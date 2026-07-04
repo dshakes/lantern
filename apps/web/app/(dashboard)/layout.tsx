@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { Notifications } from "@/components/notifications";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 import { DemoModeBanner } from "@/components/demo-mode-banner";
 import { MobileNav } from "@/components/mobile-nav";
@@ -46,11 +47,11 @@ export default function DashboardLayout({
       <div className="flex flex-1 flex-col overflow-hidden pb-14 md:pb-0">
         {/* Top bar — command bar: search left, notifications + user chip right.
             `mc-glass` gives the faint top-highlight gradient line the mock calls for. */}
-        <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-surface-1 px-4 md:px-6">
+        <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
           {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
           <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[13px] font-bold text-white">L</span>
-            <span className="text-[15px] font-semibold tracking-tight text-white">Lantern</span>
+            <span className="text-[15px] font-semibold tracking-tight text-zinc-50">Lantern</span>
           </Link>
 
           {/* Global search — opens the existing command palette. CommandPalette
@@ -64,7 +65,7 @@ export default function DashboardLayout({
               );
             }}
             aria-label="Search agents, runs, actions"
-            className="flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] text-zinc-500 transition-colors hover:border-white/[0.14] hover:text-zinc-300 md:w-full md:max-w-[440px] md:flex-1 md:justify-start md:px-3"
+            className="flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-surface-2 text-zinc-500 transition-colors hover:border-zinc-700 hover:text-zinc-300 md:w-full md:max-w-[440px] md:flex-1 md:justify-start md:px-3"
           >
             <Search className="h-3.5 w-3.5 shrink-0" />
             <span className="hidden truncate text-xs md:inline">Search agents, runs, actions…</span>
@@ -76,6 +77,8 @@ export default function DashboardLayout({
           {/* Right: Notifications, user chip.
               `ml-auto` keeps this pinned to the right. */}
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            {/* Theme toggle */}
+            <ThemeToggle />
             {/* Notifications */}
             <Notifications />
 
@@ -83,7 +86,7 @@ export default function DashboardLayout({
             <div ref={userMenuRef} className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] py-1 pl-1 pr-2.5 transition-colors hover:border-white/[0.14]"
+                className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-surface-2 py-1 pl-1 pr-2.5 transition-colors hover:border-zinc-700"
               >
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] text-[10px] font-bold text-zinc-950">
                   {user?.name ? user.name.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
