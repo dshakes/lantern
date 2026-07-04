@@ -8026,6 +8026,10 @@ export class WhatsAppSession {
         episodesBlock,
         relatedBlock,
         lowContext,
+        // The respondTo call below always attaches web_search — teach the
+        // persona to ground live facts (flight status, news) instead of
+        // deflecting with "keep me posted".
+        canWebSearch: true,
         // Unanswered-backlog hint — count of consecutive inbounds from this
         // contact with no reply between them. WhatsApp's rough transcript is
         // NOT chronologically interleaved (it lists owner-sent first, then the
@@ -8185,6 +8189,9 @@ export class WhatsAppSession {
     const draftPromise = this.agent.respondTo(from, userText, systemHint, {
       turnHint: replyTier,
       readOnlyTools: logisticsRead,
+      // Always let contact replies ground on the live web (built-in
+      // web_search only — no connector catalog unless logisticsRead).
+      webSearch: true,
     });
 
     // Wait for draft + naturalize, but don't block on it during the

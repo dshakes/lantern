@@ -5794,6 +5794,10 @@ export class IMessageSession {
       episodesBlock,
       relatedBlock,
       lowContext,
+      // The respondTo call below always attaches web_search — teach the
+      // persona to ground live facts (flight status, news) instead of
+      // deflecting with "keep me posted".
+      canWebSearch: true,
       // Unanswered-backlog hint — how many messages this contact sent in a
       // row without a reply (trailing "them:" run in the chronological chat.db
       // transcript). Tells the model to catch up on the whole backlog, not
@@ -5919,6 +5923,9 @@ export class IMessageSession {
     let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
       turnHint: replyTier,
       readOnlyTools: logisticsRead,
+      // Always let contact replies ground on the live web (built-in
+      // web_search only — no connector catalog unless logisticsRead).
+      webSearch: true,
     });
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
     // warranted". Treat as a deliberate silence so decision-prose never
