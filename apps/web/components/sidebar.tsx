@@ -126,8 +126,8 @@ export function Sidebar() {
           )}
           aria-label="Home"
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center transition-transform duration-150 group-hover:scale-105">
-            <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_14px_-6px_rgba(56,189,248,0.5)] transition-transform duration-150 group-hover:scale-105">
+            <svg width="18" height="18" viewBox="0 0 26 26" fill="none" aria-hidden="true">
               <defs>
                 <linearGradient id="lantern-mark" x1="3" y1="3" x2="23" y2="23" gradientUnits="userSpaceOnUse">
                   <stop stopColor="#2dd4bf" />
@@ -140,7 +140,12 @@ export function Sidebar() {
             </svg>
           </div>
           {!collapsed && (
-            <span className="text-base font-semibold tracking-tight text-white">Lantern</span>
+            <div className="flex flex-col leading-tight">
+              <span className="font-[680] text-base tracking-[-0.02em] text-white">Lantern</span>
+              <span className="mc-micro-label">
+                {user?.name ? `${user.name.split(" ")[0]}'s workspace` : "workspace"}
+              </span>
+            </div>
           )}
         </Link>
         {!collapsed && (
@@ -177,7 +182,7 @@ export function Sidebar() {
           <div className="px-4 pt-4">
             <Link
               href="/agents/create"
-              className="group flex w-full items-center gap-2 rounded-lg border border-lantern-500/30 bg-lantern-500/10 px-3 py-2 text-xs font-medium text-lantern-200 transition-all duration-150 hover:border-lantern-500/50 hover:bg-lantern-500/15 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
+              className="group flex w-full items-center gap-2 rounded-xl bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] px-3 py-2 text-xs font-semibold text-[#04121a] shadow-[0_6px_20px_-8px_rgba(56,189,248,0.55)] transition-transform duration-150 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
             >
               <Plus className="h-4 w-4 transition-transform duration-150 group-hover:rotate-90" />
               New agent
