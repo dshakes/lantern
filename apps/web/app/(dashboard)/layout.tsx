@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
-import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notifications } from "@/components/notifications";
 import { CommandPalette } from "@/components/command-palette";
 import { DemoModeBanner } from "@/components/demo-mode-banner";
@@ -45,61 +44,58 @@ export default function DashboardLayout({
         <Sidebar />
       </div>
       <div className="flex flex-1 flex-col overflow-hidden pb-14 md:pb-0">
-        {/* Top bar */}
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
+        {/* Top bar — command bar: search left, notifications + user chip right.
+            `mc-glass` gives the faint top-highlight gradient line the mock calls for. */}
+        <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-surface-1 px-4 md:px-6">
           {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
           <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[13px] font-bold text-white">L</span>
             <span className="text-[15px] font-semibold tracking-tight text-white">Lantern</span>
           </Link>
-          {/* Desktop: breadcrumbs (they're too cramped for a phone). */}
-          <div className="hidden md:block">
-            <Breadcrumbs />
-          </div>
 
-          {/* Right: Search hint, Notifications, User avatar.
-              `ml-auto` keeps this pinned to the right even when
-              Breadcrumbs returns null (single-segment routes like
-              /personal). Without it, `justify-between` with only one
-              flex child collapses the group to the left. */}
-          <div className="ml-auto flex items-center gap-2">
-            {/* Search shortcut hint */}
-            <button
-              onClick={() => {
-                // Trigger Cmd+K programmatically
-                window.dispatchEvent(
-                  new KeyboardEvent("keydown", {
-                    key: "k",
-                    metaKey: true,
-                    bubbles: true,
-                  }),
-                );
-              }}
-              className="hidden sm:flex items-center gap-2 rounded-lg border border-zinc-800 bg-surface-2 px-2.5 py-1 text-xs text-zinc-500 transition-colors hover:border-zinc-700 hover:text-zinc-400"
-            >
-              <Search className="h-3 w-3" />
-              <span>Search</span>
-              <kbd className="ml-1 rounded border border-zinc-700 bg-surface-3 px-1 text-[10px] font-medium">
-                &#8984;K
-              </kbd>
-            </button>
+          {/* Global search — opens the existing command palette. CommandPalette
+              listens for its own Cmd+K keydown, so we just replay that event
+              rather than adding a second "open" mechanism. Collapses to an
+              icon-only square under md (no room next to the mobile wordmark). */}
+          <button
+            onClick={() => {
+              window.dispatchEvent(
+                new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
+              );
+            }}
+            aria-label="Search agents, runs, actions"
+            className="flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] text-zinc-500 transition-colors hover:border-white/[0.14] hover:text-zinc-300 md:w-full md:max-w-[440px] md:flex-1 md:justify-start md:px-3"
+          >
+            <Search className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden truncate text-xs md:inline">Search agents, runs, actions…</span>
+            <kbd className="ml-auto hidden shrink-0 rounded border border-zinc-700 bg-surface-3 px-1 text-[10px] font-medium md:inline-block">
+              &#8984;K
+            </kbd>
+          </button>
 
+          {/* Right: Notifications, user chip.
+              `ml-auto` keeps this pinned to the right. */}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {/* Notifications */}
             <Notifications />
 
-            {/* User avatar + dropdown */}
+            {/* User chip + dropdown */}
             <div ref={userMenuRef} className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-3 transition-colors hover:bg-surface-4"
+                className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] py-1 pl-1 pr-2.5 transition-colors hover:border-white/[0.14]"
               >
-                {user?.name ? (
-                  <span className="text-[10px] font-semibold text-zinc-300 uppercase">
-                    {user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] text-[10px] font-bold text-zinc-950">
+                  {user?.name ? user.name.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
+                </span>
+                <span className="hidden flex-col items-start leading-tight sm:flex">
+                  <span className="max-w-[140px] truncate text-[11px] font-medium text-zinc-200">
+                    {user?.name || "User"}
                   </span>
-                ) : (
-                  <User className="h-3.5 w-3.5 text-zinc-400" />
-                )}
+                  <span className="max-w-[140px] truncate text-[11px] text-zinc-500">
+                    {user?.email || "user@lantern.dev"}
+                  </span>
+                </span>
               </button>
               {showUserMenu && (
                 <div className="modal-content absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 shadow-2xl z-50">
