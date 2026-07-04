@@ -69,3 +69,40 @@ func TestExecuteWebSearchTool(t *testing.T) {
 		t.Fatal("empty query must error")
 	}
 }
+
+func TestExecuteWebSearchToolOpenAIFallback(t *testing.T) {
+	// No Anthropic key → falls back to OpenAI's search-preview path.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "oai-key")
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer oai-key" {
+			t.Errorf("missing bearer token")
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"FFT3990 landed CVG 4:12pm per FlightAware."}}]}`))
+	}))
+	defer srv.Close()
+	origURL := openaiWebSearchURL
+	openaiWebSearchURL = srv.URL
+	defer func() { openaiWebSearchURL = origURL }()
+
+	res, err := executeWebSearchTool(context.Background(), nil, "t1", map[string]any{"query": "FFT3990 status"})
+	if err != nil {
+		t.Fatalf("executeWebSearchTool (openai fallback): %v", err)
+	}
+	m, ok := res.(map[string]any)
+	if !ok || m["ok"] != true || !strings.Contains(m["summary"].(string), "CVG") {
+		t.Fatalf("unexpected result %v", res)
+	}
+	if _, hasOpts := gotBody["web_search_options"]; !hasOpts {
+		t.Fatalf("request must carry web_search_options: %v", gotBody)
+	}
+
+	// Neither provider configured → clean unavailable error.
+	t.Setenv("OPENAI_API_KEY", "")
+	if _, err := executeWebSearchTool(context.Background(), nil, "t1", map[string]any{"query": "x"}); err == nil {
+		t.Fatal("no keys must error")
+	}
+}

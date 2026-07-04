@@ -1135,6 +1135,7 @@ Privacy posture (HARD rules):
 | `LANTERN_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
 | `LANTERN_QUIET_QUEUE_MAX`             | Max messages buffered in the overnight queue per bridge (default 200).                                                                                                                           |
 | `LANTERN_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
+| `LANTERN_LIVE_WATCH`                  | Set to `0`/`off` to disable live watches (default on) — LLM-detected follow-ups on live public situations a contact mentioned (flight in the air, game, outage): re-checked via `web_search` every 15–120 min, resolved with one short follow-up text ("just saw he landed"). One active watch per contact, ≤8 total, ≤12h, killswitch/mute/quiet-hours aware. State: `<stateDir>/live-watches.jsonl` (0600). |
 | `LANTERN_DRAFT_CONFIRM`               | Set to `0` or `off` to disable draft-and-confirm for LOW-confidence replies (reverts to 5s hold → auto-send). Default on.                                                                        |
 | `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `1` to enable the optional LLM fuzzy-clustering pass in the 👎 flywheel consolidation. Default off (deterministic-only pass always runs).                                                 |
 | `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
@@ -1161,6 +1162,25 @@ is per-binary in macOS TCC — easiest path is to run it via Terminal
 (which already has those grants) or grant FDA explicitly to
 `/Users/shakes/.nvm/.../node` for true always-on. See
 `docs/personal/BOT-SETUP.md`.
+
+### Web-search grounding (built-in `web_search` tool)
+
+The session tool loop has an always-on built-in `web_search` tool
+(`services/control-plane/internal/handlers/web_search.go`): Anthropic's
+server-side web search (one-shot Messages call with the tenant's key), falling
+back to OpenAI's `web_search_options` search-preview models when no Anthropic
+key resolves. It passes the read-only contact filter (public internet =
+read-only). The bridges set the `webSearch: true` session flag on EVERY
+contact reply — with `noTools` that attaches ONLY web_search (no connector
+catalog) — and the persona gains a LIVE-LOOKUP rule (`canWebSearch` in
+`natural.ts`): check live facts (flight status, news, hours) before replying,
+read identifiers from the thread + image captions, never deflect with "keep
+me posted", never narrate the tool.
+
+| Env var (control-plane)          | Default                      | Purpose                          |
+| -------------------------------- | ---------------------------- | -------------------------------- |
+| `LANTERN_WEBSEARCH_MODEL`        | `claude-3-5-haiku-latest`    | Anthropic search-summarizer model |
+| `LANTERN_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model             |
 
 ### Transient-error retry (control-plane / LLM 429 / 503)
 

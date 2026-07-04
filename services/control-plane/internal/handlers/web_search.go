@@ -25,7 +25,10 @@ import (
 )
 
 // Package vars so tests can point at a mock server / pin a model.
-var anthropicWebSearchURL = "https://api.anthropic.com/v1/messages"
+var (
+	anthropicWebSearchURL = "https://api.anthropic.com/v1/messages"
+	openaiWebSearchURL    = "https://api.openai.com/v1/chat/completions"
+)
 
 func webSearchModel() string {
 	if m := os.Getenv("LANTERN_WEBSEARCH_MODEL"); m != "" {
@@ -34,6 +37,14 @@ func webSearchModel() string {
 	// Cheapest web-search-capable model; the outer loop's model does the
 	// actual reply synthesis, this one only summarizes search results.
 	return "claude-3-5-haiku-latest"
+}
+
+func webSearchOpenAIModel() string {
+	if m := os.Getenv("LANTERN_WEBSEARCH_OPENAI_MODEL"); m != "" {
+		return m
+	}
+	// Cheapest OpenAI model that supports web_search_options.
+	return "gpt-4o-mini-search-preview"
 }
 
 // webSearchTool returns the OpenAI-format tool definition. The name
@@ -61,9 +72,11 @@ func webSearchTool() map[string]any {
 
 var webSearchHTTPClient = &http.Client{Timeout: 60 * time.Second}
 
-// executeWebSearchTool runs one web search via Anthropic's server-side
-// web_search tool and returns a text summary. Errors surface to the tool
-// loop as is_error results so the model can answer honestly without it.
+// executeWebSearchTool runs one web search and returns a text summary.
+// Anthropic's server-side web_search tool is the primary path; tenants
+// without an Anthropic key fall back to OpenAI's search-preview models
+// (web_search_options). Errors surface to the tool loop as is_error
+// results so the model can answer honestly without it.
 func executeWebSearchTool(ctx context.Context, pool *pgxpool.Pool, tenantID string, params map[string]any) (any, error) {
 	query, _ := params["query"].(string)
 	query = strings.TrimSpace(query)
@@ -71,18 +84,27 @@ func executeWebSearchTool(ctx context.Context, pool *pgxpool.Pool, tenantID stri
 		return nil, fmt.Errorf("web_search: query is required")
 	}
 
-	apiKey, err := resolveProviderKeyFromPool(ctx, pool, tenantID, "anthropic")
-	if err != nil {
-		return nil, fmt.Errorf("web_search unavailable: %w", err)
-	}
+	prompt := "Search the web and report what you find about: " + query +
+		"\nBe concise: key facts first with specific numbers/times/statuses, then source names. If results conflict or look stale, say so. If nothing relevant is found, say that plainly."
 
+	anthropicKey, anthErr := resolveProviderKeyFromPool(ctx, pool, tenantID, "anthropic")
+	if anthErr == nil {
+		return webSearchViaAnthropic(ctx, anthropicKey, prompt)
+	}
+	openaiKey, oaiErr := resolveProviderKeyFromPool(ctx, pool, tenantID, "openai")
+	if oaiErr == nil {
+		return webSearchViaOpenAI(ctx, openaiKey, prompt)
+	}
+	return nil, fmt.Errorf("web_search unavailable: no anthropic key (%v) and no openai key (%v)", anthErr, oaiErr)
+}
+
+func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, error) {
 	reqBody := map[string]any{
 		"model":      webSearchModel(),
 		"max_tokens": 1024,
 		"messages": []map[string]any{{
-			"role": "user",
-			"content": "Search the web and report what you find about: " + query +
-				"\nBe concise: key facts first with specific numbers/times/statuses, then source names. If results conflict or look stale, say so. If nothing relevant is found, say that plainly.",
+			"role":    "user",
+			"content": prompt,
 		}},
 		"tools": []map[string]any{{
 			"type":     "web_search_20250305",
@@ -133,6 +155,59 @@ func executeWebSearchTool(ctx context.Context, pool *pgxpool.Pool, tenantID stri
 		}
 	}
 	summary := strings.TrimSpace(sb.String())
+	if summary == "" {
+		return nil, fmt.Errorf("web_search: empty result")
+	}
+	return map[string]any{"ok": true, "summary": summary}, nil
+}
+
+// webSearchViaOpenAI is the fallback for tenants without an Anthropic key:
+// OpenAI's search-preview chat models run the web search server-side when
+// web_search_options is present.
+func webSearchViaOpenAI(ctx context.Context, apiKey, prompt string) (any, error) {
+	reqBody := map[string]any{
+		"model":              webSearchOpenAIModel(),
+		"web_search_options": map[string]any{},
+		"messages": []map[string]any{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", openaiWebSearchURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := webSearchHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("web_search: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	var oaiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&oaiResp); err != nil {
+		return nil, fmt.Errorf("web_search: decode response: %w", err)
+	}
+	if oaiResp.Error != nil {
+		return nil, fmt.Errorf("web_search: %s", oaiResp.Error.Message)
+	}
+	if len(oaiResp.Choices) == 0 {
+		return nil, fmt.Errorf("web_search: empty result")
+	}
+	summary := strings.TrimSpace(oaiResp.Choices[0].Message.Content)
 	if summary == "" {
 		return nil, fmt.Errorf("web_search: empty result")
 	}
