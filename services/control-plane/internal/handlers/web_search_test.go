@@ -60,7 +60,7 @@ func TestExecuteWebSearchTool(t *testing.T) {
 		t.Fatalf("expected 1 server tool, got %v", gotBody["tools"])
 	}
 	st, _ := toolsAny[0].(map[string]any)
-	if st["type"] != "web_search_20250305" {
+	if st["type"] != "web_search_20260209" {
 		t.Fatalf("wrong server tool type %v", st["type"])
 	}
 

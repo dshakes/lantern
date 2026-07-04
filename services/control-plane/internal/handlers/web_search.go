@@ -34,9 +34,11 @@ func webSearchModel() string {
 	if m := os.Getenv("LANTERN_WEBSEARCH_MODEL"); m != "" {
 		return m
 	}
-	// Cheapest web-search-capable model; the outer loop's model does the
-	// actual reply synthesis, this one only summarizes search results.
-	return "claude-3-5-haiku-latest"
+	// Cheapest CURRENT model documented to support the web_search_20260209
+	// server tool (Haiku 3.5 is retired; Haiku 4.5's web-search support is
+	// not documented). The outer loop's model does the reply synthesis —
+	// this one only summarizes search results, so calls are small.
+	return "claude-sonnet-4-6"
 }
 
 func webSearchOpenAIModel() string {
@@ -107,7 +109,9 @@ func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, err
 			"content": prompt,
 		}},
 		"tools": []map[string]any{{
-			"type":     "web_search_20250305",
+			// Current server-tool variant (dynamic filtering); requires
+			// Opus 4.6+/Sonnet 4.6 — matched to webSearchModel's default.
+			"type":     "web_search_20260209",
 			"name":     "web_search",
 			"max_uses": 3,
 		}},

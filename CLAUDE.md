@@ -1179,7 +1179,7 @@ me posted", never narrate the tool.
 
 | Env var (control-plane)          | Default                      | Purpose                          |
 | -------------------------------- | ---------------------------- | -------------------------------- |
-| `LANTERN_WEBSEARCH_MODEL`        | `claude-3-5-haiku-latest`    | Anthropic search-summarizer model |
+| `LANTERN_WEBSEARCH_MODEL`        | `claude-sonnet-4-6`          | Anthropic search-summarizer model |
 | `LANTERN_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model             |
 
 ### Transient-error retry (control-plane / LLM 429 / 503)
