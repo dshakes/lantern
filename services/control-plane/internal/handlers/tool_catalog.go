@@ -502,6 +502,10 @@ func toolsForTenant(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([
 	// bridge is running the tool just returns ok=false to the LLM,
 	// which then asks the user instead of failing the run.
 	out = append(out, personalDocsTools()...)
+	// web_search is read-only by nature (public internet), so it survives
+	// filterReadOnlyTools and grounds CONTACT replies too (flight status,
+	// news, hours) — see web_search.go.
+	out = append(out, webSearchTool())
 	return out, nil
 }
 
@@ -541,6 +545,9 @@ func filterReadOnlyTools(tools []map[string]any) []map[string]any {
 func dispatchTool(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, params map[string]any) (any, error) {
 	if isPersonalDocsTool(name) {
 		return executePersonalDocsTool(ctx, tenantID, name, params)
+	}
+	if name == "web_search" {
+		return executeWebSearchTool(ctx, pool, tenantID, params)
 	}
 	parts := strings.SplitN(name, "__", 2)
 	if len(parts) != 2 {

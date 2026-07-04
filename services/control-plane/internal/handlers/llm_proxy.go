@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -134,6 +135,12 @@ type providerConfig struct {
 // resolveProviderKey looks up API keys: first in the DB for the tenant,
 // then from environment variables.
 func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, provider string) (string, error) {
+	return resolveProviderKeyFromPool(ctx, h.srv.Pool, tenantID, provider)
+}
+
+// resolveProviderKeyFromPool is the pool-scoped form for callers without an
+// LlmProxyHandler (e.g. the web_search tool dispatch in tool_catalog.go).
+func resolveProviderKeyFromPool(ctx context.Context, pool *pgxpool.Pool, tenantID, provider string) (string, error) {
 	// 1. Check tenant-specific keys in DB.
 	var apiKeyEncrypted string
 	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter. This is a
@@ -145,8 +152,8 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 	// give. See ADR 0011 "rls-exempt-by-arg".
 	// Pool may be nil in unit tests; skip the DB lookup and fall through to env.
 	var err error
-	if h.srv.Pool != nil {
-		err = h.srv.Pool.QueryRow(ctx, `
+	if pool != nil {
+		err = pool.QueryRow(ctx, `
 			SELECT api_key_encrypted FROM llm_provider_configs
 			WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
 		`, tenantID, provider).Scan(&apiKeyEncrypted)
