@@ -331,7 +331,7 @@ export default function AgentsPage() {
 
             {/* Stats strip — 4 dense glass tiles. Real data only: see stat-buckets.ts
                 for the sparkline bucketing and the aggregate memo above for deltas. */}
-            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="mc-stagger mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat
                 icon={<Bot className="h-3.5 w-3.5 text-zinc-400" />}
                 label="Agents"
@@ -412,7 +412,7 @@ export default function AgentsPage() {
                 {personalSuite.length > 0 && (
                   <section className="mb-8">
                     <SectionLabel>Personal suite</SectionLabel>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="mc-stagger grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {personalSuite.map((agent) => (
                         <AgentCard
                           key={agent.id}
@@ -435,7 +435,7 @@ export default function AgentsPage() {
                 {otherAgents.length > 0 && (
                   <section>
                     {personalSuite.length > 0 && <SectionLabel>Other agents</SectionLabel>}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="mc-stagger grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {otherAgents.map((agent) => (
                         <AgentCard
                           key={agent.id}

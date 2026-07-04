@@ -827,3 +827,28 @@ input[type="range"]::-webkit-slider-thumb {
     radial-gradient(360px 180px at 50% 70%, rgba(56, 189, 248, 0.06), transparent 70%);
   animation: mc-aurora-drift 20s ease-in-out infinite;
 }
+
+/* Page-load reveal — fade + rise on first paint. `.mc-reveal` for a single
+   element; `.mc-stagger` sequences its direct children (delay capped at the
+   8th child so a long grid doesn't crawl in for seconds). No-preference
+   only — reduced-motion users get the final state immediately, no motion. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes mc-reveal-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .mc-reveal {
+    animation: mc-reveal-in 0.4s var(--easing-standard) both;
+  }
+  .mc-stagger > * {
+    animation: mc-reveal-in 0.4s var(--easing-standard) both;
+  }
+  .mc-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .mc-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .mc-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .mc-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .mc-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .mc-stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .mc-stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .mc-stagger > *:nth-child(n+8) { animation-delay: 280ms; }
+}
