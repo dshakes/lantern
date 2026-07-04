@@ -57,7 +57,11 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
   // the row, and re-enter the FIRST node's bottom-center straight UP. Both ends
   // are vertical, so the arrowhead is axis-aligned (points up) — never the
   // crooked tilt a side-entry curve produces with orient="auto".
-  const loopPath = `M ${lastCx} ${nodeBottom} C ${lastCx} ${ay}, ${firstCx} ${ay}, ${firstCx} ${nodeBottom}`;
+  // Dashed arc ends a few px BELOW the first box; a short solid vertical
+  // connector then carries the arrowhead straight up into the box bottom-center
+  // (guaranteed vertical + tip-touching, never chopped by the dash pattern).
+  const loopEntryY = nodeBottom + 7;
+  const loopPath = `M ${lastCx} ${nodeBottom} C ${lastCx} ${ay}, ${firstCx} ${ay}, ${firstCx} ${loopEntryY}`;
 
   const eb = execModel ? EXEC_BADGE[execModel] : null;
 
@@ -84,9 +88,10 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
       >
         <defs>
           {/* userSpaceOnUse so the head is a fixed, crisp size — not scaled
-              (and made chunky) by the line's strokeWidth. */}
-          <marker id={mid} markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-            <path d="M1,1 L8,4.5 L1,8 Z" fill={c.stroke} />
+              (and made chunky) by the line's strokeWidth. refX=9 puts the TIP
+              exactly on the path endpoint so it lands cleanly on the box edge. */}
+          <marker id={mid} markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="8" refX="9" refY="4" orient="auto">
+            <path d="M0,0 L9,4 L0,8 Z" fill={c.stroke} />
           </marker>
         </defs>
 
@@ -103,7 +108,8 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
           <line key={i} x1={nx(i) + NW + 2} y1={midY} x2={nx(i + 1) - 2} y2={midY} stroke={c.stroke} strokeWidth={1.5} markerEnd={`url(#${mid})`} />
         ))}
 
-        <path d={loopPath} fill="none" stroke={c.stroke} strokeWidth={1.5} strokeDasharray="5 3" markerEnd={`url(#${mid})`} />
+        <path d={loopPath} fill="none" stroke={c.stroke} strokeWidth={1.5} strokeDasharray="5 3" />
+        <line x1={firstCx} y1={loopEntryY} x2={firstCx} y2={nodeBottom} stroke={c.stroke} strokeWidth={1.5} markerEnd={`url(#${mid})`} />
         {/* Explicit loop label so the dashed arc reads clearly as "this repeats". */}
         {/* Label sits in the clear gap just below the boxes; the arc dips
             BELOW it (DIP is tuned so they never overlap). */}
