@@ -143,6 +143,24 @@ function getAgentStats(agent: Agent, allRuns: Run[]) {
   return { runsCount: runs.length, successRate, lastRun };
 }
 
+// One-line human summary of the last run's OUTCOME — the "did it actually do
+// anything" signal that a green status pill hides (a dead Gmail token looked
+// like healthy runs for weeks because every run 'succeeded' with 0 records).
+function summarizeOutcome(run: Run | null): string | null {
+  if (!run) return null;
+  if (run.status === "failed") {
+    return `⚠ ${(run.error?.message || "failed").slice(0, 80)}`;
+  }
+  if (run.output && typeof run.output === "object" && !Array.isArray(run.output)) {
+    const pairs = Object.entries(run.output as Record<string, unknown>)
+      .filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))
+      .slice(0, 3)
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? v.slice(0, 40) : String(v)}`);
+    if (pairs.length > 0) return pairs.join(" · ");
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -607,6 +625,23 @@ function AgentCard({
           )}
         </div>
       )}
+
+      {/* Last outcome — what the most recent run actually produced */}
+      {(() => {
+        const outcome = summarizeOutcome(stats.lastRun);
+        if (!outcome) return null;
+        return (
+          <p
+            className={clsx(
+              "mt-2 truncate font-mono text-[11px]",
+              stats.lastRun?.status === "failed" ? "text-red-400" : "text-zinc-500",
+            )}
+            title={outcome}
+          >
+            last: {outcome}
+          </p>
+        );
+      })()}
 
       {/* Footer: runs + success rate + last-run time */}
       <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-2.5 text-[12px]">

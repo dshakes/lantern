@@ -411,7 +411,7 @@ func runLoopAgentIfPresent(
 	logger *zap.Logger,
 	tenantID, agentName, runID string,
 	completeFn researchCompleteFn,
-) bool {
+) (bool, error) {
 	// Read the current version's manifest (agent_versions is RLS-exempt: no
 	// tenant_id column; the FK to agents provides indirect scoping; we carry
 	// the explicit tenant_id join for defence-in-depth).
@@ -426,12 +426,12 @@ func runLoopAgentIfPresent(
 		LIMIT  1
 	`, agentName, tenantID).Scan(&manifestJSON)
 	if err != nil || len(manifestJSON) == 0 {
-		return false
+		return false, nil
 	}
 
 	var m LoopManifest
 	if err := json.Unmarshal(manifestJSON, &m); err != nil || m.Type != "loop" {
-		return false
+		return false, nil
 	}
 
 	// Default role to concierge for backward compat (existing agents have no role field).
@@ -453,7 +453,7 @@ func runLoopAgentIfPresent(
 	if prevComplete > 0 {
 		logger.Info("loop-agent: loop_complete already present — skipping re-run (idempotent)",
 			zap.String("run_id", runID), zap.String("role", role))
-		return true
+		return true, nil
 	}
 
 	logger.Info("loop-agent: dispatching loop run",
@@ -461,12 +461,14 @@ func runLoopAgentIfPresent(
 		zap.String("role", role), zap.String("tier", m.Tier))
 
 	var outputJSON []byte
+	var loopErr error
 	switch role {
 	case "chief_of_staff":
 		briefChars, runErr := runChiefOfStaffBrief(ctx, pool, logger, tenantID, runID, completeFn)
 		if runErr != nil {
 			logger.Error("loop-agent: chief_of_staff brief failed",
 				zap.String("run_id", runID), zap.Error(runErr))
+			loopErr = runErr
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"brief_chars": briefChars})
 
@@ -475,6 +477,7 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: inbox_autopilot failed",
 				zap.String("run_id", runID), zap.Error(runErr))
+			loopErr = runErr
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"new": newN, "created": createdM})
 
@@ -483,6 +486,7 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: inbox_triage failed",
 				zap.String("run_id", runID), zap.Error(runErr))
+			loopErr = runErr
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"action": actionN, "fyi": fyiN})
 
@@ -491,6 +495,7 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: relationship_keeper failed",
 				zap.String("run_id", runID), zap.Error(runErr))
+			loopErr = runErr
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"surfaced": surfaced})
 
@@ -499,6 +504,7 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: financial_sentinel failed",
 				zap.String("run_id", runID), zap.Error(runErr))
+			loopErr = runErr
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"hikes": hikesN})
 
@@ -507,6 +513,7 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: domain_tracker failed",
 				zap.String("run_id", runID), zap.String("domain", m.Domain), zap.Error(runErr))
+			loopErr = runErr
 		}
 		// Coach pass: tracker runs first to refresh data, then coach synthesises
 		// the weekly brief from whatever is already stored.
@@ -556,6 +563,26 @@ func runLoopAgentIfPresent(
 		outputJSON, _ = json.Marshal(map[string]any{"surfaced": surfaced})
 	}
 
+	// FAILURE PROPAGATION: a loop body error must FAIL the run — never
+	// finalize as "succeeded, 0 records" (that silent-success pattern hid a
+	// dead Gmail token for weeks: agents looked green while reading nothing).
+	// No loop_complete event is written on failure, so a recovery re-drive
+	// re-executes the body. Connector AUTH errors additionally page the
+	// owner (once per tenant per day) — only the owner can re-auth.
+	if loopErr != nil {
+		failPayload, _ := json.Marshal(map[string]string{"error": loopErr.Error(), "role": role})
+		// rls-exempt: journal_events is RLS-exempt (no tenant_id; keyed by run_id).
+		_, _ = pool.Exec(ctx, `
+			INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+			VALUES ($1, 10000, 'loop_failed', 'loop', 1, $2)
+			ON CONFLICT (run_id, seq) DO NOTHING
+		`, runID, failPayload)
+		if isConnectorAuthError(loopErr) {
+			pageConnectorAuthExpired(ctx, pool, logger, tenantID, runID)
+		}
+		return true, loopErr
+	}
+
 	// Write a terminal journal event summarising the run output.
 	// rls-exempt: journal_events is RLS-exempt (no tenant_id; keyed by run_id).
 	seq := int64(10000)
@@ -565,7 +592,42 @@ func runLoopAgentIfPresent(
 		ON CONFLICT (run_id, seq) DO NOTHING
 	`, runID, seq, outputJSON)
 
-	return true
+	return true, nil
+}
+
+// isConnectorAuthError reports whether err looks like a dead connector
+// credential (expired/revoked OAuth token) rather than a transient failure.
+// Today only Gmail-backed loop bodies produce these.
+func isConnectorAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "invalid credentials") ||
+		strings.Contains(s, "invalid_grant") ||
+		strings.Contains(s, "unauthenticated") ||
+		strings.Contains(s, "api error 401") ||
+		strings.Contains(s, "token has been expired or revoked")
+}
+
+// sendSelfNote is the owner-notification seam. Tests swap it so no real
+// bridge send fires; prod wiring is deliverWhatsAppSelfNote (rest.go).
+var sendSelfNote = deliverWhatsAppSelfNote
+
+// pageConnectorAuthExpired texts the owner ONE self-chat page per tenant per
+// day when a loop agent dies on a dead connector credential. Dedup rides
+// claimSideEffect (invariant #8); delivery is best-effort — the failed runs
+// themselves are the durable signal, this is the human-visible one.
+func pageConnectorAuthExpired(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, runID string) {
+	key := fmt.Sprintf("connauth-page:%s:%s", tenantID, time.Now().UTC().Format("2006-01-02"))
+	claimed, claimErr := claimSideEffect(ctx, pool, key, runID, tenantID, "connector_auth_page")
+	if claimErr != nil || !claimed {
+		return // already paged today; claim errors retry on the next scheduled run
+	}
+	msg := "🔑 Gmail connection expired — your email agents (inbox-triage, upskill, garage, household, travel-concierge, care-coordinator, financial-sentinel) can't read email until you reconnect: dashboard → Integrations → Gmail → Reconnect."
+	if sendErr := sendSelfNote(tenantID, msg); sendErr != nil {
+		logger.Warn("connector-auth page delivery failed", zap.String("tenant", tenantID), zap.Error(sendErr))
+	}
 }
 
 // scanAndNudgeCommitments scans open/suggested/in_progress commitments whose
@@ -2080,6 +2142,19 @@ func runDomainCoach(
 		// Non-fatal: still emit the journal event.
 		logger.Warn("domain-coach: upsert commitment failed",
 			zap.String("domain", domain), zap.Error(upsertErr))
+	}
+
+	// 5b. PUSH the brief to the owner's self-chat — once per (domain,
+	// ISO-week). Storing it only as an fyi commitment proved invisible in
+	// practice: fyi surfaces solely when the owner texts "?" — and they
+	// never knew to. claimSideEffect dedups the push (invariant #8);
+	// delivery is best-effort (the brief stays in commitments regardless).
+	// Never log the brief body — it carries PII (invariant #10).
+	pushKey := fmt.Sprintf("coach-push:%s:%s:%d-W%02d", tenantID, domain, year, week)
+	if claimed, _ := claimSideEffect(ctx, pool, pushKey, runID, tenantID, "coach_brief_push"); claimed {
+		if sendErr := sendSelfNote(tenantID, fmt.Sprintf("🤖 %s weekly: %s", domain, brief)); sendErr != nil {
+			logger.Warn("domain-coach: brief push failed", zap.String("domain", domain), zap.Error(sendErr))
+		}
 	}
 
 	// 6. Emit domain_coached journal event — brief_chars only, no PII (invariant #10).
