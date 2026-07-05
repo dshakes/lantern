@@ -11,6 +11,7 @@ import {
   chunkCategories,
   formatScoutPage,
   formatScoutPicks,
+  friendlyTime,
   parseCuration,
   defaultScoutState,
   eventKey,
@@ -20,7 +21,6 @@ import {
   parseBookReply,
   parseScoutCommand,
   parseScoutEvents,
-  sortByCategory,
 } from "./event-scout.ts";
 
 const NOW = new Date(2026, 6, 4, 9, 0, 0); // 2026-07-04 local
@@ -117,8 +117,8 @@ test("formatScoutList numbers events and uses the registered 🎪 prefix", () =>
     st,
   );
   assert.ok(msg.startsWith("🎪 "));
-  assert.match(msg, /1\. Sat, Jul 4 — Fireworks @ Sully Park \(free\)/);
-  assert.match(msg, /2\. Sat, Aug 1 19:00 — Circus/);
+  assert.match(msg, /1\. Sat, Jul 4 — Fireworks\n    Sully Park · free/);
+  assert.match(msg, /2\. Sat, Aug 1 7pm — Circus/);
   assert.match(msg, /book 1,3/);
   assert.ok(formatCategories(st).startsWith("🎟 "));
 });
@@ -137,18 +137,22 @@ test("curation: parse + apply reorders picks first; picks message + pager number
 
   const { ordered, whys } = applyCuration(events, picks);
   assert.equal(ordered.length, 10);
-  assert.equal(ordered[0].title, "Event 7");
-  assert.equal(ordered[1].title, "Event 2");
-  assert.equal(ordered[2].title, "Event 1"); // rest keep date order
+  // Picks lead the list but are DATE-sorted (Event 2 = Jul 11 < Event 7 = Jul 16),
+  // with why-lines still paired to the right event.
+  assert.equal(ordered[0].title, "Event 2");
+  assert.equal(ordered[1].title, "Event 7");
+  assert.equal(whys[0], "free and close");
+  assert.equal(whys[1], "perfect for a 4yo");
+  assert.equal(ordered[2].title, "Event 1"); // rest date order
 
   const picksMsg = formatScoutPicks(ordered, whys, st);
-  assert.ok(picksMsg.startsWith("🎪 top 2 picks"));
-  assert.match(picksMsg, /1\. .*Event 7[\s\S]*↳ perfect for a 4yo/);
-  assert.match(picksMsg, /"events more" for all 10/);
+  assert.ok(picksMsg.startsWith("🎪 Top 2 picks"));
+  assert.match(picksMsg, /1\. .*Event 2[\s\S]*↳ free and close/);
+  assert.match(picksMsg, /events more → all 10/);
 
   // Pager: next page after the 2 picks = items 3..8, numbered globally.
   const page = formatScoutPage(ordered, 2, st);
-  assert.match(page, /events 3-8 of 10/);
+  assert.match(page, /Events 3-8 of 10/);
   assert.match(page, /^3\. /m);
   assert.match(page, /^8\. /m);
   assert.match(page, /next 2/); // 2 left after this page
@@ -158,22 +162,28 @@ test("curation: parse + apply reorders picks first; picks message + pager number
   assert.deepEqual(parseCuration("no json", 5), []);
 });
 
-test("grouping: sortByCategory clusters groups; list/pager render ▸ headers, numbering stays global", () => {
+test("display: strict date order, 2-line layout, category as tag, friendly times", () => {
   const st = defaultScoutState();
-  const events = sortByCategory([
-    { title: "Fireworks A", date: "2026-07-04", category: "fireworks" },
-    { title: "Garba", date: "2026-08-28", category: "Indian community events" },
-    { title: "Fireworks B", date: "2026-07-05", category: "fireworks" },
-    { title: "Telugu show", date: "2026-07-10", category: "Indian community events" },
-  ]);
-  // Groups clustered, date order inside each.
-  assert.deepEqual(events.map((e) => e.title), ["Fireworks A", "Fireworks B", "Telugu show", "Garba"]);
+  // Renderers keep input order (pending is date-sorted upstream by
+  // parseScoutEvents / applyCuration) — feed them sorted, as prod does.
+  const events = [
+    { title: "Fireworks A", date: "2026-07-04", category: "fireworks", venue: "Franklin Park", city: "Purcellville", cost: "free" },
+    { title: "Mystery Expo", date: "2026-07-10", cost: "unknown" },
+    { title: "Garba Night", date: "2026-08-28", time: "20:00", category: "Indian community events (Telugu shows)", venue: "Dulles SportsPlex" },
+  ];
   const msg = formatScoutList(events, st);
-  assert.match(msg, /▸ fireworks\n1\. /);
-  assert.match(msg, /▸ Indian community events\n3\. /);
-  // Single-group list → no headers.
-  const solo = formatScoutList([{ title: "X", date: "2026-07-10" }], st);
-  assert.ok(!solo.includes("▸"));
+  // Strict date order with global numbering.
+  assert.match(msg, /1\. Sat, Jul 4 — Fireworks A/);
+  assert.match(msg, /2\. Fri, Jul 10 — Mystery Expo/);
+  assert.match(msg, /3\. Fri, Aug 28 8pm — Garba Night/);
+  // Detail line: venue · cost · short category tag (no "(Telugu…)" tail).
+  assert.match(msg, /    Franklin Park, Purcellville · free · fireworks/);
+  assert.match(msg, /    Dulles SportsPlex · Indian community events\n/);
+  // "unknown" cost is dropped, not displayed.
+  assert.ok(!msg.includes("unknown"));
+  assert.equal(friendlyTime("19:00"), "7pm");
+  assert.equal(friendlyTime("10:30"), "10:30am");
+  assert.equal(friendlyTime("00:15"), "12:15am");
 });
 
 test("list-all / pagination command grammar", () => {

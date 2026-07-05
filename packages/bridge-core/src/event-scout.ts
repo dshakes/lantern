@@ -81,12 +81,13 @@ export function formatScoutPage(ordered: ScoutEvent[], start: number, state: Eve
   const pageEnd = Math.min(start + SCOUT_PAGE_SIZE, ordered.length);
   const left = ordered.length - pageEnd;
   return [
-    `🎪 events ${start + 1}-${pageEnd} of ${ordered.length}:`,
-    ...renderGrouped(ordered, start, pageEnd),
+    `🎪 Events ${start + 1}-${pageEnd} of ${ordered.length} (by date)`,
+    "",
+    ...renderEvents(ordered, start, pageEnd),
     "",
     left > 0
-      ? `reply "book ${start + 1},${start + 2}" to calendar-block · "events more" for the next ${Math.min(SCOUT_PAGE_SIZE, left)}`
-      : `that's everything — "book <n>" to calendar-block, "scan events" to look again`,
+      ? `book ${start + 1},${start + 2} → calendar · events more → next ${Math.min(SCOUT_PAGE_SIZE, left)}`
+      : `that's everything — book <n> → calendar · scan events → fresh look`,
   ].join("\n");
 }
 
@@ -228,57 +229,75 @@ export function parseCuration(raw: string, count: number): ScoutPick[] {
   return out;
 }
 
-// Display order: grouped by category (as labeled by the scan LLM —
-// "Indian community events" together, "fireworks" together, …), date
-// order within each group. Stable so equal keys keep scan order.
-export function sortByCategory(events: ScoutEvent[]): ScoutEvent[] {
-  return [...events].sort((a, b) => {
-    const g = groupLabel(a).localeCompare(groupLabel(b));
-    return g !== 0 ? g : (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""));
-  });
-}
+const byDate = (a: ScoutEvent, b: ScoutEvent) =>
+  (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""));
 
-function groupLabel(ev: ScoutEvent): string {
-  return (ev.category || "other").toLowerCase();
-}
-
-// Reorder: picks first (curator order), the rest category-grouped after.
-// Returns the reordered list + the picks' why-lines.
+// Reorder: picks first, the rest after — BOTH strictly date-sorted.
+// (Grouping by category broke chronology and read as "dates not sorted";
+// category now appears as a per-line tag instead.) Why-lines stay paired
+// with their pick through the sort.
 export function applyCuration(events: ScoutEvent[], picks: ScoutPick[]): { ordered: ScoutEvent[]; whys: string[] } {
-  const picked = picks.map((p) => events[p.n - 1]);
-  const pickedSet = new Set(picked);
-  const rest = sortByCategory(events.filter((e) => !pickedSet.has(e)));
-  return { ordered: [...picked, ...rest], whys: picks.map((p) => p.why) };
+  const paired = picks
+    .map((p) => ({ ev: events[p.n - 1], why: p.why }))
+    .sort((a, b) => byDate(a.ev, b.ev));
+  const pickedSet = new Set(paired.map((p) => p.ev));
+  const rest = events.filter((e) => !pickedSet.has(e)).sort(byDate);
+  return { ordered: [...paired.map((p) => p.ev), ...rest], whys: paired.map((p) => p.why) };
 }
 
-// Render a numbered slice with a "▸ category" header wherever the group
-// changes — skipped entirely when the whole list is a single group.
-function renderGrouped(ordered: ScoutEvent[], start: number, end: number): string[] {
-  const multiGroup = new Set(ordered.map(groupLabel)).size > 1;
+// Short category tag for the detail line ("Indian community events
+// (Telugu/Indian shows, …)" → "Indian community events").
+function shortCategory(ev: ScoutEvent): string {
+  return (ev.category || "").split("(")[0].trim();
+}
+
+// Clean two-line layout per event, numbered globally, strict date order:
+//   3. Fri, Jul 17 7pm — Cirque Italia Water Circus
+//      Fair Oaks Mall, Fairfax · $25-$85 · circus
+function renderEvents(ordered: ScoutEvent[], start: number, end: number): string[] {
   const lines: string[] = [];
   for (let i = start; i < end; i++) {
     const ev = ordered[i];
-    if (multiGroup && (i === start || groupLabel(ev) !== groupLabel(ordered[i - 1]))) {
-      lines.push(`▸ ${ev.category || "other"}`);
-    }
-    const where = ev.venue ? ` @ ${ev.venue}${ev.city ? ", " + ev.city : ""}` : ev.city ? ` @ ${ev.city}` : "";
-    lines.push(`${i + 1}. ${friendlyDate(ev.date)}${ev.time ? " " + ev.time : ""} — ${ev.title}${where}${ev.cost ? ` (${ev.cost})` : ""}`);
+    lines.push(`${i + 1}. ${friendlyDate(ev.date)}${ev.time ? " " + friendlyTime(ev.time) : ""} — ${ev.title}`);
+    const detail = [
+      ev.venue ? `${ev.venue}${ev.city ? ", " + ev.city : ""}` : ev.city || "",
+      ev.cost && ev.cost !== "unknown" ? ev.cost : "",
+      shortCategory(ev),
+    ].filter(Boolean).join(" · ");
+    if (detail) lines.push(`    ${detail}`);
   }
   return lines;
 }
 
+// "19:00" → "7pm", "10:30" → "10:30am" — terse, human.
+export function friendlyTime(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isFinite(h)) return hhmm;
+  const suffix = h >= 12 ? "pm" : "am";
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${hr}:${String(m).padStart(2, "0")}${suffix}` : `${hr}${suffix}`;
+}
+
 export function formatScoutPicks(ordered: ScoutEvent[], whys: string[], state: EventScoutState): string {
   const k = whys.length;
-  const lines = ordered.slice(0, k).map((ev, i) => {
-    const where = ev.venue ? ` @ ${ev.venue}${ev.city ? ", " + ev.city : ""}` : ev.city ? ` @ ${ev.city}` : "";
-    const cost = ev.cost ? ` (${ev.cost})` : "";
-    return `${i + 1}. ${friendlyDate(ev.date)}${ev.time ? " " + ev.time : ""} — ${ev.title}${where}${cost}\n   ↳ ${whys[i]}`;
-  });
+  const lines: string[] = [];
+  for (let i = 0; i < k; i++) {
+    const ev = ordered[i];
+    lines.push(`${i + 1}. ${friendlyDate(ev.date)}${ev.time ? " " + friendlyTime(ev.time) : ""} — ${ev.title}`);
+    const detail = [
+      ev.venue ? `${ev.venue}${ev.city ? ", " + ev.city : ""}` : ev.city || "",
+      ev.cost && ev.cost !== "unknown" ? ev.cost : "",
+    ].filter(Boolean).join(" · ");
+    if (detail) lines.push(`    ${detail}`);
+    lines.push(`    ↳ ${whys[i]}`);
+    if (i < k - 1) lines.push("");
+  }
   return [
-    `🎪 top ${k} picks for the next ${Math.round(state.windowDays / 30)} months (of ${ordered.length} found):`,
+    `🎪 Top ${k} picks · next ${Math.round(state.windowDays / 30)} months (${ordered.length} found)`,
+    "",
     ...lines,
     "",
-    `reply "book 1,3" to calendar-block · "events more" for all ${ordered.length} · "events categories" to tune`,
+    `book 1,3 → calendar · events more → all ${ordered.length} · events categories → tune`,
   ].join("\n");
 }
 
@@ -288,10 +307,11 @@ export function formatScoutPicks(ordered: ScoutEvent[], whys: string[], state: E
 
 export function formatScoutList(events: ScoutEvent[], state: EventScoutState): string {
   return [
-    `🎪 events — next ${Math.round(state.windowDays / 30)} months near you:`,
-    ...renderGrouped(events, 0, events.length),
+    `🎪 Events · next ${Math.round(state.windowDays / 30)} months (by date)`,
     "",
-    `reply "book 1,3" (or "book all") to add to calendar with reminders · "events categories" to tune what I scan for`,
+    ...renderEvents(events, 0, events.length),
+    "",
+    `book 1,3 (or book all) → calendar with reminders · events categories → tune`,
   ].join("\n");
 }
 

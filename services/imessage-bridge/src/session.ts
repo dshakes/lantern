@@ -211,7 +211,6 @@ import {
   formatScoutPicks,
   SCOUT_PAGE_SIZE,
   parseCuration,
-  sortByCategory,
   friendlyDate,
   isPastEvent,
   parseBookReply,
@@ -2501,7 +2500,7 @@ export class IMessageSession {
       // pending so "book 1" = top pick; "events more" shows the full list.
       // Curation failure (or a short list) falls back to the plain list.
       let message: string;
-      const disp = sortByCategory(fresh); // category-grouped display order
+      const disp = fresh; // already strict date order from parseScoutEvents
       st.pending = disp;
       st.shown = disp.length; // plain list shows everything; picks path overrides
       if (disp.length > 6) {
