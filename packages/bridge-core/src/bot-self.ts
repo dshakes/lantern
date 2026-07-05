@@ -147,6 +147,12 @@ const BOT_SELF_PREFIXES: string[] = [
   "🧘 this week:",   // "🧘 this week: avg 7.2k steps/day, 7h sleep avg, 3 workouts"
   "📥 while you were heads-down", // "📥 while you were heads-down (2h): meeting in 10 min; …"
 
+  // ── Event scout (self-chat) ──
+  // Weekly event-scan list + status/acks. Keep in sync with the emits
+  // in event-scout.ts / the session's scout handlers.
+  "🎪 ",                     // "🎪 events — next 2 months near you: 1. …"
+  "🎟 ",                     // "🎟 scanning event sources…" / category acks
+
   // ── Life-event engine owner pings (self-chat) ──
   // The LIFE-EVENT ENGINE surfaces typed transactional inbound (bill, delivery,
   // fraud, OTP, receipt, travel) to the owner self-chat with one-tap actions.

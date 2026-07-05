@@ -413,7 +413,7 @@ func TestLoopRunFinalize_Succeeded(t *testing.T) {
 		return "good morning brief", nil
 	}
 
-	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+	if ok, _ := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn); !ok {
 		t.Fatal("expected runLoopAgentIfPresent to return true")
 	}
 	finalizeLoopRun(ctx, pool, nopLogger(), runID, tenant, agentName, lu)
@@ -462,7 +462,7 @@ func TestLoopRunFinalize_NoLLM(t *testing.T) {
 	agentName := "cos-nollm-" + tenant[:8]
 	runID := insertLoopTestRun(t, tenant, agentName, "chief_of_staff")
 
-	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, nil) {
+	if ok, _ := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, nil); !ok {
 		t.Fatal("expected runLoopAgentIfPresent to return true")
 	}
 	finalizeLoopRun(ctx, pool, nopLogger(), runID, tenant, agentName, loopUsage{})
@@ -503,7 +503,7 @@ func TestLoopRunFinalize_Idempotent(t *testing.T) {
 	}
 
 	// First call: body runs, loop_complete event is written.
-	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+	if ok, _ := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn); !ok {
 		t.Fatal("first call: expected true")
 	}
 	after1 := callCount
@@ -512,7 +512,7 @@ func TestLoopRunFinalize_Idempotent(t *testing.T) {
 	}
 
 	// Second call (simulates crash-recovery re-drive): idempotency guard fires.
-	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+	if ok, _ := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn); !ok {
 		t.Fatal("second call: expected true")
 	}
 	if callCount != after1 {

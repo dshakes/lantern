@@ -1080,6 +1080,50 @@ Nudges carry stable `dedupeKey`s persisted to `~/.lantern/<bridge>/fired-nudges.
 so the same nudge never fires twice in a day. Respect quiet hours.
 Disable with `LANTERN_PROACTIVE_NUDGES=0`.
 
+### Event scout (proactive family-event discovery)
+
+`packages/bridge-core/src/event-scout.ts` (pure: prompt/parse/format/command
+grammar) + wiring in the iMessage session. Weekly (rides the anticipation
+tick, so killswitch + quiet hours apply), the bridge runs a web_search-grounded
+LLM scan (sessions under the registered `event-scout` agent — visible on the
+dashboard Agents page; override with `LANTERN_EVENT_SCOUT_AGENT`; keys
+`${owner}::eventscout<i>`) for the next 60 days of events
+near the owner — kids/family, fireworks, Indian community (Telugu shows,
+melas, temple events), circus, expos, light shows, fairs, county/state/DC —
+and DMs a numbered list to self-chat. Discovery is LLM reasoning over live
+search, never a hardcoded scrape list; the prompt forbids invented events.
+
+Owner self-chat commands (both routing paths; strict anchored grammar):
+`scan events` (manual scan) · `book 1,3` / `book all` (adds picks to
+Calendar.app via MacActions with 1-day + 2-hour alarm reminders) ·
+`events more` / `events` (page through the rest, 6 at a time) ·
+`events categories` / `events add <cat>` / `events drop <cat>` (the category
+list is owner-editable state, no code change to tune coverage) ·
+`events location <place>`.
+
+**Delivery UX (curation + grouping + paging).** When a scan finds >6 fresh
+events, a second no-tools LLM call (`buildCurationPrompt`/`parseCuration`)
+ranks them for the family and the owner gets only the top 4-6 picks with a
+one-line why each; `applyCuration` moves picks to the front of `pending` so
+numbering is global and `book 1` = top pick. The remainder is
+category-grouped (`sortByCategory` on the scan LLM's own category labels —
+Indian community together, fireworks together; `▸ <category>` headers, no
+keyword heuristics) and paged 6-at-a-time via the `shown` cursor. Curation
+failure falls back to the plain grouped list.
+
+State: `bridge_state/<tenant>/event-scout.json` (0600) — categories, location,
+audience, seen-event dedupe keys (120-day TTL), last shown list. Bot-self
+prefixes `🎪 ` / `🎟 ` are registered in `bot-self.ts`. Env:
+`LANTERN_EVENT_SCOUT=0` disables the scheduled scan (commands still work);
+`LANTERN_EVENT_SCOUT_LOCATION` / `LANTERN_EVENT_SCOUT_AUDIENCE` override the
+defaults baked into `defaultScoutState()`. Each scan runs one LLM call per
+category batch (`chunkCategories`, 3/call) with a 480s per-call `timeoutMs`
+(`AgentClient.respondTo` now takes a per-call timeout) — a single
+all-category turn exceeds the 180s SSE default. The WhatsApp bridge mirrors
+the full command surface; its SCHEDULED scan defaults OFF
+(`LANTERN_EVENT_SCOUT_WA=1` to enable) so the weekly list isn't texted on
+two channels.
+
 ### Scheduling negotiation
 
 When `schedulingEnabled` is true and the owner's free slots are passed in,
