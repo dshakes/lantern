@@ -62,6 +62,7 @@
     "./dislike-consolidator": "./src/dislike-consolidator.ts",
     "./contact-priority": "./src/contact-priority.ts",
     "./anticipation": "./src/anticipation.ts",
+    "./event-scout": "./src/event-scout.ts",
     "./emotional-register": "./src/emotional-register.ts",
     "./life-events-emit": "./src/life-events-emit.ts",
     "./mac-usage": "./src/mac-usage.ts",
