@@ -1696,15 +1696,32 @@ func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
 	return deliverWhatsAppSelfNote(tenantID, message)
 }
 
-// deliverWhatsAppSelfNote is the package-level owner self-chat sender —
-// callable from the loop-agent dispatcher (no RESTHandler in scope there).
+// deliverWhatsAppSelfNote fans an owner self-chat note out to BOTH bridges
+// (WhatsApp :3100 AND iMessage :3200 — both expose the same
+// /session/:tenant/send-self contract), so server-side agent output reads
+// consistently on either surface instead of WhatsApp-only. Best-effort per
+// bridge; success = at least one delivered. Package-level so the loop-agent
+// dispatcher (no RESTHandler in scope) can call it. Name kept for the
+// existing call sites; behavior is now both-bridges.
 func deliverWhatsAppSelfNote(tenantID, message string) error {
-	base := os.Getenv("LANTERN_BRIDGE_URL")
-	if base == "" {
-		base = "http://localhost:3100"
+	waBase := os.Getenv("LANTERN_BRIDGE_URL")
+	if waBase == "" {
+		waBase = "http://localhost:3100"
 	}
-	base = strings.TrimRight(base, "/")
+	imBase := os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+	if imBase == "" {
+		imBase = "http://localhost:3200"
+	}
+	waErr := postBridgeSendSelf(waBase, os.Getenv("LANTERN_BRIDGE_TOKEN"), tenantID, message)
+	imErr := postBridgeSendSelf(imBase, os.Getenv("LANTERN_IMESSAGE_BRIDGE_TOKEN"), tenantID, message)
+	if waErr != nil && imErr != nil {
+		return fmt.Errorf("both bridges failed — whatsapp: %v; imessage: %v", waErr, imErr)
+	}
+	return nil
+}
 
+func postBridgeSendSelf(base, token, tenantID, message string) error {
+	base = strings.TrimRight(base, "/")
 	payload, _ := json.Marshal(map[string]string{"message": message})
 	req, err := http.NewRequest(
 		"POST",
@@ -1715,10 +1732,9 @@ func deliverWhatsAppSelfNote(tenantID, message string) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if tok := os.Getenv("LANTERN_BRIDGE_TOKEN"); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
-
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
