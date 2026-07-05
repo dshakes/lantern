@@ -197,6 +197,31 @@ export function shouldFireDropNotice(
   return true;
 }
 import { MacActions, extractActionMarkers, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import {
+  applyCuration,
+  buildCurationPrompt,
+  buildScoutPrompt,
+  calendarSpecFor,
+  chunkCategories,
+  defaultScoutState,
+  eventKey,
+  formatCategories,
+  formatScoutList,
+  formatScoutPage,
+  formatScoutPicks,
+  SCOUT_PAGE_SIZE,
+  parseCuration,
+  sortByCategory,
+  friendlyDate,
+  isPastEvent,
+  parseBookReply,
+  parseScoutCommand,
+  parseScoutEvents,
+  type EventScoutState,
+  type ScoutCommand,
+  type ScoutEvent,
+  type BookSelection,
+} from "@lantern/bridge-core/event-scout";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
@@ -699,6 +724,19 @@ export class IMessageSession {
   private static readonly NUDGE_DEDUP_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
   // Cap how many nudges fire in one tick so a backlog can't flood self-chat.
   private static readonly NUDGE_MAX_PER_TICK = 3;
+  // Event scout — weekly web_search scan for family/kids/Indian-community
+  // events near the owner; list DM'd to self-chat, "book 1,3" adds to
+  // Calendar. State (categories, seen keys, pending list) persisted 0600.
+  // Rides the anticipation tick; LANTERN_EVENT_SCOUT=0 disables the
+  // scheduled scan (owner commands still work). See bridge-core/event-scout.ts.
+  private scoutState: EventScoutState | null = null;
+  private scoutPath = "";
+  private scoutScanInFlight = false;
+  // Dedicated AgentClient so scout sessions/spend show under the
+  // "event-scout" agent in the dashboard instead of the bridge assistant.
+  private scoutAgent: AgentClient | null = null;
+  private static readonly SCOUT_SCAN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // weekly
+  private static readonly SCOUT_SEEN_TTL_MS = 120 * 24 * 60 * 60 * 1000; // 120 days
   // Learning-flywheel cadence: once every 8h (jittered at boot via kick).
   private static readonly FLYWHEEL_INTERVAL_MS = 8 * 60 * 60 * 1000;
   // Nudge cadence: every 45 min.
@@ -1764,6 +1802,12 @@ export class IMessageSession {
       if (this.proactivePaused()) return;
 
       const now = Date.now();
+
+      // EVENT SCOUT rides this tick (same killswitch/quiet-hours guards):
+      // weekly web_search scan → numbered list to self-chat. Fire-and-forget
+      // so a slow search never delays the nudges below.
+      this.maybeRunEventScout(target, now);
+
       const input = await this.gatherProactiveSignals(now);
       const nudges = computeProactiveNudges({ now, ...input });
       if (nudges.length === 0) return;
@@ -2363,6 +2407,234 @@ export class IMessageSession {
     } catch (err) {
       this.logger.warn({ err }, "failed to persist fired-nudge dedupe");
     }
+  }
+
+  // ── EVENT SCOUT (weekly family-event scan + book-to-calendar) ──────
+  // State is lazy-loaded so owner commands work even when the nudges
+  // timer (and thus the scheduled scan) is disabled.
+  private ensureScoutState(): EventScoutState {
+    if (this.scoutState) return this.scoutState;
+    this.scoutPath = join(this.stateDir, "event-scout.json");
+    let st = defaultScoutState();
+    try {
+      if (existsSync(this.scoutPath)) {
+        st = { ...st, ...(JSON.parse(readFileSync(this.scoutPath, "utf-8")) as Partial<EventScoutState>) };
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "event-scout state load failed — starting fresh");
+    }
+    this.scoutState = st;
+    return st;
+  }
+
+  private persistScoutState(): void {
+    const st = this.scoutState;
+    if (!st || !this.scoutPath) return;
+    try {
+      // GC seen-keys past TTL so the file stays bounded.
+      const now = Date.now();
+      for (const [k, ts] of Object.entries(st.seen)) {
+        if (now - ts >= IMessageSession.SCOUT_SEEN_TTL_MS) delete st.seen[k];
+      }
+      writeFileSync(this.scoutPath, JSON.stringify(st), { mode: 0o600 });
+      try { chmodSync(this.scoutPath, 0o600); } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.warn({ err }, "event-scout state persist failed");
+    }
+  }
+
+  private maybeRunEventScout(target: string, now: number): void {
+    if ((process.env.LANTERN_EVENT_SCOUT || "1") === "0") return;
+    const st = this.ensureScoutState();
+    if (now - st.lastScanAt < IMessageSession.SCOUT_SCAN_INTERVAL_MS) return;
+    void this.runEventScoutScan(target, false);
+  }
+
+  private async runEventScoutScan(target: string, manual: boolean): Promise<void> {
+    if (this.scoutScanInFlight) {
+      if (manual) await this.send(target, "🎟 already scanning — give me a couple minutes.").catch(() => {});
+      return;
+    }
+    this.scoutScanInFlight = true;
+    const st = this.ensureScoutState();
+    try {
+      if (manual) await this.send(target, "🎟 scanning event sources — back in a few minutes.").catch(() => {});
+      // One call per category batch: a single all-category turn exceeds the
+      // 180s SSE timeout (verified live). Sequential; each batch on its own
+      // purpose-scoped session key (never the live self-chat thread) with
+      // web_search grounding — same pattern as ::watchcheck. A failed batch
+      // is logged and skipped; the rest still deliver.
+      const merged = new Map<string, ScoutEvent>();
+      const batches = chunkCategories(st.categories);
+      let batchesOk = 0;
+      for (let i = 0; i < batches.length; i++) {
+        const prompt = buildScoutPrompt(st, new Date(), batches[i]);
+        // 8-min per-batch timeout: a multi-search batch legitimately runs
+        // 3-6 min (measured live); the 180s default aborted every scan.
+        this.scoutAgent ??= new AgentClient(this.logger, { agentName: process.env.LANTERN_EVENT_SCOUT_AGENT || "event-scout" });
+        const raw = (await this.scoutAgent.respondTo(`${target}::eventscout${i}`, prompt, "", { webSearch: true, timeoutMs: 480_000 })) || "";
+        const events = parseScoutEvents(raw);
+        if (events.length > 0) batchesOk += 1;
+        else this.logger.warn({ batch: batches[i], rawPreview: raw.slice(0, 200) }, "event scout: batch returned no events");
+        for (const e of events) if (!merged.has(eventKey(e))) merged.set(eventKey(e), e);
+      }
+      const all = [...merged.values()].sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+      if (batchesOk === 0) {
+        // Total failure (timeout/outage) — do NOT stamp lastScanAt, so the
+        // next 45-min tick retries instead of waiting a week.
+        this.logger.warn({ batches: batches.length }, "event scout: all batches empty — will retry next tick");
+        if (manual) await this.send(target, '🎟 scan hit an error — try "scan events" again in a bit.').catch(() => {});
+        return;
+      }
+      const nowD = new Date();
+      const fresh = all.filter((e) => !isPastEvent(e, nowD) && !st.seen[eventKey(e)]);
+      st.lastScanAt = Date.now();
+      if (fresh.length === 0) {
+        this.persistScoutState();
+        this.logger.info({ found: all.length }, "event scout: nothing new");
+        if (manual) await this.send(target, "🎟 nothing new since the last scan — I'll keep looking weekly.").catch(() => {});
+        return;
+      }
+      for (const e of fresh) st.seen[eventKey(e)] = st.lastScanAt;
+      // CURATION PASS: rank the finds for this family and lead with the top
+      // picks (+why) instead of a 19-item wall. Picks move to the front of
+      // pending so "book 1" = top pick; "events more" shows the full list.
+      // Curation failure (or a short list) falls back to the plain list.
+      let message: string;
+      const disp = sortByCategory(fresh); // category-grouped display order
+      st.pending = disp;
+      st.shown = disp.length; // plain list shows everything; picks path overrides
+      if (disp.length > 6) {
+        try {
+          const rankRaw = (await this.scoutAgent!.respondTo(`${target}::eventscoutrank`, buildCurationPrompt(disp, st), "", { withTools: false })) || "";
+          const picks = parseCuration(rankRaw, disp.length);
+          if (picks.length > 0) {
+            const { ordered, whys } = applyCuration(disp, picks);
+            st.pending = ordered;
+            st.shown = whys.length; // picks shown; "events more" pages the rest
+            message = formatScoutPicks(ordered, whys, st);
+          } else {
+            message = formatScoutList(disp, st);
+          }
+        } catch {
+          message = formatScoutList(disp, st);
+        }
+      } else {
+        message = formatScoutList(disp, st);
+      }
+      this.persistScoutState();
+      const ok = await this.send(target, message).then((r) => r.ok, () => false);
+      this.logger.info({ found: all.length, fresh: fresh.length, sent: ok }, "event scout: scan complete");
+      this.broadcast({
+        type: "activity",
+        data: { kind: "proactive_nudge", summary: `event scout: ${fresh.length} new events`, timestamp: Date.now() },
+      });
+    } catch (err) {
+      this.logger.warn({ err }, "event scout scan failed (non-fatal)");
+      if (manual) await this.send(target, "🎟 scan hit an error — try \"scan events\" again in a bit.").catch(() => {});
+    } finally {
+      this.scoutScanInFlight = false;
+    }
+  }
+
+  // Owner self-chat hook — called from BOTH routing paths (isFromMe
+  // self-chat AND dedicated-bot inbound). Returns true when handled.
+  private maybeHandleScout(jid: string, text: string): boolean {
+    const book = parseBookReply(text);
+    if (book) {
+      void this.handleScoutBook(jid, book).catch((err) => this.logger.warn({ err }, "scout book failed"));
+      return true;
+    }
+    const cmd = parseScoutCommand(text);
+    if (cmd) {
+      void this.handleScoutCommand(jid, cmd).catch((err) => this.logger.warn({ err }, "scout command failed"));
+      return true;
+    }
+    return false;
+  }
+
+  private async handleScoutCommand(jid: string, cmd: ScoutCommand): Promise<void> {
+    const st = this.ensureScoutState();
+    switch (cmd.action) {
+      case "scan": {
+        const target = this.ownerSelfChatTarget() || jid;
+        void this.runEventScoutScan(target, true);
+        return;
+      }
+      case "list-all": {
+        if (!st.pending.length) {
+          await this.send(jid, '🎟 no event list active — text "scan events" first.');
+          return;
+        }
+        const start = Math.min(st.shown ?? 0, st.pending.length);
+        if (start >= st.pending.length) {
+          await this.send(jid, `🎟 that's all ${st.pending.length} — "scan events" to look again.`);
+          return;
+        }
+        await this.send(jid, formatScoutPage(st.pending, start, st));
+        st.shown = Math.min(start + SCOUT_PAGE_SIZE, st.pending.length);
+        this.persistScoutState();
+        return;
+      }
+      case "list-categories":
+        await this.send(jid, formatCategories(st));
+        return;
+      case "add-category": {
+        const exists = st.categories.some((c) => c.toLowerCase() === cmd.value.toLowerCase());
+        if (!exists) st.categories.push(cmd.value);
+        this.persistScoutState();
+        await this.send(jid, exists
+          ? `🎟 "${cmd.value}" is already on the list.`
+          : `🎟 added "${cmd.value}" — ${st.categories.length} categories now. Next scan covers it.`);
+        return;
+      }
+      case "remove-category": {
+        const i = st.categories.findIndex((c) => c.toLowerCase().includes(cmd.value.toLowerCase()));
+        if (i < 0) {
+          await this.send(jid, `🎟 no category matching "${cmd.value}" — text "events categories" to see the list.`);
+          return;
+        }
+        const [dropped] = st.categories.splice(i, 1);
+        this.persistScoutState();
+        await this.send(jid, `🎟 dropped "${dropped}" — ${st.categories.length} categories left.`);
+        return;
+      }
+      case "set-location":
+        st.location = cmd.value;
+        this.persistScoutState();
+        await this.send(jid, `🎟 location updated: ${st.location}`);
+        return;
+    }
+  }
+
+  private async handleScoutBook(jid: string, sel: BookSelection): Promise<void> {
+    const st = this.ensureScoutState();
+    if (st.pending.length === 0) {
+      await this.send(jid, '🎟 no event list active — text "scan events" first.');
+      return;
+    }
+    const nums = sel.all ? st.pending.map((_, i) => i + 1) : sel.nums.filter((n) => n <= st.pending.length);
+    if (nums.length === 0) {
+      await this.send(jid, `🎟 pick 1-${st.pending.length} from the last list (e.g. "book 1,3").`);
+      return;
+    }
+    const booked: string[] = [];
+    const failed: string[] = [];
+    for (const n of nums) {
+      const ev = st.pending[n - 1];
+      const res = await this.macActions.createCalendarEvent(calendarSpecFor(ev));
+      if (res.ok) {
+        booked.push(`${ev.title} (${friendlyDate(ev.date)})`);
+        recordAction({ kind: "calendar_added", summary: `event scout: ${ev.title} ${ev.date}` });
+      } else {
+        failed.push(`${n}. ${ev.title} — ${res.reason}`);
+        this.logger.warn({ title: ev.title, reason: res.reason }, "scout booking failed");
+      }
+    }
+    const parts: string[] = [];
+    if (booked.length) parts.push(`📅 booked with reminders (1 day + 2h before): ${booked.join("; ")}`);
+    if (failed.length) parts.push(`couldn't add: ${failed.join("; ")}`);
+    await this.send(jid, parts.join("\n"));
   }
 
   // 3) DRAFT-AND-CONFIRM (high-stakes). Hold a contact reply and DM the
@@ -4789,6 +5061,11 @@ export class IMessageSession {
         return;
       }
 
+      // EVENT SCOUT commands ("scan events" / "events add <cat>" /
+      // "book 1,3") — strict anchored grammar, so a normal self-chat
+      // message never trips it.
+      if (this.maybeHandleScout(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
+
       // Personal-docs Q&A. SECURITY: triple-gated to the owner's
       // self-chat:
       //   1) personalDocsEnabled toggle must be ON (owner-controlled,
@@ -5108,6 +5385,8 @@ export class IMessageSession {
         void this.handleOwnerCommand(row.handle, parsed);
         return;
       }
+      // EVENT SCOUT commands — same grammar as the fromMe path above.
+      if (this.maybeHandleScout(row.handle, text)) return;
     }
 
     // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"

@@ -90,7 +90,7 @@ export class AgentClient {
   // and is wrong for personal-docs replies where the prompt is
   // already large with OCR context. The bridges' natural-chat path
   // sets this to true so the bot can actually use Gmail when asked.
-  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<string | null> {
+  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string; timeoutMs?: number }): Promise<string | null> {
     const r = await this.runQueuedTurn(jid, userText, systemHint, opts);
     return r ? r.text : null;
   }
@@ -98,18 +98,18 @@ export class AgentClient {
   // Same turn as respondTo, but also returns the raw doc text the control-plane
   // surfaced (id ground truth for humanizeWithOffer). Owner-only doc-query path.
   // respondTo stays the string|null contract for every other caller.
-  async respondToWithSources(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<TurnResult | null> {
+  async respondToWithSources(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string; timeoutMs?: number }): Promise<TurnResult | null> {
     return this.runQueuedTurn(jid, userText, systemHint, opts);
   }
 
-  private async runQueuedTurn(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<TurnResult | null> {
+  private async runQueuedTurn(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string; timeoutMs?: number }): Promise<TurnResult | null> {
     if (!this.enabled()) return null;
     // readOnlyTools implies the catalog loads (withTools), but the control
     // plane filters it to read-only actions. Used on the contact reply path
     // for logistics inbound so a contact can't drive a connector write.
     const withTools = opts?.withTools === true || opts?.readOnlyTools === true;
     const prev = this.inflight.get(jid) ?? Promise.resolve<TurnResult | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true, opts?.webSearch === true)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true, opts?.webSearch === true, opts?.timeoutMs)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -119,7 +119,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false, webSearch = false): Promise<TurnResult | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false, webSearch = false, timeoutMs?: number): Promise<TurnResult | null> {
     // Up to ONE retry on dead-session errors. A prior turn that got
     // SSE-aborted (timeout, network hiccup) leaves the control-plane
     // session in "ended" state — the next POST then 409s with
@@ -131,7 +131,7 @@ export class AgentClient {
       if (!sessionId) return null;
 
       const sseCtrl = new AbortController();
-      const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal);
+      const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal, timeoutMs);
 
       const postBody: Record<string, unknown> = {
         content: userText,
@@ -265,10 +265,12 @@ export class AgentClient {
     return data.id;
   }
 
-  private async waitForAgentMessage(sessionId: string, signal: AbortSignal): Promise<TurnResult | null> {
+  private async waitForAgentMessage(sessionId: string, signal: AbortSignal, timeoutMs?: number): Promise<TurnResult | null> {
     const ctrl = new AbortController();
     signal.addEventListener("abort", () => ctrl.abort(), { once: true });
-    const timeoutId = setTimeout(() => ctrl.abort(), SSE_TIMEOUT_MS);
+    // Per-call override for known-slow turns (e.g. the event scout, whose
+    // multi-search batches legitimately exceed the 180s default).
+    const timeoutId = setTimeout(() => ctrl.abort(), timeoutMs ?? SSE_TIMEOUT_MS);
     try {
       const res = await authedFetch(`/v1/sessions/${sessionId}/events`, {
         headers: { Accept: "text/event-stream" },
