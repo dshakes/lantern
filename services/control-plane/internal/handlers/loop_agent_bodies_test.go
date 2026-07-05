@@ -599,9 +599,12 @@ func TestLoopDispatch_Role(t *testing.T) {
 		return "Today you have 0 items.", nil
 	}
 
-	dispatched := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, stubFn)
+	dispatched, dispatchErr := runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, stubFn)
 	if !dispatched {
 		t.Fatal("runLoopAgentIfPresent returned false — manifest not detected as loop type")
+	}
+	if dispatchErr != nil {
+		t.Fatalf("runLoopAgentIfPresent returned error: %v", dispatchErr)
 	}
 
 	// loop_complete event must carry brief_chars (chief_of_staff output key).

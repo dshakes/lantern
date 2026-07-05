@@ -20,4 +20,5 @@ export * from "./dislike-consolidator.js";
 export * from "./owner-profile-auto-update.js";
 export * from "./contact-priority.js";
 export * from "./anticipation.js";
+export * from "./event-scout.js";
 export * from "./emotional-register.js";

@@ -1133,7 +1133,25 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 			return text, err
 		}
 	}
-	if runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID, loopCompleteFn) {
+	if handled, loopErr := runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID, loopCompleteFn); handled {
+		if loopErr != nil {
+			// Loop body failed — mark the run FAILED (never "succeeded, 0
+			// records"; see runLoopAgentIfPresent). Usage is still recorded:
+			// tokens were genuinely spent before the failure.
+			failJSON, _ := json.Marshal(map[string]string{"code": "loop_agent_failed", "message": loopErr.Error()})
+			// rls-exempt: inline executor — runs write keyed by id (authorized run).
+			if _, upErr := h.srv.Pool.Exec(ctx,
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+				runID, string(failJSON),
+			); upErr != nil {
+				h.logger().Error("loop run: failed to mark run failed",
+					zap.String("run_id", runID), zap.Error(upErr))
+			}
+			if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, lu.TokensIn, lu.TokensOut, lu.CostUsd, map[string]int{}); recErr != nil {
+				h.logger().Warn("loop run: RecordUsage failed", zap.String("run_id", runID), zap.Error(recErr))
+			}
+			return "", resolvedTemplateID, fmt.Errorf("loop agent failed: %w", loopErr)
+		}
 		// Finalize: mark succeeded + record usage — mirrors the normal path (~rest.go:1502).
 		finalizeLoopRun(ctx, h.srv.Pool, h.logger(), runID, tenantID, agentName, lu)
 		return "", resolvedTemplateID, nil
@@ -1675,6 +1693,12 @@ func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
 // Bridge URL + optional shared token come from env (LANTERN_BRIDGE_URL,
 // LANTERN_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
 func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
+	return deliverWhatsAppSelfNote(tenantID, message)
+}
+
+// deliverWhatsAppSelfNote is the package-level owner self-chat sender —
+// callable from the loop-agent dispatcher (no RESTHandler in scope there).
+func deliverWhatsAppSelfNote(tenantID, message string) error {
 	base := os.Getenv("LANTERN_BRIDGE_URL")
 	if base == "" {
 		base = "http://localhost:3100"

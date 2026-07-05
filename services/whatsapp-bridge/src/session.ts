@@ -64,6 +64,30 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import {
+  applyCuration,
+  buildCurationPrompt,
+  buildScoutPrompt,
+  calendarSpecFor,
+  chunkCategories,
+  defaultScoutState,
+  eventKey,
+  formatCategories,
+  formatScoutList,
+  formatScoutPage,
+  formatScoutPicks,
+  SCOUT_PAGE_SIZE,
+  parseCuration,
+  friendlyDate,
+  isPastEvent,
+  parseBookReply,
+  parseScoutCommand,
+  parseScoutEvents,
+  type EventScoutState,
+  type ScoutCommand,
+  type ScoutEvent,
+  type BookSelection,
+} from "@lantern/bridge-core/event-scout";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
@@ -1150,6 +1174,19 @@ export class WhatsAppSession {
   }
 
   private macActions: MacActions | null = null;
+  // Event scout (mirrors the iMessage bridge). Owner commands ("scan
+  // events", "book 1,3", "events add/drop/categories") always work; the
+  // SCHEDULED weekly scan defaults OFF here (LANTERN_EVENT_SCOUT_WA=1 to
+  // enable) so the owner isn't texted the same weekly list on two
+  // channels — iMessage is the primary proactive surface.
+  private scoutState: EventScoutState | null = null;
+  private scoutPath = "";
+  private scoutScanInFlight = false;
+  // Dedicated AgentClient so scout sessions/spend show under the
+  // "event-scout" agent in the dashboard instead of the bridge assistant.
+  private scoutAgent: AgentClient | null = null;
+  private static readonly SCOUT_SCAN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // weekly
+  private static readonly SCOUT_SEEN_TTL_MS = 120 * 24 * 60 * 60 * 1000; // 120 days
   // Per-chat cache of the most recent offer (humanize follow-up).
   // On next-turn "yes" we execute it deterministically — bypasses
   // LLM hallucination where it claims an action happened without
@@ -4547,6 +4584,10 @@ export class WhatsAppSession {
         }
       }
     }
+
+    // EVENT SCOUT commands ("scan events" / "events add <cat>" / "book 1,3")
+    // — strict anchored grammar; mirrors the iMessage bridge.
+    if (self && !group && trimmed && this.maybeHandleScout(jid, text)) return;
 
     // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"
     // and numbered-action replies against the last Brief/plate/did shown.
@@ -9132,6 +9173,226 @@ export class WhatsAppSession {
     }
   }
 
+  // ── EVENT SCOUT (mirrors services/imessage-bridge/src/session.ts) ──
+  private ensureScoutState(): EventScoutState {
+    if (this.scoutState) return this.scoutState;
+    this.scoutPath = join(this.stateDir, "event-scout.json");
+    let st = defaultScoutState();
+    try {
+      if (existsSync(this.scoutPath)) {
+        st = { ...st, ...(JSON.parse(readFileSync(this.scoutPath, "utf-8")) as Partial<EventScoutState>) };
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "event-scout state load failed — starting fresh");
+    }
+    this.scoutState = st;
+    return st;
+  }
+
+  private persistScoutState(): void {
+    const st = this.scoutState;
+    if (!st || !this.scoutPath) return;
+    try {
+      const now = Date.now();
+      for (const [k, ts] of Object.entries(st.seen)) {
+        if (now - ts >= WhatsAppSession.SCOUT_SEEN_TTL_MS) delete st.seen[k];
+      }
+      writeFileSync(this.scoutPath, JSON.stringify(st), { mode: 0o600 });
+      try { chmodSync(this.scoutPath, 0o600); } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.warn({ err }, "event-scout state persist failed");
+    }
+  }
+
+  private maybeRunEventScout(now: number): void {
+    const flag = (process.env.LANTERN_EVENT_SCOUT_WA || "0").toLowerCase();
+    if (flag !== "1" && flag !== "true" && flag !== "on") return;
+    const st = this.ensureScoutState();
+    if (now - st.lastScanAt < WhatsAppSession.SCOUT_SCAN_INTERVAL_MS) return;
+    const own = this.ownJid();
+    if (own) void this.runEventScoutScan(own, false);
+  }
+
+  private async runEventScoutScan(target: string, manual: boolean): Promise<void> {
+    if (this.scoutScanInFlight) {
+      if (manual) await this.sendMessage(target, "🎟 already scanning — give me a couple minutes.").catch(() => {});
+      return;
+    }
+    this.scoutScanInFlight = true;
+    const st = this.ensureScoutState();
+    try {
+      if (manual) await this.sendMessage(target, "🎟 scanning event sources — back in a few minutes.").catch(() => {});
+      // One call per category batch (a single all-category turn exceeds the
+      // 180s SSE timeout). Purpose-scoped session keys + web_search, 8-min
+      // per-batch timeout; a failed batch is logged and skipped.
+      const merged = new Map<string, ScoutEvent>();
+      const batches = chunkCategories(st.categories);
+      let batchesOk = 0;
+      for (let i = 0; i < batches.length; i++) {
+        const prompt = buildScoutPrompt(st, new Date(), batches[i]);
+        this.scoutAgent ??= new AgentClient(this.logger, { agentName: process.env.LANTERN_EVENT_SCOUT_AGENT || "event-scout" });
+        const raw = (await this.scoutAgent.respondTo(`${target}::eventscout${i}`, prompt, "", { webSearch: true, timeoutMs: 480_000 })) || "";
+        const events = parseScoutEvents(raw);
+        if (events.length > 0) batchesOk += 1;
+        else this.logger.warn({ batch: batches[i], rawPreview: raw.slice(0, 200) }, "event scout: batch returned no events");
+        for (const e of events) if (!merged.has(eventKey(e))) merged.set(eventKey(e), e);
+      }
+      const all = [...merged.values()].sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+      if (batchesOk === 0) {
+        // Total failure — don't stamp lastScanAt, so the next tick retries.
+        this.logger.warn({ batches: batches.length }, "event scout: all batches empty — will retry next tick");
+        if (manual) await this.sendMessage(target, '🎟 scan hit an error — try "scan events" again in a bit.').catch(() => {});
+        return;
+      }
+      const nowD = new Date();
+      const fresh = all.filter((e) => !isPastEvent(e, nowD) && !st.seen[eventKey(e)]);
+      st.lastScanAt = Date.now();
+      if (fresh.length === 0) {
+        this.persistScoutState();
+        this.logger.info({ found: all.length }, "event scout: nothing new");
+        if (manual) await this.sendMessage(target, "🎟 nothing new since the last scan — I'll keep looking weekly.").catch(() => {});
+        return;
+      }
+      for (const e of fresh) st.seen[eventKey(e)] = st.lastScanAt;
+      // CURATION PASS (mirrors iMessage): top picks first with a one-line
+      // why; "events more" shows the full list. Fallback = plain list.
+      let message: string;
+      const disp = fresh; // already strict date order from parseScoutEvents
+      st.pending = disp;
+      st.shown = disp.length; // plain list shows everything; picks path overrides
+      if (disp.length > 6) {
+        try {
+          const rankRaw = (await this.scoutAgent!.respondTo(`${target}::eventscoutrank`, buildCurationPrompt(disp, st), "", { withTools: false })) || "";
+          const picks = parseCuration(rankRaw, disp.length);
+          if (picks.length > 0) {
+            const { ordered, whys } = applyCuration(disp, picks);
+            st.pending = ordered;
+            st.shown = whys.length; // picks shown; "events more" pages the rest
+            message = formatScoutPicks(ordered, whys, st);
+          } else {
+            message = formatScoutList(disp, st);
+          }
+        } catch {
+          message = formatScoutList(disp, st);
+        }
+      } else {
+        message = formatScoutList(disp, st);
+      }
+      this.persistScoutState();
+      await this.sendMessage(target, message);
+      this.logger.info({ found: all.length, fresh: fresh.length }, "event scout: scan complete");
+      this.broadcast({
+        type: "activity",
+        data: { kind: "proactive_nudge", summary: `event scout: ${fresh.length} new events`, timestamp: Date.now() },
+      });
+    } catch (err) {
+      this.logger.warn({ err }, "event scout scan failed (non-fatal)");
+      if (manual) await this.sendMessage(target, '🎟 scan hit an error — try "scan events" again in a bit.').catch(() => {});
+    } finally {
+      this.scoutScanInFlight = false;
+    }
+  }
+
+  private maybeHandleScout(jid: string, text: string): boolean {
+    const book = parseBookReply(text);
+    if (book) {
+      void this.handleScoutBook(jid, book).catch((err) => this.logger.warn({ err }, "scout book failed"));
+      return true;
+    }
+    const cmd = parseScoutCommand(text);
+    if (cmd) {
+      void this.handleScoutCommand(jid, cmd).catch((err) => this.logger.warn({ err }, "scout command failed"));
+      return true;
+    }
+    return false;
+  }
+
+  private async handleScoutCommand(jid: string, cmd: ScoutCommand): Promise<void> {
+    const st = this.ensureScoutState();
+    switch (cmd.action) {
+      case "scan":
+        void this.runEventScoutScan(jid, true);
+        return;
+      case "list-all": {
+        if (!st.pending.length) {
+          await this.sendMessage(jid, '🎟 no event list active — text "scan events" first.');
+          return;
+        }
+        const start = Math.min(st.shown ?? 0, st.pending.length);
+        if (start >= st.pending.length) {
+          await this.sendMessage(jid, `🎟 that's all ${st.pending.length} — "scan events" to look again.`);
+          return;
+        }
+        await this.sendMessage(jid, formatScoutPage(st.pending, start, st));
+        st.shown = Math.min(start + SCOUT_PAGE_SIZE, st.pending.length);
+        this.persistScoutState();
+        return;
+      }
+      case "list-categories":
+        await this.sendMessage(jid, formatCategories(st));
+        return;
+      case "add-category": {
+        const exists = st.categories.some((c) => c.toLowerCase() === cmd.value.toLowerCase());
+        if (!exists) st.categories.push(cmd.value);
+        this.persistScoutState();
+        await this.sendMessage(jid, exists
+          ? `🎟 "${cmd.value}" is already on the list.`
+          : `🎟 added "${cmd.value}" — ${st.categories.length} categories now. Next scan covers it.`);
+        return;
+      }
+      case "remove-category": {
+        const i = st.categories.findIndex((c) => c.toLowerCase().includes(cmd.value.toLowerCase()));
+        if (i < 0) {
+          await this.sendMessage(jid, `🎟 no category matching "${cmd.value}" — text "events categories" to see the list.`);
+          return;
+        }
+        const [dropped] = st.categories.splice(i, 1);
+        this.persistScoutState();
+        await this.sendMessage(jid, `🎟 dropped "${dropped}" — ${st.categories.length} categories left.`);
+        return;
+      }
+      case "set-location":
+        st.location = cmd.value;
+        this.persistScoutState();
+        await this.sendMessage(jid, `🎟 location updated: ${st.location}`);
+        return;
+    }
+  }
+
+  private async handleScoutBook(jid: string, sel: BookSelection): Promise<void> {
+    const st = this.ensureScoutState();
+    if (st.pending.length === 0) {
+      await this.sendMessage(jid, '🎟 no event list active — text "scan events" first.');
+      return;
+    }
+    if (!this.macActions) {
+      await this.sendMessage(jid, "🎟 calendar isn't available from this bridge — book from iMessage self-chat instead.");
+      return;
+    }
+    const nums = sel.all ? st.pending.map((_, i) => i + 1) : sel.nums.filter((n) => n <= st.pending.length);
+    if (nums.length === 0) {
+      await this.sendMessage(jid, `🎟 pick 1-${st.pending.length} from the last list (e.g. "book 1,3").`);
+      return;
+    }
+    const booked: string[] = [];
+    const failed: string[] = [];
+    for (const n of nums) {
+      const ev = st.pending[n - 1];
+      const res = await this.macActions.createCalendarEvent(calendarSpecFor(ev));
+      if (res.ok) {
+        booked.push(`${ev.title} (${friendlyDate(ev.date)})`);
+        recordAction({ kind: "calendar_added", summary: `event scout: ${ev.title} ${ev.date}` });
+      } else {
+        failed.push(`${n}. ${ev.title} — ${res.reason}`);
+        this.logger.warn({ title: ev.title, reason: res.reason }, "scout booking failed");
+      }
+    }
+    const parts: string[] = [];
+    if (booked.length) parts.push(`📅 booked with reminders (1 day + 2h before): ${booked.join("; ")}`);
+    if (failed.length) parts.push(`couldn't add: ${failed.join("; ")}`);
+    await this.sendMessage(jid, parts.join("\n"));
+  }
+
   private async runNudgeTick(): Promise<void> {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
@@ -9146,6 +9407,11 @@ export class WhatsAppSession {
       }
 
       const now = Date.now();
+
+      // EVENT SCOUT rides this tick (same killswitch/quiet-hours guards).
+      // Default OFF on WhatsApp (LANTERN_EVENT_SCOUT_WA=1 enables) — the
+      // iMessage bridge already runs the weekly proactive scan.
+      this.maybeRunEventScout(now);
 
       // Signal 1: key dates (anniversaries / birthdays) from the owner profile.
       const keyDates: KeyDateSignal[] = [];
