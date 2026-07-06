@@ -20,6 +20,12 @@ func TenantIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
+// WithTenantID injects tid into ctx so MustTenantID can extract it.
+// Intended for use in tests; production code uses UnaryTenantInterceptor.
+func WithTenantID(ctx context.Context, tid string) context.Context {
+	return context.WithValue(ctx, tenantIDKey{}, tid)
+}
+
 // MustTenantID is a convenience wrapper that returns a gRPC error if the
 // tenant ID is missing. Handlers should call this at the top.
 func MustTenantID(ctx context.Context) (string, error) {

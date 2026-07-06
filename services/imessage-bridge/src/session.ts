@@ -318,6 +318,11 @@ import {
   type AttentionSnapshot,
 } from "@lantern/bridge-core/reaction-commands";
 import {
+  matchSkillRequest, matchSkillCommand, buildSkillSpecPrompt, parseSkillSpec,
+  formatSkillProposal, formatSkillList, formatSchedule, dueSkills, localDayKey, defaultSkillState,
+  type SkillForgeState, type SkillSpec,
+} from "@lantern/bridge-core/skill-forge";
+import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
   type CenterStateEntry,
 } from "@lantern/bridge-core/command-center-executor";
@@ -461,6 +466,10 @@ export class IMessageSession {
   private pendingBriefEcho: { text: string; items: BriefItem[]; queuedAt: number }[] = [];
   // Last built Brief, served to the dashboard via GET /session/:t/attention.
   private lastAttentionSnapshot: AttentionSnapshot | null = null;
+  // SKILL FORGE — owner-taught recurring skills (see bridge-core/skill-forge.ts).
+  private skillState: SkillForgeState | null = null;
+  private skillPath = "";
+  private pendingSkillProposal: { spec: SkillSpec; at: number } | null = null;
   private ownerSentHistory: Map<string, string[]> = new Map();
   // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
   // contacts, reaching past the bot-dominated recent rows). Unioned into
@@ -1825,6 +1834,8 @@ export class IMessageSession {
       // weekly web_search scan → numbered list to self-chat. Fire-and-forget
       // so a slow search never delays the nudges below.
       this.maybeRunEventScout(target, now);
+      // SKILL FORGE rides the same tick: due owner-taught skills fire here.
+      this.maybeRunSkills(target, now);
 
       const input = await this.gatherProactiveSignals(now);
       const nudges = computeProactiveNudges({ now, ...input });
@@ -2593,6 +2604,120 @@ export class IMessageSession {
       if (manual) await this.send(target, "🎟 scan hit an error — try \"scan events\" again in a bit.").catch(() => {});
     } finally {
       this.scoutScanInFlight = false;
+    }
+  }
+
+  // ── SKILL FORGE (owner-taught recurring skills) ────────────────────
+  // "new skill: ..." → LLM drafts a spec → owner approves → fires on the
+  // proactive tick (killswitch/mute/quiet-hours gated like every loop).
+
+  private ensureSkillState(): SkillForgeState {
+    if (this.skillState) return this.skillState;
+    this.skillPath = join(this.stateDir, "skills.json");
+    try {
+      if (existsSync(this.skillPath)) {
+        this.skillState = { ...defaultSkillState(), ...(JSON.parse(readFileSync(this.skillPath, "utf8")) as SkillForgeState) };
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "skill state load failed — starting fresh");
+    }
+    if (!this.skillState) this.skillState = defaultSkillState();
+    return this.skillState;
+  }
+
+  private persistSkillState(): void {
+    if (!this.skillState || !this.skillPath) return;
+    try {
+      writeFileSync(this.skillPath, JSON.stringify(this.skillState), { mode: 0o600 });
+      try { chmodSync(this.skillPath, 0o600); } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.warn({ err }, "skill state persist failed");
+    }
+  }
+
+  /** Owner self-chat hook (both routing paths). Returns true when handled. */
+  private maybeHandleSkillForge(jid: string, text: string): boolean {
+    const t = text.trim();
+    const cmd = matchSkillCommand(t);
+    if (cmd === "list") {
+      void this.send(jid, formatSkillList(this.ensureSkillState().skills)).catch(() => {});
+      return true;
+    }
+    if (cmd && typeof cmd === "object") {
+      const st = this.ensureSkillState();
+      const idx = cmd.drop - 1;
+      if (idx < 0 || idx >= st.skills.length) {
+        void this.send(jid, `🛠 no skill ${cmd.drop} — "skills" to see the list.`).catch(() => {});
+      } else {
+        const [gone] = st.skills.splice(idx, 1);
+        this.persistSkillState();
+        void this.send(jid, `🛠 dropped ${gone.name}.`).catch(() => {});
+      }
+      return true;
+    }
+    // Approve / discard a pending proposal (10-min TTL).
+    if (this.pendingSkillProposal && Date.now() - this.pendingSkillProposal.at < 10 * 60_000) {
+      if (/^(approve skill|approve|activate)$/i.test(t)) {
+        const st = this.ensureSkillState();
+        const spec = this.pendingSkillProposal.spec;
+        this.pendingSkillProposal = null;
+        if (st.skills.some((s) => s.name === spec.name)) {
+          st.skills = st.skills.map((s) => (s.name === spec.name ? { ...s, ...spec, enabled: true } : s));
+        } else {
+          st.skills.push({ ...spec, createdAt: Date.now(), enabled: true });
+        }
+        this.persistSkillState();
+        void this.send(jid, `✅ skill live — ${spec.description} (${formatSchedule(spec.schedule)}). "skills" to manage.`).catch(() => {});
+        return true;
+      }
+      if (/^(drop|discard|no|skip|cancel)$/i.test(t)) {
+        this.pendingSkillProposal = null;
+        void this.send(jid, `👍 skipped`).catch(() => {});
+        return true;
+      }
+    }
+    const request = matchSkillRequest(t);
+    if (!request) return false;
+    void (async () => {
+      try {
+        const prompt = buildSkillSpecPrompt(request, new Date(), process.env.LANTERN_OWNER_TIMEZONE);
+        const raw = (await this.agent.respondTo("skillforge::spec", prompt, "Return only valid JSON. No prose.", { timeoutMs: 30_000 })) || "";
+        const spec = parseSkillSpec(raw);
+        if (!spec) {
+          await this.send(jid, `🛠 couldn't shape that into a skill — try rephrasing what and when.`);
+        } else if ("error" in spec) {
+          await this.send(jid, `🛠 can't do that one: ${spec.error}`);
+        } else {
+          this.pendingSkillProposal = { spec, at: Date.now() };
+          await this.send(jid, formatSkillProposal(spec));
+        }
+      } catch (err) {
+        this.logger.warn({ err }, "skill spec draft failed");
+        await this.send(jid, `🛠 skill drafting hit an error — try again.`).catch(() => {});
+      }
+    })();
+    return true;
+  }
+
+  /** Tick hook: run due skills (window > tick interval so none are missed). */
+  private maybeRunSkills(target: string, now: number): void {
+    const st = this.ensureSkillState();
+    if (st.skills.length === 0) return;
+    const tz = process.env.LANTERN_OWNER_TIMEZONE;
+    const due = dueSkills(st, new Date(now), tz, 50);
+    for (const s of due) {
+      // Mark BEFORE executing: a crash mid-run must not double-fire (missing
+      // one delivery beats a duplicate).
+      s.lastFiredDay = localDayKey(new Date(now), tz);
+      this.persistSkillState();
+      void (async () => {
+        try {
+          const out = await this.agent.respondTo(`skill::${s.name}`, s.prompt, "You are running a scheduled personal skill. Deliver the result directly — no preamble, no narration of the process.", { timeoutMs: 300_000, webSearch: true });
+          if (out?.trim()) await this.send(target, `🛠 ${s.name}: ${out.trim()}`);
+        } catch (err) {
+          this.logger.warn({ err, skill: s.name }, "skill run failed");
+        }
+      })();
     }
   }
 
@@ -5230,6 +5355,7 @@ export class IMessageSession {
       // "book 1,3") — strict anchored grammar, so a normal self-chat
       // message never trips it.
       if (this.maybeHandleScout(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
+      if (this.maybeHandleSkillForge(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
 
       // Personal-docs Q&A. SECURITY: triple-gated to the owner's
       // self-chat:
@@ -5552,6 +5678,7 @@ export class IMessageSession {
       }
       // EVENT SCOUT commands — same grammar as the fromMe path above.
       if (this.maybeHandleScout(row.handle, text)) return;
+      if (this.maybeHandleSkillForge(row.handle, text)) return;
     }
 
     // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"

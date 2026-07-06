@@ -1147,6 +1147,32 @@ parse / candidate ids) + wiring in both bridges' `handleCenterCommand`:
   counts}`); the `/inbox` page's **Personal tab** merges both channels
   (read-only + copy-command affordances — chat is the acting surface).
 
+### Skill forge (safe self-improvement loop)
+
+The owner teaches the assistant new recurring capabilities from self-chat.
+`packages/bridge-core/src/skill-forge.ts` (pure: request grammar, spec
+prompt/parse, schedule matching, formatting) + wiring in both bridges.
+
+- **Grammar.** `new skill: <what and when>` / `teach yourself to …` →
+  `matchSkillRequest`. `skills` lists; `drop skill <n>` removes.
+- **Draft → approve.** The LLM drafts a `SkillSpec`
+  `{name, description, schedule{hour,minute,daysOfWeek}, prompt}` (session key
+  `skillforge::spec`, strict JSON, tolerant parse; honest `{error}` when the
+  request can't be a scheduled prompt). The owner sees a proposal and must
+  reply `approve skill` (10-min TTL) before anything activates — nothing
+  self-installs.
+- **A skill is a PROMPT, not code.** Each firing runs the spec's `prompt`
+  through `respondTo("skill::<name>")` with web_search on and delivers the
+  result to self-chat. No shell, no filesystem, no new capability surface —
+  that is the line OpenClaw crossed and this deliberately does not.
+- **Fires on the proactive tick** (`maybeRunSkills`), so killswitch, mute,
+  and quiet hours gate it like every other loop. `dueSkills` matches
+  owner-local `daysOfWeek`+`hour:minute` within a 50-min window (> the
+  ~45-min tick so none are missed) and `lastFiredDay` is stamped BEFORE
+  execution (a crash drops one delivery rather than double-firing).
+- State: `bridge_state/<tenant>/skills.json` (0600). Bot-self prefixes
+  `🛠` / `✅ skill live` registered in `bot-self.ts`.
+
 ### Event scout (proactive family-event discovery)
 
 `packages/bridge-core/src/event-scout.ts` (pure: prompt/parse/format/command

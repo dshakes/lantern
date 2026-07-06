@@ -30,6 +30,18 @@ staleness). Actions: `<n>`/`<n> draft` drafts a reply in your voice and
 stages it in the normal drafts rail (send/edit), `<n> review` peeks the
 thread, `<n> skip` mutes it for the session.
 
+### Skill forge (`skill-forge.ts`)
+
+Teach the assistant a new recurring skill from self-chat: `new skill: text me
+a week-ahead family preview every Sunday evening`. The LLM drafts a spec (name,
+schedule, and the prompt it will run), you get a one-line proposal, and it only
+goes live after you reply `approve skill`. Each firing runs the skill's prompt
+(web-search enabled) on the proactive tick and texts you the result — gated by
+killswitch, mute, and quiet hours like every loop. `skills` lists them,
+`drop skill <n>` removes one. A skill is a scheduled prompt, never code: no
+shell, no filesystem — the assistant gets more capable without getting more
+dangerous.
+
 ### Truthful presence (`presence.ts`)
 
 When a contact asks where you are, the reply is grounded in a fused snapshot
