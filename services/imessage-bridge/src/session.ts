@@ -56,6 +56,10 @@ import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
+import {
+  looksLikeRecapRequest, parseRecapWindow, buildRecapPrompt, finalizeRecap,
+  type RecapItem,
+} from "@lantern/bridge-core/time-travel";
 import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
@@ -2721,6 +2725,49 @@ export class IMessageSession {
     }
   }
 
+  // ── TIME-TRAVEL RECAP ("what did I miss") ──────────────────────────
+  /** Owner self-chat hook. Returns true when handled. Gathers what landed
+   *  since a cutoff (contacts waiting + the assistant's own recent actions)
+   *  and narrates it in the owner's voice; deterministic fallback on failure. */
+  private maybeHandleRecap(jid: string, text: string): boolean {
+    if (!looksLikeRecapRequest(text)) return false;
+    void (async () => {
+      const now = Date.now();
+      const since = parseRecapWindow(text, now) ?? now - 6 * 3_600_000; // default: last 6h
+      const items: RecapItem[] = [];
+      try {
+        for (const r of this.gatherAwaitingReply(now)) {
+          if (r.lastInboundAt >= since) {
+            const hist = this.inboundHistory.get(r.handle);
+            items.push({
+              kind: "message", subject: r.displayName || r.handle,
+              detail: hist?.length ? hist[hist.length - 1].slice(0, 80) : "messaged you",
+              at: r.lastInboundAt, weight: 2,
+            });
+          }
+        }
+      } catch { /* best-effort */ }
+      try {
+        for (const a of recentActions({ nowMs: now })) {
+          if (a.ts >= since && a.kind !== "presence") {
+            items.push({ kind: "auto_action", subject: "assistant", detail: a.summary, at: a.ts, weight: 0 });
+          }
+        }
+      } catch { /* best-effort */ }
+      const req = { since, now, items };
+      try {
+        const raw = items.length
+          ? await this.agent.respondTo("recap::synth", buildRecapPrompt(req), "Write the recap directly — no preamble.", { timeoutMs: 30_000 })
+          : null;
+        await this.send(jid, finalizeRecap(raw, req));
+      } catch (err) {
+        this.logger.warn({ err }, "recap failed");
+        await this.send(jid, finalizeRecap(null, req)).catch(() => {});
+      }
+    })();
+    return true;
+  }
+
   // Owner self-chat hook — called from BOTH routing paths (isFromMe
   // self-chat AND dedicated-bot inbound). Returns true when handled.
   private maybeHandleScout(jid: string, text: string): boolean {
@@ -5354,6 +5401,7 @@ export class IMessageSession {
       // EVENT SCOUT commands ("scan events" / "events add <cat>" /
       // "book 1,3") — strict anchored grammar, so a normal self-chat
       // message never trips it.
+      if (this.maybeHandleRecap(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       if (this.maybeHandleScout(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       if (this.maybeHandleSkillForge(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
 
@@ -5677,6 +5725,7 @@ export class IMessageSession {
         return;
       }
       // EVENT SCOUT commands — same grammar as the fromMe path above.
+      if (this.maybeHandleRecap(row.handle, text)) return;
       if (this.maybeHandleScout(row.handle, text)) return;
       if (this.maybeHandleSkillForge(row.handle, text)) return;
     }
