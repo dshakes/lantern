@@ -47,6 +47,11 @@ import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type Presence
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { reactionToAction, dispatchReaction, ReactableLog, strikeBriefLines, buildAttentionSnapshot, type AttentionSnapshot } from "@lantern/bridge-core/reaction-commands";
+import {
+  matchSkillRequest, matchSkillCommand, buildSkillSpecPrompt, parseSkillSpec,
+  formatSkillProposal, formatSkillList, formatSchedule, dueSkills, localDayKey, defaultSkillState,
+  type SkillForgeState, type SkillSpec,
+} from "@lantern/bridge-core/skill-forge";
 import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@lantern/bridge-core/daily-digest";
 import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
@@ -1187,6 +1192,10 @@ export class WhatsAppSession {
   private scoutState: EventScoutState | null = null;
   private scoutPath = "";
   private scoutScanInFlight = false;
+  // SKILL FORGE — owner-taught recurring skills (see bridge-core/skill-forge.ts).
+  private skillState: SkillForgeState | null = null;
+  private skillPath = "";
+  private pendingSkillProposal: { spec: SkillSpec; at: number } | null = null;
   // Dedicated AgentClient so scout sessions/spend show under the
   // "event-scout" agent in the dashboard instead of the bridge assistant.
   private scoutAgent: AgentClient | null = null;
@@ -4630,6 +4639,7 @@ export class WhatsAppSession {
     // EVENT SCOUT commands ("scan events" / "events add <cat>" / "book 1,3")
     // — strict anchored grammar; mirrors the iMessage bridge.
     if (self && !group && trimmed && this.maybeHandleScout(jid, text)) return;
+    if (self && !group && trimmed && this.maybeHandleSkillForge(text)) return;
 
     // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"
     // and numbered-action replies against the last Brief/plate/did shown.
@@ -9215,6 +9225,114 @@ export class WhatsAppSession {
     }
   }
 
+  // ── SKILL FORGE (owner-taught recurring skills; mirrors iMessage) ──
+  private ensureSkillState(): SkillForgeState {
+    if (this.skillState) return this.skillState;
+    this.skillPath = join(this.stateDir, "skills.json");
+    try {
+      if (existsSync(this.skillPath)) {
+        this.skillState = { ...defaultSkillState(), ...(JSON.parse(readFileSync(this.skillPath, "utf-8")) as SkillForgeState) };
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "skill state load failed — starting fresh");
+    }
+    if (!this.skillState) this.skillState = defaultSkillState();
+    return this.skillState;
+  }
+
+  private persistSkillState(): void {
+    if (!this.skillState || !this.skillPath) return;
+    try {
+      writeFileSync(this.skillPath, JSON.stringify(this.skillState), { mode: 0o600 });
+      try { chmodSync(this.skillPath, 0o600); } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.warn({ err }, "skill state persist failed");
+    }
+  }
+
+  /** Owner self-chat hook. Returns true when handled. */
+  private maybeHandleSkillForge(text: string): boolean {
+    const t = text.trim();
+    const cmd = matchSkillCommand(t);
+    if (cmd === "list") {
+      void this.confirmToSelf(formatSkillList(this.ensureSkillState().skills));
+      return true;
+    }
+    if (cmd && typeof cmd === "object") {
+      const st = this.ensureSkillState();
+      const idx = cmd.drop - 1;
+      if (idx < 0 || idx >= st.skills.length) {
+        void this.confirmToSelf(`🛠 no skill ${cmd.drop} — "skills" to see the list.`);
+      } else {
+        const [gone] = st.skills.splice(idx, 1);
+        this.persistSkillState();
+        void this.confirmToSelf(`🛠 dropped ${gone.name}.`);
+      }
+      return true;
+    }
+    if (this.pendingSkillProposal && Date.now() - this.pendingSkillProposal.at < 10 * 60_000) {
+      if (/^(approve skill|approve|activate)$/i.test(t)) {
+        const st = this.ensureSkillState();
+        const spec = this.pendingSkillProposal.spec;
+        this.pendingSkillProposal = null;
+        if (st.skills.some((s) => s.name === spec.name)) {
+          st.skills = st.skills.map((s) => (s.name === spec.name ? { ...s, ...spec, enabled: true } : s));
+        } else {
+          st.skills.push({ ...spec, createdAt: Date.now(), enabled: true });
+        }
+        this.persistSkillState();
+        void this.confirmToSelf(`✅ skill live — ${spec.description} (${formatSchedule(spec.schedule)}). "skills" to manage.`);
+        return true;
+      }
+      if (/^(drop|discard|no|skip|cancel)$/i.test(t)) {
+        this.pendingSkillProposal = null;
+        void this.confirmToSelf(`👍 skipped`);
+        return true;
+      }
+    }
+    const request = matchSkillRequest(t);
+    if (!request) return false;
+    void (async () => {
+      try {
+        const prompt = buildSkillSpecPrompt(request, new Date(), process.env.LANTERN_OWNER_TIMEZONE);
+        const raw = (await this.agent.respondTo("skillforge::spec", prompt, "Return only valid JSON. No prose.", { timeoutMs: 30_000 })) || "";
+        const spec = parseSkillSpec(raw);
+        if (!spec) {
+          await this.confirmToSelf(`🛠 couldn't shape that into a skill — try rephrasing what and when.`);
+        } else if ("error" in spec) {
+          await this.confirmToSelf(`🛠 can't do that one: ${spec.error}`);
+        } else {
+          this.pendingSkillProposal = { spec, at: Date.now() };
+          await this.confirmToSelf(formatSkillProposal(spec));
+        }
+      } catch (err) {
+        this.logger.warn({ err }, "skill spec draft failed");
+        await this.confirmToSelf(`🛠 skill drafting hit an error — try again.`);
+      }
+    })();
+    return true;
+  }
+
+  /** Tick hook: run due skills (window > tick interval so none are missed). */
+  private maybeRunSkills(now: number): void {
+    const st = this.ensureSkillState();
+    if (st.skills.length === 0) return;
+    const tz = process.env.LANTERN_OWNER_TIMEZONE;
+    const due = dueSkills(st, new Date(now), tz, 50);
+    for (const s of due) {
+      s.lastFiredDay = localDayKey(new Date(now), tz);
+      this.persistSkillState();
+      void (async () => {
+        try {
+          const out = await this.agent.respondTo(`skill::${s.name}`, s.prompt, "You are running a scheduled personal skill. Deliver the result directly — no preamble, no narration of the process.", { timeoutMs: 300_000, webSearch: true });
+          if (out?.trim()) await this.confirmToSelf(`🛠 ${s.name}: ${out.trim()}`);
+        } catch (err) {
+          this.logger.warn({ err, skill: s.name }, "skill run failed");
+        }
+      })();
+    }
+  }
+
   // ── EVENT SCOUT (mirrors services/imessage-bridge/src/session.ts) ──
   private ensureScoutState(): EventScoutState {
     if (this.scoutState) return this.scoutState;
@@ -9454,6 +9572,7 @@ export class WhatsAppSession {
       // Default OFF on WhatsApp (LANTERN_EVENT_SCOUT_WA=1 enables) — the
       // iMessage bridge already runs the weekly proactive scan.
       this.maybeRunEventScout(now);
+      this.maybeRunSkills(now);
 
       // Signal 1: key dates (anniversaries / birthdays) from the owner profile.
       const keyDates: KeyDateSignal[] = [];
