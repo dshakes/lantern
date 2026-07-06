@@ -1185,8 +1185,9 @@ Privacy posture (HARD rules):
 | `LANTERN_OWNER_TIMEZONE`              | IANA timezone (e.g. `America/Los_Angeles`). Used by quiet hours, daily digest scheduling, and calendar lookups. Defaults to process timezone when unset.                                         |
 | `LANTERN_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
 | `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
-| `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
+| `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Downloads:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
 | `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
+| `LANTERN_MAIL_INDEX`                  | (Optional) Set to `0`/`off` to disable the OWNER-ONLY `search_email` tool (read-only search over Apple Mail's local "Envelope Index" SQLite — sender/subject/date of the owner's ENTIRE synced mailbox incl. Gmail, no OAuth). Default ON. Fails closed; live read-only open, never copied, so results are never stale. |
 | `LANTERN_MAC_USAGE`                   | (Optional) `on` to enable the OWNER-ONLY Mac app-usage signal (reads knowledgeC.db, distills one "what you've been doing today" line into the owner's self-chat context). Default OFF. Summaries only; fails closed. |
 | `LANTERN_MAC_USAGE_SEC`               | (Optional) Mac app-usage refresh interval in seconds (min 60, default 1800 = 30 min).                                                                                                            |
 | `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
@@ -1215,7 +1216,10 @@ The iMessage bridge handles RCS in both directions:
 ### Always-on
 
 WhatsApp + API + dashboard run under user LaunchAgents
-(`~/Library/LaunchAgents/dev.lantern.*.plist`). The iMessage bridge needs
+(`~/Library/LaunchAgents/dev.lantern.*.plist`). Bridge env overrides go in
+`~/.lantern/bridge.env` (sourced by `scripts/launchd/run-bridge-wrapper.sh` at
+every start, overrides plist env) — takes effect with a plain
+`launchctl kickstart -k`, no bootout/bootstrap needed. The iMessage bridge needs
 Full Disk Access (chat.db) + Automation permission (Messages.app), which
 is per-binary in macOS TCC — easiest path is to run it via Terminal
 (which already has those grants) or grant FDA explicitly to
@@ -1269,6 +1273,7 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 
 | Method | Path                                       | Purpose                                                                                    |
 | ------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `POST` | `/session/:tenantId/mail/search` (iMessage bridge)  | Local Apple Mail envelope-index search backing the `search_email` tool. Owner-only via session gating; 422 when the index is unavailable/disabled.        |
 | `POST` | `/v1/vision/ocr`                           | OCR a base64 image via tenant's OpenAI vision key. Used by personal-docs for scanned PDFs. |
 | `POST` | `/v1/people/resolve`                       | Resolve a (channel, handle) to a canonical person row; creates if absent.                  |
 | `GET`  | `/v1/people`                               | List people, most-recently-updated first.                                                  |

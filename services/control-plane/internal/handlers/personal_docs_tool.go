@@ -40,6 +40,7 @@ const (
 	whatsappHistoryBackfillTool = "backfill_whatsapp_history"
 	readCalendarTool            = "read_calendar"
 	searchContactsTool          = "search_contacts"
+	searchEmailTool             = "search_email"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -75,6 +76,42 @@ func personalDocsTools() []map[string]any {
 						"limit": map[string]any{
 							"type":        "integer",
 							"description": "Max contacts to return (default 8, max 25).",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": searchEmailTool,
+				"description": "Search the owner's ENTIRE email history locally (Apple Mail's on-disk index of every synced account, Gmail included — ~100k messages, no login needed). Returns sender, subject, and date, newest first. " +
+					"Use for ANY question about past email: travel history ('all my flights in 2024' → query airlines/'itinerary'/'booking confirmed'), receipts, USCIS/immigration notices, bills, appointments that arrived by email. " +
+					"AND-matches every word in `query` against subject + sender, so keep queries to 1-3 strong keywords and run SEVERAL searches with different keywords rather than one long query. " +
+					"This is HISTORY (subjects only, always current). If you also need full message bodies or to act on live mail, additionally try gmail_search. Never say 'no email about X' without calling this first.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "1-3 keywords, each must match subject or sender. E.g. 'united receipt', 'uscis', 'booking confirmed'.",
+						},
+						"from": map[string]any{
+							"type":        "string",
+							"description": "Optional sender filter (address or display-name substring), e.g. 'united.com'.",
+						},
+						"since": map[string]any{
+							"type":        "string",
+							"description": "Optional ISO start date, e.g. '2021-07-01'.",
+						},
+						"until": map[string]any{
+							"type":        "string",
+							"description": "Optional ISO end date (inclusive).",
+						},
+						"limit": map[string]any{
+							"type":        "integer",
+							"description": "Max results (default 25, max 100).",
 						},
 					},
 					"required": []string{"query"},
@@ -312,7 +349,8 @@ func isPersonalDocsTool(name string) bool {
 		imessageHistorySearchTool, whatsappHistorySearchTool,
 		imessageGroupsListTool, imessageGroupMembersTool,
 		whatsappGroupsListTool, whatsappGroupMembersTool,
-		whatsappHistoryBackfillTool, readCalendarTool, searchContactsTool:
+		whatsappHistoryBackfillTool, readCalendarTool, searchContactsTool,
+		searchEmailTool:
 		return true
 	}
 	return false
@@ -375,6 +413,25 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 		}
 		body["path"] = path
 		endpoint = fmt.Sprintf("%s/session/%s/personal-docs/read", base, tenantID)
+	case searchEmailTool:
+		query, _ := params["query"].(string)
+		query = strings.TrimSpace(query)
+		if query == "" {
+			return nil, errors.New("search_email: 'query' is required")
+		}
+		if len(query) > personalDocsMaxQueryChars {
+			return nil, fmt.Errorf("search_email: 'query' too long (max %d chars)", personalDocsMaxQueryChars)
+		}
+		body["query"] = query
+		for _, k := range []string{"from", "since", "until"} {
+			if v, ok := params[k].(string); ok && strings.TrimSpace(v) != "" {
+				body[k] = strings.TrimSpace(v)
+			}
+		}
+		if v, ok := params["limit"].(float64); ok && v > 0 {
+			body["limit"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/mail/search", base, tenantID)
 	case imessageHistorySearchTool:
 		// All filters optional — bridge handles the empty case.
 		if v, ok := params["keyword"].(string); ok && strings.TrimSpace(v) != "" {
