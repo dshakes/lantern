@@ -355,22 +355,22 @@ func main() {
 
 	// REST API endpoints (direct, no gateway needed).
 	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)
-	httpMux.HandleFunc("POST /v1/agents", restHandler.CreateAgent)
+	httpMux.HandleFunc("POST /v1/agents", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.CreateAgent))
 	httpMux.HandleFunc("GET /v1/agents/{name}", restHandler.GetAgent)
-	httpMux.HandleFunc("PATCH /v1/agents/{name}", restHandler.UpdateAgent)
-	httpMux.HandleFunc("DELETE /v1/agents/{name}", restHandler.DeleteAgent)
+	httpMux.HandleFunc("PATCH /v1/agents/{name}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.UpdateAgent))
+	httpMux.HandleFunc("DELETE /v1/agents/{name}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.DeleteAgent))
 	httpMux.HandleFunc("GET /v1/runs", restHandler.ListRuns)
-	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
+	httpMux.HandleFunc("POST /v1/runs", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CreateRun))
 	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
 	httpMux.HandleFunc("GET /v1/runs/{id}/events", restHandler.GetRunEvents)
-	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", restHandler.CancelRun)
-	httpMux.HandleFunc("DELETE /v1/runs/{id}", restHandler.DeleteRun)
+	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CancelRun))
+	httpMux.HandleFunc("DELETE /v1/runs/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.DeleteRun))
 
 	// Connector endpoints.
-	httpMux.HandleFunc("POST /v1/connectors/install", connectorHandler.InstallConnector)
+	httpMux.HandleFunc("POST /v1/connectors/install", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.InstallConnector))
 	httpMux.HandleFunc("GET /v1/connectors", connectorHandler.ListConnectors)
 	httpMux.HandleFunc("GET /v1/connectors/oauth/callback", connectorHandler.OAuthCallback)
-	httpMux.HandleFunc("POST /v1/connectors/oauth/start", connectorHandler.OAuthStart)
+	httpMux.HandleFunc("POST /v1/connectors/oauth/start", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.OAuthStart))
 	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", gmailHandler.GetMessages)
 	// Connector executor — registered before {id} to avoid path conflict.
 	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
@@ -382,8 +382,8 @@ func main() {
 	httpMux.HandleFunc("POST /v1/voice/twilio/webhook", smsHandler.VoiceWebhook)
 	httpMux.HandleFunc("POST /v1/voice/twilio/turn", smsHandler.VoiceTurn)
 	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
-	httpMux.HandleFunc("POST /v1/connectors/{id}/test", connectorHandler.TestConnector)
-	httpMux.HandleFunc("DELETE /v1/connectors/{id}", connectorHandler.UninstallConnector)
+	httpMux.HandleFunc("POST /v1/connectors/{id}/test", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.TestConnector))
+	httpMux.HandleFunc("DELETE /v1/connectors/{id}", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.UninstallConnector))
 
 	// Surface endpoints.
 	httpMux.HandleFunc("POST /v1/surfaces", surfaceHandler.ConfigureSurface)
@@ -461,16 +461,16 @@ func main() {
 	httpMux.HandleFunc("POST /v1/voice/tts", llmProxyHandler.HandleTTS)
 
 	// Agent AI generation endpoints.
-	httpMux.HandleFunc("POST /v1/agents/generate-spec", llmProxyHandler.GenerateAgentSpec)
-	httpMux.HandleFunc("POST /v1/agents/generate-code", llmProxyHandler.GenerateAgentCode)
+	httpMux.HandleFunc("POST /v1/agents/generate-spec", authHandler.WithScope(handlers.ScopeAgentsWrite, llmProxyHandler.GenerateAgentSpec))
+	httpMux.HandleFunc("POST /v1/agents/generate-code", authHandler.WithScope(handlers.ScopeAgentsWrite, llmProxyHandler.GenerateAgentCode))
 
 	// LLM provider settings endpoints.
-	httpMux.HandleFunc("POST /v1/settings/llm-providers", llmProxyHandler.SaveLlmProvider)
+	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
 	httpMux.HandleFunc("GET /v1/settings/llm-providers", llmProxyHandler.ListLlmProviders)
-	httpMux.HandleFunc("POST /v1/settings/llm-providers/{provider}/test", llmProxyHandler.TestLlmProvider)
+	httpMux.HandleFunc("POST /v1/settings/llm-providers/{provider}/test", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.TestLlmProvider))
 
 	// Deployment endpoints.
-	httpMux.HandleFunc("POST /v1/deployments", deploymentHandler.CreateDeployment)
+	httpMux.HandleFunc("POST /v1/deployments", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.CreateDeployment))
 	httpMux.HandleFunc("GET /v1/deployments", deploymentHandler.ListDeployments)
 	httpMux.HandleFunc("GET /v1/deployments/{id}", deploymentHandler.GetDeployment)
 	httpMux.HandleFunc("POST /v1/data-planes", deploymentHandler.RegisterDataPlane)
@@ -478,9 +478,9 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", deploymentHandler.RemoveDataPlane)
 
 	// Cloud deploy endpoints (Gap 5: Managed Hosting).
-	httpMux.HandleFunc("POST /v1/agents/{name}/deploy", deploymentHandler.DeployAgent)
+	httpMux.HandleFunc("POST /v1/agents/{name}/deploy", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.DeployAgent))
 	httpMux.HandleFunc("GET /v1/agents/{name}/deploy", deploymentHandler.GetCloudDeployment)
-	httpMux.HandleFunc("POST /v1/agents/{name}/deploy/stop", deploymentHandler.StopDeployment)
+	httpMux.HandleFunc("POST /v1/agents/{name}/deploy/stop", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.StopDeployment))
 
 	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
 	httpMux.HandleFunc("GET /v1/agents/{name}/card", a2aHandler.GetAgentCard)
@@ -488,22 +488,22 @@ func main() {
 	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
 	// Workflow persistence endpoints (visual editor).
-	httpMux.HandleFunc("PUT /v1/agents/{name}/workflow", restHandler.SaveWorkflow)
+	httpMux.HandleFunc("PUT /v1/agents/{name}/workflow", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.SaveWorkflow))
 	httpMux.HandleFunc("GET /v1/agents/{name}/workflow", restHandler.GetWorkflow)
 
 	// Schedule endpoints.
-	httpMux.HandleFunc("POST /v1/schedules", restHandler.CreateSchedule)
+	httpMux.HandleFunc("POST /v1/schedules", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.CreateSchedule))
 	httpMux.HandleFunc("GET /v1/schedules", restHandler.ListSchedules)
-	httpMux.HandleFunc("PUT /v1/schedules/{id}", restHandler.UpdateSchedule)
-	httpMux.HandleFunc("DELETE /v1/schedules/{id}", restHandler.DeleteSchedule)
+	httpMux.HandleFunc("PUT /v1/schedules/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.UpdateSchedule))
+	httpMux.HandleFunc("DELETE /v1/schedules/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.DeleteSchedule))
 
 	// Session endpoints (interactive, long-lived agent sessions).
-	httpMux.HandleFunc("POST /v1/sessions", sessionHandler.CreateSession)
+	httpMux.HandleFunc("POST /v1/sessions", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.CreateSession))
 	httpMux.HandleFunc("GET /v1/sessions", sessionHandler.ListSessions)
-	httpMux.HandleFunc("POST /v1/sessions/{id}/messages", sessionHandler.SendMessage)
+	httpMux.HandleFunc("POST /v1/sessions/{id}/messages", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.SendMessage))
 	httpMux.HandleFunc("GET /v1/sessions/{id}/events", sessionHandler.GetEvents)
-	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", sessionHandler.StopSession)
-	httpMux.HandleFunc("DELETE /v1/sessions/{id}", sessionHandler.DeleteSession)
+	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.StopSession))
+	httpMux.HandleFunc("DELETE /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.DeleteSession))
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
 
 	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
@@ -551,18 +551,18 @@ func main() {
 
 	// Loop-agent platform primitive (Stage 3).
 	// Must be registered before the generic /v1/agents/{name} patterns to avoid shadowing.
-	httpMux.HandleFunc("POST /v1/agents/loop", loopAgentHandler.CreateLoopAgent)
+	httpMux.HandleFunc("POST /v1/agents/loop", authHandler.WithScope(handlers.ScopeAgentsWrite, loopAgentHandler.CreateLoopAgent))
 
 	// Pre-run cost forecaster.
-	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)
+	httpMux.HandleFunc("POST /v1/runs/forecast", authHandler.WithScope(handlers.ScopeRunsExecute, forecastHandler.Forecast))
 
 	// Accurate spend + run-health aggregation (agent_usage_daily + runs).
 	httpMux.HandleFunc("GET /v1/usage", usageHandler.GetUsage)
 
 	// Policy-as-code budgets (per-agent cost + per-tool rate limits).
-	httpMux.HandleFunc("PUT /v1/agents/{name}/budget", budgetHandler.UpsertBudget)
+	httpMux.HandleFunc("PUT /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.UpsertBudget))
 	httpMux.HandleFunc("GET /v1/agents/{name}/budget", budgetHandler.GetBudget)
-	httpMux.HandleFunc("DELETE /v1/agents/{name}/budget", budgetHandler.DeleteBudget)
+	httpMux.HandleFunc("DELETE /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.DeleteBudget))
 	httpMux.HandleFunc("GET /v1/budgets", budgetHandler.ListBudgets)
 
 	// Marketplace — publish, fork, star agents.
@@ -592,7 +592,7 @@ func main() {
 	// REST handler for agentSvc + pool access.
 	templateHandler := handlers.NewTemplateHandler(restHandler, authHandler)
 	httpMux.HandleFunc("GET /v1/agents/templates", templateHandler.ListTemplates)
-	httpMux.HandleFunc("POST /v1/agents/from-template", templateHandler.Apply)
+	httpMux.HandleFunc("POST /v1/agents/from-template", authHandler.WithScope(handlers.ScopeAgentsWrite, templateHandler.Apply))
 	httpMux.HandleFunc("GET /v1/agents/{name}/setup", templateHandler.SetupStatus)
 
 	// W11d: voice channel. Phone-number management + provider webhooks
@@ -609,9 +609,9 @@ func main() {
 	// MCP server registry + per-agent attachments.
 	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)
 	httpMux.HandleFunc("GET /v1/mcp/servers/{slug}", mcpHandler.GetServer)
-	httpMux.HandleFunc("POST /v1/agents/{name}/mcp-servers", mcpHandler.AttachToAgent)
+	httpMux.HandleFunc("POST /v1/agents/{name}/mcp-servers", authHandler.WithScope(handlers.ScopeAgentsWrite, mcpHandler.AttachToAgent))
 	httpMux.HandleFunc("GET /v1/agents/{name}/mcp-servers", mcpHandler.ListAttachments)
-	httpMux.HandleFunc("DELETE /v1/agents/{name}/mcp-servers/{slug}", mcpHandler.DetachFromAgent)
+	httpMux.HandleFunc("DELETE /v1/agents/{name}/mcp-servers/{slug}", authHandler.WithScope(handlers.ScopeAgentsWrite, mcpHandler.DetachFromAgent))
 
 	// Eval suites + runs + baselines (foundation for lantern test --against=last-green).
 	httpMux.HandleFunc("POST /v1/eval-suites", evalHandler.UpsertSuite)

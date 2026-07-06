@@ -991,23 +991,71 @@ func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*Lante
 
 // Scope is a permission string carried by an API key.
 //
-// Scope model: coarse read/write/admin. Fine-grained per-resource scopes can
-// be added later (e.g. "runs:read", "agents:write") but are not yet assigned
-// to any endpoint — the three coarse values cover the current needs:
+// Scope hierarchy (implication flows left-to-right):
 //
-//	"read"  — safe, idempotent operations (GET requests)
-//	"write" — state-mutating operations (POST/PUT/PATCH/DELETE)
-//	"admin" — tenant-admin operations (API key management, billing, settings)
+//	admin  ⊇  write  ⊇  read
+//	admin  ⊇  agents:write  ⊇  agents:read
+//	admin  ⊇  runs:execute  ⊇  runs:read
+//	admin  ⊇  runs:write    ⊇  runs:read
+//	admin  ⊇  connectors:write
+//	admin  ⊇  budgets:write
+//	admin  ⊇  settings:write
 //
-// When an API key has an empty scopes list, all operations are allowed
-// (backward-compatible with existing keys issued before scopes were enforced).
+// The coarse "read"/"write" scopes are kept for backward-compat: a key
+// carrying "write" passes any fine-grained write check. An empty scopes
+// list on an API key means unrestricted (pre-scope legacy key).
 type Scope = string
 
 const (
+	// Coarse scopes — backward-compatible with existing keys.
 	ScopeRead  Scope = "read"
 	ScopeWrite Scope = "write"
 	ScopeAdmin Scope = "admin"
+
+	// Fine-grained per-resource scopes.
+	ScopeAgentsRead      Scope = "agents:read"
+	ScopeAgentsWrite     Scope = "agents:write"
+	ScopeRunsRead        Scope = "runs:read"
+	ScopeRunsWrite       Scope = "runs:write"
+	ScopeRunsExecute     Scope = "runs:execute"
+	ScopeConnectorsWrite Scope = "connectors:write"
+	ScopeBudgetsWrite    Scope = "budgets:write"
+	ScopeSettingsWrite   Scope = "settings:write"
 )
+
+// scopeImplies reports whether holding scope s transitively implies holding required.
+func scopeImplies(s, required Scope) bool {
+	switch s {
+	case ScopeAdmin:
+		return true // admin implies everything
+	case ScopeWrite:
+		// Coarse write implies all fine-grained write and read scopes.
+		return isReadScope(required) || isWriteScope(required)
+	case ScopeRead:
+		return isReadScope(required)
+	case ScopeAgentsWrite:
+		return required == ScopeAgentsRead
+	case ScopeRunsWrite:
+		return required == ScopeRunsRead
+	case ScopeRunsExecute:
+		// Executing a run implies the ability to read its status and events.
+		return required == ScopeRunsRead || required == ScopeRunsWrite
+	}
+	return false
+}
+
+func isReadScope(s Scope) bool {
+	return s == ScopeRead || s == ScopeAgentsRead || s == ScopeRunsRead
+}
+
+func isWriteScope(s Scope) bool {
+	switch s {
+	case ScopeWrite, ScopeAgentsWrite, ScopeRunsWrite, ScopeRunsExecute,
+		ScopeConnectorsWrite, ScopeBudgetsWrite, ScopeSettingsWrite:
+		return true
+	}
+	return false
+}
 
 // HasScope returns true when the claims allow the requested scope.
 //
@@ -1015,35 +1063,79 @@ const (
 //   - JWT-based auth (Role != "service"): always allowed — JWT holders are
 //     interactive users, not machine tokens.
 //   - API key with empty scopes list: always allowed (legacy / unrestricted key).
-//   - API key with non-empty scopes: "admin" implies "write" implies "read".
+//   - API key with non-empty scopes: see scopeImplies for the full lattice.
 func HasScope(claims *LanternClaims, required Scope) bool {
 	if claims.Role != "service" {
-		// JWT user — not an API key; no scope restriction.
 		return true
 	}
 	if len(claims.Scopes) == 0 {
-		// Unrestricted API key — all scopes allowed.
 		return true
 	}
 	for _, s := range claims.Scopes {
-		if s == required {
+		if Scope(s) == required || scopeImplies(Scope(s), required) {
 			return true
-		}
-		// Implication: admin ⊇ write ⊇ read.
-		switch s {
-		case ScopeAdmin:
-			// admin implies write and read.
-			if required == ScopeWrite || required == ScopeRead {
-				return true
-			}
-		case ScopeWrite:
-			// write implies read.
-			if required == ScopeRead {
-				return true
-			}
 		}
 	}
 	return false
+}
+
+// ---------- Claims context caching ----------
+//
+// WithScope validates the token once and stores the resulting *LanternClaims
+// in the request context. contextWithTenant (rest.go) reads them back so the
+// same token is never validated twice in one request (avoids a second DB hit
+// for API key requests).
+
+type claimsCtxKey struct{}
+
+func storeClaimsInCtx(ctx context.Context, c *LanternClaims) context.Context {
+	return context.WithValue(ctx, claimsCtxKey{}, c)
+}
+
+// claimsFromCtx returns claims stored by WithScope, or nil if absent.
+func claimsFromCtx(ctx context.Context) *LanternClaims {
+	c, _ := ctx.Value(claimsCtxKey{}).(*LanternClaims)
+	return c
+}
+
+// WithScope wraps handler with per-resource scope authorization.
+//
+// Flag gate: when LANTERN_AUTHZ_ENFORCE is off (default), a missing scope is
+// logged at debug and the request is ALLOWED — zero behavior change, safe to
+// merge at any time. When LANTERN_AUTHZ_ENFORCE=1, a missing scope returns
+// HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE (ADR 0011).
+//
+// JWT-authenticated requests (interactive users) and API keys with an empty
+// scopes list always pass regardless of the flag.
+//
+// Usage (in main.go):
+//
+//	mux.HandleFunc("POST /v1/agents", auth.WithScope(handlers.ScopeAgentsWrite, rest.CreateAgent))
+func (h *AuthHandler) WithScope(required Scope, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next(w, r)
+			return
+		}
+		claims, err := h.validateRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		if !HasScope(claims, required) {
+			if authzEnforce() {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": fmt.Sprintf("API key missing required scope: %s", required),
+				})
+				return
+			}
+			// ponytail: enforce-off is the default; flip LANTERN_AUTHZ_ENFORCE=1 to enable.
+			h.logger().Debug("authz: scope missing, enforcement off",
+				zap.String("required", required),
+				zap.Strings("held", claims.Scopes))
+		}
+		next(w, r.WithContext(storeClaimsInCtx(r.Context(), claims)))
+	}
 }
 
 // RequireScopeMiddleware returns an http.Handler that enforces scope on API key

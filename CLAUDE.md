@@ -374,6 +374,27 @@ keyed by SHA-256 of the key; fail-closed on any error). Gateway env:
 `LANTERN_GRPC_SERVICE_TOKEN` (same shared token as the gRPC trust boundary).
 Unset → API-key auth stays fail-closed-disabled; JWT auth is unaffected.
 
+#### Per-endpoint scope authorization (`LANTERN_AUTHZ_ENFORCE`, default OFF)
+
+API keys carry `scopes` (stored in `api_keys`); mutating endpoints are annotated
+with a required scope via `AuthHandler.WithScope(scope, handler)` in
+`cmd/server/main.go`. Scope taxonomy (`internal/handlers/auth.go`): coarse
+`read`/`write`/`admin` (backward-compatible with existing keys) plus fine-grained
+`agents:{read,write}`, `runs:{read,write,execute}`, `connectors:write`,
+`budgets:write`, `settings:write`. `admin` implies all; `write` implies `read`
+(`scopeImplies`). `WithScope` authenticates via the SAME `validateRequest` the
+handlers already used (caching claims in ctx so `contextWithTenant` reuses them —
+no double token validation / DB hit), so it is **not** a new auth surface.
+
+**Staged like RLS — FLAG-GATED, DEFAULT OFF.** When `LANTERN_AUTHZ_ENFORCE` is
+unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
+zero behavior change, safe to merge/run against the live bridges + dashboard.
+When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
+keep full access. Annotated today: the agents/runs/sessions/connectors/
+deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
+follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
+fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |
