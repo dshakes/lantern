@@ -18,17 +18,17 @@
 // JSONL because it's append-only, survives crashes mid-write, easy to
 // inspect with `cat`, and the read path streams the tail.
 
-import { appendFile, chmod, readFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
+import { loadOrCreateStateKey, appendSecureLine, readSecureLines } from "./secure-store.js";
 
-// 0600 — entries hold inbound message text + bot replies (PII). Match the
-// OCR-cache standard so this isn't world-readable.
-const FILE_MODE = 0o600;
+// Entries hold inbound message text + bot replies (PII), so lines are
+// AES-256-GCM-encrypted at rest (0600) via secure-store; old plaintext lines
+// still read (backward-compat).
 
 export interface DislikeEntry {
   jid: string;          // contact JID / handle the bad reply was sent to
@@ -49,6 +49,7 @@ export class DislikeMemory {
   // Keyed by jid; each bucket holds entries sorted newest-first.
   private cache: Map<string, DislikeEntry[]> | null = null;
   private cachedAt = 0;
+  private key: Buffer | null = null;
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
@@ -61,6 +62,12 @@ export class DislikeMemory {
     }
   }
 
+  // State key lives next to the state file (co-located per store dir).
+  private getKey(): Buffer {
+    if (!this.key) this.key = loadOrCreateStateKey(dirname(this.path));
+    return this.key;
+  }
+
   /**
    * Append a new dislike entry. Returns the saved row. Fire-and-forget
    * safe — failures log a warning but don't throw.
@@ -68,9 +75,7 @@ export class DislikeMemory {
   async record(entry: Omit<DislikeEntry, "ts">): Promise<DislikeEntry | null> {
     const row: DislikeEntry = { ...entry, ts: Date.now() };
     try {
-      const fresh = !existsSync(this.path);
-      await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
-      if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
+      await appendSecureLine(this.path, JSON.stringify(row), this.getKey());
       // Invalidate cache so the next read picks up this entry.
       this.cache = null;
       this.cachedAt = 0;
@@ -104,7 +109,7 @@ export class DislikeMemory {
       // (degenerate retry) or already set.
       if (last.goodReply || last.badReply.trim() === goodReply.trim()) return;
       const patch: DislikeEntry = { ...last, goodReply, ts: last.ts };
-      await appendFile(this.path, JSON.stringify(patch) + "\n", { encoding: "utf8", mode: FILE_MODE });
+      await appendSecureLine(this.path, JSON.stringify(patch), this.getKey());
       this.cache = null;
       this.cachedAt = 0;
     } catch (err) {
@@ -141,33 +146,23 @@ export class DislikeMemory {
     this.cache = new Map();
     this.cachedAt = now;
 
-    if (!existsSync(this.path)) return;
-
-    let raw: string;
+    // readSecureLines decrypts each line and tail-caps at MAX_FILE_SIZE_BYTES
+    // (dropping a possibly-truncated first line) — the OOM safety net. We
+    // don't rotate proactively — admin can `tail -n 1000 dislike-patterns.jsonl
+    // > tmp && mv tmp dislike-patterns.jsonl` when needed.
+    let lines: string[];
     try {
-      raw = await readFile(this.path, "utf8");
+      lines = await readSecureLines(this.path, this.getKey(), MAX_FILE_SIZE_BYTES);
     } catch (err) {
       this.logger?.warn({ err, path: this.path }, "dislike read failed");
       return;
-    }
-
-    // If the file grew beyond cap, only consume the tail. We don't
-    // rotate proactively — admin can `tail -n 1000 dislike-patterns.jsonl
-    // > tmp && mv tmp dislike-patterns.jsonl` when needed. Cap is a
-    // safety net so we don't OOM in the worst case.
-    if (raw.length > MAX_FILE_SIZE_BYTES) {
-      raw = raw.slice(-MAX_FILE_SIZE_BYTES);
-      const firstNl = raw.indexOf("\n");
-      if (firstNl >= 0) raw = raw.slice(firstNl + 1); // drop possibly-truncated first line
     }
 
     // Parse + merge patches. A patch row has the same jid + inbound
     // + badReply + ts as the original — when we see it later in the
     // stream, we overlay goodReply onto the existing entry.
     const byKey = new Map<string, DislikeEntry>();
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    for (const trimmed of lines) {
       let entry: DislikeEntry;
       try {
         entry = JSON.parse(trimmed) as DislikeEntry;

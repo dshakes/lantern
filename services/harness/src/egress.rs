@@ -389,8 +389,13 @@ pub fn pattern_matches(pattern: &str, host: &str) -> bool {
 //
 // At boot, when egress rules are declared, we verify the REDIRECT layer is
 // present. If it is absent the workload could bypass the allowlist entirely, so
-// we either FAIL CLOSED (refuse to start; default in production) or log a
-// prominent SECURITY warning + audit event (dev override).
+// we either FAIL CLOSED (refuse to start the workload) or log a prominent
+// SECURITY warning + audit event and proceed.
+//
+// FAIL-CLOSED is the DEFAULT in production (LANTERN_ENV=prod/production/
+// staging). In dev (LANTERN_ENV unset or any other value) it is opt-in via
+// LANTERN_EGRESS_FAIL_CLOSED=1. An explicit LANTERN_EGRESS_FAIL_CLOSED=0 in
+// a prod environment is IGNORED — prod is never fail-open.
 // ---------------------------------------------------------------------------
 
 /// Outcome of the egress enforcement preflight.
@@ -424,13 +429,51 @@ pub fn preflight_decision(
     }
 }
 
-/// Default fail-closed policy from the environment. Defaults to FALSE (warn
-/// only) so the dev path and images that haven't yet wired iptables keep
-/// booting; production images set `LANTERN_EGRESS_FAIL_CLOSED=1`.
+/// Resolve the fail-closed policy from raw env-var values.
+///
+/// Pure: takes `Option<&str>` so the logic is unit-testable without `setenv`.
+///
+/// Decision rule:
+///  * Prod (`LANTERN_ENV` = `"prod"`, `"production"`, or `"staging"`): always
+///    returns `true`. An explicit `LANTERN_EGRESS_FAIL_CLOSED=0` is IGNORED.
+///  * Dev (any other value, or unset): honours `LANTERN_EGRESS_FAIL_CLOSED`;
+///    defaults to `false` (warn-only) when unset or empty.
+#[must_use]
+pub fn resolve_fail_closed(lantern_env: Option<&str>, fail_closed_var: Option<&str>) -> bool {
+    let is_prod = lantern_env
+        .map(|e| matches!(e, "prod" | "production" | "staging"))
+        .unwrap_or(false);
+    if is_prod {
+        true
+    } else {
+        fail_closed_var
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
+}
+
+/// Derive the fail-closed policy from the current process environment.
+///
+/// Calls [`resolve_fail_closed`]. Emits a warning when prod ignores an
+/// explicit `LANTERN_EGRESS_FAIL_CLOSED=0`.
 fn egress_fail_closed_from_env() -> bool {
-    std::env::var("LANTERN_EGRESS_FAIL_CLOSED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    let env = std::env::var("LANTERN_ENV").ok();
+    let var = std::env::var("LANTERN_EGRESS_FAIL_CLOSED").ok();
+    let fail_closed = resolve_fail_closed(env.as_deref(), var.as_deref());
+    // Warn when prod overrides an operator's explicit-false attempt.
+    let explicit_false = var
+        .as_deref()
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    if fail_closed && explicit_false {
+        tracing::warn!(
+            lantern_env = %env.as_deref().unwrap_or(""),
+            "egress: LANTERN_EGRESS_FAIL_CLOSED=0 is IGNORED in production. \
+             Egress enforcement is always fail-closed when LANTERN_ENV is \
+             prod/production/staging."
+        );
+    }
+    fail_closed
 }
 
 /// Detect whether the in-VM iptables REDIRECT-to-proxy rule is present.
@@ -508,8 +551,9 @@ pub async fn enforcement_preflight(
             audit_preflight(manager, proxy_port, "fail_closed").await;
             anyhow::bail!(
                 "egress: refusing to start — egress rules declared but iptables REDIRECT \
-                 enforcement absent and LANTERN_EGRESS_FAIL_CLOSED is set. Install the REDIRECT \
-                 rule in the VM image (see egress.rs header)."
+                 enforcement absent. Fail-closed is active (prod env or \
+                 LANTERN_EGRESS_FAIL_CLOSED=1). Install the REDIRECT rule in the VM image \
+                 (see egress.rs header)."
             );
         }
     }
@@ -1469,6 +1513,41 @@ mod tests {
             preflight_decision(true, false, false),
             PreflightOutcome::WarnOnly
         );
+    }
+
+    // ---- resolve_fail_closed: prod env always fail-closed ----
+
+    #[test]
+    fn resolve_fail_closed_prod_env_always_true() {
+        // Production → always fail-closed regardless of explicit var.
+        for env in ["prod", "production", "staging"] {
+            assert!(resolve_fail_closed(Some(env), None), "env={env}");
+            assert!(
+                resolve_fail_closed(Some(env), Some("0")),
+                "env={env} explicit=0"
+            );
+            assert!(
+                resolve_fail_closed(Some(env), Some("false")),
+                "env={env} explicit=false"
+            );
+            assert!(
+                resolve_fail_closed(Some(env), Some("1")),
+                "env={env} explicit=1"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_fail_closed_dev_env_honours_explicit_var() {
+        // Dev (unset/other) → honour the explicit var; default false.
+        assert!(!resolve_fail_closed(None, None));
+        assert!(!resolve_fail_closed(Some(""), None));
+        assert!(!resolve_fail_closed(Some("dev"), None));
+        assert!(!resolve_fail_closed(None, Some("0")));
+        assert!(!resolve_fail_closed(None, Some("false")));
+        assert!(resolve_fail_closed(None, Some("1")));
+        assert!(resolve_fail_closed(None, Some("true")));
+        assert!(resolve_fail_closed(Some("dev"), Some("1")));
     }
 
     // ---- Bug 1 fix: resolve_and_check_ip returns validated SocketAddrs ----

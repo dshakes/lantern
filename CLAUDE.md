@@ -362,6 +362,18 @@ tenant. The fallback guarantee keeps the bridges safe at every step.
 | `GET`  | `/v1/settings/llm-providers`                 | List configured providers |
 | `POST` | `/v1/settings/llm-providers/{provider}/test` | Test provider connection  |
 
+### Internal (service-token auth — not JWT)
+
+| Method | Path                           | Description                                                                                                                                                                     |
+| ------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/internal/auth/introspect-key` | Validate a raw API key for the gateway. Body `{"key":"..."}`, header `x-lantern-service-token` (= `LANTERN_GRPC_SERVICE_TOKEN`). 200 `{tenantId, scopes}` or 401; 403 fail-closed in prod when the token env is unset. |
+
+The gateway's `X-API-Key` hot path calls this endpoint (60s in-memory cache
+keyed by SHA-256 of the key; fail-closed on any error). Gateway env:
+`LANTERN_CONTROL_PLANE_URL` (introspection base URL) +
+`LANTERN_GRPC_SERVICE_TOKEN` (same shared token as the gRPC trust boundary).
+Unset → API-key auth stays fail-closed-disabled; JWT auth is unaffected.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |
@@ -770,8 +782,12 @@ controls, all fail-safe:
   host/image to install that REDIRECT rule** (see the header comment in
   `services/harness/src/egress.rs`); env injection alone is bypassable by a
   client that ignores proxy vars. When rules are declared but REDIRECT is
-  absent: `LANTERN_EGRESS_FAIL_CLOSED=1` → harness refuses to start the
-  workload; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
+  absent: **prod (`LANTERN_ENV=prod/production/staging`) is ALWAYS
+  fail-closed** — the harness refuses to start the workload, and an explicit
+  `LANTERN_EGRESS_FAIL_CLOSED=0` is ignored with a WARN (prod never
+  fail-open). In dev, `LANTERN_EGRESS_FAIL_CLOSED=1` opts in to the same
+  refusal; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
+  Decision logic: `resolve_fail_closed` in `egress.rs`.
 - **Security audits are never silently dropped.** The harness wires the real
   `RuntimeHarness.Report` client-streaming RPC with reconnect. Security-critical
   audits (`secret_vend`, egress `deny`, `secret_access_denied`,
@@ -782,8 +798,9 @@ controls, all fail-safe:
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
 egress at spawn), `LANTERN_EGRESS_FAIL_CLOSED=1` (refuse to boot without
-iptables REDIRECT when egress declared), `LANTERN_NO_PROXY` (override the
-injected `NO_PROXY`; defaults keep loopback + `169.254.169.254` direct).
+iptables REDIRECT when egress declared — implied and non-overridable in
+prod), `LANTERN_NO_PROXY` (override the injected `NO_PROXY`; defaults keep
+loopback + `169.254.169.254` direct).
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -912,7 +929,11 @@ place; stale overrides yield to fresh iPhone signals, `presence.ts`),
 thread-peek (answer from the real chat.db / wa-history thread, `thread-peek.ts`),
 location privacy per contact (`disclosure.ts`), and cross-app self-context
 synthesis (`working-memory.ts`). State is `0600` JSONL under `~/.lantern/`;
-nothing touches the control plane. **Full reference + owner self-chat commands:
+nothing touches the control plane. The highest-PII stores (`episodes.jsonl`,
+`topic-index.jsonl`, `dislike-patterns.jsonl`) are additionally **AES-256-GCM
+encrypted at rest** via `bridge-core/src/secure-store.ts` (`enc1:` line
+envelope; key auto-created 0600 at `<stateDir>/state.key`; legacy plaintext
+lines still read and age out — no migration). **Full reference + owner self-chat commands:
 [`docs/personal/INTELLIGENCE-LAYER.md`](docs/personal/INTELLIGENCE-LAYER.md).**
 
 ### Security model

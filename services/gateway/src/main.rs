@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod error;
 mod grpc;
+mod introspect;
 mod middleware;
 mod otel;
 mod routes;
@@ -53,6 +54,16 @@ async fn main() -> anyhow::Result<()> {
     let listen_addr = config.listen_addr;
     let jwt_secret = config.jwt_secret.clone();
 
+    // API-key introspection against the control-plane. None (fail-closed) when
+    // LANTERN_CONTROL_PLANE_URL / LANTERN_GRPC_SERVICE_TOKEN are unset.
+    let introspector = introspect::ApiKeyIntrospector::from_env().map(std::sync::Arc::new);
+    if introspector.is_none() {
+        tracing::warn!(
+            "API-key auth disabled: set LANTERN_CONTROL_PLANE_URL and \
+             LANTERN_GRPC_SERVICE_TOKEN to enable X-API-Key introspection"
+        );
+    }
+
     // M2: restrict CORS to configured dashboard origins rather than Any.
     let cors = build_cors(&config.allowed_origins);
 
@@ -68,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(PropagateRequestIdLayer::new(x_request_id))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
-        .layer(AuthLayer::new(jwt_secret))
+        .layer(AuthLayer::new(jwt_secret, introspector))
         // OtelSpanLayer runs after auth so Claims are available; records
         // tenant_id on the TraceLayer span and extracts upstream W3C context.
         .layer(OtelSpanLayer)

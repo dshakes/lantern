@@ -26,18 +26,17 @@
 // fallback for richer extractions — called only when the rule
 // misses and the exchange is substantive (> 20 words combined).
 
-import { appendFile, chmod, readFile } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
 import { trimJsonlBytes } from "./jsonl-trim.js";
+import { loadOrCreateStateKey, appendSecureLine, readSecureLines } from "./secure-store.js";
 
-// 0600 — episodes embed inbound/outbound message text (PII). Match the
-// OCR-cache standard so a JSONL store of private messages isn't
-// world-readable.
-const FILE_MODE = 0o600;
+// episodes embed inbound/outbound message text (PII), so lines are
+// AES-256-GCM-encrypted at rest (0600) via secure-store. Old plaintext lines
+// still read (backward-compat) and age out of the trim-bounded file.
 
 export interface Episode {
   jid: string;
@@ -74,6 +73,7 @@ export class EpisodicMemory {
   private logger?: Logger;
   private cache: Map<string, Episode[]> | null = null;
   private cachedAt = 0;
+  private key: Buffer | null = null;
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
@@ -82,13 +82,17 @@ export class EpisodicMemory {
     try { mkdirSync(dirname(this.path), { recursive: true }); } catch {}
   }
 
+  // State key lives next to the state file (co-located per store dir).
+  private getKey(): Buffer {
+    if (!this.key) this.key = loadOrCreateStateKey(dirname(this.path));
+    return this.key;
+  }
+
   /** Append a new episode. */
   async record(ep: Omit<Episode, "ts">): Promise<Episode | null> {
     const row: Episode = { ...ep, ts: Date.now() };
     try {
-      const fresh = !existsSync(this.path);
-      await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
-      if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
+      await appendSecureLine(this.path, JSON.stringify(row), this.getKey());
       await trimJsonlBytes(this.path, MAX_FILE_BYTES); // keep the DISK bounded, not just the read
       this.cache = null;
       this.cachedAt = 0;
@@ -156,20 +160,11 @@ export class EpisodicMemory {
     this.cache = new Map();
     this.cachedAt = now;
 
-    if (!existsSync(this.path)) return;
-    let raw: string;
-    try { raw = await readFile(this.path, "utf8"); }
+    let lines: string[];
+    try { lines = await readSecureLines(this.path, this.getKey(), MAX_FILE_BYTES); }
     catch (err) { this.logger?.warn({ err }, "episodes read failed"); return; }
 
-    if (raw.length > MAX_FILE_BYTES) {
-      raw = raw.slice(-MAX_FILE_BYTES);
-      const firstNl = raw.indexOf("\n");
-      if (firstNl >= 0) raw = raw.slice(firstNl + 1);
-    }
-
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
+    for (const t of lines) {
       try {
         const ep = JSON.parse(t) as Episode;
         if (!ep.jid || !ep.date || !ep.outcome) continue;
