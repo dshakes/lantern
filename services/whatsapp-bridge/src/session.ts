@@ -52,6 +52,10 @@ import {
   formatSkillProposal, formatSkillList, formatSchedule, dueSkills, localDayKey, defaultSkillState,
   type SkillForgeState, type SkillSpec,
 } from "@lantern/bridge-core/skill-forge";
+import {
+  matchPlanRequest, buildPlanPrompt, parseActionPlan, formatPlanPreview,
+  parsePlanReply, dropStep, PLAN_TTL_MS, type ActionPlan,
+} from "@lantern/bridge-core/action-plan";
 import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@lantern/bridge-core/daily-digest";
 import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
@@ -1513,6 +1517,8 @@ export class WhatsAppSession {
   // Attention Engine: threads the owner skipped from the Brief.
   // ponytail: session-lifetime only — persist to stateDir if "skip forever" is asked for.
   private attentionSkipped: Set<string> = new Set();
+  // Multi-action plan staged for owner confirm ("do it"). 10-min TTL (PLAN_TTL_MS).
+  private pendingPlan: { plan: ActionPlan; at: number } | null = null;
   private static readonly INBOUND_HISTORY_PER_CONTACT = 12;
   // Per-contact "has this person been told they're talking to an assistant?"
   // We send the one-liner handoff disclosure exactly once per JID, the first
@@ -4645,6 +4651,7 @@ export class WhatsAppSession {
     if (self && !group && trimmed && this.maybeHandleRecap(jid, text)) return;
     if (self && !group && trimmed && this.maybeHandleScout(jid, text)) return;
     if (self && !group && trimmed && this.maybeHandleSkillForge(text)) return;
+    if (self && !group && trimmed && this.maybeHandlePlan(jid, text)) return;
 
     // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"
     // and numbered-action replies against the last Brief/plate/did shown.
@@ -5893,15 +5900,17 @@ export class WhatsAppSession {
       `  • Prefer "I don't see one on your calendar for the next N days" (scoped to what you checked) over a blanket "you have no appointment".`,
       `  • Document field VALUES (passport #, license #, policy/account #, expiry date, dollar amount, any ID) MUST be quoted VERBATIM from the personal-docs file content shown below. If that specific field is NOT present in the extracted text (scanned/image-only file, or it didn't OCR), say "i couldn't read that field off the file — want me to pull up the file itself?" and offer the attachment. NEVER compute, complete, guess, or recall a document field value from memory or the filename — a fabricated number/date is a critical failure.`,
       ``,
-      `# Voice`,
-      `  • Direct answer first, lowercase, conversational. 1-3 short lines max.`,
+      `# Voice (this is the MOST important rule — a long reply is a failure)`,
+      `  • Answer the actual question in ONE line. For an identification question ("what's this", "what is X") that's a single clause — e.g. "a login code from your login.gov sign-in." Stop there.`,
+      `  • Max 1-3 short lines, lowercase, conversational. Never a multi-paragraph explainer, never a bulleted breakdown unless the owner asked to see a list.`,
       `  • No "I'd be happy to" / "feel free" / "certainly" — sound like ${ownerName}.`,
-      `  • State the FACT when you have it.`,
+      `  • State the FACT when you have it. Don't echo the full code/message back — the owner can see it; just tell them what it IS.`,
       ``,
-      `# Agentic follow-ups (mandatory when applicable)`,
-      `  • Answer mentions an EXPIRY / DEADLINE → end with ONE short question offering a calendar reminder ~60 days before.`,
-      `  • Answer mentions a NUMBER worth remembering (passport #, license #) → offer to save as Note.`,
-      `  • Answer references a FILE → offer to attach it.`,
+      `# Follow-up offers — only when they genuinely help (NOT a checklist)`,
+      `  • Reason about whether a follow-up is actually useful before adding one. When in doubt, don't — just answer.`,
+      `  • NEVER offer to save/remind/store an EPHEMERAL or one-time value: OTP / 2FA / verification codes, login links, delivery codes. Saving a code that expires in 60 seconds is nonsense.`,
+      `  • A durable ID the owner will need later (passport #, policy #, account #) MAY warrant ONE "want this as a note?" — only if genuinely useful, never on every answer.`,
+      `  • A real expiry/deadline MAY warrant a reminder offer; a file the owner asked about MAY warrant an attach offer. One offer max, or none.`,
       ``,
       `# Actions — emit ONE marker per action on its own line at the END`,
       `  • Attach file:    [ATTACH:/absolute/path]  (COPY paths from read_personal_file — never invent)`,
@@ -9339,6 +9348,122 @@ export class WhatsAppSession {
   }
 
   // ── EVENT SCOUT (mirrors services/imessage-bridge/src/session.ts) ──
+  // ── MULTI-ACTION PLAN ("tell X …, snooze Y, add Z") ────────────────
+  /** Owner self-chat hook. Detects a multi-action request or a reply to a
+   *  staged plan; returns true when it owns the message. LLM decomposes; the
+   *  owner confirms ONCE; each step runs through the existing executors.
+   *  Placed AFTER the single-action handlers and gated on the conservative
+   *  matchPlanRequest heuristic so a genuine single command never diverts. */
+  private maybeHandlePlan(jid: string, text: string): boolean {
+    const t = text.trim();
+    // 1. Reply to a staged, unexpired plan: confirm / drop-a-step / cancel.
+    if (this.pendingPlan && Date.now() - this.pendingPlan.at < PLAN_TTL_MS) {
+      const reply = parsePlanReply(t);
+      if (reply && "cancel" in reply) {
+        this.pendingPlan = null;
+        void this.confirmToSelf("🗂 scrapped.");
+        return true;
+      }
+      if (reply && "drop" in reply) {
+        const next = dropStep(this.pendingPlan.plan, reply.drop);
+        if (next.steps.length === 0) {
+          this.pendingPlan = null;
+          void this.confirmToSelf("🗂 nothing left — scrapped.");
+        } else {
+          this.pendingPlan = { plan: next, at: Date.now() };
+          void this.confirmToSelf(formatPlanPreview(next));
+        }
+        return true;
+      }
+      if (reply && "confirm" in reply) {
+        const plan = this.pendingPlan.plan;
+        this.pendingPlan = null;
+        void this.executePlan(jid, plan).catch((err) => this.logger.warn({ err }, "plan execute failed"));
+        return true;
+      }
+      // Not a plan-reply while one is staged — fall through to normal handling.
+    } else if (this.pendingPlan) {
+      this.pendingPlan = null; // expired
+    }
+    // 2. Fresh multi-action request → attempt an LLM plan (conservative gate).
+    if (!matchPlanRequest(t)) return false;
+    void this.runPlanDecompose(jid, t).catch((err) => this.logger.warn({ err }, "plan decompose failed"));
+    return true;
+  }
+
+  /** LLM decomposition of a bundled request → staged plan + one preview. */
+  private async runPlanDecompose(_jid: string, request: string): Promise<void> {
+    const prompt = buildPlanPrompt(request, {
+      now: new Date(),
+      timezone: process.env.LANTERN_OWNER_TIMEZONE,
+      contacts: [...new Set(this.contactNames.values())].filter(Boolean).slice(0, 40),
+    });
+    let raw: string | null = null;
+    try {
+      // Isolated session key — never a contact's live thread.
+      raw = await this.agent.respondTo("plan::decompose", prompt, undefined, { timeoutMs: 60000 });
+    } catch (err) {
+      this.logger.warn({ err }, "plan decompose LLM failed");
+    }
+    const plan = raw ? parseActionPlan(raw) : null;
+    if (!plan) {
+      void this.confirmToSelf("🗂 couldn't turn that into a plan — try one action at a time.");
+      return;
+    }
+    this.pendingPlan = { plan, at: Date.now() };
+    void this.confirmToSelf(formatPlanPreview(plan));
+  }
+
+  /** Execute a confirmed plan through existing executors, best-effort per step. */
+  private async executePlan(_jid: string, plan: ActionPlan): Promise<void> {
+    const done: string[] = [];
+    const skipped: string[] = [];
+    let staged = false;
+    for (const s of plan.steps) {
+      const label = s.summary ?? s.kind;
+      try {
+        if (s.kind === "calendar") {
+          if (!this.macActions) { skipped.push(`${s.title} (no Mac)`); continue; }
+          const res = await this.macActions.createCalendarEvent({ title: s.title, start: s.start, end: s.end, notes: s.notes });
+          if (res.ok) done.push(`added ${s.title}`);
+          else skipped.push(`${s.title} (${res.reason})`);
+        } else if (s.kind === "note") {
+          if (!this.macActions) { skipped.push(`${s.title} (no Mac)`); continue; }
+          const res = await this.macActions.createNote({ title: s.title, body: s.body ?? "" });
+          if (res.ok) done.push(`noted ${s.title}`);
+          else skipped.push(`${s.title} (${res.reason})`);
+        } else if (s.kind === "snooze") {
+          this.attentionSkipped.add(s.target.toLowerCase());
+          done.push(`snoozed ${s.target}`);
+        } else if (s.kind === "message") {
+          const target = await this.resolveCallTarget(s.contact);
+          if (!target) { skipped.push(`text ${s.contact} (no match)`); continue; }
+          const targetJid = target.phone.replace(/\D/g, "") + "@s.whatsapp.net";
+          const drafted = (await this.agent
+            .respondTo(`plan::msg::${targetJid}`,
+              `Write a short message in the owner's voice to ${target.name ?? s.contact}. The owner wants to say: "${s.body}". Output only the message text — no preamble, no quotes.`,
+              undefined, { timeoutMs: 60000 })
+            .catch(() => null))?.trim() || s.body;
+          // Park in the drafts rail under the same attn: key the Brief uses.
+          this.pendingDraftEdits.set(`attn:${targetJid}`, {
+            targetJid, displayName: target.name ?? s.contact,
+            draftText: drafted, inboundText: "", issuedAt: Date.now(),
+          });
+          staged = true;
+          done.push(`drafted to ${target.name ?? s.contact}`);
+        }
+      } catch (err) {
+        this.logger.warn({ err, kind: s.kind }, "plan step failed");
+        skipped.push(`${label} (error)`);
+      }
+    }
+    const parts: string[] = [];
+    if (done.length) parts.push(`done: ${done.join(", ")}`);
+    if (skipped.length) parts.push(`skipped — ${skipped.join("; ")}`);
+    const tail = staged ? "\ntap the draft in your Brief to send." : "";
+    void this.confirmToSelf(`🗂 ${parts.join(" · ") || "nothing to do"}${tail}`);
+  }
+
   private ensureScoutState(): EventScoutState {
     if (this.scoutState) return this.scoutState;
     this.scoutPath = join(this.stateDir, "event-scout.json");
