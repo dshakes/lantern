@@ -490,7 +490,8 @@ When `agents.workflow` JSONB contains a graph saved by the visual editor,
 the inline run executor dispatches to the workflow interpreter at
 `services/control-plane/internal/workflow/interpreter.go`. Supported node
 types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
-`end`. Loop / subagent are no-op pass-throughs (future wave). Every node
+`end`. `loop` (executeLoop) and `subagent` (depth-guarded synchronous child
+runs via `Deps.RunSubAgent`, wired in `rest.go`) are both implemented. Every node
 emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
@@ -602,6 +603,10 @@ returning placeholder strings:
   a typed tool registry), so `exec_tool` validates the request and returns
   `TOOL_STATUS_UNAVAILABLE` — never a fabricated success — until the in-VM
   runner lands.
+- **`child_run` steps** fail with the typed `ErrChildRunUnavailable` — the
+  engine has no control-plane run client yet, so it cannot dispatch a child
+  agent run. (Regression-guarded: this step used to journal a fake
+  `child_started`/`child_completed` pair and return a placeholder output.)
 
 ### Human takeover (W11a)
 
