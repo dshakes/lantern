@@ -36,8 +36,16 @@ describe("secure-store crypto", () => {
 
   test("tamper → null", () => {
     const env = encryptLine("secret", key);
-    // Flip a char in the ciphertext body.
-    const tampered = env.slice(0, -3) + (env.endsWith("A") ? "B" : "A") + env.slice(-2);
+    // Flip a byte in the ciphertext at the decoded level. A char-substitution
+    // in the base64 text is unreliable: it can be a no-op (the char already
+    // equals its replacement) or a base64 alias near padding that decodes to
+    // the same bytes — both leave the ciphertext intact and decryption
+    // succeeds. Mutating the decoded buffer always breaks the GCM tag.
+    const [prefix, ivB64, ctB64] = env.split(":");
+    const ct = Buffer.from(ctB64, "base64");
+    ct[0] ^= 0xff;
+    const tampered = `${prefix}:${ivB64}:${ct.toString("base64")}`;
+    assert.notEqual(tampered, env, "tamper must actually change the envelope");
     assert.equal(decryptLine(tampered, key), null);
   });
 
