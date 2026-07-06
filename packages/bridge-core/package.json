@@ -83,6 +83,7 @@
     "./identity": "./src/identity.ts",
     "./entity-binding": "./src/entity-binding.ts",
     "./thread-peek": "./src/thread-peek.ts",
+    "./time-travel": "./src/time-travel.ts",
     "./disclosure": "./src/disclosure.ts",
     "./known-people": "./src/known-people.ts",
     "./gender": "./src/gender.ts"

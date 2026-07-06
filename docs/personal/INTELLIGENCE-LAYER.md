@@ -42,6 +42,17 @@ killswitch, mute, and quiet hours like every loop. `skills` lists them,
 shell, no filesystem — the assistant gets more capable without getting more
 dangerous.
 
+### Time-travel recap (`time-travel.ts`)
+
+Ask `what did I miss` / `what happened while I was out` / `catch me up` and the
+assistant narrates — not lists — what landed since you were last around:
+contacts waiting on you plus the actions it took on your behalf (skills that
+fired, drafts, bookings). It leads with the 1-2 things that actually need you
+(money, someone waiting, anything time-sensitive) and compresses the rest.
+Optional window: `what did I miss in the last 3 hours` / `today` / `overnight`
+(default: last 6h). The LLM writes it; a deterministic fallback still tells the
+truth if the model call fails. Owner self-chat only, both channels.
+
 ### Truthful presence (`presence.ts`)
 
 When a contact asks where you are, the reply is grounded in a fused snapshot
