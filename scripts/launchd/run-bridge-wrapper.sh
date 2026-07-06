@@ -19,6 +19,17 @@ NODE_DIR="$(dirname "$(ls -t "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null |
 
 cd "$BRIDGE_DIR" || { echo "[$(date +%T)] bridge dir missing: $BRIDGE_DIR" >&2; exit 1; }
 
+# Optional env overrides. launchd only reloads plist EnvironmentVariables on a
+# full bootout/bootstrap (which has failed and left the bridge down before);
+# vars in ~/.lantern/bridge.env take effect on a plain `kickstart -k` because
+# this wrapper runs at every (re)start. Vars here override plist env.
+if [ -f "$HOME/.lantern/bridge.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.lantern/bridge.env"
+  set +a
+fi
+
 # Self-heal a missing/broken tsx runner before boot.
 if [ ! -x node_modules/.bin/tsx ] || [ ! -f node_modules/tsx/dist/cli.mjs ]; then
   echo "[$(date +%T)] bridge tsx missing/broken in $BRIDGE_DIR — self-healing via npm install" >&2

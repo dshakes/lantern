@@ -64,6 +64,7 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 
 import { IMessageSession } from "./session.js";
+import { searchMailIndex } from "./mail-reader.js";
 import { initAuth } from "@lantern/bridge-core/auth";
 import { buildLabel } from "@lantern/bridge-core/build-info";
 
@@ -319,6 +320,36 @@ app.post("/session/:tenantId/personal-docs/search", async (req, res) => {
     logger.warn({ err, tenantId: req.params.tenantId }, "personal-docs/search failed");
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// Local Apple Mail envelope-index search — the `search_email` tool.
+// Sender/subject/date over the owner's ENTIRE synced mailbox (Gmail
+// included), no OAuth to expire. Same owner-only session gating as
+// personal-docs: the control-plane only surfaces the tool on owner
+// self-chat sessions.
+app.post("/session/:tenantId/mail/search", (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { query, from, since, until, limit } = req.body as {
+    query?: unknown; from?: unknown; since?: unknown; until?: unknown; limit?: unknown;
+  };
+  if (typeof query !== "string" || query.trim().length === 0) {
+    res.status(400).json({ error: "'query' required (non-empty string)" });
+    return;
+  }
+  if (query.length > 500) { res.status(400).json({ error: "'query' must be ≤ 500 chars" }); return; }
+  const outcome = searchMailIndex(
+    {
+      query,
+      from: typeof from === "string" ? from : undefined,
+      since: typeof since === "string" ? since : undefined,
+      until: typeof until === "string" ? until : undefined,
+      limit: typeof limit === "number" ? limit : undefined,
+    },
+    logger,
+  );
+  if (!outcome.ok) { res.status(422).json({ error: outcome.error }); return; }
+  res.json({ query, count: outcome.hits.length, results: outcome.hits });
 });
 
 app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
