@@ -46,7 +46,7 @@ import {
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
-import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
+import { reactionToAction, dispatchReaction, ReactableLog, strikeBriefLines, buildAttentionSnapshot, type AttentionSnapshot } from "@lantern/bridge-core/reaction-commands";
 import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@lantern/bridge-core/daily-digest";
 import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
@@ -1461,6 +1461,22 @@ export class WhatsAppSession {
   // confirmToSelf() call to pair the sent id with the inbound text +
   // system hint (so 🔁 can later look it up).
   private lastSelfSentMsgId: string = "";
+  // Attention Engine one-tap layer. reactable maps a sent Brief's message id →
+  // its items so a reaction resolves to a one-tap action on the top item.
+  private reactable = new ReactableLog();
+  // Full key of the most-recent sendSelf() send — needed to edit (living Brief).
+  private lastSelfSentKey?: import("baileys").proto.IMessageKey;
+  // The last Brief we sent, kept for the living-Brief in-place edit (~15-min
+  // WhatsApp edit window). resolved holds the item numbers already struck.
+  private lastBrief?: {
+    key: import("baileys").proto.IMessageKey;
+    text: string;
+    items: BriefItem[];
+    sentAt: number;
+    resolved: Set<number>;
+  };
+  // Last built Brief flattened for GET /session/:tenantId/attention.
+  private lastAttentionSnapshot?: AttentionSnapshot;
   private gcTimer: NodeJS.Timeout | null = null;
   // Ticker that looks for pauses near expiry and buffers warnings; the
   // flush timer is armed lazily when the first warning lands so an empty
@@ -2670,6 +2686,21 @@ export class WhatsAppSession {
                 );
               }
             }
+            // Brief reaction (PRECEDENCE): if the reacted-to message is a
+            // tracked Brief, brief semantics win over the legacy EMOJI_MAP
+            // (❤️ on a Brief = confirm the top item, not mark-vip). Only on a
+            // miss do we fall through to the legacy dispatchReaction below.
+            {
+              const briefTarget = reactionMsg.key?.id || undefined;
+              const hit = briefTarget ? this.reactable.resolve(briefTarget, emoji) : null;
+              if (hit) {
+                this.logger.info({ emoji, ref: hit.item.ref, action: hit.action }, "brief reaction");
+                void this.executeCenterAction(from, { item: hit.item, action: hit.action }).catch((err) =>
+                  this.logger.warn({ err }, "brief reaction execute failed"),
+                );
+                continue;
+              }
+            }
             const action = reactionToAction(emoji);
             if (action) {
               const targetKeyId = reactionMsg.key?.id || undefined;
@@ -3348,6 +3379,9 @@ export class WhatsAppSession {
     }
     const sent = await this.socket.sendMessage(own, { text });
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // ponytail: owner briefs are serial, so a single last-key field is enough
+    // for handleCenterCommand to remember/edit the Brief it just sent.
+    this.lastSelfSentKey = sent?.key ?? undefined;
     // If this delivery (e.g. a morning brief or concierge summary) ends in
     // a "want me to X?" offer, arm it so the owner's "yes" executes the
     // follow-up instead of falling through to generic chatter.
@@ -9534,6 +9568,7 @@ export class WhatsAppSession {
         await this.confirmToSelf(saved
           ? `🔖 saved to readlist — "${item.label.slice(0, 50)}". pull "readlist" anytime.`
           : `⚠️ couldn't save that — try again.`);
+        if (saved) this.reflectResolved(item, action);
         return;
       }
       if (item.ref === "commitment") {
@@ -9617,10 +9652,57 @@ export class WhatsAppSession {
           await this.confirmToSelf("⚠️ that action can't be undone (no undo cached).");
         }
       }
+      // Living Brief: strike this item in the original Brief message (best-effort).
+      this.reflectResolved(item, action);
     } catch (err) {
       this.logger.warn({ err, action: action.action, ref: item.ref }, "wa center action execute failed");
       await this.confirmToSelf("⚠️ something went wrong — try again.");
     }
+  }
+
+  /**
+   * Living Brief: when an item that belongs to the last Brief is resolved, edit
+   * the original Brief message in place with that line struck through. WhatsApp
+   * only — best-effort, never throws, and only inside the ~15-min edit window.
+   *
+   * The (ref, action) predicate mirrors executeCenterAction's terminal branches
+   * — the combos that actually resolve an item (vs. show a menu or peek). A
+   * drifted branch only mis-strikes the Brief; it never breaks the action.
+   */
+  private reflectResolved(item: BriefItem, action: ParsedAction): void {
+    const a = action.action;
+    const did =
+      a === "save" ||
+      (item.ref === "commitment" && (a === "done" || a === "snooze" || a === "skip")) ||
+      (item.ref === "draft" && (a === "send" || a === "act" || a === "edit" || a === "custom" || a === "skip")) ||
+      (item.ref === "thread" && (a === "draft" || a === "act" || a === "custom" || a === "skip"));
+    if (!did) return;
+    const lb = this.lastBrief;
+    if (!lb?.key?.id || !lb.key.remoteJid) return;
+    if (Date.now() - lb.sentAt > 14 * 60_000) return; // WhatsApp edit window ~15 min
+    if (!lb.items.some((i) => i.n === item.n)) return; // not from the last Brief
+    if (lb.resolved.has(item.n)) return; // already struck
+    lb.resolved.add(item.n);
+    const struck = strikeBriefLines(lb.text, lb.resolved);
+    void this.socket
+      ?.sendMessage(lb.key.remoteJid, { text: struck, edit: lb.key })
+      .catch((err) => this.logger.debug({ err }, "living brief edit failed"));
+  }
+
+  /** GET /session/:tenantId/attention payload. Empty when no Brief built yet. */
+  getAttentionSnapshot(): {
+    generatedAt: number | null;
+    channel: "whatsapp";
+    items: AttentionSnapshot["items"];
+    counts: AttentionSnapshot["counts"];
+  } {
+    const s = this.lastAttentionSnapshot;
+    return {
+      generatedAt: s?.generatedAt ?? null,
+      channel: "whatsapp",
+      items: s?.items ?? [],
+      counts: s?.counts ?? { waiting: 0, drafts: 0, commitments: 0 },
+    };
   }
 
   /**
@@ -9655,6 +9737,7 @@ export class WhatsAppSession {
         await this.rankAttention(input);
         const view = buildBrief(input);
         text = view.text; items = view.items;
+        this.lastAttentionSnapshot = buildAttentionSnapshot(items, input.whys, Date.now());
       } else if (cmd === "plate") {
         const view = buildPlate(allOpen, drafts);
         text = view.text; items = view.items;
@@ -9751,6 +9834,16 @@ export class WhatsAppSession {
 
       setCenterItems(this.centerState, jid, items);
       await this.sendSelf(text);
+      // Remember the sent message so a reaction on it resolves to a one-tap
+      // action on the top item. For the Brief proper, also keep it for the
+      // living-Brief in-place edit.
+      const sentKey = this.lastSelfSentKey;
+      if (sentKey?.id && items.length) {
+        this.reactable.remember(sentKey.id, items);
+        if (cmd === "brief") {
+          this.lastBrief = { key: sentKey, text, items, sentAt: Date.now(), resolved: new Set() };
+        }
+      }
     } catch (err) {
       this.logger.warn({ err }, "wa center command failed");
       await this.confirmToSelf("⚠️ couldn't load your brief right now — try again.");

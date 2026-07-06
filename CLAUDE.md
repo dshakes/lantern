@@ -1129,6 +1129,23 @@ parse / candidate ids) + wiring in both bridges' `handleCenterCommand`:
   (`attn:<handle>` key) so the standard drafts rail (send/edit) applies;
   `<n> review` peeks the last inbound; `<n> skip` suppresses the thread for
   the session (`attentionSkipped`).
+- **Reactions as an API (one-tap layer).** A reaction/tapback on a
+  remembered center-view message acts on its TOP item — 👍/❤️ confirm
+  (draft→send, commitment→done, thread→draft), 👎/❌ skip, ⏰ snooze,
+  ❓ review. `ReactableLog` + `mapBriefReactionToAction` +
+  `tapbackToEmoji` live in `reaction-commands.ts`; Brief semantics WIN over
+  the legacy emoji map for remembered messages. iMessage captures sent-Brief
+  GUIDs via the `pendingBriefEcho` → poll-harvest pairing (mirrors
+  queueReplyMeta); WA uses the sendMessage key directly. `auto_action` undo
+  is never tap-triggered (destructive → needs a typed word).
+- **Living Brief (WA only).** Resolving an item within 14 min of a Brief
+  send edits the original WhatsApp message in place, striking through the
+  done line (`strikeBriefLines`). Best-effort; iMessage has no edit API.
+- **Dashboard depth view.** Both bridges expose
+  `GET /session/:tenantId/attention` (last Brief flattened:
+  `{generatedAt, channel, items[{n,ref,id,icon,label,why?,defaultAction}],
+  counts}`); the `/inbox` page's **Personal tab** merges both channels
+  (read-only + copy-command affordances — chat is the acting surface).
 
 ### Event scout (proactive family-event discovery)
 
