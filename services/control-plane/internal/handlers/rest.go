@@ -134,9 +134,15 @@ func (h *RESTHandler) logger() *zap.Logger {
 // a context that carries the tenant_id in gRPC metadata so the existing gRPC
 // handlers can read it via middleware.MustTenantID.
 func (h *RESTHandler) contextWithTenant(r *http.Request) (context.Context, error) {
-	claims, err := h.auth.validateRequest(r)
-	if err != nil {
-		return nil, err
+	// Reuse claims already validated by WithScope to avoid a second token
+	// validation (and DB hit for API keys).
+	claims := claimsFromCtx(r.Context())
+	if claims == nil {
+		var err error
+		claims, err = h.auth.validateRequest(r)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The gRPC handlers extract tenant_id from incoming gRPC metadata via

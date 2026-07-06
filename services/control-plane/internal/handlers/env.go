@@ -25,6 +25,16 @@ func IsProd() bool {
 // package (receipts, auth, cors, etc.) — keeps call sites concise.
 func isProd() bool { return IsProd() }
 
+// authzEnforce reports whether LANTERN_AUTHZ_ENFORCE is active.
+//
+// When off (default): WithScope logs a debug message but always allows the
+// request — zero behavior change so the flag can be merged safely. When on:
+// missing scope returns HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE.
+func authzEnforce() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_AUTHZ_ENFORCE")))
+	return v == "1" || v == "true" || v == "on"
+}
+
 // devReceiptSecret is the single shared default used by both receipts.go and
 // marketplace_invoke.go when LANTERN_RECEIPT_SECRET is unset in dev. A single
 // constant prevents the two callers from drifting to different fallback strings
