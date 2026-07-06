@@ -3087,6 +3087,10 @@ export class IMessageSession {
   }
 
   stop(): void {
+    // Flush the send-dedup state FIRST so a launchd/SIGTERM restart doesn't
+    // lose the last few seconds of sends (whose chat.db echoes would otherwise
+    // re-ingest as fresh owner queries on the next boot).
+    this.flushBridgeSendsNow();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -4962,16 +4966,34 @@ export class IMessageSession {
     if (this.bridgeSendsPersistTimer) return;
     this.bridgeSendsPersistTimer = setTimeout(() => {
       this.bridgeSendsPersistTimer = null;
-      if (!this.bridgeSendsDirty) return;
-      try {
-        // sent.json holds reply text = PII at rest. Owner-only (0600).
-        writeFileSync(this.bridgeSendsPersistPath, JSON.stringify({ sends: this.recentBridgeSends }), { mode: 0o600 });
-        try { chmodSync(this.bridgeSendsPersistPath, 0o600); } catch {}
-        this.bridgeSendsDirty = false;
-      } catch (err) {
-        this.logger.warn({ err }, "failed to persist bridge-send dedup");
-      }
+      this.writeBridgeSends();
     }, IMessageSession.BRIDGE_SENDS_PERSIST_DEBOUNCE_MS);
+  }
+
+  // Synchronous write of the dedup state. Shared by the debounced timer and the
+  // shutdown flush.
+  private writeBridgeSends(): void {
+    if (!this.bridgeSendsDirty || !this.bridgeSendsPersistPath) return;
+    try {
+      // sent.json holds reply text = PII at rest. Owner-only (0600).
+      writeFileSync(this.bridgeSendsPersistPath, JSON.stringify({ sends: this.recentBridgeSends }), { mode: 0o600 });
+      try { chmodSync(this.bridgeSendsPersistPath, 0o600); } catch {}
+      this.bridgeSendsDirty = false;
+    } catch (err) {
+      this.logger.warn({ err }, "failed to persist bridge-send dedup");
+    }
+  }
+
+  // Flush pending dedup state to disk NOW (called from stop()). Without this a
+  // SIGTERM/launchd restart drops the last <=5s of sends (the debounce window),
+  // so their chat.db echoes re-ingest as fresh owner queries on the next boot —
+  // the bot re-answers old messages. Cancels the pending timer first.
+  flushBridgeSendsNow(): void {
+    if (this.bridgeSendsPersistTimer) {
+      clearTimeout(this.bridgeSendsPersistTimer);
+      this.bridgeSendsPersistTimer = null;
+    }
+    this.writeBridgeSends();
   }
 
   // Load the reply-meta sidecar into bridgeReplyMeta on startup so a 👎
