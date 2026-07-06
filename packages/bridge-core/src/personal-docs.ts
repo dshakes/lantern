@@ -19,7 +19,7 @@
 // box; other types return a "binary — won't preview" placeholder.
 
 import { spawn } from "child_process";
-import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from "fs";
 import { resolve, dirname, basename, extname, join, sep } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
@@ -76,6 +76,10 @@ export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig 
     : [
         join(home, "Documents"),
         join(home, "Desktop"),
+        // Downloads is where real docs land and stay (a whole-Mac sweep
+        // found Personal_IDs/, Medical/, Tax_Documents/ living here) —
+        // omitting it made the assistant blind to them.
+        join(home, "Downloads"),
         join(home, "Library/Mobile Documents/com~apple~CloudDocs"),
       ];
   mkdirSync(stateDir, { recursive: true });
@@ -301,13 +305,22 @@ export class PersonalDocs {
     // tight cap (maxResults) caused find's length-sorted output to
     // be truncated to folders + short filenames, hiding the actual
     // owner's passport (which has a long filename).
-    const POOL_CAP = Math.max(60, this.cfg.maxResults * 6);
+    // Runaway guard only — fairness comes from PER_SOURCE below. The
+    // previous tight cap (60) let the FIRST root's hits fill the whole
+    // pool: a query like "Manasa green card" saturated it with
+    // ~/Documents W2s before the iCloud root (where the actual green
+    // card lives) was even searched.
+    const POOL_CAP = Math.max(600, this.cfg.maxResults * 6);
+    // Max entries any single (root × phrase) source may add to the pool.
+    const PER_SOURCE = 30;
     // Per-phrase per-root: pull a lot so the ranker has a fair pool.
     const perPhrasePerRoot = 80;
 
     const seenPaths = new Set<string>();
-    const ingest = (paths: string[], includeFolders: boolean) => {
+    const ingest = (paths: string[], includeFolders: boolean, maxAdd = Infinity) => {
+      let added = 0;
       for (const p of paths) {
+        if (added >= maxAdd) break;
         if (seenPaths.has(p)) continue;
         if (!this.isAllowedPath(p)) continue;
         if (!existsSync(p)) continue;
@@ -315,6 +328,7 @@ export class PersonalDocs {
           const st = statSync(p);
           if (st.isDirectory() && !includeFolders) continue;
           seenPaths.add(p);
+          added++;
           const ext = st.isDirectory() ? "" : extname(p).toLowerCase();
           results.push({
             path: p,
@@ -342,19 +356,38 @@ export class PersonalDocs {
         // We deliberately overshoot here — ingest dedupes by path —
         // because the final ranker re-sorts the union by relevance
         // score, not by per-source order.
+        const sourceStart = results.length;
         try {
           const paths = await this.mdfind(phrase, root, perPhrasePerRoot);
-          ingest(paths, true);
+          ingest(paths, true, PER_SOURCE - (results.length - sourceStart));
         } catch (err) {
           this.logger.warn({ err, root, phrase }, "mdfind failed");
         }
         try {
           const paths = await this.findByName(phrase, root, perPhrasePerRoot);
-          ingest(paths, true);
+          ingest(paths, true, PER_SOURCE - (results.length - sourceStart));
         } catch (err) {
           this.logger.warn({ err, root, phrase }, "find failed");
         }
         if (results.length >= POOL_CAP) break;
+      }
+    }
+
+    // Descend one level into folder hits whose NAME matched a phrase.
+    // The target file often has an unrelated filename inside an aptly
+    // named folder ("Green Card/SeshamManasa_LatestGC.pdf" for query
+    // "green card") — without this the folder is a dead-end breadcrumb
+    // and the file itself never enters the pool.
+    for (const dir of [...results]) {
+      if (results.length >= POOL_CAP) break;
+      if (dir.ext !== "") continue; // folders are ingested with ext ""
+      const dirBase = basename(dir.path).toLowerCase();
+      if (!phrases.some((p) => dirBase.includes(p.toLowerCase()))) continue;
+      try {
+        const children = readdirSync(dir.path).slice(0, 40).map((c) => join(dir.path, c));
+        ingest(children, false);
+      } catch (err) {
+        this.logger.debug({ err, dir: dir.path }, "folder descend failed");
       }
     }
 
@@ -383,8 +416,18 @@ export class PersonalDocs {
       let s = 0;
       const baseLower = r.name.toLowerCase();
       const pathLower = r.path.toLowerCase();
+      // Cumulative across phrases: a file matching BOTH "manasa" and
+      // "green card" must beat one matching only "manasa" (the W2-vs-
+      // green-card real-world miss). Folder-name (path) match scores
+      // slightly below a basename match so exact filenames still win.
+      // Folders are breadcrumbs, not answers: their own name scores at
+      // the path rate too, so a file inside "Green Card/" always beats
+      // the bare folder (was a platform-lottery tie otherwise).
+      const nameRate = r.ext === "" ? 25 : 30;
       for (const phrase of phrases) {
-        if (baseLower.includes(phrase.toLowerCase())) { s += 30; break; }
+        const p = phrase.toLowerCase();
+        if (baseLower.includes(p)) s += nameRate;
+        else if (pathLower.includes(p)) s += 25;
       }
       // Person-targeting boost. If the query said "Sam's …" we
       // want Sam's files even though the user (Ada) typed.

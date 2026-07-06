@@ -66,6 +66,7 @@
     "./emotional-register": "./src/emotional-register.ts",
     "./life-events-emit": "./src/life-events-emit.ts",
     "./mac-usage": "./src/mac-usage.ts",
+    "./mail-index": "./src/mail-index.ts",
     "./device-signals": "./src/device-signals.ts",
     "./commitments-edge": "./src/commitments-edge.ts",
     "./proactive-loops": "./src/proactive-loops.ts",
