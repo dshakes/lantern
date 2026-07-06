@@ -420,9 +420,13 @@ export class PersonalDocs {
       // "green card" must beat one matching only "manasa" (the W2-vs-
       // green-card real-world miss). Folder-name (path) match scores
       // slightly below a basename match so exact filenames still win.
+      // Folders are breadcrumbs, not answers: their own name scores at
+      // the path rate too, so a file inside "Green Card/" always beats
+      // the bare folder (was a platform-lottery tie otherwise).
+      const nameRate = r.ext === "" ? 25 : 30;
       for (const phrase of phrases) {
         const p = phrase.toLowerCase();
-        if (baseLower.includes(p)) s += 30;
+        if (baseLower.includes(p)) s += nameRate;
         else if (pathLower.includes(p)) s += 25;
       }
       // Person-targeting boost. If the query said "Sam's …" we
