@@ -447,6 +447,17 @@ directory lists only `is_public` agents.
 | `POST`   | `/v1/eval-baselines`                    | Pin a run as the baseline for `(agent, branch)`                                |
 | `GET`    | `/v1/eval-baselines?agentName=&branch=` | Get baseline                                                                   |
 
+#### Eval observability (read-only, over existing `eval_runs`)
+
+No new tables — reads `eval_runs.cases_result` history. `internal/handlers/eval_observability.go`; pure `clusterFailures`/`computeTrend`/`clampLimit` are unit-tested.
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET`  | `/v1/eval-observability/failures?agentName=&branch=&limit=` | Failing cases grouped across recent runs, worst-first: `{clusters:[{case, failures, seen, failRate, sampleError, expected, actual, firstSeen, lastSeen}], runsScanned}` (limit = runs scanned, default 50 cap 200) |
+| `GET`  | `/v1/eval-observability/trends?agentName=&branch=&limit=`   | Score/pass-rate/cost time series oldest-first for charting: `{points:[{runId, createdAt, score, passRate, passed, costUsd, agentVersion, commitSha}], latestVsMean, regressing}` (regressing = latest score below the mean of priors) |
+
+The dashboard `/evaluations` page renders these (quality-trend sparkline + top-failing-cases). Tenant-scoped via `WithTenant`.
+
 ### A/B experiments
 
 | Method | Path                            | Description                                                                     |

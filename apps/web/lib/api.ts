@@ -2139,11 +2139,82 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       return [];
     }
   }
+
+  // ---- Eval observability ---------------------------------------------------
+
+  async getEvalFailures(opts?: {
+    agentName?: string;
+    branch?: string;
+    limit?: number;
+  }): Promise<EvalFailures> {
+    const qs = new URLSearchParams();
+    if (opts?.agentName) qs.set("agentName", opts.agentName);
+    if (opts?.branch) qs.set("branch", opts.branch);
+    if (opts?.limit != null) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    try {
+      return await this.request<EvalFailures>(`/v1/eval-observability/failures${suffix}`);
+    } catch {
+      return { clusters: [], runsScanned: 0 };
+    }
+  }
+
+  async getEvalTrends(opts?: {
+    agentName?: string;
+    branch?: string;
+    limit?: number;
+  }): Promise<EvalTrends> {
+    const qs = new URLSearchParams();
+    if (opts?.agentName) qs.set("agentName", opts.agentName);
+    if (opts?.branch) qs.set("branch", opts.branch);
+    if (opts?.limit != null) qs.set("limit", String(opts.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    try {
+      return await this.request<EvalTrends>(`/v1/eval-observability/trends${suffix}`);
+    } catch {
+      return { points: [], latestVsMean: 0, regressing: false };
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Types for the new backends
 // ---------------------------------------------------------------------------
+
+// Eval observability — failure clusters + quality trend
+export interface FailureCluster {
+  case: string;
+  failures: number;
+  seen: number;
+  failRate: number;
+  sampleError: string;
+  expected: string;
+  actual: string;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface EvalFailures {
+  clusters: FailureCluster[];
+  runsScanned: number;
+}
+
+export interface TrendPoint {
+  runId: string;
+  createdAt: string;
+  score: number;
+  passRate: number;
+  passed: boolean;
+  costUsd: number;
+  agentVersion: string;
+  commitSha: string;
+}
+
+export interface EvalTrends {
+  points: TrendPoint[];
+  latestVsMean: number;
+  regressing: boolean;
+}
 
 export interface MarketplaceAgent {
   id: string;
