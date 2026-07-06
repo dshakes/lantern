@@ -164,6 +164,17 @@ app.get("/session/:tenantId/bot", (req, res) => {
   res.json(s.botState());
 });
 
+// GET /session/:tenantId/attention — the last built Brief flattened, for the
+// dashboard / external readers. Empty (generatedAt null) when no Brief yet.
+app.get("/session/:tenantId/attention", (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) {
+    res.json({ generatedAt: null, channel: "imessage", items: [], counts: { waiting: 0, drafts: 0, commitments: 0 } });
+    return;
+  }
+  res.json(s.getAttentionSnapshot());
+});
+
 app.post("/session/:tenantId/bot/mute", (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }

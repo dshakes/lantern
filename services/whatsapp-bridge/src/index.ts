@@ -180,6 +180,17 @@ app.get("/session/:tenantId/diagnostics", (req, res) => {
   res.json({ ...session.getDiagnostics(), present: true });
 });
 
+// GET /session/:tenantId/attention -- the last built Brief flattened, for the
+// dashboard / external readers. Empty (generatedAt null) when no Brief yet.
+app.get("/session/:tenantId/attention", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.json({ generatedAt: null, channel: "whatsapp", items: [], counts: { waiting: 0, drafts: 0, commitments: 0 } });
+    return;
+  }
+  res.json(session.getAttentionSnapshot());
+});
+
 // POST /session/:tenantId/whatsapp/thread-peek -- cross-bridge: the iMessage
 // bridge calls this for a person's recent WhatsApp thread to merge cross-channel.
 app.post("/session/:tenantId/whatsapp/thread-peek", async (req, res) => {

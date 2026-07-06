@@ -314,6 +314,10 @@ import {
 } from "@lantern/bridge-core/attention";
 import type { BriefInput } from "@lantern/bridge-core/command-center";
 import {
+  tapbackToEmoji, ReactableLog, buildAttentionSnapshot,
+  type AttentionSnapshot,
+} from "@lantern/bridge-core/reaction-commands";
+import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
   type CenterStateEntry,
 } from "@lantern/bridge-core/command-center-executor";
@@ -450,6 +454,13 @@ export class IMessageSession {
   // Attention Engine: threads the owner skipped from the Brief.
   // ponytail: session-lifetime only — persist to stateDir if "skip forever" is asked for.
   private attentionSkipped: Set<string> = new Set();
+  // Attention Engine one-tap layer: recent center-view messages a tapback can act on.
+  private reactable = new ReactableLog();
+  // Center views waiting for their sent-message GUID to echo back via the
+  // chat.db poll (mirrors the queueReplyMeta → harvest mechanism).
+  private pendingBriefEcho: { text: string; items: BriefItem[]; queuedAt: number }[] = [];
+  // Last built Brief, served to the dashboard via GET /session/:t/attention.
+  private lastAttentionSnapshot: AttentionSnapshot | null = null;
   private ownerSentHistory: Map<string, string[]> = new Map();
   // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
   // contacts, reaching past the bot-dominated recent rows). Unioned into
@@ -3143,6 +3154,7 @@ export class IMessageSession {
         await this.rankAttention(input);
         const view = buildBrief(input);
         text = view.text; items = view.items;
+        this.lastAttentionSnapshot = buildAttentionSnapshot(items, input.whys, Date.now());
       } else if (cmd === "plate") {
         const view = buildPlate(allOpen, drafts);
         text = view.text; items = view.items;
@@ -3244,10 +3256,45 @@ export class IMessageSession {
 
       setCenterItems(this.centerState, handle, items);
       await send(text);
+      if (items.length > 0) {
+        // Queue for GUID capture: the poll loop sees our own fromMe echo and
+        // registers it in the reactable log so a tapback can act on it.
+        this.pendingBriefEcho.push({ text: text.trim(), items, queuedAt: Date.now() });
+        if (this.pendingBriefEcho.length > 5) this.pendingBriefEcho.splice(0, this.pendingBriefEcho.length - 5);
+      }
     } catch (err) {
       this.logger.warn({ err }, "im center command failed");
       await send("⚠️ couldn't load your brief right now — try again.");
     }
+  }
+
+  /** Pair a fromMe chat.db row with a queued center view; on match, the
+   *  message becomes tapback-actionable (Attention Engine one-tap layer). */
+  private harvestBriefEcho(text: string, guid: string): void {
+    if (!guid || this.pendingBriefEcho.length === 0) return;
+    const now = Date.now();
+    this.pendingBriefEcho = this.pendingBriefEcho.filter((e) => now - e.queuedAt < 2 * 60_000);
+    const idx = this.pendingBriefEcho.findIndex((e) => e.text === text.trim());
+    if (idx < 0) return;
+    const [entry] = this.pendingBriefEcho.splice(idx, 1);
+    this.reactable.remember(guid, entry.items);
+    this.logger.debug({ guid, items: entry.items.length }, "brief echo harvested — tapbacks armed");
+  }
+
+  /** Dashboard depth view: the last built Brief as a JSON snapshot. */
+  getAttentionSnapshot(): {
+    generatedAt: number | null;
+    channel: "imessage";
+    items: AttentionSnapshot["items"];
+    counts: AttentionSnapshot["counts"];
+  } {
+    const s = this.lastAttentionSnapshot;
+    return {
+      generatedAt: s?.generatedAt ?? null,
+      channel: "imessage",
+      items: s?.items ?? [],
+      counts: s?.counts ?? { waiting: 0, drafts: 0, commitments: 0 },
+    };
   }
 
   /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
@@ -4835,6 +4882,47 @@ export class IMessageSession {
     if (row.associatedMessageType && row.associatedMessageType !== 0) {
       // SELF-EVAL: 👎 (dislike, type 2002) from the OWNER on a
       // message we sent. Look up the original via the
+      // ATTENTION ENGINE ONE-TAP LAYER. A tapback on a remembered center
+      // view (Brief/plate) acts on its TOP item: 👍/❤️ confirm (send/done/
+      // draft), 👎 skip, ❓ review. Brief semantics WIN over the 👎
+      // critique-retry below for these messages (a Brief is never in
+      // bridgeReplyMeta, so the flows can't cross anyway).
+      {
+        const briefEmoji = tapbackToEmoji(row.associatedMessageType);
+        if (
+          briefEmoji &&
+          row.associatedMessageGuid &&
+          !isGroupRow(row) &&
+          this.isOwnerChatRow(row)
+        ) {
+          const hit = this.reactable.resolve(row.associatedMessageGuid, briefEmoji);
+          if (hit) {
+            // Same cross-device dedup as the 👎 flow below.
+            const now = Date.now();
+            this.recentTapbacks = this.recentTapbacks.filter(
+              (e) => now - e.ts < IMessageSession.TAPBACK_DEDUP_MS,
+            );
+            if (this.recentTapbacks.some(
+              (e) => e.targetGuid === row.associatedMessageGuid && e.type === row.associatedMessageType,
+            )) {
+              return;
+            }
+            this.recentTapbacks.push({
+              targetGuid: row.associatedMessageGuid,
+              type: row.associatedMessageType,
+              ts: now,
+            });
+            this.logger.info(
+              { targetGuid: row.associatedMessageGuid, emoji: briefEmoji, ref: hit.item.ref, action: hit.action },
+              "brief tapback — executing top-item action",
+            );
+            void this.executeCenterAction(row.handle, { item: hit.item, action: hit.action }).catch((err) =>
+              this.logger.warn({ err }, "brief tapback action failed"),
+            );
+            return;
+          }
+        }
+      }
       // associated_message_guid → bridgeReplyMeta → re-prompt LLM.
       if (
         row.associatedMessageType === 2002 &&
@@ -4930,6 +5018,7 @@ export class IMessageSession {
       // exactly what the isFromMe branch used to do at ~L2173.
       if (row.isFromMe) {
         this.harvestPendingReplyMeta(text, row.guid, row.chatRowid);
+        this.harvestBriefEcho(text, row.guid);
       }
       this.logger.info(
         { rowid: row.rowid, fromMe: row.isFromMe, textPreview: text.slice(0, 60) },
@@ -5052,6 +5141,7 @@ export class IMessageSession {
         // pending-reply-meta entry, pair its GUID with the meta
         // so the next 👎 tapback can look it up.
         this.harvestPendingReplyMeta(text, row.guid, row.chatRowid);
+        this.harvestBriefEcho(text, row.guid);
         return;
       }
 

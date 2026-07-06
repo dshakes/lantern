@@ -210,6 +210,38 @@ export function unmonitorGroup(
   return post(channel, `/session/${encodeURIComponent(tenantId)}/bot/group/unmonitor`, { jid });
 }
 
+// ---- Attention snapshot -----------------------------------------------------
+//
+// The owner's cross-thread attention queue (Brief v2), served by each bridge at
+// GET /session/<tenantId>/attention. Read-only: the acting surface is chat, so
+// the dashboard only reflects the queue. See CLAUDE.md "Attention Engine".
+
+export type AttentionRef = "thread" | "draft" | "commitment";
+
+export interface AttentionItem {
+  n: number;
+  ref: AttentionRef;
+  id: string;
+  icon: string;
+  label: string;
+  why?: string;
+  defaultAction: string;
+}
+
+export interface AttentionSnapshot {
+  generatedAt: number | null;
+  channel: BridgeChannel;
+  items: AttentionItem[];
+  counts: { waiting: number; drafts: number; commitments: number };
+}
+
+export function fetchAttention(
+  tenantId: string,
+  channel: BridgeChannel,
+): Promise<AttentionSnapshot> {
+  return get<AttentionSnapshot>(channel, `/session/${encodeURIComponent(tenantId)}/attention`);
+}
+
 // ---- WebSocket URL ----------------------------------------------------------
 //
 // Components open their own WS to handle reconnection/cleanup, but the URL

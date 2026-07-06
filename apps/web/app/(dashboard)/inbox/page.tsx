@@ -20,12 +20,15 @@
 // new color system.
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Clock,
+  Copy,
   DollarSign,
   Gauge,
   Inbox as InboxIcon,
@@ -53,10 +56,19 @@ import {
   type Alert,
   type FleetSort,
 } from "@/lib/fleet-health";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, CountBadge } from "@/components/page-header";
 import { Skeleton } from "@/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { useToast } from "@/components/toast";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { Sparkline } from "../runtime/cockpit-ui";
+import { useAuth } from "@/lib/auth";
+import {
+  fetchAttention,
+  type AttentionSnapshot,
+  type AttentionItem,
+} from "@/lib/bridge-client";
+import type { BridgeChannel } from "@/lib/bridge-types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,6 +100,8 @@ type Section = "fleet" | "activity";
 // Page
 // ---------------------------------------------------------------------------
 
+type TopTab = "agents" | "personal";
+
 export default function MissionControlPage() {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +110,22 @@ export default function MissionControlPage() {
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
   const [agentTotal, setAgentTotal] = useState<number | null>(null);
+
+  // Top-level view: the agent fleet vs. the owner's personal attention queue.
+  // Deep-linkable via ?tab=personal.
+  const searchParams = useSearchParams();
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? "default";
+  const [topTab, setTopTab] = useState<TopTab>(() =>
+    searchParams.get("tab") === "personal" ? "personal" : "agents",
+  );
+  function selectTab(t: TopTab) {
+    setTopTab(t);
+    const url = new URL(window.location.href);
+    if (t === "personal") url.searchParams.set("tab", "personal");
+    else url.searchParams.delete("tab");
+    window.history.replaceState(null, "", url);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -167,46 +197,61 @@ export default function MissionControlPage() {
         />
       </div>
 
-      <CommandStrip summary={displaySummary} lastUpdated={lastUpdated} loading={loading} />
-
-      <div className="flex-1 px-6 pb-10 pt-5 md:px-8">
-        {/* Section switch — fleet is primary, activity feed preserved behind a tab. */}
-        <div className="mb-6 flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="View">
-            <SectionTab active={section === "fleet"} onClick={() => setSection("fleet")} label="Fleet health" />
-            <SectionTab active={section === "activity"} onClick={() => setSection("activity")} label="Activity feed" />
-          </div>
+      {/* Top-level view switch — the agent fleet vs. the owner's personal
+          attention queue. Two different audiences; keep them apart. */}
+      <div className="px-6 pt-4 md:px-8">
+        <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="Inbox view">
+          <SectionTab active={topTab === "agents"} onClick={() => selectTab("agents")} label="Agents" />
+          <SectionTab active={topTab === "personal"} onClick={() => selectTab("personal")} label="Personal" />
         </div>
-
-        {error && (
-          <div className="mb-5 rounded-lg bg-red-500/[0.06] px-3 py-2.5 text-[12px] text-red-300/90">
-            Could not refresh activity: {error}
-          </div>
-        )}
-
-        {section === "fleet" ? (
-          loading ? (
-            <FleetSkeleton />
-          ) : (
-            <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_360px]">
-              {/* Primary column — fleet health (the centerpiece). */}
-              <div className="min-w-0">
-                <FleetHealth fleet={sortedFleet} runs={runs ?? []} sort={sort} setSort={setSort} />
-              </div>
-              {/* Secondary column — alerts + compact queues. */}
-              <aside className="flex flex-col gap-6">
-                <AlertsPanel alerts={alerts} fleet={fleet} totalCostToday={displaySummary.costTodayUsd} />
-                <ActionQueue title="Live now" tone="info" runs={queue.live} emptyHint="No runs in flight." icon={<Play className="h-3.5 w-3.5" />} />
-                <ActionQueue title="Needs review" tone="warn" runs={queue.needsReview} emptyHint="Nothing to review." icon={<AlertTriangle className="h-3.5 w-3.5" />} />
-              </aside>
-            </div>
-          )
-        ) : loading ? (
-          <ActivitySkeleton />
-        ) : (
-          <ActivityFeed runs={(runs ?? []).slice(0, 50)} />
-        )}
       </div>
+
+      {topTab === "personal" ? (
+        <PersonalAttention tenantId={tenantId} />
+      ) : (
+        <>
+          <CommandStrip summary={displaySummary} lastUpdated={lastUpdated} loading={loading} />
+
+          <div className="flex-1 px-6 pb-10 pt-5 md:px-8">
+            {/* Section switch — fleet is primary, activity feed preserved behind a tab. */}
+            <div className="mb-6 flex flex-wrap items-center gap-2">
+              <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="View">
+                <SectionTab active={section === "fleet"} onClick={() => setSection("fleet")} label="Fleet health" />
+                <SectionTab active={section === "activity"} onClick={() => setSection("activity")} label="Activity feed" />
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-5 rounded-lg bg-red-500/[0.06] px-3 py-2.5 text-[12px] text-red-300/90">
+                Could not refresh activity: {error}
+              </div>
+            )}
+
+            {section === "fleet" ? (
+              loading ? (
+                <FleetSkeleton />
+              ) : (
+                <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_360px]">
+                  {/* Primary column — fleet health (the centerpiece). */}
+                  <div className="min-w-0">
+                    <FleetHealth fleet={sortedFleet} runs={runs ?? []} sort={sort} setSort={setSort} />
+                  </div>
+                  {/* Secondary column — alerts + compact queues. */}
+                  <aside className="flex flex-col gap-6">
+                    <AlertsPanel alerts={alerts} fleet={fleet} totalCostToday={displaySummary.costTodayUsd} />
+                    <ActionQueue title="Live now" tone="info" runs={queue.live} emptyHint="No runs in flight." icon={<Play className="h-3.5 w-3.5" />} />
+                    <ActionQueue title="Needs review" tone="warn" runs={queue.needsReview} emptyHint="Nothing to review." icon={<AlertTriangle className="h-3.5 w-3.5" />} />
+                  </aside>
+                </div>
+              )
+            ) : loading ? (
+              <ActivitySkeleton />
+            ) : (
+              <ActivityFeed runs={(runs ?? []).slice(0, 50)} />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -931,5 +976,250 @@ function ActivitySkeleton() {
         </li>
       ))}
     </ul>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Personal attention — the owner's cross-channel "what needs you" queue.
+//
+// READ-ONLY by design. The acting surface is chat (the Brief lives in your
+// self-chat: text `?` to your assistant); the dashboard is the depth view. The
+// only affordance here is "copy command", which copies the self-chat command
+// (e.g. `2 draft`) so the owner can act from their phone. No action buttons.
+//
+// Fed by each bridge's attention snapshot at GET /session/<tenant>/attention.
+// Channels fetch independently so one bridge being down never blanks the other.
+// ---------------------------------------------------------------------------
+
+const ATTENTION_CHANNELS: { channel: BridgeChannel; label: string }[] = [
+  { channel: "imessage", label: "iMessage" },
+  { channel: "whatsapp", label: "WhatsApp" },
+];
+
+const ATTENTION_STALE_MS = 30 * 60 * 1000;
+
+type ChannelAttention = {
+  channel: BridgeChannel;
+  label: string;
+  snap: AttentionSnapshot | null;
+  error: string | null;
+  loaded: boolean;
+};
+
+function PersonalAttention({ tenantId }: { tenantId: string }) {
+  const toast = useToast();
+  const [channels, setChannels] = useState<ChannelAttention[]>(() =>
+    ATTENTION_CHANNELS.map((c) => ({ ...c, snap: null, error: null, loaded: false })),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOne(c: { channel: BridgeChannel }) {
+      try {
+        const snap = await fetchAttention(tenantId, c.channel);
+        if (cancelled) return;
+        setChannels((prev) =>
+          prev.map((x) => (x.channel === c.channel ? { ...x, snap, error: null, loaded: true } : x)),
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : "bridge unreachable";
+        setChannels((prev) =>
+          prev.map((x) => (x.channel === c.channel ? { ...x, error: msg, loaded: true } : x)),
+        );
+      }
+    }
+
+    function loadAll() {
+      // ponytail: skip polling while the browser tab is backgrounded.
+      if (typeof document !== "undefined" && document.hidden) return;
+      ATTENTION_CHANNELS.forEach(loadOne);
+    }
+
+    loadAll();
+    const id = setInterval(loadAll, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tenantId]);
+
+  const anyLoaded = channels.some((c) => c.loaded);
+  const anyError = channels.some((c) => c.error);
+  const allErrored = channels.every((c) => c.error);
+  const totalItems = channels.reduce((n, c) => n + (c.snap?.items.length ?? 0), 0);
+  const counts = channels.reduce(
+    (acc, c) => {
+      if (c.snap) {
+        acc.waiting += c.snap.counts.waiting;
+        acc.drafts += c.snap.counts.drafts;
+        acc.commitments += c.snap.counts.commitments;
+      }
+      return acc;
+    },
+    { waiting: 0, drafts: 0, commitments: 0 },
+  );
+
+  function copyCommand(item: AttentionItem) {
+    const cmd = `${item.n} ${item.defaultAction}`;
+    navigator.clipboard.writeText(cmd).then(
+      () => toast.success(`Copied “${cmd}” — paste into your assistant chat`),
+      () => toast.error("Couldn't copy to clipboard"),
+    );
+  }
+
+  return (
+    <div className="flex-1 px-6 pb-10 pt-5 md:px-8">
+      {!anyLoaded ? (
+        <AttentionSkeleton />
+      ) : totalItems === 0 && allErrored ? (
+        <div className="mx-auto max-w-3xl rounded-lg bg-red-500/[0.06] px-3 py-2.5 text-[12px] text-red-300/90">
+          Couldn&apos;t reach your bridges. Your attention queue is live in your self-chat — text{" "}
+          <code className="rounded bg-surface-2 px-1">?</code> to your assistant.
+        </div>
+      ) : totalItems === 0 && !anyError ? (
+        <EmptyState
+          icon={InboxIcon}
+          title="Your attention queue is clear"
+          description="Nothing waiting across your channels. The Brief lives in your self-chat too — text `?` to your assistant."
+        />
+      ) : (
+        <div className="mx-auto max-w-3xl">
+          {totalItems > 0 && (
+            <div className="mb-6 flex flex-wrap items-center gap-2">
+              <AttentionCount label="waiting" n={counts.waiting} />
+              <AttentionCount label="drafts" n={counts.drafts} />
+              <AttentionCount label="commitments" n={counts.commitments} />
+            </div>
+          )}
+
+          <div className="flex flex-col gap-6">
+            {channels.map((c) => (
+              <ChannelBlock key={c.channel} c={c} onCopy={copyCommand} />
+            ))}
+          </div>
+
+          <p className="mt-6 text-[11px] text-zinc-600">
+            Read-only — act from chat. Copy a command and paste it to your assistant.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttentionCount({ label, n }: { label: string; n: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+      <CountBadge count={n} />
+      {label}
+    </span>
+  );
+}
+
+function ChannelBadge({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center rounded-md bg-surface-2 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+      {label}
+    </span>
+  );
+}
+
+function ChannelBlock({
+  c,
+  onCopy,
+}: {
+  c: ChannelAttention;
+  onCopy: (i: AttentionItem) => void;
+}) {
+  // Soft-fail: a down channel is a quiet inline note, never a toast.
+  if (c.error) {
+    return (
+      <div className="flex items-center gap-1.5 text-[12px] text-zinc-600">
+        <ChannelBadge label={c.label} />
+        <span>bridge unavailable</span>
+      </div>
+    );
+  }
+
+  const items = c.snap ? [...c.snap.items].sort((a, b) => a.n - b.n) : [];
+  if (items.length === 0) return null;
+
+  const stale =
+    c.snap?.generatedAt != null && Date.now() - c.snap.generatedAt > ATTENTION_STALE_MS;
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <ChannelBadge label={c.label} />
+        {stale && (
+          <span
+            className="inline-flex items-center gap-1 text-[10px] text-amber-400/80"
+            title={`Snapshot from ${formatRelative(c.snap!.generatedAt)}`}
+          >
+            <Clock className="h-3 w-3" /> stale
+          </span>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+        {items.map((item, i) => (
+          <AttentionRow key={item.id} item={item} onCopy={onCopy} first={i === 0} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AttentionRow({
+  item,
+  onCopy,
+  first,
+}: {
+  item: AttentionItem;
+  onCopy: (i: AttentionItem) => void;
+  first: boolean;
+}) {
+  return (
+    <div className={clsx("flex items-start gap-3 px-4 py-3", !first && "border-t border-zinc-800/70")}>
+      <span className="mt-0.5 shrink-0 text-base leading-none" aria-hidden>
+        {item.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-[11px] tabular-nums text-zinc-600">{item.n}</span>
+          <span className="truncate text-[13px] text-zinc-100">{item.label}</span>
+          <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
+            {item.ref}
+          </span>
+        </div>
+        {item.why && <p className="mt-0.5 truncate text-[12px] text-zinc-500">{item.why}</p>}
+      </div>
+      <button
+        onClick={() => onCopy(item)}
+        title={`Copy “${item.n} ${item.defaultAction}” for your assistant chat`}
+        aria-label={`Copy command ${item.n} ${item.defaultAction}`}
+        className="mt-0.5 shrink-0 rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-200"
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function AttentionSkeleton() {
+  return (
+    <div className="mx-auto max-w-3xl">
+      <div className="mb-6 flex gap-2">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-7 w-24 rounded-md" />
+        ))}
+      </div>
+      <div className="flex flex-col gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-14 w-full rounded-xl" />
+        ))}
+      </div>
+    </div>
   );
 }
