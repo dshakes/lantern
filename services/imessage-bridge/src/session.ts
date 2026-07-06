@@ -309,6 +309,11 @@ import {
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type AgentRunRow, type NewsItemLite, type NewsAskResult,
 } from "@lantern/bridge-core/command-center";
 import {
+  buildAttentionPrompt, parseAttentionRanking, candidateIds,
+  type WaitingThread,
+} from "@lantern/bridge-core/attention";
+import type { BriefInput } from "@lantern/bridge-core/command-center";
+import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
   type CenterStateEntry,
 } from "@lantern/bridge-core/command-center-executor";
@@ -442,6 +447,9 @@ export class IMessageSession {
   // Inbound = what the contact sends; ownerSent = what the user sends
   // themselves (used as exemplars for "talk like Ada").
   private inboundHistory: Map<string, string[]> = new Map();
+  // Attention Engine: threads the owner skipped from the Brief.
+  // ponytail: session-lifetime only — persist to stateDir if "skip forever" is asked for.
+  private attentionSkipped: Set<string> = new Set();
   private ownerSentHistory: Map<string, string[]> = new Map();
   // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
   // contacts, reaching past the bot-dominated recent rows). Unioned into
@@ -2332,6 +2340,47 @@ export class IMessageSession {
     return out;
   }
 
+  /** Waiting-on-you threads for the Brief (Attention Engine). Reuses the
+   *  anticipation overdue-reply detector; preview comes from the in-memory
+   *  inbound history when we have it. */
+  private gatherWaitingForBrief(): WaitingThread[] {
+    const now = Date.now();
+    return this.gatherAwaitingReply(now)
+      .filter((r) => !this.attentionSkipped.has(r.handle))
+      .slice(0, 6)
+      .map((r) => {
+        const hist = this.inboundHistory.get(r.handle);
+        return {
+          contactKey: r.handle,
+          displayName: r.displayName || r.handle,
+          channel: "imessage" as const,
+          daysWaiting: Math.max(1, Math.round((now - r.lastInboundAt) / 86_400_000)),
+          lastInbound: hist?.length ? hist[hist.length - 1].slice(0, 60) : undefined,
+          // ponytail: no vip flag yet — VIP list lives server-side; wire when
+          // the Brief needs it for ranking quality.
+        };
+      });
+  }
+
+  /** LLM attention ranking over the Brief's unified candidates — the model
+   *  reorders/annotates only; ANY failure leaves the deterministic order.
+   *  Own session key (never a contact's live session). */
+  private async rankAttention(input: BriefInput): Promise<void> {
+    const waiting = input.waiting ?? [];
+    if (input.drafts.length + input.commitments.length + waiting.length < 2) return;
+    try {
+      const prompt = buildAttentionPrompt(input, waiting, new Date());
+      const raw = (await this.agent.respondTo("attention::rank", prompt, "Return only valid JSON. No prose.", { timeoutMs: 20_000 })) || "";
+      const ranking = parseAttentionRanking(raw, candidateIds(input, waiting));
+      if (ranking) {
+        input.rankedIds = ranking.order;
+        input.whys = ranking.whys;
+      }
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "attention ranking failed — deterministic order");
+    }
+  }
+
   // Build priority signals for a contact from the data the bridge holds —
   // relationship label (owner profile), recency, and VIP-ish heuristics.
   private contactSignalsFor(handle: string, now: number): ContactSignals {
@@ -3019,6 +3068,31 @@ export class IMessageSession {
         } else {
           await ack(`draft to ${targetLabel}: "${draft.slice(0, 40)}…"\n"${item.n} send" / "${item.n} edit <text>"`);
         }
+      } else if (item.ref === "thread") {
+        // Attention Engine: a conversation waiting on the owner. item.id = contact handle.
+        const contact = item.id;
+        const name = (this.contactNames.get(contact) || contact).trim();
+        if (action.action === "draft" || action.action === "act" || action.action === "custom") {
+          const hist = this.inboundHistory.get(contact) ?? [];
+          const lastInbound = hist[hist.length - 1] ?? "";
+          const instruction = action.arg
+            ? `The owner wants to reply now and says: "${action.arg}". Draft that reply in the owner's voice.`
+            : `Draft the reply the owner would send now — it's been a few days, keep it natural, no apology theater.`;
+          const draft = await this.agent.respondTo(contact, lastInbound || "(no recent text cached — greet naturally)", instruction, { timeoutMs: 30_000 });
+          if (!draft) { await ack(`⚠️ couldn't draft for ${name} — try again.`); return; }
+          const key = `attn:${contact}`;
+          this.pendingDraftEdits.set(key, { target: contact, targetLabel: name, draft, inbound: lastInbound, issuedAt: Date.now() });
+          await ack(`📨 draft for ${name}: "${draft.slice(0, 120)}"\nsay "?" to send/edit it from drafts.`);
+        } else if (action.action === "review") {
+          const hist = this.inboundHistory.get(contact) ?? [];
+          const peek = hist.slice(-3).map((m) => `  ${name}: ${m.slice(0, 80)}`).join("\n");
+          await ack(peek ? `⏳ last from ${name}:\n${peek}\n→ "${item.n} draft" to reply` : `no cached messages for ${name} — "${item.n} draft" to reply anyway`);
+        } else if (action.action === "skip") {
+          this.attentionSkipped.add(contact);
+          await ack(`👍 won't surface ${name} again today.`);
+        } else {
+          await ack(`"${item.n} draft" · "${item.n} review" · "${item.n} skip"`);
+        }
       } else if (item.ref === "auto_action") {
         // Route to existing auto-action undo rail (pendingOffers kind=auto-act-undo).
         const cachedOffer = this.pendingOffers.get(handle);
@@ -3065,6 +3139,8 @@ export class IMessageSession {
 
       if (cmd === "brief") {
         const input = await fetchBriefInput(authedFetch, allOpen, drafts);
+        input.waiting = this.gatherWaitingForBrief();
+        await this.rankAttention(input);
         const view = buildBrief(input);
         text = view.text; items = view.items;
       } else if (cmd === "plate") {

@@ -1085,6 +1085,30 @@ Nudges carry stable `dedupeKey`s persisted to `~/.lantern/<bridge>/fired-nudges.
 so the same nudge never fires twice in a day. Respect quiet hours.
 Disable with `LANTERN_PROACTIVE_NUDGES=0`.
 
+### Attention Engine (Brief v2 — LLM-ranked "what needs you")
+
+The owner Brief (`?` / `today` / `whats up`) is the cross-thread attention
+surface. `packages/bridge-core/src/attention.ts` (pure: prompt / tolerant
+parse / candidate ids) + wiring in both bridges' `handleCenterCommand`:
+
+- **Waiting-on-you threads.** `gatherWaitingForBrief()` reuses the
+  anticipation overdue-reply detector and surfaces contacts left unanswered
+  as numbered `thread` items (⏳, VIP-first, preview from inbound history) —
+  previously these were gated out of real-time nudges AND absent from the
+  Brief, so they vanished entirely.
+- **LLM ranking across kinds.** `rankAttention()` sends drafts + commitments
+  + waiting threads to the LLM (session key `attention::rank`, never a
+  contact's live session) which returns strict JSON `{order, why}`; the model
+  can only REORDER and ANNOTATE existing items (a VIP waiting 3 days can
+  outrank a routine draft). ANY failure → deterministic order stands. `why`
+  renders as a ` · reason` suffix on the numbered line.
+- **Thread actions.** Bare `<n>` or `<n> draft` / `draft <n>` generates a
+  reply draft in the owner's voice (respondTo on the CONTACT's session — the
+  draft is that thread's business) and stages it in `pendingDraftEdits`
+  (`attn:<handle>` key) so the standard drafts rail (send/edit) applies;
+  `<n> review` peeks the last inbound; `<n> skip` suppresses the thread for
+  the session (`attentionSkipped`).
+
 ### Event scout (proactive family-event discovery)
 
 `packages/bridge-core/src/event-scout.ts` (pure: prompt/parse/format/command

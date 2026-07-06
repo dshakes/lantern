@@ -30,9 +30,13 @@ export type ActionKind =
   | "edit" // replace a draft with the owner's text (arg)
   | "undo" // revert an auto-action
   | "save" // save the item to the readlist / todo
+  | "draft" // draft a reply to a waiting thread (Attention Engine)
   | "custom"; // free-text the owner typed after the number
 
-export type RefKind = "commitment" | "draft" | "life_event" | "auto_action" | "news_item";
+export type RefKind = "commitment" | "draft" | "life_event" | "auto_action" | "news_item" | "thread";
+
+// Type-only import (erased at runtime — no module cycle with attention.ts).
+import type { WaitingThread as AttentionWaitingThread } from "./attention.ts";
 
 /** One numbered, actionable line shown to the owner. The bridge maps `id`+`ref`
  *  back to the right rail (commitment resolve / draft send / cross-app execute /
@@ -66,6 +70,7 @@ const UNDO_RE = /^(undo|revert|cancel\s*that)$/i;
 const SAVE_RE = /^(save|read\s*later|readlist|bookmark|keep)$/i;
 const SNOOZE_RE = /^(snooze|later|defer|remind|hold)\b\s*(.*)$/i;
 const EDIT_RE = /^(edit|change|rewrite|reword)\b\s*(.*)$/i;
+const DRAFT_RE = /^(draft|reply|respond|answer)\b\s*(.*)$/i;
 
 /**
  * Parse an owner reply against the last shown numbered list. Returns null when
@@ -80,6 +85,12 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
   if (sv) {
     const it = items.find((i) => i.n === parseInt(sv[1], 10));
     if (it) return { item: it, action: "save" };
+  }
+  // Verb-first draft: "draft 2" / "reply to 2" (Attention Engine threads).
+  const dv = t.match(/^(?:draft|reply(?:\s+to)?|respond(?:\s+to)?)\s+(\d{1,2})\b/i);
+  if (dv) {
+    const it = items.find((i) => i.n === parseInt(dv[1], 10));
+    if (it && it.ref === "thread") return { item: it, action: "draft" };
   }
   // Must start with the item number (1–99). Anything else is normal chat.
   const m = t.match(/^(\d{1,2})\b[.):]?\s*(.*)$/s);
@@ -103,6 +114,8 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
   if (sn) return { item, action: "snooze", arg: sn[2]?.trim() || undefined };
   const ed = rest.match(EDIT_RE);
   if (ed) return { item, action: "edit", arg: ed[2]?.trim() || undefined };
+  const dr = rest.match(DRAFT_RE);
+  if (dr && item.ref === "thread") return { item, action: "draft", arg: dr[2]?.trim() || undefined };
   // Any other free text after the number = the owner's own version / instruction.
   return { item, action: "custom", arg: rest };
 }
@@ -280,6 +293,17 @@ export interface BriefInput {
   fyi: LifeEventLite[];
   /** Max actionable items to number (keeps the Brief scannable). */
   maxItems?: number;
+  /** Threads waiting on the owner (Attention Engine). */
+  waiting?: AttentionWaitingThread[];
+  /**
+   * LLM attention ranking (refIds from attention.ts, most-important first).
+   * Reorders the unified needs-you list; absent/unknown ids keep the
+   * deterministic order after the ranked ones. Optional — the Brief renders
+   * identically-shaped output without it.
+   */
+  rankedIds?: string[];
+  /** refId -> one-line reason, rendered after the item label. */
+  whys?: Record<string, string>;
 }
 
 export interface CenterView {
@@ -299,40 +323,74 @@ export function buildBrief(input: BriefInput): CenterView {
     lines.push(`agents (24h): ${input.agentActivity.join(" · ")}`);
   }
 
-  // Needs-you: drafts first (time-sensitive), then commitments by urgency.
-  let n = 1;
-  const needs: string[] = [];
+  // Needs-you: unified candidate list — drafts (time-sensitive), commitments
+  // by urgency, threads waiting on the owner by staleness. When the Attention
+  // Engine supplied rankedIds, that LLM order wins across kinds (a VIP
+  // waiting 3 days can outrank a routine draft); otherwise the deterministic
+  // order above stands. `whys` annotates items either way.
+  type Entry = { key: string; item: Omit<BriefItem, "n">; hint: (n: number) => string };
+  const entries: Entry[] = [];
   for (const d of input.drafts) {
-    if (n > max) break;
-    const it: BriefItem = {
-      n,
-      ref: "draft",
-      id: d.id,
-      icon: "📨",
-      label: `draft to ${clip(d.to, 24)} — “${clip(d.preview, 40)}”`,
-      defaultAction: "review",
-      actions: ["send", "edit", "skip"],
-    };
-    items.push(it);
-    needs.push(` ${n} ${it.icon} ${it.label}  → "${n} send" / "${n} edit"`);
-    n++;
+    entries.push({
+      key: `draft:${d.id}`,
+      item: {
+        ref: "draft",
+        id: d.id,
+        icon: "📨",
+        label: `draft to ${clip(d.to, 24)} — “${clip(d.preview, 40)}”`,
+        defaultAction: "review",
+        actions: ["send", "edit", "skip"],
+      },
+      hint: (i) => `"${i} send" / "${i} edit"`,
+    });
   }
   const ranked = [...input.commitments].sort((a, b) => urgencyRank(a.urgency) - urgencyRank(b.urgency));
   for (const c of ranked) {
-    if (n > max) break;
     const draftable = c.status === "suggested" && !!c.action_plan; // researched → one-tap
-    const it: BriefItem = {
-      n,
-      ref: "commitment",
-      id: c.id,
-      icon: iconFor(c),
-      label: clip(c.title, 46) + (c.assignedBy ? ` (from ${clip(c.assignedBy, 14)})` : ""),
-      defaultAction: draftable ? "review" : "done",
-      actions: draftable ? ["act", "done", "snooze"] : ["done", "snooze", "skip"],
-    };
+    entries.push({
+      key: `commitment:${c.id}`,
+      item: {
+        ref: "commitment",
+        id: c.id,
+        icon: iconFor(c),
+        label: clip(c.title, 46) + (c.assignedBy ? ` (from ${clip(c.assignedBy, 14)})` : ""),
+        defaultAction: draftable ? "review" : "done",
+        actions: draftable ? ["act", "done", "snooze"] : ["done", "snooze", "skip"],
+      },
+      hint: draftable ? (i: number) => `"${i}" to handle` : (i: number) => `"${i} done" / "${i} snooze"`,
+    });
+  }
+  const waitingSorted = [...(input.waiting ?? [])].sort(
+    (a, b) => Number(b.vip ?? false) - Number(a.vip ?? false) || b.daysWaiting - a.daysWaiting,
+  );
+  for (const w of waitingSorted) {
+    entries.push({
+      key: `thread:${w.contactKey}`,
+      item: {
+        ref: "thread",
+        id: w.contactKey,
+        icon: "⏳",
+        label: `${clip(w.displayName, 20)}${w.vip ? " 👑" : ""} waiting ${w.daysWaiting}d${w.lastInbound ? ` — “${clip(w.lastInbound, 34)}”` : ""}`,
+        defaultAction: "draft",
+        actions: ["draft", "review", "skip"],
+      },
+      hint: (i) => `"${i} draft" / "${i} skip"`,
+    });
+  }
+  if (input.rankedIds?.length) {
+    const rank = new Map(input.rankedIds.map((id, i) => [id, i]));
+    // Stable sort: ranked ids by LLM order, unranked keep deterministic order after.
+    entries.sort((a, b) => (rank.get(a.key) ?? Infinity) - (rank.get(b.key) ?? Infinity));
+  }
+
+  let n = 1;
+  const needs: string[] = [];
+  for (const e of entries) {
+    if (n > max) break;
+    const it: BriefItem = { ...e.item, n };
     items.push(it);
-    const hint = draftable ? `"${n}" to handle` : `"${n} done" / "${n} snooze"`;
-    needs.push(` ${n} ${it.icon} ${it.label}  → ${hint}`);
+    const why = input.whys?.[e.key];
+    needs.push(` ${n} ${it.icon} ${it.label}${why ? ` · ${clip(why, 40)}` : ""}  → ${e.hint(n)}`);
     n++;
   }
 

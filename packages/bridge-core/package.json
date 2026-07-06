@@ -74,6 +74,7 @@
     "./digest-compose": "./src/digest-compose.ts",
     "./doc-ingest": "./src/doc-ingest.ts",
     "./recall": "./src/recall.ts",
+    "./attention": "./src/attention.ts",
     "./command-center": "./src/command-center.ts",
     "./command-center-executor": "./src/command-center-executor.ts",
     "./browser-history": "./src/browser-history.ts",
