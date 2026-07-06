@@ -1173,6 +1173,21 @@ prompt/parse, schedule matching, formatting) + wiring in both bridges.
 - State: `bridge_state/<tenant>/skills.json` (0600). Bot-self prefixes
   `🛠` / `✅ skill live` registered in `bot-self.ts`.
 
+### Time-travel recap ("what did I miss")
+
+`packages/bridge-core/src/time-travel.ts` (pure: `looksLikeRecapRequest`,
+`parseRecapWindow`, `buildRecapPrompt`, `finalizeRecap`) + `maybeHandleRecap`
+in both bridges. Owner self-chat `what did I miss` / `what happened while I was
+out` / `catch me up` (optional window `last 3 hours` / `today` / `overnight`;
+default 6h). The bridge gathers what landed since the cutoff — waiting-on-you
+contacts (`gatherAwaitingReply`) + the assistant's own recent actions
+(`recentActions`, `presence` kind filtered) — and the LLM (`recap::synth`
+session key) writes a SHORT narrative that leads with what matters. A
+deterministic weight-ranked fallback (`finalizeRecap`) is truthful when the LLM
+call fails. The request grammar caps at 80 chars so a real message isn't
+mistaken for a recap ask; the narrative output matches no command grammar so it
+can't loop.
+
 ### Event scout (proactive family-event discovery)
 
 `packages/bridge-core/src/event-scout.ts` (pure: prompt/parse/format/command

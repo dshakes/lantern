@@ -116,6 +116,10 @@ import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
 import { recordAction, recentActions } from "@lantern/bridge-core/working-memory";
+import {
+  looksLikeRecapRequest, parseRecapWindow, buildRecapPrompt, finalizeRecap,
+  type RecapItem,
+} from "@lantern/bridge-core/time-travel";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
@@ -4638,6 +4642,7 @@ export class WhatsAppSession {
 
     // EVENT SCOUT commands ("scan events" / "events add <cat>" / "book 1,3")
     // — strict anchored grammar; mirrors the iMessage bridge.
+    if (self && !group && trimmed && this.maybeHandleRecap(jid, text)) return;
     if (self && !group && trimmed && this.maybeHandleScout(jid, text)) return;
     if (self && !group && trimmed && this.maybeHandleSkillForge(text)) return;
 
@@ -9451,6 +9456,46 @@ export class WhatsAppSession {
     } finally {
       this.scoutScanInFlight = false;
     }
+  }
+
+  // ── TIME-TRAVEL RECAP ("what did I miss"; mirrors iMessage) ────────
+  private maybeHandleRecap(jid: string, text: string): boolean {
+    if (!looksLikeRecapRequest(text)) return false;
+    void (async () => {
+      const now = Date.now();
+      const since = parseRecapWindow(text, now) ?? now - 6 * 3_600_000;
+      const items: RecapItem[] = [];
+      try {
+        for (const r of this.gatherAwaitingReply(now)) {
+          if (r.lastInboundAt >= since) {
+            const hist = this.inboundHistory.get(r.handle);
+            items.push({
+              kind: "message", subject: r.displayName || r.handle.split("@")[0],
+              detail: hist?.length ? hist[hist.length - 1].slice(0, 80) : "messaged you",
+              at: r.lastInboundAt, weight: 2,
+            });
+          }
+        }
+      } catch { /* best-effort */ }
+      try {
+        for (const a of recentActions({ nowMs: now })) {
+          if (a.ts >= since && a.kind !== "presence") {
+            items.push({ kind: "auto_action", subject: "assistant", detail: a.summary, at: a.ts, weight: 0 });
+          }
+        }
+      } catch { /* best-effort */ }
+      const req = { since, now, items };
+      try {
+        const raw = items.length
+          ? await this.agent.respondTo("recap::synth", buildRecapPrompt(req), "Write the recap directly — no preamble.", { timeoutMs: 30_000 })
+          : null;
+        await this.sendMessage(jid, finalizeRecap(raw, req));
+      } catch (err) {
+        this.logger.warn({ err }, "recap failed");
+        await this.sendMessage(jid, finalizeRecap(null, req)).catch(() => {});
+      }
+    })();
+    return true;
   }
 
   private maybeHandleScout(jid: string, text: string): boolean {
