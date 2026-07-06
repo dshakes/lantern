@@ -15,11 +15,13 @@ import {
   ArrowDownRight,
   Loader2,
   Bot,
+  Microscope,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import type { FleetUsage } from "@/lib/api";
+import type { FleetUsage, EvalFailures, EvalTrends } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { LineChart, type LineSeries } from "@/components/charts/line-chart";
 import type { Run, Agent } from "@/lib/mock-data";
@@ -47,6 +49,51 @@ function fmtDuration(ms: number): string {
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
+}
+
+function relTime(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86_400)}d ago`;
+}
+
+// Inline sparkline of eval scores over time. Min–max normalized so drift near
+// the top of the 0–1 range stays legible; stroke uses a theme token so it
+// reads in both light and dark. ponytail: no chart lib, one polyline.
+function Sparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const W = 100;
+  const H = 28;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * W;
+      const y = H - ((v - min) / range) * H;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      className="h-12 w-full text-violet-400"
+      aria-hidden
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 interface AgentMetrics {
@@ -228,6 +275,8 @@ export default function EvaluationsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+  const [evalTrends, setEvalTrends] = useState<EvalTrends | null>(null);
+  const [evalFailures, setEvalFailures] = useState<EvalFailures | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<"7d" | "30d" | "all">("7d");
 
@@ -249,6 +298,18 @@ export default function EvaluationsPage() {
         // API unavailable -- show empty state
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    // Eval observability degrades independently — each method soft-fails to a
+    // safe empty shape, so one endpoint being down never blanks the page.
+    (async () => {
+      const [trends, failures] = await Promise.all([
+        api.getEvalTrends(),
+        api.getEvalFailures(),
+      ]);
+      if (!cancelled) {
+        setEvalTrends(trends);
+        setEvalFailures(failures);
       }
     })();
     return () => { cancelled = true; };
@@ -460,6 +521,114 @@ export default function EvaluationsPage() {
                 formatY={(n) => fmt(n, 0)}
               />
             )}
+          </div>
+        </div>
+
+        {/* Observability — eval quality trend + top failing cases */}
+        <div>
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-zinc-200">
+            <Microscope className="h-4 w-4 text-zinc-500" />
+            Observability
+          </h2>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* Quality trend */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="mb-4 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Quality trend
+              </h3>
+              {!evalTrends || evalTrends.points.length < 2 ? (
+                <div className="flex h-[92px] items-center justify-center text-sm text-zinc-500">
+                  Not enough eval runs yet.
+                </div>
+              ) : (
+                (() => {
+                  const pts = evalTrends.points;
+                  const latest = pts[pts.length - 1]!.score;
+                  const improving = !evalTrends.regressing && evalTrends.latestVsMean > 0;
+                  return (
+                    <div>
+                      <div className="flex items-end justify-between">
+                        <div>
+                          <p className="text-2xl font-semibold tabular-nums text-zinc-100">
+                            {pct(latest)}
+                          </p>
+                          <p className="mt-0.5 text-xs text-zinc-500">
+                            latest score · {pts.length} runs
+                          </p>
+                        </div>
+                        <span
+                          className={clsx(
+                            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                            evalTrends.regressing
+                              ? "bg-red-500/10 text-red-400"
+                              : improving
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : "bg-surface-3 text-zinc-400",
+                          )}
+                        >
+                          {evalTrends.regressing
+                            ? `▼ regressing (${pct(evalTrends.latestVsMean)})`
+                            : improving
+                            ? `▲ improving (+${pct(evalTrends.latestVsMean)})`
+                            : "stable"}
+                        </span>
+                      </div>
+                      <div className="mt-3">
+                        <Sparkline values={pts.map((p) => p.score)} />
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+
+            {/* Top failing cases */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Top failing cases
+                </h3>
+                {evalFailures && evalFailures.runsScanned > 0 && (
+                  <span className="text-[11px] text-zinc-600">
+                    {evalFailures.runsScanned} runs scanned
+                  </span>
+                )}
+              </div>
+              {!evalFailures || evalFailures.clusters.length === 0 ? (
+                <EmptyState
+                  size="compact"
+                  icon={CheckCircle2}
+                  title="All green"
+                  description="No failing cases in the recent window."
+                />
+              ) : (
+                <div className="space-y-2.5">
+                  {evalFailures.clusters.map((c) => (
+                    <div
+                      key={c.case}
+                      className="rounded-lg bg-surface-0 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium text-zinc-200">
+                          {c.case}
+                        </span>
+                        <span className="shrink-0 text-[11px] tabular-nums text-red-400">
+                          {c.failures}/{c.seen} · {pct(c.failRate)}
+                        </span>
+                      </div>
+                      {c.sampleError && (
+                        <p className="mt-1 truncate text-[12px] text-zinc-500">
+                          {c.sampleError}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[11px] text-zinc-600">
+                        last seen {relTime(c.lastSeen)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

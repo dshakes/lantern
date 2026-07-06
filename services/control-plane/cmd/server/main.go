@@ -623,6 +623,9 @@ func main() {
 	httpMux.HandleFunc("GET /v1/eval-runs/{id}", evalHandler.GetRun)
 	httpMux.HandleFunc("POST /v1/eval-baselines", evalHandler.SetBaseline)
 	httpMux.HandleFunc("GET /v1/eval-baselines", evalHandler.GetBaseline)
+	// Eval observability (read-only): failure clustering + score/pass-rate trends.
+	httpMux.HandleFunc("GET /v1/eval-observability/failures", evalHandler.GetFailureClusters)
+	httpMux.HandleFunc("GET /v1/eval-observability/trends", evalHandler.GetTrends)
 
 	// A/B experiments with auto-promotion.
 	httpMux.HandleFunc("POST /v1/experiments", experimentHandler.Create)
