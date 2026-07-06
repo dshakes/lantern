@@ -16,6 +16,20 @@ below work in your **self-chat** (or your dedicated-bot DM).
 
 ## Capabilities
 
+### Attention Engine (`attention.ts` + command-center Brief)
+
+The Brief (`?` / `today` / `whats up` in self-chat) is the one ranked view of
+what needs you across BOTH channels. It merges reply drafts, open
+commitments, and **waiting-on-you threads** (contacts you left unanswered —
+VIP-first, with their last message as a preview) into a single numbered list,
+then asks the LLM to re-rank across kinds and attach a one-line "why"
+(`3 ⏳ Madhu 👑 waiting 3d — "did you see the deck?" · vip waiting three days`).
+The model can only reorder/annotate items that exist; any LLM failure leaves
+the deterministic order (drafts → commitments by urgency → threads by
+staleness). Actions: `<n>`/`<n> draft` drafts a reply in your voice and
+stages it in the normal drafts rail (send/edit), `<n> review` peeks the
+thread, `<n> skip` mutes it for the session.
+
 ### Truthful presence (`presence.ts`)
 
 When a contact asks where you are, the reply is grounded in a fused snapshot

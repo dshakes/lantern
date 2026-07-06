@@ -181,6 +181,11 @@ import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
   type CenterStateEntry,
 } from "@lantern/bridge-core/command-center-executor";
+import {
+  buildAttentionPrompt, parseAttentionRanking, candidateIds,
+  type WaitingThread,
+} from "@lantern/bridge-core/attention";
+import type { BriefInput } from "@lantern/bridge-core/command-center";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
 // based on this. Falls back to application/octet-stream for unknown.
@@ -1476,6 +1481,9 @@ export class WhatsAppSession {
   // seed the natural-texting persona prompt every turn so the agent
   // sounds like a human matching their register.
   private inboundHistory: Map<string, string[]> = new Map();
+  // Attention Engine: threads the owner skipped from the Brief.
+  // ponytail: session-lifetime only — persist to stateDir if "skip forever" is asked for.
+  private attentionSkipped: Set<string> = new Set();
   private static readonly INBOUND_HISTORY_PER_CONTACT = 12;
   // Per-contact "has this person been told they're talking to an assistant?"
   // We send the one-liner handoff disclosure exactly once per JID, the first
@@ -9573,6 +9581,31 @@ export class WhatsAppSession {
             `draft to ${label}: "${pending.draftText.slice(0, 40)}…"\n"${item.n} send" / "${item.n} edit <text>"`
           );
         }
+      } else if (item.ref === "thread") {
+        // Attention Engine: a conversation waiting on the owner. item.id = contact JID.
+        const contact = item.id;
+        const name = (this.contactNames.get(contact) || contact.split("@")[0]).trim();
+        if (action.action === "draft" || action.action === "act" || action.action === "custom") {
+          const hist = this.inboundHistory.get(contact) ?? [];
+          const lastInbound = hist[hist.length - 1] ?? "";
+          const instruction = action.arg
+            ? `The owner wants to reply now and says: "${action.arg}". Draft that reply in the owner's voice.`
+            : `Draft the reply the owner would send now — it's been a few days, keep it natural, no apology theater.`;
+          const draft = await this.agent.respondTo(contact, lastInbound || "(no recent text cached — greet naturally)", instruction, { timeoutMs: 30_000 });
+          if (!draft) { await this.confirmToSelf(`⚠️ couldn't draft for ${name} — try again.`); return; }
+          const key = `attn:${contact}`;
+          this.pendingDraftEdits.set(key, { targetJid: contact, displayName: name, draftText: draft, inboundText: lastInbound, issuedAt: Date.now() });
+          await this.confirmToSelf(`📨 draft for ${name}: "${draft.slice(0, 120)}"\nsay "?" to send/edit it from drafts.`);
+        } else if (action.action === "review") {
+          const hist = this.inboundHistory.get(contact) ?? [];
+          const peek = hist.slice(-3).map((m) => `  ${name}: ${m.slice(0, 80)}`).join("\n");
+          await this.confirmToSelf(peek ? `⏳ last from ${name}:\n${peek}\n→ "${item.n} draft" to reply` : `no cached messages for ${name} — "${item.n} draft" to reply anyway`);
+        } else if (action.action === "skip") {
+          this.attentionSkipped.add(contact);
+          await this.confirmToSelf(`👍 won't surface ${name} again today.`);
+        } else {
+          await this.confirmToSelf(`"${item.n} draft" · "${item.n} review" · "${item.n} skip"`);
+        }
       } else if (item.ref === "auto_action") {
         // Route to the existing auto-action undo rail via pendingOffers (kind=auto-act-undo).
         const cachedOffer = this.pendingOffers.get(jid);
@@ -9618,6 +9651,8 @@ export class WhatsAppSession {
 
       if (cmd === "brief") {
         const input = await fetchBriefInput(authedFetch, allOpen, drafts);
+        input.waiting = this.gatherWaitingForBrief();
+        await this.rankAttention(input);
         const view = buildBrief(input);
         text = view.text; items = view.items;
       } else if (cmd === "plate") {
@@ -10504,6 +10539,43 @@ export class WhatsAppSession {
   // than the overdue threshold AND who the owner/bot has not replied to since.
   // Attaches contact-priority signals so a high-priority person's overdue
   // reply ranks above a cold contact's. Best-effort; never throws.
+  /** Waiting-on-you threads for the Brief (Attention Engine). Mirrors the
+   *  iMessage bridge; preview comes from in-memory inbound history. */
+  private gatherWaitingForBrief(): WaitingThread[] {
+    const now = Date.now();
+    return this.gatherAwaitingReply(now)
+      .filter((r) => !this.attentionSkipped.has(r.handle))
+      .slice(0, 6)
+      .map((r) => {
+        const hist = this.inboundHistory.get(r.handle);
+        return {
+          contactKey: r.handle,
+          displayName: r.displayName || r.handle.split("@")[0],
+          channel: "whatsapp" as const,
+          daysWaiting: Math.max(1, Math.round((now - r.lastInboundAt) / 86_400_000)),
+          lastInbound: hist?.length ? hist[hist.length - 1].slice(0, 60) : undefined,
+        };
+      });
+  }
+
+  /** LLM attention ranking — best-effort; ANY failure keeps deterministic order.
+   *  Own session key (never a contact's live session). */
+  private async rankAttention(input: BriefInput): Promise<void> {
+    const waiting = input.waiting ?? [];
+    if (input.drafts.length + input.commitments.length + waiting.length < 2) return;
+    try {
+      const prompt = buildAttentionPrompt(input, waiting, new Date());
+      const raw = (await this.agent.respondTo("attention::rank", prompt, "Return only valid JSON. No prose.", { timeoutMs: 20_000 })) || "";
+      const ranking = parseAttentionRanking(raw, candidateIds(input, waiting));
+      if (ranking) {
+        input.rankedIds = ranking.order;
+        input.whys = ranking.whys;
+      }
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "attention ranking failed — deterministic order");
+    }
+  }
+
   private gatherAwaitingReply(now: number): AwaitingReplySignal[] {
     const out: AwaitingReplySignal[] = [];
     try {
