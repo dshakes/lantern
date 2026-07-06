@@ -127,6 +127,11 @@ rather than punting to "I can't tell."
 
 ## Stores (`~/.lantern/`, all mode 0600)
 
+`episodes.jsonl`, `topic-index.jsonl`, and `dislike-patterns.jsonl` are
+AES-256-GCM encrypted at rest (`enc1:` line envelope, `secure-store.ts`; key
+auto-created 0600 at `~/.lantern/state.key`). Old plaintext lines still read
+and age out naturally.
+
 | File | Written by | Read by |
 | --- | --- | --- |
 | `identity-overrides.jsonl` | owner corrections | name resolution (both bridges) |

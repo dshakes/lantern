@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
 use crate::error::AppError;
+use crate::introspect::ApiKeyIntrospector;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -53,12 +54,17 @@ impl Claims {
 #[derive(Clone)]
 pub struct AuthLayer {
     jwt_secret: Arc<String>,
+    introspector: Option<Arc<ApiKeyIntrospector>>,
 }
 
 impl AuthLayer {
-    pub fn new(jwt_secret: String) -> Self {
+    /// `introspector` is `None` when API-key auth is unconfigured
+    /// (LANTERN_CONTROL_PLANE_URL / LANTERN_GRPC_SERVICE_TOKEN unset) — the
+    /// API-key path then stays fail-closed.
+    pub fn new(jwt_secret: String, introspector: Option<Arc<ApiKeyIntrospector>>) -> Self {
         Self {
             jwt_secret: Arc::new(jwt_secret),
+            introspector,
         }
     }
 }
@@ -70,6 +76,7 @@ impl<S> Layer<S> for AuthLayer {
         AuthMiddleware {
             inner,
             jwt_secret: self.jwt_secret.clone(),
+            introspector: self.introspector.clone(),
         }
     }
 }
@@ -78,6 +85,7 @@ impl<S> Layer<S> for AuthLayer {
 pub struct AuthMiddleware<S> {
     inner: S,
     jwt_secret: Arc<String>,
+    introspector: Option<Arc<ApiKeyIntrospector>>,
 }
 
 impl<S> Service<Request<Body>> for AuthMiddleware<S>
@@ -102,15 +110,20 @@ where
         }
 
         let jwt_secret = self.jwt_secret.clone();
+        let introspector = self.introspector.clone();
         let mut inner = self.inner.clone();
+        // Extract the credential synchronously so the async block never borrows
+        // `req` across an `.await` (which would make the future non-Send).
+        let credential = extract_credential(&req);
 
         Box::pin(async move {
-            let claims = match extract_claims(&req, &jwt_secret) {
-                Ok(claims) => claims,
-                Err(err) => {
-                    return Ok(err.into_response());
-                }
-            };
+            let claims =
+                match resolve_claims(credential, &jwt_secret, introspector.as_deref()).await {
+                    Ok(claims) => claims,
+                    Err(err) => {
+                        return Ok(err.into_response());
+                    }
+                };
 
             // H3: enforce scope before the request reaches any handler.
             if let Err(err) = claims.enforce_scope(req.method()) {
@@ -129,44 +142,56 @@ where
     }
 }
 
-fn extract_claims(req: &Request<Body>, jwt_secret: &str) -> Result<Claims, AppError> {
+/// A presented credential, extracted from request headers (owned, so it can
+/// cross an `.await` without borrowing the request).
+enum Credential {
+    Jwt(String),
+    ApiKey(String),
+}
+
+/// Pull the credential out of the request headers synchronously. Bearer JWT
+/// wins over X-API-Key when both are present.
+fn extract_credential(req: &Request<Body>) -> Result<Credential, AppError> {
     if let Some(auth_header) = req.headers().get("authorization") {
         let header_str = auth_header
             .to_str()
             .map_err(|_| AppError::Auth("invalid authorization header encoding".to_string()))?;
-
         if let Some(token) = header_str.strip_prefix("Bearer ") {
-            return decode_jwt(token.trim(), jwt_secret);
+            return Ok(Credential::Jwt(token.trim().to_string()));
         }
     }
 
     if let Some(api_key_header) = req.headers().get("x-api-key") {
-        let _key = api_key_header
+        let key = api_key_header
             .to_str()
             .map_err(|_| AppError::Auth("invalid X-API-Key header encoding".to_string()))?;
-        // C2: API-key path FAILS CLOSED.
-        //
-        // The gateway has no direct connection to the control-plane's `api_keys`
-        // table and cannot hash-and-lookup the presented key without introducing
-        // a synchronous HTTP/gRPC call on every hot-path request — a design
-        // that belongs in a dedicated auth service or a JWT-exchange endpoint.
-        //
-        // TODO: implement API-key validation by either:
-        //   (a) adding a ValidateApiKey RPC to the control-plane gRPC service and
-        //       calling it here (with an in-process cache keyed by SHA-256(key)),
-        //   (b) exchanging the key for a short-lived JWT at /auth/token and
-        //       having the SDK cache that token.
-        // Until one of those paths exists, we REJECT API-key auth so that
-        // a caller cannot impersonate an arbitrary tenant by forging the key body.
-        return Err(AppError::Auth(
-            "API-key authentication is not supported at this endpoint; use a Bearer JWT"
-                .to_string(),
-        ));
+        return Ok(Credential::ApiKey(key.to_string()));
     }
 
     Err(AppError::Auth(
         "missing authorization header or X-API-Key".to_string(),
     ))
+}
+
+async fn resolve_claims(
+    credential: Result<Credential, AppError>,
+    jwt_secret: &str,
+    introspector: Option<&ApiKeyIntrospector>,
+) -> Result<Claims, AppError> {
+    match credential? {
+        Credential::Jwt(token) => decode_jwt(&token, jwt_secret),
+        // API-key path: introspect against the control-plane (cached 60s). Still
+        // FAILS CLOSED when introspection is unconfigured — a caller must not be
+        // able to impersonate a tenant by forging the key body.
+        Credential::ApiKey(key) => match introspector {
+            Some(i) => i.introspect(&key).await,
+            None => Err(AppError::Auth(
+                "API-key authentication is not configured at this gateway (set \
+                 LANTERN_CONTROL_PLANE_URL and LANTERN_GRPC_SERVICE_TOKEN)"
+                    .to_string(),
+            )),
+        },
+    }
 }
 
 fn decode_jwt(token: &str, secret: &str) -> Result<Claims, AppError> {
@@ -279,16 +304,17 @@ mod tests {
 
     // ---- C2: API-key path fails closed ----
 
-    #[test]
-    fn api_key_rejected_regardless_of_format() {
-        // Build a minimal request with X-API-Key header.
+    #[tokio::test]
+    async fn api_key_rejected_when_introspection_unconfigured() {
+        // With no introspector wired (unset control-plane URL / service token)
+        // the API-key path must fail closed — no tenant impersonation.
         let req = Request::builder()
             .method(Method::GET)
             .uri("/v1/agents")
             .header("x-api-key", "hlx_live_mytenant_randomsuffix")
             .body(Body::empty())
             .unwrap();
-        let result = extract_claims(&req, "jwt-secret");
+        let result = resolve_claims(extract_credential(&req), "jwt-secret", None).await;
         assert!(
             result.is_err(),
             "API-key auth must fail closed — no tenant impersonation"
@@ -299,16 +325,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn api_key_arbitrary_tenant_rejected() {
-        // An attacker forging hlx_live_victim_anything must be rejected.
+    #[tokio::test]
+    async fn api_key_arbitrary_tenant_rejected() {
+        // An attacker forging hlx_live_victim_anything must be rejected when
+        // introspection is unconfigured.
         let req = Request::builder()
             .method(Method::POST)
             .uri("/v1/runs")
             .header("x-api-key", "hlx_live_victim-tenant_exploit")
             .body(Body::empty())
             .unwrap();
-        let result = extract_claims(&req, "jwt-secret");
+        let result = resolve_claims(extract_credential(&req), "jwt-secret", None).await;
         assert!(result.is_err());
     }
 

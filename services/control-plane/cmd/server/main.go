@@ -701,6 +701,10 @@ func main() {
 	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
 	runtimeSecretsHandler := handlers.NewRuntimeSecretsHandler(srv, authHandler)
 	httpMux.HandleFunc("POST /v1/runtime/secrets/resolve", runtimeSecretsHandler.ResolveSecrets)
+	// Internal API-key introspection — the Rust gateway validates X-API-Key
+	// here. Guarded by the shared gRPC service token (fail-closed in prod
+	// when LANTERN_GRPC_SERVICE_TOKEN is unset).
+	httpMux.HandleFunc("POST /internal/auth/introspect-key", authHandler.IntrospectKey)
 	// Report ingestion — runtime-manager forwards harness telemetry here.
 	// Auth: same shared token as the secret relay (fail-closed when unset).
 	runtimeReportHandler := handlers.NewRuntimeReportHandler(srv)

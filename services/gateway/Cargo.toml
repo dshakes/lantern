@@ -31,6 +31,11 @@ anyhow = "1"
 futures-core = "0.3"
 http = "1"
 subtle = "2"
+# API-key introspection HTTP call to the control-plane (rustls to match the
+# gateway's TLS backend; already in the tree via opentelemetry-otlp).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# SHA-256 for the introspection cache key (ring is already pulled in by rustls).
+ring = "0.17"
 # TLS termination — rustls-based, config-driven, FAIL-CLOSED in prod
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = "0.26"
