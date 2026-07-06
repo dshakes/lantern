@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { looksLikeBriefingRequest, formatNextEvent } from "./daily-digest.ts";
+import { looksLikeBriefingRequest, formatNextEvent, buildDigest, type DigestData } from "./daily-digest.ts";
 
 test("triggers on explicit briefing asks", () => {
   for (const s of [
@@ -61,4 +61,47 @@ test("formatNextEvent: timed event still computes minutes-from-now", () => {
 test("formatNextEvent: skips past all-day events", () => {
   const now = new Date(2026, 5, 29, 10, 0, 0).getTime();
   assert.equal(formatNextEvent([{ summary: "old", start: { date: "2026-06-01" } }], now), null);
+});
+
+test("buildDigest deterministic fallback renders attention items (commitments/overdue/sleep)", async () => {
+  const data: DigestData = {
+    autoReplies: 2,
+    pausedContacts: [],
+    watchedThreads: 0,
+    escalations: 1,
+    commitments: [
+      { title: "send Raju the deck", assignedBy: "Raju" },
+      { title: "renew passport" },
+    ],
+    overdueContacts: [{ displayName: "Madhu", daysOverdue: 3 }],
+    sleepHours: 6.5,
+    // Pre-supplied so the fallback makes zero network calls in tests.
+    drafts: { count: 1, sample: "Sam" },
+    nextEvent: null,
+  } as DigestData;
+
+  const body = await buildDigest(data);
+  assert.match(body, /on your plate/);
+  assert.match(body, /send Raju the deck \(for Raju\)/);
+  assert.match(body, /renew passport/);
+  assert.match(body, /waiting on you: Madhu \(3d\)/);
+  assert.match(body, /6\.5h sleep/);
+  assert.match(body, /1 VIP draft/);
+});
+
+test("buildDigest fallback omits attention lines when empty", async () => {
+  const data = {
+    autoReplies: 0,
+    pausedContacts: [],
+    watchedThreads: 0,
+    escalations: 0,
+    commitments: [],
+    overdueContacts: [],
+    sleepHours: null,
+    drafts: { count: 0, sample: "" },
+    nextEvent: null,
+  } as unknown as DigestData;
+
+  const body = await buildDigest(data);
+  assert.doesNotMatch(body, /on your plate|waiting on you|sleep/);
 });

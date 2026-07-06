@@ -209,14 +209,34 @@ export async function buildDigest(data: DigestData): Promise<string> {
     lines.push(`• 🚨 ${data.escalations} escalation${data.escalations === 1 ? "" : "s"} — check email`);
   }
 
-  // Pending drafts (cross-channel; same DB for both bridges).
-  const drafts = await fetchPendingDrafts();
+  // Attention items — the reason the owner opens the digest. These must
+  // survive the deterministic path too, not just the LLM narrative
+  // (regression: a compose failure used to silently drop all of them).
+  const commitments = data.commitments ?? [];
+  if (commitments.length > 0) {
+    lines.push(`• 📌 on your plate:`);
+    for (const c of commitments.slice(0, 3)) {
+      lines.push(`   ${c.title}${c.assignedBy ? ` (for ${c.assignedBy})` : ""}`);
+    }
+  }
+  const overdue = data.overdueContacts ?? [];
+  if (overdue.length > 0) {
+    const top = overdue.slice(0, 3).map((c) => `${c.displayName || "someone"} (${c.daysOverdue}d)`);
+    lines.push(`• ⏳ waiting on you: ${top.join(", ")}`);
+  }
+  if (typeof data.sleepHours === "number") {
+    lines.push(`• 😴 ${data.sleepHours}h sleep`);
+  }
+
+  // Pending drafts (cross-channel; same DB for both bridges). Prefer the
+  // bridge's pre-fetched enrichment over a second API call.
+  const drafts = data.drafts ?? (await fetchPendingDrafts());
   if (drafts.count > 0) {
     lines.push(`• 👑 ${drafts.count} VIP draft${drafts.count === 1 ? "" : "s"} waiting${drafts.sample ? ` (${drafts.sample})` : ""}`);
   }
 
   // Next calendar event (when calendar connector is wired).
-  const nextEv = await fetchNextEvent();
+  const nextEv = data.nextEvent !== undefined ? data.nextEvent : await fetchNextEvent();
   if (nextEv) {
     lines.push(`• next: ${nextEv}`);
   }

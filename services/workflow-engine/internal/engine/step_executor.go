@@ -28,6 +28,11 @@ var ErrModelRouterUnavailable = errors.New("model router not configured (set LAN
 // tool result.
 var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set LANTERN_RUNTIME_MANAGER_ADDR)")
 
+// ErrChildRunUnavailable is returned by a child_run step: dispatching a child
+// agent run via the control plane is not implemented yet. The step fails
+// honestly rather than fabricating a child run's output.
+var ErrChildRunUnavailable = errors.New("child run dispatch not implemented (no control-plane run client)")
+
 // StepPayload is the decoded payload from a step request. The Kind field
 // determines what the step does (llm_call, tool_call, sleep, signal, etc.)
 // and the Data field carries kind-specific parameters.
@@ -651,9 +656,9 @@ func (se *StepExecutor) executeWaitSignal(ctx context.Context, state *RunState, 
 	}
 }
 
-// executeChildRun starts a child run. The parent run waits for the child
-// to complete. Child runs are tracked via child_started/child_completed
-// journal events.
+// executeChildRun will start a child run via the control plane and wait for
+// it to complete, tracked via child_started/child_completed journal events.
+// Until that client exists it fails with ErrChildRunUnavailable.
 func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, stepID, idempotencyKey string, data json.RawMessage) (json.RawMessage, error) {
 	se.logger.Info("executing child_run step",
 		zap.String("run_id", state.RunID),
@@ -661,8 +666,6 @@ func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, st
 		zap.String("idempotency_key", idempotencyKey),
 	)
 
-	// In the full implementation, this creates a child run via the control plane
-	// and waits for it to complete. The child run's output becomes this step's output.
 	var req struct {
 		AgentName string          `json:"agent_name"`
 		Input     json.RawMessage `json:"input"`
@@ -671,59 +674,10 @@ func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, st
 		return nil, fmt.Errorf("invalid child_run payload: %w", err)
 	}
 
-	// Journal child_started.
-	tx, err := se.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	childEntry := &journal.JournalEntry{
-		RunID:   state.RunID,
-		Kind:    journal.KindChildStarted,
-		StepID:  stepID,
-		Attempt: 1,
-		Payload: data,
-	}
-	if err := journal.Append(ctx, tx, childEntry); err != nil {
-		return nil, fmt.Errorf("journal child_started: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit child_started: %w", err)
-	}
-	state.AppendJournal(*childEntry)
-
-	// Placeholder: in production, this dispatches to the control plane.
-	result := map[string]any{
-		"child_run_id": fmt.Sprintf("child-%s-%s", state.RunID[:8], stepID),
-		"status":       "completed",
-		"output":       fmt.Sprintf("[child run placeholder for agent=%s]", req.AgentName),
-	}
-	resultBytes, _ := json.Marshal(result)
-
-	// Journal child_completed.
-	tx2, err := se.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx2.Rollback(ctx) //nolint:errcheck
-
-	completeEntry := &journal.JournalEntry{
-		RunID:   state.RunID,
-		Kind:    journal.KindChildCompleted,
-		StepID:  stepID,
-		Attempt: 1,
-		Payload: resultBytes,
-	}
-	if err := journal.Append(ctx, tx2, completeEntry); err != nil {
-		return nil, fmt.Errorf("journal child_completed: %w", err)
-	}
-	if err := tx2.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit child_completed: %w", err)
-	}
-	state.AppendJournal(*completeEntry)
-
-	return resultBytes, nil
+	// Dispatch via the control plane is not wired yet. The step fails with the
+	// typed error (mirroring llm_call/tool_call without their clients) rather
+	// than journaling a fabricated child_started/child_completed pair.
+	return nil, fmt.Errorf("child_run for agent %q: %w", req.AgentName, ErrChildRunUnavailable)
 }
 
 // executeApproval pauses the run until a human approves or denies the request.
