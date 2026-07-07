@@ -64,7 +64,7 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 
 import { IMessageSession } from "./session.js";
-import { searchMailIndex } from "./mail-reader.js";
+import { searchMailIndex, readMailBody } from "./mail-reader.js";
 import { initAuth } from "@lantern/bridge-core/auth";
 import { buildLabel } from "@lantern/bridge-core/build-info";
 
@@ -361,6 +361,23 @@ app.post("/session/:tenantId/mail/search", (req, res) => {
   );
   if (!outcome.ok) { res.status(422).json({ error: outcome.error }); return; }
   res.json({ query, count: outcome.hits.length, results: outcome.hits });
+});
+
+// Read one email's BODY by its Envelope-Index ROWID (chained after
+// /mail/search, which returns the rowid). Owner-only via the same session
+// gate; body text is never logged.
+app.post("/session/:tenantId/mail/read", (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { rowid } = req.body as { rowid?: unknown };
+  const id = typeof rowid === "number" ? rowid : typeof rowid === "string" ? Number(rowid) : NaN;
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "'rowid' required (positive integer)" });
+    return;
+  }
+  const outcome = readMailBody(id, logger);
+  if (!outcome.ok) { res.status(422).json({ error: outcome.reason }); return; }
+  res.json({ rowid: id, from: outcome.from, subject: outcome.subject, text: outcome.text });
 });
 
 app.post("/session/:tenantId/personal-docs/read", async (req, res) => {

@@ -41,6 +41,7 @@ const (
 	readCalendarTool            = "read_calendar"
 	searchContactsTool          = "search_contacts"
 	searchEmailTool             = "search_email"
+	readEmailTool               = "read_email"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -86,10 +87,10 @@ func personalDocsTools() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name": searchEmailTool,
-				"description": "Search the owner's ENTIRE email history locally (Apple Mail's on-disk index of every synced account, Gmail included — ~100k messages, no login needed). Returns sender, subject, and date, newest first. " +
+				"description": "Search the owner's ENTIRE email history locally (Apple Mail's on-disk index of every synced account, Gmail included — ~100k messages, no login needed). Returns each match's rowid, sender, subject, and date, newest first. " +
 					"Use for ANY question about past email: travel history ('all my flights in 2024' → query airlines/'itinerary'/'booking confirmed'), receipts, USCIS/immigration notices, bills, appointments that arrived by email. " +
 					"AND-matches every word in `query` against subject + sender, so keep queries to 1-3 strong keywords and run SEVERAL searches with different keywords rather than one long query. " +
-					"This is HISTORY (subjects only, always current). If you also need full message bodies or to act on live mail, additionally try gmail_search. Never say 'no email about X' without calling this first.",
+					"This gives subjects only. To read an email's BODY (times, addresses, order details, confirmation codes), take the rowid from a result and call read_email — do NOT say you can't read the message.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -115,6 +116,25 @@ func personalDocsTools() []map[string]any {
 						},
 					},
 					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": readEmailTool,
+				"description": "Read the BODY of one email from the owner's local mailbox, given the `rowid` returned by search_email. " +
+					"Use this whenever the subject alone doesn't answer the question — appointment/confirmation times, addresses, order details, amounts, confirmation codes all live in the body. " +
+					"Returns sender, subject, and a plain-text snippet of the body. Chain it: search_email to find the message, then read_email on its rowid.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"rowid": map[string]any{
+							"type":        "integer",
+							"description": "The rowid of a message from a prior search_email result.",
+						},
+					},
+					"required": []string{"rowid"},
 				},
 			},
 		},
@@ -350,7 +370,7 @@ func isPersonalDocsTool(name string) bool {
 		imessageGroupsListTool, imessageGroupMembersTool,
 		whatsappGroupsListTool, whatsappGroupMembersTool,
 		whatsappHistoryBackfillTool, readCalendarTool, searchContactsTool,
-		searchEmailTool:
+		searchEmailTool, readEmailTool:
 		return true
 	}
 	return false
@@ -432,6 +452,13 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 			body["limit"] = int(v)
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/mail/search", base, tenantID)
+	case readEmailTool:
+		rowid, ok := params["rowid"].(float64)
+		if !ok || rowid <= 0 || rowid != float64(int64(rowid)) {
+			return nil, errors.New("read_email: 'rowid' is required (positive integer from a search_email result)")
+		}
+		body["rowid"] = int64(rowid)
+		endpoint = fmt.Sprintf("%s/session/%s/mail/read", base, tenantID)
 	case imessageHistorySearchTool:
 		// All filters optional — bridge handles the empty case.
 		if v, ok := params["keyword"].(string); ok && strings.TrimSpace(v) != "" {
