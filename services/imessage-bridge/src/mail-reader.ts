@@ -17,17 +17,23 @@
 //     structured error the LLM can relay, one debug log, never a throw.
 //   * Disable entirely with LANTERN_MAIL_INDEX=0.
 
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
+import { execFileSync } from "child_process";
 import { join } from "path";
 import { homedir } from "os";
 import Database from "better-sqlite3";
 import type { Logger } from "pino";
 import {
   buildMailQuery,
+  parseEmlx,
   rowToHit,
   type MailHit,
   type MailSearchParams,
 } from "@lantern/bridge-core/mail-index";
+
+export type MailReadOutcome =
+  | { ok: true; text: string; from?: string; subject?: string }
+  | { ok: false; reason: string };
 
 export type MailSearchOutcome =
   | { ok: true; hits: MailHit[] }
@@ -62,7 +68,7 @@ export function searchMailIndex(params: MailSearchParams, log: Logger): MailSear
   try {
     db = new Database(indexPath, { readonly: true, fileMustExist: true });
     const { sql, args } = buildMailQuery(params);
-    const rows = db.prepare(sql).all(...args) as { ts: number; comment: string; address: string; subject: string }[];
+    const rows = db.prepare(sql).all(...args) as { rowid: number; ts: number; comment: string; address: string; subject: string }[];
     return { ok: true, hits: rows.map(rowToHit) };
   } catch (err) {
     // Fail closed: no FDA / schema drift / lock — single debug log,
@@ -71,5 +77,42 @@ export function searchMailIndex(params: MailSearchParams, log: Logger): MailSear
     return { ok: false, error: `mail index unavailable: ${(err as Error).message}` };
   } finally {
     try { db?.close(); } catch {}
+  }
+}
+
+// Read one message's BODY by its Envelope-Index ROWID (== the .emlx
+// filename). Locates the per-message .emlx under ~/Library/Mail, parses the
+// RFC822 payload, and returns a bounded plain-text snippet. Same fail-closed,
+// owner-only, read-only, kill-switch posture as searchMailIndex; body text is
+// NEVER logged (PII).
+export function readMailBody(rowid: number, log: Logger, mailRoot = join(homedir(), "Library", "Mail")): MailReadOutcome {
+  if (!mailIndexEnabled()) return { ok: false, reason: "local mail index disabled (LANTERN_MAIL_INDEX=0)" };
+  if (!Number.isInteger(rowid) || rowid <= 0) return { ok: false, reason: "invalid rowid" };
+  try {
+    const root = realpathSync(mailRoot);
+    // `find` is rooted at the mail dir and the rowid is a validated positive
+    // integer, so the exact-name match cannot escape ~/Library/Mail. Parens
+    // are required so the default -print binds to BOTH -name predicates.
+    let out = "";
+    try {
+      out = execFileSync(
+        "find",
+        [root, "(", "-name", `${rowid}.emlx`, "-o", "-name", `${rowid}.partial.emlx`, ")", "-print"],
+        { encoding: "utf8", timeout: 8000, maxBuffer: 1 << 20 },
+      );
+    } catch { out = ""; }
+    const file = out.split("\n").map((l) => l.trim()).filter(Boolean)[0];
+    if (!file) return { ok: false, reason: `email #${rowid} not found in local mailbox` };
+    // Defense in depth: the resolved file must stay under the mail root.
+    const resolved = realpathSync(file);
+    if (resolved !== root && !resolved.startsWith(root + "/")) {
+      return { ok: false, reason: "resolved path escaped mail root" };
+    }
+    const parsed = parseEmlx(readFileSync(resolved, "utf8"));
+    if (!parsed.text) return { ok: false, reason: "no readable text body in this email" };
+    return { ok: true, text: parsed.text, from: parsed.from, subject: parsed.subject };
+  } catch (err) {
+    log.debug({ err: (err as Error).message, rowid }, "mail body read failed (fails closed)");
+    return { ok: false, reason: `mail body unavailable: ${(err as Error).message}` };
   }
 }
