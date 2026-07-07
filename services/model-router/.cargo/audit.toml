@@ -1,0 +1,14 @@
+# cargo-audit configuration for lantern-model-router.
+#
+# RUSTSEC-2026-0097: rand 0.8.5 — unsound interaction with a custom GlobalRng logger.
+# rand 0.8 is pulled TRANSITIVELY by opentelemetry_sdk (0.27.1), which still pins rand 0.8.
+# Fixing it requires opentelemetry_sdk to bump to rand 0.9, a semver-breaking change that
+# is outside our control. The unsoundness requires a custom GlobalRng override, which we
+# never install; the default thread_rng/SmallRng paths in our deps are unaffected.
+# Revisit when opentelemetry_sdk releases with rand 0.9+ support.
+
+[advisories]
+ignore = [
+    # rand 0.8 transitive via opentelemetry_sdk; fix requires upstream semver bump.
+    "RUSTSEC-2026-0097",
+]
