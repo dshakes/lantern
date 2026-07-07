@@ -146,7 +146,8 @@ func (s *SimpleScheduler) claimDueSchedules(ctx context.Context) ([]claimedSched
 	}()
 
 	rows, err := tx.Query(ctx, `
-		SELECT id, tenant_id, agent_name, input_template, cron_expr, config
+		SELECT id, tenant_id, agent_name, input_template, cron_expr, config,
+		       COALESCE(timezone, '')
 		FROM   schedules
 		WHERE  enabled = true
 		  AND  next_fire_at <= now()
@@ -163,12 +164,13 @@ func (s *SimpleScheduler) claimDueSchedules(ctx context.Context) ([]claimedSched
 		inputJSON  []byte
 		cronExpr   string
 		configJSON []byte
+		timezone   string
 	}
 
 	var rawRows []rawRow
 	for rows.Next() {
 		var r rawRow
-		if scanErr := rows.Scan(&r.id, &r.tenantID, &r.agentName, &r.inputJSON, &r.cronExpr, &r.configJSON); scanErr != nil {
+		if scanErr := rows.Scan(&r.id, &r.tenantID, &r.agentName, &r.inputJSON, &r.cronExpr, &r.configJSON, &r.timezone); scanErr != nil {
 			s.logger.Error("scheduler: scan error", zap.Error(scanErr))
 			continue
 		}
@@ -183,7 +185,7 @@ func (s *SimpleScheduler) claimDueSchedules(ctx context.Context) ([]claimedSched
 	var claimed []claimedSchedule
 
 	for _, r := range rawRows {
-		next, cronErr := NextCronTime(r.cronExpr, now)
+		next, cronErr := NextCronTime(r.cronExpr, now.In(ResolveLocation(r.timezone)))
 		if cronErr != nil {
 			s.logger.Error("scheduler: bad cron expr, disabling schedule",
 				zap.String("schedule_id", r.id),
