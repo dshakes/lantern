@@ -9761,6 +9761,9 @@ export class WhatsAppSession {
         if (this.macActions) {
           const ev = await this.macActions.readUpcomingEvents({ days: 2, max: 20 });
           for (const e of ev) {
+            // All-day events aren't timed meetings — never fire "starts in N
+            // min" for them (their stored time is a midnight-GMT artifact).
+            if (e.allDay) continue;
             const startMs = e.start?.getTime?.();
             if (typeof startMs === "number" && Number.isFinite(startMs) && startMs >= now) {
               upcomingEvents.push({ title: e.title, startAt: startMs });

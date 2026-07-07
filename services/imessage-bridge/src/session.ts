@@ -2279,11 +2279,16 @@ export class IMessageSession {
     let upcomingEvents: UpcomingEventSignal[] = [];
     try {
       const evs = await this.macActions.readUpcomingEvents({ days: 1, max: 20 });
-      upcomingEvents = evs.map((e) => ({
-        title: e.title,
-        startAt: e.start.getTime(),
-        eventId: `${e.calendar}:${e.title}:${e.start.getTime()}`,
-      }));
+      // All-day events are not timed meetings — they must never drive a
+      // "starts in N min" pre-meeting nudge (and their stored time is a
+      // midnight-GMT artifact, not a real start). Skip them here.
+      upcomingEvents = evs
+        .filter((e) => !e.allDay)
+        .map((e) => ({
+          title: e.title,
+          startAt: e.start.getTime(),
+          eventId: `${e.calendar}:${e.title}:${e.start.getTime()}`,
+        }));
     } catch { /* empty */ }
 
     // Contacts awaiting a reply: last inbound > 2 days old with no owner
