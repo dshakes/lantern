@@ -1,0 +1,24 @@
+# cargo-audit configuration for lantern-gateway.
+#
+# RUSTSEC-2026-0097: rand 0.8.5 — unsound interaction with a custom GlobalRng logger.
+# rand 0.8 is pulled TRANSITIVELY by opentelemetry_sdk (0.27.1), which still pins rand 0.8.
+# Fixing it requires opentelemetry_sdk to bump to rand 0.9, a semver-breaking change that
+# is outside our control. The unsoundness requires a custom GlobalRng override, which we
+# never install; the default thread_rng/SmallRng paths in our deps are unaffected.
+# Revisit when opentelemetry_sdk releases with rand 0.9+ support.
+#
+# RUSTSEC-2025-0134: rustls-pemfile 2.2.0 — marked UNMAINTAINED.
+# rustls-pemfile is a DIRECT dep (used for TLS cert/key loading in the gateway's
+# gRPC + HTTPS listeners) and ALSO pulled by tonic 0.12. The successor crate
+# (rustls-pki-types) has a different API; migrating requires source changes and a tonic
+# major-version bump. The unmaintained advisory carries no known CVE — the crate is
+# functionally complete for its PEM-parsing role. We accept the maintenance risk until
+# tonic 0.13+ (which ships rustls-pki-types natively) is production-ready for our stack.
+
+[advisories]
+ignore = [
+    # rand 0.8 transitive via opentelemetry_sdk; fix requires upstream semver bump.
+    "RUSTSEC-2026-0097",
+    # rustls-pemfile unmaintained; migration needs tonic major-version bump + source changes.
+    "RUSTSEC-2025-0134",
+]
