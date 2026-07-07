@@ -100,8 +100,14 @@ export class CalendarLookup {
       const now = Date.now();
       const horizon = now + 30 * 60_000;
       for (const ev of items) {
-        const startIso = ev.start?.dateTime || ev.start?.date;
-        const endIso = ev.end?.dateTime || ev.end?.date;
+        // All-day events carry `date` (no `dateTime`). They are NOT imminent
+        // timed meetings, and a date-only value parses as midnight UTC — in a
+        // negative-offset zone it lands in the evening of the PRIOR day, so an
+        // all-day event tomorrow would wrongly read as "in a meeting" tonight.
+        // Skip them for the imminent-meeting / presence check.
+        if (ev.start?.date && !ev.start?.dateTime) continue;
+        const startIso = ev.start?.dateTime;
+        const endIso = ev.end?.dateTime;
         if (!startIso || !endIso) continue;
         const startMs = new Date(startIso).getTime();
         const endMs = new Date(endIso).getTime();
@@ -118,8 +124,19 @@ export class CalendarLookup {
   }
 }
 
-function formatWhen(iso: string, tz?: string): string {
+export function formatWhen(iso: string, tz?: string): string {
   try {
+    // All-day / date-only value ("YYYY-MM-DD", no time): render as a bare
+    // calendar date. Parsing it as an instant (new Date("2026-07-07")) yields
+    // midnight UTC, which prints the PRIOR evening ("Jul 6, 8:00 PM") in a
+    // negative-offset zone — a wrong day + a fabricated time the LLM reasons
+    // over. A bare date has no time zone, so build it from local components.
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.exec(iso);
+    if (dateOnly) {
+      const [y, m, day] = iso.split("-").map(Number);
+      const d = new Date(y, m - 1, day);
+      return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(d) + " (all day)";
+    }
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
     const opts: Intl.DateTimeFormatOptions = {
