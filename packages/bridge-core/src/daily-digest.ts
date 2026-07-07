@@ -86,15 +86,23 @@ export function msUntilNextDigest(now: Date, cfg: DigestConfig): number {
   // hour in TZ; we compute the diff and apply it.
   if (cfg.timezone) {
     try {
+      // Read hour AND minute/second from the SAME owner-TZ formatter. Using
+      // now.getMinutes()/getSeconds() (process-local) mixed the owner-TZ hour
+      // with process-local minutes — off by up to the minute-offset difference
+      // (30 min for a half-hour zone like Asia/Kolkata +5:30).
       const fmt = new Intl.DateTimeFormat("en-US", {
         timeZone: cfg.timezone,
+        hourCycle: "h23",
         hour: "numeric",
-        hour12: false,
+        minute: "numeric",
+        second: "numeric",
       });
-      const ownerHour = parseInt(fmt.format(now), 10);
+      const parts = fmt.formatToParts(now);
+      const part = (t: string) => parseInt(parts.find((p) => p.type === t)?.value ?? "0", 10);
+      const ownerHour = part("hour") % 24; // h23 gives 0-23, guard 24→0
       let hoursAhead = cfg.hour - ownerHour;
       if (hoursAhead <= 0) hoursAhead += 24;
-      const ms = hoursAhead * 3600_000 - (now.getMinutes() * 60_000 + now.getSeconds() * 1000);
+      const ms = hoursAhead * 3600_000 - (part("minute") * 60_000 + part("second") * 1000);
       return Math.max(60_000, ms);
     } catch {
       // fall through to local-time calc
