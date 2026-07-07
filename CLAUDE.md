@@ -317,6 +317,18 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `PUT`    | `/v1/schedules/{id}` | Update schedule        |
 | `DELETE` | `/v1/schedules/{id}` | Delete schedule        |
 
+**Timezone.** Cron matching is timezone-aware. `POST`/`PUT` accept an optional
+`timezone` (IANA, e.g. `America/New_York`; invalid → 400), stored on
+`schedules.timezone`. `NextCronTime` is computed in that zone via
+`scheduler.ResolveLocation(tz)` (priority: schedule tz → `LANTERN_DEFAULT_TIMEZONE`
+env → **UTC**). Without a per-schedule tz AND without the env, everything stays
+UTC — identical to prior behavior (so `0 9 * * *` only fires at 9am *local* once
+a zone is configured; before this it fired at 09:00 UTC). The same
+`ResolveLocation("")` drives the budget/usage **day boundary** (`usageDate()` in
+`internal/handlers/tz.go`, used by all `agent_usage_daily.usage_date` sites) so a
+`max_cost_usd_per_day` rolls at the deployment's local midnight, not UTC. Env:
+`LANTERN_DEFAULT_TIMEZONE` (deployment-wide IANA; unset → UTC, a no-op).
+
 ### Completions (LLM proxy)
 
 | Method | Path              | Description                                     |

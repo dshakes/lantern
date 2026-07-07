@@ -35,6 +35,7 @@ func (h *RESTHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		InputTemplate map[string]any `json:"inputTemplate"`
 		DeliveryEmail string         `json:"deliveryEmail"`
 		Enabled       *bool          `json:"enabled"`
+		Timezone      string         `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -46,8 +47,16 @@ func (h *RESTHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the cron expression.
-	nextFire, err := scheduler.NextCronTime(body.CronExpr, time.Now())
+	if body.Timezone != "" {
+		if _, err := time.LoadLocation(body.Timezone); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid timezone: " + err.Error()})
+			return
+		}
+	}
+
+	// Validate the cron expression in the requested timezone.
+	loc := scheduler.ResolveLocation(body.Timezone)
+	nextFire, err := scheduler.NextCronTime(body.CronExpr, time.Now().In(loc))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron expression: " + err.Error()})
 		return
@@ -71,19 +80,24 @@ func (h *RESTHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	configJSON, _ := json.Marshal(config)
 
 	var id string
+	var tzArg *string
+	if body.Timezone != "" {
+		tzArg = &body.Timezone
+	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			INSERT INTO schedules (tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at)
-			VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
+			INSERT INTO schedules (tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at, timezone)
+			VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
 			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
 				cron_expr = EXCLUDED.cron_expr,
 				input_template = EXCLUDED.input_template,
 				config = EXCLUDED.config,
 				enabled = EXCLUDED.enabled,
 				next_fire_at = EXCLUDED.next_fire_at,
+				timezone = EXCLUDED.timezone,
 				updated_at = now()
 			RETURNING id
-		`, tenantID, body.AgentName, body.CronExpr, string(inputJSON), string(configJSON), enabled, nextFire,
+		`, tenantID, body.AgentName, body.CronExpr, string(inputJSON), string(configJSON), enabled, nextFire, tzArg,
 		).Scan(&id)
 	})
 	if err != nil {
@@ -212,21 +226,29 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		CronExpr      *string `json:"cronExpr"`
 		DeliveryEmail *string `json:"deliveryEmail"`
 		Enabled       *bool   `json:"enabled"`
+		Timezone      *string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	if body.Timezone != nil && *body.Timezone != "" {
+		if _, err := time.LoadLocation(*body.Timezone); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid timezone: " + err.Error()})
+			return
+		}
+	}
+
 	// Fetch current schedule.
-	var currentCronExpr string
+	var currentCronExpr, currentTimezone string
 	var currentConfigJSON []byte
 	var currentEnabled bool
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT cron_expr, config, enabled FROM schedules WHERE id = $1 AND tenant_id = $2`,
+			`SELECT cron_expr, config, enabled, COALESCE(timezone, '') FROM schedules WHERE id = $1 AND tenant_id = $2`,
 			id, tenantID,
-		).Scan(&currentCronExpr, &currentConfigJSON, &currentEnabled)
+		).Scan(&currentCronExpr, &currentConfigJSON, &currentEnabled, &currentTimezone)
 	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "schedule not found"})
@@ -241,6 +263,10 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
+	tz := currentTimezone
+	if body.Timezone != nil {
+		tz = *body.Timezone
+	}
 
 	var currentConfig map[string]any
 	if len(currentConfigJSON) > 0 {
@@ -254,18 +280,23 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	configJSON, _ := json.Marshal(currentConfig)
 
-	// Recalculate next fire time.
-	nextFire, err := scheduler.NextCronTime(cronExpr, time.Now())
+	// Recalculate next fire time in the schedule's timezone.
+	nextFire, err := scheduler.NextCronTime(cronExpr, time.Now().In(scheduler.ResolveLocation(tz)))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron expression: " + err.Error()})
 		return
 	}
 
+	var tzUpdateArg *string
+	if tz != "" {
+		tzUpdateArg = &tz
+	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
-			UPDATE schedules SET cron_expr = $1, config = $2::jsonb, enabled = $3, next_fire_at = $4, updated_at = now()
-			WHERE id = $5 AND tenant_id = $6
-		`, cronExpr, string(configJSON), enabled, nextFire, id, tenantID)
+			UPDATE schedules SET cron_expr = $1, config = $2::jsonb, enabled = $3, next_fire_at = $4,
+			                     timezone = $5, updated_at = now()
+			WHERE id = $6 AND tenant_id = $7
+		`, cronExpr, string(configJSON), enabled, nextFire, tzUpdateArg, id, tenantID)
 		return e
 	})
 	if err != nil {
