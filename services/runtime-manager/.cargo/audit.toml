@@ -17,8 +17,39 @@
 #
 # ACTION: drop these ignores once object_store releases a version depending on
 # quick-xml >=0.41 and we bump to it.
+#
+# RUSTSEC-2026-0097: rand 0.8.5 — unsound interaction with a custom GlobalRng logger.
+# Pulled TRANSITIVELY by backoff 0.4.0 -> kube-runtime 0.97.0. Fixing requires kube
+# to drop backoff (or bump rand to 0.9), a semver-breaking upstream change. The
+# unsoundness is only exploitable if a custom GlobalRng override is registered; we
+# never do this. Revisit when kube migrates off rand 0.8.
+#
+# RUSTSEC-2025-0134: rustls-pemfile 2.2.0 — marked UNMAINTAINED.
+# Pulled TRANSITIVELY by kube-client 0.97.0 and tonic 0.12. The successor crate
+# (rustls-pki-types) has a different API; migrating requires a kube and tonic
+# major-version bump, both of which are outside our control. No known CVE — the
+# crate is functionally complete for PEM parsing. Drop once kube 0.98+ and tonic
+# 0.13+ (both shipping rustls-pki-types) are production-ready for our stack.
+#
+# RUSTSEC-2025-0012: backoff 0.4.0 — marked UNMAINTAINED.
+# Pulled TRANSITIVELY by kube-runtime 0.97.0 only. kube 0.97 has no released
+# version that removes this dep; we have no upstream path to remove it today.
+# backoff 0.4 is a pure-logic exponential-backoff helper with no network/parsing
+# surface — "unmaintained" carries no known vulnerability, only maintenance risk.
+# Drop when kube drops or replaces backoff internally.
+#
+# RUSTSEC-2024-0384: instant 0.1.13 — marked UNMAINTAINED.
+# Pulled TRANSITIVELY by backoff 0.4.0 (see above). instant is a wasm-compatible
+# time shim; on native targets (our only deployment target) it delegates directly
+# to std::time. "Unmaintained" carries no known vulnerability. Drop when backoff
+# is removed from the dependency graph (see RUSTSEC-2025-0012 above).
+
 [advisories]
 ignore = [
     "RUSTSEC-2026-0194", # quick-xml: quadratic runtime on duplicate attribute names
     "RUSTSEC-2026-0195", # quick-xml: unbounded namespace-declaration allocation (DoS)
+    "RUSTSEC-2026-0097", # rand 0.8 transitive via backoff->kube-runtime; fix needs upstream semver bump
+    "RUSTSEC-2025-0134", # rustls-pemfile unmaintained; transitive via kube-client+tonic; needs major-version bumps
+    "RUSTSEC-2025-0012", # backoff unmaintained; transitive via kube-runtime; no released fix upstream
+    "RUSTSEC-2024-0384", # instant unmaintained; transitive via backoff->kube-runtime; same upstream blocker
 ]
