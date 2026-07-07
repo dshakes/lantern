@@ -223,7 +223,7 @@ func (h *LoopAgentHandler) CreateLoopAgent(w http.ResponseWriter, r *http.Reques
 	// 3. Create schedule (skip for nano — event-driven only).
 	var scheduleID string
 	if manifest.Tier != "nano" && manifest.Cron != "" {
-		nextFire, cronErr := scheduler.NextCronTime(manifest.Cron, time.Now())
+		nextFire, cronErr := scheduler.NextCronTime(manifest.Cron, time.Now().In(scheduler.ResolveLocation("")))
 		if cronErr != nil {
 			h.logger().Warn("CreateLoopAgent: invalid cron — skipping schedule",
 				zap.String("cron", manifest.Cron), zap.Error(cronErr))
@@ -336,7 +336,7 @@ Pick the right tier for the cadence described. Use kebab-case for name.`
 	if def, ok := tierCronDefault[manifest.Tier]; ok {
 		if manifest.Cron == "" {
 			manifest.Cron = def
-		} else if _, err := scheduler.NextCronTime(manifest.Cron, time.Now()); err != nil {
+		} else if _, err := scheduler.NextCronTime(manifest.Cron, time.Now().In(scheduler.ResolveLocation(""))); err != nil {
 			manifest.Cron = def
 		}
 	} else if manifest.Tier == "nano" {
@@ -2792,7 +2792,7 @@ func seedOneLoopAgent(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logge
 		return
 	}
 
-	nextFire, err := scheduler.NextCronTime(manifest.Cron, time.Now())
+	nextFire, err := scheduler.NextCronTime(manifest.Cron, time.Now().In(scheduler.ResolveLocation("")))
 	if err != nil {
 		logger.Error("seed loop agent: bad cron",
 			zap.String("name", manifest.Name), zap.String("cron", manifest.Cron), zap.Error(err))

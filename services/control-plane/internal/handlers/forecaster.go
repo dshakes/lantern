@@ -256,7 +256,7 @@ func (h *ForecastHandler) loadBudget(ctx context.Context, tenantID, agentName st
 	var maxTokensPerDayRaw *int64
 	var spent float64
 	var runs int
-	today := time.Now().UTC().Format("2006-01-02")
+	today := usageDate(time.Now())
 	budgetErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		if e := tx.QueryRow(ctx, `
 			SELECT max_cost_usd_per_day, max_cost_usd_per_run, max_tokens_per_day, max_runs_per_day,
