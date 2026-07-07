@@ -509,7 +509,7 @@ return out`;
         const rows = conn
           .prepare(
             `SELECT ci.summary AS summary, ci.start_date AS start_date, ci.end_date AS end_date,
-                    c.title AS cal
+                    ci.all_day AS all_day, c.title AS cal
              FROM CalendarItem ci
              LEFT JOIN Calendar c ON c.ROWID = ci.calendar_id
              WHERE ci.start_date IS NOT NULL AND ci.start_date >= @start AND ci.start_date <= @end
@@ -521,16 +521,27 @@ return out`;
           summary?: string;
           start_date?: number;
           end_date?: number;
+          all_day?: number;
           cal?: string;
         }>;
+        // All-day events store start/end at midnight GMT, not a wall-clock time.
+        // Rendering that instant in a non-UTC timezone shifts it to the evening
+        // of the PRIOR day (e.g. a tomorrow all-day event → 8pm today in EDT),
+        // which made the pre-meeting nudge fire "starts in 9 min". For all-day
+        // events, rebuild the date as LOCAL midnight of the GMT calendar day.
+        const toDate = (sec: number, allDay: boolean): Date => calendarStoreDate(sec, allDay);
         return rows
           .filter((r) => typeof r.start_date === "number")
-          .map((r) => ({
-            calendar: r.cal || "",
-            title: r.summary || "",
-            start: new Date((r.start_date! + APPLE_EPOCH) * 1000),
-            end: typeof r.end_date === "number" ? new Date((r.end_date + APPLE_EPOCH) * 1000) : null,
-          }));
+          .map((r) => {
+            const allDay = !!r.all_day;
+            return {
+              calendar: r.cal || "",
+              title: r.summary || "",
+              start: toDate(r.start_date!, allDay),
+              end: typeof r.end_date === "number" ? toDate(r.end_date, allDay) : null,
+              allDay,
+            };
+          });
       } finally {
         try { conn?.close(); } catch { /* ignore */ }
       }
@@ -543,11 +554,34 @@ return out`;
 
 // ---------- Calendar read: parsing + formatting (pure, testable) ----------
 
+/** Seconds between the Unix epoch (1970-01-01) and the Apple/CoreData epoch
+ *  (2001-01-01) — the Calendar store keeps dates as seconds since 2001. */
+export const APPLE_ABS_EPOCH = 978307200;
+
+/**
+ * Convert a Calendar-store date (seconds since 2001-01-01) to a JS Date.
+ *
+ * TIMED events store a real instant → return it as-is.
+ * ALL-DAY events store midnight **GMT** of the day (not a wall-clock time).
+ * Returning that instant directly renders it in the local zone as the EVENING
+ * of the prior day in any negative-offset zone (e.g. a tomorrow all-day event
+ * → 8pm today in EDT) — which is exactly what fired a bogus "starts in 9 min"
+ * pre-meeting nudge. For all-day events we rebuild LOCAL midnight of the same
+ * GMT calendar day so it lands on the correct day at 00:00 local.
+ */
+export function calendarStoreDate(secondsSince2001: number, allDay: boolean): Date {
+  const inst = new Date((secondsSince2001 + APPLE_ABS_EPOCH) * 1000);
+  return allDay ? new Date(inst.getUTCFullYear(), inst.getUTCMonth(), inst.getUTCDate()) : inst;
+}
+
 export interface CalendarEventRead {
   calendar: string;
   title: string;
   start: Date;
   end: Date | null;
+  /** All-day events store their start at midnight GMT, not a wall-clock time —
+   *  they must NOT be treated as timed meetings (no "starts in N min" nudge). */
+  allDay: boolean;
 }
 
 function parseStamp(str: string): Date | null {
@@ -572,6 +606,10 @@ export function parseAppleCalendarOutput(raw: string): CalendarEventRead[] {
       title: (parts[1] || "").trim(),
       start,
       end: parts[3] ? parseStamp(parts[3]) : null,
+      // AppleScript `start date` returns LOCAL wall-clock (no GMT-midnight shift),
+      // so all-day events already land on the right local day here; we can't
+      // cheaply detect the all-day flag from this path, so leave it false.
+      allDay: false,
     });
   }
   out.sort((a, b) => a.start.getTime() - b.start.getTime());

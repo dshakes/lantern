@@ -11,7 +11,31 @@ import { strict as assert } from "node:assert";
 import {
   parseAppleCalendarOutput,
   formatAppleCalendarBlock,
+  calendarStoreDate,
+  APPLE_ABS_EPOCH,
 } from "./mac-actions.ts";
+
+// Regression: a tomorrow ALL-DAY event ("Splash Day at Goddard (Ved)") fired a
+// bogus "starts in 9 min" pre-meeting nudge at 7:51pm. Cause: the Calendar
+// store keeps all-day events at midnight GMT; rendering that instant in EDT
+// shifts it to ~8pm the PRIOR day. calendarStoreDate must rebuild all-day
+// events as LOCAL midnight of the correct calendar day.
+test("calendarStoreDate: all-day event lands on local midnight of the GMT day, not the prior evening", () => {
+  // Midnight GMT of 2026-07-08, expressed in Calendar-store seconds (since 2001).
+  const gmtMidnight2001 = Math.floor(Date.UTC(2026, 6, 8, 0, 0, 0) / 1000) - APPLE_ABS_EPOCH;
+
+  const allDay = calendarStoreDate(gmtMidnight2001, true);
+  // Must be the 8th at 00:00 LOCAL — never the 7th evening (the bug).
+  assert.equal(allDay.getFullYear(), 2026);
+  assert.equal(allDay.getMonth(), 6); // July (0-based)
+  assert.equal(allDay.getDate(), 8);
+  assert.equal(allDay.getHours(), 0);
+  assert.equal(allDay.getMinutes(), 0);
+
+  // A TIMED event returns the exact instant unchanged.
+  const timed = calendarStoreDate(gmtMidnight2001, false);
+  assert.equal(timed.getTime(), (gmtMidnight2001 + APPLE_ABS_EPOCH) * 1000);
+});
 
 test("parses delimited Calendar.app output into sorted events", () => {
   const raw =
