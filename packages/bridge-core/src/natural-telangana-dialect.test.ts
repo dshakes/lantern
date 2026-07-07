@@ -125,6 +125,15 @@ test("all vocative address particles are flagged standalone", () => {
   }
 });
 
+test("REGRESSION: 'bava' as an address is flagged (owner never calls anyone bava)", () => {
+  // The reported bug: contact greeted "Hi Bava" and the bot mirrored it back.
+  for (const draft of ["Hi bava, interview ela jarigindi?", "sare bava", "ok baava, cheptha"]) {
+    assert.ok(detectTeluguBotTell(draft), `should flag: ${draft}`);
+  }
+  // Referring to a third person mid-sentence is not an address — must not flag.
+  assert.equal(detectTeluguBotTell("mee bava vastunnada annadu"), null);
+});
+
 test("English look-alikes never trip the vocative net", () => {
   for (const draft of [
     "I'll have a soda.",
