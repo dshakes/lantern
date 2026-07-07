@@ -251,37 +251,48 @@ function parseYMD(date: string): { y: number; mo: number; d: number } | null {
  */
 function daysUntilAnnual(now: number, mo: number, d: number): number {
   const n = new Date(now);
-  const todayUTC = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
+  // LOCAL date parts, not UTC: the bridge runs on the owner's Mac (process TZ
+  // == owner TZ). With UTC, a PDT owner at 5pm on June 2 (= June 3 00:00 UTC)
+  // saw the June-3 anniversary as "today" a full day early — and the dedupe
+  // key then suppressed the real June-3 ping.
+  const todayLocal = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
   // Candidate this year (handle Feb-29 by clamping into the month).
-  let year = n.getUTCFullYear();
-  let target = Date.UTC(year, mo - 1, d);
+  let year = n.getFullYear();
+  let target = new Date(year, mo - 1, d).getTime();
   // If the constructed date rolled over (e.g. Feb 29 in a non-leap
   // year became Mar 1), or it's already in the past, advance a year.
-  if (target < todayUTC) {
+  if (target < todayLocal) {
     year += 1;
-    target = Date.UTC(year, mo - 1, d);
+    target = new Date(year, mo - 1, d).getTime();
   }
-  return Math.round((target - todayUTC) / DAY_MS);
+  // Math.round absorbs the ±1h drift when a DST boundary sits between the two
+  // local midnights, so the day count stays correct.
+  return Math.round((target - todayLocal) / DAY_MS);
 }
 
 /** Local-midnight epoch for a given annual recurrence (used as dueAt). */
 function nextAnnualMidnight(now: number, mo: number, d: number): number {
   const days = daysUntilAnnual(now, mo, d);
   const n = new Date(now);
-  return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) + days * DAY_MS;
+  // Component construction (today + `days`) stays on LOCAL midnight and is
+  // DST-correct — adding days*DAY_MS would drift an hour across a boundary.
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate() + days).getTime();
 }
 
-/** Day bucket (UTC date string) for dedupe keys that should fire once
- *  per day, not once per call. */
+/** Day bucket (LOCAL date string) for dedupe keys that should fire once
+ *  per day, not once per call. Local so "once per day" rolls at the owner's
+ *  local midnight, not UTC midnight (owner-evening). */
 function dayBucket(now: number): string {
-  return new Date(now).toISOString().slice(0, 10); // YYYY-MM-DD
+  const n = new Date(now);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
 
-/** Month bucket (UTC YYYY-MM) for dedupe keys that should fire at most
+/** Month bucket (LOCAL YYYY-MM) for dedupe keys that should fire at most
  *  once a month, not daily — used for dormant-thread warming so a cold
  *  thread doesn't nag every morning. */
 function monthBucket(now: number): string {
-  return new Date(now).toISOString().slice(0, 7); // YYYY-MM
+  const n = new Date(now);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /** Priority contribution of a contact (0..1 fraction of contactPriority). */
@@ -515,11 +526,13 @@ function stripPossessive(label: string): string {
   return label.replace(/^(your|my|our)\s+/i, "");
 }
 
-/** The calendar year the NEXT recurrence of mo/d falls in, given now. */
+/** The calendar year the NEXT recurrence of mo/d falls in, given now.
+ *  LOCAL parts (owner-Mac TZ) — must agree with daysUntilAnnual or the dedupe
+ *  key's year and the day-count disagree at the owner-evening UTC rollover. */
 function recurrenceYear(now: number, mo: number, d: number): number {
   const n = new Date(now);
-  const todayUTC = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
-  let year = n.getUTCFullYear();
-  if (Date.UTC(year, mo - 1, d) < todayUTC) year += 1;
+  const todayLocal = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  let year = n.getFullYear();
+  if (new Date(year, mo - 1, d).getTime() < todayLocal) year += 1;
   return year;
 }
