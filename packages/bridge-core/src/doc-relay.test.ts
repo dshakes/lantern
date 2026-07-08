@@ -21,6 +21,12 @@ test("docMatchesRequest: distinct person — wrong person's doc doesn't match", 
   assert.equal(docMatchesRequest("Manasa aadhaar", "Shekhar-Aadhaar.pdf"), false);
 });
 
+test("docMatchesRequest: word-boundary — 'pan' must NOT match 'japan_trip.pdf'", () => {
+  assert.equal(docMatchesRequest("PAN card", "japan_trip.pdf"), false);
+  assert.equal(docMatchesRequest("PAN card", "Shekhar_PAN_card.pdf"), true);
+  assert.equal(docMatchesRequest("visa", "advisage_notes.pdf"), false);
+});
+
 test("docMatchesRequest: all-generic request can't confirm a file", () => {
   assert.equal(docMatchesRequest("send me a copy please", "Shekhar_PAN_Card.pdf"), false);
 });

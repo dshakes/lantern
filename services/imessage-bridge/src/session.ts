@@ -19,6 +19,7 @@
 //   - Persisted state in bridge_state/<tenant>/
 
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync } from "fs";
+import { readFile as readFileAsync } from "fs/promises";
 import { homedir } from "os";
 import { basename, join } from "path";
 import type { Logger } from "pino";
@@ -383,10 +384,13 @@ function localPlus30(startIso: string): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}T${p(e.getHours())}:${p(e.getMinutes())}:00`;
 }
-// Default 60 minutes; override via LANTERN_AGENT_PAUSE_MIN (matches the
-// WhatsApp bridge's env var so the owner sets it once in shared config).
+// Default 5 minutes; override via LANTERN_AGENT_PAUSE_MIN (matches the
+// WhatsApp bridge's env var so the owner sets it once in shared config). The
+// window ROLLS on each owner send, so a plain manual reply pauses THIS thread
+// and the bot resumes ~5 min after the owner goes quiet — per-thread, never
+// silencing other contacts. Explicit handoffs use the longer window below.
 const PAUSE_DURATION_MS =
-  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
+  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 5) * 60_000;
 // Longer pause when the owner's manual message is an explicit handoff/
 // commitment ("I'll call you this evening", "human here") — a flat 60-min
 // pause let the bot barge back into a thread the owner said they'd handle.
@@ -4822,7 +4826,9 @@ export class IMessageSession {
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        const named = results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
+        const named = results
+          .filter((r) => r.path) // can't deliver a result with no path; also avoids a vacuous name===request match
+          .map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
         // Pick the first result whose NAME actually matches the request — not
         // just results[0], which can be the wrong doc sharing a folder/word.
         const match = named.find((r) => docMatchesRequest(request, r.name));
@@ -4871,7 +4877,7 @@ export class IMessageSession {
     let lead = "";
     try {
       lead = (await this.agent.respondTo(
-        "docrelay::compose",
+        `docrelay::compose::${contactHandle}`,
         buildDocRelayPrompt(ctx),
         "One short line in the owner's casual texting voice. No emoji, no preamble.",
         { withTools: false, timeoutMs: 15_000 },
@@ -4979,7 +4985,7 @@ export class IMessageSession {
   ): Promise<{ ok: boolean; reason?: string; via?: "link" }> {
     let content: Buffer;
     try {
-      content = readFileSync(filePath);
+      content = await readFileAsync(filePath); // async: don't block the event loop on a big scan
     } catch (err) {
       this.logger.warn({ err, filePath }, "doc-link: file read failed");
       return { ok: false, reason: "couldn't read the file" };
@@ -6764,7 +6770,7 @@ export class IMessageSession {
         ? this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
         : Promise.resolve([]),
       !isGroup && inboundTopics.length > 0
-        ? this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4 })
+        ? this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4, excludeHandles: [this.ownerSelfChatTarget(), process.env.LANTERN_IMESSAGE_OWNER_HANDLE || ""].filter(Boolean) })
         : Promise.resolve([]),
       this.presence.current({
         nextEvent: async () => {

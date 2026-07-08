@@ -36,6 +36,12 @@ export async function stageDownloadLink(o: StageLinkOptions): Promise<{ url: str
     if (!res.ok) return null;
     const j = (await res.json()) as { url?: string; expiresAt?: number };
     if (!j.url) return null;
+    // Guard against a dead link: if LANTERN_PUBLIC_BASE_URL isn't set on the
+    // control-plane, the staged URL is a loopback/private host the contact can't
+    // reach. Refuse rather than text someone a useless link.
+    if (/\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(j.url)) {
+      return null;
+    }
     return { url: j.url, expiresAt: j.expiresAt ?? 0 };
   } catch {
     return null;

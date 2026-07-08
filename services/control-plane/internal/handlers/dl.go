@@ -14,6 +14,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -283,7 +284,7 @@ func (h *DLHandler) Serve(w http.ResponseWriter, r *http.Request) {
 			ct = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+		w.Header().Set("Content-Disposition", contentDisposition(name))
 		h.logger().Info("dl served", zap.String("filename", name))
 		_, _ = io.Copy(w, obj.Body)
 		return
@@ -305,7 +306,7 @@ func (h *DLHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	w.Header().Set("Content-Disposition", contentDisposition(name))
 	h.logger().Info("dl served", zap.String("filename", name))
 	_, _ = io.Copy(w, f)
 }
@@ -359,6 +360,19 @@ func (h *DLHandler) gcExpired() {
 			_ = os.Remove(filepath.Join(h.dir, e.Name()))
 		}
 	}
+}
+
+// contentDisposition builds an attachment header that survives non-ASCII
+// filenames (e.g. Telugu/Tamil doc names) per RFC 5987/6266: an ASCII fallback
+// plus a percent-encoded UTF-8 filename*.
+func contentDisposition(name string) string {
+	ascii := strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, name)
+	return fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", ascii, url.PathEscape(name))
 }
 
 func sanitizeFilename(name string) string {
