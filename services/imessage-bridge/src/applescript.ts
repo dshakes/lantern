@@ -123,7 +123,11 @@ export class IMessageSender {
   // (not an iCloud Drive 0-byte placeholder). We pre-materialize via
   // `brctl download` before sending so iCloud Drive optimized-
   // storage files don't get sent as broken stubs.
-  async sendFile(to: string, filePath: string): Promise<{ ok: true; service: "iMessage" | "SMS" } | { ok: false; reason: string }> {
+  async sendFile(
+    to: string,
+    filePath: string,
+    opts: { iMessageOnly?: boolean } = {},
+  ): Promise<{ ok: true; service: "iMessage" | "SMS" } | { ok: false; reason: string }> {
     if (!to || !filePath) {
       return { ok: false, reason: "to + filePath required" };
     }
@@ -162,8 +166,11 @@ export class IMessageSender {
         send theFile to targetBuddy
       end tell` },
     ];
-    let lastErr = "";
+    let lastErr = "not attempted";
     for (const { service, script } of strategies) {
+      // iMessageOnly: skip the flaky SMS/MMS path — the caller falls back to a
+      // secure link, which delivers reliably to non-iMessage numbers.
+      if (opts.iMessageOnly && service !== "iMessage") continue;
       const res = await this.runOsascript(script);
       // NOTE: osascript exit 0 means Messages ACCEPTED the handoff, not that it
       // was delivered. For iMessage that's reliable; for SMS/MMS the recipient's

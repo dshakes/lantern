@@ -252,6 +252,7 @@ func main() {
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	signalHandler := handlers.NewSignalHandler(srv)
+	dlHandler := handlers.NewDLHandler(srv)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
 	jarvisHandler := handlers.NewJarvisHandler(srv, authHandler, llmProxyHandler)
@@ -708,6 +709,10 @@ func main() {
 	// here. Guarded by the shared gRPC service token (fail-closed in prod
 	// when LANTERN_GRPC_SERVICE_TOKEN is unset).
 	httpMux.HandleFunc("POST /internal/auth/introspect-key", authHandler.IntrospectKey)
+	// Secure short-lived file links: bridges stage a file (service-token gated),
+	// contacts fetch it from the public capability URL until it expires.
+	httpMux.HandleFunc("POST /internal/dl/stage", dlHandler.Stage)
+	httpMux.HandleFunc("GET /dl/{token}", dlHandler.Serve)
 	// Report ingestion — runtime-manager forwards harness telemetry here.
 	// Auth: same shared token as the secret relay (fail-closed when unset).
 	runtimeReportHandler := handlers.NewRuntimeReportHandler(srv)
