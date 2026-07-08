@@ -10,6 +10,7 @@ import (
 
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/storage"
 )
 
 // Server holds shared dependencies for all gRPC service handlers.
@@ -32,6 +33,11 @@ type Server struct {
 	Redis    *redis.Client
 	Logger   *zap.Logger
 	S3Bucket string
+
+	// Blob is the object-storage client (S3/MinIO) for shared file storage —
+	// e.g. staged secure-download files. Nil when S3 is unconfigured (bare
+	// single-instance dev), in which case callers fall back to local disk.
+	Blob *storage.Blob
 }
 
 // TenantPool returns AppPool when it is set, falling back to Pool.

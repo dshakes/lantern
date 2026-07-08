@@ -35,6 +35,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/lantern/services/control-plane/internal/storage"
 	"github.com/dshakes/lantern/services/control-plane/internal/telemetry"
 )
 
@@ -167,6 +168,40 @@ func main() {
 		Redis:    rdb,
 		Logger:   logger,
 		S3Bucket: cfg.S3Bucket,
+	}
+
+	// --- Object storage (S3/MinIO) ---
+	// Shared file storage for the secure doc-link feature. Nil when S3 is
+	// unconfigured (bare single-instance dev) — dl falls back to local disk.
+	if blob, err := storage.New(storage.Config{
+		Endpoint:  cfg.S3Endpoint,
+		AccessKey: cfg.S3AccessKey,
+		Secret:    cfg.S3Secret,
+		Region:    cfg.S3Region,
+		Bucket:    cfg.S3Bucket,
+	}, logger); err != nil {
+		logger.Warn("object storage init failed — dl falls back to local disk", zap.Error(err))
+	} else if blob != nil {
+		srv.Blob = blob
+		if err := blob.EnsureBucketAndLifecycle(context.Background(), "dl/", 1); err != nil {
+			logger.Warn("object storage bucket/lifecycle setup failed", zap.Error(err))
+		} else {
+			logger.Info("object storage ready", zap.String("bucket", cfg.S3Bucket))
+		}
+		// Active sweep: delete staged download objects older than 1h so disk is
+		// freed on the link's real timeline (the day-granular bucket lifecycle is
+		// only a backstop). Runs every 10 min → an object lives ~1h at most.
+		go func() {
+			t := time.NewTicker(10 * time.Minute)
+			defer t.Stop()
+			for range t.C {
+				if n, err := blob.GCPrefix(context.Background(), "dl/", time.Hour); err != nil {
+					logger.Warn("dl gc sweep failed", zap.Error(err))
+				} else if n > 0 {
+					logger.Info("dl gc: removed expired links", zap.Int("count", n))
+				}
+			}
+		}()
 	}
 
 	// --- gRPC server ---
@@ -966,6 +1001,10 @@ type config struct {
 	RedisURL    string
 	ListenAddr  string
 	S3Bucket    string
+	S3Endpoint  string
+	S3AccessKey string
+	S3Secret    string
+	S3Region    string
 	LogLevel    string
 	JWTSecret   string
 }
@@ -976,6 +1015,11 @@ func loadConfig() config {
 		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50051"),
 		S3Bucket:    envOrDefault("S3_BUCKET", "lantern-bundles-dev"),
+		S3Endpoint:  os.Getenv("S3_ENDPOINT"),
+		// Accept both S3_* (dev/Makefile) and AWS_* (helm / AWS SDK convention).
+		S3AccessKey: firstNonEmpty(os.Getenv("S3_ACCESS_KEY"), os.Getenv("AWS_ACCESS_KEY_ID"), "lantern"),
+		S3Secret:    firstNonEmpty(os.Getenv("S3_SECRET"), os.Getenv("AWS_SECRET_ACCESS_KEY"), "lanternsecret"),
+		S3Region:    os.Getenv("S3_REGION"),
 		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
 		JWTSecret:   envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
 	}
@@ -986,6 +1030,15 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func mustInitLogger(level string) *zap.Logger {
