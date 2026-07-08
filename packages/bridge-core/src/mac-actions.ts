@@ -695,6 +695,14 @@ const RE_MAIL = /\[MAIL:([^\]]+)\]/g;
 //   [CALL:target|mode|message-or-reason]
 //   mode ∈ conference | voicemail | task
 const RE_CALL = /\[CALL:([^\]]+)\]/g;
+// Owner-initiated outbound MESSAGE — the LLM emits this when the owner asks to
+// send/text/message someone (any phrasing/language). The bridge resolves the
+// contact, confirms once with the owner, then sends from the owner's own
+// account. No marker = nothing sends, which also kills the "i'll text him"
+// hallucination on the owner path.
+//   [SEND:channel|contact|text]
+//   channel ∈ whatsapp | imessage | sms | auto
+const RE_SEND = /\[SEND:([^\]]+)\]/g;
 // Presence/away status the LLM sets when the owner says they're at a place /
 // away / busy / back — the intelligent path that handles any phrasing or
 // language a regex would miss ("I am at the pool till 7:30pm est", Telugu, …).
@@ -705,6 +713,12 @@ export interface CallSpec {
   target: string;
   mode: "conference" | "voicemail" | "task";
   message?: string;
+}
+
+export interface SendSpec {
+  channel: "whatsapp" | "imessage" | "sms" | "auto";
+  contact: string;
+  text: string;
 }
 
 export interface StatusSpec {
@@ -720,6 +734,7 @@ export interface ExtractedActions {
   notes: NoteSpec[];
   mailDrafts: MailDraftSpec[];
   calls: CallSpec[];
+  sends: SendSpec[];
   status?: StatusSpec;
 }
 
@@ -729,6 +744,7 @@ export function extractActionMarkers(text: string): ExtractedActions {
   const notes: NoteSpec[] = [];
   const mailDrafts: MailDraftSpec[] = [];
   const calls: CallSpec[] = [];
+  const sends: SendSpec[] = [];
 
   for (const m of text.matchAll(RE_CALENDAR)) {
     const parts = m[1].split("|").map((p) => p.trim());
@@ -771,6 +787,30 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
+  for (const m of text.matchAll(RE_SEND)) {
+    // Split only the first two pipes (channel, contact); keep the message body
+    // verbatim so a legit "|" inside the text survives.
+    const raw = m[1];
+    const p1 = raw.indexOf("|");
+    const p2 = p1 === -1 ? -1 : raw.indexOf("|", p1 + 1);
+    if (p1 !== -1 && p2 !== -1) {
+      const rawChannel = raw.slice(0, p1).trim().toLowerCase();
+      const contact = raw.slice(p1 + 1, p2).trim();
+      const body = raw.slice(p2 + 1).trim();
+      if (contact && body) {
+        const channel: SendSpec["channel"] =
+          rawChannel === "whatsapp" || rawChannel === "wa"
+            ? "whatsapp"
+            : rawChannel === "imessage" || rawChannel === "message"
+              ? "imessage"
+              : rawChannel === "sms" || rawChannel === "text"
+                ? "sms"
+                : "auto";
+        sends.push({ channel, contact, text: body });
+      }
+    }
+    cleaned = cleaned.replace(m[0], "");
+  }
   let status: StatusSpec | undefined;
   for (const m of text.matchAll(RE_STATUS)) {
     const body = m[1].trim();
@@ -787,7 +827,7 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
-  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, status };
+  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, sends, status };
 }
 
 /**
