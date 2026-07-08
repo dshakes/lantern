@@ -202,6 +202,7 @@ export function shouldFireDropNotice(
 }
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -4915,14 +4916,13 @@ export class IMessageSession {
         try {
           const res = await this.deliverPendingSend(pendingEdit, body);
           if (res.ok) this.repliesSentToday += 1;
-          this.logger.info({ to: pendingEdit.target, service: res.service, ok: res.ok, docRelay: isDoc }, "pending-draft delivery result");
-          // Honest ack: iMessage = reliable; SMS/MMS = handed off, NOT confirmed
-          // delivered (a file over MMS often won't land) — never claim "sent".
+          this.logger.info({ to: pendingEdit.target, via: res.via, service: res.service, ok: res.ok, docRelay: isDoc }, "pending-draft delivery result");
+          // Honest ack keyed on how it actually went out.
           let ack: string;
           if (!res.ok) {
             ack = `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`;
-          } else if (res.service === "SMS") {
-            ack = `📤 handed ${isDoc ? "it" : "that"} to ${label} over SMS — but they're not on iMessage, and a file over SMS/MMS often doesn't go through. tell me if it doesn't land and I'll get it to them another way.`;
+          } else if (res.via === "link") {
+            ack = `✅ sent ${isDoc ? "your " + pendingEdit.inbound : "that"} to ${label} as a secure link (they're not on iMessage) — it expires in 1h.`;
           } else {
             ack = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
           }
@@ -4936,15 +4936,52 @@ export class IMessageSession {
     }
   }
 
+  // Deliver a FILE to a contact reliably: iMessage inline when they're on
+  // iMessage; otherwise a short-lived secure link texted to them (a PDF over
+  // SMS/MMS is unreliable, so we never push the binary to a non-iMessage number).
+  private async deliverFileToContact(
+    target: string,
+    filePath: string,
+    request: string,
+  ): Promise<{ ok: boolean; reason?: string; via?: "imessage" | "link" }> {
+    const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
+    if (im.ok) return { ok: true, via: "imessage" };
+    return this.stageAndSendLink(target, filePath, request);
+  }
+
+  private async stageAndSendLink(
+    target: string,
+    filePath: string,
+    request: string,
+  ): Promise<{ ok: boolean; reason?: string; via?: "link" }> {
+    let contentB64: string;
+    try {
+      contentB64 = readFileSync(filePath).toString("base64");
+    } catch (err) {
+      this.logger.warn({ err, filePath }, "doc-link: file read failed");
+      return { ok: false, reason: "couldn't read the file" };
+    }
+    const staged = await stageDownloadLink({
+      controlPlaneUrl: process.env.LANTERN_CONTROL_PLANE_URL || "http://127.0.0.1:8080",
+      serviceToken: process.env.LANTERN_GRPC_SERVICE_TOKEN,
+      filename: filePath.split("/").pop() || "file",
+      contentB64,
+      ttlSeconds: 3600,
+    });
+    if (!staged) return { ok: false, reason: "couldn't create a secure link" };
+    const sent = await this.send(target, buildDocLinkMessage(request, staged.url, 60));
+    return sent.ok ? { ok: true, via: "link" } : { ok: false, reason: sent.reason };
+  }
+
   // Deliver a confirmed owner-initiated SEND on the right wire. WhatsApp goes
   // over the already-wired cross-bridge HTTP hop (:3100); iMessage/SMS/auto use
   // the local Messages sender (which itself falls back iMessage→SMS).
   private async deliverPendingSend(
-    pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string; kind?: "doc-relay"; filePath?: string },
+    pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string; kind?: "doc-relay"; filePath?: string; inbound?: string },
     body: string,
-  ): Promise<{ ok: boolean; reason?: string; service?: "iMessage" | "SMS" }> {
+  ): Promise<{ ok: boolean; reason?: string; service?: "iMessage" | "SMS"; via?: "imessage" | "link" }> {
     if (pending.kind === "doc-relay" && pending.filePath) {
-      return this.sender.sendFile(pending.target, pending.filePath);
+      return this.deliverFileToContact(pending.target, pending.filePath, pending.inbound || "file");
     }
     if (pending.channel === "whatsapp" && pending.waJid) {
       const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");

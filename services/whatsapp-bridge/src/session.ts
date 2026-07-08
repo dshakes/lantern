@@ -74,6 +74,7 @@ import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPre
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -5482,9 +5483,16 @@ export class WhatsAppSession {
         this.pendingDraftEdits.delete(jid);
         try {
           if (isDocRelay) {
-            // doc-relay only ever approves (never "replace") — deliver the file.
-            await this.sendDocument(pending.targetJid, pending.filePath!);
-            await this.confirmToSelf(`✅ sent your ${pending.inboundText} to ${label}.`);
+            // doc-relay only ever approves — deliver the file (WhatsApp doc,
+            // else a secure short-lived link).
+            const r = await this.deliverFileToContact(pending.targetJid, pending.filePath!, pending.inboundText);
+            await this.confirmToSelf(
+              !r.ok
+                ? `⚠️ couldn't send your ${pending.inboundText} to ${label} — ${r.reason || "delivery failed"}.`
+                : r.via === "link"
+                  ? `✅ sent your ${pending.inboundText} to ${label} as a secure link — expires in 1h.`
+                  : `✅ sent your ${pending.inboundText} to ${label}.`,
+            );
           } else {
             const body = decision === "replace" ? text : pending.draftText;
             await this.sendMessage(pending.targetJid, body);
@@ -5498,6 +5506,38 @@ export class WhatsAppSession {
         return true;
       }
     }
+  }
+
+  // Deliver a FILE to a WhatsApp contact: the native document first (reliable),
+  // else a short-lived secure link texted to them.
+  private async deliverFileToContact(
+    targetJid: string,
+    filePath: string,
+    request: string,
+  ): Promise<{ ok: boolean; reason?: string; via?: "whatsapp" | "link" }> {
+    try {
+      await this.sendDocument(targetJid, filePath);
+      return { ok: true, via: "whatsapp" };
+    } catch (err) {
+      this.logger.warn({ err, to: targetJid }, "WA sendDocument failed — falling back to secure link");
+    }
+    let contentB64: string;
+    try {
+      contentB64 = readFileSync(filePath).toString("base64");
+    } catch (err) {
+      this.logger.warn({ err, filePath }, "doc-link: file read failed");
+      return { ok: false, reason: "couldn't read the file" };
+    }
+    const staged = await stageDownloadLink({
+      controlPlaneUrl: process.env.LANTERN_CONTROL_PLANE_URL || "http://127.0.0.1:8080",
+      serviceToken: process.env.LANTERN_GRPC_SERVICE_TOKEN,
+      filename: filePath.split("/").pop() || "file",
+      contentB64,
+      ttlSeconds: 3600,
+    });
+    if (!staged) return { ok: false, reason: "couldn't create a secure link" };
+    await this.sendMessage(targetJid, buildDocLinkMessage(request, staged.url, 60));
+    return { ok: true, via: "link" };
   }
 
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
