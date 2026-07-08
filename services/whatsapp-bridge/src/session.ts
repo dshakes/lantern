@@ -8141,6 +8141,7 @@ export class WhatsAppSession {
         stylePrompt,
         ownerProfile,
         ownerFacts: this.ownerProfileStore.factsBlock(),
+        knownPeople: this.ownerProfileStore.relationshipsBlock(),
         addressRule,
         relationship,
         recentTranscript,
