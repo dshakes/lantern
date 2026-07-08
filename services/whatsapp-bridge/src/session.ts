@@ -5521,9 +5521,9 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err, to: targetJid }, "WA sendDocument failed — falling back to secure link");
     }
-    let contentB64: string;
+    let content: Buffer;
     try {
-      contentB64 = readFileSync(filePath).toString("base64");
+      content = readFileSync(filePath);
     } catch (err) {
       this.logger.warn({ err, filePath }, "doc-link: file read failed");
       return { ok: false, reason: "couldn't read the file" };
@@ -5532,7 +5532,7 @@ export class WhatsAppSession {
       controlPlaneUrl: process.env.LANTERN_CONTROL_PLANE_URL || "http://127.0.0.1:8080",
       serviceToken: process.env.LANTERN_GRPC_SERVICE_TOKEN,
       filename: filePath.split("/").pop() || "file",
-      contentB64,
+      content,
       ttlSeconds: 3600,
     });
     if (!staged) return { ok: false, reason: "couldn't create a secure link" };
