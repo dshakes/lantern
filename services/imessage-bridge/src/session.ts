@@ -225,7 +225,7 @@ import {
   type ScoutEvent,
   type BookSelection,
 } from "@lantern/bridge-core/event-scout";
-import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, classifyPendingReply, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -4838,6 +4838,53 @@ export class IMessageSession {
     }
   }
 
+  // Resolve a pending draft / owner-SEND / doc-relay confirm from the owner's
+  // self-chat. THE single choke point: called on the live inbound path AND at
+  // the top of handleOwnerDocQuery, so a "send"/"yes"/"no" that arrives while
+  // the chat is busy (and drains through the query queue) still fires the STAGED
+  // action instead of being re-read by the LLM as a fresh request (which was the
+  // doc-relay-hijack bug). Returns true iff it consumed the message.
+  //
+  // `confirmOnly` (drain path): honor confirm/reject ONLY. A queued free-text
+  // message must NOT be treated as a "replacement" and blasted to a contact
+  // minutes later — that path is live-only, where intent is unambiguous.
+  private async maybeResolvePendingDraft(jid: string, text: string, confirmOnly: boolean): Promise<boolean> {
+    if (!text) return false;
+    this.gcPendingDraftEdits();
+    const editKey = this.pendingDraftEdits.has(jid) ? jid : this.ownerSelfChatTarget();
+    const pendingEdit = this.pendingDraftEdits.get(editKey);
+    if (!pendingEdit || Date.now() - pendingEdit.issuedAt > IMessageSession.DRAFT_EDIT_TTL_MS) return false;
+    const label = pendingEdit.targetLabel;
+
+    const decision = classifyPendingReply(text, pendingEdit, confirmOnly);
+    switch (decision) {
+      case "none":
+        return false;
+      case "reject":
+        this.pendingDraftEdits.delete(editKey);
+        this.pendingSelfChatDrafts.delete(editKey);
+        await this.send(jid, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
+        return true;
+      case "approve":
+      case "replace": {
+        // approve → deliver the staged draft/file; replace → send the owner's words.
+        const body = decision === "replace" ? text : pendingEdit.draft;
+        const ackOk = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
+        this.pendingDraftEdits.delete(editKey);
+        this.pendingSelfChatDrafts.delete(editKey);
+        try {
+          const res = await this.deliverPendingSend(pendingEdit, body);
+          if (res.ok) this.repliesSentToday += 1;
+          await this.send(jid, res.ok ? ackOk : `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`).catch(() => {});
+        } catch (err) {
+          this.logger.warn({ err, to: pendingEdit.target }, "pending-draft send failed");
+          await this.send(jid, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
+        }
+        return true;
+      }
+    }
+  }
+
   // Deliver a confirmed owner-initiated SEND on the right wire. WhatsApp goes
   // over the already-wired cross-bridge HTTP hop (:3100); iMessage/SMS/auto use
   // the local Messages sender (which itself falls back iMessage→SMS).
@@ -6016,53 +6063,8 @@ export class IMessageSession {
     //   - NO DOUBLE-SEND: the draft was only ever queued (never auto-sent), and
     //     both pending entries are deleted BEFORE the send fires.
     if (text && !isGroup && this.isOwnerChatRow(row)) {
-      this.gcPendingDraftEdits();
-      const editKey = this.pendingDraftEdits.has(row.handle)
-        ? row.handle
-        : this.ownerSelfChatTarget();
-      const pendingEdit = this.pendingDraftEdits.get(editKey);
-      if (pendingEdit && Date.now() - pendingEdit.issuedAt <= IMessageSession.DRAFT_EDIT_TTL_MS) {
-        const label = pendingEdit.targetLabel;
-        // Approve-as-is — send the bot's ORIGINAL draft to the contact.
-        if (looksLikeConfirmation(text)) {
-          this.pendingDraftEdits.delete(editKey);
-          this.pendingSelfChatDrafts.delete(editKey);
-          try {
-            const res = await this.deliverPendingSend(pendingEdit, pendingEdit.draft);
-            if (res.ok) this.repliesSentToday += 1;
-            await this.send(row.handle, res.ok ? `✅ sent to ${label}.` : `⚠️ couldn't send to ${label}.`).catch(() => {});
-          } catch (err) {
-            this.logger.warn({ err, to: pendingEdit.target }, "B5 approve-as-is send failed");
-            await this.send(row.handle, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
-          }
-          return;
-        }
-        // Reject — drop the draft, brief ack, no send.
-        if (looksLikeRejection(text)) {
-          this.pendingDraftEdits.delete(editKey);
-          this.pendingSelfChatDrafts.delete(editKey);
-          await this.send(row.handle, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
-          return;
-        }
-        // Free-text: for a text draft, send the OWNER'S words to the contact.
-        // A doc-relay can't be "replaced" with text — leave it pending (a later
-        // "send"/"no" still works) and fall through to normal handling.
-        if (pendingEdit.kind === "doc-relay") {
-          // fall through — do not consume, do not send
-        } else {
-        this.pendingDraftEdits.delete(editKey);
-        this.pendingSelfChatDrafts.delete(editKey);
-        try {
-          const res = await this.deliverPendingSend(pendingEdit, text);
-          if (res.ok) this.repliesSentToday += 1;
-          await this.send(row.handle, res.ok ? `✅ sent your version to ${label}.` : `⚠️ couldn't send that to ${label}.`).catch(() => {});
-        } catch (err) {
-          this.logger.warn({ err, to: pendingEdit.target }, "B5 inline-edit send failed");
-          await this.send(row.handle, `⚠️ couldn't send that to ${label} — try again.`).catch(() => {});
-        }
-        return;
-        }
-      }
+      // Live path: full behavior (confirm / reject / free-text replacement).
+      if (await this.maybeResolvePendingDraft(row.handle, text, false)) return;
     }
 
     // Personal-docs interception — fires BEFORE the normal inbound
@@ -9035,6 +9037,13 @@ export class IMessageSession {
     query: string,
     chatRowid: number = 0,
   ): Promise<void> {
+    // CONFIRM-FIRST (drain-path safety): a "send"/"yes"/"no" for a staged draft
+    // must fire the STAGED action, never be re-read by the LLM as a fresh
+    // request. Messages queued while the chat was busy drain straight here,
+    // bypassing the live confirm intercept — this closes that hole. confirmOnly:
+    // a queued free-text message is NOT resent to a contact as a replacement.
+    // Runs before busyChat.add so an early return can't leave the chat busy.
+    if (await this.maybeResolvePendingDraft(jid, query, true)) return;
     this.busyChat.add(jid);
     // Declared before the try so the finally can always clear it — a
     // throw must never leave a stray "🧠 thinking…" timer firing.

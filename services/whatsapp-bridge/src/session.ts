@@ -97,7 +97,7 @@ import {
   type ScoutEvent,
   type BookSelection,
 } from "@lantern/bridge-core/event-scout";
-import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, classifyPendingReply, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -4706,51 +4706,8 @@ export class WhatsAppSession {
     //     the pending entry is deleted BEFORE the send fires, so a stray retry
     //     can't re-trigger it.
     if (self && !group && trimmed) {
-      this.gcPendingDraftEdits();
-      const pending = this.pendingDraftEdits.get(jid);
-      if (pending && Date.now() - pending.issuedAt <= WhatsAppSession.DRAFT_EDIT_TTL_MS) {
-        const label = pending.displayName ?? pending.targetJid.split("@")[0];
-        const isDocRelay = pending.kind === "doc-relay" && !!pending.filePath;
-        // Approve-as-is (doc-relay → deliver the file; else → send the draft text).
-        if (looksLikeConfirmation(text)) {
-          this.pendingDraftEdits.delete(jid);
-          try {
-            if (isDocRelay) {
-              await this.sendDocument(pending.targetJid, pending.filePath!);
-              await this.confirmToSelf(`✅ sent your ${pending.inboundText} to ${label}.`);
-            } else {
-              await this.sendMessage(pending.targetJid, pending.draftText);
-              this.recordOutboundReply(pending.targetJid, pending.draftText);
-              await this.confirmToSelf(`✅ sent to ${label}.`);
-            }
-          } catch (err) {
-            this.logger.warn({ err, to: pending.targetJid }, "B5 approve-as-is send failed");
-            await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
-          }
-          return;
-        }
-        // Reject.
-        if (looksLikeRejection(text)) {
-          this.pendingDraftEdits.delete(jid);
-          await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
-          return;
-        }
-        // Free-text: for a text draft, send the OWNER'S words to the contact.
-        // A doc-relay can't be "replaced" with text — leave it pending (a later
-        // "send"/"no" still works) and fall through to normal handling.
-        if (!isDocRelay) {
-          this.pendingDraftEdits.delete(jid);
-          try {
-            await this.sendMessage(pending.targetJid, text);
-            this.recordOutboundReply(pending.targetJid, text);
-            await this.confirmToSelf(`✅ sent your version to ${label}.`);
-          } catch (err) {
-            this.logger.warn({ err, to: pending.targetJid }, "B5 inline-edit send failed");
-            await this.confirmToSelf("⚠️ couldn't send that — try again.");
-          }
-          return;
-        }
-      }
+      // Live path: full behavior (confirm / reject / free-text replacement).
+      if (await this.maybeResolvePendingDraft(jid, text, false)) return;
     }
 
     // Personal-docs Q&A — owner asking about local files in self-chat.
@@ -5467,6 +5424,51 @@ export class WhatsAppSession {
     }
   }
 
+  // Resolve a pending draft / owner-SEND / doc-relay confirm from the owner's
+  // self-chat. THE single choke point: called on the live inbound path AND at
+  // the top of handleOwnerDocQuery, so a "send"/"yes"/"no" that arrives while
+  // the chat is busy (and drains through the query queue) still fires the STAGED
+  // action instead of being re-read by the LLM as a fresh request. Returns true
+  // iff it consumed the message. confirmOnly (drain path): honor confirm/reject
+  // only — a queued free-text message must NOT be blasted to a contact.
+  private async maybeResolvePendingDraft(jid: string, text: string, confirmOnly: boolean): Promise<boolean> {
+    if (!text) return false;
+    this.gcPendingDraftEdits();
+    const pending = this.pendingDraftEdits.get(jid);
+    if (!pending || Date.now() - pending.issuedAt > WhatsAppSession.DRAFT_EDIT_TTL_MS) return false;
+    const label = pending.displayName ?? pending.targetJid.split("@")[0];
+    const isDocRelay = pending.kind === "doc-relay" && !!pending.filePath;
+    const decision = classifyPendingReply(text, pending, confirmOnly);
+    switch (decision) {
+      case "none":
+        return false;
+      case "reject":
+        this.pendingDraftEdits.delete(jid);
+        await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
+        return true;
+      case "approve":
+      case "replace": {
+        this.pendingDraftEdits.delete(jid);
+        try {
+          if (isDocRelay) {
+            // doc-relay only ever approves (never "replace") — deliver the file.
+            await this.sendDocument(pending.targetJid, pending.filePath!);
+            await this.confirmToSelf(`✅ sent your ${pending.inboundText} to ${label}.`);
+          } else {
+            const body = decision === "replace" ? text : pending.draftText;
+            await this.sendMessage(pending.targetJid, body);
+            this.recordOutboundReply(pending.targetJid, body);
+            await this.confirmToSelf(decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`);
+          }
+        } catch (err) {
+          this.logger.warn({ err, to: pending.targetJid }, "pending-draft send failed");
+          await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
+        }
+        return true;
+      }
+    }
+  }
+
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
     const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
     const result = await universalResolve(input, {
@@ -5720,6 +5722,13 @@ export class WhatsAppSession {
     query: string,
     key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null },
   ): Promise<void> {
+    // CONFIRM-FIRST (drain-path safety): a "send"/"yes"/"no" for a staged draft
+    // must fire the STAGED action, never be re-read by the LLM as a fresh
+    // request. Messages queued while the chat was busy drain straight here,
+    // bypassing the live confirm intercept — this closes that hole. confirmOnly:
+    // a queued free-text message is NOT resent to a contact as a replacement.
+    // Runs before busyChat.add so an early return can't leave the chat busy.
+    if (await this.maybeResolvePendingDraft(jid, query, true)) return;
     if (!this.docs) return;
     this.busyChat.add(jid);
     // Hoisted so the `finally` can guarantee clearTimeout even on an

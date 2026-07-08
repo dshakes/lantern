@@ -324,6 +324,31 @@ export function looksLikeRejection(text: string): boolean {
   return /^(no|nope|nah|not now|not really|skip|cancel|never mind|nvm|don'?t|do not|leave it)\b/i.test(t);
 }
 
+// Decision for a pending draft / owner-SEND / doc-relay confirm in the owner's
+// self-chat. Pure + unit-tested so the confirm matrix (the thing the drain-path
+// bug turned on) can't silently regress.
+//   - "approve": fire the staged action. Includes a BARE "send"/"send it" —
+//     the exact word the confirm preview tells the owner to reply, which
+//     looksLikeConfirmation() does NOT cover. A trailing target ("send Raju hi")
+//     is NOT a bare confirm — it's a fresh request, so it never approves a stale
+//     pending.
+//   - "reject": drop it.
+//   - "none": don't consume. On the DRAIN path (confirmOnly) a non-confirm must
+//     flow to the LLM, and a doc-relay can't be replaced with free text.
+//   - "replace": (live only) send the owner's typed words to the contact instead.
+export function classifyPendingReply(
+  text: string,
+  pending: { kind?: string },
+  confirmOnly: boolean,
+): "approve" | "reject" | "replace" | "none" {
+  const t = (text || "").trim().toLowerCase();
+  const bareSend = t.length <= 40 && /^(send|sent|deliver|send it|send that|send now|send them|fire it|do it)[.!]*$/.test(t);
+  if (bareSend || looksLikeConfirmation(text)) return "approve";
+  if (looksLikeRejection(text)) return "reject";
+  if (confirmOnly || pending.kind === "doc-relay") return "none";
+  return "replace";
+}
+
 // AUTO-ACT LADDER — owner wants to REVERT the action the bot just auto-did.
 // Distinct from looksLikeRejection ("no" to a suggestion): here the action
 // already happened and "undo"/"remove"/"delete that" / "take it off" reverts
