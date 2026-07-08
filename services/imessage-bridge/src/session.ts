@@ -202,7 +202,7 @@ export function shouldFireDropNotice(
   return true;
 }
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage, chooseFileTransport } from "@lantern/bridge-core/doc-link";
 import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
 import {
@@ -4827,14 +4827,15 @@ export class IMessageSession {
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        const named = results
-          .filter((r) => r.path) // can't deliver a result with no path; also avoids a vacuous name===request match
-          .map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
-        // Pick the first result whose NAME actually matches the request — not
-        // just results[0], which can be the wrong doc sharing a folder/word.
-        const match = named.find((r) => docMatchesRequest(request, r.name));
-        if (match) hit = match;
-        else if (named.length > 0) closest = named[0].name;
+        // Pick the best-matching FILE (never a folder — a directory can't be
+        // delivered and silently "failed to send" on both channels) whose name
+        // clears the PII match gate; else surface the closest file to the owner.
+        const picked = pickDocToSend(
+          results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request, ext: r.ext })),
+          request,
+        );
+        if (picked.hit) hit = { path: picked.hit.path, name: picked.hit.name };
+        else closest = picked.closest;
       }
     } catch (err) {
       this.logger.warn({ err, request }, "doc-relay search failed");
@@ -4989,6 +4990,8 @@ export class IMessageSession {
       let ack: string;
       if (!res.ok) {
         ack = `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`;
+      } else if (res.via === "imessage-besteffort") {
+        ack = `⚠️ pushed ${isDoc ? "your " + pendingEdit.inbound : "that"} to ${label} over iMessage, but couldn't build a secure link to confirm it landed (set LANTERN_PUBLIC_BASE_URL). if ${label} isn't on iMessage, it may not have arrived.`;
       } else if (res.via === "link") {
         ack = `✅ sent ${isDoc ? "your " + pendingEdit.inbound : "that"} to ${label} as a secure link (they're not on iMessage) — it expires in 1h.`;
       } else {
@@ -5009,7 +5012,7 @@ export class IMessageSession {
     target: string,
     filePath: string,
     request: string,
-  ): Promise<{ ok: boolean; reason?: string; via?: "imessage" | "link" }> {
+  ): Promise<{ ok: boolean; reason?: string; via?: "imessage" | "link" | "imessage-besteffort" }> {
     // sendFile's osascript exits 0 even when iMessage can't actually reach the
     // recipient, so we can't trust it to tell iMessage-capable from not. Use the
     // SAME ground truth the text path uses (recentSendStatus): only push the file
@@ -5017,17 +5020,30 @@ export class IMessageSession {
     // Everything else (SMS/RCS, or unproven phone numbers) → secure link, which
     // delivers reliably as text. Non-phone Apple IDs can only be iMessage.
     const phone = this.isPhoneish(target);
-    const transport = chooseFileTransport({
-      isPhone: phone,
-      recent: phone ? this.db.recentSendStatus(target) : null,
-    });
+    const recent = phone ? this.db.recentSendStatus(target) : null;
+    const transport = chooseFileTransport({ isPhone: phone, recent });
     if (transport === "imessage") {
       const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
       if (im.ok) return { ok: true, via: "imessage" };
       if (!phone) return { ok: false, reason: im.reason }; // no link route for a non-phone handle
       // a phone we thought was iMessage-capable but the send failed → link
     }
-    return this.stageAndSendLink(target, filePath, request);
+    const link = await this.stageAndSendLink(target, filePath, request);
+    if (link.ok) return link;
+    // The link couldn't be built or sent — most commonly LANTERN_PUBLIC_BASE_URL
+    // is unset, so stageDownloadLink refuses the loopback URL and returns null.
+    // Rather than let a confirmed file silently vanish (the reported failure),
+    // make ONE best-effort inline iMessage attempt — it reaches any
+    // iMessage-capable contact (a spouse always is). We deliberately did NOT do
+    // this for a handle PROVEN to be SMS-only (transport stays "imessage" there),
+    // so this only fires for unknown/unproven phones where inline is strictly
+    // better than nothing. The exit code can't fully confirm receipt, so the
+    // caller reports it honestly rather than claiming certain delivery.
+    if (transport !== "imessage") {
+      const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
+      if (im.ok) return { ok: true, via: "imessage-besteffort", reason: link.reason };
+    }
+    return { ok: false, reason: link.reason };
   }
 
   private async stageAndSendLink(
@@ -5060,7 +5076,7 @@ export class IMessageSession {
   private async deliverPendingSend(
     pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string; kind?: "doc-relay"; filePath?: string; inbound?: string },
     body: string,
-  ): Promise<{ ok: boolean; reason?: string; service?: "iMessage" | "SMS"; via?: "imessage" | "link" }> {
+  ): Promise<{ ok: boolean; reason?: string; service?: "iMessage" | "SMS"; via?: "imessage" | "link" | "imessage-besteffort" }> {
     if (pending.kind === "doc-relay" && pending.filePath) {
       return this.deliverFileToContact(pending.target, pending.filePath, pending.inbound || "file");
     }

@@ -47,6 +47,36 @@ export function docMatchesRequest(request: string, filename: string): boolean {
   });
 }
 
+// A candidate file from the personal-docs search that the relay may deliver.
+// `ext` is the lowercased extension ("" for a directory — the search returns
+// folders too, with their name suffixed " (folder)").
+export interface DocCandidate {
+  path: string;
+  name: string;
+  ext: string;
+}
+
+// Choose the file to send for a contact's document request. Two rules the live
+// PAN-card incident exposed:
+//   1. NEVER pick a directory. A folder's name can match the request
+//      ("PAN Card/" for "pan card") when the actual file inside has a generic
+//      scanned name ("IMG_2024.pdf") that doesn't match — but a folder can't be
+//      delivered: readFileSync(dir) throws EISDIR on WhatsApp AND the link
+//      fallback's read throws too, so it silently "failed to send" on BOTH
+//      channels. Only real files (ext !== "") are deliverable.
+//   2. Among files, pick the first whose NAME matches the request (the existing
+//      PII match gate); otherwise surface the closest FILE name so the owner can
+//      point at the right one — never a folder breadcrumb.
+export function pickDocToSend(
+  candidates: DocCandidate[],
+  request: string,
+): { hit?: DocCandidate; closest?: string } {
+  const files = candidates.filter((c) => c.path && c.ext !== "");
+  const hit = files.find((c) => docMatchesRequest(request, c.name));
+  if (hit) return { hit };
+  return files.length > 0 ? { closest: files[0].name } : {};
+}
+
 export function buildDocRelayPrompt(c: DocRelayContext): string {
   const who = c.relationship ? `${c.contactLabel} (${c.ownerName}'s ${c.relationship})` : c.contactLabel;
   const where = c.folder ? ` You found it in the ${c.folder} folder.` : "";

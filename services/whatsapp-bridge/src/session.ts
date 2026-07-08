@@ -74,7 +74,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
 import {
@@ -5408,12 +5408,12 @@ export class WhatsAppSession {
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        const named = results
-          .filter((r) => r.path)
-          .map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
-        const match = named.find((r) => docMatchesRequest(request, r.name));
-        if (match) hit = match;
-        else if (named.length > 0) closest = named[0].name;
+        const picked = pickDocToSend(
+          results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request, ext: r.ext })),
+          request,
+        );
+        if (picked.hit) hit = { path: picked.hit.path, name: picked.hit.name };
+        else closest = picked.closest;
       }
     } catch (err) {
       this.logger.warn({ err, request }, "doc-relay search failed");
