@@ -6690,6 +6690,7 @@ export class IMessageSession {
       // Structured owner facts (ground truth) so the bot never denies a
       // known fact ("happy anniversary" gets a truthful reply).
       ownerFacts: this.ownerProfileStore.factsBlock(),
+      knownPeople: this.ownerProfileStore.relationshipsBlock(),
       // Per-contact addressing rule — what to call them, what never to.
       addressRule: isGroup
         ? undefined
