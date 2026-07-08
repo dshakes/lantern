@@ -123,7 +123,7 @@ export class IMessageSender {
   // (not an iCloud Drive 0-byte placeholder). We pre-materialize via
   // `brctl download` before sending so iCloud Drive optimized-
   // storage files don't get sent as broken stubs.
-  async sendFile(to: string, filePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  async sendFile(to: string, filePath: string): Promise<{ ok: true; service: "iMessage" | "SMS" } | { ok: false; reason: string }> {
     if (!to || !filePath) {
       return { ok: false, reason: "to + filePath required" };
     }
@@ -148,24 +148,27 @@ export class IMessageSender {
     //   2) SMS/MMS via Text Message Forwarding — for RCS/SMS-only recipients
     //      (requires the paired iPhone + carrier MMS; the only way a file reaches
     //      a non-iMessage number).
-    const strategies = [
-      `tell application "Messages"
+    const strategies: Array<{ service: "iMessage" | "SMS"; script: string }> = [
+      { service: "iMessage", script: `tell application "Messages"
         set targetService to 1st service whose service type = iMessage
         set targetBuddy to buddy ${aplStr(to)} of targetService
         set theFile to (POSIX file ${aplStr(filePath)}) as alias
         send theFile to targetBuddy
-      end tell`,
-      `tell application "Messages"
+      end tell` },
+      { service: "SMS", script: `tell application "Messages"
         set targetService to 1st service whose service type = SMS
         set targetBuddy to buddy ${aplStr(to)} of targetService
         set theFile to (POSIX file ${aplStr(filePath)}) as alias
         send theFile to targetBuddy
-      end tell`,
+      end tell` },
     ];
     let lastErr = "";
-    for (const script of strategies) {
+    for (const { service, script } of strategies) {
       const res = await this.runOsascript(script);
-      if (res.ok) return { ok: true };
+      // NOTE: osascript exit 0 means Messages ACCEPTED the handoff, not that it
+      // was delivered. For iMessage that's reliable; for SMS/MMS the recipient's
+      // carrier may still drop a PDF — the caller must phrase the ack honestly.
+      if (res.ok) return { ok: true, service };
       lastErr = res.reason;
       if (res.reason.includes("not authorized") || res.reason.includes("-1743")) return res;
     }

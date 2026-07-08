@@ -4909,13 +4909,24 @@ export class IMessageSession {
       case "replace": {
         // approve → deliver the staged draft/file; replace → send the owner's words.
         const body = decision === "replace" ? text : pendingEdit.draft;
-        const ackOk = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
+        const isDoc = pendingEdit.kind === "doc-relay";
         this.pendingDraftEdits.delete(editKey);
         this.pendingSelfChatDrafts.delete(editKey);
         try {
           const res = await this.deliverPendingSend(pendingEdit, body);
           if (res.ok) this.repliesSentToday += 1;
-          await this.send(jid, res.ok ? ackOk : `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`).catch(() => {});
+          this.logger.info({ to: pendingEdit.target, service: res.service, ok: res.ok, docRelay: isDoc }, "pending-draft delivery result");
+          // Honest ack: iMessage = reliable; SMS/MMS = handed off, NOT confirmed
+          // delivered (a file over MMS often won't land) — never claim "sent".
+          let ack: string;
+          if (!res.ok) {
+            ack = `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`;
+          } else if (res.service === "SMS") {
+            ack = `📤 handed ${isDoc ? "it" : "that"} to ${label} over SMS — but they're not on iMessage, and a file over SMS/MMS often doesn't go through. tell me if it doesn't land and I'll get it to them another way.`;
+          } else {
+            ack = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
+          }
+          await this.send(jid, ack).catch(() => {});
         } catch (err) {
           this.logger.warn({ err, to: pendingEdit.target }, "pending-draft send failed");
           await this.send(jid, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
@@ -4931,7 +4942,7 @@ export class IMessageSession {
   private async deliverPendingSend(
     pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string; kind?: "doc-relay"; filePath?: string },
     body: string,
-  ): Promise<{ ok: boolean; reason?: string }> {
+  ): Promise<{ ok: boolean; reason?: string; service?: "iMessage" | "SMS" }> {
     if (pending.kind === "doc-relay" && pending.filePath) {
       return this.sender.sendFile(pending.target, pending.filePath);
     }
