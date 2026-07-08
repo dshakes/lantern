@@ -201,7 +201,7 @@ export function shouldFireDropNotice(
   return true;
 }
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage, chooseFileTransport } from "@lantern/bridge-core/doc-link";
 import {
   applyCuration,
@@ -4818,10 +4818,16 @@ export class IMessageSession {
     this.docRelayDedup.set(dedupKey, Date.now());
 
     let hit: { path: string; name: string } | undefined;
+    let closest: string | undefined;
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        if (results.length > 0) hit = { path: results[0].path, name: results[0].name || results[0].path.split("/").pop() || request };
+        const named = results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
+        // Pick the first result whose NAME actually matches the request — not
+        // just results[0], which can be the wrong doc sharing a folder/word.
+        const match = named.find((r) => docMatchesRequest(request, r.name));
+        if (match) hit = match;
+        else if (named.length > 0) closest = named[0].name;
       }
     } catch (err) {
       this.logger.warn({ err, request }, "doc-relay search failed");
@@ -4829,7 +4835,9 @@ export class IMessageSession {
 
     const ownerThread = this.ownerSelfChatTarget();
     if (!hit) {
-      await this.send(ownerThread, docNotFoundPing({ contactLabel, request }));
+      // No name-match: never auto-send a mismatched sensitive doc. Name the
+      // closest (if any) so the owner can point at the right file.
+      await this.send(ownerThread, closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
       return;
     }
     this.pendingDraftEdits.set(ownerThread, {

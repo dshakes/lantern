@@ -27,6 +27,14 @@ import type { Logger } from "pino";
 
 // ---- types ----------------------------------------------------------------
 
+// Generic doc words that don't identify WHICH document — down-weighted in
+// ranking so a distinctive term (aadhaar / passport / w2) dominates a generic
+// one (card / copy) shared across many files.
+const DOC_GENERIC_TERMS = new Set([
+  "card", "cards", "copy", "copies", "document", "documents", "doc", "docs", "file", "files",
+  "pdf", "scan", "scanned", "photo", "photos", "image", "picture", "pic", "latest", "recent",
+]);
+
 export interface DocSearchResult {
   path: string;          // absolute, normalized
   displayPath: string;   // user-friendly (~/Documents/...)
@@ -426,8 +434,14 @@ export class PersonalDocs {
       const nameRate = r.ext === "" ? 25 : 30;
       for (const phrase of phrases) {
         const p = phrase.toLowerCase();
-        if (baseLower.includes(p)) s += nameRate;
-        else if (pathLower.includes(p)) s += 25;
+        // Generic doc words ("card", "copy", "pdf"…) match many unrelated docs
+        // (PAN card, green card, license…), so they must NOT outweigh a
+        // distinctive term. Score them low; distinctive-term weights unchanged
+        // so folder-vs-file ordering is preserved. (The doc-relay send gate is
+        // what ultimately prevents delivering the wrong file.)
+        const generic = DOC_GENERIC_TERMS.has(p);
+        if (baseLower.includes(p)) s += generic ? 3 : nameRate;
+        else if (pathLower.includes(p)) s += generic ? 2 : 25;
       }
       // Person-targeting boost. If the query said "Sam's …" we
       // want Sam's files even though the user (Ada) typed.

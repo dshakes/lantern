@@ -3,7 +3,34 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing } from "./doc-relay.ts";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing } from "./doc-relay.ts";
+
+test("docMatchesRequest: THE bug — 'aadhaar card' must NOT match Shekhar_PAN_Card.pdf", () => {
+  assert.equal(docMatchesRequest("Shekhar's aadhaar card", "Shekhar_PAN_Card.pdf"), false);
+});
+
+test("docMatchesRequest: right file matches", () => {
+  assert.equal(docMatchesRequest("Shekhar's aadhaar card", "Shekhar-Aadhaar - Oct 1 2020.pdf"), true);
+  assert.equal(docMatchesRequest("PAN card", "Shekhar_PAN_Card.pdf"), true);
+  assert.equal(docMatchesRequest("green card copy", "Shekhar-GreenCard.pdf"), true);
+  assert.equal(docMatchesRequest("passport", "Manasa_Passport_2023.pdf"), true);
+});
+
+test("docMatchesRequest: distinct person — wrong person's doc doesn't match", () => {
+  // "manasa aadhaar" must not pass a Shekhar aadhaar file
+  assert.equal(docMatchesRequest("Manasa aadhaar", "Shekhar-Aadhaar.pdf"), false);
+});
+
+test("docMatchesRequest: all-generic request can't confirm a file", () => {
+  assert.equal(docMatchesRequest("send me a copy please", "Shekhar_PAN_Card.pdf"), false);
+});
+
+test("docMismatchPing refuses to send + names the closest", () => {
+  const m = docMismatchPing({ contactLabel: "Manasa", request: "aadhaar card", closest: "Shekhar_PAN_Card.pdf" });
+  assert.match(m, /couldn't find an exact match/);
+  assert.match(m, /Shekhar_PAN_Card\.pdf/);
+  assert.match(m, /won't send the wrong document/);
+});
 
 const ctx = {
   ownerName: "Shekhar",
