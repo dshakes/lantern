@@ -56,8 +56,14 @@ export interface DocCandidate {
   ext: string;
 }
 
-// Choose the file to send for a contact's document request. Two rules the live
-// PAN-card incident exposed:
+// The personal-docs search suffixes folder names with " (folder)". Strip it
+// before matching a folder name against the request.
+function folderBaseName(name: string): string {
+  return name.replace(/\s*\(folder\)\s*$/i, "");
+}
+
+// Choose the file to send for a contact's document request. Three rules the
+// live PAN-card incident exposed:
 //   1. NEVER pick a directory. A folder's name can match the request
 //      ("PAN Card/" for "pan card") when the actual file inside has a generic
 //      scanned name ("IMG_2024.pdf") that doesn't match — but a folder can't be
@@ -65,8 +71,14 @@ export interface DocCandidate {
 //      fallback's read throws too, so it silently "failed to send" on BOTH
 //      channels. Only real files (ext !== "") are deliverable.
 //   2. Among files, pick the first whose NAME matches the request (the existing
-//      PII match gate); otherwise surface the closest FILE name so the owner can
-//      point at the right one — never a folder breadcrumb.
+//      PII match gate).
+//   3. AUTO-DESCEND: if no file name matched but a FOLDER name matches the
+//      request AND that folder holds exactly ONE deliverable file, send that
+//      file (the scanned "PAN Card/IMG_2024.pdf" case). The owner still sees the
+//      real filename in the confirm ping and approves before anything sends, so
+//      this is safe. More than one file under the folder is ambiguous — never
+//      guess which PII to send; fall through to surfacing the closest FILE so
+//      the owner points at the right one (never a folder breadcrumb).
 export function pickDocToSend(
   candidates: DocCandidate[],
   request: string,
@@ -74,6 +86,16 @@ export function pickDocToSend(
   const files = candidates.filter((c) => c.path && c.ext !== "");
   const hit = files.find((c) => docMatchesRequest(request, c.name));
   if (hit) return { hit };
+
+  const matchedFolders = candidates.filter(
+    (c) => c.path && c.ext === "" && docMatchesRequest(request, folderBaseName(c.name)),
+  );
+  for (const folder of matchedFolders) {
+    const prefix = folder.path.endsWith("/") ? folder.path : folder.path + "/";
+    const inside = files.filter((f) => f.path.startsWith(prefix));
+    if (inside.length === 1) return { hit: inside[0] };
+  }
+
   return files.length > 0 ? { closest: files[0].name } : {};
 }
 
