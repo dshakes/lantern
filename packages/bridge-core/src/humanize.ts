@@ -349,6 +349,29 @@ export function classifyPendingReply(
   return "replace";
 }
 
+// Pick the pending the owner is confirming with a bare "send"/"yes". Owner-
+// confirm pendings are keyed `${ownerKey}` or `${ownerKey}::${target}`; other
+// entries in the same map (attention-rail "attn:…", reaction drafts keyed by
+// message id) are NOT owner-confirm pendings and must be ignored. Among the
+// owner-confirm keys, the NEWEST fresh one is the ping the owner just saw — so
+// two concurrent pendings (a doc-relay + a [SEND] to different contacts) no
+// longer silently stomp each other. Pure + tested.
+export function selectNewestPending<T extends { issuedAt: number }>(
+  entries: Array<[string, T]>,
+  ownerKey: string,
+  nowMs: number,
+  ttlMs: number,
+): [string, T] | undefined {
+  const prefix = ownerKey + "::";
+  let best: [string, T] | undefined;
+  for (const [k, e] of entries) {
+    if (k !== ownerKey && !k.startsWith(prefix)) continue;
+    if (nowMs - e.issuedAt > ttlMs) continue;
+    if (!best || e.issuedAt > best[1].issuedAt) best = [k, e];
+  }
+  return best;
+}
+
 // AUTO-ACT LADDER — owner wants to REVERT the action the bot just auto-did.
 // Distinct from looksLikeRejection ("no" to a suggestion): here the action
 // already happened and "undo"/"remove"/"delete that" / "take it off" reverts
