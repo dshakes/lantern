@@ -715,6 +715,23 @@ export interface CallSpec {
   message?: string;
 }
 
+// Contact-path marker: the LLM emits [DOCREQ:<what they asked for>] when a
+// CONTACT asks the owner for a document/file/copy. Unlike the action markers
+// above (owner self-chat only), this fires on the contact-reply path — the
+// bridge strips it, replies intent-only to the contact, and surfaces the ask to
+// the owner for a confirm-then-send. Kept out of extractActionMarkers on purpose.
+const RE_DOCREQ = /\[DOCREQ:([^\]]+)\]/g;
+export function extractDocRequests(text: string): { cleanedText: string; docRequests: string[] } {
+  const docRequests: string[] = [];
+  let cleaned = text;
+  for (const m of text.matchAll(RE_DOCREQ)) {
+    const req = m[1].trim();
+    if (req) docRequests.push(req);
+    cleaned = cleaned.replace(m[0], "");
+  }
+  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), docRequests };
+}
+
 export interface SendSpec {
   channel: "whatsapp" | "imessage" | "sms" | "auto";
   contact: string;

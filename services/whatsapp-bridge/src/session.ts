@@ -72,7 +72,7 @@ import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -1241,7 +1241,7 @@ export class WhatsAppSession {
   // reads the most recent heads-up. Cleared on send/reject/expiry.
   private pendingDraftEdits: Map<
     string,
-    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number }
+    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number; kind?: "doc-relay"; filePath?: string }
   > = new Map();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000;
   // Per-chat concurrency lock. A single doc / natural-chat
@@ -4710,13 +4710,19 @@ export class WhatsAppSession {
       const pending = this.pendingDraftEdits.get(jid);
       if (pending && Date.now() - pending.issuedAt <= WhatsAppSession.DRAFT_EDIT_TTL_MS) {
         const label = pending.displayName ?? pending.targetJid.split("@")[0];
-        // Approve-as-is.
+        const isDocRelay = pending.kind === "doc-relay" && !!pending.filePath;
+        // Approve-as-is (doc-relay → deliver the file; else → send the draft text).
         if (looksLikeConfirmation(text)) {
           this.pendingDraftEdits.delete(jid);
           try {
-            await this.sendMessage(pending.targetJid, pending.draftText);
-            this.recordOutboundReply(pending.targetJid, pending.draftText);
-            await this.confirmToSelf(`✅ sent to ${label}.`);
+            if (isDocRelay) {
+              await this.sendDocument(pending.targetJid, pending.filePath!);
+              await this.confirmToSelf(`✅ sent your ${pending.inboundText} to ${label}.`);
+            } else {
+              await this.sendMessage(pending.targetJid, pending.draftText);
+              this.recordOutboundReply(pending.targetJid, pending.draftText);
+              await this.confirmToSelf(`✅ sent to ${label}.`);
+            }
           } catch (err) {
             this.logger.warn({ err, to: pending.targetJid }, "B5 approve-as-is send failed");
             await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
@@ -4729,17 +4735,21 @@ export class WhatsAppSession {
           await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
           return;
         }
-        // Free-text replacement — send the OWNER'S words to the contact.
-        this.pendingDraftEdits.delete(jid);
-        try {
-          await this.sendMessage(pending.targetJid, text);
-          this.recordOutboundReply(pending.targetJid, text);
-          await this.confirmToSelf(`✅ sent your version to ${label}.`);
-        } catch (err) {
-          this.logger.warn({ err, to: pending.targetJid }, "B5 inline-edit send failed");
-          await this.confirmToSelf("⚠️ couldn't send that — try again.");
+        // Free-text: for a text draft, send the OWNER'S words to the contact.
+        // A doc-relay can't be "replaced" with text — leave it pending (a later
+        // "send"/"no" still works) and fall through to normal handling.
+        if (!isDocRelay) {
+          this.pendingDraftEdits.delete(jid);
+          try {
+            await this.sendMessage(pending.targetJid, text);
+            this.recordOutboundReply(pending.targetJid, text);
+            await this.confirmToSelf(`✅ sent your version to ${label}.`);
+          } catch (err) {
+            this.logger.warn({ err, to: pending.targetJid }, "B5 inline-edit send failed");
+            await this.confirmToSelf("⚠️ couldn't send that — try again.");
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -5416,6 +5426,46 @@ export class WhatsAppSession {
   private lastCallDeps: any = null;
 
   private lastResolveSuggestions: Array<{ name: string; phone?: string; relationship?: string }> = [];
+
+  // Dedup doc-request pings: key `${contactJid}|${request-lowercased}` → last-fired ms.
+  private docRelayDedup = new Map<string, number>();
+
+  // A contact asked the owner for a document. Search the owner's OWN docs
+  // (owner-privileged; the contact never triggers this and sees nothing), then
+  // ping the owner's self-chat to confirm before the file is sent. On the
+  // owner's "send", the confirm intercept delivers the file to the contact.
+  private async relayDocRequestToOwner(contactJid: string, contactLabel: string, request: string): Promise<void> {
+    const dedupKey = `${contactJid}|${request.toLowerCase().trim()}`;
+    const last = this.docRelayDedup.get(dedupKey);
+    if (last && Date.now() - last < 30 * 60_000) return; // already surfaced this ask recently
+    this.docRelayDedup.set(dedupKey, Date.now());
+
+    let hit: { path: string; name: string } | undefined;
+    try {
+      if (this.docs) {
+        const results = await this.docs.search(request);
+        if (results.length > 0) hit = { path: results[0].path, name: results[0].name || results[0].path.split("/").pop() || request };
+      }
+    } catch (err) {
+      this.logger.warn({ err, request }, "doc-relay search failed");
+    }
+
+    const ownerThread = this.ownJid();
+    if (hit && ownerThread) {
+      this.pendingDraftEdits.set(ownerThread, {
+        targetJid: contactJid,
+        displayName: contactLabel,
+        draftText: "",
+        inboundText: request,
+        issuedAt: Date.now(),
+        kind: "doc-relay",
+        filePath: hit.path,
+      });
+      await this.confirmToSelf(`📄 ${contactLabel} asked for your ${request} — found ${hit.name}.\nreply "send" to send it to them, or "no" to skip.`);
+    } else {
+      await this.confirmToSelf(`📄 ${contactLabel} asked for your ${request} — I couldn't find it in your docs. drop me the file and I'll send it, or ignore.`);
+    }
+  }
 
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
     const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
@@ -8370,6 +8420,21 @@ export class WhatsAppSession {
         this.notifyOwnerOfDrop({ jid: from, reason: "I couldn't generate a reply (LLM error)", text, senderName: opts.senderName });
       }
       return;
+    }
+
+    // DOC REQUEST — the contact asked the owner for a file. Strip the LLM's
+    // [DOCREQ:...] marker (so the contact only gets the intent text), then
+    // surface the ask to the owner for a confirm-then-send. LLM-detected — no
+    // keyword matching. Fired async; never blocks or fails the contact reply.
+    if (draft) {
+      const dq = extractDocRequests(draft);
+      if (dq.docRequests.length > 0) {
+        draft = dq.cleanedText;
+        for (const req of dq.docRequests) {
+          void this.relayDocRequestToOwner(from, opts.senderName || from, req).catch((err) =>
+            this.logger.warn({ err, from }, "doc-request relay failed"));
+        }
+      }
     }
 
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to deliberately signal

@@ -200,7 +200,7 @@ export function shouldFireDropNotice(
   state.set(dedupeKey, now);
   return true;
 }
-import { MacActions, extractActionMarkers, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -820,6 +820,8 @@ export class IMessageSession {
     issuedAt: number;
     channel?: "whatsapp" | "imessage" | "sms"; // owner-initiated SEND: which wire (default iMessage/SMS)
     waJid?: string;        // channel=whatsapp: the resolved <digits>@s.whatsapp.net target
+    kind?: "doc-relay";    // doc-relay: deliver filePath as an attachment to a contact who asked
+    filePath?: string;     // doc-relay: absolute path of the owner's file to send
   }> = new Map();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000; // 10 min (WA parity)
   // Draft-and-confirm for LOW-confidence contact replies. OPT-IN
@@ -4796,13 +4798,56 @@ export class IMessageSession {
     t.unref?.();
   }
 
+  // Dedup doc-request pings: `${contactHandle}|${request-lowercased}` → last-fired ms.
+  private docRelayDedup = new Map<string, number>();
+
+  // A contact asked the owner for a document. Search the owner's OWN docs
+  // (owner-privileged; the contact never triggers this and sees nothing), then
+  // ping the owner's self-chat to confirm before the file is sent. On the
+  // owner's "send", the confirm intercept delivers the file to the contact.
+  private async relayDocRequestToOwner(contactHandle: string, contactLabel: string, request: string): Promise<void> {
+    const dedupKey = `${contactHandle}|${request.toLowerCase().trim()}`;
+    const last = this.docRelayDedup.get(dedupKey);
+    if (last && Date.now() - last < 30 * 60_000) return;
+    this.docRelayDedup.set(dedupKey, Date.now());
+
+    let hit: { path: string; name: string } | undefined;
+    try {
+      if (this.docs) {
+        const results = await this.docs.search(request);
+        if (results.length > 0) hit = { path: results[0].path, name: results[0].name || results[0].path.split("/").pop() || request };
+      }
+    } catch (err) {
+      this.logger.warn({ err, request }, "doc-relay search failed");
+    }
+
+    const ownerThread = this.ownerSelfChatTarget();
+    if (hit) {
+      this.pendingDraftEdits.set(ownerThread, {
+        target: contactHandle,
+        targetLabel: contactLabel,
+        draft: "",
+        inbound: request,
+        issuedAt: Date.now(),
+        kind: "doc-relay",
+        filePath: hit.path,
+      });
+      await this.send(ownerThread, `📄 ${contactLabel} asked for your ${request} — found ${hit.name}.\nreply "send" to send it to them, or "no" to skip.`);
+    } else {
+      await this.send(ownerThread, `📄 ${contactLabel} asked for your ${request} — I couldn't find it in your docs. drop me the file and I'll send it, or ignore.`);
+    }
+  }
+
   // Deliver a confirmed owner-initiated SEND on the right wire. WhatsApp goes
   // over the already-wired cross-bridge HTTP hop (:3100); iMessage/SMS/auto use
   // the local Messages sender (which itself falls back iMessage→SMS).
   private async deliverPendingSend(
-    pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string },
+    pending: { target: string; channel?: "whatsapp" | "imessage" | "sms"; waJid?: string; kind?: "doc-relay"; filePath?: string },
     body: string,
   ): Promise<{ ok: boolean; reason?: string }> {
+    if (pending.kind === "doc-relay" && pending.filePath) {
+      return this.sender.sendFile(pending.target, pending.filePath);
+    }
     if (pending.channel === "whatsapp" && pending.waJid) {
       const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -5999,7 +6044,12 @@ export class IMessageSession {
           await this.send(row.handle, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
           return;
         }
-        // Free-text replacement — send the OWNER'S words to the contact.
+        // Free-text: for a text draft, send the OWNER'S words to the contact.
+        // A doc-relay can't be "replaced" with text — leave it pending (a later
+        // "send"/"no" still works) and fall through to normal handling.
+        if (pendingEdit.kind === "doc-relay") {
+          // fall through — do not consume, do not send
+        } else {
         this.pendingDraftEdits.delete(editKey);
         this.pendingSelfChatDrafts.delete(editKey);
         try {
@@ -6011,6 +6061,7 @@ export class IMessageSession {
           await this.send(row.handle, `⚠️ couldn't send that to ${label} — try again.`).catch(() => {});
         }
         return;
+        }
       }
     }
 
@@ -6846,6 +6897,20 @@ export class IMessageSession {
       // web_search only — no connector catalog unless logisticsRead).
       webSearch: true,
     });
+    // DOC REQUEST — the contact asked the owner for a file. Strip the LLM's
+    // [DOCREQ:...] marker (contact only gets the intent text), then surface the
+    // ask to the owner for a confirm-then-send. LLM-detected — no keyword match.
+    // Fired async; never blocks or fails the contact reply.
+    if (draft) {
+      const dq = extractDocRequests(draft);
+      if (dq.docRequests.length > 0) {
+        draft = dq.cleanedText;
+        for (const req of dq.docRequests) {
+          void this.relayDocRequestToOwner(row.handle, this.contactLabel(row.handle), req).catch((err) =>
+            this.logger.warn({ err, from: row.handle }, "doc-request relay failed"));
+        }
+      }
+    }
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
     // warranted". Treat as a deliberate silence so decision-prose never
     // reaches the contact. Deterministic; no send.
