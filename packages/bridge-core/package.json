@@ -21,6 +21,7 @@
     "./offline-monitor": "./src/offline-monitor.ts",
     "./personal-docs": "./src/personal-docs.ts",
     "./mac-actions": "./src/mac-actions.ts",
+    "./doc-relay": "./src/doc-relay.ts",
     "./inbound-classifier": "./src/inbound-classifier.ts",
     "./life-events": "./src/life-events.ts",
     "./life-events-store": "./src/life-events-store.ts",

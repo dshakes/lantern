@@ -201,6 +201,7 @@ export function shouldFireDropNotice(
   return true;
 }
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -823,6 +824,10 @@ export class IMessageSession {
     kind?: "doc-relay";    // doc-relay: deliver filePath as an attachment to a contact who asked
     filePath?: string;     // doc-relay: absolute path of the owner's file to send
   }> = new Map();
+  // Guards the double-lane race: owner self-chat is processed by two routing
+  // lanes; whichever resolves a confirm records `${jid}|${text}` here so the
+  // other lane skips the LLM instead of re-replying ("lol it's already gone").
+  private recentlyResolvedConfirm = new Map<string, number>();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000; // 10 min (WA parity)
   // Draft-and-confirm for LOW-confidence contact replies. OPT-IN
   // (LANTERN_DRAFT_CONFIRM=on) — default OFF. On-by-default silently drafted
@@ -4822,20 +4827,50 @@ export class IMessageSession {
     }
 
     const ownerThread = this.ownerSelfChatTarget();
-    if (hit) {
-      this.pendingDraftEdits.set(ownerThread, {
-        target: contactHandle,
-        targetLabel: contactLabel,
-        draft: "",
-        inbound: request,
-        issuedAt: Date.now(),
-        kind: "doc-relay",
-        filePath: hit.path,
-      });
-      await this.send(ownerThread, `📄 ${contactLabel} asked for your ${request} — found ${hit.name}.\nreply "send" to send it to them, or "no" to skip.`);
-    } else {
-      await this.send(ownerThread, `📄 ${contactLabel} asked for your ${request} — I couldn't find it in your docs. drop me the file and I'll send it, or ignore.`);
+    if (!hit) {
+      await this.send(ownerThread, docNotFoundPing({ contactLabel, request }));
+      return;
     }
+    this.pendingDraftEdits.set(ownerThread, {
+      target: contactHandle,
+      targetLabel: contactLabel,
+      draft: "",
+      inbound: request,
+      issuedAt: Date.now(),
+      kind: "doc-relay",
+      filePath: hit.path,
+    });
+    await this.send(ownerThread, await this.composeDocRelayPing(contactHandle, contactLabel, request, hit));
+  }
+
+  // Natural, in-the-owner's-voice heads-up (LLM lead + deterministic confirm
+  // affordance). Falls back to a truthful template on any LLM miss/timeout.
+  private async composeDocRelayPing(
+    contactHandle: string,
+    contactLabel: string,
+    request: string,
+    hit: { path: string; name: string },
+  ): Promise<string> {
+    const ctx: DocRelayContext = {
+      ownerName: (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0] || "you",
+      contactLabel,
+      relationship: this.ownerProfileStore?.relationshipFor(contactHandle, contactLabel) || undefined,
+      request,
+      fileName: hit.name,
+      folder: hit.path.split("/").slice(-3, -1).join("/") || undefined,
+    };
+    let lead = "";
+    try {
+      lead = (await this.agent.respondTo(
+        "docrelay::compose",
+        buildDocRelayPrompt(ctx),
+        "One short line in the owner's casual texting voice. No emoji, no preamble.",
+        { withTools: false, timeoutMs: 15_000 },
+      )) || "";
+    } catch (err) {
+      this.logger.warn({ err }, "doc-relay ping compose failed — using fallback");
+    }
+    return finalizeDocRelayPing(lead, ctx);
   }
 
   // Resolve a pending draft / owner-SEND / doc-relay confirm from the owner's
@@ -4857,9 +4892,14 @@ export class IMessageSession {
     const label = pendingEdit.targetLabel;
 
     const decision = classifyPendingReply(text, pendingEdit, confirmOnly);
+    if (decision === "none") return false;
+    // Mark consumed so the other self-chat lane skips the LLM for this message.
+    if (this.recentlyResolvedConfirm.size > 64) {
+      const cutoff = Date.now() - 30_000;
+      for (const [k, t] of this.recentlyResolvedConfirm) if (t < cutoff) this.recentlyResolvedConfirm.delete(k);
+    }
+    this.recentlyResolvedConfirm.set(`${jid}|${text.trim().toLowerCase()}`, Date.now());
     switch (decision) {
-      case "none":
-        return false;
       case "reject":
         this.pendingDraftEdits.delete(editKey);
         this.pendingSelfChatDrafts.delete(editKey);
@@ -9044,6 +9084,15 @@ export class IMessageSession {
     // a queued free-text message is NOT resent to a contact as a replacement.
     // Runs before busyChat.add so an early return can't leave the chat busy.
     if (await this.maybeResolvePendingDraft(jid, query, true)) return;
+    // If the OTHER self-chat lane just resolved this exact confirm, don't let the
+    // LLM re-reply to it (the "lol it's already gone" double-reply).
+    const ackKey = `${jid}|${(query || "").trim().toLowerCase()}`;
+    const resolvedAt = this.recentlyResolvedConfirm.get(ackKey);
+    if (resolvedAt && Date.now() - resolvedAt < 15_000) {
+      this.recentlyResolvedConfirm.delete(ackKey);
+      this.logger.info({ jid }, "confirm already handled by other self-chat lane — skipping LLM");
+      return;
+    }
     this.busyChat.add(jid);
     // Declared before the try so the finally can always clear it — a
     // throw must never leave a stray "🧠 thinking…" timer firing.
