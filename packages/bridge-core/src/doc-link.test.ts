@@ -1,6 +1,28 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildDocLinkMessage, stageDownloadLink } from "./doc-link.ts";
+import { buildDocLinkMessage, stageDownloadLink, chooseFileTransport } from "./doc-link.ts";
+
+test("chooseFileTransport: the bug — a phone where iMessage failed (error 25) MUST route to link", () => {
+  assert.equal(chooseFileTransport({ isPhone: true, recent: { service: "iMessage", error: 25 } }), "link");
+});
+
+test("chooseFileTransport: SMS/RCS phone → link", () => {
+  assert.equal(chooseFileTransport({ isPhone: true, recent: { service: "RCS", error: 0 } }), "link");
+  assert.equal(chooseFileTransport({ isPhone: true, recent: { service: "SMS", error: 0 } }), "link");
+});
+
+test("chooseFileTransport: unknown phone (no history) → link (never gamble on iMessage)", () => {
+  assert.equal(chooseFileTransport({ isPhone: true, recent: null }), "link");
+  assert.equal(chooseFileTransport({ isPhone: true }), "link");
+});
+
+test("chooseFileTransport: phone with proven iMessage delivery → inline", () => {
+  assert.equal(chooseFileTransport({ isPhone: true, recent: { service: "iMessage", error: 0 } }), "imessage");
+});
+
+test("chooseFileTransport: non-phone Apple ID → iMessage (only channel)", () => {
+  assert.equal(chooseFileTransport({ isPhone: false, recent: null }), "imessage");
+});
 
 test("link message carries the url + honest expiry, in a natural voice", () => {
   const m = buildDocLinkMessage("PAN card", "https://x.example.com/dl/abc", 60);

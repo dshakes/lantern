@@ -202,7 +202,7 @@ export function shouldFireDropNotice(
 }
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
-import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
+import { stageDownloadLink, buildDocLinkMessage, chooseFileTransport } from "@lantern/bridge-core/doc-link";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -4944,8 +4944,23 @@ export class IMessageSession {
     filePath: string,
     request: string,
   ): Promise<{ ok: boolean; reason?: string; via?: "imessage" | "link" }> {
-    const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
-    if (im.ok) return { ok: true, via: "imessage" };
+    // sendFile's osascript exits 0 even when iMessage can't actually reach the
+    // recipient, so we can't trust it to tell iMessage-capable from not. Use the
+    // SAME ground truth the text path uses (recentSendStatus): only push the file
+    // inline over iMessage when iMessage is PROVEN working for this handle.
+    // Everything else (SMS/RCS, or unproven phone numbers) → secure link, which
+    // delivers reliably as text. Non-phone Apple IDs can only be iMessage.
+    const phone = this.isPhoneish(target);
+    const transport = chooseFileTransport({
+      isPhone: phone,
+      recent: phone ? this.db.recentSendStatus(target) : null,
+    });
+    if (transport === "imessage") {
+      const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
+      if (im.ok) return { ok: true, via: "imessage" };
+      if (!phone) return { ok: false, reason: im.reason }; // no link route for a non-phone handle
+      // a phone we thought was iMessage-capable but the send failed → link
+    }
     return this.stageAndSendLink(target, filePath, request);
   }
 

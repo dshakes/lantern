@@ -39,6 +39,26 @@ export async function stageDownloadLink(o: StageLinkOptions): Promise<{ url: str
   }
 }
 
+// Choose how to deliver a FILE to a handle. The hard-won rule: an AppleScript
+// file send returns "success" even when iMessage can't actually reach the
+// recipient, so NEVER infer capability from the send result. Push inline over
+// iMessage ONLY with positive evidence it works; otherwise a secure link (which
+// delivers reliably as text). This is the decision that kept silently failing —
+// it is pure and unit-tested so it can't regress.
+//   - non-phone handle (email / Apple ID): iMessage is the only channel.
+//   - phone with recent status proving iMessage delivered (service imessage,
+//     error 0): iMessage inline.
+//   - phone otherwise (SMS/RCS, a delivery error, or no history): link.
+export function chooseFileTransport(input: {
+  isPhone: boolean;
+  recent?: { service: string; error: number } | null;
+}): "imessage" | "link" {
+  if (!input.isPhone) return "imessage";
+  const r = input.recent;
+  if (r && r.service.toLowerCase() === "imessage" && r.error === 0) return "imessage";
+  return "link";
+}
+
 // The contact-facing message carrying the link — the owner's voice, warm and
 // plain, with an honest expiry note.
 export function buildDocLinkMessage(request: string, url: string, ttlMinutes: number): string {
