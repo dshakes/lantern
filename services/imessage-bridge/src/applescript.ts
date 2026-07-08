@@ -141,6 +141,13 @@ export class IMessageSender {
     // that can't be opened or downloaded. The `as alias` cast
     // resolves the path to a Finder alias the Messages send
     // pipeline uploads in full.
+    // Each strategy targets an EXPLICIT service so we never get a false
+    // success: an iMessage-only send to an SMS-only recipient must FAIL here (so
+    // the caller sees it), not "succeed" locally while nothing is delivered.
+    //   1) iMessage — for iMessage-capable recipients.
+    //   2) SMS/MMS via Text Message Forwarding — for RCS/SMS-only recipients
+    //      (requires the paired iPhone + carrier MMS; the only way a file reaches
+    //      a non-iMessage number).
     const strategies = [
       `tell application "Messages"
         set targetService to 1st service whose service type = iMessage
@@ -149,8 +156,10 @@ export class IMessageSender {
         send theFile to targetBuddy
       end tell`,
       `tell application "Messages"
+        set targetService to 1st service whose service type = SMS
+        set targetBuddy to buddy ${aplStr(to)} of targetService
         set theFile to (POSIX file ${aplStr(filePath)}) as alias
-        send theFile to buddy ${aplStr(to)}
+        send theFile to targetBuddy
       end tell`,
     ];
     let lastErr = "";

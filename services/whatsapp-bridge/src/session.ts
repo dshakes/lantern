@@ -73,6 +73,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -5408,20 +5409,50 @@ export class WhatsAppSession {
     }
 
     const ownerThread = this.ownJid();
-    if (hit && ownerThread) {
-      this.pendingDraftEdits.set(ownerThread, {
-        targetJid: contactJid,
-        displayName: contactLabel,
-        draftText: "",
-        inboundText: request,
-        issuedAt: Date.now(),
-        kind: "doc-relay",
-        filePath: hit.path,
-      });
-      await this.confirmToSelf(`📄 ${contactLabel} asked for your ${request} — found ${hit.name}.\nreply "send" to send it to them, or "no" to skip.`);
-    } else {
-      await this.confirmToSelf(`📄 ${contactLabel} asked for your ${request} — I couldn't find it in your docs. drop me the file and I'll send it, or ignore.`);
+    if (!hit || !ownerThread) {
+      await this.confirmToSelf(docNotFoundPing({ contactLabel, request }));
+      return;
     }
+    this.pendingDraftEdits.set(ownerThread, {
+      targetJid: contactJid,
+      displayName: contactLabel,
+      draftText: "",
+      inboundText: request,
+      issuedAt: Date.now(),
+      kind: "doc-relay",
+      filePath: hit.path,
+    });
+    await this.confirmToSelf(await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
+  }
+
+  // Natural, in-the-owner's-voice heads-up (LLM lead + deterministic confirm
+  // affordance). Falls back to a truthful template on any LLM miss/timeout.
+  private async composeDocRelayPing(
+    contactJid: string,
+    contactLabel: string,
+    request: string,
+    hit: { path: string; name: string },
+  ): Promise<string> {
+    const ctx: DocRelayContext = {
+      ownerName: (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0] || "you",
+      contactLabel,
+      relationship: this.ownerProfileStore?.relationshipFor(contactJid, contactLabel) || undefined,
+      request,
+      fileName: hit.name,
+      folder: hit.path.split("/").slice(-3, -1).join("/") || undefined,
+    };
+    let lead = "";
+    try {
+      lead = (await this.agent.respondTo(
+        "docrelay::compose",
+        buildDocRelayPrompt(ctx),
+        "One short line in the owner's casual texting voice. No emoji, no preamble.",
+        { withTools: false, timeoutMs: 15_000 },
+      )) || "";
+    } catch (err) {
+      this.logger.warn({ err }, "doc-relay ping compose failed — using fallback");
+    }
+    return finalizeDocRelayPing(lead, ctx);
   }
 
   // Resolve a pending draft / owner-SEND / doc-relay confirm from the owner's
