@@ -76,6 +76,7 @@ import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapter
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
+import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -5423,7 +5424,7 @@ export class WhatsAppSession {
       await this.confirmToSelf(closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
       return;
     }
-    this.pendingDraftEdits.set(ownerThread, {
+    this.pendingDraftEdits.set(`${ownerThread}::${contactJid}`, {
       targetJid: contactJid,
       displayName: contactLabel,
       draftText: "",
@@ -5475,46 +5476,96 @@ export class WhatsAppSession {
   private async maybeResolvePendingDraft(jid: string, text: string, confirmOnly: boolean): Promise<boolean> {
     if (!text) return false;
     this.gcPendingDraftEdits();
-    const pending = this.pendingDraftEdits.get(jid);
-    if (!pending || Date.now() - pending.issuedAt > WhatsAppSession.DRAFT_EDIT_TTL_MS) return false;
-    const label = pending.displayName ?? pending.targetJid.split("@")[0];
-    const isDocRelay = pending.kind === "doc-relay" && !!pending.filePath;
-    const decision = classifyPendingReply(text, pending, confirmOnly);
-    switch (decision) {
-      case "none":
-        return false;
-      case "reject":
-        this.pendingDraftEdits.delete(jid);
-        await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
-        return true;
-      case "approve":
-      case "replace": {
-        this.pendingDraftEdits.delete(jid);
-        try {
-          if (isDocRelay) {
-            // doc-relay only ever approves — deliver the file (WhatsApp doc,
-            // else a secure short-lived link).
-            const r = await this.deliverFileToContact(pending.targetJid, pending.filePath!, pending.inboundText);
-            await this.confirmToSelf(
-              !r.ok
-                ? `⚠️ couldn't send your ${pending.inboundText} to ${label} — ${r.reason || "delivery failed"}.`
-                : r.via === "link"
-                  ? `✅ sent your ${pending.inboundText} to ${label} as a secure link — expires in 1h.`
-                  : `✅ sent your ${pending.inboundText} to ${label}.`,
-            );
-          } else {
-            const body = decision === "replace" ? text : pending.draftText;
-            await this.sendMessage(pending.targetJid, body);
-            this.recordOutboundReply(pending.targetJid, body);
-            await this.confirmToSelf(decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`);
-          }
-        } catch (err) {
-          this.logger.warn({ err, to: pending.targetJid }, "pending-draft send failed");
-          await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
-        }
+    const ownerKey = this.ownJid() || jid;
+    const now = Date.now();
+    const ttl = WhatsAppSession.DRAFT_EDIT_TTL_MS;
+    // Owner-confirm pendings only (composite `${ownerKey}::…` or plain owner key).
+    const candidates = [...this.pendingDraftEdits].filter(
+      ([k, e]) => (k === ownerKey || k === jid || k.startsWith(ownerKey + "::")) && now - e.issuedAt <= ttl,
+    );
+    if (candidates.length === 0) return false;
+
+    let editKey: string;
+    let pending: (typeof candidates)[number][1];
+    let decision: "approve" | "reject" | "replace";
+
+    if (candidates.length === 1) {
+      [editKey, pending] = candidates[0];
+      const d = classifyPendingReply(text, pending, confirmOnly);
+      if (d === "none") return false;
+      decision = d;
+    } else {
+      // AGENTIC disambiguation across multiple staged confirmations — ask if the
+      // LLM can't tell which the owner means (never gamble a sensitive doc).
+      const descriptors = candidates.map(([k, e]) => ({
+        id: k,
+        kind: (e.kind === "doc-relay" ? "doc" : "text") as "doc" | "text",
+        target: e.displayName ?? e.targetJid.split("@")[0],
+        summary: e.kind === "doc-relay" ? e.inboundText || e.filePath?.split("/").pop() || "file" : (e.draftText || "").slice(0, 60),
+      }));
+      let res: PendingResolution;
+      try {
+        const raw = await this.agent.respondTo(
+          "pending::resolve",
+          buildPendingResolvePrompt(descriptors, text),
+          "Reply with strict JSON only.",
+          { withTools: false, timeoutMs: 12000 },
+        );
+        res = parsePendingResolution(raw || "", descriptors.map((d) => d.id));
+      } catch {
+        res = { decision: "ask", question: `which one — ${descriptors.map((d) => d.target).join(" or ")}?` };
+      }
+      if (res.decision === "none") return false;
+      if (res.decision === "ask") {
+        await this.confirmToSelf(res.question);
         return true;
       }
+      const found = this.pendingDraftEdits.get(res.id);
+      if (!found) return false;
+      editKey = res.id;
+      pending = found;
+      decision = res.decision === "send" ? "approve" : "reject";
     }
+
+    return this.firePending(editKey, pending, decision, text);
+  }
+
+  // Execute a resolved pending: reject / approve (deliver staged file or draft) /
+  // replace (owner's typed words). Honest, transport-aware ack.
+  private async firePending(
+    editKey: string,
+    pending: NonNullable<ReturnType<typeof this.pendingDraftEdits.get>>,
+    decision: "approve" | "reject" | "replace",
+    text: string,
+  ): Promise<boolean> {
+    const label = pending.displayName ?? pending.targetJid.split("@")[0];
+    const isDocRelay = pending.kind === "doc-relay" && !!pending.filePath;
+    this.pendingDraftEdits.delete(editKey);
+    if (decision === "reject") {
+      await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
+      return true;
+    }
+    try {
+      if (isDocRelay) {
+        const r = await this.deliverFileToContact(pending.targetJid, pending.filePath!, pending.inboundText);
+        await this.confirmToSelf(
+          !r.ok
+            ? `⚠️ couldn't send your ${pending.inboundText} to ${label} — ${r.reason || "delivery failed"}.`
+            : r.via === "link"
+              ? `✅ sent your ${pending.inboundText} to ${label} as a secure link — expires in 1h.`
+              : `✅ sent your ${pending.inboundText} to ${label}.`,
+        );
+      } else {
+        const body = decision === "replace" ? text : pending.draftText;
+        await this.sendMessage(pending.targetJid, body);
+        this.recordOutboundReply(pending.targetJid, body);
+        await this.confirmToSelf(decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`);
+      }
+    } catch (err) {
+      this.logger.warn({ err, to: pending.targetJid }, "pending-draft send failed");
+      await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
+    }
+    return true;
   }
 
   // Deliver a FILE to a WhatsApp contact: the native document first (reliable),
@@ -6256,7 +6307,7 @@ export class WhatsAppSession {
         }
         const targetJid = `${resolved.phone.replace(/\D/g, "")}@s.whatsapp.net`;
         const label = resolved.name || s.contact;
-        this.pendingDraftEdits.set(jid, {
+        this.pendingDraftEdits.set(`${jid}::${targetJid}`, {
           targetJid,
           displayName: label,
           draftText: s.text,

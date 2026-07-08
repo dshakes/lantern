@@ -204,6 +204,7 @@ export function shouldFireDropNotice(
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage, chooseFileTransport } from "@lantern/bridge-core/doc-link";
+import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
 import {
   applyCuration,
   buildCurationPrompt,
@@ -4846,7 +4847,7 @@ export class IMessageSession {
       await this.send(ownerThread, closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
       return;
     }
-    this.pendingDraftEdits.set(ownerThread, {
+    this.pendingDraftEdits.set(`${ownerThread}::${contactHandle}`, {
       target: contactHandle,
       targetLabel: contactLabel,
       draft: "",
@@ -4901,53 +4902,104 @@ export class IMessageSession {
   private async maybeResolvePendingDraft(jid: string, text: string, confirmOnly: boolean): Promise<boolean> {
     if (!text) return false;
     this.gcPendingDraftEdits();
-    const editKey = this.pendingDraftEdits.has(jid) ? jid : this.ownerSelfChatTarget();
-    const pendingEdit = this.pendingDraftEdits.get(editKey);
-    if (!pendingEdit || Date.now() - pendingEdit.issuedAt > IMessageSession.DRAFT_EDIT_TTL_MS) return false;
-    const label = pendingEdit.targetLabel;
+    const ownerKey = this.ownerSelfChatTarget();
+    const now = Date.now();
+    const ttl = IMessageSession.DRAFT_EDIT_TTL_MS;
+    // Owner-confirm pendings only (composite `${ownerKey}::…` or the plain owner
+    // key) — never the attention-rail / reaction-draft entries in the same map.
+    const candidates = [...this.pendingDraftEdits].filter(
+      ([k, e]) => (k === ownerKey || k === jid || k.startsWith(ownerKey + "::")) && now - e.issuedAt <= ttl,
+    );
+    if (candidates.length === 0) return false;
 
-    const decision = classifyPendingReply(text, pendingEdit, confirmOnly);
-    if (decision === "none") return false;
+    let editKey: string;
+    let pendingEdit: (typeof candidates)[number][1];
+    let decision: "approve" | "reject" | "replace";
+
+    if (candidates.length === 1) {
+      [editKey, pendingEdit] = candidates[0];
+      const d = classifyPendingReply(text, pendingEdit, confirmOnly);
+      if (d === "none") return false;
+      decision = d;
+    } else {
+      // AGENTIC disambiguation: multiple staged confirmations — let the LLM
+      // reason about which one the owner means, and ASK if it genuinely can't
+      // tell (never gamble a sensitive doc to the wrong contact).
+      const descriptors = candidates.map(([k, e]) => ({
+        id: k,
+        kind: (e.kind === "doc-relay" ? "doc" : "text") as "doc" | "text",
+        target: e.targetLabel,
+        summary: e.kind === "doc-relay" ? e.inbound || e.filePath?.split("/").pop() || "file" : (e.draft || "").slice(0, 60),
+      }));
+      let res: PendingResolution;
+      try {
+        const raw = await this.agent.respondTo(
+          "pending::resolve",
+          buildPendingResolvePrompt(descriptors, text),
+          "Reply with strict JSON only.",
+          { withTools: false, timeoutMs: 12000 },
+        );
+        res = parsePendingResolution(raw || "", descriptors.map((d) => d.id));
+      } catch {
+        res = { decision: "ask", question: `which one — ${candidates.map(([, e]) => e.targetLabel).join(" or ")}?` };
+      }
+      if (res.decision === "none") return false;
+      if (res.decision === "ask") {
+        await this.send(jid, res.question).catch(() => {});
+        return true; // consumed; pendings stay live for the owner's next reply
+      }
+      const found = this.pendingDraftEdits.get(res.id);
+      if (!found) return false;
+      editKey = res.id;
+      pendingEdit = found;
+      decision = res.decision === "send" ? "approve" : "reject";
+    }
+
     // Mark consumed so the other self-chat lane skips the LLM for this message.
     if (this.recentlyResolvedConfirm.size > 64) {
-      const cutoff = Date.now() - 30_000;
+      const cutoff = now - 30_000;
       for (const [k, t] of this.recentlyResolvedConfirm) if (t < cutoff) this.recentlyResolvedConfirm.delete(k);
     }
-    this.recentlyResolvedConfirm.set(`${jid}|${text.trim().toLowerCase()}`, Date.now());
-    switch (decision) {
-      case "reject":
-        this.pendingDraftEdits.delete(editKey);
-        this.pendingSelfChatDrafts.delete(editKey);
-        await this.send(jid, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
-        return true;
-      case "approve":
-      case "replace": {
-        // approve → deliver the staged draft/file; replace → send the owner's words.
-        const body = decision === "replace" ? text : pendingEdit.draft;
-        const isDoc = pendingEdit.kind === "doc-relay";
-        this.pendingDraftEdits.delete(editKey);
-        this.pendingSelfChatDrafts.delete(editKey);
-        try {
-          const res = await this.deliverPendingSend(pendingEdit, body);
-          if (res.ok) this.repliesSentToday += 1;
-          this.logger.info({ to: pendingEdit.target, via: res.via, service: res.service, ok: res.ok, docRelay: isDoc }, "pending-draft delivery result");
-          // Honest ack keyed on how it actually went out.
-          let ack: string;
-          if (!res.ok) {
-            ack = `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`;
-          } else if (res.via === "link") {
-            ack = `✅ sent ${isDoc ? "your " + pendingEdit.inbound : "that"} to ${label} as a secure link (they're not on iMessage) — it expires in 1h.`;
-          } else {
-            ack = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
-          }
-          await this.send(jid, ack).catch(() => {});
-        } catch (err) {
-          this.logger.warn({ err, to: pendingEdit.target }, "pending-draft send failed");
-          await this.send(jid, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
-        }
-        return true;
-      }
+    this.recentlyResolvedConfirm.set(`${jid}|${text.trim().toLowerCase()}`, now);
+    return this.firePending(jid, editKey, pendingEdit, decision, text);
+  }
+
+  // Execute a resolved pending: reject (drop), approve (deliver staged), or
+  // replace (send the owner's typed words). Honest, transport-aware ack.
+  private async firePending(
+    jid: string,
+    editKey: string,
+    pendingEdit: NonNullable<ReturnType<typeof this.pendingDraftEdits.get>>,
+    decision: "approve" | "reject" | "replace",
+    text: string,
+  ): Promise<boolean> {
+    const label = pendingEdit.targetLabel;
+    this.pendingDraftEdits.delete(editKey);
+    this.pendingSelfChatDrafts.delete(editKey);
+    if (decision === "reject") {
+      await this.send(jid, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
+      return true;
     }
+    const body = decision === "replace" ? text : pendingEdit.draft;
+    const isDoc = pendingEdit.kind === "doc-relay";
+    try {
+      const res = await this.deliverPendingSend(pendingEdit, body);
+      if (res.ok) this.repliesSentToday += 1;
+      this.logger.info({ to: pendingEdit.target, via: res.via, service: res.service, ok: res.ok, docRelay: isDoc }, "pending-draft delivery result");
+      let ack: string;
+      if (!res.ok) {
+        ack = `⚠️ couldn't send to ${label} — ${res.reason || "delivery failed"}.`;
+      } else if (res.via === "link") {
+        ack = `✅ sent ${isDoc ? "your " + pendingEdit.inbound : "that"} to ${label} as a secure link (they're not on iMessage) — it expires in 1h.`;
+      } else {
+        ack = decision === "replace" ? `✅ sent your version to ${label}.` : `✅ sent to ${label}.`;
+      }
+      await this.send(jid, ack).catch(() => {});
+    } catch (err) {
+      this.logger.warn({ err, to: pendingEdit.target }, "pending-draft send failed");
+      await this.send(jid, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
+    }
+    return true;
   }
 
   // Deliver a FILE to a contact reliably: iMessage inline when they're on
@@ -9788,7 +9840,7 @@ export class IMessageSession {
         }
         const label = resolved.name || s.contact;
         const onWhatsApp = s.channel === "whatsapp";
-        this.pendingDraftEdits.set(this.ownerSelfChatTarget(), {
+        this.pendingDraftEdits.set(`${this.ownerSelfChatTarget()}::${resolved.phone}`, {
           target: resolved.phone,
           targetLabel: label,
           draft: s.text,
