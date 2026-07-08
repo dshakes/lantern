@@ -54,6 +54,7 @@ export interface DocCandidate {
   path: string;
   name: string;
   ext: string;
+  modifiedAt?: number; // epoch ms — used to order the numbered pick newest-first
 }
 
 // The personal-docs search suffixes folder names with " (folder)". Strip it
@@ -79,10 +80,16 @@ function folderBaseName(name: string): string {
 //      this is safe. More than one file under the folder is ambiguous — never
 //      guess which PII to send; fall through to surfacing the closest FILE so
 //      the owner points at the right one (never a folder breadcrumb).
+// A file the owner can pick from a numbered list (path + display name).
+export interface DocPickCandidate {
+  path: string;
+  name: string;
+}
+
 export function pickDocToSend(
   candidates: DocCandidate[],
   request: string,
-): { hit?: DocCandidate; closest?: string } {
+): { hit?: DocCandidate; closest?: string; candidates?: DocPickCandidate[] } {
   const files = candidates.filter((c) => c.path && c.ext !== "");
   const hit = files.find((c) => docMatchesRequest(request, c.name));
   if (hit) return { hit };
@@ -93,10 +100,55 @@ export function pickDocToSend(
   for (const folder of matchedFolders) {
     const prefix = folder.path.endsWith("/") ? folder.path : folder.path + "/";
     const inside = files.filter((f) => f.path.startsWith(prefix));
+    // Exactly one file under a matched folder → auto-descend (owner still
+    // confirms). Two-or-more → we have a STRONG signal the right doc is in this
+    // folder but can't tell which; offer them as a numbered pick rather than
+    // dead-ending or guessing a PII file.
     if (inside.length === 1) return { hit: inside[0] };
+    if (inside.length > 1) {
+      // Order newest-first so #1 is the latest scan (the usual "resend my PAN"
+      // wants the most recent copy) and "latest" maps to the first item.
+      const byNewest = [...inside].sort((a, b) => (b.modifiedAt ?? 0) - (a.modifiedAt ?? 0));
+      return { candidates: byNewest.slice(0, 3).map((f) => ({ path: f.path, name: f.name })) };
+    }
   }
 
   return files.length > 0 ? { closest: files[0].name } : {};
+}
+
+// Owner-facing ping for the numbered-pick fallback: the request found several
+// plausible files (all in a folder that matched) and we won't guess which PII
+// to send. The owner replies a number to choose.
+export function buildDocPickPing(
+  c: { contactLabel: string; request: string },
+  candidates: DocPickCandidate[],
+): string {
+  const list = candidates.map((f, i) => `${i + 1}. ${f.name}${i === 0 ? " (newest)" : ""}`).join("\n");
+  return `📄 ${c.contactLabel} asked for your ${c.request} — I found a few and I'm not sure which is right:\n${list}\n\nreply the number to send it (e.g. "1"), "latest" for the newest, or "no".`;
+}
+
+// Parse the owner's reply to a numbered doc-pick ping. Returns a 0-based index
+// into the candidate list, "reject", or null (unclear → the caller re-asks).
+// A bare "send"/"yes" with a multi-item list is deliberately null: we never
+// guess which sensitive file the owner meant.
+export function parseDocPick(text: string, count: number): number | "reject" | null {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return null;
+  if (/^(no|nope|nah|cancel|skip|none|never\s*mind|nvm|don'?t)\b/.test(t)) return "reject";
+  // Candidates are ordered newest-first, so "latest"/"newest"/"most recent"
+  // resolves to the first item.
+  if (/\b(latest|newest|most\s*recent|recent)\b/.test(t) && count > 0) return 0;
+  const words: Record<string, number> = { first: 1, one: 1, second: 2, two: 2, third: 3, three: 3 };
+  let n: number | undefined;
+  const digit = t.match(/(?:^|\bsend\b|\bnumber\b|\bthe\b|\boption\b|#)\s*(\d+)/);
+  if (digit) n = parseInt(digit[1], 10);
+  else {
+    for (const [w, v] of Object.entries(words)) {
+      if (new RegExp(`\\b${w}\\b`).test(t)) { n = v; break; }
+    }
+  }
+  if (n === undefined || n < 1 || n > count) return null;
+  return n - 1;
 }
 
 export function buildDocRelayPrompt(c: DocRelayContext): string {
