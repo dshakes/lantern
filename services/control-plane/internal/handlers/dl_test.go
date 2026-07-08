@@ -17,8 +17,7 @@ import (
 func newDLHandlerForTest(t *testing.T) *DLHandler {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	h := &DLHandler{srv: &server.Server{Logger: logger}, dir: t.TempDir()}
-	t.Setenv("LANTERN_DL_SIGNING_SECRET", "test-secret-abc")
+	h := &DLHandler{srv: &server.Server{Logger: logger}, dir: t.TempDir(), secret: []byte("test-secret-abc")}
 	t.Setenv("LANTERN_PUBLIC_BASE_URL", "https://tunnel.example.com")
 	return h
 }

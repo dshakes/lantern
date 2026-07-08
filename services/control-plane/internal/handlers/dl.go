@@ -39,25 +39,37 @@ const (
 )
 
 type DLHandler struct {
-	srv *server.Server
-	dir string
+	srv    *server.Server
+	dir    string
+	secret []byte
 }
 
 func NewDLHandler(srv *server.Server) *DLHandler {
 	dir := filepath.Join(os.TempDir(), "lantern-dl")
 	_ = os.MkdirAll(dir, 0o700)
-	return &DLHandler{srv: srv, dir: dir}
+	return &DLHandler{srv: srv, dir: dir, secret: resolveDLSecret()}
+}
+
+// resolveDLSecret prefers a dedicated secret, then the shared service token,
+// else a per-process random secret (dev): links then simply don't survive an
+// API restart — fine at a 1h TTL, and never insecure.
+func resolveDLSecret() []byte {
+	if s := strings.TrimSpace(os.Getenv(dlSecretEnv)); s != "" {
+		return []byte(s)
+	}
+	if s := strings.TrimSpace(os.Getenv(dlServiceTokenEnv)); s != "" {
+		return []byte(s)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return []byte("lantern-dl-fallback-secret") // unreachable in practice
+	}
+	return b
 }
 
 func (h *DLHandler) logger() *zap.Logger { return h.srv.Logger.Named("dl") }
 
-// signingSecret prefers a dedicated secret, else the shared service token.
-func (h *DLHandler) signingSecret() []byte {
-	if s := strings.TrimSpace(os.Getenv(dlSecretEnv)); s != "" {
-		return []byte(s)
-	}
-	return []byte(strings.TrimSpace(os.Getenv(dlServiceTokenEnv)))
-}
+func (h *DLHandler) signingSecret() []byte { return h.secret }
 
 // sign/verify a self-contained capability token: base64url(id|exp).base64url(hmac).
 func signDLToken(secret []byte, id string, exp int64) string {
