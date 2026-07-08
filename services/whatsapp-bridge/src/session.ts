@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
 import { join, dirname, basename } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync, chmodSync } from "fs";
+import { readFile as readFileAsync } from "fs/promises";
 import { homedir } from "os";
 import type { Logger } from "pino";
 import { AgentClient } from "@lantern/bridge-core/agent";
@@ -274,8 +275,10 @@ function normWaJid(jid: string): string {
 // dashboard's countdown ring; the bridge does not enforce it.
 const QR_VALID_MS = 20_000;
 
+// Default 5 minutes (rolls on each owner send → resumes ~5 min after the owner
+// goes quiet, per-thread). Explicit handoffs use the longer window below.
 const PAUSE_TTL_MS =
-  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
+  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 5) * 60_000;
 // Longer pause applied when the owner's manual message is an explicit
 // handoff/commitment ("I'll call you this evening", "human here") — a flat
 // 60-min pause let the bot barge back into a thread the owner said they'd
@@ -5404,7 +5407,9 @@ export class WhatsAppSession {
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        const named = results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
+        const named = results
+          .filter((r) => r.path)
+          .map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
         const match = named.find((r) => docMatchesRequest(request, r.name));
         if (match) hit = match;
         else if (named.length > 0) closest = named[0].name;
@@ -5449,7 +5454,7 @@ export class WhatsAppSession {
     let lead = "";
     try {
       lead = (await this.agent.respondTo(
-        "docrelay::compose",
+        `docrelay::compose::${contactJid}`,
         buildDocRelayPrompt(ctx),
         "One short line in the owner's casual texting voice. No emoji, no preamble.",
         { withTools: false, timeoutMs: 15_000 },
@@ -5527,7 +5532,7 @@ export class WhatsAppSession {
     }
     let content: Buffer;
     try {
-      content = readFileSync(filePath);
+      content = await readFileAsync(filePath); // async: don't block the event loop on a big scan
     } catch (err) {
       this.logger.warn({ err, filePath }, "doc-link: file read failed");
       return { ok: false, reason: "couldn't read the file" };
@@ -8203,7 +8208,7 @@ export class WhatsAppSession {
           ? this.episodicMemory.forMentions(contactFirstNames, { excludeJid: from, limit: 3, maxAgeDays: 30 })
           : Promise.resolve([]),
         !opts.isGroup && inboundTopics.length > 0
-          ? this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4 })
+          ? this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4, excludeHandles: [this.ownJid() || "", process.env.LANTERN_WA_OWNER_JID || ""].filter(Boolean) })
           : Promise.resolve([]),
         this.presence.current({
           nextEvent: async () => {

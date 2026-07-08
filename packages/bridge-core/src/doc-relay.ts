@@ -36,7 +36,15 @@ export function docMatchesRequest(request: string, filename: string): boolean {
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length >= 3 && !DOC_GENERIC.has(t));
   if (terms.length === 0) return false; // no distinctive term → can't safely confirm the file
-  return terms.every((t) => base.includes(t));
+  // Prefix-anchored match, not raw substring: the term must START a word
+  // component (after start or a non-alphanumeric separator). "pan" matches
+  // "shekhar_pan_card" and "GreenCard" matches "green" — but "pan" does NOT
+  // match "japan_trip" (pan is mid-word there). Trailing letters are allowed so
+  // compounds like "GreenCard" still match "green".
+  return terms.every((t) => {
+    const re = new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+    return re.test(base);
+  });
 }
 
 export function buildDocRelayPrompt(c: DocRelayContext): string {

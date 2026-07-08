@@ -60,6 +60,14 @@ test("stageDownloadLink streams raw bytes + headers (no base64) and returns the 
   assert.equal(seen.init.body, bytes); // raw bytes, not JSON
 });
 
+test("stageDownloadLink rejects an unreachable loopback/private URL (dead link guard)", async () => {
+  const b = new Uint8Array([1]);
+  for (const url of ["http://localhost:8080/dl/t", "http://127.0.0.1:8080/dl/t", "http://192.168.1.9/dl/t"]) {
+    const f = (async () => ({ ok: true, json: async () => ({ url }) }) as any) as unknown as typeof fetch;
+    assert.equal(await stageDownloadLink({ controlPlaneUrl: "http://x", filename: "a", content: b, fetchImpl: f }), null, url);
+  }
+});
+
 test("stageDownloadLink returns null on non-ok / missing url / throw", async () => {
   const b = new Uint8Array([1]);
   const bad = (async () => ({ ok: false, json: async () => ({}) }) as any) as unknown as typeof fetch;

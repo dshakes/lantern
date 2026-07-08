@@ -99,7 +99,7 @@ export class SocialGraph {
    * excludeJid) within the retrieval window that mention any of the
    * given topics. Newest-first.
    */
-  async related(opts: { topics: string[]; excludeJid: string; limit?: number }): Promise<TaggedMessage[]> {
+  async related(opts: { topics: string[]; excludeJid: string; limit?: number; excludeHandles?: string[] }): Promise<TaggedMessage[]> {
     if (opts.topics.length === 0) return [];
     await this.refreshIfStale();
     const all = this.cache ?? [];
@@ -110,11 +110,16 @@ export class SocialGraph {
     // excluded regardless of which channel they reached us on (their
     // WhatsApp + iMessage messages are the same person, not "other threads").
     const excludeKey = canonicalHandle(opts.excludeJid);
+    // The owner's OWN handles are NEVER "related context from other threads" —
+    // the owner's private self-chat (venting, notes to their assistant) must not
+    // leak into a contact's reply.
+    const ownerKeys = new Set((opts.excludeHandles ?? []).map(canonicalHandle));
     const matched: TaggedMessage[] = [];
     // all is newest-first after refreshIfStale().
     for (const m of all) {
       if (m.ts < cutoff) break;
       if (canonicalHandle(m.jid) === excludeKey) continue;
+      if (ownerKeys.has(canonicalHandle(m.jid))) continue;
       if (m.topics.some((t) => wanted.has(t))) {
         matched.push(m);
         if (matched.length >= limit) break;
