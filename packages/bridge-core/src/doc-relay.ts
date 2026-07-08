@@ -16,6 +16,29 @@ export interface DocRelayContext {
   folder?: string; // human folder hint, e.g. "I-485/Shekhar"
 }
 
+// Generic words that don't identify WHICH document (they match card/copy/etc.
+// across many docs). Excluded from the match gate so the distinctive term wins.
+const DOC_GENERIC = new Set([
+  "card", "cards", "copy", "copies", "document", "documents", "doc", "docs", "file", "files",
+  "pdf", "scan", "scanned", "photo", "photos", "image", "picture", "pic", "latest", "recent",
+  "my", "your", "the", "a", "an", "me", "of", "send", "please", "get", "for", "and",
+]);
+
+// SAFETY GATE for PII: only send a file whose basename actually contains EVERY
+// distinctive (non-generic) term from the request. This is what stops "aadhaar
+// card" from delivering Shekhar_PAN_Card.pdf just because PAN shares "card" and
+// sits in an "Aadhaar" folder. Deterministic + strict: when unsure it refuses
+// (the caller asks the owner) rather than send the wrong sensitive document.
+export function docMatchesRequest(request: string, filename: string): boolean {
+  const base = filename.toLowerCase();
+  const terms = request
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !DOC_GENERIC.has(t));
+  if (terms.length === 0) return false; // no distinctive term → can't safely confirm the file
+  return terms.every((t) => base.includes(t));
+}
+
 export function buildDocRelayPrompt(c: DocRelayContext): string {
   const who = c.relationship ? `${c.contactLabel} (${c.ownerName}'s ${c.relationship})` : c.contactLabel;
   const where = c.folder ? ` You found it in the ${c.folder} folder.` : "";
@@ -43,4 +66,11 @@ export function finalizeDocRelayPing(llmLine: string, c: DocRelayContext): strin
 // Truthful ping when the file could NOT be found — never fabricate having it.
 export function docNotFoundPing(c: Pick<DocRelayContext, "contactLabel" | "request">): string {
   return `📄 ${c.contactLabel} asked for your ${c.request} — I couldn't find it in your docs. drop me the file and I'll send it, or ignore.`;
+}
+
+// The search returned a file, but its name doesn't match the request — do NOT
+// auto-send it (that's the wrong-PII bug). Name the closest so the owner can
+// decide, but require them to point at the right file explicitly.
+export function docMismatchPing(c: { contactLabel: string; request: string; closest: string }): string {
+  return `📄 ${c.contactLabel} asked for your ${c.request}, but I couldn't find an exact match — the closest is "${c.closest}", which doesn't look right. I won't send the wrong document. Reply with the correct file if you want it sent.`;
 }

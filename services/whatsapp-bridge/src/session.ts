@@ -73,7 +73,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import {
   applyCuration,
@@ -5400,10 +5400,14 @@ export class WhatsAppSession {
     this.docRelayDedup.set(dedupKey, Date.now());
 
     let hit: { path: string; name: string } | undefined;
+    let closest: string | undefined;
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        if (results.length > 0) hit = { path: results[0].path, name: results[0].name || results[0].path.split("/").pop() || request };
+        const named = results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
+        const match = named.find((r) => docMatchesRequest(request, r.name));
+        if (match) hit = match;
+        else if (named.length > 0) closest = named[0].name;
       }
     } catch (err) {
       this.logger.warn({ err, request }, "doc-relay search failed");
@@ -5411,7 +5415,7 @@ export class WhatsAppSession {
 
     const ownerThread = this.ownJid();
     if (!hit || !ownerThread) {
-      await this.confirmToSelf(docNotFoundPing({ contactLabel, request }));
+      await this.confirmToSelf(closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
       return;
     }
     this.pendingDraftEdits.set(ownerThread, {
