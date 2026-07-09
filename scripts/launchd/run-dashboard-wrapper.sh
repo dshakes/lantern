@@ -15,6 +15,14 @@ set -uo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$REPO_ROOT/apps/web"
 
+# SERVER-SIDE API base for the auth middleware. The middleware validates the
+# lantern_token cookie by calling <base>/auth/me on every gated request, with a
+# short timeout. It must hit the LOCAL API (localhost:8080), NOT the public
+# NEXT_PUBLIC_API_URL (Tailscale) — a slow/unreachable remote validation "fails
+# closed" and bounces /agents → /login forever (blank screen redirect loop).
+# LANTERN_API_URL wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
+export LANTERN_API_URL="${LANTERN_API_URL:-http://localhost:8080}"
+
 # Wait up to 60s for the API so we don't flash "API offline" during boot.
 for i in {1..30}; do
   if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/healthz | grep -q 200; then
