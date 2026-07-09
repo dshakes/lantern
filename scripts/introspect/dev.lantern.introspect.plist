@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.lantern.introspect</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/shakes/workspace/lantern/scripts/introspect/run.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>17</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>47</integer></dict>
+        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>33</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>7</integer></dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/shakes/Library/Logs/Lantern/introspect.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/shakes/Library/Logs/Lantern/introspect.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
