@@ -74,7 +74,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, docMatchesRequest, docMismatchPing, type DocRelayContext } from "@lantern/bridge-core/doc-relay";
+import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, buildDocPickPing, parseDocPick, docMismatchPing, type DocRelayContext, type DocPickCandidate } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
 import {
@@ -1247,7 +1247,7 @@ export class WhatsAppSession {
   // reads the most recent heads-up. Cleared on send/reject/expiry.
   private pendingDraftEdits: Map<
     string,
-    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number; kind?: "doc-relay"; filePath?: string }
+    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number; kind?: "doc-relay" | "doc-pick"; filePath?: string; candidates?: Array<{ path: string; name: string }> }
   > = new Map();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000;
   // Per-chat concurrency lock. A single doc / natural-chat
@@ -5405,35 +5405,52 @@ export class WhatsAppSession {
 
     let hit: { path: string; name: string } | undefined;
     let closest: string | undefined;
+    let pickList: DocPickCandidate[] | undefined;
     try {
       if (this.docs) {
         const results = await this.docs.search(request);
-        const named = results
-          .filter((r) => r.path)
-          .map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request }));
-        const match = named.find((r) => docMatchesRequest(request, r.name));
-        if (match) hit = match;
-        else if (named.length > 0) closest = named[0].name;
+        const picked = pickDocToSend(
+          results.map((r) => ({ path: r.path, name: r.name || r.path.split("/").pop() || request, ext: r.ext, modifiedAt: r.modifiedAt })),
+          request,
+        );
+        if (picked.hit) hit = { path: picked.hit.path, name: picked.hit.name };
+        else if (picked.candidates?.length) pickList = picked.candidates;
+        else closest = picked.closest;
       }
     } catch (err) {
       this.logger.warn({ err, request }, "doc-relay search failed");
     }
 
     const ownerThread = this.ownJid();
-    if (!hit || !ownerThread) {
-      await this.confirmToSelf(closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
+    if (hit && ownerThread) {
+      this.pendingDraftEdits.set(`${ownerThread}::${contactJid}`, {
+        targetJid: contactJid,
+        displayName: contactLabel,
+        draftText: "",
+        inboundText: request,
+        issuedAt: Date.now(),
+        kind: "doc-relay",
+        filePath: hit.path,
+      });
+      await this.confirmToSelf(await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
       return;
     }
-    this.pendingDraftEdits.set(`${ownerThread}::${contactJid}`, {
-      targetJid: contactJid,
-      displayName: contactLabel,
-      draftText: "",
-      inboundText: request,
-      issuedAt: Date.now(),
-      kind: "doc-relay",
-      filePath: hit.path,
-    });
-    await this.confirmToSelf(await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
+    if (pickList && pickList.length && ownerThread) {
+      // Several plausible files in a matched folder — stage a numbered chooser;
+      // the owner replies a number and firePending delivers the chosen file.
+      this.pendingDraftEdits.set(`${ownerThread}::${contactJid}`, {
+        targetJid: contactJid,
+        displayName: contactLabel,
+        draftText: "",
+        inboundText: request,
+        issuedAt: Date.now(),
+        kind: "doc-pick",
+        candidates: pickList,
+      });
+      await this.confirmToSelf(buildDocPickPing({ contactLabel, request }, pickList));
+      return;
+    }
+    await this.confirmToSelf(closest ? docMismatchPing({ contactLabel, request, closest }) : docNotFoundPing({ contactLabel, request }));
   }
 
   // Natural, in-the-owner's-voice heads-up (LLM lead + deterministic confirm
@@ -5480,10 +5497,38 @@ export class WhatsAppSession {
     const now = Date.now();
     const ttl = WhatsAppSession.DRAFT_EDIT_TTL_MS;
     // Owner-confirm pendings only (composite `${ownerKey}::…` or plain owner key).
-    const candidates = [...this.pendingDraftEdits].filter(
+    let candidates = [...this.pendingDraftEdits].filter(
       ([k, e]) => (k === ownerKey || k === jid || k.startsWith(ownerKey + "::")) && now - e.issuedAt <= ttl,
     );
     if (candidates.length === 0) return false;
+
+    // NUMBERED DOC-PICK — the owner is choosing which file to send from a list.
+    // Only auto-resolve when the chooser is the SOLE pending: a "1"/"latest"/
+    // "no" is otherwise ambiguous across multiple prompts and could fire the
+    // wrong contact's sensitive file. With several pendings we drop the
+    // chooser(s) from the generic confirm matrix so an empty doc-pick can never
+    // be mis-approved, and let the other pendings resolve normally.
+    const docPicks = candidates.filter(([, e]) => e.kind === "doc-pick" && e.candidates?.length);
+    if (docPicks.length > 0) {
+      if (candidates.length === 1) {
+        const [pk, pe] = docPicks[0];
+        const pickLabel = pe.displayName ?? pe.targetJid.split("@")[0];
+        const sel = parseDocPick(text, pe.candidates!.length);
+        if (sel === "reject") {
+          this.pendingDraftEdits.delete(pk);
+          await this.confirmToSelf(`👍 dropped — nothing sent to ${pickLabel}.`);
+          return true;
+        }
+        if (typeof sel === "number") {
+          const chosen = pe.candidates![sel];
+          this.pendingDraftEdits.delete(pk);
+          return this.firePending(pk, { ...pe, kind: "doc-relay", filePath: chosen.path, candidates: undefined }, "approve", text);
+        }
+        return false; // not a pick reply — leave the chooser staged, don't consume
+      }
+      candidates = candidates.filter(([, e]) => e.kind !== "doc-pick");
+      if (candidates.length === 0) return false;
+    }
 
     let editKey: string;
     let pending: (typeof candidates)[number][1];

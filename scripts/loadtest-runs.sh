@@ -25,7 +25,7 @@ jget() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))"; 
 echo "==> infra + build + boot control-plane"
 $DC up -d postgres redis minio-init >/dev/null 2>&1 || true
 for i in $(seq 1 30); do $PSQL -c "SELECT 1" >/dev/null 2>&1 && break; [ "$i" = 30 ] && fail "pg not ready"; sleep 1; done
-( cd "$ROOT/services/control-plane" && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.4 go build -o "$CP_BIN" ./cmd/server ) || fail "build"
+( cd "$ROOT/services/control-plane" && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.5 go build -o "$CP_BIN" ./cmd/server ) || fail "build"
 bash "$ROOT/scripts/kill-port.sh" 8080 50051 >/dev/null 2>&1 || true
 DATABASE_URL="$DB_URL" REDIS_URL="redis://localhost:6379" S3_ENDPOINT="http://localhost:9000" \
   JWT_SECRET="lantern-dev-jwt-secret-do-not-use-in-production" LOG_LEVEL="warn" \
