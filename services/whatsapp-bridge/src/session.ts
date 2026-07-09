@@ -74,6 +74,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, extractDocRequests, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { maybeDocRequest, buildDocIntentPrompt, parseDocIntent } from "@lantern/bridge-core/doc-intent";
 import { buildDocRelayPrompt, finalizeDocRelayPing, docNotFoundPing, pickDocToSend, buildDocPickPing, parseDocPick, docMismatchPing, type DocRelayContext, type DocPickCandidate } from "@lantern/bridge-core/doc-relay";
 import { stageDownloadLink, buildDocLinkMessage } from "@lantern/bridge-core/doc-link";
 import { buildPendingResolvePrompt, parsePendingResolution, type PendingResolution } from "@lantern/bridge-core/pending-resolve";
@@ -5397,11 +5398,15 @@ export class WhatsAppSession {
   // (owner-privileged; the contact never triggers this and sees nothing), then
   // ping the owner's self-chat to confirm before the file is sent. On the
   // owner's "send", the confirm intercept delivers the file to the contact.
-  private async relayDocRequestToOwner(contactJid: string, contactLabel: string, request: string): Promise<void> {
+  private async relayDocRequestToOwner(contactJid: string, contactLabel: string, request: string, initiatedByOwner = false): Promise<void> {
+    // Reactive (contact-asked) relays dedup; an explicit owner [SENDDOC] command
+    // is never suppressed — the owner meant it.
     const dedupKey = `${contactJid}|${request.toLowerCase().trim()}`;
-    const last = this.docRelayDedup.get(dedupKey);
-    if (last && Date.now() - last < 30 * 60_000) return; // already surfaced this ask recently
-    this.docRelayDedup.set(dedupKey, Date.now());
+    if (!initiatedByOwner) {
+      const last = this.docRelayDedup.get(dedupKey);
+      if (last && Date.now() - last < 30 * 60_000) return; // already surfaced this ask recently
+      this.docRelayDedup.set(dedupKey, Date.now());
+    }
 
     let hit: { path: string; name: string } | undefined;
     let closest: string | undefined;
@@ -5432,7 +5437,9 @@ export class WhatsAppSession {
         kind: "doc-relay",
         filePath: hit.path,
       });
-      await this.confirmToSelf(await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
+      await this.confirmToSelf(initiatedByOwner
+        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". reply "send" to send it, or "no".`
+        : await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
       return;
     }
     if (pickList && pickList.length && ownerThread) {
@@ -6156,6 +6163,8 @@ export class WhatsAppSession {
       `CALLS: when ${ownerName} asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. "call mae", "conference me withe manmanu", "can you ring her") you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks ${ownerName} to confirm before dialing. NEVER say "I'll call" / "calling her" / "will do" WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. "conference me with X" → mode conference. "leave X a voicemail saying Y" → mode voicemail, message Y. "call the pharmacy to refill" → mode task, message the task. Use the contact's real name as target; the bridge resolves it to a number.`,
       `  • Send message:   [SEND:whatsapp|Chikka|the message text]   (channel = whatsapp | imessage | sms | auto)`,
       `SEND: when ${ownerName} asks you to send / text / message / reply-to / forward-to / tell someone something (ANY phrasing, any language — "text chikka the docs are coming", "tell mae I'll be late", "send Anil this on whatsapp") you MUST emit a [SEND:...] marker. The bridge resolves the contact, shows ${ownerName} a one-line preview, and only sends after they reply "send". The message goes FROM ${ownerName}'s own account. NEVER say "paste it yourself" / "I can only read WhatsApp" / "I'll text him" WITHOUT the marker — the send capability EXISTS; a reply that claims or defers a send without the marker is a lie. Put the message in ${ownerName}'s voice/language. Default channel to whatsapp when they say "on whatsapp", imessage/sms for "text", else auto.`,
+      `  • Send DOCUMENT:  [SENDDOC:auto|Manasa|PAN card]   (channel | contact | which document — a FILE, not text)`,
+      `SENDDOC: when ${ownerName} asks you to send a FILE / document / copy / scan / their ID (PAN card, aadhaar, passport, licence, receipt, insurance, certificate — "send Manasa my pan card", "forward the passport scan to dad") you MUST emit [SENDDOC:...] — NOT [SEND]. [SEND] carries only text and CANNOT attach a file, so using it for a document sends a "here's the pan card" message with no file (a lie). [SENDDOC] finds ${ownerName}'s real file, shows the filename, and attaches it after they reply "send". Put the document name (e.g. "PAN card") in the third field, not a sentence. For a note AND a file, emit BOTH a [SEND] and a [SENDDOC].`,
       `STATUS: when ${ownerName} tells you where they are or that they're away/busy/back (ANY phrasing or language — "I am at the pool till 7:30pm est", "in a meeting for 2h", "driving", "I'm back", Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve "till 7:30pm" to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that ${ownerName} is at <place> and will get back, and offers to take a message. Confirm to ${ownerName} in your reply ("📍 got it — you're at the pool till 7:30; I'll let people know.").`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
       `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
@@ -6196,7 +6205,7 @@ export class WhatsAppSession {
     }
 
     const { cleanedText: textNoAttach, paths } = extractAttachMarkers(draft);
-    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls, sends, status } = extractActionMarkers(textNoAttach);
+    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls, sends, sendDocs, status } = extractActionMarkers(textNoAttach);
     // Presence/away status the LLM parsed from the owner ("I am at the pool
     // till 7:30pm", any phrasing/language). Shared file → applies on all
     // channels. The fast regex path handles the common cases before the LLM.
@@ -6363,6 +6372,29 @@ export class WhatsAppSession {
       } catch (err) {
         this.logger.warn({ err, contact: s.contact }, "owner [SEND] marker exception");
         await this.confirmToSelf("(couldn't set that send up — try again)");
+      }
+    }
+    // Owner-initiated SEND DOCUMENT: [SEND] carries only text and can never
+    // attach a file (the docRelay:false silent-non-delivery bug). Route into the
+    // hardened doc-relay pipeline instead — it finds the file and stages the
+    // "reply send" confirm showing the real filename before anything leaves.
+    for (const d of sendDocs) {
+      try {
+        if (d.channel === "imessage" || d.channel === "sms") {
+          await this.confirmToSelf(`i can send that over WhatsApp from here — for iMessage/SMS, ask me from the iMessage side.`);
+          continue;
+        }
+        const resolved = await this.resolveCallTarget(d.contact);
+        if (!resolved) {
+          const sugg = this.getLastResolveSuggestions();
+          await this.confirmToSelf(sugg ? `which ${d.contact}? ${sugg}` : `couldn't find "${d.contact}" — who should I send the ${d.doc} to?`);
+          continue;
+        }
+        const targetJid = `${resolved.phone.replace(/\D/g, "")}@s.whatsapp.net`;
+        await this.relayDocRequestToOwner(targetJid, resolved.name || d.contact, d.doc, true);
+      } catch (err) {
+        this.logger.warn({ err, contact: d.contact, doc: d.doc }, "owner [SENDDOC] marker exception");
+        await this.confirmToSelf("(couldn't set that document send up — try again)");
       }
     }
     } catch (err) {
@@ -8619,6 +8651,31 @@ export class WhatsAppSession {
           void this.relayDocRequestToOwner(from, opts.senderName || from, req).catch((err) =>
             this.logger.warn({ err, from }, "doc-request relay failed"));
         }
+      } else if (!opts.isGroup && maybeDocRequest(text)) {
+        // BACKSTOP (prod-critical): the persona often deflects and drops the
+        // [DOCREQ] marker, so the relay silently no-ops and the contact gets a
+        // deflection with no file. Independently classify the contact's actual
+        // message and fire the relay when it's a doc request, regardless of what
+        // the persona emitted. Async; deduped inside relayDocRequestToOwner; the
+        // owner still confirms before any file leaves.
+        void (async () => {
+          try {
+            const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
+            const raw = await this.agent.respondTo(
+              `docintent::${from}`,
+              buildDocIntentPrompt(text, ownerName, "inbound"),
+              "Reply with STRICT JSON only.",
+              { withTools: false, timeoutMs: 12_000 },
+            );
+            const intent = parseDocIntent(raw);
+            if (intent.isDocRequest) {
+              this.logger.info({ from, doc: intent.document }, "doc-intent backstop fired (persona dropped [DOCREQ])");
+              await this.relayDocRequestToOwner(from, opts.senderName || from, intent.document);
+            }
+          } catch (err) {
+            this.logger.warn({ err, from }, "doc-intent backstop failed");
+          }
+        })();
       }
     }
 

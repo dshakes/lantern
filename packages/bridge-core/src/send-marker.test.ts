@@ -54,3 +54,29 @@ test("SEND coexists with other action markers", () => {
   assert.equal(r.sends.length, 1);
   assert.equal(r.sends[0].contact, "Anil");
 });
+
+// [SENDDOC] — owner-initiated DOCUMENT send. Unlike [SEND] (text only), this
+// carries a file. The GA fix: "send Manasa my pan card" must attach the file,
+// not text a "here's the pan card" with docRelay:false.
+
+test("parses a [SENDDOC] marker (file, not text)", () => {
+  const r = extractActionMarkers("on it.\n[SENDDOC:auto|Manasa|PAN card]");
+  assert.equal(r.sendDocs.length, 1);
+  assert.equal(r.sendDocs[0].channel, "auto");
+  assert.equal(r.sendDocs[0].contact, "Manasa");
+  assert.equal(r.sendDocs[0].doc, "PAN card");
+  assert.ok(!r.cleanedText.includes("[SENDDOC:"), "marker stripped from reply text");
+  assert.equal(r.sends.length, 0, "SENDDOC must not be parsed as a text SEND");
+});
+
+test("[SENDDOC] channel aliases + a note-plus-file turn", () => {
+  const r = extractActionMarkers("[SENDDOC:wa|Dad|passport]\n[SEND:imessage|Dad|sending it now]");
+  assert.equal(r.sendDocs.length, 1);
+  assert.equal(r.sendDocs[0].channel, "whatsapp");
+  assert.equal(r.sends.length, 1, "a note + a file = both markers");
+});
+
+test("[SENDDOC] with a missing field is ignored (no half-formed send)", () => {
+  assert.equal(extractActionMarkers("[SENDDOC:auto|Manasa]").sendDocs.length, 0);
+  assert.equal(extractActionMarkers("[SENDDOC:auto||PAN card]").sendDocs.length, 0);
+});
