@@ -9,7 +9,7 @@
 # This is the "outside the unit tests" proof for docs/GA-READINESS.md gap #1.
 #
 # Usage:  bash scripts/e2e-dataplane-smoke.sh
-# Needs:  docker compose (Postgres+Redis), Go (go1.26.4 via GOTOOLCHAIN), python3.
+# Needs:  docker compose (Postgres+Redis), Go (go1.26.5 via GOTOOLCHAIN), python3.
 #
 set -euo pipefail
 
@@ -45,8 +45,8 @@ $DC up -d postgres redis minio-init >/dev/null 2>&1 || true
 for i in $(seq 1 30); do $PSQL -c "SELECT 1" >/dev/null 2>&1 && break; [ "$i" = 30 ] && fail "Postgres never ready"; sleep 1; done
 
 echo "==> [2/9] build control-plane + data-plane-agent (CGO off)"
-( cd "$ROOT/services/control-plane"   && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.4 go build -o "$CP_BIN" ./cmd/server )  || fail "control-plane build"
-( cd "$ROOT/services/data-plane-agent" && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.4 go build -o "$AGENT_BIN" ./cmd/agent ) || fail "agent build"
+( cd "$ROOT/services/control-plane"   && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.5 go build -o "$CP_BIN" ./cmd/server )  || fail "control-plane build"
+( cd "$ROOT/services/data-plane-agent" && CGO_ENABLED=0 GOTOOLCHAIN=go1.26.5 go build -o "$AGENT_BIN" ./cmd/agent ) || fail "agent build"
 
 echo "==> [3/9] free ports + start control-plane (:8080 REST, :50051 gRPC)"
 bash "$ROOT/scripts/kill-port.sh" 8080 50051 8090 >/dev/null 2>&1 || true
