@@ -4811,6 +4811,37 @@ export class IMessageSession {
     t.unref?.();
   }
 
+  // File analogue of scheduleDeliveryWatch. deliverFileToContact only sends a file
+  // inline over iMessage when recentSendStatus PROVES the handle iMessage-capable,
+  // but that's a PRE-send check — the send can still async-fail ("Not Delivered",
+  // error 25) seconds later, and sendFile's osascript exit code can't see it. A
+  // binary can't fall back to SMS, so on async failure we re-deliver via the
+  // secure link (reliable as text) and correct the owner's "✅ sent" honestly.
+  // Without this, a confirmed doc silently never arrives while the owner is told
+  // it did — the exact GA incident.
+  private scheduleFileDeliveryWatch(to: string, filePath: string, request: string): void {
+    const delayMs = Number(process.env.LANTERN_DELIVERY_WATCH_MS) || 30000;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const st = this.db.recentSendStatus(to);
+          if (st && st.service.toLowerCase() === "imessage" && st.error !== 0 && !st.isDelivered) {
+            this.logger.warn({ to, error: st.error, request }, "iMessage file Not Delivered (async) — re-delivering via secure link");
+            const label = this.contactLabel(to);
+            const link = await this.stageAndSendLink(to, filePath, request);
+            const owner = this.ownerSelfChatTarget();
+            await this.send(owner, link.ok
+              ? `⚠️ heads up — iMessage didn't deliver ${request} to ${label}, so I re-sent it as a secure link (expires in 1h).`
+              : `⚠️ ${request} may NOT have reached ${label} — iMessage didn't deliver it and I couldn't build a link (set LANTERN_PUBLIC_BASE_URL). Try again or send it yourself.`);
+          }
+        } catch (err) {
+          this.logger.debug({ err }, "file delivery watch failed (no-op)");
+        }
+      })();
+    }, delayMs);
+    t.unref?.();
+  }
+
   // Dedup doc-request pings: `${contactHandle}|${request-lowercased}` → last-fired ms.
   private docRelayDedup = new Map<string, number>();
 
@@ -5079,7 +5110,12 @@ export class IMessageSession {
     const transport = chooseFileTransport({ isPhone: phone, recent });
     if (transport === "imessage") {
       const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
-      if (im.ok) return { ok: true, via: "imessage" };
+      if (im.ok) {
+        // sendFile's exit code can't see an async "Not Delivered" — watch for it
+        // and re-deliver via link if the file silently fails (Finding: GA incident).
+        if (phone) this.scheduleFileDeliveryWatch(target, filePath, request);
+        return { ok: true, via: "imessage" };
+      }
       if (!phone) return { ok: false, reason: im.reason }; // no link route for a non-phone handle
       // a phone we thought was iMessage-capable but the send failed → link
     }
@@ -5097,7 +5133,10 @@ export class IMessageSession {
     // it honestly rather than claiming certain delivery.
     if (transport !== "imessage" && phone && !recent) {
       const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
-      if (im.ok) return { ok: true, via: "imessage-besteffort", reason: link.reason };
+      if (im.ok) {
+        this.scheduleFileDeliveryWatch(target, filePath, request);
+        return { ok: true, via: "imessage-besteffort", reason: link.reason };
+      }
     }
     return { ok: false, reason: link.reason };
   }
