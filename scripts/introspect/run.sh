@@ -54,9 +54,13 @@ if [ "${LANTERN_INTROSPECT_DRYRUN:-0}" = "1" ]; then
 fi
 
 # Run headless with a hard timeout (macOS has no timeout(1)): background + kill.
+# --strict-mcp-config with no --mcp-config = load NO MCP servers. This env
+# carries a huge set of MCP tool schemas that blow the context ("Prompt is too
+# long"); the audit only needs built-in tools (Bash/Read/Edit/Grep/Agent).
 "$CLAUDE" -p "$(cat "$REPO/scripts/introspect/PROMPT.md")" \
   --model "$MODEL" \
   --dangerously-skip-permissions \
+  --strict-mcp-config \
   "${DRYRUN_SYS[@]}" \
   >>"$RUNLOG" 2>&1 &
 CPID=$!
