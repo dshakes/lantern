@@ -323,7 +323,7 @@ import {
 } from "@lantern/bridge-core/attention";
 import type { BriefInput } from "@lantern/bridge-core/command-center";
 import {
-  tapbackToEmoji, ReactableLog, buildAttentionSnapshot,
+  tapbackToEmoji, reactionToAction, ReactableLog, buildAttentionSnapshot,
   type AttentionSnapshot,
 } from "@lantern/bridge-core/reaction-commands";
 import {
@@ -4894,7 +4894,7 @@ export class IMessageSession {
         filePath: hit.path,
       });
       const ping = initiatedByOwner
-        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". reply "send" to send it, or "no".`
+        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". 👍 to send · 👎 to skip (or reply "send").`
         : await this.composeDocRelayPing(contactHandle, contactLabel, request, hit);
       await this.send(ownerThread, ping);
       return;
@@ -5649,6 +5649,35 @@ export class IMessageSession {
             void this.executeCenterAction(row.handle, { item: hit.item, action: hit.action }).catch((err) =>
               this.logger.warn({ err }, "brief tapback action failed"),
             );
+            return;
+          }
+        }
+      }
+      // Doc-relay confirm BY TAPBACK — no typing needed. 👍 = send, 👎/❌ = skip.
+      // Only when EXACTLY ONE doc confirm is pending, so a stray reaction can
+      // never fire the wrong sensitive file. Reuses the same resolver as a typed
+      // "send"/"no" (confirmOnly, so a reaction is never treated as a replacement).
+      {
+        const emoji = tapbackToEmoji(row.associatedMessageType);
+        const act = emoji ? reactionToAction(emoji) : null;
+        if (
+          (act === "approve-draft" || act === "discard-draft") &&
+          row.associatedMessageGuid &&
+          !isGroupRow(row) &&
+          this.isOwnerChatRow(row)
+        ) {
+          let docPendings = 0;
+          for (const pe of this.pendingDraftEdits.values()) {
+            if (pe.kind === "doc-relay" || pe.kind === "doc-pick") docPendings++;
+          }
+          if (docPendings === 1) {
+            const now = Date.now();
+            this.recentTapbacks = this.recentTapbacks.filter((e) => now - e.ts < IMessageSession.TAPBACK_DEDUP_MS);
+            if (this.recentTapbacks.some((e) => e.targetGuid === row.associatedMessageGuid && e.type === row.associatedMessageType)) return;
+            this.recentTapbacks.push({ targetGuid: row.associatedMessageGuid, type: row.associatedMessageType, ts: now });
+            this.logger.info({ emoji, action: act }, "doc confirm by tapback");
+            void this.maybeResolvePendingDraft(this.ownerSelfChatTarget(), act === "approve-draft" ? "send" : "no", true)
+              .catch((err) => this.logger.warn({ err }, "doc confirm by tapback failed"));
             return;
           }
         }
