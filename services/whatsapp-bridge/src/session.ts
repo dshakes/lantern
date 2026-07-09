@@ -2728,6 +2728,22 @@ export class WhatsAppSession {
               }
             }
             const action = reactionToAction(emoji);
+            // Doc-relay confirm BY REACTION — 👍 = send, 👎/❌ = skip, but ONLY
+            // when EXACTLY ONE doc confirm is pending, so a stray reaction can
+            // never fire the wrong sensitive file. Wins over the 👎 critique
+            // path for that case. Reuses the typed-"send"/"no" resolver.
+            if (action === "approve-draft" || action === "discard-draft") {
+              let docPendings = 0;
+              for (const e of this.pendingDraftEdits.values()) {
+                if (e.kind === "doc-relay" || e.kind === "doc-pick") docPendings++;
+              }
+              if (docPendings === 1) {
+                this.logger.info({ emoji, action }, "doc confirm by reaction");
+                void this.maybeResolvePendingDraft(this.ownJid() || from, action === "approve-draft" ? "send" : "no", true)
+                  .catch((err) => this.logger.warn({ err }, "doc confirm by reaction failed"));
+                continue;
+              }
+            }
             if (action) {
               const targetKeyId = reactionMsg.key?.id || undefined;
               // A reaction is "on a bot reply" if we sent that message id OR
@@ -5438,7 +5454,7 @@ export class WhatsAppSession {
         filePath: hit.path,
       });
       await this.confirmToSelf(initiatedByOwner
-        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". reply "send" to send it, or "no".`
+        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". 👍 to send · 👎 to skip (or reply "send").`
         : await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
       return;
     }
