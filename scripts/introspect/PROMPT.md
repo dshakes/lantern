@@ -21,11 +21,18 @@ Read real behavior — never speculate:
   `docRelay`, `ok:false`, suppression reasons, `pending-draft delivery result`,
   `backstop`, marker handling, exceptions.
 - The chat stores for what the CONTACT actually received vs what the bot logged
-  it "sent": iMessage `~/Library/Messages/chat.db` (read-only), WhatsApp history.
+  it "sent" — read the actual 1:1 THREAD (the back-and-forth), not just single
+  lines: iMessage `~/Library/Messages/chat.db` (read-only), WhatsApp history.
 - Cross-check CLAIM vs ACTION: a log/reply that says "sent"/"done"/"added" with
   no corresponding successful side-effect is the top-priority bug.
 
-Focus ONLY on the owner's real conversations. Do not invent examples.
+**DMs ONLY. Exclude group chats entirely.** Only audit 1:1 direct-message threads.
+Skip iMessage group chats (`chat.db`: `chat.style = 43` / a non-null `room_name` /
+multiple participants — keep only `style = 45` 1:1) and WhatsApp groups (JID ending
+`@g.us`; keep only `@s.whatsapp.net` / `@lid` DMs). The bot behaves differently in
+groups and group messages are noisier + more sensitive to touch.
+
+Focus ONLY on the owner's real DM conversations. Do not invent examples.
 
 ## 2. Judge each notable response against the rules
 
