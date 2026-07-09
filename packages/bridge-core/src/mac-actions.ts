@@ -703,6 +703,15 @@ const RE_CALL = /\[CALL:([^\]]+)\]/g;
 //   [SEND:channel|contact|text]
 //   channel ∈ whatsapp | imessage | sms | auto
 const RE_SEND = /\[SEND:([^\]]+)\]/g;
+// Owner-initiated outbound DOCUMENT — the LLM emits this when the owner asks to
+// send a FILE/document/copy/scan/attachment (passport, PAN card, receipt, …) to
+// someone, instead of plain text. [SEND] is text-only and cannot attach a file,
+// so a doc send via [SEND] silently delivers a "here's the PAN card" message
+// with NO file (the real docRelay:false bug). This routes into the same hardened
+// doc-relay pipeline the contact-ask path uses (search → pickDocToSend → confirm
+// → real attachment), so the owner still approves before anything sends.
+//   [SENDDOC:channel|contact|what-document]
+const RE_SENDDOC = /\[SENDDOC:([^\]]+)\]/g;
 // Presence/away status the LLM sets when the owner says they're at a place /
 // away / busy / back — the intelligent path that handles any phrasing or
 // language a regex would miss ("I am at the pool till 7:30pm est", Telugu, …).
@@ -738,6 +747,12 @@ export interface SendSpec {
   text: string;
 }
 
+export interface SendDocSpec {
+  channel: "whatsapp" | "imessage" | "sms" | "auto";
+  contact: string;
+  doc: string; // what document the owner wants sent ("PAN card", "passport")
+}
+
 export interface StatusSpec {
   clear: boolean;
   label?: string;     // "at the swimming pool"
@@ -752,6 +767,7 @@ export interface ExtractedActions {
   mailDrafts: MailDraftSpec[];
   calls: CallSpec[];
   sends: SendSpec[];
+  sendDocs: SendDocSpec[];
   status?: StatusSpec;
 }
 
@@ -762,6 +778,7 @@ export function extractActionMarkers(text: string): ExtractedActions {
   const mailDrafts: MailDraftSpec[] = [];
   const calls: CallSpec[] = [];
   const sends: SendSpec[] = [];
+  const sendDocs: SendDocSpec[] = [];
 
   for (const m of text.matchAll(RE_CALENDAR)) {
     const parts = m[1].split("|").map((p) => p.trim());
@@ -828,6 +845,29 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
+  for (const m of text.matchAll(RE_SENDDOC)) {
+    // Same first-two-pipes split as [SEND]; third field is the document name.
+    const raw = m[1];
+    const p1 = raw.indexOf("|");
+    const p2 = p1 === -1 ? -1 : raw.indexOf("|", p1 + 1);
+    if (p1 !== -1 && p2 !== -1) {
+      const rawChannel = raw.slice(0, p1).trim().toLowerCase();
+      const contact = raw.slice(p1 + 1, p2).trim();
+      const doc = raw.slice(p2 + 1).trim();
+      if (contact && doc) {
+        const channel: SendDocSpec["channel"] =
+          rawChannel === "whatsapp" || rawChannel === "wa"
+            ? "whatsapp"
+            : rawChannel === "imessage" || rawChannel === "message"
+              ? "imessage"
+              : rawChannel === "sms" || rawChannel === "text"
+                ? "sms"
+                : "auto";
+        sendDocs.push({ channel, contact, doc });
+      }
+    }
+    cleaned = cleaned.replace(m[0], "");
+  }
   let status: StatusSpec | undefined;
   for (const m of text.matchAll(RE_STATUS)) {
     const body = m[1].trim();
@@ -844,7 +884,7 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
-  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, sends, status };
+  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, sends, sendDocs, status };
 }
 
 /**

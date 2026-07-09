@@ -33,6 +33,7 @@ const BOT_SELF_PREFIXES: string[] = [
   "📷 still working",
   "📷 almost there",
   "📎 grabbing it",
+  "📎 sending your",
   "⏳",                      // any hourglass-prefixed waiting nudge
   "🪙 no monitored groups",
   "📡 watching:",            // live-watch registered (owner transparency ping)
