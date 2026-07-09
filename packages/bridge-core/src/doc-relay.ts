@@ -127,26 +127,35 @@ export function buildDocPickPing(
   return `📄 ${c.contactLabel} asked for your ${c.request} — I found a few and I'm not sure which is right:\n${list}\n\nreply the number to send it (e.g. "1"), "latest" for the newest, or "no".`;
 }
 
+const WORD_TO_NUM: Record<string, number> = { one: 1, first: 1, two: 2, second: 2, three: 3, third: 3 };
+
 // Parse the owner's reply to a numbered doc-pick ping. Returns a 0-based index
 // into the candidate list, "reject", or null (unclear → the caller re-asks).
-// A bare "send"/"yes" with a multi-item list is deliberately null: we never
-// guess which sensitive file the owner meant.
+//
+// STRICT on purpose — this fires a SENSITIVE file, so a selector is honored ONLY
+// when the reply is essentially just that selector, or an explicit imperative
+// ("send 2", "pick the first"). This is what stops a normal "one sec" / "give me
+// 2 mins" / "the aadhaar too" reply after the prompt from blasting a document.
+// A bare "send"/"yes" (no index) is deliberately null: we never guess which
+// sensitive file the owner meant.
 export function parseDocPick(text: string, count: number): number | "reject" | null {
   const t = (text || "").trim().toLowerCase();
   if (!t) return null;
   if (/^(no|nope|nah|cancel|skip|none|never\s*mind|nvm|don'?t)\b/.test(t)) return "reject";
-  // Candidates are ordered newest-first, so "latest"/"newest"/"most recent"
-  // resolves to the first item.
-  if (/\b(latest|newest|most\s*recent|recent)\b/.test(t) && count > 0) return 0;
-  const words: Record<string, number> = { first: 1, one: 1, second: 2, two: 2, third: 3, three: 3 };
-  let n: number | undefined;
-  const digit = t.match(/(?:^|\bsend\b|\bnumber\b|\bthe\b|\boption\b|#)\s*(\d+)/);
-  if (digit) n = parseInt(digit[1], 10);
-  else {
-    for (const [w, v] of Object.entries(words)) {
-      if (new RegExp(`\\b${w}\\b`).test(t)) { n = v; break; }
-    }
-  }
+  // Candidates are ordered newest-first, so a bare "latest"/"newest"/"most
+  // recent" (the whole reply) resolves to the first item.
+  if (count > 0 && /^(?:the\s+)?(?:latest|newest|most\s*recent)[.! ]*$/.test(t)) return 0;
+
+  const sel = "(\\d+|one|two|three|first|second|third)";
+  // (a) a bare selector as the ENTIRE reply: "1", "2.", "first", "the first",
+  //     "option 2", "#3" — nothing else follows it.
+  const bare = t.match(new RegExp(`^(?:the\\s+|number\\s+|option\\s+|#)?${sel}(?:\\s+one)?[.! ]*$`));
+  // (b) an explicit imperative naming the selector: "send 2", "pick the first",
+  //     "go with 1", "use option 3".
+  const explicit = t.match(new RegExp(`\\b(?:send|pick|choose|use|go\\s+with|option|number)\\s+(?:the\\s+)?${sel}\\b`));
+  const token = bare?.[1] ?? explicit?.[1];
+  if (!token) return null;
+  const n = /^\d+$/.test(token) ? parseInt(token, 10) : WORD_TO_NUM[token];
   if (n === undefined || n < 1 || n > count) return null;
   return n - 1;
 }

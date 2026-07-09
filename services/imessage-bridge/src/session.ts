@@ -4933,27 +4933,29 @@ export class IMessageSession {
     if (candidates.length === 0) return false;
 
     // NUMBERED DOC-PICK — the owner is choosing which file to send from a list.
-    // Resolve a "1"/"latest"/"no" reply straight to the chosen file; a reply
-    // that isn't a pick leaves the chooser staged (excluded from the generic
-    // confirm matrix below so an empty doc-pick pending can never mis-fire).
-    const pickEntry = candidates.find(([, e]) => e.kind === "doc-pick" && e.candidates?.length);
-    if (pickEntry) {
-      const [pk, pe] = pickEntry;
-      const sel = parseDocPick(text, pe.candidates!.length);
-      if (sel === "reject") {
-        this.pendingDraftEdits.delete(pk);
-        await this.send(jid, `👍 dropped — nothing sent to ${pe.targetLabel}.`).catch(() => {});
-        return true;
+    // Only auto-resolve when the chooser is the SOLE pending: a "1"/"latest"/
+    // "no" is otherwise ambiguous across multiple prompts and could fire the
+    // wrong contact's sensitive file. With several pendings we drop the
+    // chooser(s) from the generic confirm matrix so an empty doc-pick can never
+    // be mis-approved, and let the other pendings resolve normally.
+    const docPicks = candidates.filter(([, e]) => e.kind === "doc-pick" && e.candidates?.length);
+    if (docPicks.length > 0) {
+      if (candidates.length === 1) {
+        const [pk, pe] = docPicks[0];
+        const sel = parseDocPick(text, pe.candidates!.length);
+        if (sel === "reject") {
+          this.pendingDraftEdits.delete(pk);
+          await this.send(jid, `👍 dropped — nothing sent to ${pe.targetLabel}.`).catch(() => {});
+          return true;
+        }
+        if (typeof sel === "number") {
+          const chosen = pe.candidates![sel];
+          this.pendingDraftEdits.delete(pk);
+          return this.firePending(jid, pk, { ...pe, kind: "doc-relay", filePath: chosen.path, candidates: undefined }, "approve", text);
+        }
+        return false; // not a pick reply — leave the chooser staged, don't consume
       }
-      if (typeof sel === "number") {
-        const chosen = pe.candidates![sel];
-        this.pendingDraftEdits.delete(pk);
-        return this.firePending(jid, pk, { ...pe, kind: "doc-relay", filePath: chosen.path, candidates: undefined }, "approve", text);
-      }
-      // Not a pick reply — drop the chooser from the generic matrix so it can't
-      // be approved with an empty filePath. If it was the only pending, don't
-      // consume the message (it flows to normal handling; the chooser lingers).
-      candidates = candidates.filter(([k]) => k !== pk);
+      candidates = candidates.filter(([, e]) => e.kind !== "doc-pick");
       if (candidates.length === 0) return false;
     }
 
@@ -5076,14 +5078,15 @@ export class IMessageSession {
     if (link.ok) return link;
     // The link couldn't be built or sent — most commonly LANTERN_PUBLIC_BASE_URL
     // is unset, so stageDownloadLink refuses the loopback URL and returns null.
-    // Rather than let a confirmed file silently vanish (the reported failure),
-    // make ONE best-effort inline iMessage attempt — it reaches any
-    // iMessage-capable contact (a spouse always is). We deliberately did NOT do
-    // this for a handle PROVEN to be SMS-only (transport stays "imessage" there),
-    // so this only fires for unknown/unproven phones where inline is strictly
-    // better than nothing. The exit code can't fully confirm receipt, so the
-    // caller reports it honestly rather than claiming certain delivery.
-    if (transport !== "imessage") {
+    // Rather than let a confirmed file silently vanish, make ONE best-effort
+    // inline iMessage attempt — but ONLY for a phone with NO send history
+    // (recent === null: unknown capability). We must NOT gamble on iMessage for
+    // a handle with history proving it's SMS/RCS or a prior iMessage failure —
+    // that's exactly chooseFileTransport's "never gamble on iMessage" rule, and
+    // the AppleScript exit code would falsely report success on a dropped SMS.
+    // The exit code can't fully confirm receipt even here, so the caller reports
+    // it honestly rather than claiming certain delivery.
+    if (transport !== "imessage" && phone && !recent) {
       const im = await this.sender.sendFile(target, filePath, { iMessageOnly: true });
       if (im.ok) return { ok: true, via: "imessage-besteffort", reason: link.reason };
     }
