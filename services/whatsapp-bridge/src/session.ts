@@ -8758,7 +8758,21 @@ export class WhatsAppSession {
         // The classic case: a stranger texts "Hi", the model replies "Hey! How
         // can I help you?", and the customer-service guard suppresses it →
         // silence. For a pure greeting, fall back to a human opener instead.
-        if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+        // For a CONCRETE non-greeting message, greetingReply returns null so the
+        // fallback no-ops — and a real message would vanish with only a dashboard
+        // blip. Ping the owner's self-chat so they can take it over (never-silent
+        // rule: the owner lives in chat, not the dashboard).
+        if (!opts.isGroup) {
+          const greeted = await this.sendGreetingFallback(from, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+          if (!greeted) {
+            this.notifyOwnerOfDrop({
+              jid: from,
+              reason: `I kept drafting a reply that sounded bot-like (${retryCheck.reason ?? tellCheck.reason}) and held it — want to take this one?`,
+              text,
+              senderName: opts.senderName,
+            });
+          }
+        }
         return;
       }
     }
