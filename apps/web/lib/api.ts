@@ -419,6 +419,30 @@ export function getSimulatedHistory(): SimulatedEvent[] {
 class LanternAPI {
   private baseUrl: string;
   private _token: string | null = null;
+  // Resolves when the most recent HttpOnly session-cookie write has completed.
+  // A login redirect awaits this so it never races ahead of the cookie.
+  private _cookieSync: Promise<void> = Promise.resolve();
+
+  /** Await the latest session-cookie write before navigating to a gated route. */
+  whenCookieSynced(): Promise<void> {
+    return this._cookieSync;
+  }
+
+  /**
+   * Re-write the HttpOnly session cookie from the current in-memory token.
+   * Repairs a token/cookie desync (valid localStorage token but missing/stale
+   * cookie → middleware bounce loop / blank screen) WITHOUT forcing a re-login.
+   * No-op with a resolved promise when there is no token to sync.
+   */
+  syncCookie(): Promise<void> {
+    if (typeof window === "undefined" || !this._token) return Promise.resolve();
+    this._cookieSync = fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: this._token }),
+    }).then(() => undefined).catch(() => undefined);
+    return this._cookieSync;
+  }
 
   constructor() {
     // In the browser, use the Next.js proxy to avoid CORS. Server-side, call
@@ -458,16 +482,17 @@ class LanternAPI {
       // needed for the middleware's /auth/me check, and a failure here just
       // means the next page load falls back to localStorage.
       if (token) {
-        fetch("/api/auth/session", {
+        // Track the cookie write so a login redirect can await it — otherwise the
+        // redirect to a gated route races ahead of the cookie and the middleware
+        // bounces back to /login (blank-screen loop). Still non-fatal on failure.
+        this._cookieSync = fetch("/api/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token }),
-        }).catch(() => {
-          // Non-blocking — in-memory token still works for API calls in
-          // this session even if the HttpOnly cookie write fails.
-        });
+        }).then(() => undefined).catch(() => undefined);
       } else {
-        fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
+        this._cookieSync = fetch("/api/auth/session", { method: "DELETE" })
+          .then(() => undefined).catch(() => undefined);
       }
     }
   }

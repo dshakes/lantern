@@ -40,7 +40,7 @@ function GitHubIcon() {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login, signup, loginDemo, isAuthenticated } = useAuth();
+  const { login, signup, loginDemo, isAuthenticated, isLoading } = useAuth();
 
   // Where to send the user after a successful login. Defaults to /agents.
   // ?next= is set by the 401-redirect in lib/runtime-api + lib/api; ?from= is set
@@ -70,21 +70,31 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
-  const healed = useRef(false);
+  // Redirect / desync-repair. AuthProvider restores + VALIDATES the token
+  // (/auth/me) asynchronously, so wait for isLoading to settle. Once the client
+  // is authenticated with a proven-valid token:
+  //   - If we were bounced here by the server (?from=/?next=) yet hold a valid
+  //     token, the HttpOnly cookie is missing/stale (the desync that loops
+  //     /login <-> the gated route → blank screen). REPAIR it by re-writing the
+  //     cookie from the token — no destructive re-login — then proceed.
+  //   - Otherwise just await the pending cookie write so the redirect never
+  //     races ahead of it.
+  // The one-shot ref bounds this to a single repair+redirect per mount.
+  const redirecting = useRef(false);
   useEffect(() => {
-    if (isAuthenticated && bounced && !healed.current) {
-      // Stale token, server rejected the session → clear token + cookie so the
-      // form shows instead of looping. Self-heals without a manual localStorage wipe.
-      healed.current = true;
-      api.setToken(null);
-      return;
-    }
-    if (isAuthenticated && !bounced) router.replace(nextPath);
-  }, [isAuthenticated, bounced, nextPath, router]);
+    if (isLoading || !isAuthenticated || redirecting.current) return;
+    redirecting.current = true;
+    let cancelled = false;
+    void (async () => {
+      if (bounced) await api.syncCookie();
+      await api.whenCookieSynced();
+      if (!cancelled) router.replace(nextPath);
+    })();
+    return () => { cancelled = true; };
+  }, [isLoading, isAuthenticated, bounced, nextPath, router]);
 
-  // Hide the form only for a genuine authenticated redirect — never on a bounce
-  // (there we're clearing the stale token and must show the form).
-  if (isAuthenticated && !bounced) {
+  // Authenticated → we're about to redirect; don't flash the form.
+  if (!isLoading && isAuthenticated) {
     return null;
   }
 
