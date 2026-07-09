@@ -2,7 +2,7 @@ module github.com/dshakes/lantern/services/billing
 
 go 1.23
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	github.com/dshakes/lantern/gen/go v0.0.0
