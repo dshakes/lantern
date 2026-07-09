@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -43,15 +43,22 @@ export default function LoginPage() {
   const { login, signup, loginDemo, isAuthenticated } = useAuth();
 
   // Where to send the user after a successful login. Defaults to /agents.
-  // ?next= is set by the 401-redirect in lib/runtime-api + lib/api so that
-  // a session expiring mid-task drops the user back where they were.
+  // ?next= is set by the 401-redirect in lib/runtime-api + lib/api; ?from= is set
+  // by the auth middleware when it bounces an unauthenticated request. Read both
+  // so a session expiring mid-task drops the user back where they were.
   // Reject absolute URLs to avoid open-redirect; only same-origin paths.
   const nextPath = (() => {
-    const raw = searchParams.get("next");
+    const raw = searchParams.get("next") || searchParams.get("from");
     if (!raw) return "/agents";
     if (!raw.startsWith("/") || raw.startsWith("//")) return "/agents";
     return raw;
   })();
+
+  // A `from`/`next` param means the SERVER (middleware or a 401) rejected our
+  // session and sent us here. If the client still reads as authenticated, it's a
+  // stale localStorage token with no valid server cookie — the exact desync that
+  // otherwise loops /login <-> the gated route forever (blank screen). Detect it.
+  const bounced = searchParams.get("from") !== null || searchParams.get("next") !== null;
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -63,11 +70,21 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
+  const healed = useRef(false);
   useEffect(() => {
-    if (isAuthenticated) router.replace(nextPath);
-  }, [isAuthenticated, nextPath, router]);
+    if (isAuthenticated && bounced && !healed.current) {
+      // Stale token, server rejected the session → clear token + cookie so the
+      // form shows instead of looping. Self-heals without a manual localStorage wipe.
+      healed.current = true;
+      api.setToken(null);
+      return;
+    }
+    if (isAuthenticated && !bounced) router.replace(nextPath);
+  }, [isAuthenticated, bounced, nextPath, router]);
 
-  if (isAuthenticated) {
+  // Hide the form only for a genuine authenticated redirect — never on a bounce
+  // (there we're clearing the stale token and must show the form).
+  if (isAuthenticated && !bounced) {
     return null;
   }
 
