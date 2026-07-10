@@ -136,9 +136,12 @@ export async function consolidateDislikes(
     }
   }
 
-  // Optional LLM clustering pass — only when explicitly enabled AND a
-  // caller is wired. Catches fuzzy recurring patterns the regexes miss.
-  if (opts.llmCall && process.env.LANTERN_DISLIKE_LLM_CLUSTER === "1") {
+  // LLM clustering pass — catches the fuzzy recurring patterns the regexes
+  // miss (the novel-preference learner). Runs when a caller is wired AND it is
+  // not explicitly disabled (LANTERN_DISLIKE_LLM_CLUSTER=0). Fail-safe: any
+  // error below falls through to the deterministic lessons; the LLM can only
+  // ADD/raise a lesson, never clobber a higher-support deterministic one.
+  if (opts.llmCall && process.env.LANTERN_DISLIKE_LLM_CLUSTER !== "0") {
     try {
       const llmLessons = await llmClusterPass(entries, opts.llmCall, minSupport);
       for (const l of llmLessons) {

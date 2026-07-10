@@ -1418,6 +1418,22 @@ export class IMessageSession {
         profilePath: this.ownerProfileStore.getPath(),
         invalidate: () => this.ownerProfileStore.invalidate(),
         logger: this.logger,
+        // Novel-preference learner: cluster fuzzy 👎 patterns the regexes miss.
+        // Fail-safe (→ "" on any error) and a throwaway session key per run
+        // (no history accumulation). Owner-only; never a contact's session.
+        llmCall: async (prompt: string) => {
+          try {
+            const out = await this.agent.respondTo(
+              `owner::dislike-cluster::${Date.now()}`,
+              prompt,
+              "",
+              { withTools: false },
+            );
+            return out || "";
+          } catch {
+            return "";
+          }
+        },
       });
       if (!res.ok) return;
       this.styleLessonsBlock = formatStyleLessonsBlock(res.lessons);
