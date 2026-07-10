@@ -165,7 +165,7 @@ const STAGE_LABEL: Record<Stage, string> = {
 function Stepper({ stage, error }: { stage: Stage; error?: boolean }) {
   const activeIdx = STAGE_ORDER.indexOf(stage);
   return (
-    <div className="flex items-center gap-2 text-[12px]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
       {STAGE_ORDER.map((s, idx) => {
         const isActive = idx === activeIdx;
         const isDone = idx < activeIdx;
@@ -1572,7 +1572,7 @@ function PairingPanel({
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+      <div className="flex flex-col gap-6 md:flex-row md:items-start">
         {/* QR / spinner */}
         <div className="flex shrink-0 flex-col items-center gap-2">
           <div className="relative">
