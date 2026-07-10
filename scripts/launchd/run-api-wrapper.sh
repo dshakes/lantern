@@ -4,9 +4,20 @@
 # that the infra LaunchAgent finished, and we don't want a crash-loop
 # at boot).
 
-set -euo pipefail
+set -uo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$REPO_ROOT/services/control-plane"
+
+# Shared local env — same file the bridge + dashboard wrappers source. Feature
+# flags (LANTERN_CONFIDENCE_*, LANTERN_IMMIGRATION_SENTINEL, …) live here so a
+# plain `kickstart -k` reloads them (read at runtime by `go run`), with no plist
+# bootout/bootstrap. Loaded before the API starts.
+if [ -f "$HOME/.lantern/bridge.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.lantern/bridge.env"
+  set +a
+fi
 
 # Wait up to 90s for Postgres to accept TCP.
 for i in {1..45}; do
