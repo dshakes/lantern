@@ -440,6 +440,16 @@ export interface PersonaOptions {
   // which beats the BAD→GOOD dialect rules. Additive to contactStyleBlock,
   // never a replacement. Empty when the owner has no usable history yet.
   ownerVoiceBlock?: string;
+  // LLM-REASONED owner voice profile (voice-profile.ts, Phase 2). When
+  // LANTERN_VOICE_REASONING=1 the bridge computes this from the owner's own
+  // sent messages, derives EXPLICIT guidance ("terse, jumps to point, 🙏
+  // for thanks only, code-switches Telugu for warmth"), and passes the
+  // formatted instruction string here. Injected in the VOICE ANCHOR section
+  // between ownerVoiceBlock (verbatim exemplars) and contactStyleBlock (per-
+  // contact stat fingerprint) so it bridges raw examples and specific cues.
+  // When undefined (the default / flag off) the VOICE ANCHOR is byte-
+  // identical to today — zero behavior change.
+  voiceReasoningHint?: string;
   // Scheduling-negotiation capability. When true (the bridge has the
   // owner's free slots + calendar on hand), the persona may PROPOSE,
   // hold, and confirm concrete times — and, on the contact's agreement,
@@ -992,6 +1002,14 @@ export function agentPersonaPrompt(
   if (ownerVoice) {
     lines.push(``);
     lines.push(ownerVoice);
+  }
+  // Phase 2 reasoned voice guidance sits between the raw exemplars (above)
+  // and the per-contact stat fingerprint (below) — more explicit than the
+  // examples, more specific than the global-ownership rules.
+  const reasonedVoice = opts.voiceReasoningHint?.trim();
+  if (reasonedVoice) {
+    lines.push(``);
+    lines.push(reasonedVoice);
   }
   const contactStyle = opts.contactStyleBlock?.trim();
   if (contactStyle) {
