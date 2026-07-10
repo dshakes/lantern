@@ -64,6 +64,7 @@ import {
 import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
+import { intentRouterEnabled, classifyIntent, forcedHandler } from "@lantern/bridge-core/intent-router";
 import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
@@ -2908,8 +2909,8 @@ export class IMessageSession {
   /** Owner self-chat hook. Returns true when handled. Gathers what landed
    *  since a cutoff (contacts waiting + the assistant's own recent actions)
    *  and narrates it in the owner's voice; deterministic fallback on failure. */
-  private maybeHandleRecap(jid: string, text: string): boolean {
-    if (!looksLikeRecapRequest(text)) return false;
+  private maybeHandleRecap(jid: string, text: string, force = false): boolean {
+    if (!force && !looksLikeRecapRequest(text)) return false;
     void (async () => {
       const now = Date.now();
       const since = parseRecapWindow(text, now) ?? now - 6 * 3_600_000; // default: last 6h
@@ -2949,6 +2950,44 @@ export class IMessageSession {
 
   // Owner self-chat hook — called from BOTH routing paths (isFromMe
   // self-chat AND dedicated-bot inbound). Returns true when handled.
+  // ── PHASE 2c INTENT ROUTER (LANTERN_INTENT_ROUTER, default OFF) ─────
+  /** Persist a location-disclosure preference and ack to the owner. Mirrors the
+   *  detectDisclosureDeny gate inside handleOwnerDocQuery so the intent router
+   *  can force it for phrasings the wordlist misses. Returns true if applied. */
+  // ponytail: ack text mirrors the inline detectDisclosureDeny gate — keep in sync.
+  private async applyDisclosureDeny(jid: string, target: string, deny: boolean): Promise<boolean> {
+    const handle = await this.resolveTargetToHandle(target);
+    if (handle && recordDisclosureDeny(handle, deny)) {
+      this.logger.info({ handle, deny }, "disclosure preference captured (router)");
+      await this.send(jid, deny
+        ? `📝 noted — I won't tell ${target} where you are`
+        : `📝 noted — I can share your whereabouts with ${target} again`);
+      return true;
+    }
+    return false;
+  }
+
+  /** When ON, an LLM reasons about the owner's intent and FORCE-routes the two
+   *  self-contained gates it subsumes — disclosure-deny (privacy-critical) and
+   *  recap — even for phrasings the regex wordlist misses. On normal_reply /
+   *  self_context / thread_peek / any uncertainty / error it returns false so
+   *  the regex gate stack (the floor) runs unchanged. Never throws. Owner-only
+   *  (callers already gate on that). Only reached behind intentRouterEnabled(). */
+  private async maybeRouteIntent(jid: string, text: string): Promise<boolean> {
+    try {
+      const decision = await classifyIntent(text, (k, t, h, o) => this.agent.respondTo(k, t, h, o));
+      const handler = forcedHandler(decision);
+      if (handler === "disclosure_deny" && decision?.kind === "disclosure_deny") {
+        return await this.applyDisclosureDeny(jid, decision.target, decision.deny);
+      }
+      if (handler === "recap") return this.maybeHandleRecap(jid, text, true);
+      return false;
+    } catch (err) {
+      this.logger.warn({ err }, "intent-router failed; falling back to regex gates");
+      return false;
+    }
+  }
+
   private maybeHandleScout(jid: string, text: string): boolean {
     const book = parseBookReply(text);
     if (book) {
@@ -9516,6 +9555,12 @@ export class IMessageSession {
       this.logger.info({ jid }, "confirm already handled by other self-chat lane — skipping LLM");
       return;
     }
+    // PHASE 2c — intent router (LANTERN_INTENT_ROUTER, default OFF). When ON it
+    // reasons about the owner's intent and force-routes the self-contained gates
+    // it subsumes (disclosure-deny, recap) for phrasings the regex wordlist
+    // downstream would miss. OFF → short-circuits synchronously; the regex gates
+    // (the disclosure block below, and maybeHandleRecap upstream) run unchanged.
+    if (intentRouterEnabled() && await this.maybeRouteIntent(jid, query)) return;
     this.busyChat.add(jid);
     // Declared before the try so the finally can always clear it — a
     // throw must never leave a stray "🧠 thinking…" timer firing.
