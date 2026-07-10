@@ -15,6 +15,18 @@ set -uo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$REPO_ROOT/apps/web"
 
+# Shared bridge env — same file the bridge wrapper sources. The dashboard's
+# server-side bridge proxy (app/api/bridge/[channel]/…) authenticates to the
+# bridges with LANTERN_IMESSAGE_BRIDGE_TOKEN / LANTERN_BRIDGE_TOKEN; keeping all
+# three services on one file means a plain `kickstart -k` reloads the token
+# (these are read at RUNTIME, not build time). Loaded before `next start`.
+if [ -f "$HOME/.lantern/bridge.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.lantern/bridge.env"
+  set +a
+fi
+
 # SERVER-SIDE API base for the auth middleware. The middleware validates the
 # lantern_token cookie by calling <base>/auth/me on every gated request, with a
 # short timeout. It must hit the LOCAL API (localhost:8080), NOT the public
