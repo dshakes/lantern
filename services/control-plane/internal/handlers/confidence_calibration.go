@@ -33,6 +33,11 @@ const regretCacheTTL = 5 * time.Minute
 // ponytail: 3 is conservative; raise to 10+ if false positives are a concern.
 const regretMinSamples = 3
 
+// regretCacheMaxEntries bounds the in-memory cache. Keyed by
+// (tenant, agent, node_type); harmless in a single-tenant deployment but must
+// not grow unbounded in a multi-tenant rollout (the TTL never reclaims space).
+const regretCacheMaxEntries = 10000
+
 // regretCacheKey identifies a unique (tenant, agent, nodeType) combination.
 type regretCacheKey struct {
 	tenantID  string
@@ -75,6 +80,21 @@ func (rc *regretCache) get(
 	rate := queryRegretRate(ctx, pool, tenantID, agentName, nodeType, logger)
 
 	rc.mu.Lock()
+	// Bound memory: the TTL never reclaims space on its own (stale entries sit
+	// until re-fetched). At capacity, sweep expired entries; if still full, skip
+	// caching this one — the value is still returned, just recomputed next time.
+	if len(rc.items) >= regretCacheMaxEntries {
+		now := time.Now()
+		for k, e := range rc.items {
+			if now.After(e.expiresAt) {
+				delete(rc.items, k)
+			}
+		}
+		if len(rc.items) >= regretCacheMaxEntries {
+			rc.mu.Unlock()
+			return rate
+		}
+	}
 	rc.items[key] = regretCacheEntry{rate: rate, expiresAt: time.Now().Add(regretCacheTTL)}
 	rc.mu.Unlock()
 
@@ -82,8 +102,15 @@ func (rc *regretCache) get(
 }
 
 // queryRegretRate queries journal_events + run_feedback + runs to compute
-// the fraction of auto-executed gated steps (decision="execute") that later
-// received a thumbs-down (run_feedback.score ≤ 2) or ended in a failed run.
+// the fraction of auto-executed gated steps (decision="execute") that were a
+// genuine regret: the SAME step later failed (a step_failed event for the same
+// (run_id, step_id)), OR the run received a thumbs-down (run_feedback.score ≤ 2).
+//
+// Regret is attributed per STEP, not per run: a run that fails at step 7 for an
+// unrelated reason must not mark steps 1–6's auto-executions as regrets, which
+// would progressively over-tighten the gate on innocent node types. Only a
+// step whose own execution failed counts (plus the run-level thumbs-down, which
+// is a deliberate global dissatisfaction signal).
 //
 // Tenant isolation is enforced via db.WithTenantConn (sets app.tenant_id);
 // the RLS policies on runs/agents/run_feedback ensure cross-tenant reads
@@ -104,7 +131,13 @@ func queryRegretRate(
 			SELECT
 				COUNT(*) AS total,
 				COUNT(*) FILTER (
-					WHERE r.status = 'failed'
+					WHERE EXISTS (
+					          SELECT 1
+					          FROM   journal_events sf
+					          WHERE  sf.run_id  = je.run_id
+					            AND  sf.step_id = je.step_id
+					            AND  sf.kind    = 'step_failed'
+					      )
 					   OR EXISTS (
 					          SELECT 1
 					          FROM   run_feedback f

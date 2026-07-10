@@ -396,8 +396,14 @@ func (c CalibratedEstimator) Estimate(ctx context.Context, node Node, vars map[s
 		return base // no data or zero regret → unchanged
 	}
 	adjusted := base * (1 - regret)
+	// Self-enforce the [0,1] invariant the contract promises, rather than rely
+	// on base ∈ [0,1] × (1−regret) ∈ [0,1] holding forever (a future base
+	// estimator could return a value slightly outside range).
 	if adjusted < 0 {
 		adjusted = 0
+	}
+	if adjusted > 1 {
+		adjusted = 1
 	}
 	return adjusted
 }
