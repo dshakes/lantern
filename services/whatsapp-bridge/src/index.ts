@@ -802,9 +802,15 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "/", `http://localhost`);
   const tenantId = url.searchParams.get("tenantId") || "default";
 
-  // Token auth also applies to WS. `authorization` header doesn't cross the
-  // WS upgrade reliably in browsers, so we also accept ?token= on the URL.
-  if (BRIDGE_TOKEN) {
+  // Token auth also applies to WS — but ONLY on non-loopback binds. The QR
+  // stream is consumed by a BROWSER WebSocket that connects directly to the
+  // bridge (Next.js route handlers can't proxy WS), and the shared token is a
+  // SERVER-side secret the browser deliberately never receives (it would be
+  // visible in devtools). On the default 127.0.0.1 bind the WS is only reachable
+  // locally, so it is open — matching the client, which sends no token. The HTTP
+  // /session mutation routes stay token-gated (dashboard proxies them with a
+  // Bearer server-side). A non-loopback bind still requires the token here.
+  if (BRIDGE_TOKEN && !isLoopback) {
     const header = (req.headers.authorization || "") as string;
     const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
     const qs = url.searchParams.get("token") || "";

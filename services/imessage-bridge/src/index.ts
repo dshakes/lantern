@@ -75,6 +75,7 @@ const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
 const PORT = parseInt(process.env.LANTERN_IMESSAGE_BRIDGE_PORT || "3200", 10);
 const BIND = process.env.LANTERN_IMESSAGE_BRIDGE_BIND || "127.0.0.1";
+const isLoopback = BIND === "127.0.0.1" || BIND === "::1" || BIND === "localhost";
 const BRIDGE_TOKEN = process.env.LANTERN_IMESSAGE_BRIDGE_TOKEN || "";
 const CORS_ORIGIN = process.env.LANTERN_IMESSAGE_BRIDGE_ORIGIN || "http://localhost:3001";
 const STATE_DIR = join(__dirname, "..", "bridge_state");
@@ -530,7 +531,11 @@ app.post("/session/:tenantId/imessage/search", async (req, res) => {
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url || "/", `http://localhost`);
   const tenantId = url.searchParams.get("tenantId") || "default";
-  if (BRIDGE_TOKEN) {
+  // WS token auth applies only on non-loopback binds — a browser WS connects
+  // directly and never carries the server-side token (see whatsapp-bridge for
+  // the full rationale). On the default 127.0.0.1 bind the WS is loopback-only
+  // and open; HTTP /session routes stay token-gated via the dashboard proxy.
+  if (BRIDGE_TOKEN && !isLoopback) {
     const auth = (req.headers.authorization || "") as string;
     const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
     const qs = url.searchParams.get("token") || "";
