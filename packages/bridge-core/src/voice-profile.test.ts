@@ -23,7 +23,6 @@ const GOOD_HINT: VoiceHint = {
   emojiUse: "rarely — 🙏 for warmth, 😂 for humor",
   warmth: "warm",
   patterns: ["jumps to the point", "no greetings", "short sentences"],
-  perContactNotes: "slightly more formal with this person",
 };
 
 const GOOD_JSON = JSON.stringify(GOOD_HINT);
@@ -161,15 +160,13 @@ describe("parseVoiceProfile", () => {
     assert.equal(result!.patterns.length, 5);
   });
 
-  it("tolerates missing perContactNotes (coerces to empty string)", () => {
-    const obj = { ...GOOD_HINT };
-    delete (obj as Partial<VoiceHint>)["perContactNotes"];
-    // Should return null because perContactNotes becomes "" and we still accept it
+  it("ignores unknown/extra fields from the LLM (tolerant parse)", () => {
+    const obj = { ...GOOD_HINT, someExtraField: "the LLM added this" };
     const result = parseVoiceProfile(JSON.stringify(obj));
-    // perContactNotes can be empty — the field exists in the type but is
-    // not required to be non-empty by parseVoiceProfile
     assert.ok(result !== null);
-    assert.equal(result!.perContactNotes, "");
+    // Only the known fields survive; the extra one is dropped.
+    assert.equal((result as Record<string, unknown>)["someExtraField"], undefined);
+    assert.equal(result!.register, "casual");
   });
 });
 
