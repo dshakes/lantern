@@ -999,7 +999,7 @@ export class IMessageSession {
     if (isVoiceReasoningEnabled()) {
       this.voiceProfileCache = new VoiceProfileCache(
         (prompt) =>
-          this.agent.respondTo("owner::voice-profile", prompt, undefined, { timeoutMs: 30_000 }),
+          this.agent.respondTo(`owner::voice-profile::${Date.now()}`, prompt, undefined, { timeoutMs: 30_000 }),
         OWNER_NAME,
         { stateDir: this.stateDir },
       );
