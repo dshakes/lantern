@@ -22,7 +22,7 @@
 // Session key: "owner::voice-profile" — never a contact JID.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 // ── Flag gate ────────────────────────────────────────────────────────────────
 
@@ -47,8 +47,6 @@ export interface VoiceHint {
   warmth: "warm" | "dry" | "neutral";
   /** Up to 5 specific observable patterns from the owner's messages. */
   patterns: string[];
-  /** How the owner adapts to this contact. Max 120 chars. */
-  perContactNotes: string;
 }
 
 const REGISTER_VALUES = ["very-casual", "casual", "direct", "semi-formal"] as const;
@@ -84,8 +82,7 @@ export function buildVoiceProfilePrompt(
     `  "languageMix": "<concise, max 80 chars>",`,
     `  "emojiUse": "<concise, max 100 chars>",`,
     `  "warmth": ${WARMTH_VALUES.map((v) => `"${v}"`).join(" | ")},`,
-    `  "patterns": ["<pattern>", ...at most 5 short patterns from the actual messages],`,
-    `  "perContactNotes": "<how ${ownerName} adapts to this contact, max 120 chars>"`,
+    `  "patterns": ["<pattern>", ...at most 5 short patterns from the actual messages]`,
     `}`,
   ].join("\n");
 }
@@ -129,11 +126,9 @@ export function parseVoiceProfile(raw: string): VoiceHint | null {
     const patterns: string[] = Array.isArray(rawPatterns)
       ? rawPatterns
           .slice(0, 5)
-          .map((p: unknown) => String(p).trim())
+          .map((p: unknown) => String(p).trim().slice(0, 120))
           .filter(Boolean)
       : [];
-
-    const perContactNotes = String(obj["perContactNotes"] ?? "").slice(0, 120).trim();
 
     return {
       register: register as VoiceHint["register"],
@@ -142,7 +137,6 @@ export function parseVoiceProfile(raw: string): VoiceHint | null {
       languageMix,
       emojiUse,
       patterns,
-      perContactNotes,
     };
   } catch {
     return null;
@@ -166,9 +160,6 @@ export function voiceHintToInstruction(hint: VoiceHint, ownerName: string): stri
   ];
   if (hint.patterns.length > 0) {
     lines.push(`- Observed patterns: ${hint.patterns.join("; ")}`);
-  }
-  if (hint.perContactNotes) {
-    lines.push(`- With this contact: ${hint.perContactNotes}`);
   }
   lines.push(
     `Write EXACTLY the way these patterns describe — not what "casual" generically means, but what ${ownerName} actually does.`,
@@ -291,7 +282,7 @@ export class VoiceProfileCache {
   private async persist(): Promise<void> {
     if (!this.filePath || !this.cached) return;
     try {
-      const dir = this.filePath.slice(0, this.filePath.lastIndexOf("/"));
+      const dir = dirname(this.filePath);
       await mkdir(dir, { recursive: true });
       await writeFile(
         this.filePath,
