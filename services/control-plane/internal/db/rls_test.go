@@ -386,6 +386,7 @@ var rlsTenantTables = []string{
 	"gmail_poll_cursors",
 	"domain_records",
 	"errands", "dnc_numbers",
+	"immigration_deadlines",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,

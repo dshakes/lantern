@@ -73,6 +73,18 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 	emails := h.recentEmails(ctx, tenantID)
 	awaiting := h.awaitingReply(ctx, tenantID)
 	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting)
+
+	// Additive: prepend any upcoming immigration deadlines when the sentinel is
+	// enabled (LANTERN_IMMIGRATION_SENTINEL=1). Empty-string when flag is off
+	// or no deadlines within 90 days — zero behavior change by default.
+	if section := immigrationBriefSection(ctx, h.srv, tenantID, h.logger()); section != "" {
+		if brief == "" {
+			brief = section
+		} else {
+			brief = section + "\n\n" + brief
+		}
+	}
+
 	return brief, calendar, emails, awaiting
 }
 

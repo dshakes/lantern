@@ -349,6 +349,7 @@ func main() {
 	receiptHandler := handlers.NewReceiptHandler(srv, authHandler)
 	feedbackHandler := handlers.NewFeedbackHandler(srv, authHandler)
 	rehearseHandler := handlers.NewRehearseHandler(srv, authHandler)
+	immigrationHandler := handlers.NewImmigrationSentinelHandler(srv, authHandler, llmProxyHandler)
 
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
@@ -703,6 +704,10 @@ func main() {
 
 	// Rehearsals — replay past failures against a candidate agent version.
 	httpMux.HandleFunc("POST /v1/runs/rehearse", rehearseHandler.Rehearse)
+
+	// Immigration Deadline Sentinel (LANTERN_IMMIGRATION_SENTINEL, default OFF).
+	httpMux.HandleFunc("GET /v1/immigration/deadlines", immigrationHandler.List)
+	httpMux.HandleFunc("POST /v1/immigration/scan", immigrationHandler.Scan)
 
 	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)

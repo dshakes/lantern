@@ -811,6 +811,33 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
 | `LANTERN_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
 
+### Immigration / USCIS deadline sentinel (Phase 3)
+
+An agent that REASONS over the family's immigration PDFs + arriving USCIS/attorney
+mail to surface DERIVED deadlines nobody typed in (EAD/AP expiry, I-485 windows,
+biometrics/RFE clocks), reconciling the PDF against the latest email — LLM
+reasoning over two sources, not a keyword scan. Control-plane only
+(`internal/handlers/immigration_sentinel.go`); surfaced additively in the Jarvis
+brief. Persisted in `immigration_deadlines` (tenant-scoped, RLS-enforced,
+`ON CONFLICT (tenant_id, who, doc_type, deadline)` dedup; in the RLS catalog gate).
+
+**Flag-gated, default OFF** (`LANTERN_IMMIGRATION_SENTINEL`): unset → scan is inert,
+endpoints return `{enabled:false}`, no brief section — zero behavior change.
+**Anti-hallucination:** a deadline is dropped unless the LLM grounds it in a
+NON-BLANK `source_ref` AND `confidence >= 0.6` (matches the prompt's own floor);
+the LLM call is capability-addressed (model router, never a hardcoded vendor,
+invariant #6); doc/mail PII never logged (invariant #10). Fail-safe throughout
+(doc/mail/LLM/DB error → no deadlines, never a crash or fabricated result).
+
+| Method | Path                          | Description                                        |
+| ------ | ----------------------------- | -------------------------------------------------- |
+| `GET`  | `/v1/immigration/deadlines`   | List derived deadlines (tenant-scoped). `{enabled:false}` when off |
+| `POST` | `/v1/immigration/scan`        | Trigger a scan (gather docs+mail → reason → upsert). Returns `{found:N}` |
+
+| Env var                        | Purpose                                                              |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `LANTERN_IMMIGRATION_SENTINEL` | `1`/`true`/`on` enables the sentinel. Default OFF (fully inert).    |
+
 ### Life-event engine (bridge "Automations" feed)
 
 The bridges classify inbound into typed life-events
