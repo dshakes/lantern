@@ -239,6 +239,25 @@ app.post("/session/:tenantId/send", async (req, res) => {
   res.json({ status: "sent" });
 });
 
+// Cross-bridge document relay: the WhatsApp bridge POSTs here when the owner
+// asked it (from WhatsApp self-chat) to send a doc over iMessage/SMS. The file
+// lives on the same Mac; the session re-validates the path is inside the
+// personal-docs roots (never attach an arbitrary peer-named path) and delivers
+// on iMessage. Token-guarded like every /session route (app.use above).
+app.post("/session/:tenantId/send-doc", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s || !s.isReady()) { res.status(400).json({ error: "not ready" }); return; }
+  const { to, filePath, caption } = req.body as { to?: unknown; filePath?: unknown; caption?: unknown };
+  if (typeof to !== "string" || !to) { res.status(400).json({ error: "'to' required" }); return; }
+  if (typeof filePath !== "string" || !filePath) { res.status(400).json({ error: "'filePath' required" }); return; }
+  const result = await s.receiveRelayedDoc(to, filePath, typeof caption === "string" ? caption : undefined);
+  if (!result.ok) {
+    res.status(result.reason === "path not allowed" ? 403 : 500).json({ error: result.reason });
+    return;
+  }
+  res.json({ status: "sent" });
+});
+
 // Mirrors whatsapp-bridge's send-self — sends to the user's own handle.
 // On iMessage you can message yourself, so this is the same path as
 // send() but the "to" is the bridge owner's primary handle. The

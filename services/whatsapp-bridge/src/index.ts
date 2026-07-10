@@ -496,6 +496,29 @@ app.post("/session/:tenantId/send", async (req, res) => {
   }
 });
 
+// Cross-bridge document relay: the iMessage bridge POSTs here when the owner
+// asked it (from iMessage self-chat) to send a doc over WhatsApp. The file lives
+// on the same Mac; the session re-validates the path is inside the personal-docs
+// roots (never attach an arbitrary peer-named path) and delivers on WhatsApp.
+// `to` is a raw phone (the session coerces it to a JID). Token-guarded via the
+// /session app.use above.
+app.post("/session/:tenantId/send-doc", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session || !session.isConnected()) {
+    res.status(400).json({ error: "Not connected" });
+    return;
+  }
+  const { to, filePath, caption } = req.body as { to?: unknown; filePath?: unknown; caption?: unknown };
+  if (typeof to !== "string" || !to) { res.status(400).json({ error: "'to' required" }); return; }
+  if (typeof filePath !== "string" || !filePath) { res.status(400).json({ error: "'filePath' required" }); return; }
+  const result = await session.receiveRelayedDoc(to, filePath, typeof caption === "string" ? caption : undefined);
+  if (!result.ok) {
+    res.status(result.reason === "path not allowed" ? 403 : 500).json({ error: result.reason });
+    return;
+  }
+  res.json({ status: "sent" });
+});
+
 // Send a message to the bridge owner's own WhatsApp self-chat. Used
 // by the control-plane to deliver agent output (Morning Brief,
 // inbox-concierge summary, etc.) directly to the user's phone without

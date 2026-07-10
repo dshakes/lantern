@@ -1248,7 +1248,7 @@ export class WhatsAppSession {
   // reads the most recent heads-up. Cleared on send/reject/expiry.
   private pendingDraftEdits: Map<
     string,
-    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number; kind?: "doc-relay" | "doc-pick"; filePath?: string; candidates?: Array<{ path: string; name: string }> }
+    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number; kind?: "doc-relay" | "doc-pick"; filePath?: string; candidates?: Array<{ path: string; name: string }>; channel?: "imessage" | "whatsapp" | "sms" }
   > = new Map();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000;
   // Per-chat concurrency lock. A single doc / natural-chat
@@ -5414,7 +5414,7 @@ export class WhatsAppSession {
   // (owner-privileged; the contact never triggers this and sees nothing), then
   // ping the owner's self-chat to confirm before the file is sent. On the
   // owner's "send", the confirm intercept delivers the file to the contact.
-  private async relayDocRequestToOwner(contactJid: string, contactLabel: string, request: string, initiatedByOwner = false): Promise<void> {
+  private async relayDocRequestToOwner(contactJid: string, contactLabel: string, request: string, initiatedByOwner = false, targetChannel: "imessage" | "whatsapp" | "sms" = "whatsapp"): Promise<void> {
     // Reactive (contact-asked) relays dedup; an explicit owner [SENDDOC] command
     // is never suppressed — the owner meant it.
     const dedupKey = `${contactJid}|${request.toLowerCase().trim()}`;
@@ -5452,9 +5452,11 @@ export class WhatsAppSession {
         issuedAt: Date.now(),
         kind: "doc-relay",
         filePath: hit.path,
+        channel: targetChannel,
       });
+      const chLabel = targetChannel === "imessage" ? " via iMessage" : targetChannel === "sms" ? " via SMS" : "";
       await this.confirmToSelf(initiatedByOwner
-        ? `📎 sending your ${request} to ${contactLabel} — found "${hit.name}". 👍 to send · 👎 to skip (or reply "send").`
+        ? `📎 sending your ${request} to ${contactLabel}${chLabel} — found "${hit.name}". 👍 to send · 👎 to skip (or reply "send").`
         : await this.composeDocRelayPing(contactJid, contactLabel, request, hit));
       return;
     }
@@ -5469,6 +5471,7 @@ export class WhatsAppSession {
         issuedAt: Date.now(),
         kind: "doc-pick",
         candidates: pickList,
+        channel: targetChannel,
       });
       await this.confirmToSelf(buildDocPickPing({ contactLabel, request }, pickList));
       return;
@@ -5615,7 +5618,19 @@ export class WhatsAppSession {
     }
     try {
       if (isDocRelay) {
-        const r = await this.deliverFileToContact(pending.targetJid, pending.filePath!, pending.inboundText);
+        // Cross-bridge: owner asked (from WhatsApp) to send this doc over
+        // iMessage/SMS. Confirm happened here; the delivery relays to the
+        // iMessage bridge (which attaches the same shared-Mac file on its wire).
+        // For cross-bridge, pending.targetJid holds the raw PHONE, not a WA JID.
+        const r =
+          pending.channel === "imessage" || pending.channel === "sms"
+            ? await this.relayDocToPeer(
+                (process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://127.0.0.1:3200").replace(/\/$/, ""),
+                pending.targetJid,
+                pending.filePath!,
+                pending.inboundText,
+              )
+            : await this.deliverFileToContact(pending.targetJid, pending.filePath!, pending.inboundText);
         await this.confirmToSelf(
           !r.ok
             ? `⚠️ couldn't send your ${pending.inboundText} to ${label} — ${r.reason || "delivery failed"}.`
@@ -5638,11 +5653,37 @@ export class WhatsAppSession {
 
   // Deliver a FILE to a WhatsApp contact: the native document first (reliable),
   // else a short-lived secure link texted to them.
+  // Registration check: WhatsApp silently accepts a send to a number that
+  // ISN'T on WhatsApp — the document (and the link fallback) just never arrive,
+  // yet sendDocument doesn't throw, so the owner sees a false "✅ sent". Verify
+  // the JID is registered on WhatsApp BEFORE delivering, so a non-WA recipient
+  // fails honestly instead of the doc vanishing (the "went to WhatsApp and
+  // disappeared" incident). null = couldn't check → don't block on it.
+  private async isOnWhatsApp(jid: string): Promise<boolean | null> {
+    if (!this.socket) return null;
+    if (!jid.endsWith("@s.whatsapp.net")) return true; // groups/broadcast: not user-registration
+    try {
+      const digits = jid.split("@")[0];
+      const res = await this.socket.onWhatsApp(jid);
+      const hit = res?.find((r) => (r.jid?.split("@")[0] || "") === digits);
+      return hit ? !!hit.exists : false;
+    } catch (err) {
+      this.logger.warn({ err, jid }, "onWhatsApp registration check failed — proceeding without it");
+      return null;
+    }
+  }
+
   private async deliverFileToContact(
     targetJid: string,
     filePath: string,
     request: string,
   ): Promise<{ ok: boolean; reason?: string; via?: "whatsapp" | "link" }> {
+    // Fail honestly BEFORE the send if the recipient isn't on WhatsApp — a false
+    // "✅ sent" for a document that silently never lands is the exact bug here.
+    if ((await this.isOnWhatsApp(targetJid)) === false) {
+      this.logger.warn({ to: targetJid }, "WA doc send blocked — recipient not on WhatsApp");
+      return { ok: false, reason: "they're not on WhatsApp" };
+    }
     try {
       await this.sendDocument(targetJid, filePath);
       return { ok: true, via: "whatsapp" };
@@ -5916,6 +5957,85 @@ export class WhatsAppSession {
   // Personal-docs Q&A in WhatsApp self-chat. Owner asked about a
   // local file. Search → inject into LLM → reply → optionally attach
   // the file via Baileys's document message type.
+  // Cross-bridge document relay (send side): POST the confirmed file to the
+  // PEER bridge's /send-doc endpoint, which re-validates the path and attaches
+  // it on its native wire. The file lives on the shared Mac, so we send the
+  // ABSOLUTE PATH (not bytes); the peer re-checks it's inside the personal-docs
+  // roots before attaching.
+  private async relayDocToPeer(
+    peerBase: string,
+    to: string,
+    filePath: string,
+    caption: string,
+  ): Promise<{ ok: boolean; reason?: string; via?: "link" }> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // Authenticate to the PEER's token, not ours: this helper only ever dials the
+    // iMessage bridge, whose /session routes validate LANTERN_IMESSAGE_BRIDGE_TOKEN
+    // (WA validates the separate LANTERN_BRIDGE_TOKEN). Sending our own token here
+    // 401s every WA→iMessage relay when the two secrets differ.
+    const tok = process.env.LANTERN_IMESSAGE_BRIDGE_TOKEN;
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      const res = await fetch(`${peerBase}/session/${this.tenantId}/send-doc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ to, filePath, caption }),
+        signal: ctrl.signal,
+      });
+      if (res.ok) return { ok: true };
+      const detail = await res.text().catch(() => "");
+      return { ok: false, reason: `peer bridge HTTP ${res.status}${detail ? `: ${detail.slice(0, 140)}` : ""}` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Cross-bridge document relay (receive side): the PEER bridge (iMessage) calls
+  // this via POST /session/:tenantId/send-doc when the owner asked it to send a
+  // doc over WhatsApp. SECURITY: re-validate the path is inside our own
+  // personal-docs roots before attaching — never trust a peer-named path.
+  async receiveRelayedDoc(to: string, filePath: string, caption?: string): Promise<{ ok: boolean; reason?: string }> {
+    if (!this.docs || !this.docs.isAllowedPath(filePath)) {
+      this.logger.warn({ filePath, to }, "cross-bridge send-doc rejected — path outside personal-docs roots (or docs disabled)");
+      return { ok: false, reason: "path not allowed" };
+    }
+    const targetJid = to.includes("@") ? to : `${to.replace(/\D/g, "")}@s.whatsapp.net`;
+    return this.deliverFileToContact(targetJid, filePath, caption || "file");
+  }
+
+  // Dispatch a single owner-initiated document send — shared by the [SENDDOC]
+  // marker loop AND the doc-intent backstop so channel handling + contact
+  // resolution live in ONE place. Always routes through relayDocRequestToOwner,
+  // which confirms with the owner before any file leaves.
+  private async dispatchOwnerDocSend(d: { channel: string; contact: string; doc: string }): Promise<void> {
+    try {
+      const resolved = await this.resolveCallTarget(d.contact);
+      if (!resolved) {
+        const sugg = this.getLastResolveSuggestions();
+        await this.confirmToSelf(sugg ? `which ${d.contact}? ${sugg}` : `couldn't find "${d.contact}" — who should I send the ${d.doc} to?`);
+        return;
+      }
+      // Honor the channel the owner named. "imessage"/"sms" are cross-bridge:
+      // confirm here, then relay the confirmed file to the iMessage bridge on
+      // send (which delivers on iMessage/SMS). "whatsapp"/"auto" go on our wire.
+      // Cross-bridge carries the raw PHONE (iMessage addresses a handle, not a
+      // WA JID); native carries the WA JID.
+      const targetChannel = d.channel === "imessage" ? "imessage" : d.channel === "sms" ? "sms" : "whatsapp";
+      const target =
+        targetChannel === "whatsapp"
+          ? `${resolved.phone.replace(/\D/g, "")}@s.whatsapp.net`
+          : resolved.phone;
+      await this.relayDocRequestToOwner(target, resolved.name || d.contact, d.doc, true, targetChannel);
+    } catch (err) {
+      this.logger.warn({ err, contact: d.contact, doc: d.doc }, "owner doc send dispatch exception");
+      await this.confirmToSelf("(couldn't set that document send up — try again)");
+    }
+  }
+
   private async handleOwnerDocQuery(
     jid: string,
     query: string,
@@ -6180,7 +6300,7 @@ export class WhatsAppSession {
       `  • Send message:   [SEND:whatsapp|Chikka|the message text]   (channel = whatsapp | imessage | sms | auto)`,
       `SEND: when ${ownerName} asks you to send / text / message / reply-to / forward-to / tell someone something (ANY phrasing, any language — "text chikka the docs are coming", "tell mae I'll be late", "send Anil this on whatsapp") you MUST emit a [SEND:...] marker. The bridge resolves the contact, shows ${ownerName} a one-line preview, and only sends after they reply "send". The message goes FROM ${ownerName}'s own account. NEVER say "paste it yourself" / "I can only read WhatsApp" / "I'll text him" WITHOUT the marker — the send capability EXISTS; a reply that claims or defers a send without the marker is a lie. Put the message in ${ownerName}'s voice/language. Default channel to whatsapp when they say "on whatsapp", imessage/sms for "text", else auto.`,
       `  • Send DOCUMENT:  [SENDDOC:auto|Manasa|PAN card]   (channel | contact | which document — a FILE, not text)`,
-      `SENDDOC: when ${ownerName} asks you to send a FILE / document / copy / scan / their ID (PAN card, aadhaar, passport, licence, receipt, insurance, certificate — "send Manasa my pan card", "forward the passport scan to dad") you MUST emit [SENDDOC:...] — NOT [SEND]. [SEND] carries only text and CANNOT attach a file, so using it for a document sends a "here's the pan card" message with no file (a lie). [SENDDOC] finds ${ownerName}'s real file, shows the filename, and attaches it after they reply "send". Put the document name (e.g. "PAN card") in the third field, not a sentence. For a note AND a file, emit BOTH a [SEND] and a [SENDDOC].`,
+      `SENDDOC: when ${ownerName} asks you to send a FILE / document / copy / scan / their ID (PAN card, aadhaar, passport, licence, receipt, insurance, certificate — "send Manasa my pan card", "forward the passport scan to dad") you MUST emit [SENDDOC:...] — NOT [SEND]. [SEND] carries only text and CANNOT attach a file, so using it for a document sends a "here's the pan card" message with no file (a lie). [SENDDOC] finds ${ownerName}'s real file, shows the filename, and attaches it after they reply "send". Put the document name (e.g. "PAN card") in the third field, not a sentence. The FIRST field is the CHANNEL and you MUST honor what ${ownerName} said: "whatsapp" for WhatsApp, "imessage" when they say iMessage/message, "sms" for SMS/text, else "auto" when unstated — e.g. "send Chikka my passport on iMessage" → [SENDDOC:imessage|Chikka|passport]. Never leave it "auto" when they named a channel. For a note AND a file, emit BOTH a [SEND] and a [SENDDOC].`,
       `STATUS: when ${ownerName} tells you where they are or that they're away/busy/back (ANY phrasing or language — "I am at the pool till 7:30pm est", "in a meeting for 2h", "driving", "I'm back", Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve "till 7:30pm" to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that ${ownerName} is at <place> and will get back, and offers to take a message. Confirm to ${ownerName} in your reply ("📍 got it — you're at the pool till 7:30; I'll let people know.").`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
       `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
@@ -6395,22 +6515,36 @@ export class WhatsAppSession {
     // hardened doc-relay pipeline instead — it finds the file and stages the
     // "reply send" confirm showing the real filename before anything leaves.
     for (const d of sendDocs) {
+      await this.dispatchOwnerDocSend(d);
+    }
+    // BACKSTOP (marker-drop safety — the same production incident as iMessage):
+    // the persona answered "sure, sent your passport to Chikka" and dropped the
+    // [SENDDOC] marker, so the send silently never fired. Mirror the inbound
+    // doc-intent classifier: classify the owner's text and drive the SAME
+    // confirm→deliver relay when a marker was expected but absent. Fail-safe
+    // (parseDocIntent → no send on any doubt); owner still confirms every relay.
+    if (sendDocs.length === 0 && maybeDocRequest(query)) {
       try {
-        if (d.channel === "imessage" || d.channel === "sms") {
-          await this.confirmToSelf(`i can send that over WhatsApp from here — for iMessage/SMS, ask me from the iMessage side.`);
-          continue;
+        const raw = await this.agent.respondTo(
+          `docintent::owner`,
+          buildDocIntentPrompt(query, ownerName, "owner"),
+          "Reply with STRICT JSON only.",
+          { withTools: false, timeoutMs: 12_000 },
+        );
+        const intent = parseDocIntent(raw, "owner");
+        if (intent.isDocRequest && intent.document && intent.contact) {
+          this.logger.info(
+            { contact: intent.contact, doc: intent.document, channel: intent.channel },
+            "owner doc-intent backstop fired ([SENDDOC] marker dropped)",
+          );
+          await this.dispatchOwnerDocSend({
+            channel: intent.channel,
+            contact: intent.contact,
+            doc: intent.document,
+          });
         }
-        const resolved = await this.resolveCallTarget(d.contact);
-        if (!resolved) {
-          const sugg = this.getLastResolveSuggestions();
-          await this.confirmToSelf(sugg ? `which ${d.contact}? ${sugg}` : `couldn't find "${d.contact}" — who should I send the ${d.doc} to?`);
-          continue;
-        }
-        const targetJid = `${resolved.phone.replace(/\D/g, "")}@s.whatsapp.net`;
-        await this.relayDocRequestToOwner(targetJid, resolved.name || d.contact, d.doc, true);
       } catch (err) {
-        this.logger.warn({ err, contact: d.contact, doc: d.doc }, "owner [SENDDOC] marker exception");
-        await this.confirmToSelf("(couldn't set that document send up — try again)");
+        this.logger.warn({ err }, "owner doc-intent backstop failed");
       }
     }
     } catch (err) {
