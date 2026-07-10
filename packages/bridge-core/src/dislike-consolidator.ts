@@ -139,8 +139,12 @@ export async function consolidateDislikes(
   // LLM clustering pass — catches the fuzzy recurring patterns the regexes
   // miss (the novel-preference learner). Runs when a caller is wired AND it is
   // not explicitly disabled (LANTERN_DISLIKE_LLM_CLUSTER=0). Fail-safe: any
-  // error below falls through to the deterministic lessons; the LLM can only
-  // ADD/raise a lesson, never clobber a higher-support deterministic one.
+  // error below falls through to the deterministic lessons. A novel lesson is
+  // inserted when its (self-declared) support ≥ minSupport; on an ID collision
+  // with a deterministic lesson the higher-support one wins. The input is the
+  // bot's OWN rejected drafts (not attacker-controlled) and every lesson is
+  // visible + deletable in owner-profile.md, so a bad lesson is low-blast and
+  // easily removed.
   if (opts.llmCall && process.env.LANTERN_DISLIKE_LLM_CLUSTER !== "0") {
     try {
       const llmLessons = await llmClusterPass(entries, opts.llmCall, minSupport);
@@ -199,7 +203,7 @@ async function llmClusterPass(
   for (const l of parsed.lessons ?? []) {
     const text = String(l?.text ?? "").trim();
     const support = Number(l?.support ?? 0);
-    if (!text || text.length > 160 || support < minSupport) continue;
+    if (!text || text.length > 120 || support < minSupport) continue; // 120 = the prompt's stated cap
     const id = String(l?.id ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     out.push({ id: id || `llm-${out.length}`, text, support });
   }
