@@ -9653,8 +9653,11 @@ export class WhatsAppSession {
         invalidate: () => this.ownerProfileStore.invalidate(),
         llmCall: async (prompt: string) => {
           try {
+            // Throwaway session key per run — a static key would accumulate the
+            // full clustering turn every consolidation, bloating context over
+            // time. Owner-only inference; never a contact's live session.
             const out = await this.agent.respondTo(
-              "dislike-flywheel",
+              `owner::dislike-cluster::${Date.now()}`,
               prompt,
               "",
               { withTools: false },

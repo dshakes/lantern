@@ -58,6 +58,32 @@ test("empty history yields no lessons", async () => {
   assert.deepEqual(lessons, []);
 });
 
+test("LLM novel-preference pass: runs by default, skipped only when disabled", async () => {
+  // Phase 2b: the fuzzy-cluster pass is now default-ON (opt-out via =0), and the
+  // bridges wire llmCall. Verify the gate: invoked when the flag is unset,
+  // skipped when explicitly "0". A "[]" reply is a valid no-lessons result.
+  const mem = fakeMemory(["a! one", "b! two", "c! three", "d! four"]);
+  let calls = 0;
+  const llmCall = async () => {
+    calls++;
+    return "[]";
+  };
+  const saved = process.env.LANTERN_DISLIKE_LLM_CLUSTER;
+  try {
+    delete process.env.LANTERN_DISLIKE_LLM_CLUSTER; // default → on
+    await consolidateDislikes(mem, { minSupport: 3, minFraction: 0.3, llmCall });
+    assert.ok(calls >= 1, "LLM cluster should run by default (flag unset)");
+
+    calls = 0;
+    process.env.LANTERN_DISLIKE_LLM_CLUSTER = "0"; // explicit opt-out
+    await consolidateDislikes(mem, { minSupport: 3, minFraction: 0.3, llmCall });
+    assert.equal(calls, 0, "LLM cluster must NOT run when explicitly disabled");
+  } finally {
+    if (saved === undefined) delete process.env.LANTERN_DISLIKE_LLM_CLUSTER;
+    else process.env.LANTERN_DISLIKE_LLM_CLUSTER = saved;
+  }
+});
+
 function tmpProfile(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), "style-lessons-"));
   const path = join(dir, "owner-profile.md");
