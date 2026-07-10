@@ -68,10 +68,27 @@ const PATTERNS: ClaimPattern[] = [
   // "I sent ..." / "I've sent ..." / "Sent ..." (with implicit subject)
   {
     action: "send-message",
-    re: /\b(?:i\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?sent|sent)\s+((?:him|her|them|you|the|a|an|that|this|it)\s+\S[^.!?]*?)(?=[.!?]|$)/i,
+    re: /\b(?:i\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?sent|sent)\s+((?:him|her|them|you|your|my|our|the|a|an|that|this|it)\s+\S[^.!?]*?)(?=[.!?]|$)/i,
     rewrite: (m, lower) =>
       (lower ? "i'll send " : "I'll send ") + m[1].trim(),
     description: "send → will send",
+  },
+
+  // "I sent/shared/forwarded your passport to Chikka" — the exact production
+  // lie this whole module exists to stop: a document only leaves through the
+  // structured [SENDDOC] relay (search → confirm → deliver), NEVER because the
+  // persona said so. The generic "send-message" pattern misses this because it
+  // stops at the "you|your" determiner and doesn't know "shared"/"forwarded";
+  // this covers those verbs + govt-ID/paperwork nouns. A doc-send in the reply
+  // body is ALWAYS pre-delivery (the ✅ ack is a separate, res.ok-gated bot-self
+  // message emitted later), so this claim is never truthfully "done" here — it
+  // always rewrites to intent.
+  {
+    action: "send-doc",
+    re: /\b(?:i\s+)?(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?(?:sent|shared|forwarded|attached)\s+(?:you\s+|him\s+|her\s+|them\s+)?((?:the|a|an|that|this|your|my|our)?\s*(?:passport|aadhaar|aadhar|pan(?:\s*card)?|licen[cs]e|driver'?s?\s*licen[cs]e|visa|ssn|ead|green\s?card|i-?\d{3}[a-z]?|scan|certificate|statement|resume|r[eé]sum[eé]|id\s*card|document|doc|file|pdf)\b[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll send " : "I'll send ") + m[1].trim(),
+    description: "sent doc → will send",
   },
 
   // "I added ..." (calendar/note/list)
@@ -124,15 +141,16 @@ const PATTERNS: ClaimPattern[] = [
   // so these are always rewritten to honest intent.
   {
     action: "attach-media",
-    re: /\b(?:i'?m\s+)?(?:sending|attaching|sharing)\s+(?:you|him|her|them)?\s*((?:the|a|an|that|this)?\s*(?:photo|pic|picture|image|screenshot|doc|document|file|receipt|invoice|pdf|link)\b[^.!?]*?)(?=[.!?]|$)/i,
+    re: /\b(?:i'?m\s+)?(?:sending|attaching|sharing)\s+(?:you|him|her|them)?\s*((?:the|a|an|that|this|your|my|our)?\s*(?:photo|pic|picture|image|screenshot|doc|document|file|receipt|invoice|pdf|link|passport|aadhaar|aadhar|pan|licen[cs]e|visa|ssn|ead|scan|certificate|statement|id\s*card)\b[^.!?]*?)(?=[.!?]|$)/i,
     rewrite: (m, lower) =>
       (lower ? "i'll get " : "I'll get ") + m[1].trim() + " over to you",
     description: "sending media → will get it to you",
   },
-  // "here's the receipt/photo" (present-tense delivery that didn't happen)
+  // "here's the receipt/photo" / "here's your passport" (present-tense delivery
+  // that didn't happen — the doc noun list mirrors the send-doc pattern above).
   {
     action: "attach-media",
-    re: /\bhere'?s\s+(the\s+(?:photo|pic|picture|screenshot|doc|document|file|receipt|invoice|pdf)\b[^.!?]*?)(?=[.!?]|$)/i,
+    re: /\bhere'?s\s+((?:the|a|your|my|our)\s+(?:photo|pic|picture|screenshot|doc|document|file|receipt|invoice|pdf|passport|aadhaar|aadhar|pan|licen[cs]e|visa|ssn|ead|scan|certificate|statement|id\s*card)\b[^.!?]*?)(?=[.!?]|$)/i,
     rewrite: (m, lower) =>
       (lower ? "i'll send " : "I'll send ") + m[1].trim() + " over",
     description: "here's media → will send",

@@ -20,12 +20,29 @@
 // isDocRequest=false, so the backstop can only ADD a correct relay, never fire a
 // wrong send. The owner still confirms every relay before a file leaves.
 
+export type DocChannel = "imessage" | "whatsapp" | "sms" | "auto";
+
 export interface DocIntent {
   isDocRequest: boolean;
   document: string; // the requested doc, e.g. "PAN card" ("" when not a request)
+  // Owner-direction only (empty / "auto" for inbound): who the owner wants the
+  // doc sent TO, and the channel they named. "auto" = unstated → this bridge.
+  contact: string;
+  channel: DocChannel;
 }
 
-const EMPTY: DocIntent = { isDocRequest: false, document: "" };
+const EMPTY: DocIntent = { isDocRequest: false, document: "", contact: "", channel: "auto" };
+
+// Mirror of the channel normalization in mac-actions.ts extractActionMarkers so
+// the marker path and this backstop resolve "via iMessage" / "on whatsapp"
+// identically. Anything unrecognized → "auto" (deliver on the current bridge).
+function normalizeChannel(v: unknown): DocChannel {
+  const c = typeof v === "string" ? v.trim().toLowerCase() : "";
+  if (c === "whatsapp" || c === "wa") return "whatsapp";
+  if (c === "imessage" || c === "message" || c === "imsg") return "imessage";
+  if (c === "sms" || c === "text") return "sms";
+  return "auto";
+}
 
 // COST GATE ONLY — not the decision. Broad on purpose: a false positive costs
 // one cheap classification call; a false negative is the silent non-delivery bug
@@ -67,17 +84,29 @@ export function buildDocIntentPrompt(
     direction === "inbound"
       ? `A contact just messaged ${ownerName}. Decide whether the contact is asking ${ownerName} to SEND them one of ${ownerName}'s own personal documents/files (an ID, card, passport, licence, certificate, receipt, statement, form, scan, photo of a document, etc.).`
       : `${ownerName} just messaged their own assistant. Decide whether ${ownerName} is asking the assistant to SEND one of ${ownerName}'s own personal documents/files to someone.`;
+  const shape =
+    direction === "owner"
+      ? `{"isDocRequest": true|false, "document": "<the document in 1-4 words, e.g. PAN card, passport, driver licence; empty string if not a doc request>", "contact": "<who to send it TO — the name or number exactly as ${ownerName} wrote it; empty string if no recipient named>", "channel": "imessage|whatsapp|sms|auto"}`
+      : `{"isDocRequest": true|false, "document": "<the document in 1-4 words, e.g. PAN card, passport, driver licence; empty string if not a doc request>"}`;
+  const ownerRules =
+    direction === "owner"
+      ? [
+          "- \"contact\" is who the document should be sent TO (never the owner). Copy the name/number as written; empty string if no recipient is named — and an owner send with no recipient is NOT actionable, so return isDocRequest=false.",
+          "- \"channel\" is the delivery channel the owner EXPLICITLY named (\"imessage\"/\"message\", \"whatsapp\", or \"sms\"/\"text\"). Use \"auto\" when they did not say which.",
+        ]
+      : [];
   return [
     who,
     "",
     "Reply with STRICT JSON only, no prose, no code fences:",
-    `{"isDocRequest": true|false, "document": "<the document in 1-4 words, e.g. PAN card, passport, driver licence; empty string if not a doc request>"}`,
+    shape,
     "",
     "Rules:",
     "- isDocRequest is TRUE only when the message is a request to DELIVER a document now.",
     "- FALSE when they are merely confirming receipt (\"did you get my pan card?\"), discussing a document without asking for it, or asking a question about it.",
     "- FALSE for anything that is not about sending/receiving a concrete personal document.",
     "- \"document\" must name WHICH document as specifically as the message allows; do not invent one.",
+    ...ownerRules,
     "- When unsure, return false. A wrong true sends the wrong sensitive file.",
     "",
     "Message:",
@@ -90,17 +119,29 @@ export function buildDocIntentPrompt(
  * ```fences```, or JSON embedded in prose. ANY failure → {isDocRequest:false} so
  * the backstop can never fire a wrong send.
  */
-export function parseDocIntent(raw: string | null | undefined): DocIntent {
+export function parseDocIntent(
+  raw: string | null | undefined,
+  direction: "inbound" | "owner" = "inbound",
+): DocIntent {
   if (!raw) return EMPTY;
   const m = raw.match(/\{[\s\S]*\}/); // first {...} block, spanning newlines
   if (!m) return EMPTY;
   try {
-    const o = JSON.parse(m[0]) as { isDocRequest?: unknown; document?: unknown };
+    const o = JSON.parse(m[0]) as {
+      isDocRequest?: unknown;
+      document?: unknown;
+      contact?: unknown;
+      channel?: unknown;
+    };
     const isDocRequest = o.isDocRequest === true;
     const document = typeof o.document === "string" ? o.document.trim() : "";
+    const contact = typeof o.contact === "string" ? o.contact.trim() : "";
+    const channel = normalizeChannel(o.channel);
     // A true with no document is unusable (nothing to search for) → fail safe.
-    if (isDocRequest && document) return { isDocRequest: true, document };
-    return EMPTY;
+    if (!isDocRequest || !document) return EMPTY;
+    // Owner-direction: a send with no recipient is unusable → fail safe.
+    if (direction === "owner" && !contact) return EMPTY;
+    return { isDocRequest: true, document, contact, channel };
   } catch {
     return EMPTY;
   }

@@ -16,6 +16,18 @@ test("verifyClaims: completed-action lies still rewritten to intent", () => {
   assert.match(verifyClaims("I added it to your calendar").text, /i'll add/i);
 });
 
+test("verifyClaims: doc-send lies rewritten to intent (the production incident)", () => {
+  // the exact failing phrasings — "your <doc>" evaded the old determiner/noun lists
+  assert.match(verifyClaims("done, I sent your passport to Chikka").text, /i'll send your passport to chikka/i);
+  assert.match(verifyClaims("here's your passport").text, /i'll send your passport over/i);
+  assert.match(verifyClaims("sharing your license now").text, /i'll get your license.* over to you/i);
+  // verbs the generic send-message pattern doesn't know
+  assert.match(verifyClaims("I shared your aadhaar with Manasa").text, /i'll send your aadhaar with manasa/i);
+  assert.match(verifyClaims("forwarded your PAN card to him").text, /i'll send your pan card to him/i);
+  // non-doc "your" phrasing still rewrites via send-message (no false pass)
+  assert.match(verifyClaims("I sent your message to the group").text, /i'll send your message/i);
+});
+
 test("verifyClaims: scheduled/confirmed honored when performed, rewritten otherwise", () => {
   assert.match(verifyClaims("I scheduled the meeting for Tuesday").text, /i'll schedule the meeting/i);
   assert.equal(

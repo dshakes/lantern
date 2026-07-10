@@ -23,34 +23,66 @@ test("parseDocIntent: accepts strict JSON", () => {
   assert.deepEqual(parseDocIntent('{"isDocRequest": true, "document": "PAN card"}'), {
     isDocRequest: true,
     document: "PAN card",
+    contact: "",
+    channel: "auto",
   });
 });
 
 test("parseDocIntent: tolerant of code fences and prose around the JSON", () => {
   const r = parseDocIntent('```json\n{"isDocRequest": true, "document": "passport"}\n```');
-  assert.deepEqual(r, { isDocRequest: true, document: "passport" });
+  assert.deepEqual(r, { isDocRequest: true, document: "passport", contact: "", channel: "auto" });
   const r2 = parseDocIntent('Sure — {"isDocRequest": false, "document": ""} hope that helps');
   assert.equal(r2.isDocRequest, false);
 });
 
 test("parseDocIntent: FAIL-SAFE — any junk/empty yields no relay (never a wrong send)", () => {
   for (const bad of [null, undefined, "", "not json", "{", "{bad}", "yes send it"]) {
-    assert.deepEqual(parseDocIntent(bad as string), { isDocRequest: false, document: "" });
+    assert.deepEqual(parseDocIntent(bad as string), {
+      isDocRequest: false,
+      document: "",
+      contact: "",
+      channel: "auto",
+    });
   }
 });
 
 test("parseDocIntent: FAIL-SAFE — true with no document is unusable → no relay", () => {
-  assert.deepEqual(parseDocIntent('{"isDocRequest": true, "document": ""}'), {
-    isDocRequest: false,
-    document: "",
-  });
-  assert.deepEqual(parseDocIntent('{"isDocRequest": true}'), { isDocRequest: false, document: "" });
+  assert.equal(parseDocIntent('{"isDocRequest": true, "document": ""}').isDocRequest, false);
+  assert.equal(parseDocIntent('{"isDocRequest": true}').isDocRequest, false);
+});
+
+test("parseDocIntent owner-direction: extracts contact + normalized channel", () => {
+  const r = parseDocIntent(
+    '{"isDocRequest": true, "document": "passport", "contact": "Chikka", "channel": "message"}',
+    "owner",
+  );
+  assert.deepEqual(r, { isDocRequest: true, document: "passport", contact: "Chikka", channel: "imessage" });
+  // channel aliases normalize like the marker parser
+  assert.equal(parseDocIntent('{"isDocRequest":true,"document":"pan","contact":"Sam","channel":"wa"}', "owner").channel, "whatsapp");
+  assert.equal(parseDocIntent('{"isDocRequest":true,"document":"pan","contact":"Sam","channel":"text"}', "owner").channel, "sms");
+  assert.equal(parseDocIntent('{"isDocRequest":true,"document":"pan","contact":"Sam"}', "owner").channel, "auto");
+});
+
+test("parseDocIntent owner-direction: FAIL-SAFE — no recipient → no send", () => {
+  // valid doc but no contact: unusable on the owner path (who would it go to?)
+  assert.equal(
+    parseDocIntent('{"isDocRequest": true, "document": "passport", "contact": ""}', "owner").isDocRequest,
+    false,
+  );
+  // inbound direction ignores contact (recipient is the messaging contact)
+  assert.equal(
+    parseDocIntent('{"isDocRequest": true, "document": "passport"}', "inbound").isDocRequest,
+    true,
+  );
 });
 
 test("buildDocIntentPrompt: distinguishes direction + demands strict JSON", () => {
   const inbound = buildDocIntentPrompt("send me ur pan", "Shekhar", "inbound");
   assert.match(inbound, /contact/i);
   assert.match(inbound, /STRICT JSON/);
-  const owner = buildDocIntentPrompt("send Manasa my pan", "Shekhar", "owner");
+  assert.doesNotMatch(inbound, /"channel"/); // inbound shape has no channel field
+  const owner = buildDocIntentPrompt("send Manasa my pan on imessage", "Shekhar", "owner");
   assert.match(owner, /assistant/i);
+  assert.match(owner, /"channel"/); // owner shape asks for recipient + channel
+  assert.match(owner, /send it TO/i);
 });
