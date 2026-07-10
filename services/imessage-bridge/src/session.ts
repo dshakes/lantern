@@ -263,6 +263,7 @@ import {
 } from "@lantern/bridge-core/escalation-detector";
 import { ownerTakeoverPauseMs } from "@lantern/bridge-core/owner-handoff";
 import { OutboundDedupe } from "@lantern/bridge-core/outbound-dedupe";
+import { VoiceProfileCache, isVoiceReasoningEnabled } from "@lantern/bridge-core/voice-profile";
 import {
   executeOutboundCall,
   synthesizeSpeech,
@@ -489,6 +490,8 @@ export class IMessageSession {
   private skillPath = "";
   private pendingSkillProposal: { spec: SkillSpec; at: number } | null = null;
   private ownerSentHistory: Map<string, string[]> = new Map();
+  // ponytail: null when flag is off; never allocates the cache or calls LLM.
+  private voiceProfileCache: VoiceProfileCache | null = null;
   // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
   // contacts, reaching past the bot-dominated recent rows). Unioned into
   // the per-contact buckets when building the persona voice block so even
@@ -989,6 +992,19 @@ export class IMessageSession {
     this.presence = new PresenceTracker({ logger: this.logger });
     this.episodicMemory = new EpisodicMemory({ logger: this.logger });
     this.socialGraph = new SocialGraph({ logger: this.logger });
+
+    // Phase 2 reasoned owner voice — flag-gated, default OFF.
+    // When on: creates the cache + warms from disk (background, non-blocking).
+    // When off: voiceProfileCache stays null, zero LLM calls, zero behavior change.
+    if (isVoiceReasoningEnabled()) {
+      this.voiceProfileCache = new VoiceProfileCache(
+        (prompt) =>
+          this.agent.respondTo("owner::voice-profile", prompt, undefined, { timeoutMs: 30_000 }),
+        OWNER_NAME,
+        { stateDir: this.stateDir },
+      );
+      void this.voiceProfileCache.warmFromDisk();
+    }
 
     // Screen-context provider — OPT-IN via LANTERN_SCREEN_OCR=on.
     // OCR fn directly calls the control-plane /v1/vision/ocr endpoint
@@ -6944,6 +6960,11 @@ export class IMessageSession {
     const teluguLikely =
       langHint.primary === "telugu" || langHint.hasNativeScript || langHint.hasRomanized;
     const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, teluguLikely, text);
+    // Phase 2 reasoned voice: getInstruction() returns the cached hint or
+    // null (never blocks). Null → voiceReasoningHint stays undefined →
+    // agentPersonaPrompt is byte-identical to the flag-off path.
+    const voiceReasoningHint =
+      this.voiceProfileCache?.getInstruction(this.ownerVoiceGlobal) ?? undefined;
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
@@ -7071,6 +7092,8 @@ export class IMessageSession {
       emotionalRegister: emotionalRegister?.register,
       contactStyleBlock,
       ownerVoiceBlock,
+      // Phase 2 reasoned voice profile. Undefined when flag off → no change.
+      voiceReasoningHint,
       dislikeBlock,
       // Global style lessons mined from the owner's 👎 history (learning
       // flywheel). Cached + refreshed on a schedule; applies to EVERY

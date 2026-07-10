@@ -204,6 +204,7 @@ import {
   type WaitingThread,
 } from "@lantern/bridge-core/attention";
 import type { BriefInput } from "@lantern/bridge-core/command-center";
+import { VoiceProfileCache, isVoiceReasoningEnabled } from "@lantern/bridge-core/voice-profile";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
 // based on this. Falls back to application/octet-stream for unknown.
@@ -1537,6 +1538,8 @@ export class WhatsAppSession {
   // the agent learns "my voice" from real history. Capped per-contact;
   // persisted with state so the buffer survives restarts.
   private ownerSentHistory: Map<string, string[]> = new Map();
+  // ponytail: null when flag is off; never allocates the cache or calls LLM.
+  private voiceProfileCache: VoiceProfileCache | null = null;
   // Raised from 10 → 30: frequent contacts need enough verbatim voice
   // samples for the persona few-shot to read as the owner, not a bot.
   // Still bounded per-contact so total memory stays small (≤30 short
@@ -1824,6 +1827,16 @@ export class WhatsAppSession {
       }
     }
     this.loadState();
+    // Phase 2 reasoned owner voice — flag-gated, default OFF.
+    if (isVoiceReasoningEnabled()) {
+      this.voiceProfileCache = new VoiceProfileCache(
+        (prompt) =>
+          this.agent.respondTo("owner::voice-profile", prompt, undefined, { timeoutMs: 30_000 }),
+        OWNER_NAME,
+        { stateDir: this.stateDir },
+      );
+      void this.voiceProfileCache.warmFromDisk();
+    }
     // Cold-start voice mining: loadState only restores owner samples
     // captured AFTER a prior boot, so on a fresh install (or a thin
     // buffer) the persona has no "my voice" exemplars. Back-fill each
@@ -8457,6 +8470,12 @@ export class WhatsAppSession {
     const teluguLikely =
       langHint.primary === "telugu" || langHint.hasNativeScript || langHint.hasRomanized;
     const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, teluguLikely, text);
+    // Phase 2 reasoned voice: synchronous cache lookup (never blocks).
+    // Null → voiceReasoningHint undefined → agentPersonaPrompt byte-identical.
+    const voiceReasoningHint =
+      this.voiceProfileCache?.getInstruction(
+        this.ownerVoiceGlobal.map((s) => s.text),
+      ) ?? undefined;
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
     const senderName = effectiveName;
@@ -8600,6 +8619,8 @@ export class WhatsAppSession {
         languageModality,
         contactStyleBlock,
         ownerVoiceBlock,
+        // Phase 2 reasoned voice profile. Undefined when flag off → no change.
+        voiceReasoningHint,
         dislikeBlock,
         presence: presenceLine,
         episodesBlock,

@@ -91,7 +91,8 @@
     "./time-travel": "./src/time-travel.ts",
     "./disclosure": "./src/disclosure.ts",
     "./known-people": "./src/known-people.ts",
-    "./gender": "./src/gender.ts"
+    "./gender": "./src/gender.ts",
+    "./voice-profile": "./src/voice-profile.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
