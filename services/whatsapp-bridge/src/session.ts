@@ -5806,7 +5806,10 @@ export class WhatsAppSession {
     // Ravi where I am" / "you can tell Ravi where I am again" → persist a
     // per-contact location-disclosure flag the contact-reply path consults.
     try {
-      const d = detectDisclosureDeny(text);
+      // When the intent router is ON, handleOwnerDocQuery's router seam owns
+      // disclosure-deny — skip the regex here so a single command doesn't double-
+      // ack (regex + router). OFF → runs exactly as before (byte-identical).
+      const d = intentRouterEnabled() ? null : detectDisclosureDeny(text);
       if (d) {
         const handle = await this.resolveTargetToHandle(d.target);
         if (handle && recordDisclosureDeny(handle, d.deny)) {
