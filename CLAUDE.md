@@ -610,12 +610,34 @@ so unattended workflows still complete.
 Diverted-then-approved steps additionally emit the normal `step_completed` after
 the human grants. Diverted-then-denied steps emit `step_failed`.
 
-**Current estimator:** `VerbalizationHeuristic` — scans prior step text outputs
-for LLM self-reported confidence patterns (e.g. "Confidence: 85%",
-"I am 70% confident", "Confidence: High"). Falls back to `DefaultConfidence=0.9`
-when no pattern is found. This is a HEURISTIC, not statistically calibrated. The
-`ConfidenceEstimator` interface in `internal/workflow/confidence.go` is the clean
-seam for a calibrated estimator (self-consistency, logit-based) in a later phase.
+**Estimators (`ConfidenceEstimator` in `internal/workflow/confidence.go`).** Two
+are wired; select with `LANTERN_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
+`Estimate(ctx, node, vars, sample Sampler) float64` + `Name() string`; the gate
+passes the tenant-scoped `Deps.CallLLM` as the `sample` (nil-safe — estimators
+degrade gracefully when no LLM is wired). See ADR 0021.
+
+- **`verbalization_heuristic`** (default) — scans prior step text for LLM
+  self-reported confidence ("Confidence: 85%", "70% confident"). Falls back to
+  `DefaultConfidence=0.9` when none found. A HEURISTIC, and note the failure
+  mode it encodes: **silence → 0.9 → auto-execute** (a model that hallucinates an
+  action also cheerfully writes "confidence: 95%" about it, and no self-report at
+  all clears the 0.75 bar). Kept as the default for backward-compatibility and as
+  every estimator's safe fallback.
+- **`self_consistency`** (`SelfConsistencyEstimator`) — scores confidence from the
+  model's INDEPENDENT agreement, not its self-report: it re-poses the pending
+  action to the model `N` times (`LANTERN_CONFIDENCE_SAMPLES`, default 5, clamped
+  [1,9]) as a fresh skeptical YES/NO judgment and returns the fraction voting
+  "execute". Consensus → high; a split vote → low → divert. A prior verbalized
+  self-doubt signal, if lower than the consensus, wins (`min`) — the model's own
+  caution can only lower confidence, never raise it. Fixes the silence→0.9
+  default (silence is actively probed). Falls back to the verbalization heuristic
+  when `sample` is nil, the action can't be described, or every sample fails — so
+  it is **always safe to enable**. This is grounded self-consistency, NOT yet
+  statistical calibration against realized false-execution rates (that needs the
+  outcome feedback loop — the Phase-1 "close the write-only loop" work).
+
+The `confidence_evaluated` journal event tags which estimator ran via
+`Estimator.Name()`.
 
 **Env vars (control-plane):**
 
@@ -623,9 +645,12 @@ seam for a calibrated estimator (self-consistency, logit-based) in a later phase
 |-----|---------|---------|
 | `LANTERN_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
 | `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
+| `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
+| `LANTERN_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
 
-Rollout: enable on non-production agents first → inspect `confidence_evaluated`
-events in the run waterfall → tune threshold → then enable on production traffic.
+Rollout: enable the gate on non-production agents first → inspect
+`confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
+→ turn on `self-consistency` and tune `SAMPLES`/threshold → then production.
 
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 

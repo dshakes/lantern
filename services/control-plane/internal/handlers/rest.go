@@ -2584,6 +2584,9 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 //
 //	LANTERN_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
 //	LANTERN_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
+//	LANTERN_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
+//	                                  (default: verbalization — backward-compatible)
+//	LANTERN_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
 func buildConfidenceGate() *workflow.ConfidenceGate {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE"))) {
 	case "1", "true", "on", "yes":
@@ -2597,10 +2600,25 @@ func buildConfidenceGate() *workflow.ConfidenceGate {
 			threshold = f
 		}
 	}
-	return &workflow.ConfidenceGate{
-		Estimator: workflow.VerbalizationHeuristic{DefaultConfidence: 0.9},
-		Threshold: threshold,
+
+	// Verbalization heuristic is the default estimator (unchanged behavior).
+	// Self-consistency polls the model for independent agreement instead of
+	// scraping its self-reported number; it falls back to the heuristic when no
+	// LLM sampler is available, so it is always safe to enable.
+	var est workflow.ConfidenceEstimator = workflow.VerbalizationHeuristic{DefaultConfidence: 0.9}
+	if e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_ESTIMATOR"))); e == "self-consistency" || e == "self_consistency" || e == "sampling" {
+		samples := 5
+		if s := strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_SAMPLES")); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 9 {
+				samples = n
+			}
+		}
+		est = workflow.SelfConsistencyEstimator{
+			Samples:  samples,
+			Fallback: workflow.VerbalizationHeuristic{DefaultConfidence: 0.9},
+		}
 	}
+	return &workflow.ConfidenceGate{Estimator: est, Threshold: threshold}
 }
 
 func runToMap(r *lanternv1.Run) map[string]any {

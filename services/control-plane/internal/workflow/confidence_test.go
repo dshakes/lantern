@@ -101,7 +101,7 @@ func TestParseVerbalized_NoMatch(t *testing.T) {
 
 func TestVerbalizationHeuristic_DefaultWhenNoSteps(t *testing.T) {
 	h := VerbalizationHeuristic{DefaultConfidence: 0.8}
-	score := h.Estimate(context.Background(), Node{}, map[string]any{})
+	score := h.Estimate(context.Background(), Node{}, map[string]any{}, nil)
 	if score != 0.8 {
 		t.Errorf("got %.2f, want 0.80", score)
 	}
@@ -111,7 +111,7 @@ func TestVerbalizationHeuristic_DefaultFallbackIs09(t *testing.T) {
 	h := VerbalizationHeuristic{} // zero value → default 0.9
 	score := h.Estimate(context.Background(), Node{}, map[string]any{
 		"steps": map[string]any{},
-	})
+	}, nil)
 	if score != 0.9 {
 		t.Errorf("got %.2f, want 0.90", score)
 	}
@@ -124,7 +124,7 @@ func TestVerbalizationHeuristic_ParsesFromPriorStep(t *testing.T) {
 			"plan": "I have planned the action. Confidence: 65%",
 		},
 	}
-	score := h.Estimate(context.Background(), Node{}, vars)
+	score := h.Estimate(context.Background(), Node{}, vars, nil)
 	if score != 0.65 {
 		t.Errorf("got %.2f, want 0.65", score)
 	}
@@ -138,7 +138,7 @@ func TestVerbalizationHeuristic_NonStringStepSkipped(t *testing.T) {
 			"conn": map[string]any{"ok": true},
 		},
 	}
-	score := h.Estimate(context.Background(), Node{}, vars)
+	score := h.Estimate(context.Background(), Node{}, vars, nil)
 	if score != 0.7 {
 		t.Errorf("got %.2f, want 0.70 (default)", score)
 	}
@@ -615,6 +615,133 @@ func TestConfidenceGate_VerbalizationFromPriorStep(t *testing.T) {
 // same score, regardless of node or vars.
 type fixedEstimator float64
 
-func (f fixedEstimator) Estimate(_ context.Context, _ Node, _ map[string]any) float64 {
+func (f fixedEstimator) Name() string { return "fixed" }
+func (f fixedEstimator) Estimate(_ context.Context, _ Node, _ map[string]any, _ Sampler) float64 {
 	return float64(f)
+}
+
+// ---- SelfConsistencyEstimator unit tests ----
+
+// mockSampler returns a fixed reply for every call and counts invocations.
+type mockSampler struct {
+	reply   string
+	err     error
+	calls   int
+	replies []string // if set, returns replies[i%len] per call (round-robin votes)
+}
+
+func (m *mockSampler) fn() Sampler {
+	return func(_ context.Context, _ string, _ string) (string, error) {
+		i := m.calls
+		m.calls++
+		if m.err != nil {
+			return "", m.err
+		}
+		if len(m.replies) > 0 {
+			return m.replies[i%len(m.replies)], nil
+		}
+		return m.reply, nil
+	}
+}
+
+func toolNode() Node {
+	return Node{ID: "n", Type: "tool", Data: map[string]any{"tool": "email.send", "args": map[string]any{"to": "x@y.com"}}}
+}
+
+func TestSelfConsistency_ConsensusYes_HighScore(t *testing.T) {
+	m := &mockSampler{reply: "YES — well specified and safe."}
+	est := SelfConsistencyEstimator{Samples: 5}
+	score := est.Estimate(context.Background(), toolNode(), map[string]any{}, m.fn())
+	if score != 1.0 {
+		t.Errorf("unanimous YES: got %.2f, want 1.0", score)
+	}
+	if m.calls != 5 {
+		t.Errorf("expected 5 samples, got %d", m.calls)
+	}
+}
+
+func TestSelfConsistency_SplitVote_LowScore(t *testing.T) {
+	// 2 YES, 2 NO over 4 usable samples → 0.5 (would divert at 0.75).
+	m := &mockSampler{replies: []string{"YES do it", "NO too risky", "yes", "no"}}
+	est := SelfConsistencyEstimator{Samples: 4}
+	score := est.Estimate(context.Background(), toolNode(), map[string]any{}, m.fn())
+	if score != 0.5 {
+		t.Errorf("split vote: got %.2f, want 0.50", score)
+	}
+}
+
+func TestSelfConsistency_NilSampler_FallsBack(t *testing.T) {
+	// No sampler → must fall back to the verbalization heuristic (default 0.9).
+	est := SelfConsistencyEstimator{Samples: 5, Fallback: VerbalizationHeuristic{DefaultConfidence: 0.9}}
+	score := est.Estimate(context.Background(), toolNode(), map[string]any{}, nil)
+	if score != 0.9 {
+		t.Errorf("nil sampler fallback: got %.2f, want 0.90", score)
+	}
+}
+
+func TestSelfConsistency_UndescribableAction_FallsBack(t *testing.T) {
+	// A node with no describable action → fall back rather than judge nothing.
+	m := &mockSampler{reply: "YES"}
+	est := SelfConsistencyEstimator{Samples: 5, Fallback: VerbalizationHeuristic{DefaultConfidence: 0.8}}
+	score := est.Estimate(context.Background(), Node{ID: "n", Type: "tool", Data: map[string]any{}}, map[string]any{}, m.fn())
+	if score != 0.8 {
+		t.Errorf("undescribable action: got %.2f, want 0.80 (fallback)", score)
+	}
+	if m.calls != 0 {
+		t.Errorf("must not sample an undescribable action, got %d calls", m.calls)
+	}
+}
+
+func TestSelfConsistency_AllSamplesFail_FallsBack(t *testing.T) {
+	m := &mockSampler{err: context.DeadlineExceeded}
+	est := SelfConsistencyEstimator{Samples: 3, Fallback: VerbalizationHeuristic{DefaultConfidence: 0.7}}
+	score := est.Estimate(context.Background(), toolNode(), map[string]any{}, m.fn())
+	if score != 0.7 {
+		t.Errorf("all samples failed: got %.2f, want 0.70 (fallback)", score)
+	}
+}
+
+func TestSelfConsistency_VerbalizedDoubtLowersConsensus(t *testing.T) {
+	// Unanimous YES (1.0) but a prior step verbalized 30% → the model's own
+	// doubt wins (min), so the step still diverts.
+	m := &mockSampler{reply: "YES"}
+	est := SelfConsistencyEstimator{Samples: 3}
+	vars := map[string]any{"steps": map[string]any{"plan": "risky. Confidence: 30%"}}
+	score := est.Estimate(context.Background(), toolNode(), vars, m.fn())
+	if score != 0.30 {
+		t.Errorf("verbalized doubt should lower consensus: got %.2f, want 0.30", score)
+	}
+}
+
+func TestParseYesNo(t *testing.T) {
+	cases := []struct {
+		in   string
+		vote bool
+		ok   bool
+	}{
+		{"YES, safe.", true, true},
+		{"no — premature", false, true},
+		{"  **Yes**", true, true},
+		{"\"NO\"", false, true},
+		{"maybe, unclear", false, false},
+		{"", false, false},
+	}
+	for _, c := range cases {
+		vote, ok := parseYesNo(c.in)
+		if ok != c.ok || (ok && vote != c.vote) {
+			t.Errorf("parseYesNo(%q): got (%v,%v), want (%v,%v)", c.in, vote, ok, c.vote, c.ok)
+		}
+	}
+}
+
+func TestDescribeAction(t *testing.T) {
+	if got := describeAction(Node{Type: "tool", Data: map[string]any{"tool": "fs.write"}}); !strings.Contains(got, "fs.write") {
+		t.Errorf("tool: got %q", got)
+	}
+	if got := describeAction(Node{Type: "connector", Data: map[string]any{"connector": "slack", "action": "post"}}); !strings.Contains(got, "slack") || !strings.Contains(got, "post") {
+		t.Errorf("connector: got %q", got)
+	}
+	if got := describeAction(Node{Type: "tool", Data: map[string]any{}}); got != "" {
+		t.Errorf("empty tool: want \"\", got %q", got)
+	}
 }
