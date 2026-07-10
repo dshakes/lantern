@@ -1163,8 +1163,13 @@ When the owner taps 👎 on a bot reply:
 3. Graduated lessons are written as `## Style lessons (managed)` bullets in
    `owner-profile.md` and injected into EVERY future reply prompt — the bot
    improves globally, not just for the one contact.
-4. Optional LLM clustering pass for fuzzy patterns: enabled by
-   `LANTERN_DISLIKE_LLM_CLUSTER=1` (requires a wired `llmCall`; off by default).
+4. LLM clustering pass for fuzzy/novel patterns the regexes miss: **on by
+   default** (both bridges wire the `llmCall`); opt out with
+   `LANTERN_DISLIKE_LLM_CLUSTER=0`. Fail-safe (any LLM/parse error →
+   deterministic lessons only) and an LLM cluster can only ADD or RAISE a lesson
+   through the same minSupport/graduation guards, never clobber a higher-support
+   deterministic one. Uses a throwaway `owner::dislike-cluster::<ts>` session key
+   per run (no history accumulation, never a contact's session).
 
 Per-contact dislike memory (the raw JSONL entries) is also surfaced back into
 that contact's specific prompt so the LLM knows what shapes were already
@@ -1386,7 +1391,7 @@ Privacy posture (HARD rules):
 | `LANTERN_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
 | `LANTERN_LIVE_WATCH`                  | Set to `0`/`off` to disable live watches (default on) — LLM-detected follow-ups on live public situations a contact mentioned (flight in the air, game, outage): re-checked via `web_search` every 15–120 min, resolved with one short follow-up text ("just saw he landed"). One active watch per contact, ≤8 total, ≤12h, killswitch/mute/quiet-hours aware. State: `<stateDir>/live-watches.jsonl` (0600). |
 | `LANTERN_DRAFT_CONFIRM`               | Set to `0` or `off` to disable draft-and-confirm for LOW-confidence replies (reverts to 5s hold → auto-send). Default on.                                                                        |
-| `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `1` to enable the optional LLM fuzzy-clustering pass in the 👎 flywheel consolidation. Default off (deterministic-only pass always runs).                                                 |
+| `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `0` to DISABLE the LLM fuzzy-clustering pass in the 👎 flywheel (the novel-preference learner). Default ON; fail-safe (deterministic pass always runs). Both bridges wire the `llmCall`. |
 | `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
 | `LANTERN_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
 | `LANTERN_TWILIO_NUMBER` / `LANTERN_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
