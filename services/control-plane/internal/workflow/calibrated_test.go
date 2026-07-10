@@ -68,6 +68,12 @@ func TestCalibratedEstimator_Math(t *testing.T) {
 			// 0.0 * 0.2 = 0.0
 			wantLow: 0.0, wantHigh: 0.0,
 		},
+		{
+			name:    "out-of-range base clamps to ceiling 1.0",
+			base:    1.2, // a misbehaving base > 1
+			regret:  0.1, // 1.2 * 0.9 = 1.08 → clamped to 1.0
+			wantLow: 1.0, wantHigh: 1.0,
+		},
 	}
 
 	for _, tc := range cases {
