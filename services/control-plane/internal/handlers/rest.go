@@ -1936,7 +1936,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		// Confidence gate: when LANTERN_CONFIDENCE_GATE is set, evaluate
 		// heuristic confidence for side-effecting nodes before executing them.
 		// Nil by default so the feature is completely opt-in per deployment.
-		ConfidenceGate: buildConfidenceGate(),
+		ConfidenceGate: h.buildConfidenceGate(tenantID, agentName),
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)
@@ -2587,7 +2587,13 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 //	LANTERN_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
 //	                                  (default: verbalization — backward-compatible)
 //	LANTERN_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
-func buildConfidenceGate() *workflow.ConfidenceGate {
+//	LANTERN_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
+//	                                  this (agent, node_type)'s realized regret
+//	                                  rate (default: off — see ADR 0021, Phase 1)
+//
+// A method (not a free function) because calibration needs the tenant pool +
+// agent name to build the per-step regret lookup closure.
+func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.ConfidenceGate {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE"))) {
 	case "1", "true", "on", "yes":
 		// enabled — fall through
@@ -2616,6 +2622,16 @@ func buildConfidenceGate() *workflow.ConfidenceGate {
 		est = workflow.SelfConsistencyEstimator{
 			Samples:  samples,
 			Fallback: workflow.VerbalizationHeuristic{DefaultConfidence: 0.9},
+		}
+	}
+
+	// Outcome calibration (opt-in): wrap the selected estimator so this
+	// (agent, node_type)'s realized regret rate lowers the score. Fail-safe —
+	// with no outcome data the lookup returns 0 and the base score is unchanged.
+	if confidenceCalibrateEnabled() {
+		est = workflow.CalibratedEstimator{
+			Base:   est,
+			Regret: newRegretLookup(h.srv.TenantPool(), tenantID, agentName, h.logger()),
 		}
 	}
 	return &workflow.ConfidenceGate{Estimator: est, Threshold: threshold}

@@ -632,9 +632,20 @@ degrade gracefully when no LLM is wired). See ADR 0021.
   caution can only lower confidence, never raise it. Fixes the silence→0.9
   default (silence is actively probed). Falls back to the verbalization heuristic
   when `sample` is nil, the action can't be described, or every sample fails — so
-  it is **always safe to enable**. This is grounded self-consistency, NOT yet
-  statistical calibration against realized false-execution rates (that needs the
-  outcome feedback loop — the Phase-1 "close the write-only loop" work).
+  it is **always safe to enable**. Grounded self-consistency; the outcome
+  calibration below turns it into statistical calibration.
+
+**Outcome calibration (`CalibratedEstimator`, opt-in `LANTERN_CONFIDENCE_CALIBRATE`).**
+Wraps whichever base estimator is selected and lowers its score by this
+`(agent, node_type)`'s realized **regret rate** — the fraction of auto-executed
+steps of that type later thumbs-downed (`run_feedback.score <= 2`) or ended in a
+`failed` run. `adjusted = base × (1 − regret)`, clamped `[0,1]`; calibration can
+only LOWER a score, never raise it. This **closes the write-only outcome loop**
+for gating (ADR 0021, Phase 1): action types that have burned the owner get
+gated harder over time. The regret query is tenant-scoped (`db.WithTenantConn`,
+RLS-safe), 5-min cached, min-3-sample guarded, and **fail-safe** (any error / no
+data → regret 0 → base unchanged). Wiring: `internal/handlers/confidence_calibration.go`;
+wrapper `workflow.CalibratedEstimator` (`Name()` → `calibrated(self_consistency)`).
 
 The `confidence_evaluated` journal event tags which estimator ran via
 `Estimator.Name()`.
@@ -647,6 +658,7 @@ The `confidence_evaluated` journal event tags which estimator ran via
 | `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
 | `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
 | `LANTERN_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
+| `LANTERN_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
 
 Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall

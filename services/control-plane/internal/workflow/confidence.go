@@ -354,6 +354,54 @@ func parseYesNo(s string) (bool, bool) {
 	return false, false
 }
 
+// RegretLookup returns the historical regret rate [0, 1] for the given node
+// type in the current agent+tenant context. It returns 0 when no data is
+// available (fail-safe: no calibration is applied). Agent name and tenant
+// scope are captured in the closure at construction time in the handlers layer;
+// the nodeType argument is the only dynamic input per gated step.
+type RegretLookup func(ctx context.Context, nodeType string) float64
+
+// CalibratedEstimator wraps a base ConfidenceEstimator and lowers the returned
+// score proportional to the historical regret rate for this (agent, node_type)
+// — the fraction of auto-executed steps of this type that were later
+// thumbs-downed or ended in a failed run. This closes the write-only outcome
+// loop for confidence gating (ADR 0021, Phase 1): action types that have burned
+// the owner get gated harder over time, turning Phase 0's grounded
+// self-consistency into outcome-calibrated confidence.
+//
+// Calibration formula: adjusted = base × (1 − regretRate), clamped to [0, 1].
+// Calibration can ONLY LOWER the score, never raise it. When Regret is nil or
+// returns ≤ 0, the base score passes through unchanged (fail-safe).
+type CalibratedEstimator struct {
+	Base   ConfidenceEstimator
+	Regret RegretLookup
+}
+
+// Name reports the wrapped estimator, e.g. "calibrated(self_consistency)".
+func (c CalibratedEstimator) Name() string {
+	return "calibrated(" + c.Base.Name() + ")"
+}
+
+// Estimate applies calibration on top of the base estimator's score.
+// adjusted = base × (1 − regretRate), clamped to [0, 1]. Calibration is skipped
+// (base returned unchanged) when Regret is nil or returns ≤ 0 — fail-safe when
+// outcome data is absent. The sampler is threaded through to the base estimator.
+func (c CalibratedEstimator) Estimate(ctx context.Context, node Node, vars map[string]any, sample Sampler) float64 {
+	base := c.Base.Estimate(ctx, node, vars, sample)
+	if c.Regret == nil {
+		return base
+	}
+	regret := c.Regret(ctx, node.Type)
+	if regret <= 0 {
+		return base // no data or zero regret → unchanged
+	}
+	adjusted := base * (1 - regret)
+	if adjusted < 0 {
+		adjusted = 0
+	}
+	return adjusted
+}
+
 // isConfidenceGated reports whether a node participates in the confidence
 // gate when deps.ConfidenceGate is non-nil.
 //

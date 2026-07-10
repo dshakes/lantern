@@ -106,3 +106,17 @@ action description + prior step context; no secret material (invariant #10).
 - **Logit/entropy-based confidence.** Stronger in principle but needs token
   logprobs the model-router path doesn't surface uniformly across providers.
   Deferred; the interface accommodates it later.
+
+## Update — Phase 1 (outcome calibration) implemented
+
+The "close the write-only feedback loop" work named above is now shipped:
+`CalibratedEstimator` (`internal/workflow/confidence.go`) wraps any base
+estimator and lowers its score by the realized **regret rate** for this
+`(agent, node_type)` — the fraction of auto-executed steps later thumbs-downed
+(`run_feedback.score <= 2`) or ended in a `failed` run — via
+`adjusted = base × (1 − regret)`, clamped `[0,1]`, never raising. The regret
+lookup (`internal/handlers/confidence_calibration.go`) is tenant-scoped
+(`db.WithTenantConn`, RLS-safe), 5-min cached, min-3-sample guarded, and
+fail-safe (no data / any error → regret 0 → base unchanged). Opt-in via
+`LANTERN_CONFIDENCE_CALIBRATE`; default OFF. This makes the self-consistency
+signal *outcome-calibrated* rather than merely grounded.
