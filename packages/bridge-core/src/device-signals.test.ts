@@ -24,6 +24,7 @@ import {
   presenceFromSignals,
   latestKnownLocation,
   formatOwnerLocationBlock,
+  formatOwnerSelfLocationBlock,
   isInnerCircle,
   type DeviceSignal,
 } from "./device-signals.ts";
@@ -521,4 +522,29 @@ test("formatOwnerLocationBlock: truth when shareable+known; honest-unknown when 
   assert.match(deflect, /do NOT disclose/i);
   assert.doesNotMatch(deflect, /at home/); // must not leak the place
   assert.match(deflect, /NEVER invent/i);
+});
+
+test("formatOwnerSelfLocationBlock: grounds owner where-am-i on the real signal; forbids time/home-city guessing; honest-unknown with no signal", () => {
+  // real place → state it, marked authoritative, with the no-guess guard
+  const atOffice = formatOwnerSelfLocationBlock({ place: "the office", inTransit: false, ageMin: 12 }, "Shekhar");
+  assert.match(atOffice, /at the office/);
+  assert.match(atOffice, /TRUE/);
+  assert.match(atOffice, /trust it over any place mentioned elsewhere/i); // beats the stale app-usage summary
+  assert.match(atOffice, /NEVER infer a place/i);
+  // THE PRODUCTION BUG: a "left home" signal resolves to place:"out" (via
+  // latestKnownLocation) → must read as "out — not home", never roundable to home.
+  const out = formatOwnerSelfLocationBlock(
+    latestKnownLocation([sig("device", 48, { detail: "left home" })], { nowMs: NOW }),
+    "Shekhar",
+  );
+  assert.match(out, /out — not home/);
+  assert.match(out, /probably home/i); // the block names the failure to avoid
+  // driving → in transit
+  const driving = formatOwnerSelfLocationBlock({ place: "on the road", inTransit: true, ageMin: 3 }, "Shekhar");
+  assert.match(driving, /on the road \(driving\)/);
+  // no signal → honest unknown, never a guess
+  const unknown = formatOwnerSelfLocationBlock(null, "Shekhar");
+  assert.match(unknown, /UNKNOWN/);
+  assert.match(unknown, /don't know where you are/i);
+  assert.match(unknown, /NEVER infer a place/i);
 });

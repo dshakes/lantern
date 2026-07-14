@@ -19,7 +19,7 @@ import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/br
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
-import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, formatOwnerSelfLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
 import { addReminder as addRecurringReminder } from "@lantern/bridge-core/recurring";
@@ -6243,6 +6243,25 @@ export class WhatsAppSession {
       iphoneTs: this.latestSignalTs(),
     }).catch(() => null);
     const presenceLine = selfPresence?.line ? `Right now you are: ${selfPresence.line}.` : "";
+    // Owner whereabouts ground-truth — the self-chat twin of the contact path's
+    // anti-fabrication guard (parity with iMessage), for the owner asking HIMSELF
+    // "where am I". Without it the LLM guessed "presumably home" from the
+    // profile's home city + time of day even when the phone had posted "left
+    // home". latestKnownLocation derives the real place (a left-home signal →
+    // "out", overriding a stale geofence); the block hard-forbids inferring a
+    // place from time/weekday/home-city and marks itself authoritative over the
+    // app-usage summary. Cheap local read; same env gate as the contact path;
+    // fails closed.
+    let ownerLocationBlock = "";
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
+      try {
+        const f = join(homedir(), ".lantern", "device-signals.jsonl");
+        const known = existsSync(f)
+          ? latestKnownLocation(parseSignals(readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-500)))
+          : null;
+        ownerLocationBlock = formatOwnerSelfLocationBlock(known, ownerName);
+      } catch { /* fail-closed: no block */ }
+    }
     // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
     // Raju" → inject that contact's real recent messages so the answer comes
     // from the actual thread, not a punted/fabricated tool call.
@@ -6258,6 +6277,7 @@ export class WhatsAppSession {
       `Today is ${today}.`,
       nowLine,
       presenceLine,
+      ownerLocationBlock ? `\n${ownerLocationBlock}` : "",
       ``,
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
