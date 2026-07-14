@@ -526,6 +526,50 @@ export function formatOwnerLocationBlock(
   );
 }
 
+/**
+ * Owner-facing whereabouts ground-truth, injected into the owner's OWN self-chat
+ * (handleOwnerDocQuery) so an owner asking "where am I / am I home / did I leave
+ * yet" is answered from the REAL iPhone signal, never guessed. This is the
+ * self-chat twin of formatOwnerLocationBlock (which is contact-facing and gated
+ * by disclosure); here there is no disclosure gate — it is the owner asking
+ * about himself — so the only jobs are (a) grounding on the newest signal and
+ * (b) a hard no-guess rule. `known` is computed by latestKnownLocation, which
+ * consumes a "left home" device signal to override a stale geofence, so `out`
+ * beats an older `at home`. The block forbids inferring a place from the time of
+ * day, the weekday, or the profile's home city — the exact "presumably home"
+ * failure — and marks itself authoritative over any stale place phrase elsewhere
+ * in the prompt (e.g. the 2h app-usage summary). `known` null → honest unknown.
+ */
+export function formatOwnerSelfLocationBlock(
+  known: KnownLocation | null,
+  ownerName: string,
+): string {
+  const NO_GUESS =
+    `When asked where you are (or when you ask yourself), answer ONLY from the phone signal above. ` +
+    `NEVER infer a place from the time of day, the day of week, or ${ownerName}'s home city/profile — ` +
+    `saying "probably home" or "presumably at home" when the last signal shows you LEFT is exactly the failure to avoid. ` +
+    `No fresh signal → say plainly you're not sure where you are right now; never invent a place.`;
+  if (known) {
+    const where = known.inTransit
+      ? "on the road (driving)"
+      : known.place === "out"
+        ? "out — not home (exact spot unknown)"
+        : `at ${known.place}`;
+    const age = known.ageMin <= 1 ? "just now" : `${known.ageMin} min ago`;
+    return (
+      `## Where you are right now — from your phone (TRUE)\n` +
+      `Latest location signal (${age}): you're ${where}. This is your most current ` +
+      `whereabouts — trust it over any place mentioned elsewhere in this prompt (e.g. your app-usage summary).\n` +
+      NO_GUESS
+    );
+  }
+  return (
+    `## Where you are right now — UNKNOWN\n` +
+    `You have NO recent location signal, so you genuinely don't know where you are right now. ` +
+    NO_GUESS
+  );
+}
+
 interface BuildLineInput {
   topApps: AppCount[];
   windowMs: number;

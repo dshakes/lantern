@@ -288,7 +288,7 @@ import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
-import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/device-signals";
+import { isInnerCircle, formatOwnerLocationBlock, formatOwnerSelfLocationBlock } from "@lantern/bridge-core/device-signals";
 import { readKnownLocation } from "./device-signals-reader.js";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
@@ -9821,6 +9821,20 @@ export class IMessageSession {
       iphone: await this.contactIphonePresence(),
     }).catch(() => null);
     const presenceLine = presenceSnap?.line ? `Right now you are: ${presenceSnap.line}.` : "";
+    // Owner whereabouts ground-truth — the self-chat twin of the contact path's
+    // anti-fabrication guard, for the owner asking HIMSELF "where am I". Without
+    // it the LLM guessed "presumably home" from the profile's home city + time of
+    // day even when the phone had posted "left home". readKnownLocation derives
+    // the real place (a left-home signal → "out", overriding a stale geofence);
+    // the block hard-forbids inferring a place from time/weekday/home-city and
+    // marks itself authoritative over the (2h-window) app-usage summary. Cheap
+    // local read; gated by the same env as the contact path; fails closed.
+    let ownerLocationBlock = "";
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
+      try {
+        ownerLocationBlock = formatOwnerSelfLocationBlock(readKnownLocation(this.logger), ownerName);
+      } catch { /* fail-closed: no block */ }
+    }
     // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
     // Raju" → inject that contact's real recent messages so the answer comes
     // from the actual thread, not a punted/fabricated tool call.
@@ -9841,6 +9855,7 @@ export class IMessageSession {
       `Today is ${today}.`,
       nowLine,
       presenceLine,
+      ownerLocationBlock ? `\n${ownerLocationBlock}` : "",
       "",
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       ownerFactsBlock ? `\n${ownerFactsBlock}` : "",
