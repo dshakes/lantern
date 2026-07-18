@@ -39,6 +39,7 @@ import {
   detectBotTells,
   detectEscalation,
   formatNowContext,
+  formatTranscriptWithGaps,
   greetingReply,
   inferStyle,
   isNoReplySentinel,
@@ -8830,14 +8831,15 @@ export class IMessageSession {
     try {
       const msgs = this.db.recentMessages(chatRowid, 10);
       if (msgs.length === 0) return "";
-      // Drop the very last line if it's the inbound we're replying to —
-      // it's already the "current message"; keeping it is harmless but
-      // the prompt reads cleaner ending on prior context. We keep it
-      // anyway since chat.db ordering vs the in-flight row can race; the
-      // model handles a duplicated last line fine.
-      return msgs
-        .map((m) => `${m.fromMe ? "you" : "them"}: ${m.text.replace(/\s+/g, " ").slice(0, 240)}`)
-        .join("\n");
+      // Gap-aware: a long silence between two of these messages means the
+      // earlier one is a PREVIOUS conversation, not the live one. Without this
+      // a dormant thread surfaces months-old context (e.g. a family-name list)
+      // as the last "you:" line and the model regurgitates it in reply to an
+      // unrelated fresh message. formatTranscriptWithGaps inserts an
+      // "──── earlier conversation ────" divider the persona label treats as
+      // stale background. (The last line is the current inbound — kept; chat.db
+      // ordering vs the in-flight row can race, and a duplicated tail is fine.)
+      return formatTranscriptWithGaps(msgs);
     } catch {
       return "";
     }
