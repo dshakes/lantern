@@ -38,6 +38,8 @@ const BOT_SELF_PREFIXES: string[] = [
   "🪙 no monitored groups",
   "📡 watching:",            // live-watch registered (owner transparency ping)
   "📡 followed up with",     // live-watch resolved — follow-up recap
+  "🌅",                      // morning brief / "🌅 today's AI radar" digest header
+  "⚠️ paused auto-replies",  // self-chat circuit-breaker notice (loop guard)
 
   // ── Action confirmations ──
   "📅 added to calendar",

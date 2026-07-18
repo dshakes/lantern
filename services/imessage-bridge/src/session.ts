@@ -112,6 +112,51 @@ export function isBotSelfOrEcho(
   return isOwnBridgeSend(t) || isBotSelfMessage(t);
 }
 
+// Does `incoming` match something the bridge recently sent? Beyond exact
+// (normalized) equality, a sufficiently-long fragment that is a contiguous
+// substring of a recent send ALSO matches. Why: a long self-chat reply sent
+// over SMS Text Message Forwarding is SEGMENTED into several chat.db rows, each
+// a piece that fails full-message equality and would otherwise be re-ingested
+// as a fresh owner query — the self-echo loop that flooded the owner's
+// self-chat (678 rows / 109 LLM runs in an hour). The `fragMinLen` floor keeps
+// a genuine short owner message from being swallowed; false-positive here is
+// safe (owner re-sends), a false-negative is the catastrophe. `recentSends`
+// must be oldest→newest so the TTL break is correct. Pure; exported for tests.
+export function matchesRecentSend(
+  incoming: string,
+  recentSends: ReadonlyArray<{ text: string; ts: number }>,
+  opts: { now: number; ttlMs: number; fragMinLen?: number },
+): boolean {
+  const norm = normalizeForDedup(incoming);
+  if (!norm) return false;
+  const fragMin = opts.fragMinLen ?? 24;
+  for (let i = recentSends.length - 1; i >= 0; i--) {
+    const e = recentSends[i];
+    if (opts.now - e.ts > opts.ttlMs) break; // older entries are all stale
+    const en = normalizeForDedup(e.text);
+    if (en === norm) return true;
+    if (norm.length >= fragMin && en.length > norm.length && en.includes(norm)) return true;
+  }
+  return false;
+}
+
+// Sliding-window rate limit for owner self-chat replies — the hard circuit
+// breaker behind the echo guard. Given recorded reply timestamps and `now`,
+// returns whether this attempt should TRIP (be skipped because the window is
+// already at capacity) plus the pruned/updated timestamp list to store back.
+// A self-echo loop can never run away past `max` replies per `windowMs`
+// regardless of any echo-guard miss. Self-heals as timestamps age out. Pure;
+// exported for tests.
+export function selfChatBreakerDecision(
+  times: ReadonlyArray<number>,
+  now: number,
+  opts: { windowMs: number; max: number },
+): { tripped: boolean; times: number[] } {
+  const kept = times.filter((t) => now - t < opts.windowMs);
+  if (kept.length >= opts.max) return { tripped: true, times: kept };
+  return { tripped: false, times: [...kept, now] };
+}
+
 // Reliable iMessage group detection.
 //
 // The old heuristic — `chatDisplayName !== "" || handle === ""` — broke
@@ -501,6 +546,26 @@ export class IMessageSession {
   // authentic samples. Seeded once at boot; bot-self lines filtered out.
   private ownerVoiceGlobal: string[] = [];
   private contactNames: Map<string, string> = new Map(); // handle -> display name
+
+  // ── Self-chat circuit breaker (self-echo loop guard) ──────────────────────
+  // In self-chat every row is is_from_me, so the echo guard is the ONLY thing
+  // separating the owner's messages from the bot's own. When that guard misses
+  // (e.g. a long reply SMS-segmented by Text Message Forwarding), the bot
+  // re-ingests its own message as a fresh query and replies to itself — the
+  // runaway that flooded the owner (678 rows / 109 LLM runs in an hour, all
+  // self-chat, zero contact sends). This hard cap makes ANY such loop
+  // self-limiting: past SELFCHAT_MAX_REPLIES in SELFCHAT_WINDOW_MS we stop
+  // auto-replying to self-chat until the window drains. See selfChatBreakerDecision.
+  private selfChatReplyTimes: number[] = [];
+  private selfChatBreakerNotifiedAt = 0;
+  private static readonly SELFCHAT_WINDOW_MS =
+    Number(process.env.LANTERN_SELFCHAT_WINDOW_MS) > 0
+      ? Number(process.env.LANTERN_SELFCHAT_WINDOW_MS)
+      : 120_000;
+  private static readonly SELFCHAT_MAX_REPLIES =
+    Number(process.env.LANTERN_SELFCHAT_MAX_REPLIES) > 0
+      ? Number(process.env.LANTERN_SELFCHAT_MAX_REPLIES)
+      : 12;
 
   // Last non-empty handle we saw on an isFromMe row. iMessage's
   // multi-Apple-ID setup leaves some rows with empty handles (synced
@@ -5418,24 +5483,50 @@ export class IMessageSession {
   }
 
   private isOwnBridgeSend(text: string): boolean {
+    // Exact (normalized) match OR a long fragment that is a substring of a
+    // recent send — the latter catches SMS-Text-Message-Forwarding segments of
+    // a long reply, which byte-differ from the full send and drove the
+    // self-echo loop. Never consumes: the same reply can sync back twice
+    // (dual-Apple-ID); entries are GC'd by recordBridgeSend after the TTL.
+    return matchesRecentSend(text, this.recentBridgeSends, {
+      now: Date.now(),
+      ttlMs: IMessageSession.BRIDGE_SEND_DEDUP_MS,
+    });
+  }
+
+  // Records a self-chat reply attempt and returns true when the sliding window
+  // is already at capacity (TRIP → caller must skip this reply). The guarantee
+  // that a self-echo loop can never run away, independent of the echo guard.
+  private selfChatBreakerTripped(): boolean {
+    const d = selfChatBreakerDecision(this.selfChatReplyTimes, Date.now(), {
+      windowMs: IMessageSession.SELFCHAT_WINDOW_MS,
+      max: IMessageSession.SELFCHAT_MAX_REPLIES,
+    });
+    this.selfChatReplyTimes = d.times;
+    return d.tripped;
+  }
+
+  // Surface a tripped breaker: always to the dashboard, and — at most once per
+  // window — a single owner-visible self-chat notice. The notice is a short
+  // (unsegmented) line with a registered bot-self prefix, and while tripped we
+  // skip all replies, so even if it echoes back it cannot feed the loop.
+  private notifySelfChatBreaker(handle: string): void {
+    this.broadcast({
+      type: "activity",
+      data: {
+        kind: "agent_skipped",
+        summary: "self-chat circuit breaker tripped — auto-reply paused (loop guard)",
+        jid: handle,
+        timestamp: Date.now(),
+      },
+    });
     const now = Date.now();
-    // Normalize: trim + collapse whitespace + lowercase so chat.db
-    // whitespace mutations / line-ending differences don't miss.
-    const norm = normalizeForDedup(text);
-    for (let i = this.recentBridgeSends.length - 1; i >= 0; i--) {
-      const e = this.recentBridgeSends[i];
-      if (now - e.ts > IMessageSession.BRIDGE_SEND_DEDUP_MS) break;
-      if (normalizeForDedup(e.text) === norm) {
-        // Do NOT consume — the same reply can land in chat.db twice
-        // when the Mac is signed into multiple iMessage accounts
-        // (once as is_from_me=1 from the sending account, once as
-        // is_from_me=0 from the receiving account's own sync view).
-        // Both arrivals must be deduped. Entry is GC'd by
-        // recordBridgeSend after BRIDGE_SEND_DEDUP_MS.
-        return true;
-      }
-    }
-    return false;
+    if (now - this.selfChatBreakerNotifiedAt < IMessageSession.SELFCHAT_WINDOW_MS) return;
+    this.selfChatBreakerNotifiedAt = now;
+    void this.send(
+      handle,
+      "⚠️ paused auto-replies here — hit an unusual burst in your self-chat (loop guard). i'll resume once it settles.",
+    ).catch(() => {});
   }
 
   // Persist `recentBridgeSends` to disk so a bridge restart (launchd
@@ -6571,6 +6662,21 @@ export class IMessageSession {
           return;
         }
         // Neither yes nor no → fall through; the pending confirm expires on TTL.
+      }
+      // SELF-CHAT CIRCUIT BREAKER — this is the exact path the runaway took
+      // ("owner self-chat → agentic pipeline", 109× in an hour). Every yes/no
+      // confirm short-circuit above has already returned, so gating here caps
+      // FRESH reply-generating queries only — confirmations are never
+      // rate-limited. Past the window cap we pause self-chat auto-reply so a
+      // self-echo loop (bot re-reading its own SMS-segmented sends) cannot run
+      // away, whatever the echo guard misses.
+      if (this.selfChatBreakerTripped()) {
+        this.logger.error(
+          { chat: row.handle, textPreview: text.slice(0, 60), windowReplies: this.selfChatReplyTimes.length },
+          "SELF-CHAT CIRCUIT BREAKER TRIPPED — pausing self-chat auto-reply (likely self-echo loop)",
+        );
+        this.notifySelfChatBreaker(row.handle);
+        return;
       }
       if (isTrivialChatter(text)) {
         const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
