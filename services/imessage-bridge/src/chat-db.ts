@@ -303,13 +303,14 @@ export class ChatDB {
   recentMessages(
     chatRowid: number,
     limit = 10,
-  ): Array<{ fromMe: boolean; text: string }> {
+  ): Array<{ fromMe: boolean; text: string; ts: number }> {
     if (!this.db) return [];
     const rows = this.db
       .prepare(
         `SELECT m.is_from_me AS is_from_me,
                 COALESCE(m.text, '') AS text,
                 m.attributedBody AS attributed_body,
+                m.date       AS date,
                 COALESCE(m.associated_message_type, 0) AS amt,
                 m.cache_has_attachments AS has_att
          FROM message m
@@ -323,10 +324,13 @@ export class ChatDB {
       is_from_me: number;
       text: string;
       attributed_body: Buffer | null;
+      date: number;
       amt: number;
       has_att: number;
     }>;
     // Query is newest-first; reverse to oldest-first for natural reading.
+    // `ts` (real send time) lets the transcript builder mark a long silence as
+    // a conversation break so months-old context isn't read as the live topic.
     return rows
       .reverse()
       .map((r) => ({
@@ -337,6 +341,7 @@ export class ChatDB {
           r.text.trim() ||
           decodeAttributedBody(r.attributed_body) ||
           (r.has_att ? "[attachment]" : ""),
+        ts: appleNsToUnixMs(r.date),
       }))
       .filter((m) => m.text.length > 0);
   }

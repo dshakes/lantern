@@ -587,6 +587,60 @@ function clampTranscript(transcript: string): string {
   return headNote ? `${headNote}\n\n${tail}` : tail;
 }
 
+/** One timestamped line of a thread, oldest-first input to formatTranscriptWithGaps. */
+export interface TranscriptMsg {
+  fromMe: boolean;
+  text: string;
+  /** Unix ms. Non-finite/0 ⇒ the gap check for this line is skipped. */
+  ts: number;
+}
+
+// Beyond this silence between two consecutive messages, the earlier one belongs
+// to a PREVIOUS conversation, not the live one. 6h is long enough that a normal
+// same-day back-and-forth is never split, but a thread that reopens the next day
+// (or, as in the real incident, months later) is.
+const TRANSCRIPT_GAP_MS = 6 * 60 * 60 * 1000;
+
+/** Compact a gap duration for the divider label: "4mo", "3d", "8h", "20m". */
+function humanizeGap(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60000));
+  if (min >= 60 * 24 * 30) return `${Math.round(min / (60 * 24 * 30))}mo`;
+  if (min >= 60 * 24) return `${Math.round(min / (60 * 24))}d`;
+  if (min >= 60) return `${Math.round(min / 60)}h`;
+  return `${min}m`;
+}
+
+/**
+ * Render an oldest-first "you:/them:" transcript, inserting an
+ * "──── earlier conversation ────" divider wherever two consecutive messages are
+ * separated by a long silence (>= gapMs). A dormant thread that just reopened —
+ * a months-old exchange, then a fresh "hi" today — thus visually separates the
+ * STALE block from the LIVE one, so the model can't mistake old context for the
+ * current topic and regurgitate it (the real bug: a sister's "Ritesh my frd"
+ * drew a dump of family names the owner had listed months earlier, because they
+ * were the last "you:" line the model saw). The persona label above the
+ * transcript tells the model those pre-divider lines are background only. Pure.
+ */
+export function formatTranscriptWithGaps(
+  msgs: TranscriptMsg[],
+  opts: { gapMs?: number } = {},
+): string {
+  const gapMs = opts.gapMs ?? TRANSCRIPT_GAP_MS;
+  const kept = (msgs || []).filter((m) => m && m.text && m.text.trim());
+  const out: string[] = [];
+  for (let i = 0; i < kept.length; i++) {
+    const m = kept[i];
+    if (i > 0) {
+      const prev = kept[i - 1].ts;
+      if (Number.isFinite(prev) && Number.isFinite(m.ts) && m.ts - prev >= gapMs) {
+        out.push(`──── earlier conversation (${humanizeGap(m.ts - prev)} earlier) ────`);
+      }
+    }
+    out.push(`${m.fromMe ? "you" : "them"}: ${m.text.replace(/\s+/g, " ").slice(0, 240)}`);
+  }
+  return out.join("\n");
+}
+
 /**
  * Count the CONSECUTIVE unanswered inbound messages at the tail of a
  * chronologically-ordered transcript — i.e. how many "them:" lines trail
@@ -935,7 +989,12 @@ export function agentPersonaPrompt(
   if (transcript) {
     lines.push(``);
     lines.push(
-      `Recent conversation on this thread (oldest first — reply to the LAST message, in context):`,
+      `Recent conversation on this thread (oldest first). Reply to the LAST message only. ` +
+        `Any lines above an "──── earlier conversation ────" divider are from an OLDER, separate ` +
+        `conversation — treat them as background only: do NOT continue them, and do NOT re-send or ` +
+        `volunteer anything from them (names, lists, IDs, addresses, details) unless the LAST message ` +
+        `explicitly asks for it. If the latest message is a greeting or introduces a new topic, respond ` +
+        `to THAT — never dredge up the old thread:`,
     );
     lines.push(clampTranscript(transcript));
   }
