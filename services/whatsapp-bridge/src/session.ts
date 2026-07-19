@@ -2538,10 +2538,15 @@ export class WhatsAppSession {
           }
 
           if (loggedOut) {
-            // Phone unlinked us — auth dir is now useless; pairing must
-            // start over. Surface this as a terminal state so the dashboard
-            // can prompt for a fresh QR rather than spin forever.
+            // Phone unlinked us — the on-disk creds are permanently dead
+            // (WA returns 401 for them forever). Wipe them NOW so the next
+            // start() — e.g. the dashboard's "Pair again" — issues a fresh
+            // QR instead of looping 401s with zombie creds. Without this,
+            // pairing required a manual /reset nobody knows to call.
             this.paired = false;
+            this.phoneNumber = null;
+            this.displayName = null;
+            this.wipeAuthDir();
             this.setConnectionState(
               "logged_out",
               "WhatsApp on your phone unlinked this device"
@@ -12121,10 +12126,16 @@ export class WhatsAppSession {
     this.lastError = null;
     this.lastConnectionEventAt = null;
     this.reconnectAttempts = 0;
-    // Wipe the auth directory on disk. Baileys' useMultiFileAuthState
-    // restores from `creds.json` + the keys/ subdirectory; remove them
-    // both. We rebuild the empty dir so the next start() can write to it
-    // without an extra mkdir round-trip.
+    this.wipeAuthDir();
+    this.setConnectionState("idle", "Credentials wiped — ready for fresh pairing");
+  }
+
+  // Wipe the auth directory on disk. Baileys' useMultiFileAuthState
+  // restores from `creds.json` + the keys/ subdirectory; remove them
+  // both. We rebuild the empty dir so the next start() can write to it
+  // without an extra mkdir round-trip. Called by reset() and by the
+  // loggedOut disconnect path (phone unlinked → creds permanently dead).
+  private wipeAuthDir() {
     try {
       rmSync(this.authDir, { recursive: true, force: true });
       mkdirSync(this.authDir, { recursive: true });
@@ -12132,7 +12143,6 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err }, "failed to wipe auth credentials");
     }
-    this.setConnectionState("idle", "Credentials wiped — ready for fresh pairing");
   }
 
   isConnected() {
