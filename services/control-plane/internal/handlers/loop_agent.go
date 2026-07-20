@@ -2081,7 +2081,11 @@ func runDomainCoach(
 	var brief string
 	if completeFn != nil {
 		// Build LLM context — contains decrypted PII; NEVER log this buffer.
+		// Leads with today's date: without it the model has no way to tell a
+		// past appointment from an upcoming one and confidently briefs the
+		// owner to "prep" for events that already happened.
 		var ctxBuf strings.Builder
+		ctxBuf.WriteString(fmt.Sprintf("Today's date: %s\n", usageDate(time.Now())))
 		ctxBuf.WriteString(fmt.Sprintf("Domain: %s\nRecords on file (%d):\n", domain, len(recs)))
 		for _, r := range recs {
 			fi := clampRunes(r.fields, 200)
@@ -2113,7 +2117,7 @@ func runDomainCoach(
 			logger.Warn("domain-coach: LLM call failed — using template brief",
 				zap.String("tenant", tenantID), zap.String("domain", domain), zap.Error(llmErr))
 		} else {
-			brief = strings.TrimSpace(rawText)
+			brief = stripBriefEcho(rawText)
 		}
 	}
 
@@ -2166,7 +2170,18 @@ func runDomainCoach(
 // domain. Unlike domainSystemPrompt (which extracts from raw email), this
 // prompt synthesises a brief from already-structured records.
 // ponytail: one prompt per domain; sub-kind variants when accuracy warrants.
+// domainCoachSharedRules is appended to every domain prompt. Two hard rules
+// born from real embarrassing briefs: (a) the context leads with today's date
+// — anything dated before it already HAPPENED and must never be presented as
+// upcoming ("prep for the July 17 appt" sent on July 20); (b) output the brief
+// text only — the travel coach once opened with its own "Steps: 1) …" plan.
+const domainCoachSharedRules = ` The context begins with today's date. Anything dated before today is in the PAST: never present it as upcoming or ask the owner to prepare/confirm/book it — at most acknowledge it as done, and omit long-past items entirely. Output ONLY the brief text itself — no headings, no "Brief:" label, no numbered plan or restatement of these instructions.`
+
 func domainCoachSystemPrompt(domain string) string {
+	return domainCoachBasePrompt(domain) + domainCoachSharedRules
+}
+
+func domainCoachBasePrompt(domain string) string {
 	switch domain {
 	case "health":
 		return `You are a personal health coach assistant. Based ONLY on the owner's stored health records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: what was done recently (last appointment/lab/prescription), what is coming due (refills, follow-ups, renewals), and one gentle suggestion for what to prioritize. Be warm but direct. Never fabricate details not present in the data.`
@@ -2181,6 +2196,18 @@ func domainCoachSystemPrompt(domain string) string {
 	default:
 		return `Based ONLY on the provided domain records and obligations, write a 3–5 line plain-text coaching brief (max 500 chars, no markdown). Never fabricate details.`
 	}
+}
+
+// stripBriefEcho removes LLM meta-narration that leaked into a coaching brief
+// despite the prompt: a leading "Steps: 1) …" plan and/or a "Brief:" label.
+// When a "Brief:" marker exists, everything before it is the model talking to
+// itself — keep only what follows.
+func stripBriefEcho(raw string) string {
+	s := strings.TrimSpace(raw)
+	if idx := strings.LastIndex(s, "Brief:"); idx >= 0 {
+		s = strings.TrimSpace(s[idx+len("Brief:"):])
+	}
+	return s
 }
 
 // domainCoachTemplateBrief produces a deterministic fallback brief from counts
