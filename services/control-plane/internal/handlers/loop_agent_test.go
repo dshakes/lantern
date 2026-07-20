@@ -12,6 +12,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -517,5 +518,35 @@ func TestLoopRunFinalize_Idempotent(t *testing.T) {
 	}
 	if callCount != after1 {
 		t.Errorf("idempotency guard failed: completeFn called again (count=%d, want %d)", callCount, after1)
+	}
+}
+
+func TestStripBriefEcho(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// The real 2026-07-20 travel-weekly leak: steps plan + "Brief:" label.
+		{"Steps: 1) Review the single record. 2) Identify obligations.\n\nBrief:\nYour only record on file is an Uber transfer.", "Your only record on file is an Uber transfer."},
+		{"Brief: Clean brief after label.", "Clean brief after label."},
+		{"  A normal brief with no label.  ", "A normal brief with no label."},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := stripBriefEcho(c.in); got != c.want {
+			t.Errorf("stripBriefEcho(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDomainCoachSystemPrompt_SharedRules(t *testing.T) {
+	// Every domain prompt must carry the past-vs-upcoming date rule and the
+	// no-meta-output rule (regression: "prep for July 17 appt" sent July 20;
+	// travel brief opening with its own "Steps: 1) ..." plan).
+	for _, domain := range []string{"health", "vehicle", "career", "travel", "home", "unknown-domain"} {
+		p := domainCoachSystemPrompt(domain)
+		if !strings.Contains(p, "in the PAST") || !strings.Contains(p, "today's date") {
+			t.Errorf("domain %q prompt missing the past-date rule", domain)
+		}
+		if !strings.Contains(p, `no "Brief:" label`) {
+			t.Errorf("domain %q prompt missing the no-meta-output rule", domain)
+		}
 	}
 }
