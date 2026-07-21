@@ -645,6 +645,27 @@ func scanAndNudgeCommitments(
 	logger *zap.Logger,
 	tenantID, runID string,
 ) (int, error) {
+	// Auto-expire commitments whose deadline is long past. A July 17 dental
+	// visit is DONE on July 24 — without this the row stays "open" forever and
+	// haunts every weekly brief. The grace window keeps genuinely-overdue
+	// items (an unpaid bill) nagging for a week past deadline before they
+	// close quietly. 'expired' is distinct from 'dismissed'/'done' so an
+	// auto-close is auditable and never confused with owner action.
+	// ponytail: fixed 7-day grace; make it per-kind if bills need longer.
+	if tag, expErr := pool.Exec(ctx, `
+		UPDATE commitments
+		SET status = 'expired', updated_at = now()
+		WHERE tenant_id = $1
+		  AND status IN ('open', 'suggested', 'in_progress')
+		  AND deadline IS NOT NULL
+		  AND deadline < now() - interval '7 days'
+	`, tenantID); expErr != nil {
+		logger.Warn("loop-agent: auto-expire failed", zap.Error(expErr))
+	} else if n := tag.RowsAffected(); n > 0 {
+		logger.Info("loop-agent: auto-expired past-deadline commitments",
+			zap.String("tenant", tenantID), zap.Int64("count", n))
+	}
+
 	type dueRow struct {
 		id          string
 		title       string

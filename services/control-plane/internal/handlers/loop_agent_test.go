@@ -550,3 +550,51 @@ func TestDomainCoachSystemPrompt_SharedRules(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopScan_AutoExpiresPastDeadline: a commitment whose deadline passed
+// more than 7 days ago flips to 'expired' on scan; one inside the grace
+// window and one with no deadline stay open (regression: the July 17 dental
+// obligation stayed "open" forever and haunted every weekly brief).
+func TestLoopScan_AutoExpiresPastDeadline(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedCommitmentTenant(t, pool)
+	runID := insertTestRun(t, tenant, "concierge-test-expire")
+
+	insertWithDeadline := func(deadline *time.Time) string {
+		t.Helper()
+		var id string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO commitments (tenant_id, title, source, status, tier, urgency, deadline)
+			VALUES ($1, 'test task', 'self', 'open', 'meso', 'normal', $2)
+			RETURNING id
+		`, tenant, deadline).Scan(&id); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM commitments WHERE id = $1", id) })
+		return id
+	}
+
+	longPast := time.Now().Add(-8 * 24 * time.Hour)
+	recentPast := time.Now().Add(-2 * 24 * time.Hour)
+	expiredID := insertWithDeadline(&longPast)
+	overdueID := insertWithDeadline(&recentPast)
+	noDeadlineID := insertWithDeadline(nil)
+
+	if _, err := scanAndNudgeCommitments(ctx, pool, nopLogger(), tenant, runID); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	wantStatus := map[string]string{expiredID: "expired", overdueID: "open", noDeadlineID: "open"}
+	for id, want := range wantStatus {
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT status FROM commitments WHERE id = $1`, id).Scan(&got); err != nil {
+			t.Fatalf("read status: %v", err)
+		}
+		if got != want {
+			t.Errorf("commitment %s status=%q, want %q", id, got, want)
+		}
+	}
+}
