@@ -351,6 +351,11 @@ func main() {
 	rehearseHandler := handlers.NewRehearseHandler(srv, authHandler)
 	immigrationHandler := handlers.NewImmigrationSentinelHandler(srv, authHandler, llmProxyHandler)
 
+	// Peer-service health sweeper — created here (before the mux block) so
+	// its HTTP handler can be registered inline. The background loop is
+	// started later alongside RunRecoveryLoop.
+	healthSweeper := handlers.NewHealthSweeper(logger, authHandler)
+
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -713,6 +718,9 @@ func main() {
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
 	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
 
+	// System health snapshot — peer-service TCP reachability for the dashboard.
+	httpMux.HandleFunc("GET /v1/system/health", healthSweeper.ServeHealth)
+
 	// Errand-runner v1: owner-confirmed outbound AI calls (FCC/TCPA compliant).
 	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
 	// confirm-and-call is the SOLE dial path and requires owner/admin role.
@@ -813,6 +821,13 @@ func main() {
 	// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
 	// fires 2s after the HTTP server starts so /readyz serves first.
 	handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
+
+	// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
+	// Probes configured peer services via TCP dial; alerts the owner on
+	// up↔down transitions via sendSelfNote. Set to "0"/"off" to disable.
+	// Sweeper was created alongside the other handler declarations above so
+	// its HTTP endpoint could be registered in the mux block.
+	handlers.RunHealthSweepLoop(ctx, healthSweeper, 0)
 
 	// Per-tenant spawn rate limiter (Phase-3 resiliency): throttles a burst of
 	// run-creations / runtime-schedules per tenant, returning HTTP 429 before any
