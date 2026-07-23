@@ -670,6 +670,217 @@ impl RuntimeManagerGrpc {
 // into a `tokio_stream::wrappers::ReceiverStream` of `pb::RuntimeLogLine`.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// prost_types::Struct ↔ serde_json::Value helpers (exec_tool)
+// ---------------------------------------------------------------------------
+
+/// Convert `prost_types::Struct` → `serde_json::Value` for the tool envelope.
+fn prost_struct_to_json(s: prost_types::Struct) -> serde_json::Value {
+    serde_json::Value::Object(
+        s.fields
+            .into_iter()
+            .map(|(k, v)| (k, prost_value_to_json(v)))
+            .collect(),
+    )
+}
+
+fn prost_value_to_json(v: prost_types::Value) -> serde_json::Value {
+    use prost_types::value::Kind;
+    match v.kind {
+        None | Some(Kind::NullValue(_)) => serde_json::Value::Null,
+        Some(Kind::BoolValue(b)) => serde_json::Value::Bool(b),
+        Some(Kind::NumberValue(n)) => serde_json::Number::from_f64(n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Some(Kind::StringValue(s)) => serde_json::Value::String(s),
+        Some(Kind::ListValue(l)) => {
+            serde_json::Value::Array(l.values.into_iter().map(prost_value_to_json).collect())
+        }
+        Some(Kind::StructValue(s)) => prost_struct_to_json(s),
+    }
+}
+
+/// Convert `serde_json::Value` → `prost_types::Struct` for `ExecToolResponse`.
+/// Non-object values are wrapped as `{"value": ...}` so the field type is always
+/// a Struct (the proto requires Struct, not Value, for ExecToolResponse.result).
+fn json_to_prost_struct(v: serde_json::Value) -> prost_types::Struct {
+    match v {
+        serde_json::Value::Object(map) => prost_types::Struct {
+            fields: map
+                .into_iter()
+                .map(|(k, v)| (k, json_to_prost_value(v)))
+                .collect(),
+        },
+        other => prost_types::Struct {
+            fields: [("value".to_string(), json_to_prost_value(other))]
+                .into_iter()
+                .collect(),
+        },
+    }
+}
+
+fn json_to_prost_value(v: serde_json::Value) -> prost_types::Value {
+    use prost_types::value::Kind;
+    let kind = match v {
+        serde_json::Value::Null => Kind::NullValue(0),
+        serde_json::Value::Bool(b) => Kind::BoolValue(b),
+        serde_json::Value::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => Kind::StringValue(s),
+        serde_json::Value::Array(a) => Kind::ListValue(prost_types::ListValue {
+            values: a.into_iter().map(json_to_prost_value).collect(),
+        }),
+        serde_json::Value::Object(map) => Kind::StructValue(prost_types::Struct {
+            fields: map
+                .into_iter()
+                .map(|(k, v)| (k, json_to_prost_value(v)))
+                .collect(),
+        }),
+    };
+    prost_types::Value { kind: Some(kind) }
+}
+
+// ---------------------------------------------------------------------------
+// run_tool_via_harness — JSON-over-Exec channel to the in-guest tool registry
+// ---------------------------------------------------------------------------
+//
+// Protocol (manager → harness):
+//   ExecRequest { command: "__lantern_tool_call__", argv: [<envelope_json>] }
+//
+// Envelope JSON (argv[0]):
+//   { "tool": "<name>", "args": {…}, "idempotency_key": "…", "timeout_sec": N }
+//
+// Args content is NEVER logged here — it may carry secrets (invariant #10).
+//
+// Harness reply (stdout bytes before done=true):
+//   { "ok": true,  "result": {…} }   → ToolStatus::Ok
+//   { "ok": false, "error": "…"  }   → ToolStatus::Error
+//   harness unreachable / dial fail  → ToolStatus::Unavailable
+
+async fn run_tool_via_harness(
+    vm_id: &str,
+    endpoint: String,
+    tool_name: &str,
+    args_json: serde_json::Value,
+    idempotency_key: &str,
+    timeout_sec: u64,
+) -> pb::ExecToolResponse {
+    // Build the envelope. Args content must not appear in logs (invariant #10).
+    let envelope = serde_json::json!({
+        "tool": tool_name,
+        "args": args_json,
+        "idempotency_key": idempotency_key,
+        "timeout_sec": timeout_sec,
+    });
+    let envelope_str = match serde_json::to_string(&envelope) {
+        Ok(s) => s,
+        Err(e) => {
+            return pb::ExecToolResponse {
+                status: pb::ToolStatus::Error as i32,
+                result: None,
+                error: format!("exec_tool: cannot serialize envelope: {e}"),
+            };
+        }
+    };
+
+    // Dial the harness exec server (same path as exec_via_harness).
+    let mut client =
+        match pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint.clone()).await {
+            Ok(c) => c,
+            Err(e) => {
+                return pb::ExecToolResponse {
+                    status: pb::ToolStatus::Unavailable as i32,
+                    result: None,
+                    error: format!("exec_tool: cannot reach harness at {endpoint}: {e}"),
+                };
+            }
+        };
+
+    // Single-frame request; drop the sender to half-close immediately.
+    let (req_tx, req_rx) = mpsc::channel::<pb::ExecRequest>(1);
+    let _ = req_tx
+        .send(pb::ExecRequest {
+            vm_id: vm_id.to_string(),
+            command: "__lantern_tool_call__".to_string(),
+            argv: vec![envelope_str],
+            ..Default::default()
+        })
+        .await;
+    drop(req_tx);
+
+    let mut stream = match client.exec(ReceiverStream::new(req_rx)).await {
+        Ok(r) => r.into_inner(),
+        Err(s) => {
+            return pb::ExecToolResponse {
+                status: pb::ToolStatus::Unavailable as i32,
+                result: None,
+                error: format!("exec_tool: harness Exec RPC failed: {}", s.message()),
+            };
+        }
+    };
+
+    // Collect stdout until done=true.
+    let mut stdout_buf = Vec::new();
+    loop {
+        match stream.message().await {
+            Ok(Some(frame)) => {
+                stdout_buf.extend_from_slice(&frame.stdout);
+                if frame.done {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return pb::ExecToolResponse {
+                    status: pb::ToolStatus::Error as i32,
+                    result: None,
+                    error: format!("exec_tool: stream error from harness: {e}"),
+                };
+            }
+        }
+    }
+
+    // Parse the JSON result written by the harness tool runner.
+    let tool_result: serde_json::Value = match serde_json::from_slice(&stdout_buf) {
+        Ok(v) => v,
+        Err(e) => {
+            return pb::ExecToolResponse {
+                status: pb::ToolStatus::Error as i32,
+                result: None,
+                error: format!(
+                    "exec_tool: harness returned non-JSON ({e}): {}",
+                    String::from_utf8_lossy(&stdout_buf)
+                ),
+            };
+        }
+    };
+
+    if tool_result
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let result = tool_result
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        pb::ExecToolResponse {
+            status: pb::ToolStatus::Ok as i32,
+            result: Some(json_to_prost_struct(result)),
+            error: String::new(),
+        }
+    } else {
+        pb::ExecToolResponse {
+            status: pb::ToolStatus::Error as i32,
+            result: None,
+            error: tool_result
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool failed (no error message)")
+                .to_string(),
+        }
+    }
+}
+
 /// Translate a wire `SpawnRequest` into the internal `ScheduleRequest` the
 /// backends + warm pool consume. The wire `AgentSpec` carries an
 /// `image_digest` + `tenant_id` + `run_id`; we synthesize `bundle_uri` from
@@ -1153,19 +1364,16 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
     /// Invoke a single named tool against a run's workload.
     ///
-    /// This is the unary, structured counterpart to [`exec`](Self::exec): the
-    /// workflow engine calls it for `tool_call` steps with a tool name + JSON
-    /// args and expects a typed [`pb::ToolStatus`] back.
+    /// Forwards to the in-guest harness tool registry via the existing
+    /// `RuntimeHarness.Exec` channel at port 50056 using a JSON-over-Exec
+    /// envelope (see `services/harness/src/tool_runner.rs` for the harness
+    /// side). Only Firecracker VMs run the typed tool registry; other backends
+    /// return `TOOL_STATUS_UNAVAILABLE` because no harness is reachable.
     ///
-    /// HONEST STATUS: there is no in-VM single-tool dispatch path yet. The
-    /// harness serves a raw `Exec` (shell) channel, not a typed tool registry,
-    /// so we cannot truthfully run a named tool and return its structured
-    /// result. Rather than fabricate a success, this validates the request and
-    /// the target VM, then returns `TOOL_STATUS_UNAVAILABLE` with a clear
-    /// reason. When the in-guest tool-runner lands, swap the unavailable branch
-    /// for a forward to the harness and map its result into `result` / the
-    /// `OK`/`ERROR` statuses. Callers (the engine) already treat UNAVAILABLE as
-    /// a hard, typed failure — they do not retry it as a transient error.
+    /// Status mapping:
+    ///   harness `ok:true`   → `TOOL_STATUS_OK`   + structured result
+    ///   harness `ok:false`  → `TOOL_STATUS_ERROR` + error string
+    ///   harness unreachable → `TOOL_STATUS_UNAVAILABLE`
     async fn exec_tool(
         &self,
         request: Request<pb::ExecToolRequest>,
@@ -1175,39 +1383,125 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         if req.tool_name.is_empty() {
             return Err(Status::invalid_argument("exec_tool: tool_name is required"));
         }
-        // Need either an explicit vm_id or a run_id to resolve the workload.
         if req.vm_id.is_empty() && req.run_id.is_empty() {
             return Err(Status::invalid_argument(
                 "exec_tool: one of vm_id or run_id is required",
             ));
         }
 
-        // If a vm_id was supplied, it must resolve to a known workload — a
-        // tool call against a non-existent VM is a caller error, not an
-        // "unavailable" feature.
-        if !req.vm_id.is_empty() && self.registry.get(&req.vm_id).is_none() {
-            return Err(Status::not_found(format!("vm {} not found", req.vm_id)));
+        // Resolve vm_id: use the explicit field, or scan the registry by run_id.
+        let vm_id = if !req.vm_id.is_empty() {
+            if self.registry.get(&req.vm_id).is_none() {
+                return Err(Status::not_found(format!("vm {} not found", req.vm_id)));
+            }
+            req.vm_id.clone()
+        } else {
+            match self.registry.find_by_run_id(&req.run_id) {
+                Some((key, _)) => key,
+                None => {
+                    return Err(Status::not_found(format!(
+                        "no active vm found for run_id '{}'",
+                        req.run_id
+                    )));
+                }
+            }
+        };
+
+        let info = self
+            .registry
+            .get(&vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm {vm_id} not found")))?;
+
+        // Only Firecracker VMs run the in-guest harness tool registry.
+        if info.backend != "firecracker" {
+            tracing::info!(
+                vm_id = %vm_id,
+                backend = %info.backend,
+                tool_name = %req.tool_name,
+                "exec_tool: harness tool dispatch only available for Firecracker; \
+                 returning UNAVAILABLE for this backend"
+            );
+            return Ok(Response::new(pb::ExecToolResponse {
+                status: pb::ToolStatus::Unavailable as i32,
+                result: None,
+                error: format!(
+                    "exec_tool: harness tool dispatch not supported for '{}' backend; \
+                     only Firecracker VMs run the in-guest tool registry",
+                    info.backend
+                ),
+            }));
         }
 
+        let guest_ip = match self.harness_addrs.get(&vm_id).map(|e| *e.value()) {
+            Some(ip) => ip,
+            None => {
+                return Ok(Response::new(pb::ExecToolResponse {
+                    status: pb::ToolStatus::Unavailable as i32,
+                    result: None,
+                    error: format!(
+                        "exec_tool: harness not connected for vm '{vm_id}': \
+                         no heartbeat-derived guest address yet"
+                    ),
+                }));
+            }
+        };
+
+        let endpoint = format!(
+            "http://{}",
+            std::net::SocketAddr::new(guest_ip, harness_exec_port())
+        );
+
+        // Default timeout: the request's field if set, else 30s.
+        let timeout_sec = req
+            .timeout
+            .as_ref()
+            .map(|d| d.seconds.max(1) as u64)
+            .unwrap_or(30);
+
+        // Convert args Struct → serde_json::Value for the envelope.
+        let args_json = req
+            .args
+            .map(prost_struct_to_json)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        let started = std::time::Instant::now();
+
+        // +5s outer timeout so the harness timeout fires first and returns a
+        // typed error rather than the manager returning UNAVAILABLE.
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_sec + 5),
+            run_tool_via_harness(
+                &vm_id,
+                endpoint,
+                &req.tool_name,
+                args_json,
+                &req.idempotency_key,
+                timeout_sec,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| pb::ExecToolResponse {
+            status: pb::ToolStatus::Error as i32,
+            result: None,
+            error: format!(
+                "exec_tool: harness call timed out after {}s",
+                timeout_sec + 5
+            ),
+        });
+
+        // Audit: tool name, duration, status — NEVER args content (invariant #10).
         tracing::info!(
-            vm_id = %req.vm_id,
+            vm_id = %vm_id,
             run_id = %req.run_id,
             step_id = %req.step_id,
             tool_name = %req.tool_name,
             idempotency_key = %req.idempotency_key,
-            "exec_tool: in-VM tool dispatch not yet wired — returning UNAVAILABLE"
+            status = resp.status,
+            duration_ms = started.elapsed().as_millis(),
+            "exec_tool: dispatched to harness"
         );
 
-        Ok(Response::new(pb::ExecToolResponse {
-            status: pb::ToolStatus::Unavailable as i32,
-            result: None,
-            error: format!(
-                "in-VM tool execution is not yet wired on this runtime-manager: \
-                 cannot invoke tool '{}' (the harness serves a raw exec channel, \
-                 not a typed tool registry)",
-                req.tool_name
-            ),
-        }))
+        Ok(Response::new(resp))
     }
 
     async fn snapshot(
@@ -2765,9 +3059,8 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound, "got {err:?}");
     }
 
-    /// A well-formed call against a known VM returns a TYPED UNAVAILABLE status
-    /// with an explanatory error and no fabricated result — this is the honest
-    /// "not wired yet" contract the workflow engine relies on.
+    /// A well-formed call against a known non-Firecracker VM returns UNAVAILABLE
+    /// (no harness tool registry on docker/k8s backends). No result is fabricated.
     #[tokio::test]
     async fn exec_tool_known_vm_returns_typed_unavailable() {
         use pb::runtime_manager_server::RuntimeManager as _;
@@ -2796,34 +3089,42 @@ mod tests {
             resp.result.is_none(),
             "UNAVAILABLE must not carry a fabricated result"
         );
+        // Error must explain WHY (backend doesn't have the harness tool registry).
         assert!(
-            resp.error.contains("web_search") && resp.error.contains("not yet wired"),
-            "error should name the tool and the gap, got: {}",
+            resp.error.contains("docker") || resp.error.contains("Firecracker"),
+            "error should name the backend limitation, got: {}",
             resp.error
         );
     }
 
-    /// run_id alone (no vm_id) is sufficient to address the workload; the call
-    /// still returns the typed UNAVAILABLE rather than an argument error.
+    /// run_id alone (no vm_id) is sufficient to address the workload when the
+    /// registry contains a handle with that run_id. The call still returns
+    /// UNAVAILABLE for non-Firecracker backends (no harness tool registry).
     #[tokio::test]
     async fn exec_tool_run_id_only_is_accepted() {
         use pb::runtime_manager_server::RuntimeManager as _;
         let svc = manager_with_backend_vm("docker", "vm-tool-5", "handle-tool-5");
+        // manager_with_backend_vm seeds run_id = "run-exec-route"; use that.
         let req = Request::new(pb::ExecToolRequest {
             vm_id: String::new(),
-            run_id: "run-xyz".to_string(),
+            run_id: "run-exec-route".to_string(),
             step_id: "step-1".to_string(),
             tool_name: "search".to_string(),
             args: None,
             timeout: None,
-            idempotency_key: "run-xyz:step-1:1".to_string(),
+            idempotency_key: "run-exec-route:step-1:1".to_string(),
         });
         let resp = svc
             .exec_tool(req)
             .await
-            .expect("run_id-only call should be accepted")
+            .expect("run_id-only call should be accepted (resolves via registry scan)")
             .into_inner();
-        assert_eq!(resp.status, pb::ToolStatus::Unavailable as i32, "got {}", resp.status);
+        assert_eq!(
+            resp.status,
+            pb::ToolStatus::Unavailable as i32,
+            "docker backend has no harness, got {}",
+            resp.status
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -435,6 +435,24 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
 
         validate_first_frame(&first, &self.vm_id)?;
 
+        // Intercept the tool-runner magic command BEFORE the general exec audit.
+        // The general audit logs argv, which for tool calls contains the
+        // serialized args envelope that may carry secrets (invariant #10).
+        // tool_runner::run_tool_call emits its own audit without args content.
+        if first.command == "__lantern_tool_call__" {
+            // Drain any stray frames (there should be none for a one-shot call).
+            tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
+            let (tx, rx) = mpsc::channel(4);
+            tokio::spawn(crate::tool_runner::run_tool_call(
+                self.vm_id.clone(),
+                first.argv,
+                self.manager.clone(),
+                tx,
+            ));
+            let out: Self::ExecStream = Box::pin(ReceiverStream::new(rx));
+            return Ok(Response::new(out));
+        }
+
         tracing::info!(
             vm_id = %self.vm_id,
             command = %first.command,

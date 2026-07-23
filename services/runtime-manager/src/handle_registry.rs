@@ -109,6 +109,16 @@ impl HandleRegistry {
             .collect()
     }
 
+    /// Find a handle by `run_id`, returning the registry key (wire vm_id) and
+    /// the `HandleInfo`. O(n) scan; intended for the exec_tool path where the
+    /// caller has only a `run_id` and no `vm_id`.
+    pub fn find_by_run_id(&self, run_id: &str) -> Option<(String, HandleInfo)> {
+        self.handles
+            .iter()
+            .find(|e| e.value().run_id == run_id)
+            .map(|e| (e.key().clone(), e.value().clone()))
+    }
+
     /// Total number of active handles.
     pub fn len(&self) -> usize {
         self.handles.len()
@@ -271,6 +281,43 @@ mod tests {
         assert!(
             reg.get("backend-new").is_some(),
             "backend-new must remain accessible after refused rekey"
+        );
+    }
+
+    #[test]
+    fn find_by_run_id_returns_registry_key_and_info() {
+        let reg = HandleRegistry::new();
+        reg.register(make_info("backend-a", "run-alpha", "tenant-a"));
+        reg.register(make_info("backend-b", "run-beta", "tenant-b"));
+
+        let (key, info) = reg
+            .find_by_run_id("run-alpha")
+            .expect("run-alpha must be found");
+        assert_eq!(key, "backend-a");
+        assert_eq!(info.run_id, "run-alpha");
+    }
+
+    #[test]
+    fn find_by_run_id_missing_returns_none() {
+        let reg = HandleRegistry::new();
+        reg.register(make_info("h", "run-x", "t"));
+        assert!(reg.find_by_run_id("run-not-there").is_none());
+    }
+
+    #[test]
+    fn find_by_run_id_returns_wire_key_after_rekey() {
+        let reg = HandleRegistry::new();
+        reg.register(make_info("backend-id", "run-123", "tenant-x"));
+        reg.rekey("backend-id", "wire-vm-id");
+
+        // After rekey the registry key is the wire vm_id.
+        let (key, info) = reg
+            .find_by_run_id("run-123")
+            .expect("run must be findable after rekey");
+        assert_eq!(key, "wire-vm-id", "find_by_run_id must return the wire key");
+        assert_eq!(
+            info.handle_id, "backend-id",
+            "HandleInfo.handle_id must remain the backend id"
         );
     }
 
