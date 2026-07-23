@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Lantern End-to-End Agent Lifecycle</title>
+  <defs>
+    <marker id="farrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4b72a8"/>
+    </marker>
+    <marker id="farrow-back" markerWidth="10" markerHeight="7" refX="1" refY="3.5" orient="auto">
+      <polygon points="10 0, 0 3.5, 10 7" fill="#6366f1"/>
+    </marker>
+    <filter id="fsh" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000040"/>
+    </filter>
+    <!-- Gradient for stage headers -->
+    <linearGradient id="grad-develop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1d4ed8" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="grad-test" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0369a1" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="grad-deploy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="grad-run" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#059669" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="grad-observe" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d97706" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="grad-improve" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#db2777" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#1e2a3a" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="32" text-anchor="middle" fill="#64748b" font-size="17" font-weight="600" letter-spacing="0.3">Lantern Agent Lifecycle — End to End</text>
+  <text x="480" y="52" text-anchor="middle" fill="#64748b" font-size="12">From first commit to closed feedback loop — every stage uses the same runtime primitives</text>
+
+  <!-- ── Stage positions ── -->
+  <!-- 6 stages × 140px wide, 16px gap, centered in 960 -->
+  <!-- Start x = (960 - 6*140 - 5*16) / 2 = (960-840-80)/2 = 20 -->
+
+  <!-- ════════ 1. DEVELOP ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#develop">
+    <rect x="20" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#fsh)"/>
+    <rect x="20" y="72" width="140" height="60" rx="10" fill="url(#grad-develop)"/>
+    <rect x="20" y="112" width="140" height="20" fill="url(#grad-develop)"/><!-- blend overlap -->
+    <title>Develop: define the agent with lantern init or the visual editor, write eval cases, install connectors. SDK: TypeScript (primary), Python, Go.</title>
+    <text x="90" y="94" text-anchor="middle" fill="#93c5fd" font-size="11" font-weight="700" letter-spacing="0.8">① DEVELOP</text>
+    <text x="90" y="116" text-anchor="middle" fill="#bfdbfe" font-size="10.5">lantern init</text>
+    <text x="90" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">Visual editor</text>
+    <text x="90" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">SDK (TS/Py/Go)</text>
+    <text x="90" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Connectors</text>
+    <text x="90" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">MCP attachments</text>
+    <text x="90" y="218" text-anchor="middle" fill="#475569" font-size="9.5">POST /v1/agents</text>
+  </a>
+
+  <!-- Arrow 1→2 -->
+  <line x1="160" y1="192" x2="176" y2="192" stroke="#4b72a8" stroke-width="2" marker-end="url(#farrow)"/>
+
+  <!-- ════════ 2. TEST ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#test">
+    <rect x="176" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#fsh)"/>
+    <rect x="176" y="72" width="140" height="60" rx="10" fill="url(#grad-test)"/>
+    <rect x="176" y="112" width="140" height="20" fill="url(#grad-test)"/>
+    <title>Test: declarative eval suites, branch baselines, CI gating (HTTP 422 on regression), rehearsals replay production failures against a candidate version before traffic flips.</title>
+    <text x="246" y="94" text-anchor="middle" fill="#7dd3fc" font-size="11" font-weight="700" letter-spacing="0.8">② TEST</text>
+    <text x="246" y="116" text-anchor="middle" fill="#bae6fd" font-size="10.5">Eval suites</text>
+    <text x="246" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">Branch baselines</text>
+    <text x="246" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">CI gate (422)</text>
+    <text x="246" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Rehearsals</text>
+    <text x="246" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">lantern test</text>
+    <text x="246" y="218" text-anchor="middle" fill="#475569" font-size="9.5">POST /v1/eval-suites</text>
+  </a>
+
+  <!-- Arrow 2→3 -->
+  <line x1="316" y1="192" x2="332" y2="192" stroke="#4b72a8" stroke-width="2" marker-end="url(#farrow)"/>
+
+  <!-- ════════ 3. DEPLOY ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#deploy">
+    <rect x="332" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#fsh)"/>
+    <rect x="332" y="72" width="140" height="60" rx="10" fill="url(#grad-deploy)"/>
+    <rect x="332" y="112" width="140" height="20" fill="url(#grad-deploy)"/>
+    <title>Deploy: publish immutable agent versions, set hard budgets (402 on overspend), configure A/B experiments with auto-promotion on >2% lift.</title>
+    <text x="402" y="94" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700" letter-spacing="0.8">③ DEPLOY</text>
+    <text x="402" y="116" text-anchor="middle" fill="#ddd6fe" font-size="10.5">Agent versions</text>
+    <text x="402" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">Budgets (402 hard-fail)</text>
+    <text x="402" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">A/B experiments</text>
+    <text x="402" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Cost forecast</text>
+    <text x="402" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">Cron schedules</text>
+    <text x="402" y="218" text-anchor="middle" fill="#475569" font-size="9.5">PUT /v1/agents/{name}/budget</text>
+  </a>
+
+  <!-- Arrow 3→4 -->
+  <line x1="472" y1="192" x2="488" y2="192" stroke="#4b72a8" stroke-width="2" marker-end="url(#farrow)"/>
+
+  <!-- ════════ 4. RUN ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#run">
+    <rect x="488" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#10b981" stroke-width="2" filter="url(#fsh)"/>
+    <rect x="488" y="72" width="140" height="60" rx="10" fill="url(#grad-run)"/>
+    <rect x="488" y="112" width="140" height="20" fill="url(#grad-run)"/>
+    <title>Run: two tiers — shared (inline executor, low latency, trusted code) or microVM (Firecracker/Kata, isolated, for untrusted/user-supplied code). Multiple channels: WhatsApp, iMessage, Slack, voice, webchat.</title>
+    <text x="558" y="94" text-anchor="middle" fill="#6ee7b7" font-size="11" font-weight="700" letter-spacing="0.8">④ RUN</text>
+    <text x="558" y="116" text-anchor="middle" fill="#a7f3d0" font-size="10.5">Shared tier</text>
+    <text x="558" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">MicroVM tier</text>
+    <text x="558" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">Loop agents</text>
+    <text x="558" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Sessions (SSE)</text>
+    <text x="558" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">Channels · Cron</text>
+    <text x="558" y="218" text-anchor="middle" fill="#475569" font-size="9.5">POST /v1/runs</text>
+  </a>
+
+  <!-- Arrow 4→5 -->
+  <line x1="628" y1="192" x2="644" y2="192" stroke="#4b72a8" stroke-width="2" marker-end="url(#farrow)"/>
+
+  <!-- ════════ 5. OBSERVE ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#observe">
+    <rect x="644" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#fsh)"/>
+    <rect x="644" y="72" width="140" height="60" rx="10" fill="url(#grad-observe)"/>
+    <rect x="644" y="112" width="140" height="20" fill="url(#grad-observe)"/>
+    <title>Observe: OTel traces (lantern.tenant_id / run_id / step_id), run waterfall via journal_events SSE stream, Ed25519-signed verifiable receipts, peer health sweep (GET /v1/system/health).</title>
+    <text x="714" y="94" text-anchor="middle" fill="#fcd34d" font-size="11" font-weight="700" letter-spacing="0.8">⑤ OBSERVE</text>
+    <text x="714" y="116" text-anchor="middle" fill="#fde68a" font-size="10.5">OTel traces</text>
+    <text x="714" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">Run waterfall</text>
+    <text x="714" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">Ed25519 receipts</text>
+    <text x="714" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Peer health sweep</text>
+    <text x="714" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">Grafana dashboards</text>
+    <text x="714" y="218" text-anchor="middle" fill="#475569" font-size="9.5">GET /v1/system/health</text>
+  </a>
+
+  <!-- Arrow 5→6 -->
+  <line x1="784" y1="192" x2="800" y2="192" stroke="#4b72a8" stroke-width="2" marker-end="url(#farrow)"/>
+
+  <!-- ════════ 6. IMPROVE ════════ -->
+  <a href="../../docs/guides/self-service-e2e.md#improve">
+    <rect x="800" y="72" width="140" height="240" rx="10" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#fsh)"/>
+    <rect x="800" y="72" width="140" height="60" rx="10" fill="url(#grad-improve)"/>
+    <rect x="800" y="112" width="140" height="20" fill="url(#grad-improve)"/>
+    <title>Improve: RLHF feedback (1-5 score), 👎 flywheel mines rejections into style lessons, regret-calibrated confidence estimator lowers scores for action types that burned the owner, eval baseline updated on new green run.</title>
+    <text x="870" y="94" text-anchor="middle" fill="#f9a8d4" font-size="11" font-weight="700" letter-spacing="0.8">⑥ IMPROVE</text>
+    <text x="870" y="116" text-anchor="middle" fill="#fbcfe8" font-size="10.5">RLHF feedback</text>
+    <text x="870" y="134" text-anchor="middle" fill="#94a3b8" font-size="10">👎 style flywheel</text>
+    <text x="870" y="152" text-anchor="middle" fill="#94a3b8" font-size="10">Confidence calibration</text>
+    <text x="870" y="170" text-anchor="middle" fill="#94a3b8" font-size="10">Eval baseline update</text>
+    <text x="870" y="188" text-anchor="middle" fill="#94a3b8" font-size="10">Rehearsals → redeploy</text>
+    <text x="870" y="218" text-anchor="middle" fill="#475569" font-size="9.5">POST /v1/runs/{id}/feedback</text>
+  </a>
+
+  <!-- ════════ Feedback loop arrow (bottom, ⑥ → ①) ════════ -->
+  <path d="M 870 312 Q 870 360 480 360 Q 90 360 90 312"
+        fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#farrow)"/>
+  <text x="480" y="349" text-anchor="middle" fill="#818cf8" font-size="10">continuous improvement loop</text>
+
+  <!-- ════════ Journal substrate band (underneath) ════════ -->
+  <rect x="20" y="328" width="920" height="32" rx="6" fill="#0f2617" stroke="#10b981" stroke-width="1.5" opacity="0.85"/>
+  <text x="480" y="344" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="600" letter-spacing="0.6">journal_events — durable substrate for all tiers · receipts · replay · waterfall</text>
+  <text x="480" y="368" text-anchor="middle" fill="#475569" font-size="9">run_locks · side_effect_receipts · eval_runs · run_feedback</text>
+</svg>

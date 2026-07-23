@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Lantern Durable Execution — Crash-Resume Loop</title>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4b72a8"/>
+    </marker>
+    <marker id="arr-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <marker id="arr-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <filter id="sh" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000040"/>
+    </filter>
+  </defs>
+
+  <!-- Title -->
+  <text x="440" y="32" text-anchor="middle" fill="#64748b" font-size="17" font-weight="600" letter-spacing="0.3">Durable Execution — Crash-Resume</text>
+  <text x="440" y="52" text-anchor="middle" fill="#64748b" font-size="12">A process crash mid-step never loses state or re-spends tokens</text>
+
+  <!-- ══════════════════════════════════════════ -->
+  <!-- TOP ROW: Happy path (left side, horizontal) -->
+  <!-- ══════════════════════════════════════════ -->
+
+  <!-- 1. Run created -->
+  <a href="../09-agent-runtime.md#run-creation">
+    <rect x="32" y="80" width="152" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#sh)"/>
+    <title>Run created: POST /v1/runs creates a runs row with status=queued and acquires a run_locks lease</title>
+    <text x="108" y="100" text-anchor="middle" fill="#94a3b8" font-size="9.5" letter-spacing="0.4">1. RUN CREATED</text>
+    <text x="108" y="118" text-anchor="middle" fill="#e2e8f0" font-size="12.5" font-weight="500">POST /v1/runs</text>
+  </a>
+
+  <line x1="184" y1="104" x2="212" y2="104" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- 2. step_started -->
+  <a href="../09-agent-runtime.md#journal-events">
+    <rect x="212" y="80" width="160" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#sh)"/>
+    <title>step_started written to journal_events before any side-effect executes</title>
+    <text x="292" y="100" text-anchor="middle" fill="#94a3b8" font-size="9.5" letter-spacing="0.4">2. JOURNAL WRITE</text>
+    <text x="292" y="118" text-anchor="middle" fill="#e2e8f0" font-size="12.5" font-weight="500">step_started → journal</text>
+  </a>
+
+  <line x1="372" y1="104" x2="400" y2="104" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- 3. Step executing -->
+  <a href="../09-agent-runtime.md#step-execution">
+    <rect x="400" y="80" width="160" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#sh)"/>
+    <title>Step executes: LLM call (with Idempotency-Key header), connector, tool, or subagent</title>
+    <text x="480" y="100" text-anchor="middle" fill="#94a3b8" font-size="9.5" letter-spacing="0.4">3. STEP EXECUTING</text>
+    <text x="480" y="118" text-anchor="middle" fill="#e2e8f0" font-size="12.5" font-weight="500">LLM call (Idempotency-Key)</text>
+  </a>
+
+  <!-- CRASH — red bolt -->
+  <line x1="560" y1="104" x2="600" y2="104" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="582" y="99" text-anchor="middle" fill="#ef4444" font-size="14" font-weight="700">✕</text>
+  <text x="582" y="120" text-anchor="middle" fill="#ef4444" font-size="9.5" font-weight="600">CRASH</text>
+
+  <!-- ════════════════════════════════════ -->
+  <!-- Recovery path (bottom, left-to-right) -->
+  <!-- ════════════════════════════════════ -->
+
+  <!-- Arrow down from crash to recovery -->
+  <line x1="480" y1="128" x2="480" y2="192" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-red)"/>
+
+  <!-- 4. Recovery Sweep -->
+  <a href="../09-agent-runtime.md#recovery-sweep">
+    <rect x="320" y="192" width="216" height="56" rx="8" fill="#1e2a3a" stroke="#f59e0b" stroke-width="2" filter="url(#sh)"/>
+    <title>Recovery Sweep: RunRecoveryLoop runs every 30s (LANTERN_RECOVERY_INTERVAL). Finds runs with status=running/queued and no live run_locks row.</title>
+    <text x="428" y="212" text-anchor="middle" fill="#f59e0b" font-size="9.5" font-weight="600" letter-spacing="0.4">4. RECOVERY SWEEP</text>
+    <text x="428" y="228" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="500">RunRecoveryLoop · every 30s</text>
+    <text x="428" y="244" text-anchor="middle" fill="#94a3b8" font-size="10">LANTERN_RECOVERY_INTERVAL</text>
+  </a>
+
+  <line x1="320" y1="220" x2="256" y2="220" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- 5. Lease steal -->
+  <a href="../09-agent-runtime.md#run-locks">
+    <rect x="80" y="192" width="176" height="56" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#sh)"/>
+    <title>run_locks UPSERT: distributed guard — only the replica that wins the UPSERT proceeds; the loser skips silently. Uses PostgreSQL advisory locking semantics.</title>
+    <text x="168" y="212" text-anchor="middle" fill="#94a3b8" font-size="9.5" letter-spacing="0.4">5. LEASE STEAL</text>
+    <text x="168" y="228" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="500">run_locks UPSERT</text>
+    <text x="168" y="244" text-anchor="middle" fill="#94a3b8" font-size="10">only winner proceeds</text>
+  </a>
+
+  <line x1="168" y1="248" x2="168" y2="288" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- 6. Re-drive -->
+  <a href="../09-agent-runtime.md#redrive">
+    <rect x="80" y="288" width="176" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#sh)"/>
+    <title>Re-drive: executeRunInlineSync (plain LLM) or runWorkflowIfPresent (workflow graph). The interpreter walks the graph from the trigger node again.</title>
+    <text x="168" y="308" text-anchor="middle" fill="#94a3b8" font-size="9.5" letter-spacing="0.4">6. RE-DRIVE</text>
+    <text x="168" y="326" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="500">redriveRun · graph walk</text>
+  </a>
+
+  <line x1="256" y1="312" x2="320" y2="312" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- 7. CompletedStep check -->
+  <a href="../09-agent-runtime.md#completedstep-replay">
+    <rect x="320" y="288" width="216" height="48" rx="8" fill="#1e2a3a" stroke="#3b82f6" stroke-width="2" filter="url(#sh)"/>
+    <title>CompletedStep check: for every node the interpreter calls journalCompletedStep which queries journal_events for a step_completed row. If found, returns cached output — step is skipped entirely. No re-spent tokens.</title>
+    <text x="428" y="308" text-anchor="middle" fill="#3b82f6" font-size="9.5" font-weight="600" letter-spacing="0.4">7. COMPLETEDSTEP CHECK</text>
+    <text x="428" y="326" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="500">journalCompletedStep → SKIP</text>
+  </a>
+
+  <!-- SKIP label + arrow right to resume -->
+  <line x1="536" y1="312" x2="600" y2="312" stroke="#10b981" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <text x="568" y="307" text-anchor="middle" fill="#10b981" font-size="10">skip ✓</text>
+
+  <!-- 8. Resume at first incomplete -->
+  <a href="../09-agent-runtime.md#resume">
+    <rect x="600" y="288" width="240" height="48" rx="8" fill="#0f2617" stroke="#10b981" stroke-width="2" filter="url(#sh)"/>
+    <title>Resume: interpreter continues at the first node that has no step_completed row. Already-completed nodes are never re-executed — no double side-effects, no re-spent tokens.</title>
+    <text x="720" y="308" text-anchor="middle" fill="#10b981" font-size="9.5" font-weight="600" letter-spacing="0.4">8. RESUME</text>
+    <text x="720" y="326" text-anchor="middle" fill="#e2e8f0" font-size="12" font-weight="500">First incomplete node → continue</text>
+  </a>
+
+  <!-- Arrow: resume → journal (step_completed) -->
+  <line x1="720" y1="336" x2="720" y2="376" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-green)"/>
+  <text x="736" y="360" fill="#10b981" font-size="10">step_completed</text>
+
+  <!-- ════════════════════════════════ -->
+  <!-- Bottom: journal substrate again  -->
+  <!-- ════════════════════════════════ -->
+  <a href="../09-agent-runtime.md#journal-events">
+    <rect x="80" y="376" width="760" height="48" rx="8" fill="#0f2617" stroke="#10b981" stroke-width="2" filter="url(#sh)"/>
+    <title>journal_events: the single source of truth. Both the happy path and the resume path write here. Receipts, waterfall, and replay all read from this table.</title>
+    <text x="460" y="396" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="600" letter-spacing="0.8">JOURNAL_EVENTS — single durability substrate</text>
+    <text x="460" y="414" text-anchor="middle" fill="#94a3b8" font-size="11">step_started · step_completed · step_failed · step_retrying · anomaly_detected</text>
+  </a>
+
+  <!-- Happy path step_completed → journal -->
+  <line x1="480" y1="128" x2="200" y2="376" stroke="#10b981" stroke-width="1" stroke-dasharray="3 4" opacity="0.4"/>
+</svg>

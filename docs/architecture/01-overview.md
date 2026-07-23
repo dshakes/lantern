@@ -247,11 +247,26 @@ mTLS between every internal service. JWT for user requests. API keys for SDK req
 - **Multi-cloud abstraction layers.** Terraform modules for AWS and GCP, but we don't pretend to be cloud-agnostic in a leaky way.
 - **A "framework" for users to extend us.** Users write agents. The platform's surface is the SDK, the bundle, and the gRPC API. No plugin system.
 
+## Two-tier execution model (as of 2026-07-23)
+
+In production, runs execute in one of two tiers selected by the agent manifest's `isolation` field:
+
+- **`"shared"` (default)** — goroutine inside the control-plane (`executeRunInlineSync`). Used for loop agents, bridge replies, and dashboard runs. Durable via `journal_events` event sourcing, `run_locks` leases, and the 30s recovery sweep.
+- **`"microvm"`** — the W12 stack: control-plane → runtime-scheduler (`:50055`) → runtime-manager (`:50054`) → Firecracker/Kata/K8s Job/Wasmtime inside the harness. Required for user-supplied code, `exec` tools, or untrusted packages (invariant #5).
+
+Routing is determined at run creation from the resolved agent version. A caller cannot downgrade an agent that declares `"microvm"` to the shared tier. Failure is explicit (`microvm_unavailable`), never a silent fallback across the isolation boundary.
+
+The workflow-engine service (`:50052`) is a third implementation of durable step execution that is wired but carries no run traffic. Per [ADR 0022](../adr/0022-two-tier-agent-runtime.md), it is not a routing tier.
+
+Full details: [`09-agent-runtime.md`](09-agent-runtime.md).
+
 ## Where to go next
 
+- **[`09-agent-runtime.md`](09-agent-runtime.md) — two-tier routing, durable execution, journal, retry, sessions, scheduling, OTel** ← start here for runtime questions
 - [`02-components.md`](02-components.md) — every service in detail
 - [`03-data-model.md`](03-data-model.md) — Postgres schemas, Redis keys, S3 layout
 - [`04-runtime-isolation.md`](04-runtime-isolation.md) — how runtimes work, snapshot/restore mechanics
+- [`04b-microvm-productionization.md`](04b-microvm-productionization.md) — scheduler/manager/harness wiring
 - [`05-workflow-engine.md`](05-workflow-engine.md) — event sourcing, replay, determinism
 - [`06-model-router.md`](06-model-router.md) — capability addressing, big/small routing, caching
 - [`07-context-management.md`](07-context-management.md) — token budgeter, summarization, cache reuse

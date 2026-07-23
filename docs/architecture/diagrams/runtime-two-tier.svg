@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Lantern Two-Tier Agent Runtime</title>
+  <defs>
+    <!-- Arrow markers -->
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4b72a8"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <!-- Drop shadow -->
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000040"/>
+    </filter>
+  </defs>
+
+  <!-- ── Background ─────────────────────────────────────────────────────── -->
+  <!-- transparent so it works on both light and dark page backgrounds -->
+
+  <!-- ── Title ─────────────────────────────────────────────────────────── -->
+  <text x="440" y="32" text-anchor="middle" fill="#64748b" font-size="17" font-weight="600" letter-spacing="0.3">Two-Tier Agent Runtime</text>
+  <text x="440" y="52" text-anchor="middle" fill="#64748b" font-size="12">ADR 0022 · manifest isolation field routes every run at creation time</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Row 1 — Entry                                                       -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <!-- SDK / CLI / Dashboard -->
+  <a href="../09-agent-runtime.md#entry-points">
+    <rect x="320" y="72" width="240" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>SDK / CLI / Dashboard — call POST /v1/runs or lantern run</title>
+    <text x="440" y="92" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="500" letter-spacing="0.5">ENTRY</text>
+    <text x="440" y="110" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">SDK · CLI · Dashboard</text>
+  </a>
+
+  <!-- Arrow down -->
+  <line x1="440" y1="120" x2="440" y2="144" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="456" y="136" fill="#64748b" font-size="10">POST /v1/runs</text>
+
+  <!-- Control Plane / Auth + Budget Gate -->
+  <a href="../09-agent-runtime.md#run-creation">
+    <rect x="296" y="144" width="288" height="56" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>Control Plane: validates input, checks tenant quota, reads agent manifest isolation field</title>
+    <text x="440" y="162" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="500" letter-spacing="0.5">CONTROL PLANE</text>
+    <text x="440" y="180" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">Auth · Quota Gate · Read manifest.isolation</text>
+  </a>
+
+  <!-- Arrow down to isolation gate -->
+  <line x1="440" y1="200" x2="440" y2="224" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Isolation Gate -->
+  <a href="../09-agent-runtime.md#isolation-gate">
+    <rect x="320" y="224" width="240" height="48" rx="8" fill="#1e2a3a" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)"/>
+    <title>Isolation Gate: reads manifest.isolation field; callers cannot downgrade a microvm agent to shared</title>
+    <text x="440" y="244" text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="500" letter-spacing="0.5">ISOLATION GATE</text>
+    <text x="440" y="262" text-anchor="middle" fill="#3b82f6" font-size="13" font-weight="600">manifest.isolation = ?</text>
+  </a>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Two branches                                                        -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <!-- Left branch: shared -->
+  <line x1="368" y1="272" x2="200" y2="304" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="256" y="296" fill="#94a3b8" font-size="10" font-style="italic">"shared" (default)</text>
+
+  <!-- Right branch: microvm -->
+  <line x1="512" y1="272" x2="680" y2="304" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="575" y="296" fill="#94a3b8" font-size="10" font-style="italic">"microvm"</text>
+
+  <!-- ═════════════════════ SHARED TIER (left) ════════════════════════ -->
+
+  <!-- Shared tier header band -->
+  <rect x="40" y="304" width="320" height="24" rx="4" fill="#162032" stroke="#1e3a5a" stroke-width="1"/>
+  <text x="200" y="320" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600" letter-spacing="0.5">SHARED TIER — inline executor</text>
+
+  <!-- Inline Executor -->
+  <a href="../09-agent-runtime.md#shared-tier">
+    <rect x="64" y="336" width="272" height="48" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>Inline Executor: goroutine inside the control-plane; runs the workflow interpreter and plain-LLM tool-use loop</title>
+    <text x="200" y="354" text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="0.5">rest.go · executeRunInlineSync</text>
+    <text x="200" y="372" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">Workflow Interpreter · LLM tool-use loop</text>
+  </a>
+
+  <!-- Arrow: inline → journal -->
+  <line x1="200" y1="384" x2="200" y2="480" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow-accent)"/>
+  <text x="216" y="436" fill="#10b981" font-size="10">step events</text>
+
+  <!-- ═════════════════════ MICROVM TIER (right) ═══════════════════════ -->
+
+  <!-- MicroVM tier header band -->
+  <rect x="520" y="304" width="320" height="24" rx="4" fill="#162032" stroke="#1e3a5a" stroke-width="1"/>
+  <text x="680" y="320" text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="600" letter-spacing="0.5">MICROVM TIER — W12 stack</text>
+
+  <!-- Runtime Scheduler -->
+  <a href="../04b-microvm-productionization.md">
+    <rect x="544" y="336" width="272" height="40" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>Runtime Scheduler :50055 — 5-factor placement: warm pool, region, cost, health, fair-share</title>
+    <text x="680" y="352" text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="0.5">:50055</text>
+    <text x="680" y="368" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">Runtime Scheduler — placement</text>
+  </a>
+
+  <!-- Arrow: scheduler → manager -->
+  <line x1="680" y1="376" x2="680" y2="394" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Runtime Manager -->
+  <a href="../04b-microvm-productionization.md">
+    <rect x="544" y="394" width="272" height="40" rx="8" fill="#1e2a3a" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>Runtime Manager :50054 — spawns Firecracker/Kata/K8s Job/Wasmtime per isolation class; owns warm pool</title>
+    <text x="680" y="410" text-anchor="middle" fill="#94a3b8" font-size="10" letter-spacing="0.5">:50054</text>
+    <text x="680" y="428" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">Runtime Manager — spawn · warm pool</text>
+  </a>
+
+  <!-- Arrow: manager → VM -->
+  <line x1="680" y1="434" x2="680" y2="452" stroke="#4b72a8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- VM + Harness -->
+  <a href="../04b-microvm-productionization.md#runtime-harness-in-vm-init">
+    <rect x="544" y="452" width="272" height="40" rx="8" fill="#1e2a3a" stroke="#a78bfa" stroke-width="1.5" filter="url(#shadow)"/>
+    <title>Harness (PID 1 in the VM): egress allowlist, short-TTL secret vending, tool runner (shell_exec + http_fetch), heartbeat → manager</title>
+    <text x="680" y="468" text-anchor="middle" fill="#a78bfa" font-size="10" letter-spacing="0.5">IN-VM PID 1</text>
+    <text x="680" y="484" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">Harness · Tool Runner · Egress guard</text>
+  </a>
+
+  <!-- Arrow: harness → journal (report path) -->
+  <line x1="544" y1="474" x2="480" y2="490" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow-accent)"/>
+  <text x="480" y="484" fill="#10b981" font-size="10" text-anchor="end">report path</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- Bottom: Journal (shared substrate)                                  -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+  <a href="../09-agent-runtime.md#journal-events">
+    <rect x="96" y="496" width="688" height="48" rx="8" fill="#0f2617" stroke="#10b981" stroke-width="2" filter="url(#shadow)"/>
+    <title>journal_events table: the single durability substrate for both tiers. Every step_started, step_completed, step_failed written here. Crash-replay and receipts read from this table.</title>
+    <text x="440" y="514" text-anchor="middle" fill="#6ee7b7" font-size="10" font-weight="600" letter-spacing="0.8">SHARED DURABILITY SUBSTRATE</text>
+    <text x="440" y="532" text-anchor="middle" fill="#e2e8f0" font-size="13" font-weight="500">journal_events — step_started · step_completed · step_failed</text>
+  </a>
+
+  <!-- ── Legend ─────────────────────────────────────────────────────── -->
+  <rect x="40" y="64" width="8" height="8" rx="2" fill="#10b981"/>
+  <text x="54" y="73" fill="#94a3b8" font-size="10">step event flow</text>
+  <rect x="40" y="80" width="8" height="2" fill="#4b72a8"/>
+  <text x="54" y="89" fill="#94a3b8" font-size="10">control flow</text>
+</svg>
