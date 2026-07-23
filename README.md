@@ -98,6 +98,22 @@ Every run passes through the same path — budget gate → durable step executio
 
 The runtime is the load-bearing core: a vendor-operated, multi-tenant, **durable** agent runtime that executes inside *your* VPC, with a tamper-evident, externally-verifiable, data-plane audit substrate. Kubernetes is the default substrate ([ADR&#160;0009](docs/adr/0009-kubernetes-default-runtime-substrate.md)); isolation is a RuntimeClass tier on a pod, not a separate backend.
 
+### Two tiers, one journal
+
+Every run executes in one of two tiers, selected by `manifest.isolation` at agent-version publish time ([ADR 0022](docs/adr/0022-two-tier-agent-runtime.md)):
+
+| | **Shared tier** | **MicroVM tier** |
+|---|---|---|
+| `isolation` value | `"shared"` (default) | `"microvm"` |
+| Executor | Goroutine inside the control-plane | Scheduler → manager → VM + harness |
+| Isolation | Trust-first-party | Separate kernel (gVisor) or hypervisor (Kata) |
+| Latency | ~50–200ms | ~150ms warm / ~1.5s cold |
+| Crash resume | 30s recovery sweep + `CompletedStep` journal replay | VM lifecycle; harness reports to journal |
+
+Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 receipts, and crash-replay all read from it — tier-agnostic.
+
+The in-guest tool runner (`services/harness/src/tool_runner.rs`) shipped 2026-07-23 and makes the microVM tier a real step executor for workflow-graph agents. Full details in [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md).
+
 <p align="center">
   <img src="docs/assets/runtime-architecture.svg" alt="Agent Execution Kernel — control-plane (identity, secret relay, report ingestion, receipts, OTel) → HA scheduler → per-node manager (K8s-default, fail-closed isolation gate, hardened pods) → in-VM harness (mTLS, egress deny-default, cert-bound report), over a durable journal + Ed25519 receipt spine" width="100%">
 </p>
@@ -173,10 +189,16 @@ Four end-to-end demo agents: [`examples/headless-agents/`](examples/headless-age
 
 ## Documentation map
 
+<p align="center">
+  <img src="docs/architecture/diagrams/e2e-journey.svg" alt="Lantern end-to-end agent lifecycle: Develop → Test → Deploy → Run (shared tier | microVM tier) → Observe → Improve, with a continuous improvement loop. The journal_events table is the shared durability substrate under all stages." width="100%">
+</p>
+
 | Resource | Where |
 |---|---|
+| **Agent runtime — two-tier model, durable execution, observability** | [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md) ← start here |
+| **Self-service walkthrough** (develop → deploy → observe, copy-pasteable) | [`docs/guides/self-service-e2e.md`](docs/guides/self-service-e2e.md) |
 | **User guides** (quickstart, isolation, durable execution, observability, identity, receipts) | [`docs/guides/`](docs/guides/) |
-| **Architecture docs** (all 18 components + ADRs) | [`docs/architecture/`](docs/architecture/) · [`docs/adr/`](docs/adr/) |
+| **Architecture docs** (all components + ADRs) | [`docs/architecture/`](docs/architecture/) · [`docs/adr/`](docs/adr/) |
 | **Runtime strategy + gap analysis** | [`docs/architecture/18-agent-runtime-nextgen.md`](docs/architecture/18-agent-runtime-nextgen.md) |
 | **Operator runbooks** (control-plane, data-plane, DB, gateway, scheduler, budget, restore) | [`docs/runbooks/`](docs/runbooks/) |
 | **Prometheus alerts + Grafana dashboards** | [`infra/monitoring/`](infra/monitoring/) |

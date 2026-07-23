@@ -244,10 +244,24 @@ The control-plane handles JWT auth, tenant stamping, and run-level persistence (
 
 ---
 
+## In-guest tool runner (shipped 2026-07-23)
+
+The runtime-manager's `exec_tool` previously returned `TOOL_STATUS_UNAVAILABLE` because no in-guest runner existed (documented in ADR 0015). As of commit f26c7c7, the harness now contains a typed tool registry in `services/harness/src/tool_runner.rs`:
+
+- **`shell_exec`** — run a shell command with enforced timeout; returns stdout, stderr, exit code.
+- **`http_fetch`** — HTTP request forced through the `127.0.0.1:3128` egress-allowlist proxy; 1 MiB response cap.
+- Unknown tool names return `TOOL_STATUS_ERROR` (typed, never `UNAVAILABLE`).
+
+Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__lantern_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel before the general exec audit path so serialized arguments never appear in audit logs (invariant #10). `TOOL_STATUS_UNAVAILABLE` now strictly means the VM is not found or the harness is unreachable.
+
+This unblocks the microVM tier as a real step executor for the two-tier routing described in [ADR 0022](../adr/0022-two-tier-agent-runtime.md) and [09-agent-runtime.md](09-agent-runtime.md).
+
 ## See also
 
+- [`09-agent-runtime.md`](09-agent-runtime.md) — **definitive two-tier runtime reference** — durable execution, journal, retry, health sweep
 - [`../../examples/headless-agents/MANUAL-TEST.md`](../../examples/headless-agents/MANUAL-TEST.md) — step-by-step manual exercise of every endpoint, with an honest "what's real vs. stubbed" map
 - [`04-runtime-isolation.md`](04-runtime-isolation.md) — which class, why, and what the hardening looks like
+- [ADR 0022](../adr/0022-two-tier-agent-runtime.md) — two-tier routing: manifest `isolation` field, microVM tier, honest failure
 - [ADR 0002](../adr/0002-runtime-class-per-workload.md) — agents declare class; scheduler picks backend
 - [ADR 0003](../adr/0003-scheduler-as-separate-service.md) — scheduler split out of runtime-manager
 - [ADR 0004](../adr/0004-harness-baked-into-vm-image.md) — harness baked into base images
