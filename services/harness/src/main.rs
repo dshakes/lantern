@@ -27,6 +27,7 @@ mod secrets;
 mod signals;
 mod supervisor;
 mod tls;
+mod tool_runner;
 
 use std::sync::Arc;
 
