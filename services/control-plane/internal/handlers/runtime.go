@@ -467,6 +467,152 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
+// ---------- MicroVMDispatcher (two-tier run routing, ADR 0022) ----------
+
+// MicroVMDispatcher is the narrow interface RESTHandler uses to dispatch
+// microVM-tier runs. RuntimeHandler implements it via ScheduleRunInMicroVM.
+// The interface is intentionally minimal: all scheduling policy (quota,
+// identity, placement) lives in the RuntimeHandler, not the caller.
+type MicroVMDispatcher interface {
+	// ScheduleRunInMicroVM dispatches a new microVM workload for the given run.
+	// Returns the vmID on success. On any error the caller must mark the run
+	// failed with code "microvm_unavailable" — this method never touches the run row.
+	ScheduleRunInMicroVM(ctx context.Context, tenantID, agentVersionID, runID, imageDigest string, manifest map[string]any) (vmID string, err error)
+}
+
+// scheduleAgentSpec is the shared scheduling core called by both RuntimeHandler.Schedule
+// and RuntimeHandler.ScheduleRunInMicroVM. It mints a per-VM agent identity, calls the
+// runtime scheduler, inserts the runtime_vms shadow row, and writes the schedule audit event.
+//
+// ctx must carry the tenant_id (injected via middleware.InjectTenantID) so the
+// runtime_vms insert is RLS-scoped. principalID is the JWT subject for HTTP-originated
+// schedules; for internal dispatches (two-tier run routing) pass the runID.
+//
+// Quota enforcement is the caller's responsibility: call checkRuntimeQuota before
+// scheduleAgentSpec and abort appropriately if denied.
+func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, principalID string, spec agentSpecDTO) (vmID, node, az, instanceID string, created time.Time, err error) {
+	// Mint per-VM identity. Fail closed: an agent that cannot be identified must not be scheduled.
+	var instanceToken string
+	instanceID, instanceToken, err = h.identity.Issue(ctx, tenantID, spec.RunID, spec.AgentVersionID)
+	if err != nil {
+		return "", "", "", "", time.Time{}, fmt.Errorf("mint agent identity: %w", err)
+	}
+
+	// Build the spec map. tenant_id always comes from context; never from the caller.
+	specMap := map[string]any{
+		"image_digest":        spec.ImageDigest,
+		"isolation":           spec.Isolation,
+		"network":             spec.Network,
+		"labels":              spec.Labels,
+		"preferred_regions":   spec.PreferredRegions,
+		"idempotent":          spec.Idempotent,
+		"restore_snapshot_id": spec.RestoreSnapshotID,
+		"agent_version_id":    spec.AgentVersionID,
+		"run_id":              spec.RunID,
+		"limits":              spec.Limits,
+		"egress_rules":        spec.EgressRules,
+		"secrets":             spec.Secrets,
+		"tenant_id":           tenantID,
+	}
+	// Container exec controls — convert []string to []any so agentSpecFromMap's
+	// type-asserted decoder handles them uniformly.
+	if len(spec.Command) > 0 {
+		cmd := make([]any, len(spec.Command))
+		for i, s := range spec.Command {
+			cmd[i] = s
+		}
+		specMap["command"] = cmd
+	}
+	if len(spec.Args) > 0 {
+		args := make([]any, len(spec.Args))
+		for i, s := range spec.Args {
+			args[i] = s
+		}
+		specMap["args"] = args
+	}
+	// Build spawn env: merge caller-supplied values, then stamp identity (takes precedence).
+	env := make(map[string]any, len(spec.Env)+2)
+	for k, v := range spec.Env {
+		env[k] = v
+	}
+	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
+	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
+	specMap["env"] = env
+
+	vmID, node, az, err = h.scheduler.Schedule(ctx, specMap)
+	if err != nil {
+		return "", "", "", "", time.Time{}, fmt.Errorf("scheduler.Schedule: %w", err)
+	}
+
+	specJSON, _ := json.Marshal(specMap)
+	if len(specJSON) == 0 {
+		specJSON = []byte("{}")
+	}
+
+	// Insert shadow row. agent_version_id / run_id are UUID-typed and optional.
+	var agentVerArg, runIDArg any
+	if spec.AgentVersionID != "" {
+		if _, perr := uuid.Parse(spec.AgentVersionID); perr == nil {
+			agentVerArg = spec.AgentVersionID
+		}
+	}
+	if spec.RunID != "" {
+		if _, perr := uuid.Parse(spec.RunID); perr == nil {
+			runIDArg = spec.RunID
+		}
+	}
+
+	created = time.Now().UTC()
+	if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO runtime_vms
+			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
+			ON CONFLICT (vm_id) DO NOTHING
+		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
+		return e
+	}); wErr != nil {
+		h.logger().Error("scheduleAgentSpec: insert runtime_vms failed", zap.Error(wErr))
+		return "", "", "", "", time.Time{}, fmt.Errorf("insert runtime_vms: %w", wErr)
+	}
+
+	h.auditRuntime(ctx, tenantID, vmID, "schedule", map[string]any{
+		"image_digest":      spec.ImageDigest,
+		"isolation":         spec.Isolation,
+		"node":              node,
+		"az":                az,
+		"agent_instance_id": instanceID,
+	}, principalID, instanceID)
+
+	return vmID, node, az, instanceID, created, nil
+}
+
+// ScheduleRunInMicroVM implements MicroVMDispatcher. It dispatches a microVM
+// workload for the given run using the quota checker and scheduler wired into
+// this RuntimeHandler. Returns the vmID on success. On any failure the caller
+// must mark the run failed — this method never touches the run row.
+func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, agentVersionID, runID, imageDigest string, manifest map[string]any) (string, error) {
+	spec := agentSpecDTO{
+		ImageDigest:    imageDigest,
+		Isolation:      "microvm",
+		AgentVersionID: agentVersionID,
+		RunID:          runID,
+	}
+	if lims, ok := manifest["limits"].(map[string]any); ok {
+		spec.Limits = lims
+	}
+
+	// Quota: honest failure — any denial fails the run, never falls through to inline
+	// (ADR 0022 §3: "never silent downgrade").
+	qres := h.checkRuntimeQuota(ctx, tenantID, spec)
+	if !qres.Allowed {
+		return "", fmt.Errorf("quota exceeded: %s", qres.Reason)
+	}
+
+	vmID, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, runID, spec)
+	return vmID, err
+}
+
 // ---------- Handler ----------
 
 // vmMetricsStore is the minimal interface the RuntimeHandler needs to read
@@ -903,116 +1049,22 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 			zap.String("tenant_id", tenantID), zap.String("reason", qres.Reason))
 	}
 
-	// Mint a short-lived agent-instance identity. Do this BEFORE building
-	// specMap so the token can be injected into the spawn env. Fail closed:
-	// an agent that cannot be identified must not be scheduled.
-	instanceID, instanceToken, err := h.identity.Issue(ctx, tenantID, spec.RunID, spec.AgentVersionID)
+	vmID, node, az, instanceID, created, err := h.scheduleAgentSpec(ctx, tenantID, claims.Subject, spec)
 	if err != nil {
-		h.logger().Error("agentidentity.Issue failed", zap.Error(err))
+		h.logger().Error("scheduleAgentSpec failed", zap.Error(err))
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "mint agent identity failed")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
+		span.SetStatus(codes.Error, "scheduling failed")
+		if strings.Contains(err.Error(), "mint agent identity") {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
+		} else {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scheduler unavailable"})
+		}
 		return
 	}
-	span.SetAttributes(attribute.String("lantern.agent_instance_id", instanceID))
-
-	// Tenant id always comes from JWT; never from the body.
-	specMap := map[string]any{
-		"image_digest":        spec.ImageDigest,
-		"isolation":           spec.Isolation,
-		"network":             spec.Network,
-		"labels":              spec.Labels,
-		"preferred_regions":   spec.PreferredRegions,
-		"idempotent":          spec.Idempotent,
-		"restore_snapshot_id": spec.RestoreSnapshotID,
-		"agent_version_id":    spec.AgentVersionID,
-		"run_id":              spec.RunID,
-		"limits":              spec.Limits,
-		"egress_rules":        spec.EgressRules,
-		"secrets":             spec.Secrets,
-		"tenant_id":           tenantID,
-	}
-	// Container exec controls — convert []string to []any so
-	// agentSpecFromMap's type-asserted decoder handles them uniformly.
-	if len(spec.Command) > 0 {
-		cmd := make([]any, len(spec.Command))
-		for i, s := range spec.Command {
-			cmd[i] = s
-		}
-		specMap["command"] = cmd
-	}
-	if len(spec.Args) > 0 {
-		args := make([]any, len(spec.Args))
-		for i, s := range spec.Args {
-			args[i] = s
-		}
-		specMap["args"] = args
-	}
-	// Build the spawn env, merging caller-supplied values with the identity
-	// vars. Identity vars take precedence and cannot be overridden by the body.
-	env := make(map[string]any, len(spec.Env)+2)
-	for k, v := range spec.Env {
-		env[k] = v
-	}
-	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
-	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
-	specMap["env"] = env
-
-	vmID, node, az, err := h.scheduler.Schedule(ctx, specMap)
-	if err != nil {
-		h.logger().Error("scheduler.Schedule failed", zap.Error(err))
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "scheduler unavailable")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scheduler unavailable"})
-		return
-	}
-	span.SetAttributes(attribute.String("lantern.vm_id", vmID))
-
-	specJSON, _ := json.Marshal(specMap)
-	if len(specJSON) == 0 {
-		specJSON = []byte("{}")
-	}
-
-	// Insert shadow row. agent_version_id / run_id are UUID-typed and
-	// optional — nil out empty strings so the cast succeeds.
-	var agentVerArg, runIDArg any
-	if spec.AgentVersionID != "" {
-		if _, perr := uuid.Parse(spec.AgentVersionID); perr == nil {
-			agentVerArg = spec.AgentVersionID
-		}
-	}
-	if spec.RunID != "" {
-		if _, perr := uuid.Parse(spec.RunID); perr == nil {
-			runIDArg = spec.RunID
-		}
-	}
-
-	created := time.Now().UTC()
-	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
-		_, e := tx.Exec(ctx, `
-			INSERT INTO runtime_vms
-			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
-			ON CONFLICT (vm_id) DO NOTHING
-		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
-		return e
-	})
-	if err != nil {
-		h.logger().Error("insert runtime_vms failed", zap.Error(err))
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "insert runtime_vms failed")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-
-	h.auditRuntime(ctx, tenantID, vmID, "schedule",
-		map[string]any{
-			"image_digest":      spec.ImageDigest,
-			"isolation":         spec.Isolation,
-			"node":              node,
-			"az":                az,
-			"agent_instance_id": instanceID,
-		}, claims.Subject, instanceID)
+	span.SetAttributes(
+		attribute.String("lantern.vm_id", vmID),
+		attribute.String("lantern.agent_instance_id", instanceID),
+	)
 
 	span.SetStatus(codes.Ok, "")
 	writeJSON(w, http.StatusCreated, scheduleResponse{

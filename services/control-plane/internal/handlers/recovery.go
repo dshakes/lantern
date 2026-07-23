@@ -241,6 +241,24 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 		input = map[string]any{}
 	}
 
+	// microVM-tier runs (ADR 0022) are tracked via runtime_vms and the
+	// harness→manager→control-plane report path. The inline executor must
+	// never touch them — doing so would violate the isolation invariant.
+	// rls-exempt: agent_versions is an RLS-exempt child table; joined through
+	// runs which is keyed by the already-authorized run id.
+	var manifestIsolation string
+	_ = h.srv.Pool.QueryRow(runCtx, `
+		SELECT COALESCE(av.manifest->>'isolation', '')
+		FROM runs r
+		JOIN agent_versions av ON av.id = r.agent_version_id
+		WHERE r.id = $1
+	`, run.runID).Scan(&manifestIsolation)
+	if manifestIsolation == "microvm" {
+		h.logger().Info("redriveRun: skipping microVM-tier run (tracked by runtime_vms reconciler)",
+			zap.String("run_id", run.runID))
+		return nil
+	}
+
 	// A loop-agent run that already emitted its loop_complete event has done its
 	// work and merely never finalized (orphaned mid-finalize). Reconcile it to
 	// succeeded WITHOUT re-driving — BEFORE the llmProxy guard, so a momentary

@@ -76,13 +76,14 @@ func resolveGmailToken(ctx context.Context, pool interface {
 
 // RESTHandler wraps the gRPC service handlers to expose them over HTTP/JSON.
 type RESTHandler struct {
-	srv          *server.Server
-	auth         *AuthHandler
-	agentSvc     *AgentService
-	runSvc       *RunService
-	llmProxy     *LlmProxyHandler
-	dpRouter     *DataPlaneService // routes runs to a connected data plane (nil = inline-only)
-	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
+	srv               *server.Server
+	auth              *AuthHandler
+	agentSvc          *AgentService
+	runSvc            *RunService
+	llmProxy          *LlmProxyHandler
+	dpRouter          *DataPlaneService // routes runs to a connected data plane (nil = inline-only)
+	microVMDispatcher MicroVMDispatcher // routes microVM-tier runs to the W12 stack (nil = no microVM)
+	spawnLimiter      *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
 
 	// inFlightRuns tracks goroutines started by executeRunInline so the
 	// shutdown path can wait for them to finish (DrainInFlightRuns).
@@ -97,6 +98,10 @@ func (h *RESTHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l 
 // when no plane is connected for the tenant), runs execute inline in the control
 // plane. When set and a plane is connected, the run is dispatched to it instead.
 func (h *RESTHandler) SetDataPlaneRouter(dp *DataPlaneService) { h.dpRouter = dp }
+
+// SetMicroVMDispatcher wires the microVM-tier dispatcher (ADR 0022). nil-safe:
+// when unset, a microVM-tier run is immediately failed with "microvm_unavailable".
+func (h *RESTHandler) SetMicroVMDispatcher(d MicroVMDispatcher) { h.microVMDispatcher = d }
 
 // DrainInFlightRuns waits for all in-flight inline-run goroutines to finish,
 // up to timeout. Any goroutines still running after timeout are abandoned —
@@ -378,6 +383,18 @@ func (h *RESTHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validManifestIsolation returns an error if the isolation value is not one of
+// the recognised manifest isolation tiers (ADR 0022). Absent (empty string) is
+// treated as "shared" and is always valid.
+func validManifestIsolation(iso string) error {
+	switch iso {
+	case "", "shared", "microvm":
+		return nil
+	default:
+		return fmt.Errorf("invalid manifest isolation %q: must be one of shared, microvm", iso)
+	}
+}
+
 // UpdateAgent handles PATCH /v1/agents/{name}. Currently supports updating
 // the system prompt used by interactive sessions and the chat surfaces.
 func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
@@ -403,13 +420,27 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt *string `json:"systemPrompt"`
 		AvatarURL    *string `json:"avatarUrl"`
 		StylePrompt  *string `json:"stylePrompt"`
+		// Manifest merges into the current agent version's manifest JSONB (ADR 0022).
+		// Only the fields provided are merged; other manifest fields are unchanged.
+		// The isolation field, if present, is validated before the write.
+		Manifest map[string]any `json:"manifest,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if body.SystemPrompt == nil && body.AvatarURL == nil && body.StylePrompt == nil {
+	// Validate manifest.isolation before touching the DB (ADR 0022: unknown value → 400).
+	if body.Manifest != nil {
+		if iso, ok := body.Manifest["isolation"].(string); ok {
+			if err := validManifestIsolation(iso); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
+
+	if body.SystemPrompt == nil && body.AvatarURL == nil && body.StylePrompt == nil && body.Manifest == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": false})
 		return
 	}
@@ -439,6 +470,25 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
+	}
+
+	// Merge manifest into the current version's manifest JSONB, if provided.
+	// agent_versions is RLS-exempt (no tenant_id column), but we join through
+	// agents (tenant-scoped) to ensure the version belongs to this tenant.
+	if body.Manifest != nil {
+		manifestJSON, _ := json.Marshal(body.Manifest)
+		// rls-exempt: agent_versions is a child table with no tenant_id; the
+		// JOIN through agents (tenant_id = $2, name = $3) scopes the write.
+		if _, mErr := h.srv.Pool.Exec(ctx, `
+			UPDATE agent_versions av
+			SET manifest = COALESCE(av.manifest, '{}'::jsonb) || $1::jsonb
+			FROM agents a
+			WHERE av.id = a.current_version_id
+			  AND a.tenant_id = $2
+			  AND a.name = $3
+		`, string(manifestJSON), tenantID, name); mErr != nil {
+			h.logger().Warn("UpdateAgent: manifest merge failed", zap.Error(mErr))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
@@ -613,6 +663,52 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+	}
+
+	// Two-tier routing (ADR 0022): load the agent version manifest to check the
+	// isolation field. microvm → W12 stack; shared/absent → inline executor.
+	// agent_versions is an RLS-exempt child table, so Pool is fine here.
+	var manifestData map[string]any
+	if versionID := run.GetAgentVersionId(); versionID != "" {
+		var manifestJSON []byte
+		// rls-exempt: agent_versions is an RLS-exempt child table (no tenant_id).
+		if err := h.srv.Pool.QueryRow(ctx,
+			`SELECT COALESCE(manifest, '{}'::jsonb) FROM agent_versions WHERE id = $1`, versionID,
+		).Scan(&manifestJSON); err == nil {
+			_ = json.Unmarshal(manifestJSON, &manifestData)
+		}
+	}
+	manifestIsolation, _ := manifestData["isolation"].(string)
+
+	if manifestIsolation == "microvm" {
+		// Honest failure (ADR 0022 §3): unavailable → fail, NEVER fall through to inline.
+		if h.microVMDispatcher == nil {
+			failJSON, _ := json.Marshal(map[string]string{
+				"code":    "microvm_unavailable",
+				"message": "microVM dispatcher not configured",
+			})
+			// rls-exempt: keyed by the just-created authorized run id.
+			_, _ = h.srv.Pool.Exec(ctx,
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+				run.GetId(), string(failJSON))
+			writeJSON(w, http.StatusCreated, runToMap(run))
+			return
+		}
+		runID := run.GetId()
+		tenantID := run.GetTenantId()
+		versionID := run.GetAgentVersionId()
+		imageDigest, _ := manifestData["imageDigest"].(string)
+		if imageDigest == "" {
+			imageDigest, _ = manifestData["image"].(string)
+		}
+		manifest := manifestData
+		h.inFlightRuns.Add(1)
+		go func() {
+			defer h.inFlightRuns.Done()
+			h.dispatchMicroVMRun(runID, tenantID, versionID, imageDigest, manifest)
+		}()
+		writeJSON(w, http.StatusCreated, runToMap(run))
+		return
 	}
 
 	// Placement: if a data plane is connected for this tenant, dispatch the run
@@ -829,6 +925,76 @@ func CORSMiddleware(next http.Handler) http.Handler {
 // SetLlmProxy injects the LLM proxy handler for inline run execution.
 func (h *RESTHandler) SetLlmProxy(proxy *LlmProxyHandler) {
 	h.llmProxy = proxy
+}
+
+// dispatchMicroVMRun handles the execution path for microVM-tier agents (ADR 0022).
+// Called from a background goroutine — creates its own context.Background() so
+// HTTP request cancellation does not abort the run mid-flight.
+// On any failure the run is marked failed with code "microvm_unavailable".
+func (h *RESTHandler) dispatchMicroVMRun(runID, tenantID, agentVersionID, imageDigest string, manifest map[string]any) {
+	ctx := context.Background()
+	ctx = middleware.InjectTenantID(ctx, tenantID)
+
+	// Mark running.
+	// rls-exempt: inline executor — runs write keyed by authorized run id.
+	if _, err := h.srv.Pool.Exec(ctx,
+		`UPDATE runs SET status = 'running', started_at = now() WHERE id = $1`, runID,
+	); err != nil {
+		h.logger().Error("dispatchMicroVMRun: mark running failed",
+			zap.String("run_id", runID), zap.Error(err))
+		return
+	}
+
+	// journalStep inserts a single journal_events row with a self-computing seq.
+	// rls-exempt: journal_events is an RLS-exempt child table.
+	journalStep := func(kind, stepID string, payload map[string]any) {
+		raw, _ := json.Marshal(payload)
+		// payload column is BYTEA; pass raw bytes, no ::jsonb cast.
+		_, _ = h.srv.Pool.Exec(ctx, `
+			INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+			SELECT $1,
+			       COALESCE((SELECT MAX(seq) FROM journal_events WHERE run_id = $1), 0) + 1,
+			       $2, $3, 1, $4
+			ON CONFLICT (run_id, seq) DO NOTHING
+		`, runID, kind, stepID, raw)
+	}
+	journalStep("step_started", "microvm:schedule", map[string]any{"node_type": "microvm_schedule"})
+
+	vmID, err := h.microVMDispatcher.ScheduleRunInMicroVM(ctx, tenantID, agentVersionID, runID, imageDigest, manifest)
+	if err != nil {
+		h.logger().Error("dispatchMicroVMRun: ScheduleRunInMicroVM failed",
+			zap.String("run_id", runID), zap.Error(err))
+		journalStep("step_failed", "microvm:schedule", map[string]any{
+			"node_type": "microvm_schedule",
+			"error":     err.Error(),
+		})
+		failJSON, _ := json.Marshal(map[string]string{
+			"code":    "microvm_unavailable",
+			"message": err.Error(),
+		})
+		// rls-exempt: inline executor — runs write keyed by authorized run id.
+		if _, dbErr := h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+			runID, string(failJSON),
+		); dbErr != nil {
+			h.logger().Error("dispatchMicroVMRun: mark failed failed",
+				zap.String("run_id", runID), zap.Error(dbErr))
+		}
+		return
+	}
+
+	journalStep("step_completed", "microvm:schedule", map[string]any{
+		"node_type": "microvm_schedule",
+		"vmId":      vmID,
+	})
+	// TODO(two-tier): run completion wiring — the run stays 'running' until the
+	// harness reports output back via the runtime manager. Completion wiring is
+	// the in-guest tool-runner follow-up (ADR 0022 consequences).
+	h.logger().Info("microVM run scheduled",
+		zap.String("run_id", runID),
+		zap.String("vm_id", vmID),
+		zap.String("tenant_id", tenantID),
+	)
 }
 
 // executeRunInline processes a run in the background by calling the LLM
