@@ -32,11 +32,84 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
 )
+
+// ---- Per-step retry policy --------------------------------------------------
+
+// RetryPolicy controls how many times a failed step is retried.
+// It is read from node.Data["retry"]:
+//
+//	{"maxAttempts": 3, "backoffMs": 200, "retryableClasses": ["llm", "connector"]}
+//
+// maxAttempts:      total attempts including the first one (default 1 = no retry).
+// backoffMs:        fixed wait between attempts in milliseconds (default 0).
+// retryableClasses: which error classes trigger a retry. Empty = retry on any error.
+//
+//	Supported classes: "any", "timeout", "llm" (ai-step), "connector", "tool".
+type RetryPolicy struct {
+	MaxAttempts      int
+	BackoffMs        int
+	RetryableClasses []string
+}
+
+func parseRetryPolicy(data map[string]any) RetryPolicy {
+	rp := RetryPolicy{MaxAttempts: 1}
+	raw, ok := data["retry"].(map[string]any)
+	if !ok {
+		return rp
+	}
+	if v, ok := raw["maxAttempts"].(float64); ok && v >= 1 {
+		rp.MaxAttempts = int(v)
+	}
+	if v, ok := raw["backoffMs"].(float64); ok && v > 0 {
+		rp.BackoffMs = int(v)
+	}
+	if arr, ok := raw["retryableClasses"].([]any); ok {
+		for _, c := range arr {
+			if s, ok := c.(string); ok {
+				rp.RetryableClasses = append(rp.RetryableClasses, s)
+			}
+		}
+	}
+	return rp
+}
+
+// isRetryable reports whether err should trigger another attempt given the
+// node type and the declared retryable classes. When classes is empty every
+// error is retryable (the caller wants "retry on anything").
+func isRetryable(nodeType string, err error, classes []string) bool {
+	if len(classes) == 0 {
+		return true
+	}
+	for _, c := range classes {
+		switch c {
+		case "any":
+			return true
+		case "timeout":
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				return true
+			}
+		case "llm", "ai-step":
+			if nodeType == "ai-step" {
+				return true
+			}
+		case "connector":
+			if nodeType == "connector" {
+				return true
+			}
+		case "tool":
+			if nodeType == "tool" {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // ---- Wire types -------------------------------------------------------------
 
@@ -268,7 +341,6 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			break
 		}
 
-		stepCtx, cancel := context.WithTimeout(ctx, perStepTimeout)
 		emit("step_started", node.ID, map[string]any{
 			"name": labelOf(node),
 			"type": node.Type,
@@ -276,8 +348,38 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 
 		// Per-step LLM usage; populated by executeNode for ai-step nodes.
 		var stepUsage LLMStepUsage
-		stepOutput, stepErr := executeNode(stepCtx, runID, deps, emit, node, vars, out, byID, &stepUsage)
-		cancel()
+		var stepOutput any
+		var stepErr error
+
+		// Retry loop: honour node.Data["retry"] policy. MaxAttempts=1 (the
+		// default) means a single attempt with no retries — identical to the
+		// prior unconditional call.
+		rp := parseRetryPolicy(node.Data)
+	stepLoop:
+		for attempt := 1; attempt <= rp.MaxAttempts; attempt++ {
+			if attempt > 1 {
+				// Wait between attempts; bail early if the run context is cancelled.
+				if wait := time.Duration(rp.BackoffMs) * time.Millisecond; wait > 0 {
+					select {
+					case <-time.After(wait):
+					case <-ctx.Done():
+						stepErr = ctx.Err()
+						break stepLoop
+					}
+				}
+				emit("step_retrying", node.ID, map[string]any{
+					"attempt": attempt,
+					"of":      rp.MaxAttempts,
+					"error":   stepErr.Error(),
+				})
+			}
+			stepCtx, cancel := context.WithTimeout(ctx, perStepTimeout)
+			stepOutput, stepErr = executeNode(stepCtx, runID, deps, emit, node, vars, out, byID, &stepUsage)
+			cancel()
+			if stepErr == nil || !isRetryable(node.Type, stepErr, rp.RetryableClasses) {
+				break
+			}
+		}
 		res.StepsRan++
 
 		// Accumulate stats and check anomalies immediately after each step.
