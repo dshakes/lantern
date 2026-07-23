@@ -1138,6 +1138,164 @@ func TestMidRunAnomaly_DedupedPerKind(t *testing.T) {
 	}
 }
 
+// ---- Per-step retry policy tests -------------------------------------------
+
+// failN returns a stubDeps where CallLLM errors on the first n calls and
+// succeeds on the (n+1)th, making it easy to drive retry scenarios.
+func failNDeps(n int) (*stubDeps, Deps) {
+	calls := 0
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	d.CallLLM = func(_ context.Context, _, _ string) (string, error) {
+		stub.mu.Lock()
+		defer stub.mu.Unlock()
+		calls++
+		if calls <= n {
+			return "", fmt.Errorf("transient LLM error (call %d)", calls)
+		}
+		stub.llmCalls = append(stub.llmCalls, "ok")
+		return "recovered", nil
+	}
+	return stub, d
+}
+
+func TestRetry_SucceedsOnSecondAttempt(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{
+				"prompt": "hello",
+				"retry":  map[string]any{"maxAttempts": float64(3), "backoffMs": float64(0)},
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+	stub, d := failNDeps(1) // fail once, succeed on attempt 2
+	res, err := Run(context.Background(), "run", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("run should have recovered: %s", res.LastError)
+	}
+	// step_retrying must be emitted exactly once (between attempt 1 and 2).
+	var retrying int
+	for _, e := range stub.events {
+		if e.Kind == "step_retrying" {
+			retrying++
+			if e.StepID != "a" {
+				t.Errorf("step_retrying stepID = %q, want %q", e.StepID, "a")
+			}
+			if e.Payload["attempt"] != 2 {
+				t.Errorf("step_retrying attempt = %v, want 2", e.Payload["attempt"])
+			}
+		}
+	}
+	if retrying != 1 {
+		t.Errorf("got %d step_retrying events, want 1", retrying)
+	}
+}
+
+func TestRetry_ExhaustsAndFails(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{
+				"prompt": "hello",
+				"retry":  map[string]any{"maxAttempts": float64(2), "backoffMs": float64(0)},
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+	_, d := failNDeps(99) // always fail
+	res, err := Run(context.Background(), "run", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if !res.Failed {
+		t.Fatal("run should have failed after exhausting retries")
+	}
+	if res.FailedAt != "a" {
+		t.Errorf("FailedAt = %q, want %q", res.FailedAt, "a")
+	}
+}
+
+func TestRetry_NonRetryableClassSkipsRetry(t *testing.T) {
+	// retryableClasses = ["connector"] but the node is ai-step → no retry.
+	calls := 0
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	d.CallLLM = func(_ context.Context, _, _ string) (string, error) {
+		calls++
+		return "", fmt.Errorf("llm error")
+	}
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{
+				"prompt": "hello",
+				"retry": map[string]any{
+					"maxAttempts":      float64(3),
+					"retryableClasses": []any{"connector"},
+				},
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+	res, err := Run(context.Background(), "run", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if !res.Failed {
+		t.Fatal("run should have failed (non-retryable class)")
+	}
+	if calls != 1 {
+		t.Errorf("CallLLM called %d times, want 1 (no retry on non-matching class)", calls)
+	}
+}
+
+func TestParseRetryPolicy_Defaults(t *testing.T) {
+	// No retry key → MaxAttempts=1, no backoff, no classes.
+	rp := parseRetryPolicy(map[string]any{"prompt": "hi"})
+	if rp.MaxAttempts != 1 {
+		t.Errorf("MaxAttempts = %d, want 1", rp.MaxAttempts)
+	}
+	if rp.BackoffMs != 0 {
+		t.Errorf("BackoffMs = %d, want 0", rp.BackoffMs)
+	}
+}
+
+func TestParseRetryPolicy_FullSpec(t *testing.T) {
+	rp := parseRetryPolicy(map[string]any{
+		"retry": map[string]any{
+			"maxAttempts":      float64(5),
+			"backoffMs":        float64(250),
+			"retryableClasses": []any{"llm", "timeout"},
+		},
+	})
+	if rp.MaxAttempts != 5 {
+		t.Errorf("MaxAttempts = %d, want 5", rp.MaxAttempts)
+	}
+	if rp.BackoffMs != 250 {
+		t.Errorf("BackoffMs = %d, want 250", rp.BackoffMs)
+	}
+	if len(rp.RetryableClasses) != 2 || rp.RetryableClasses[0] != "llm" || rp.RetryableClasses[1] != "timeout" {
+		t.Errorf("RetryableClasses = %v, want [llm timeout]", rp.RetryableClasses)
+	}
+}
+
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
