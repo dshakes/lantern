@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Diagram } from "../../_components/Diagram";
 
 export default function RuntimeStreamingPage() {
   return (
@@ -10,6 +11,11 @@ export default function RuntimeStreamingPage() {
         sequence of three named SSE events on{" "}
         <code>GET /v1/sessions/&#123;id&#125;/events</code>.
       </p>
+
+      <Diagram
+        name="streaming-sequence"
+        caption="Provider deltas flow through the control-plane and Redis pub/sub to connected SSE clients. Tool-using turns buffer; tool-free turns stream every token."
+      />
 
       <div className="callout callout-info">
         <strong>Shared tier only.</strong> Sessions run on the shared tier
@@ -117,7 +123,7 @@ for await (const event of client.sessions.streamMessage(sessionId, {
       <p>
         Out-of-order <code>seq</code> values are buffered and yielded in order.
         A <code>message_error</code> from the server throws a typed{" "}
-        <code>SessionStreamError</code>. Unknown event kinds are silently
+        <code>MessageStreamError</code>. Unknown event kinds are silently
         ignored so old and new server versions are both handled.
       </p>
 

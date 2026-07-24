@@ -32,16 +32,25 @@ export default function RuntimeIdentityPage() {
       <h2 id="vending">Short-TTL secret vending</h2>
       <p>
         The workload never ships with secrets. Instead it requests them at
-        runtime via <code>VendSecret</code>, authenticating with a{" "}
-        <strong>Bearer</strong> credential tied to its per-instance identity.
-        Vended secrets are <strong>short-TTL</strong> — they expire quickly, so
-        a leaked value has a small blast radius — and the channel is{" "}
-        <strong>mTLS</strong>, so both ends are authenticated.
+        runtime via the harness&apos;s secrets socket (
+        <code>/run/lantern/secrets.sock</code>), which authenticates every
+        connecting peer with <code>SO_PEERCRED</code> — kernel-attested uid
+        and pid, not spoofable. The harness only vends to the workload uid
+        injected by the manager as <code>LANTERN_WORKLOAD_UID</code>. Secrets
+        have a 300-second TTL.
+      </p>
+      <p>
+        The control-plane resolves <code>lantern.secret/...</code> references
+        through a relay endpoint protected by a pre-shared
+        <code>X-Lantern-Runtime-Token</code> header (SHA-256 compared, set via{" "}
+        <code>LANTERN_RUNTIME_SECRET_TOKEN</code>; the endpoint returns 403
+        when unset). mTLS between the runtime-manager and control-plane is the
+        planned stronger follow-up and is not yet implemented.
       </p>
       <ul>
-        <li><strong>Bearer on <code>VendSecret</code>.</strong> The instance presents a credential derived from its spawn identity; an unauthenticated request gets nothing.</li>
-        <li><strong>Short TTL.</strong> Secrets are vended just-in-time and expire, rather than living for the life of the pod.</li>
-        <li><strong>mTLS transport.</strong> The vending channel is mutually authenticated; the secret never crosses an unauthenticated hop.</li>
+        <li><strong><code>SO_PEERCRED</code> peer auth.</strong> The kernel attests uid/pid on every socket connection; no credential the workload can forge.</li>
+        <li><strong>Short TTL (300 s).</strong> A leaked value has a small blast radius — the workload re-requests as needed.</li>
+        <li><strong>Pre-shared token on the relay.</strong> The manager authenticates to the control-plane relay via <code>X-Lantern-Runtime-Token</code>; fail-closed when unset.</li>
       </ul>
 
       <h2 id="ref-form">The <code>lantern.secret/...</code> ref form</h2>
@@ -74,7 +83,7 @@ export default function RuntimeIdentityPage() {
       <h2 id="takeaway">What you get</h2>
       <ul>
         <li><strong>Per-spawn Ed25519 identity</strong>, externally verifiable at <code>/.well-known/lantern-agent-identity</code>.</li>
-        <li><strong>Bearer-authenticated, short-TTL secret vending</strong> over mTLS.</li>
+        <li><strong>SO_PEERCRED peer-auth, short-TTL secret vending</strong> via harness Unix socket.</li>
         <li><strong>Reference-form secrets</strong> resolved inside the isolation boundary — raw values never touch the image, env, logs, or run state.</li>
       </ul>
     </>

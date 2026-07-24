@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="640" viewBox="0 0 1240 640" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Token streaming sequence — provider deltas flow through the session SSE to your client, with the failover rule and the tool-turn buffering exception">
+  <defs>
+    <radialGradient id="str-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="str-glowf" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="ss-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .mono { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .lane { stroke:#2a2118; stroke-width:1; }
+      .tok  { animation:ss-tok 2.4s linear infinite; }
+      .tok2 { animation:ss-tok 2.4s linear infinite; animation-delay:.8s; }
+      .tok3 { animation:ss-tok 2.4s linear infinite; animation-delay:1.6s; }
+      @keyframes ss-tok { 0% { transform:translateX(0); opacity:0; } 8% { opacity:1; } 92% { opacity:1; } 100% { transform:translateX(560px); opacity:0; } }
+      @media (prefers-reduced-motion: reduce) { .tok,.tok2,.tok3 { animation:none; opacity:.7; } }
+      .hotspot { fill:transparent; cursor:pointer; transition:fill .15s; }
+      .hotspot:hover { fill:rgba(255,255,255,.06); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="640" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="640" rx="16" fill="url(#str-vign)"/>
+  <rect x="0" y="0" width="1240" height="640" rx="16" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="44" class="h" font-size="22" filter="url(#str-glowf)">Token streaming, end to end</text>
+  <text x="384" y="44" class="sub" font-size="13">the model's first word reaches your UI while it is still thinking about the second</text>
+
+  <!-- ============ LANES ============ -->
+  <g transform="translate(32,80)">
+    <!-- lane headers -->
+    <rect x="0" y="0" width="260" height="44" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="130" y="27" text-anchor="middle" class="t" font-size="12.5" font-weight="700">LLM provider</text>
+    <rect x="0" y="150" width="260" height="44" rx="10" fill="#1e1813" stroke="#f59e0b"/>
+    <text x="130" y="177" text-anchor="middle" class="t" font-size="12.5" font-weight="700">control-plane</text>
+    <rect x="0" y="300" width="260" height="44" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="130" y="327" text-anchor="middle" class="t" font-size="12.5" font-weight="700">your client</text>
+
+    <!-- provider → control-plane -->
+    <line x1="300" y1="22" x2="1160" y2="22" class="lane"/>
+    <text x="300" y="12" class="sub">provider SSE — OpenAI delta.content · Anthropic content_block_delta</text>
+    <g transform="translate(320,16)"><circle class="tok" r="5" fill="#fbbf24"/></g>
+    <g transform="translate(320,16)"><circle class="tok2" r="5" fill="#fbbf24"/></g>
+    <g transform="translate(320,16)"><circle class="tok3" r="5" fill="#fbbf24"/></g>
+
+    <!-- control-plane processing -->
+    <line x1="300" y1="172" x2="1160" y2="172" class="lane"/>
+    <text x="300" y="162" class="sub">re-emitted per token — flushed immediately, never accumulated (http.Flusher per delta)</text>
+    <g transform="translate(320,166)"><circle class="tok" r="5" fill="#fb923c"/></g>
+    <g transform="translate(320,166)"><circle class="tok2" r="5" fill="#fb923c"/></g>
+    <g transform="translate(320,166)"><circle class="tok3" r="5" fill="#fb923c"/></g>
+    <g transform="translate(300,196)">
+      <rect x="0" y="0" width="856" height="58" rx="8" fill="#171310" stroke="#3a2f24"/>
+      <text x="14" y="20" class="code">event: message_delta   data: {"sessionId","turnId","seq":1..N,"delta"}</text>
+      <text x="14" y="36" class="code">event: message_completed   data: {"turnId","text","usage":{tokensIn,tokensOut,costUsd}}</text>
+      <text x="14" y="52" class="code">event: message_error   data: {"turnId","error"}   <tspan class="sub">— legacy agent.message still emitted alongside</tspan></text>
+    </g>
+
+    <!-- control-plane → client -->
+    <line x1="300" y1="322" x2="1160" y2="322" class="lane"/>
+    <text x="300" y="312" class="sub">GET /v1/sessions/{id}/events (SSE) · or POST /v1/completions {"stream":true}</text>
+    <g transform="translate(320,316)"><circle class="tok" r="5" fill="#2dd4bf"/></g>
+    <g transform="translate(320,316)"><circle class="tok2" r="5" fill="#2dd4bf"/></g>
+    <g transform="translate(320,316)"><circle class="tok3" r="5" fill="#2dd4bf"/></g>
+    <g transform="translate(300,346)">
+      <rect x="0" y="0" width="856" height="42" rx="8" fill="#171310" stroke="#3a2f24"/>
+      <text x="14" y="18" class="mono">for await (const chunk of client.sessions.streamMessage(id, {content})) { ... }</text>
+      <text x="14" y="34" class="sub">TS SDK: ordered by seq (out-of-order buffered) · dashboard chat + webchat widget render the same events</text>
+    </g>
+  </g>
+
+  <!-- ============ RULES ============ -->
+  <text x="32" y="510" class="band" fill="#fbbf24">TWO RULES THAT KEEP IT HONEST</text>
+  <g transform="translate(32,524)">
+    <rect x="0" y="0" width="572" height="76" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="18" y="26" class="t" font-size="12.5" font-weight="700">No mid-sentence provider swap</text>
+    <text x="18" y="48" class="sub">Failover to the next provider happens only if ZERO deltas have been</text>
+    <text x="18" y="64" class="sub">emitted. After the first token, an error is a clean <tspan class="mono">message_error</tspan> — never a splice.</text>
+
+    <rect x="604" y="0" width="572" height="76" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="622" y="26" class="t" font-size="12.5" font-weight="700">Tool-using turns buffer — by design, and we say so</text>
+    <text x="622" y="48" class="sub">A turn that calls tools (up to 5 tool rounds) can't stream partial reasoning;</text>
+    <text x="622" y="64" class="sub">it emits one <tspan class="mono">message_completed</tspan>. Tool-free turns always stream.</text>
+  </g>
+
+  <text x="32" y="628" class="sub">sessions.go processMessage / GetSessionEvents · llm_proxy.go streamWithFailover / completeSSE · sdk-ts sessions.streamMessage</text>
+
+  <!-- ============ NAVIGATION HOTSPOTS ============ -->
+  <!-- "your client" lane header → /runtime/streaming#sse (absolute: x=32, y=80+300=380, w=260, h=44) -->
+  <a href="/runtime/streaming#sse">
+    <title>SSE transport — GET /v1/sessions/{id}/events</title>
+    <rect class="hotspot" x="32" y="380" width="260" height="44" rx="10"/>
+  </a>
+
+  <a href="/runtime/streaming#message_delta">
+    <title>The event contract — message_delta / message_completed / message_error</title>
+    <rect class="hotspot" x="332" y="276" width="856" height="58" rx="8"/>
+  </a>
+  <a href="/runtime/streaming#sse">
+    <title>Consuming the stream — TS SDK streamMessage</title>
+    <rect class="hotspot" x="332" y="426" width="856" height="42" rx="8"/>
+  </a>
+  <a href="/runtime/streaming">
+    <title>Failover rule — never a mid-sentence provider swap</title>
+    <rect class="hotspot" x="32" y="524" width="572" height="76" rx="12"/>
+  </a>
+  <a href="/runtime/streaming">
+    <title>Tool-turn buffering — the honest limitation</title>
+    <rect class="hotspot" x="636" y="524" width="572" height="76" rx="12"/>
+  </a>
+</svg>

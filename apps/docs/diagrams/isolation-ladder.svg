@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="700" viewBox="0 0 1240 700" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Isolation ladder — trust classes map to sandbox backends through a fail-closed gate that never downgrades">
+  <defs>
+    <radialGradient id="iso-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="iso-glowf" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="il-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <marker id="il-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f87171"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .mono { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .ilpulse { animation:il-pulse 1.8s ease-in-out infinite; }
+      @keyframes il-pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+      @media (prefers-reduced-motion: reduce) { .ilpulse { animation:none; } }
+      .hotspot { fill:transparent; cursor:pointer; transition:fill .15s; }
+      .hotspot:hover { fill:rgba(255,255,255,.06); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="700" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="700" rx="16" fill="url(#iso-vign)"/>
+  <rect x="0" y="0" width="1240" height="700" rx="16" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="44" class="h" font-size="22" filter="url(#iso-glowf)">The isolation ladder</text>
+  <text x="248" y="44" class="sub" font-size="13">you declare how much you trust the code — the runtime either honors it or refuses. There is no third option.</text>
+
+  <!-- ============ TRUST CLASSES ============ -->
+  <text x="32" y="86" class="band" fill="#fbbf24">WHAT YOU DECLARE — THE TRUST CLASS</text>
+  <g transform="translate(32,98)">
+    <rect x="0" y="0" width="272" height="76" rx="10" fill="#0e1512" stroke="#134e4a"/>
+    <text x="16" y="24" class="code" font-size="12">trusted</text>
+    <text x="16" y="44" class="t" font-size="12">First-party code you wrote</text>
+    <text x="16" y="62" class="sub">any backend, plain runc allowed</text>
+
+    <rect x="300" y="0" width="272" height="76" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="316" y="24" class="code" font-size="12">standard</text>
+    <text x="316" y="44" class="t" font-size="12">Normal workloads (default)</text>
+    <text x="316" y="62" class="sub">gVisor; runc only if explicitly allowed</text>
+
+    <rect x="600" y="0" width="272" height="76" rx="10" fill="#1e1813" stroke="#f59e0b"/>
+    <text x="616" y="24" class="code" font-size="12">untrusted</text>
+    <text x="616" y="44" class="t" font-size="12">User-supplied / generated code</text>
+    <text x="616" y="62" class="sub">REQUIRES a separate kernel (gVisor)</text>
+
+    <rect x="900" y="0" width="276" height="76" rx="10" fill="#201414" stroke="#f87171"/>
+    <text x="916" y="24" class="code" font-size="12">hostile</text>
+    <text x="916" y="44" class="t" font-size="12">Assume it will attack the host</text>
+    <text x="916" y="62" class="sub">REQUIRES a hypervisor (Kata / Firecracker)</text>
+  </g>
+
+  <!-- ============ THE GATE ============ -->
+  <g transform="translate(390,214)">
+    <rect x="0" y="0" width="460" height="70" rx="12" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="230" y="28" text-anchor="middle" class="t" font-size="12.5" font-weight="700">FAIL-CLOSED GATE — twice</text>
+    <text x="230" y="50" text-anchor="middle" class="sub"><tspan class="mono">choose_backend()</tspan> refuses, then <tspan class="mono">build_job()</tspan> re-checks — never a bare pod</text>
+  </g>
+  <path d="M 300 174 Q 400 200 560 214" stroke="#8a7d6b" stroke-width="1.2" fill="none" marker-end="url(#il-arr)"/>
+  <path d="M 620 174 V 208" stroke="#8a7d6b" stroke-width="1.2" fill="none" marker-end="url(#il-arr)"/>
+  <path d="M 736 174 Q 700 196 660 210" stroke="#8a7d6b" stroke-width="1.2" fill="none" marker-end="url(#il-arr)"/>
+  <path d="M 1030 174 Q 940 202 760 216" stroke="#8a7d6b" stroke-width="1.2" fill="none" marker-end="url(#il-arr)"/>
+
+  <!-- ============ BACKENDS ============ -->
+  <text x="32" y="330" class="band" fill="#fbbf24">WHAT ACTUALLY RUNS IT — THE BACKEND LADDER, WEAKEST TO STRONGEST</text>
+  <g transform="translate(32,344)">
+    <rect x="0" y="0" width="216" height="120" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700">runc</text>
+    <text x="16" y="46" class="sub">shared kernel, namespaced</text>
+    <text x="16" y="66" class="sub">trusted · (standard only with</text>
+    <text x="16" y="81" class="code">LANTERN_ALLOW_RUNC_STANDARD</text>
+    <text x="16" y="96" class="sub">— default false)</text>
+
+    <rect x="240" y="0" width="216" height="120" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="256" y="26" class="t" font-size="12.5" font-weight="700">gVisor</text>
+    <text x="256" y="46" class="sub">userspace kernel between</text>
+    <text x="256" y="61" class="sub">code and host syscalls</text>
+    <text x="256" y="84" class="sub">standard · untrusted</text>
+    <text x="256" y="102" class="code">RuntimeClass: gvisor</text>
+
+    <rect x="480" y="0" width="216" height="120" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="496" y="26" class="t" font-size="12.5" font-weight="700">Kata</text>
+    <text x="496" y="46" class="sub">lightweight VM per pod —</text>
+    <text x="496" y="61" class="sub">its own kernel + hypervisor</text>
+    <text x="496" y="84" class="sub">hostile and below</text>
+    <text x="496" y="102" class="code">RuntimeClass: kata</text>
+
+    <rect x="720" y="0" width="216" height="120" rx="10" fill="#1c1520" stroke="#7e22ce"/>
+    <text x="736" y="26" class="t" font-size="12.5" font-weight="700">Firecracker</text>
+    <text x="736" y="46" class="sub">microVM with the Lantern</text>
+    <text x="736" y="61" class="sub">harness as PID 1 inside</text>
+    <text x="736" y="84" class="sub">all classes · session VMs ·</text>
+    <text x="736" y="99" class="sub">in-guest tool runner</text>
+
+    <rect x="960" y="0" width="216" height="120" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="976" y="26" class="t" font-size="12.5" font-weight="700">Wasmtime</text>
+    <text x="976" y="46" class="sub">capability-scoped sandbox</text>
+    <text x="976" y="61" class="sub">for wasm workloads</text>
+    <text x="976" y="84" class="sub">refuses untrusted / hostile</text>
+    <text x="976" y="99" class="sub">outright</text>
+  </g>
+
+  <!-- ============ REFUSAL ============ -->
+  <g transform="translate(32,494)" class="ilpulse">
+    <rect x="0" y="0" width="1176" height="64" rx="12" fill="#201414" stroke="#f87171" stroke-width="1.5"/>
+    <text x="20" y="26" class="t" font-size="12.5" font-weight="700" fill="#fca5a5">When the hardened class is missing, your workload does not run — and that is the feature.</text>
+    <text x="20" y="48" class="sub">Boot preflight checks the cluster for the gVisor/Kata RuntimeClasses; absent → that capability is disabled and the gate returns a refusal (<tspan class="mono">SECURITY: refusing to schedule</tspan>) — untrusted code is never quietly put on a shared kernel.</text>
+  </g>
+
+  <!-- ============ IN-VM CONTROLS ============ -->
+  <g transform="translate(32,582)">
+    <rect x="0" y="0" width="1176" height="76" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
+    <text x="20" y="26" class="band" fill="#5eead4" font-size="11">AND INSIDE THE VM, THE HARNESS KEEPS ENFORCING</text>
+    <text x="20" y="48" class="t" font-size="12">Egress: everything through the <tspan class="mono">127.0.0.1:3128</tspan> allowlist proxy — metadata IPs blocked, DNS-rebind re-checked, prod always fail-closed</text>
+    <text x="20" y="66" class="t" font-size="12">Secrets: kernel-attested peer auth (<tspan class="mono">SO_PEERCRED</tspan>) on the vend socket · 300 s TTLs · Exec: bearer-token gated, fatal-if-unset in prod</text>
+  </g>
+
+  <text x="32" y="684" class="sub">Backends: services/runtime-manager/src/backends/ · gate: service.rs choose_backend · preflight: runtimeclass_preflight.rs · harness: services/harness/src</text>
+
+  <!-- ============ NAVIGATION HOTSPOTS ============ -->
+  <!-- In-VM harness controls box → /runtime/isolation#classes -->
+  <a href="/runtime/isolation#classes">
+    <title>Isolation classes — in-VM harness enforcement</title>
+    <rect class="hotspot" x="32" y="582" width="1176" height="76" rx="12"/>
+  </a>
+
+  <a href="/runtime/isolation#fail-closed">
+    <title>The fail-closed gate — choose_backend + build_job</title>
+    <rect class="hotspot" x="390" y="214" width="460" height="70" rx="12"/>
+  </a>
+  <a href="/runtime/isolation#fail-closed">
+    <title>Refusal semantics — missing hardened class means the workload does not run</title>
+    <rect class="hotspot" x="32" y="494" width="1176" height="64" rx="12"/>
+  </a>
+  <a href="/runtime/isolation#classes">
+    <title>runc — trusted only</title>
+    <rect class="hotspot" x="32" y="344" width="216" height="120" rx="10"/>
+  </a>
+  <a href="/runtime/isolation#classes">
+    <title>gVisor — standard and untrusted</title>
+    <rect class="hotspot" x="272" y="344" width="216" height="120" rx="10"/>
+  </a>
+  <a href="/runtime/isolation#classes">
+    <title>Kata — hostile and below</title>
+    <rect class="hotspot" x="512" y="344" width="216" height="120" rx="10"/>
+  </a>
+  <a href="/runtime/sessions-and-memory">
+    <title>Firecracker — session-scoped VMs + in-guest tool runner</title>
+    <rect class="hotspot" x="752" y="344" width="216" height="120" rx="10"/>
+  </a>
+  <a href="/runtime/isolation#classes">
+    <title>Wasmtime — capability-scoped wasm sandbox</title>
+    <rect class="hotspot" x="992" y="344" width="216" height="120" rx="10"/>
+  </a>
+</svg>

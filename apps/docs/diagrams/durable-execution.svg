@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Durable execution — a run crashes mid-step and resumes from the exact point of failure via the journal">
   <defs>
+    <radialGradient id="dur-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dur-glowf" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
     <marker id="de-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
     </marker>
@@ -31,7 +39,7 @@
   <rect x="0" y="0" width="1240" height="720" rx="16" fill="#0b1120"/>
   <rect x="0" y="0" width="1240" height="720" rx="16" fill="none" stroke="#1e293b"/>
 
-  <text x="32" y="44" class="h" font-size="22">Durable Execution</text>
+  <text x="32" y="44" class="h" font-size="22" filter="url(#dur-glowf)">Durable Execution</text>
   <text x="262" y="44" class="sub" font-size="13">a crash costs one step, never the run — and never a double-spent side effect</text>
 
   <!-- ============ BAND 1: THE RUN ============ -->

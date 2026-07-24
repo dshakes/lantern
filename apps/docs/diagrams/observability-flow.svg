@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="680" viewBox="0 0 1240 680" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Observability flow — one attribute contract across spans, metrics, journal, health sweep, and receipts">
+  <defs>
+    <radialGradient id="obs-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="obs-glowf" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="ob-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .mono { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .obflow { stroke-dasharray:6 6; animation:ob-dash 1.4s linear infinite; }
+      @keyframes ob-dash { to { stroke-dashoffset:-24; } }
+      @media (prefers-reduced-motion: reduce) { .obflow { animation:none; } }
+      .hotspot { fill:transparent; cursor:pointer; transition:fill .15s; }
+      .hotspot:hover { fill:rgba(255,255,255,.06); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="680" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="680" rx="16" fill="url(#obs-vign)"/>
+  <rect x="0" y="0" width="1240" height="680" rx="16" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="44" class="h" font-size="22" filter="url(#obs-glowf)">One run, one story</text>
+  <text x="230" y="44" class="sub" font-size="13">every signal — span, metric, journal row, health probe, receipt — speaks the same identifiers, so nothing needs correlation glue</text>
+
+  <!-- ============ THE CONTRACT ============ -->
+  <g transform="translate(32,72)">
+    <rect x="0" y="0" width="1176" height="54" rx="12" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="20" y="23" class="band" fill="#fbbf24" font-size="11">THE ATTRIBUTE CONTRACT — STAMPED EVERYWHERE</text>
+    <text x="20" y="43" class="code" font-size="12">lantern.tenant_id · lantern.run_id · lantern.step_id · lantern.user_id   <tspan class="sub">(middleware.EnrichSpan — HTTP, gRPC, and step spans all funnel through it)</tspan></text>
+  </g>
+
+  <!-- ============ FIVE SIGNALS ============ -->
+  <text x="32" y="166" class="band" fill="#fbbf24">FIVE SIGNALS, ONE CONTRACT</text>
+  <g transform="translate(32,180)">
+    <!-- traces -->
+    <rect x="0" y="0" width="380" height="128" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="18" y="26" class="t" font-size="12.5" font-weight="700">Traces (OTel)</text>
+    <text x="18" y="48" class="sub">HTTP entry span (route template, e.g. <tspan class="mono">POST /v1/runs</tspan>)</text>
+    <text x="18" y="66" class="sub">→ step spans → LLM spans (<tspan class="mono">gen_ai.*</tspan> semconv)</text>
+    <text x="18" y="84" class="sub">→ microVM report-ingest + resume spans</text>
+    <text x="18" y="108" class="code">no-op safe when LANTERN_OTEL_ENABLED unset</text>
+
+    <!-- metrics -->
+    <rect x="398" y="0" width="380" height="128" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="416" y="26" class="t" font-size="12.5" font-weight="700">Metrics (OTel, meter lantern.runtime)</text>
+    <text x="416" y="48" class="code">lantern.run.step.duration <tspan class="sub">ms histogram · tier + outcome</tspan></text>
+    <text x="416" y="66" class="code">lantern.run.step.retries · lantern.run.replay.skips</text>
+    <text x="416" y="84" class="code">lantern.run.budget.blocks · lantern.run.total</text>
+    <text x="416" y="108" class="sub">replay.skips is your crash-resume health signal</text>
+
+    <!-- journal -->
+    <rect x="796" y="0" width="380" height="128" rx="12" fill="#0e1512" stroke="#134e4a"/>
+    <text x="814" y="26" class="t" font-size="12.5" font-weight="700">Journal (the product-facing timeline)</text>
+    <text x="814" y="48" class="sub">step_started · completed · failed · retrying · waiting ·</text>
+    <text x="814" y="66" class="sub">confidence_evaluated — rendered as the run waterfall,</text>
+    <text x="814" y="84" class="sub">streamed live: SSE (15 s heartbeat, 500 ms tail) + gRPC</text>
+    <text x="814" y="108" class="code">GET /v1/runs/{id}/events</text>
+  </g>
+
+  <g transform="translate(32,336)">
+    <!-- health -->
+    <rect x="0" y="0" width="380" height="116" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="18" y="26" class="t" font-size="12.5" font-weight="700">Peer health (the sweep)</text>
+    <text x="18" y="48" class="sub">TCP probes every 60 s · DOWN after 3 straight failures ·</text>
+    <text x="18" y="66" class="sub">one owner self-chat alert per transition — no storms</text>
+    <text x="18" y="92" class="code">GET /v1/system/health</text>
+
+    <!-- receipts -->
+    <rect x="398" y="0" width="380" height="116" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="416" y="26" class="t" font-size="12.5" font-weight="700">Receipts (externally verifiable)</text>
+    <text x="416" y="48" class="sub">SHA-256 chain over the FULL journal (seq|kind|payload)</text>
+    <text x="416" y="66" class="sub">→ Ed25519 signature · verify with no Lantern account</text>
+    <text x="416" y="92" class="code">POST /v1/runs/receipts/verify · /.well-known/lantern-receipts</text>
+
+    <!-- cost -->
+    <rect x="796" y="0" width="380" height="116" rx="12" fill="#171310" stroke="#3a2f24"/>
+    <text x="814" y="26" class="t" font-size="12.5" font-weight="700">Cost attribution</text>
+    <text x="814" y="48" class="sub">per-call usage → agent_usage_daily rollups → budget</text>
+    <text x="814" y="66" class="sub">enforcement (402) + /evaluations analytics + forecasts</text>
+    <text x="814" y="92" class="code">tokensIn / tokensOut / costUsd on every completion</text>
+  </g>
+
+  <!-- flows into the debug story -->
+  <path class="obflow" d="M 222 488 V 512" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#ob-arr)"/>
+  <path class="obflow" d="M 620 488 V 512" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#ob-arr)"/>
+  <path class="obflow" d="M 1018 488 V 512" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#ob-arr)"/>
+
+  <!-- ============ THE PAYOFF ============ -->
+  <g transform="translate(32,520)">
+    <rect x="0" y="0" width="1176" height="100" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
+    <text x="20" y="28" class="band" fill="#5eead4">WHAT THIS BUYS YOU AT 3 AM</text>
+    <text x="20" y="52" class="t" font-size="12.5">A failing run gives you: the exact step that failed (waterfall) → its span with the provider error (trace) → whether it was retried and how often (metrics)</text>
+    <text x="20" y="72" class="t" font-size="12.5">→ whether a crashed process re-drove it and skipped completed work (replay.skips + journal) → and a signed receipt proving what actually executed.</text>
+    <text x="20" y="92" class="sub">One tenant_id + run_id filters all of it. No cross-referencing five dashboards.</text>
+  </g>
+
+  <text x="32" y="656" class="sub">middleware/span.go · middleware/metrics.go · run_events.go · health_sweep.go · receipts.go · budgets.go</text>
+
+  <!-- ============ NAVIGATION HOTSPOTS ============ -->
+  <!-- Receipts box → /runtime/receipts (absolute: x=32+398=430, y=336, w=380, h=116) -->
+  <a href="/runtime/receipts">
+    <title>Verifiable receipts — Ed25519-signed proof of execution</title>
+    <rect class="hotspot" x="430" y="336" width="380" height="116" rx="12"/>
+  </a>
+
+  <a href="/runtime/observability">
+    <title>Traces — OTel spans with the attribute contract</title>
+    <rect class="hotspot" x="32" y="180" width="380" height="128" rx="12"/>
+  </a>
+  <a href="/runtime/observability#metrics">
+    <title>Metrics — lantern.run.* histograms and counters</title>
+    <rect class="hotspot" x="430" y="180" width="380" height="128" rx="12"/>
+  </a>
+  <a href="/runtime/durable-execution#journal">
+    <title>journal_events — the event-sourced run timeline</title>
+    <rect class="hotspot" x="828" y="180" width="380" height="128" rx="12"/>
+  </a>
+  <a href="/runtime/observability#health">
+    <title>Peer health sweep — GET /v1/system/health</title>
+    <rect class="hotspot" x="32" y="336" width="380" height="116" rx="12"/>
+  </a>
+  <a href="/runtime/observability">
+    <title>Cost attribution — usage rollups, budgets, forecasts</title>
+    <rect class="hotspot" x="828" y="336" width="380" height="116" rx="12"/>
+  </a>
+</svg>

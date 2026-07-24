@@ -34,7 +34,6 @@ triage them by severity, and post a summary to Slack every morning.`}</code>
         The AI will propose a name, system prompt, model capability, connected
         tools, and a schedule. Review and adjust before creating.
       </p>
-      <p>[Screenshot: AI-assisted agent creation wizard]</p>
 
       <h3>2. Manual creation</h3>
       <p>
@@ -124,10 +123,12 @@ say so rather than making things up.`}</code>
           simple tasks (maps to Haiku, GPT-4o-mini, etc.)
         </li>
         <li>
-          <code>&quot;code&quot;</code> -- optimized for code generation
+          <code>&quot;code-large&quot;</code> / <code>&quot;code-small&quot;</code> -- optimized
+          for code generation
         </li>
         <li>
-          <code>&quot;vision&quot;</code> -- models that understand images
+          <code>&quot;vision-large&quot;</code> / <code>&quot;vision-small&quot;</code> -- models
+          that understand images
         </li>
       </ul>
       <p>
@@ -165,7 +166,7 @@ say so rather than making things up.`}</code>
           <strong>CLI</strong> -- <code>lantern run &lt;agent&gt;</code>
         </li>
         <li>
-          <strong>REST API</strong> -- <code>POST /api/agents/:name/runs</code>
+          <strong>REST API</strong> -- <code>POST /v1/runs</code> (with <code>agentName</code> in the body)
         </li>
         <li>
           <strong>Schedule</strong> -- cron-based recurring runs
@@ -199,7 +200,7 @@ say so rather than making things up.`}</code>
           <strong>Running</strong> -- steps are actively executing
         </li>
         <li>
-          <strong>Completed</strong> -- all steps finished successfully
+          <strong>Succeeded</strong> -- all steps finished successfully
         </li>
         <li>
           <strong>Failed</strong> -- a step failed after exhausting retries

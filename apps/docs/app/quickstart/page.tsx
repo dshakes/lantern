@@ -90,8 +90,14 @@ data: {"seq":1,"kind":"step_started","stepId":"llm:main","attempt":1,"payload":{
 event: step_completed
 data: {"seq":2,"kind":"step_completed","stepId":"llm:main","attempt":1,"payload":{"output":"The three laws..."},"createdAt":"..."}
 
-event: run_completed
-data: {"seq":3,"kind":"run_completed","attempt":0,"payload":{"cost_usd":0.0004,"tokens_in":45,"tokens_out":120},"createdAt":"..."}`}</code></pre>
+: heartbeat`}</code></pre>
+          <p>
+            The stream closes when the run reaches a terminal status (
+            <code>succeeded</code>, <code>failed</code>, or{" "}
+            <code>cancelled</code>). There is no <code>run_completed</code>{" "}
+            event — poll <code>GET /v1/runs/{"{id}"}</code> for the final output
+            and cost.
+          </p>
           <div className="callout callout-tip">
             <strong>Dashboard view:</strong> open <a href="http://localhost:3001/runs" target="_blank" rel="noopener noreferrer">localhost:3001/runs</a> to see the waterfall timeline, cost breakdown, and full event log.
           </div>

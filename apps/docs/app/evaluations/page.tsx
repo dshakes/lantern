@@ -1,174 +1,243 @@
 export default function EvaluationsPage() {
   return (
     <>
-      <h1>Evaluations &amp; Observability</h1>
+      <h1>Evaluations</h1>
       <p>
-        The Evaluations dashboard gives you a complete picture of how your
-        agents are performing in production. Track success rates, cost
-        attribution, latency, and model usage -- all from a single page in the
-        dashboard.
+        Lantern has a built-in evaluation system for testing agents against
+        declarative test cases, gating CI on regressions, running A/B
+        experiments, and collecting human feedback — all from the same API the
+        dashboard uses.
       </p>
 
-      <h2 id="metrics">Agent performance metrics</h2>
+      <h2 id="eval-suites">Eval suites</h2>
       <p>
-        The Evaluations page (accessible from the dashboard sidebar under{" "}
-        <strong>Evaluations</strong>) displays key metrics for each agent:
-      </p>
-      <ul>
-        <li>
-          <strong>Success rate</strong> -- percentage of runs that completed
-          without errors, tracked over time with trend indicators
-        </li>
-        <li>
-          <strong>Latency percentiles</strong> -- p50, p95, and p99 response
-          times for agent runs, broken down by step type (LLM call, tool
-          execution, connector request)
-        </li>
-        <li>
-          <strong>Throughput</strong> -- runs per hour/day/week with historical
-          comparison
-        </li>
-        <li>
-          <strong>Error breakdown</strong> -- categorized failure reasons
-          (model timeout, connector failure, guardrail block, user abort)
-        </li>
-      </ul>
-
-      <div className="callout callout-info">
-        <strong>Note:</strong> Metrics are computed from the{" "}
-        <code>runs</code> and <code>journal_events</code> tables. Every run
-        automatically records cost, token counts, and timing -- no extra
-        instrumentation required.
-      </div>
-
-      <h2 id="cost">Cost attribution</h2>
-      <p>
-        Lantern tracks cost at every level of granularity:
-      </p>
-      <ul>
-        <li>
-          <strong>Per-run cost</strong> -- total USD spent on LLM tokens,
-          connector API calls, and compute for each run
-        </li>
-        <li>
-          <strong>Per-agent cost</strong> -- aggregated spend across all runs
-          for an agent, with daily/weekly/monthly rollups
-        </li>
-        <li>
-          <strong>Per-model cost</strong> -- breakdown of spend by model
-          provider and model tier (e.g., how much went to Claude Opus vs.
-          GPT-4o-mini)
-        </li>
-        <li>
-          <strong>Per-tenant cost</strong> -- total platform spend for billing
-          and chargeback
-        </li>
-      </ul>
-      <p>
-        Cost data flows from the model router (which records token counts and
-        pricing) and the billing service (which aggregates and attributes).
+        An eval suite is a named collection of test cases for an agent. Each
+        case defines an input and expected output (or a scoring function).
+        Suites are upserted by <code>(tenant, agent, name)</code>.
       </p>
 
-      <h2 id="model-usage">Model usage tracking</h2>
+      <h3>Create or update a suite</h3>
+      <pre>
+        <code>{`POST /v1/eval-suites
+{
+  "agentName": "research-agent",
+  "name": "factual-accuracy",
+  "cases": [
+    {
+      "id": "case-1",
+      "input": { "question": "What year did WWII end?" },
+      "expectedOutput": "1945",
+      "scoreThreshold": 0.9
+    }
+  ]
+}
+
+Response: 200 OK
+{ "id": "suite-uuid", "agentName": "research-agent", "name": "factual-accuracy" }`}</code>
+      </pre>
+
+      <h3>Other suite endpoints</h3>
+      <pre>
+        <code>{`GET    /v1/eval-suites              — list all suites (bare array)
+GET    /v1/eval-suites?agentName=  — filter by agent
+GET    /v1/eval-suites/{id}        — get suite
+DELETE /v1/eval-suites/{id}        — delete suite`}</code>
+      </pre>
+
+      <h2 id="eval-runs">Recording a run + CI gate</h2>
       <p>
-        The model usage panel shows which models your agents are actually
-        using after routing:
+        After running your agent against a suite&apos;s cases, post the results.
+        If the score has regressed vs. the branch baseline, the API returns{" "}
+        <strong>HTTP 422</strong> — wire this into your CI pipeline to block
+        merges on regression.
       </p>
-      <ul>
-        <li>
-          <strong>Model distribution</strong> -- pie chart of requests by
-          concrete model (Claude 3.5 Sonnet, GPT-4o, Gemini Pro, etc.)
-        </li>
-        <li>
-          <strong>Routing decisions</strong> -- how the model router resolved
-          capability requests (e.g., <code>reasoning-large</code> mapped to
-          Claude Opus 72% of the time and GPT-4o 28% of the time)
-        </li>
-        <li>
-          <strong>Token consumption</strong> -- input and output tokens per
-          model, per agent, per time period
-        </li>
-        <li>
-          <strong>Strategy effectiveness</strong> -- compare outcomes across
-          the four routing strategies (<code>balanced</code>,{" "}
-          <code>cheap</code>, <code>quality</code>, <code>fast</code>) to
-          find the optimal setting for each agent
-        </li>
-      </ul>
 
-      <h2 id="quality">Quality signals</h2>
+      <pre>
+        <code>{`POST /v1/eval-runs
+{
+  "suiteId": "suite-uuid",
+  "agentName": "research-agent",
+  "agentVersion": "v2",
+  "commitSha": "abc1234",
+  "branch": "main",
+  "passed": 9,
+  "score": 0.91,
+  "casesResult": [
+    { "id": "case-1", "passed": true, "score": 0.95, "actual": "1945" }
+  ]
+}
+
+Response: 200 OK — passed baseline check
+{ "id": "run-uuid", "score": 0.91, "passed": 9, "regressed": false }
+
+Response: 422 Unprocessable Entity — regressed vs. baseline
+{ "error": "score 0.91 is below baseline 0.94 on branch main", "regressed": true }`}</code>
+      </pre>
+
+      <h3>Other eval-run endpoints</h3>
+      <pre>
+        <code>{`GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)`}</code>
+      </pre>
+
+      <h2 id="baselines">Baselines</h2>
       <p>
-        Beyond raw metrics, Lantern surfaces quality signals that help you
-        understand whether your agents are doing the right thing:
+        Pin a specific eval run as the baseline for an agent + branch. Future
+        runs on that branch are compared against it.
       </p>
-      <ul>
-        <li>
-          <strong>Session satisfaction</strong> -- for interactive sessions,
-          track whether users continue the conversation (engaged) or abandon
-          it (dissatisfied)
-        </li>
-        <li>
-          <strong>Guardrail triggers</strong> -- how often guardrails fire,
-          which rules trigger most, and whether blocked outputs indicate a
-          prompt issue
-        </li>
-        <li>
-          <strong>Retry rate</strong> -- how often steps need to be retried
-          due to transient failures, and which connectors or models are least
-          reliable
-        </li>
-        <li>
-          <strong>Version comparison</strong> -- compare metrics between
-          agent versions to validate that changes improve (or at least do
-          not degrade) performance
-        </li>
-      </ul>
+      <pre>
+        <code>{`POST /v1/eval-baselines
+{ "agentName": "research-agent", "branch": "main", "evalRunId": "run-uuid" }
 
-      <div className="callout callout-tip">
-        <strong>Tip:</strong> Use version comparison before promoting a new
-        agent version to production. Deploy the new version to a staging
-        environment, run a batch of test inputs, and compare the evaluation
-        metrics side by side.
-      </div>
+GET /v1/eval-baselines?agentName=research-agent&branch=main`}</code>
+      </pre>
 
-      <h2 id="alerts">Setting up alerts (future)</h2>
+      <h2 id="observability">Eval observability</h2>
       <p>
-        Alert configuration is on the roadmap. Planned capabilities include:
+        Two read-only endpoints over existing <code>eval_runs</code> data for
+        the dashboard quality-trend sparkline and top-failing-cases view.
       </p>
-      <ul>
-        <li>
-          <strong>Success rate threshold</strong> -- alert when an
-          agent&apos;s success rate drops below a configurable percentage
-        </li>
-        <li>
-          <strong>Cost spike</strong> -- alert when per-run or per-day cost
-          exceeds a threshold
-        </li>
-        <li>
-          <strong>Latency degradation</strong> -- alert when p95 latency
-          exceeds a target for a sustained period
-        </li>
-        <li>
-          <strong>Delivery channels</strong> -- email, Slack, PagerDuty, and
-          webhook
-        </li>
-      </ul>
 
-      <div className="callout callout-warning">
-        <strong>Coming soon:</strong> Alerts are not yet available in the
-        current release. Use the evaluations dashboard for manual monitoring,
-        or export metrics to your existing observability stack via the OTel
-        exporter.
-      </div>
+      <h3>Failure clusters</h3>
+      <pre>
+        <code>{`GET /v1/eval-observability/failures?agentName=research-agent&branch=main&limit=50
 
-      <h2>OTel integration</h2>
+Response:
+{
+  "clusters": [
+    {
+      "case": "What year did WWII end?",
+      "failures": 3,
+      "seen": 5,
+      "failRate": 0.6,
+      "sampleError": "Agent said 1944 instead of 1945",
+      "firstSeen": "2026-07-01T...",
+      "lastSeen": "2026-07-20T..."
+    }
+  ],
+  "runsScanned": 50
+}`}</code>
+      </pre>
+
+      <h3>Score trend</h3>
+      <pre>
+        <code>{`GET /v1/eval-observability/trends?agentName=research-agent&branch=main
+
+Response:
+{
+  "points": [
+    {
+      "runId": "run-uuid",
+      "createdAt": "2026-07-01T...",
+      "score": 0.94,
+      "passRate": 0.9,
+      "passed": 9,
+      "costUsd": 0.12,
+      "agentVersion": "v1",
+      "commitSha": "abc1234"
+    }
+  ],
+  "latestVsMean": -0.03,
+  "regressing": true
+}`}</code>
+      </pre>
+
+      <h2 id="experiments">A/B experiments</h2>
       <p>
-        Every service in Lantern emits OpenTelemetry traces with standard
-        attributes: <code>tenant_id</code>, <code>run_id</code>,{" "}
-        <code>step_id</code>, and <code>agent_version</code>. You can export
-        these to any OTel-compatible backend (Jaeger, Datadog, Grafana Tempo,
-        Honeycomb) for deep-dive debugging alongside the built-in evaluations
-        dashboard.
+        Run two agent versions side by side with deterministic traffic
+        splitting (FNV-1a hash on a caller-supplied bucketing key). Record
+        per-request outcomes and let Lantern auto-promote the winner when it
+        has a statistically significant lift.
+      </p>
+
+      <h3>Create an experiment</h3>
+      <pre>
+        <code>{`POST /v1/experiments
+{
+  "agentName": "research-agent",
+  "variantAVersion": "v1",
+  "variantBVersion": "v2",
+  "trafficSplitB": 0.2,     // 20% to variant B
+  "autoPromote": true       // auto-flip to B if lift > 2%
+}
+
+Response: 201 Created
+{ "id": "exp-uuid", "status": "running", ... }`}</code>
+      </pre>
+
+      <h3>Record an outcome</h3>
+      <pre>
+        <code>{`POST /v1/experiments/{id}/record
+{
+  "bucketingKey": "user-123",  // determines which variant this caller gets
+  "score": 0.95                // 0–1; your metric (e.g. task success rate)
+}
+
+// Auto-promotion fires when:
+// - variant B score - variant A score > 0.02
+// - both arms have ≥ minRunsPerArm samples`}</code>
+      </pre>
+
+      <h3>Conclude manually</h3>
+      <pre>
+        <code>{`POST /v1/experiments/{id}/conclude
+{
+  "winner": "b",     // "a" | "b" | null (inconclusive)
+  "promote": true    // flip agent's currentVersionId to the winner
+}`}</code>
+      </pre>
+
+      <h3>Other experiment endpoints</h3>
+      <pre>
+        <code>{`GET /v1/experiments         — list (bare array)
+GET /v1/experiments/{id}    — get with current a_score / b_score`}</code>
+      </pre>
+
+      <h2 id="feedback">Human feedback (RLHF)</h2>
+      <p>
+        Collect thumbs-up / thumbs-down reactions on individual runs. Score is
+        1–5; 4–5 is positive, 1–2 is negative. Negative runs feed the
+        rehearsal queue automatically.
+      </p>
+
+      <pre>
+        <code>{`POST /v1/runs/{id}/feedback
+{
+  "score": 2,
+  "comment": "The agent missed the follow-up question",
+  "preferredOutput": "It should have asked for clarification first"
+}
+
+GET /v1/runs/{id}/feedback                   — per-run history (bare array)
+GET /v1/agents/{name}/feedback               — aggregate summary
+  → { avgScore, thumbsUp, thumbsDown, trend7d: [...] }`}</code>
+      </pre>
+
+      <h2 id="rehearsals">Rehearsals</h2>
+      <p>
+        Replay past failed or low-scoring runs as synthetic test cases against
+        a candidate version before you flip production traffic. Uses the same
+        CI-gate baseline machinery as eval runs.
+      </p>
+
+      <pre>
+        <code>{`POST /v1/runs/rehearse
+{
+  "agentName": "research-agent",
+  "candidateVersion": "v3",
+  "window": "7d",   // look-back window for source runs
+  "limit": 20,      // max synthetic cases to generate
+  "maxScore": 2     // only pull runs with feedback score ≤ this
+}`}</code>
+      </pre>
+
+      <h2 id="otel">OTel traces</h2>
+      <p>
+        Every HTTP request and gRPC call carries a span enriched with{" "}
+        <code>lantern.tenant_id</code>, <code>lantern.run_id</code>,{" "}
+        <code>lantern.step_id</code>, and <code>lantern.user_id</code> via{" "}
+        <code>middleware.EnrichSpan</code>. Traces are no-op safe when{" "}
+        <code>LANTERN_OTEL_ENABLED</code> is unset. Export to any OTel backend
+        by setting <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>.
       </p>
     </>
   );

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Diagram } from "../../_components/Diagram";
 
 export default function RuntimeObservabilityPage() {
   return (
@@ -7,6 +8,11 @@ export default function RuntimeObservabilityPage() {
       <p>
         One OTel trace per spawn, GenAI token telemetry, real-time anomaly detection — wired through standard OpenTelemetry.
       </p>
+
+      <Diagram
+        name="observability-flow"
+        caption="Every signal — OTel span, metric, journal row, health probe, receipt — speaks the same identifiers, so nothing needs correlation glue."
+      />
 
       <h2 id="trace">One trace per spawn</h2>
       <p>

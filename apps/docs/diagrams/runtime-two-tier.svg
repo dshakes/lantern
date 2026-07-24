@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="900" viewBox="0 0 1240 900" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Two-tier agent runtime — shared inline executor and isolated microVM tier over one durable journal">
   <defs>
+    <radialGradient id="run-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="run-glowf" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
     <marker id="tt-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
     </marker>
@@ -24,7 +32,7 @@
   <rect x="0" y="0" width="1240" height="900" rx="16" fill="#0b1120"/>
   <rect x="0" y="0" width="1240" height="900" rx="16" fill="none" stroke="#1e293b"/>
 
-  <text x="32" y="44" class="h" font-size="22">Agent Runtime</text>
+  <text x="32" y="44" class="h" font-size="22" filter="url(#run-glowf)">Agent Runtime</text>
   <text x="225" y="44" class="sub" font-size="13">two tiers, one journal · every run routed by manifest at creation time · ADR 0022</text>
   <g transform="translate(1064,30)">
     <rect x="0" y="0" width="14" height="14" rx="3" fill="#38bdf8"/><text x="20" y="11" class="sub">Go</text>

@@ -50,7 +50,7 @@ DELETE /v1/sessions/sess_abc123`}</code></pre>
       <p>
         The same durability primitives that apply to headless runs apply to
         sessions. Each turn&apos;s LLM call carries an idempotency key derived
-        from <code>(run_id, step_id, attempt)</code>. The result is journaled in{" "}
+        from <code>sha256("runID|stepID|attempt")</code>. The result is journaled in{" "}
         <code>journal_events</code>. If the control-plane crashes mid-turn, the
         recovery sweep re-drives the run; the{" "}
         <code>checkCachedLLMStep</code> cache returns the prior response so the

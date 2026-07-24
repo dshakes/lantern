@@ -136,14 +136,16 @@ export default function SecurityPage() {
       <h3>At rest</h3>
       <ul>
         <li>
-          All data in Postgres is encrypted using AES-256
+          <strong>Connector credentials</strong> and{" "}
+          <strong>LLM provider API keys</strong> are AES-256-GCM encrypted
+          at the application layer (
+          <code>LANTERN_CREDENTIAL_KEY</code>). Other Postgres columns use
+          standard Postgres storage — disk-level encryption is the
+          responsibility of the host.
         </li>
         <li>
-          Secrets and API keys use envelope encryption with tenant-specific
-          keys
-        </li>
-        <li>
-          S3 objects use server-side encryption (SSE-S3 or SSE-KMS)
+          S3/MinIO objects (agent bundles, snapshots) use server-side
+          encryption at the storage layer.
         </li>
       </ul>
 
@@ -153,12 +155,17 @@ export default function SecurityPage() {
           All external traffic uses TLS 1.3
         </li>
         <li>
-          Internal gRPC traffic between control plane and data plane uses
-          mutual TLS (mTLS)
+          Internal gRPC traffic is authenticated with a pre-shared service
+          token (<code>LANTERN_GRPC_SERVICE_TOKEN</code>) validated via
+          constant-time compare — a <code>UnaryServiceAuthInterceptor</code>{" "}
+          runs before tenant extraction, fail-closed in production. mTLS is the
+          planned stronger follow-up and is not yet implemented.
         </li>
         <li>
-          The &quot;paranoid&quot; privacy level adds end-to-end encryption on
-          top of TLS
+          In-VM secret vending uses kernel-attested peer auth (
+          <code>SO_PEERCRED</code>) on the Unix domain socket — only the
+          expected workload uid may receive secrets, and the harness refuses any
+          other peer at the kernel level.
         </li>
       </ul>
 
