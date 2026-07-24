@@ -601,6 +601,20 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 	if lims, ok := manifest["limits"].(map[string]any); ok {
 		spec.Limits = lims
 	}
+	// env and restoreSnapshotId from the manifest support crash-resume:
+	// the recovery path injects LANTERN_RESUME=1 via manifest["env"] and
+	// provides a snapshot id via manifest["restoreSnapshotId"] (ADR 0022).
+	if envRaw, ok := manifest["env"].(map[string]any); ok {
+		spec.Env = make(map[string]string, len(envRaw))
+		for k, v := range envRaw {
+			if sv, ok := v.(string); ok {
+				spec.Env[k] = sv
+			}
+		}
+	}
+	if snap, ok := manifest["restoreSnapshotId"].(string); ok {
+		spec.RestoreSnapshotID = snap
+	}
 
 	// Quota: honest failure — any denial fails the run, never falls through to inline
 	// (ADR 0022 §3: "never silent downgrade").
