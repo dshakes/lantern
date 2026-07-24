@@ -15,15 +15,26 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
+// SessionVMTerminator is implemented by RuntimeHandler and called by the
+// session lifecycle (stop/delete) to tear down the session's microVM.
+// Best-effort: a nil terminator is a no-op (no microVM wired).
+type SessionVMTerminator interface {
+	TerminateSessionVM(ctx context.Context, tenantID, sessionID string) error
+}
+
 // SessionHandler provides HTTP handlers for interactive agent sessions.
 // A session is a durable, long-lived entity that allows multi-turn
 // conversation with an agent. Users send messages, the agent responds,
 // and users can steer mid-execution.
 type SessionHandler struct {
-	srv      *server.Server
-	auth     *AuthHandler
-	llmProxy *LlmProxyHandler
+	srv          *server.Server
+	auth         *AuthHandler
+	llmProxy     *LlmProxyHandler
+	vmTerminator SessionVMTerminator // optional; set via SetSessionVMTerminator
 }
+
+// SetSessionVMTerminator wires the microVM teardown hook. nil-safe.
+func (h *SessionHandler) SetSessionVMTerminator(t SessionVMTerminator) { h.vmTerminator = t }
 
 // NewSessionHandler creates a new SessionHandler.
 func NewSessionHandler(srv *server.Server, auth *AuthHandler, llmProxy *LlmProxyHandler) *SessionHandler {
@@ -907,6 +918,14 @@ func (h *SessionHandler) StopSession(w http.ResponseWriter, r *http.Request) {
 
 	h.publishEvent(sessionID, "session.stopped", map[string]string{})
 
+	// Best-effort: terminate the session's microVM if one is running.
+	if h.vmTerminator != nil {
+		if termErr := h.vmTerminator.TerminateSessionVM(ctx, tenantID, sessionID); termErr != nil {
+			h.logger().Warn("StopSession: TerminateSessionVM failed",
+				zap.String("session_id", sessionID), zap.Error(termErr))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
@@ -948,6 +967,14 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
+	}
+
+	// Best-effort: terminate the session's microVM if one is running.
+	if h.vmTerminator != nil {
+		if termErr := h.vmTerminator.TerminateSessionVM(ctx, tenantID, sessionID); termErr != nil {
+			h.logger().Warn("DeleteSession: TerminateSessionVM failed",
+				zap.String("session_id", sessionID), zap.Error(termErr))
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

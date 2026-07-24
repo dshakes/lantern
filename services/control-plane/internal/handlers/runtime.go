@@ -42,6 +42,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -591,6 +592,10 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 // workload for the given run using the quota checker and scheduler wired into
 // this RuntimeHandler. Returns the vmID on success. On any failure the caller
 // must mark the run failed — this method never touches the run row.
+//
+// When the run is associated with a session (runs.session_id is set), the call
+// is routed through scheduleSessionVM which reuses an existing live VM for that
+// session rather than spawning a new one on every turn.
 func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, agentVersionID, runID, imageDigest string, manifest map[string]any) (string, error) {
 	spec := agentSpecDTO{
 		ImageDigest:    imageDigest,
@@ -616,15 +621,248 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 		spec.RestoreSnapshotID = snap
 	}
 
-	// Quota: honest failure — any denial fails the run, never falls through to inline
-	// (ADR 0022 §3: "never silent downgrade").
-	qres := h.checkRuntimeQuota(ctx, tenantID, spec)
-	if !qres.Allowed {
-		return "", fmt.Errorf("quota exceeded: %s", qres.Reason)
+	// Look up the run's session_id — when present, route through the session VM
+	// affinity path so all turns of the same session reuse one VM.
+	// rls-exempt: runs is tenant-scoped but we have tenantID and self-scope explicitly.
+	var sessionID string
+	if runID != "" {
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT COALESCE(session_id::text, '') FROM runs WHERE id = $1 AND tenant_id = $2`,
+			runID, tenantID,
+		).Scan(&sessionID)
 	}
 
-	vmID, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, runID, spec)
-	return vmID, err
+	// Quota: honest failure — any denial fails the run, never falls through to inline
+	// (ADR 0022 §3: "never silent downgrade"). Skip quota check on session-VM reuse
+	// (no new resource is consumed); the initial spawn already checked.
+	if sessionID == "" {
+		qres := h.checkRuntimeQuota(ctx, tenantID, spec)
+		if !qres.Allowed {
+			return "", fmt.Errorf("quota exceeded: %s", qres.Reason)
+		}
+		vmID, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, runID, spec)
+		return vmID, err
+	}
+
+	// Session affinity: quota is checked inside scheduleSessionVM for the spawn
+	// path; on reuse the check is skipped (same VM already counted).
+	return h.scheduleSessionVM(ctx, tenantID, sessionID, spec)
+}
+
+// scheduleSessionVM reuses the live VM for (tenantID, sessionID) when one exists,
+// or spawns a new one (after a quota check) and stamps the session_id on it.
+//
+// Singleflight deduplicates concurrent calls with the same key so two
+// simultaneous turns in the same session never double-spawn. Sequential turns
+// find the existing VM via the DB check.
+func (h *RuntimeHandler) scheduleSessionVM(ctx context.Context, tenantID, sessionID string, spec agentSpecDTO) (string, error) {
+	type result struct{ vmID string }
+	sfKey := tenantID + ":" + sessionID
+
+	v, err, _ := h.sessionVMsf.Do(sfKey, func() (any, error) {
+		// 1. Check DB for a live VM already pinned to this session.
+		var existingVMID string
+		_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			e := tx.QueryRow(ctx, `
+				SELECT vm_id FROM runtime_vms
+				WHERE tenant_id = $1 AND session_id = $2
+				  AND state IN ('pending','spawning','running')
+				ORDER BY created_at DESC LIMIT 1
+			`, tenantID, sessionID).Scan(&existingVMID)
+			if e != nil {
+				return nil // ErrNoRows or other — proceed to spawn
+			}
+			// Touch last_used_at so the idle sweep doesn't evict a busy VM.
+			_, _ = tx.Exec(ctx, `UPDATE runtime_vms SET last_used_at = now() WHERE vm_id = $1`, existingVMID)
+			return nil
+		})
+		if existingVMID != "" {
+			h.logger().Debug("scheduleSessionVM: reusing live VM",
+				zap.String("session_id", sessionID),
+				zap.String("vm_id", existingVMID),
+				zap.String("tenant_id", tenantID),
+			)
+			return result{vmID: existingVMID}, nil
+		}
+
+		// 2. No live VM — enforce quota before spawning.
+		qres := h.checkRuntimeQuota(ctx, tenantID, spec)
+		if !qres.Allowed {
+			return nil, fmt.Errorf("quota exceeded: %s", qres.Reason)
+		}
+
+		// 3. Stamp the session affinity label so the scheduler can co-locate turns.
+		labels := make(map[string]string, len(spec.Labels)+1)
+		for k, v := range spec.Labels {
+			labels[k] = v
+		}
+		labels["lantern.session_id"] = sessionID
+		specWithSession := spec
+		specWithSession.Labels = labels
+
+		vmID, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, spec.RunID, specWithSession)
+		if err != nil {
+			return nil, err
+		}
+
+		// 4. Write session_id + last_used_at onto the freshly-inserted VM row.
+		if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(ctx, `
+				UPDATE runtime_vms SET session_id = $1, last_used_at = now() WHERE vm_id = $2
+			`, sessionID, vmID)
+			return e
+		}); wErr != nil {
+			h.logger().Warn("scheduleSessionVM: stamp session_id failed",
+				zap.String("vm_id", vmID), zap.Error(wErr))
+			// Non-fatal: the VM is running; session affinity lookup will miss on
+			// the next turn (re-spawns) but the current turn is unaffected.
+		}
+
+		h.logger().Info("scheduleSessionVM: spawned new session VM",
+			zap.String("session_id", sessionID),
+			zap.String("vm_id", vmID),
+			zap.String("tenant_id", tenantID),
+		)
+		return result{vmID: vmID}, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return v.(result).vmID, nil
+}
+
+// TerminateSessionVM terminates the live VM pinned to (tenantID, sessionID),
+// if one exists. Best-effort: errors are logged, not returned. Emits a
+// session_vm_terminated audit event. Called by StopSession / DeleteSession.
+func (h *RuntimeHandler) TerminateSessionVM(ctx context.Context, tenantID, sessionID string) error {
+	var vmID string
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT vm_id FROM runtime_vms
+			WHERE tenant_id = $1 AND session_id = $2
+			  AND state IN ('pending','spawning','running')
+			ORDER BY created_at DESC LIMIT 1
+		`, tenantID, sessionID).Scan(&vmID)
+	})
+	if err != nil {
+		// ErrNoRows is normal (no VM for this session). Other errors are unexpected.
+		if err != pgx.ErrNoRows {
+			h.logger().Warn("TerminateSessionVM: lookup failed",
+				zap.String("session_id", sessionID), zap.Error(err))
+		}
+		return nil
+	}
+
+	if termErr := h.scheduler.Terminate(withTenant(ctx, tenantID), vmID, "session_ended"); termErr != nil {
+		h.logger().Warn("TerminateSessionVM: scheduler.Terminate failed",
+			zap.String("vm_id", vmID), zap.Error(termErr))
+		// Fall through to mark terminated in DB so the row doesn't linger.
+	}
+
+	if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE runtime_vms SET state = 'terminated', terminated_at = COALESCE(terminated_at, now())
+			WHERE vm_id = $1 AND tenant_id = $2
+		`, vmID, tenantID)
+		return e
+	}); wErr != nil {
+		h.logger().Warn("TerminateSessionVM: state update failed",
+			zap.String("vm_id", vmID), zap.Error(wErr))
+	}
+
+	h.auditRuntime(ctx, tenantID, vmID, "session_vm_terminated",
+		map[string]any{"session_id": sessionID}, "", "")
+
+	h.logger().Info("TerminateSessionVM: terminated",
+		zap.String("session_id", sessionID),
+		zap.String("vm_id", vmID),
+		zap.String("tenant_id", tenantID),
+	)
+	return nil
+}
+
+// RunSessionVMIdleSweep terminates session VMs whose last_used_at is older
+// than LANTERN_SESSION_VM_IDLE_TTL (default 30m). Runs until ctx is cancelled.
+// Start it as a goroutine alongside the other background loops in main.go.
+func RunSessionVMIdleSweep(ctx context.Context, h *RuntimeHandler, logger *zap.Logger) {
+	ttl := 30 * time.Minute
+	if v := os.Getenv("LANTERN_SESSION_VM_IDLE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			ttl = d
+		}
+	}
+	// Sweep at 1/4 of TTL so a VM doesn't sit idle for 2× the TTL.
+	interval := ttl / 4
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	logger.Info("session VM idle sweep started",
+		zap.Duration("ttl", ttl), zap.Duration("interval", interval))
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweepIdleSessionVMs(ctx, h, ttl, logger)
+		}
+	}
+}
+
+func sweepIdleSessionVMs(ctx context.Context, h *RuntimeHandler, ttl time.Duration, logger *zap.Logger) {
+	sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Collect (tenant_id, vm_id, session_id) for stale session VMs.
+	// rls-exempt: cross-tenant sweep — uses privileged pool, same pattern as reconcileLoop.
+	type staleVM struct {
+		tenantID  string
+		vmID      string
+		sessionID string
+	}
+	rows, err := h.srv.Pool.Query(sweepCtx, `
+		SELECT tenant_id, vm_id, session_id
+		FROM runtime_vms
+		WHERE session_id IS NOT NULL
+		  AND state IN ('pending','spawning','running')
+		  AND last_used_at < now() - $1::interval
+	`, ttl.String())
+	if err != nil {
+		logger.Warn("session VM idle sweep: query failed", zap.Error(err))
+		return
+	}
+	var stale []staleVM
+	for rows.Next() {
+		var s staleVM
+		if e := rows.Scan(&s.tenantID, &s.vmID, &s.sessionID); e == nil {
+			stale = append(stale, s)
+		}
+	}
+	rows.Close()
+
+	for _, s := range stale {
+		tctx := middleware.InjectTenantID(sweepCtx, s.tenantID)
+		if termErr := h.scheduler.Terminate(withTenant(tctx, s.tenantID), s.vmID, "idle_timeout"); termErr != nil {
+			logger.Warn("session VM idle sweep: terminate failed",
+				zap.String("vm_id", s.vmID), zap.Error(termErr))
+		}
+		_ = h.srv.WithTenant(tctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(tctx, `
+				UPDATE runtime_vms SET state = 'terminated', terminated_at = COALESCE(terminated_at, now())
+				WHERE vm_id = $1 AND tenant_id = $2
+			`, s.vmID, s.tenantID)
+			return e
+		})
+		h.auditRuntime(tctx, s.tenantID, s.vmID, "session_vm_terminated",
+			map[string]any{"session_id": s.sessionID, "reason": "idle_timeout"}, "", "")
+		logger.Info("session VM idle sweep: terminated stale VM",
+			zap.String("vm_id", s.vmID),
+			zap.String("session_id", s.sessionID),
+			zap.String("tenant_id", s.tenantID),
+		)
+	}
 }
 
 // ---------- Handler ----------
@@ -644,6 +882,10 @@ type RuntimeHandler struct {
 	identity     *agentidentity.Issuer
 	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
 	metricsStore vmMetricsStore    // optional; nil when report handler not wired
+	// ponytail: singleflight deduplicates concurrent session-VM spawns within
+	// a single process. Cross-replica deduplication is a future concern; the DB
+	// check in scheduleSessionVM limits worst-case to a brief double-spawn.
+	sessionVMsf singleflight.Group // key: "tenantID:sessionID"
 }
 
 // SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe.

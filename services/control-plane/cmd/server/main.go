@@ -744,7 +744,8 @@ func main() {
 	// Firecracker-backed RuntimeScheduler at :50055. Quota-gated,
 	// tenant-scoped, audit-logged.
 	runtimeHandler := handlers.NewRuntimeHandler(srv, authHandler)
-	restHandler.SetMicroVMDispatcher(runtimeHandler) // two-tier run routing (ADR 0022)
+	restHandler.SetMicroVMDispatcher(runtimeHandler)      // two-tier run routing (ADR 0022)
+	sessionHandler.SetSessionVMTerminator(runtimeHandler) // session VM teardown on stop/delete
 	httpMux.HandleFunc("POST /v1/runtime/schedule", runtimeHandler.Schedule)
 	httpMux.HandleFunc("GET /v1/runtime/vms", runtimeHandler.ListVMs)
 	httpMux.HandleFunc("GET /v1/runtime/vms/{id}", runtimeHandler.GetVM)
@@ -849,6 +850,10 @@ func main() {
 
 	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
 	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
+
+	// Session-scoped microVM idle sweep: terminates VMs whose last_used_at
+	// is older than LANTERN_SESSION_VM_IDLE_TTL (default 30m).
+	go handlers.RunSessionVMIdleSweep(ctx, runtimeHandler, logger)
 
 	// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
 	go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
