@@ -102,6 +102,10 @@ The runtime is the load-bearing core: a vendor-operated, multi-tenant, **durable
 
 Every run executes in one of two tiers, selected by `manifest.isolation` at agent-version publish time ([ADR 0022](docs/adr/0022-two-tier-agent-runtime.md)):
 
+<p align="center">
+  <img src="docs/architecture/diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime — the isolation gate routes each run to the shared inline executor or the microVM stack; both tiers checkpoint to the same journal_events substrate" width="100%">
+</p>
+
 | | **Shared tier** | **MicroVM tier** |
 |---|---|---|
 | `isolation` value | `"shared"` (default) | `"microvm"` |
@@ -111,6 +115,10 @@ Every run executes in one of two tiers, selected by `manifest.isolation` at agen
 | Crash resume | 30s recovery sweep + `CompletedStep` journal replay | VM lifecycle; harness reports to journal |
 
 Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 receipts, and crash-replay all read from it — tier-agnostic.
+
+<p align="center">
+  <img src="docs/architecture/diagrams/durable-execution.svg" alt="Durable execution — a run crashes mid-step; the 30s recovery sweep steals the expired lease, re-drives, replay skips completed steps and side effects, and the run finishes with the same idempotency keys (animated)" width="100%">
+</p>
 
 The in-guest tool runner (`services/harness/src/tool_runner.rs`) shipped 2026-07-23 and makes the microVM tier a real step executor for workflow-graph agents. Full details in [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md).
 

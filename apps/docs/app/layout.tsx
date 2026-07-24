@@ -60,7 +60,7 @@ const sections: NavSection[] = [
   ]},
   { label: "Runtime", items: [
     { href: "/runtime", label: "Overview", icon: Server, subs: [
-      { href: "/runtime#model", label: "The model" }, { href: "/runtime#principles", label: "What's different" }, { href: "/runtime#guides", label: "In this section" },
+      { href: "/runtime#tiers", label: "Two tiers" }, { href: "/runtime#routing", label: "Routing" }, { href: "/runtime#shared", label: "Shared tier" }, { href: "/runtime#microvm", label: "MicroVM tier" }, { href: "/runtime#health-sweep", label: "Health sweep" },
     ]},
     { href: "/runtime/quickstart", label: "Headless Quickstart", icon: Rocket, subs: [
       { href: "/runtime/quickstart#write", label: "Write the spec" }, { href: "/runtime/quickstart#pick", label: "Pick isolation" }, { href: "/runtime/quickstart#run", label: "Run it" }, { href: "/runtime/quickstart#watch", label: "Logs, traces & cost" }, { href: "/runtime/quickstart#terminate", label: "Terminate" },
@@ -69,10 +69,10 @@ const sections: NavSection[] = [
       { href: "/runtime/isolation#decision", label: "Decision tree" }, { href: "/runtime/isolation#classes", label: "The classes" }, { href: "/runtime/isolation#fail-closed", label: "Fail-closed gate" },
     ]},
     { href: "/runtime/durable-execution", label: "Durable Execution", icon: Clock, subs: [
-      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#resume", label: "Resume" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery watchdog" },
+      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#completedstep", label: "CompletedStep replay" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery sweep" }, { href: "/runtime/durable-execution#retry", label: "Per-step retry" },
     ]},
     { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
-      { href: "/runtime/observability#trace", label: "One trace per spawn" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#semconv", label: "GenAI semconv" }, { href: "/runtime/observability#metrics", label: "Metrics endpoint" },
+      { href: "/runtime/observability#trace", label: "Span attributes" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "Metrics endpoint" },
     ]},
     { href: "/runtime/identity", label: "Identity & Secrets", icon: Code, subs: [
       { href: "/runtime/identity#identity", label: "Per-instance identity" }, { href: "/runtime/identity#vending", label: "Secret vending" }, { href: "/runtime/identity#ref-form", label: "Ref form" },

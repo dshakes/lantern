@@ -10,11 +10,24 @@ export default function RuntimeObservabilityPage() {
 
       <h2 id="trace">One trace per spawn</h2>
       <p>
-        Every spawn opens a single trace correlated under:
+        Every run opens a single OTel trace. Spans from every entry point use
+        the same attribute keys, defined in{" "}
+        <code>internal/middleware/span.go</code> and stamped by a single{" "}
+        <code>EnrichSpan</code> helper so they never drift between HTTP and gRPC
+        code paths:
       </p>
-      <pre><code>{`(tenant_id, run_id, step_id, agent_instance_id, trace_id)`}</code></pre>
+      <pre><code>{`lantern.tenant_id   # on every span, both tiers
+lantern.user_id
+lantern.run_id
+lantern.step_id     # per-step spans in the inline executor`}</code></pre>
       <p>
-        <code>agent_instance_id</code> is the per-spawn identity (see <Link href="/runtime/identity">Identity &amp; secrets</Link>), so two runs of the same agent never collide. A <Link href="/runtime/durable-execution">durable resume</Link> after a crash re-joins the same <code>trace_id</code> — the full lifecycle is one coherent timeline.
+        On the <strong>microVM tier</strong> the manager and harness additionally
+        stamp <code>vm_id</code>, <code>isolation_class</code>, and{" "}
+        <code>agent_instance_id</code> (the per-spawn Ed25519 identity — see{" "}
+        <Link href="/runtime/identity">Identity &amp; secrets</Link>). A{" "}
+        <Link href="/runtime/durable-execution">durable resume</Link> after a
+        crash re-joins the same <code>trace_id</code> — the full lifecycle is
+        one coherent timeline.
       </p>
 
       {/* Trace spine — simplified flat list */}
@@ -68,10 +81,112 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
         LLM steps are annotated with OTel GenAI semantic-convention attributes — including <strong>reasoning tokens</strong> and <strong>cache tokens</strong>, not just plain input/output counts. Per-step cost attribution and model-usage breakdowns work out of the box with any OTel-compatible backend.
       </p>
 
+      <h2 id="span-attrs">OTel span attribute contract</h2>
+      <p>
+        Every span emitted anywhere in the stack uses these keys, set via{" "}
+        <code>internal/middleware.EnrichSpan</code>. They are no-ops when
+        telemetry is disabled.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Attribute</th><th>Key</th><th>Set by</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tenant</td><td><code>lantern.tenant_id</code></td><td>HTTP enrichment middleware + gRPC tracing interceptor</td></tr>
+          <tr><td>User</td><td><code>lantern.user_id</code></td><td>Same</td></tr>
+          <tr><td>Run</td><td><code>lantern.run_id</code></td><td>Same + inline executor</td></tr>
+          <tr><td>Step</td><td><code>lantern.step_id</code></td><td>Inline executor per step</td></tr>
+          <tr><td>Agent name</td><td><code>lantern.agent_name</code></td><td>Inline executor + model-router</td></tr>
+          <tr><td>VM ID (microVM)</td><td><code>vm_id</code></td><td>Scheduler / manager spans</td></tr>
+          <tr><td>Isolation class (microVM)</td><td><code>isolation_class</code></td><td>Manager spans</td></tr>
+          <tr><td>Agent version (microVM)</td><td><code>agent_version</code></td><td>Manager spans</td></tr>
+          <tr><td>Model used</td><td><code>model_used</code></td><td>Model-router completion span</td></tr>
+          <tr><td>Cost USD</td><td><code>cost_usd</code></td><td>Model-router completion span</td></tr>
+          <tr><td>Tokens in / out</td><td><code>tokens_in</code> / <code>tokens_out</code></td><td>Model-router completion span</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="otel-metrics">The five <code>lantern.run.*</code> metrics</h2>
+      <p>
+        The inline executor emits five OTel metric instruments via the{" "}
+        <code>lantern.runtime</code> meter (
+        <code>internal/middleware/metrics.go</code>). They are no-ops when the
+        global <code>MeterProvider</code> is unset (the default no-op provider
+        is safe to import with zero overhead).
+      </p>
+      <table>
+        <thead>
+          <tr><th>Instrument</th><th>Type</th><th>Attributes</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>lantern.run.step.duration</code></td>
+            <td>Histogram (ms)</td>
+            <td><code>agent_name</code>, <code>node_type</code>, <code>tier</code>, <code>outcome</code></td>
+            <td>Wall-clock duration of one workflow step, including all retry backoff. <code>outcome</code> is <code>ok</code>, <code>failed</code>, or <code>retried</code>.</td>
+          </tr>
+          <tr>
+            <td><code>lantern.run.step.retries</code></td>
+            <td>Counter</td>
+            <td><code>agent_name</code>, <code>node_type</code>, <code>tier</code></td>
+            <td>Extra attempts beyond the first. Only incremented when <code>retryCount &gt; 0</code>.</td>
+          </tr>
+          <tr>
+            <td><code>lantern.run.replay.skips</code></td>
+            <td>Counter</td>
+            <td><code>agent_name</code></td>
+            <td><code>CompletedStep</code> cache hits during crash-resume. Each hit means one node was skipped rather than re-executed.</td>
+          </tr>
+          <tr>
+            <td><code>lantern.run.budget.blocks</code></td>
+            <td>Counter</td>
+            <td><code>agent_name</code></td>
+            <td>Runs denied by the agent&apos;s hard-fail budget policy (HTTP 402).</td>
+          </tr>
+          <tr>
+            <td><code>lantern.run.total</code></td>
+            <td>Counter</td>
+            <td><code>agent_name</code>, <code>tier</code>, <code>status</code></td>
+            <td>Total runs dispatched through the inline executor. <code>tier</code> is <code>shared</code> or <code>microvm</code>; <code>status</code> is <code>succeeded</code> or <code>failed</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2 id="anomaly">Real-time anomaly detection</h2>
       <p>
         The runtime watches the live event stream for pathological shapes — a tool-call loop, a step retrying without progress — and surfaces them in real time. This is the early-warning layer for runaway runs.
       </p>
+
+      <h2 id="health">Peer-service health sweep</h2>
+      <p>
+        A background loop in the control-plane TCP-probes its peer services
+        every 60 s (<code>LANTERN_HEALTH_SWEEP_INTERVAL</code>; set{" "}
+        <code>"0"</code> or <code>"off"</code> to disable). After 3 consecutive
+        failures it declares a peer <strong>DOWN</strong> and sends one
+        self-chat alert. It sends one more when the peer recovers. No alert
+        storms — only state transitions fire notifications.
+      </p>
+      <p>Services probed when their address env var is set:</p>
+      <ul>
+        <li><code>model-router</code> — <code>LANTERN_MODEL_ROUTER_ADDR</code> (only when <code>LANTERN_USE_MODEL_ROUTER=1</code> or addr is non-default)</li>
+        <li><code>runtime-scheduler</code> — <code>LANTERN_SCHEDULER_GRPC_ADDR</code></li>
+        <li><code>runtime-manager</code> — <code>LANTERN_DEFAULT_MANAGER_ADDR</code></li>
+        <li><code>workflow-engine</code> — <code>LANTERN_WORKFLOW_ENGINE_ADDR</code> (optional)</li>
+      </ul>
+      <p>Read the current snapshot:</p>
+      <pre><code>{`GET /v1/system/health    # JWT-authed`}</code></pre>
+      <pre><code>{`{
+  "services": [
+    {
+      "name": "runtime-manager",
+      "addr": "localhost:50054",
+      "up": false,
+      "consecutiveFailures": 5,
+      "lastChecked": "2026-07-23T10:00:00Z",
+      "lastTransition": "2026-07-23T09:57:00Z"
+    }
+  ]
+}`}</code></pre>
 
       <h2 id="metrics">Metrics endpoint</h2>
       <p>Per-VM live stats for the caller&apos;s tenant:</p>
