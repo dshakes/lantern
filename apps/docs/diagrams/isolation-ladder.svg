@@ -114,7 +114,7 @@
   <g transform="translate(32,494)" class="ilpulse">
     <rect x="0" y="0" width="1176" height="64" rx="12" fill="#201414" stroke="#f87171" stroke-width="1.5"/>
     <text x="20" y="26" class="t" font-size="12.5" font-weight="700" fill="#fca5a5">When the hardened class is missing, your workload does not run — and that is the feature.</text>
-    <text x="20" y="48" class="sub">Boot preflight checks the cluster for the gVisor/Kata RuntimeClasses; absent → that capability is disabled and the gate returns a refusal (<tspan class="mono">SECURITY: refusing to schedule</tspan>) — untrusted code is never quietly put on a shared kernel.</text>
+    <text x="20" y="48" class="sub">Boot preflight checks the cluster for the gVisor/Kata RuntimeClasses; absent → that capability is disabled and the gate returns a refusal (<tspan class="mono">SECURITY: refusing to schedule</tspan>)</text>
   </g>
 
   <!-- ============ IN-VM CONTROLS ============ -->

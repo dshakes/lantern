@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="620" viewBox="0 0 1240 620" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="The agent runtime, mapped — a run passes the gates, executes in one of two tiers, survives crashes through the journal, and proves what happened. Every card links to its deep-dive page.">
+  <defs>
+    <radialGradient id="rm-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="rm-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="rm-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .col  { font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .go   { fill:#fbbf24; font-size:11px; font-weight:700; }
+      .card { fill:#171310; stroke:#3a2f24; }
+      .card:hover { stroke:#f59e0b; }
+      .rmflow { stroke-dasharray:6 6; animation:rm-dash 1.4s linear infinite; }
+      @keyframes rm-dash { to { stroke-dashoffset:-24; } }
+      @media (prefers-reduced-motion: reduce) { .rmflow { animation:none; } }
+      .hotspot { fill:transparent; cursor:pointer; transition:fill .15s; }
+      .hotspot:hover { fill:rgba(245,158,11,.07); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="url(#rm-vign)"/>
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="46" class="h" font-size="24" filter="url(#rm-glow)">The runtime, mapped</text>
+  <text x="300" y="46" class="sub" font-size="13">four things happen to every run — each card is clickable and goes to its deep dive</text>
+
+  <!-- ============ COLUMN 1 · GATES ============ -->
+  <text x="32" y="96" class="col" fill="#fbbf24">1 · IT GETS GATED</text>
+  <g transform="translate(32,110)">
+    <rect x="0" y="0" width="264" height="86" rx="12" class="card"/>
+    <text x="18" y="28" class="t" font-size="13" font-weight="700">Auth + tenancy</text>
+    <text x="18" y="50" class="sub">JWT / API key · every row and span</text>
+    <text x="18" y="66" class="sub">carries tenant_id · RLS-backed</text>
+
+    <rect x="0" y="102" width="264" height="86" rx="12" class="card"/>
+    <text x="18" y="130" class="t" font-size="13" font-weight="700">Budget gate</text>
+    <text x="18" y="152" class="sub">forecast, then hard caps —</text>
+    <text x="18" y="168" class="sub">a runaway loop gets <tspan class="code">HTTP 402</tspan></text>
+
+    <rect x="0" y="204" width="264" height="86" rx="12" class="card"/>
+    <text x="18" y="232" class="t" font-size="13" font-weight="700">Isolation route</text>
+    <text x="18" y="254" class="code">isolation: shared | microvm</text>
+    <text x="18" y="270" class="sub">declared at publish, never guessed</text>
+  </g>
+
+  <!-- ============ COLUMN 2 · EXECUTION ============ -->
+  <text x="342" y="96" class="col" fill="#fbbf24">2 · IT EXECUTES</text>
+  <g transform="translate(342,110)">
+    <rect x="0" y="0" width="264" height="134" rx="12" class="card"/>
+    <text x="18" y="28" class="t" font-size="13" font-weight="700">Shared tier</text>
+    <text x="18" y="50" class="sub">inline executor · workflow graphs ·</text>
+    <text x="18" y="66" class="sub">capability-routed LLM calls ·</text>
+    <text x="18" y="82" class="sub">approvals park without compute</text>
+    <text x="18" y="112" class="code">~50–200 ms dispatch</text>
+
+    <rect x="0" y="150" width="264" height="140" rx="12" fill="#171020" stroke="#7e22ce"/>
+    <text x="18" y="178" class="t" font-size="13" font-weight="700">microVM tier</text>
+    <text x="18" y="200" class="sub">untrusted code behind the fail-closed</text>
+    <text x="18" y="216" class="sub">ladder: runc → gVisor → Kata →</text>
+    <text x="18" y="232" class="sub">Firecracker · in-guest tools · session VMs</text>
+    <text x="18" y="262" class="code" fill="#c4b5fd">unavailable → honest failure,</text>
+    <text x="18" y="278" class="code" fill="#c4b5fd">never a silent downgrade</text>
+  </g>
+
+  <!-- ============ COLUMN 3 · DURABILITY ============ -->
+  <text x="652" y="96" class="col" fill="#5eead4">3 · IT SURVIVES</text>
+  <g transform="translate(652,110)">
+    <rect x="0" y="0" width="264" height="86" rx="12" fill="#0e1512" stroke="#134e4a"/>
+    <text x="18" y="28" class="t" font-size="13" font-weight="700">Every step journaled</text>
+    <text x="18" y="50" class="code">journal_events</text>
+    <text x="18" y="66" class="sub">event-sourced, both tiers, one log</text>
+
+    <rect x="0" y="102" width="264" height="86" rx="12" fill="#0e1512" stroke="#134e4a"/>
+    <text x="18" y="130" class="t" font-size="13" font-weight="700">Crash → resume</text>
+    <text x="18" y="152" class="sub">30 s sweep steals the expired lease,</text>
+    <text x="18" y="168" class="sub">replay skips completed work</text>
+
+    <rect x="0" y="204" width="264" height="86" rx="12" fill="#0e1512" stroke="#134e4a"/>
+    <text x="18" y="232" class="t" font-size="13" font-weight="700">Exactly-once effects</text>
+    <text x="18" y="254" class="sub">idempotency keys at every boundary —</text>
+    <text x="18" y="270" class="sub">no re-spent tokens, no double webhooks</text>
+  </g>
+
+  <!-- ============ COLUMN 4 · EVIDENCE ============ -->
+  <text x="962" y="96" class="col" fill="#fbbf24">4 · IT PROVES IT</text>
+  <g transform="translate(962,110)">
+    <rect x="0" y="0" width="246" height="86" rx="12" class="card"/>
+    <text x="18" y="28" class="t" font-size="13" font-weight="700">Streams live</text>
+    <text x="18" y="50" class="sub">tokens + step events over SSE,</text>
+    <text x="18" y="66" class="sub">first word while it thinks</text>
+
+    <rect x="0" y="102" width="246" height="86" rx="12" class="card"/>
+    <text x="18" y="130" class="t" font-size="13" font-weight="700">One trace contract</text>
+    <text x="18" y="152" class="sub">tenant · run · step on every span,</text>
+    <text x="18" y="168" class="sub">metric, and journal row</text>
+
+    <rect x="0" y="204" width="246" height="86" rx="12" fill="#1e1813" stroke="#f59e0b" filter="url(#rm-glow)"/>
+    <text x="18" y="232" class="t" font-size="13" font-weight="700">Signed receipt</text>
+    <text x="18" y="254" class="sub">Ed25519 over the journal —</text>
+    <text x="18" y="270" class="sub">verify offline, no account</text>
+  </g>
+
+  <!-- flows between columns -->
+  <path class="rmflow" d="M 300 255 H 336" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rm-arr)"/>
+  <path class="rmflow" d="M 610 255 H 646" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#rm-arr)"/>
+  <path class="rmflow" d="M 920 255 H 956" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rm-arr)"/>
+
+  <!-- ============ FOOTER NAV RAIL ============ -->
+  <g transform="translate(32,436)">
+    <rect x="0" y="0" width="1176" height="120" rx="14" fill="#12100c" stroke="#4a3b28"/>
+    <text x="20" y="30" class="col" fill="#d8cfc0" font-size="11">GO DEEPER — THE RUNTIME PAGES</text>
+    <g font-size="12">
+      <rect x="20" y="46" width="170" height="30" rx="15" class="card"/><text x="105" y="66" text-anchor="middle" class="go">durable execution →</text>
+      <rect x="202" y="46" width="150" height="30" rx="15" class="card"/><text x="277" y="66" text-anchor="middle" class="go">isolation →</text>
+      <rect x="364" y="46" width="150" height="30" rx="15" class="card"/><text x="439" y="66" text-anchor="middle" class="go">streaming →</text>
+      <rect x="526" y="46" width="170" height="30" rx="15" class="card"/><text x="611" y="66" text-anchor="middle" class="go">observability →</text>
+      <rect x="708" y="46" width="200" height="30" rx="15" class="card"/><text x="808" y="66" text-anchor="middle" class="go">sessions &amp; memory →</text>
+      <rect x="920" y="46" width="130" height="30" rx="15" class="card"/><text x="985" y="66" text-anchor="middle" class="go">identity →</text>
+      <rect x="1062" y="46" width="94" height="30" rx="15" class="card"/><text x="1109" y="66" text-anchor="middle" class="go">receipts →</text>
+    </g>
+    <text x="20" y="104" class="sub">or start at the beginning: the runtime quickstart takes one YAML file and ~60 seconds</text>
+  </g>
+
+  <!-- ============ HOTSPOTS (absolute coords) ============ -->
+  <a href="/runtime/durable-execution"><title>Durable execution — journal, recovery, replay</title><rect class="hotspot" x="684" y="110" width="264" height="290" rx="12"/></a>
+  <a href="/runtime/isolation"><title>The isolation ladder — fail-closed by design</title><rect class="hotspot" x="342" y="260" width="264" height="140" rx="12"/></a>
+  <a href="/runtime/streaming"><title>Token streaming end to end</title><rect class="hotspot" x="962" y="110" width="246" height="86" rx="12"/></a>
+  <a href="/runtime/observability"><title>Observability — one attribute contract</title><rect class="hotspot" x="962" y="212" width="246" height="86" rx="12"/></a>
+  <a href="/runtime/receipts"><title>Verifiable receipts</title><rect class="hotspot" x="962" y="314" width="246" height="86" rx="12"/></a>
+  <a href="/runtime/quickstart"><title>Runtime quickstart</title><rect class="hotspot" x="32" y="110" width="264" height="290" rx="12"/></a>
+  <a href="/runtime/durable-execution"><title>Durable execution</title><rect class="hotspot" x="52" y="482" width="170" height="30" rx="15"/></a>
+  <a href="/runtime/isolation"><title>Isolation</title><rect class="hotspot" x="234" y="482" width="150" height="30" rx="15"/></a>
+  <a href="/runtime/streaming"><title>Streaming</title><rect class="hotspot" x="396" y="482" width="150" height="30" rx="15"/></a>
+  <a href="/runtime/observability"><title>Observability</title><rect class="hotspot" x="558" y="482" width="170" height="30" rx="15"/></a>
+  <a href="/runtime/sessions-and-memory"><title>Sessions and memory</title><rect class="hotspot" x="740" y="482" width="200" height="30" rx="15"/></a>
+  <a href="/runtime/identity"><title>Per-instance identity</title><rect class="hotspot" x="952" y="482" width="130" height="30" rx="15"/></a>
+  <a href="/runtime/receipts"><title>Receipts</title><rect class="hotspot" x="1094" y="482" width="94" height="30" rx="15"/></a>
+  <a href="/runtime/quickstart"><title>Runtime quickstart — one YAML, 60 seconds</title><rect class="hotspot" x="52" y="526" width="600" height="20"/></a>
+</svg>

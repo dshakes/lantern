@@ -124,10 +124,9 @@
   <g transform="translate(32,552)">
     <rect x="0" y="0" width="386" height="120" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="14" y="24" class="t" font-size="11.5" font-weight="700">Unit + integration gates</text>
-    <text x="14" y="46" class="item">proves the code compiles &amp; passes in isolation</text>
-    <text x="14" y="68" class="sub" font-size="10.5">cargo test (manager 293, harness 103) · clippy -D warnings</text>
-    <text x="14" y="86" class="sub" font-size="10.5">go build/vet/test · helm lint + render · cluster-e2e (kind+Calico)</text>
-    <text x="14" y="106" class="grn" font-size="10.5">delegator re-runs every gate — a subagent "verified" is a claim</text>
+    <text x="14" y="48" class="sub" font-size="10.5">cargo test (manager 293, harness 103) · clippy -D warnings</text>
+    <text x="14" y="70" class="sub" font-size="10.5">go build/vet/test · helm lint + render · cluster-e2e (kind+Calico)</text>
+    <text x="14" y="94" class="grn" font-size="10.5">delegator re-runs every gate</text>
 
     <rect x="402" y="0" width="386" height="120" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="416" y="24" class="t" font-size="11.5" font-weight="700">Security-auditor (trust boundaries)</text>

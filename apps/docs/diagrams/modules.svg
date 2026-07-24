@@ -70,7 +70,7 @@
     <text x="820" y="98" class="sub">verifiable receipts · RBAC scopes · gRPC service-token</text>
     <text x="820" y="114" class="sub">trust boundaries · OTel with tenant/run/step ids ·</text>
     <text x="820" y="130" class="sub">AES-256-GCM secrets · RLS on every tenant table</text>
-    <text x="820" y="158" class="code">provider idempotency keys — no double-billed retry</text>
+    <text x="820" y="158" class="code">provider idempotency keys</text>
   </g>
 
   <!-- ============ ROW 2: two modules ============ -->

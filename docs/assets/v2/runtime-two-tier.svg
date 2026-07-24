@@ -75,7 +75,7 @@
     <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter <tspan class="port" dx="200">internal/workflow</tspan></text>
     <text x="36" y="104" class="sub">trigger · ai-step · tool · connector · condition · loop · subagent · approval · end</text>
     <text x="36" y="122" class="sub">per-step retry <tspan class="code">node.retry {maxAttempts, backoffMs, classes}</tspan> · confidence gate → human approval</text>
-    <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled — visible in the run waterfall</text>
+    <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled</text>
 
     <rect x="20" y="168" width="532" height="74" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="36" y="190" class="t" font-size="12.5" font-weight="700">LLM tool-use loop</text>
@@ -138,5 +138,5 @@
     <text x="20" y="44" class="sub">OTel spans + metrics, one attribute contract: <tspan class="code">lantern.tenant_id · run_id · step_id · agent_version</tspan> · metrics: step.duration · step.retries · replay.skips · budget.blocks · run.total · peer health: GET /v1/system/health → owner self-chat alert on transition</text>
   </g>
 
-  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller — a caller can never downgrade a microvm agent. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
+  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
 </svg>

@@ -77,7 +77,7 @@
     <text x="20" y="30" class="t" font-size="13" font-weight="700">Shared tier — inline executor</text>
     <text x="20" y="52" class="sub">First-party agent logic in the control plane's process space</text>
     <text x="20" y="76" class="sub">· workflow interpreter (ai-step · tool · connector · condition · approval · loop · subagent)</text>
-    <text x="20" y="94" class="sub">· capability-routed LLM calls — <tspan class="code">model: "auto"</tspan>, never a hardcoded vendor</text>
+    <text x="20" y="94" class="sub">· capability-routed LLM calls — <tspan class="code">model: "auto"</tspan></text>
     <text x="20" y="112" class="sub">· confidence gate can divert risky steps to a human before they execute</text>
     <text x="20" y="130" class="sub">· approval nodes park WITHOUT compute — goroutine released, run status <tspan class="code">waiting</tspan></text>
     <text x="20" y="160" class="code">token streaming end-to-end: message_delta {seq} → message_completed {usage}</text>
@@ -101,7 +101,7 @@
     <rect x="0" y="0" width="1176" height="98" rx="14" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5" filter="url(#rl-glow)"/>
     <text x="20" y="28" class="band" fill="#fbbf24" font-size="11">THE DURABILITY SPINE — journal_events (event-sourced, both tiers)</text>
     <text x="20" y="52" class="sub">every step: <tspan class="code">step_started → step_completed / step_failed / step_retrying / step_waiting</tspan> · run locks lease 60 s · recovery sweep every 30 s steals expired leases</text>
-    <text x="20" y="72" class="sub">replay skips completed steps + dedups side effects — <tspan class="code">sha256(run|step|attempt)</tspan> idempotency — a crash never re-spends tokens or re-sends a webhook</text>
+    <text x="20" y="72" class="sub">replay skips completed steps + dedups side effects — <tspan class="code">sha256(run|step|attempt)</tspan> idempotency</text>
     <text x="20" y="90" class="code">status truth set: queued → running → succeeded · failed · waiting · cancelled</text>
   </g>
 

@@ -92,7 +92,6 @@
     <text x="36" y="42" class="t" font-size="12.5" font-weight="700">runtime-scheduler <tspan class="lang" fill="#38bdf8">GO</tspan><tspan class="mono" dx="70">:50055</tspan></text>
     <text x="36" y="64" class="sub">HA leader election · 5-factor placement:</text>
     <text x="36" y="80" class="sub">warm-pool · region · fair-share · cost · health</text>
-    <text x="36" y="102" class="sub">picks the node, hands the spec to that node's manager</text>
 
     <rect x="408" y="18" width="380" height="118" rx="12" fill="#12100c" stroke="#3a2f24"/>
     <text x="424" y="42" class="t" font-size="12.5" font-weight="700">runtime-manager <tspan class="lang" fill="#f97316">RUST</tspan><tspan class="mono" dx="70">:50054</tspan></text>
@@ -120,5 +119,5 @@
     <text x="20" y="42" class="sub">step events + vm_exit → journal_events → run waterfall + OTel traces (<tspan class="code">tenant_id · run_id · step_id</tspan>) → Ed25519-signed receipt anyone can verify offline</text>
   </g>
 
-  <text x="32" y="708" class="sub">runtime.proto · runtime-scheduler/ · runtime-manager/ · harness/src · runtime_report.go · receipts.go — see docs/architecture/04b + ADRs 0002–0008</text>
+  <text x="32" y="708" class="sub">runtime.proto · runtime-scheduler/ · runtime-manager/ · harness/src — see docs/architecture/04b + ADRs 0002–0008</text>
 </svg>

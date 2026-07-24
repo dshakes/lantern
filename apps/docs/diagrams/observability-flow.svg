@@ -101,8 +101,7 @@
     <rect x="0" y="0" width="1176" height="100" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="28" class="band" fill="#5eead4">WHAT THIS BUYS YOU AT 3 AM</text>
     <text x="20" y="52" class="t" font-size="12.5">A failing run gives you: the exact step that failed (waterfall) → its span with the provider error (trace) → whether it was retried and how often (metrics)</text>
-    <text x="20" y="72" class="t" font-size="12.5">→ whether a crashed process re-drove it and skipped completed work (replay.skips + journal) → and a signed receipt proving what actually executed.</text>
-    <text x="20" y="92" class="sub">One tenant_id + run_id filters all of it. No cross-referencing five dashboards.</text>
+    <text x="20" y="72" class="sub">One tenant_id + run_id filters all of it. No cross-referencing five dashboards.</text>
   </g>
 
   <text x="32" y="656" class="sub">middleware/span.go · middleware/metrics.go · run_events.go · health_sweep.go · receipts.go · budgets.go</text>
