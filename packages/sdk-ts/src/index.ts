@@ -1,6 +1,6 @@
 export { agent } from "./agent.js";
 export { step, setStepRuntime } from "./step.js";
-export { LanternClient, LanternApiError } from "./client.js";
+export { LanternClient, LanternApiError, MessageStreamError } from "./client.js";
 export { tool } from "./tools.js";
 
 // Runtime subsystem
@@ -88,6 +88,7 @@ export type {
   Session,
   SessionMessage,
   SessionEvent,
+  SessionStreamEvent,
   PersistedToolCall,
   ConnectorInfo,
   ConnectorResult,

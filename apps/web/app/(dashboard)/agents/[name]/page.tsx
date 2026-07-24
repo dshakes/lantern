@@ -345,6 +345,9 @@ export default function AgentDetailPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatStreaming, setChatStreaming] = useState(false);
+  // Accumulates token deltas for in-progress streaming turns.
+  const [streamingDraft, setStreamingDraft] = useState<string | null>(null);
+  const streamingDraftRef = useRef<string>("");
   const [chatIncludeEmails, setChatIncludeEmails] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [chatFiles, setChatFiles] = useState<Array<{ name: string; content: string }>>([]);
@@ -575,6 +578,64 @@ export default function AgentDetailPage() {
         }
       } catch { /* ignore malformed events */ }
     };
+    // Named SSE events for token-level streaming (new protocol).
+    // EventSource.onmessage only fires on default (unnamed) events; named
+    // events require addEventListener. Unknown event names are silently
+    // ignored so old and new servers are both handled.
+    es.addEventListener("message_delta", (e) => {
+      try {
+        const data = JSON.parse(e.data) as { seq?: number; delta?: string };
+        if (typeof data.delta === "string") {
+          streamingDraftRef.current += data.delta;
+          setStreamingDraft(streamingDraftRef.current);
+          setChatStreaming(true);
+        }
+      } catch { /* ignore malformed */ }
+    });
+
+    es.addEventListener("message_completed", (e) => {
+      try {
+        const data = JSON.parse(e.data) as { text?: string };
+        const finalText = data.text ?? streamingDraftRef.current;
+        const assistantMsg: ChatMessage = {
+          role: "assistant",
+          content: finalText,
+          timestamp: new Date().toISOString(),
+          toolCalls: pendingToolCallsRef.current.length > 0 ? [...pendingToolCallsRef.current] : undefined,
+        };
+        pendingToolCallsRef.current = [];
+        streamingDraftRef.current = "";
+        setStreamingDraft(null);
+        setChatMessages((prev) => {
+          const updated = [...prev, assistantMsg];
+          saveChat(name, updated);
+          return updated;
+        });
+        setChatStreaming(false);
+        setSessionStatus("idle");
+      } catch { /* ignore malformed */ }
+    });
+
+    es.addEventListener("message_error", (e) => {
+      try {
+        const data = JSON.parse(e.data) as { error?: string };
+        const errMsg: ChatMessage = {
+          role: "assistant",
+          content: `Error: ${data.error ?? "Stream error"}`,
+          timestamp: new Date().toISOString(),
+        };
+        streamingDraftRef.current = "";
+        setStreamingDraft(null);
+        setChatMessages((prev) => {
+          const updated = [...prev, errMsg];
+          saveChat(name, updated);
+          return updated;
+        });
+        setChatStreaming(false);
+        setSessionStatus("idle");
+      } catch { /* ignore malformed */ }
+    });
+
     es.onerror = () => {
       // SSE connection failed — mark as disconnected but keep session
       setSessionConnected(false);
@@ -583,6 +644,8 @@ export default function AgentDetailPage() {
     return () => {
       es.close();
       eventSourceRef.current = null;
+      streamingDraftRef.current = "";
+      setStreamingDraft(null);
     };
   }, [sessionId, sessionConnected, name]);
 
@@ -1686,14 +1749,25 @@ export default function AgentDetailPage() {
               ))}
               {chatStreaming && (
                 <div className="flex justify-start">
-                  <div className="rounded-xl bg-surface-2 px-3.5 py-2.5">
-                    <div className="flex items-center gap-1.5">
-                      <div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" />
-                      <span className="text-xs text-zinc-500">
-                        {sessionStatus === "thinking" ? "Thinking..." : "Processing..."}
-                      </span>
+                  {streamingDraft ? (
+                    // Token-streaming: show partial reply with a blinking cursor.
+                    <div className="max-w-[80%] rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm text-zinc-300">
+                      <div className="whitespace-pre-wrap leading-relaxed">
+                        {streamingDraft}
+                        <span className="ml-px inline-block h-3.5 w-0.5 animate-pulse bg-lantern-400 align-middle" />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    // Fallback pulse dots while waiting for first token.
+                    <div className="rounded-xl bg-surface-2 px-3.5 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" />
+                        <span className="text-xs text-zinc-500">
+                          {sessionStatus === "thinking" ? "Thinking..." : "Processing..."}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div ref={chatEndRef} />

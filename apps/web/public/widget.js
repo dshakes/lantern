@@ -251,8 +251,10 @@
     }).then(handleJson);
   }
 
-  // Stream the agent reply via SSE on /v1/sessions/{id}/events. We resolve
-  // when we see an agent.message event and then close the stream.
+  // Stream the agent reply via SSE on /v1/sessions/{id}/events.
+  // Handles both the legacy agent.message event and the new token-streaming
+  // protocol (message_delta / message_completed / message_error named events).
+  // Unknown event kinds are silently ignored so old and new servers both work.
   function streamReply(id, el) {
     return new Promise(function (resolve, reject) {
       var url = apiBase + "/v1/sessions/" + encodeURIComponent(id) + "/events";
@@ -270,6 +272,48 @@
         es.close();
         reject(new Error("timeout"));
       }, 60_000);
+
+      // Accumulated token-streaming content for this turn.
+      var accumulated = "";
+
+      // Named event: one token delta arrives.
+      es.addEventListener("message_delta", function (e) {
+        try {
+          var evt = JSON.parse(e.data);
+          if (typeof evt.delta === "string") {
+            accumulated += evt.delta;
+            el.textContent = accumulated;
+          }
+        } catch (err) { /* ignore malformed */ }
+      });
+
+      // Named event: turn is complete; finalize with the authoritative text.
+      es.addEventListener("message_completed", function (e) {
+        try {
+          var evt = JSON.parse(e.data);
+          clearTimeout(timeout);
+          el.textContent = typeof evt.text === "string" ? evt.text : accumulated;
+          es.close();
+          resolve();
+        } catch (err) { /* ignore malformed */ }
+      });
+
+      // Named event: server-side error during the turn.
+      es.addEventListener("message_error", function (e) {
+        try {
+          var evt = JSON.parse(e.data);
+          clearTimeout(timeout);
+          es.close();
+          reject(new Error(evt.error || "stream error"));
+        } catch (err) {
+          clearTimeout(timeout);
+          es.close();
+          reject(new Error("stream error"));
+        }
+      });
+
+      // Default (unnamed) event — legacy agent.message path; kept for
+      // backward compat with servers that don't send named events yet.
       es.onmessage = function (e) {
         try {
           var evt = JSON.parse(e.data);

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   Agent,
   BudgetPolicy,
@@ -20,10 +21,38 @@ import type {
   Run,
   Session,
   SessionEvent,
+  SessionStreamEvent,
   SignedReceipt,
   StreamEvent,
 } from "./types.js";
 import { isNetworkError, withRetry } from "./retry.js";
+
+// ---------------------------------------------------------------------------
+// Zod schemas for session streaming events (untrusted SSE data)
+// ---------------------------------------------------------------------------
+
+const messageDeltaSchema = z.object({
+  sessionId: z.string().optional(),
+  turnId: z.string().optional(),
+  seq: z.number().int().positive(),
+  delta: z.string(),
+});
+
+const messageCompletedSchema = z.object({
+  sessionId: z.string().optional(),
+  turnId: z.string().optional(),
+  text: z.string(),
+  usage: z.object({
+    tokensIn: z.number(),
+    tokensOut: z.number(),
+    costUsd: z.number(),
+  }),
+});
+
+const messageErrorSchema = z.object({
+  turnId: z.string().optional(),
+  error: z.string(),
+});
 
 export interface LanternClientConfig {
   baseUrl?: string;
@@ -200,6 +229,26 @@ export class LanternClient {
 
     events: (sessionId: string): AsyncIterable<SessionEvent> =>
       this.sessionSSE(`/v1/sessions/${encodeURIComponent(sessionId)}/events`),
+
+    /** Posts the message, then yields streaming chunks as the assistant replies.
+     *  Yields `{type:"delta", delta}` per token and a final
+     *  `{type:"completed", text, usage}` when the turn is done.
+     *  Throws `MessageStreamError` on `message_error` events.
+     *
+     *  Out-of-order seq values are buffered and yielded in order. Unknown
+     *  event kinds (including all pre-existing session events) are silently
+     *  ignored so old and new servers are both handled. */
+    streamMessage: (
+      sessionId: string,
+      params: {
+        content: string;
+        attachments?: string[];
+        systemHint?: string;
+        turnHint?: string;
+        noTools?: boolean;
+        readOnlyTools?: boolean;
+      },
+    ): AsyncIterable<SessionStreamEvent> => this.streamSessionMessage(sessionId, params),
 
     stop: (sessionId: string): Promise<{ status: string }> =>
       this.fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/stop`, { method: "POST" }),
@@ -439,6 +488,70 @@ export class LanternClient {
       }),
   };
 
+  private async *streamSessionMessage(
+    sessionId: string,
+    params: {
+      content: string;
+      attachments?: string[];
+      systemHint?: string;
+      turnHint?: string;
+      noTools?: boolean;
+      readOnlyTools?: boolean;
+    },
+  ): AsyncIterable<SessionStreamEvent> {
+    // Open the SSE connection before posting so we don't miss early deltas.
+    const sseUrl = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`;
+    const sseRes = await fetch(sseUrl, {
+      headers: { ...this.headers(), Accept: "text/event-stream" },
+    });
+    if (!sseRes.ok) {
+      const body = await sseRes.text().catch(() => "");
+      throw new LanternApiError(sseRes.status, body);
+    }
+
+    // Post the message to trigger the turn.
+    await this.sessions.sendMessage(sessionId, params);
+
+    // Buffer for out-of-order deltas: seq → delta string.
+    const pending = new Map<number, string>();
+    let nextSeq = 1;
+
+    for await (const { event, data } of this.rawSSEWithEvent(sseRes)) {
+      if (event === "message_delta") {
+        let parsed: { seq: number; delta: string };
+        try {
+          parsed = messageDeltaSchema.parse(JSON.parse(data));
+        } catch {
+          continue; // malformed — skip
+        }
+        pending.set(parsed.seq, parsed.delta);
+        // Yield all contiguous buffered deltas in seq order.
+        while (pending.has(nextSeq)) {
+          yield { type: "delta", delta: pending.get(nextSeq)! };
+          pending.delete(nextSeq);
+          nextSeq++;
+        }
+      } else if (event === "message_completed") {
+        let parsed: { text: string; usage: { tokensIn: number; tokensOut: number; costUsd: number } };
+        try {
+          parsed = messageCompletedSchema.parse(JSON.parse(data));
+        } catch {
+          return; // malformed completed — stop without error
+        }
+        yield { type: "completed", text: parsed.text, usage: parsed.usage };
+        return;
+      } else if (event === "message_error") {
+        let detail = "stream error";
+        try {
+          detail = messageErrorSchema.parse(JSON.parse(data)).error;
+        } catch { /* use default */ }
+        throw new MessageStreamError(detail);
+      }
+      // All other event kinds (agent.message, agent.thinking, etc.) are ignored
+      // so the iterator is forward-compatible with unknown event types.
+    }
+  }
+
   private async *streamRun(params: {
     agent: string;
     input: unknown;
@@ -513,6 +626,50 @@ export class LanternClient {
     }
   }
 
+  /** Parses an SSE response body, yielding `{event, data}` pairs per SSE
+   *  block. Tracks the `event:` field so named events are attributed
+   *  correctly; defaults to `"message"` (the SSE spec default) when the
+   *  block has no `event:` line. */
+  private async *rawSSEWithEvent(res: Response): AsyncIterable<{ event: string; data: string }> {
+    const reader = res.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let pendingEvent = "message";
+    let pendingData = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const raw of lines) {
+          const line = raw.trimEnd(); // strip \r from CRLF lines
+          if (line === "") {
+            // Blank line dispatches the accumulated event block.
+            if (pendingData !== "") {
+              yield { event: pendingEvent, data: pendingData };
+            }
+            pendingEvent = "message";
+            pendingData = "";
+          } else if (line.startsWith("event:")) {
+            pendingEvent = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            pendingData = line.slice(5).trim();
+          }
+          // comment lines (":" prefix) and unknown fields are silently ignored
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
   /** Reads an SSE response body and yields each `data: ` line's payload
    *  (raw string, un-parsed). Stops on `[DONE]` or stream end. */
   private async *rawSSELines(res: Response): AsyncIterable<string> {
@@ -552,5 +709,14 @@ export class LanternApiError extends Error {
   ) {
     super(`Lantern API error ${status}: ${body.slice(0, 200)}`);
     this.name = "LanternApiError";
+  }
+}
+
+/** Thrown by `sessions.streamMessage()` when the server emits a
+ *  `message_error` event on the SSE stream. */
+export class MessageStreamError extends Error {
+  constructor(public readonly detail: string) {
+    super(`Session stream error: ${detail}`);
+    this.name = "MessageStreamError";
   }
 }
