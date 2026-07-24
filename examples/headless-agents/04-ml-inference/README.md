@@ -33,7 +33,7 @@ Expected response (truncated):
 
 ## What you'll see in the dashboard
 
-`localhost:3000/runtime/<vm_id>`:
+`localhost:3001/runtime/<vm_id>`:
 
 - **Resource panel**: vCPU, memory, **GPU=1 (NVIDIA L4)**, accumulated
   cost ticking up while the workload runs.

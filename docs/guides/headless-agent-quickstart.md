@@ -10,10 +10,13 @@ The runtime stack must be running. Start it with:
 
 ```bash
 make dev-infra            # terminal 1 — Postgres, Redis, MinIO
-make run-runtime-manager  # terminal 2 — runtime-manager on :50054
-make run-scheduler        # terminal 3 — scheduler on :50055 / :8085
+make run-scheduler        # terminal 2 — scheduler on :50055 (gRPC) / :8085 (REST)
+make run-runtime-manager  # terminal 3 — runtime-manager on :50054; self-registers with scheduler
 make run-api-runtime      # terminal 4 — control-plane wired to the scheduler on :8080
 ```
+
+Start them in this order: scheduler must be up before the runtime-manager so the
+self-registration heartbeat can reach `:8085`.
 
 Or with Docker Compose:
 

@@ -93,6 +93,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 	printSection("Core", []checkResult{healthResult, authResult, provResult, runResult})
 
+	// ── RLS readiness ─────────────────────────────────────────────────────
+	printSection("RLS readiness", checkRLS(restURL, healthResult))
+
 	// ── Service ports ─────────────────────────────────────────────────────
 	printSection("Service ports", checkPorts())
 
@@ -108,6 +111,104 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintln(os.Stderr, colorGreen+"doctor: all checks passed — stack is ready"+colorReset)
 	return nil
+}
+
+// healthzResponse is what /healthz returns.  Extra fields are added over time;
+// we decode only what the doctor cares about.
+type healthzResponse struct {
+	Status               string `json:"status"`
+	LLMMode              string `json:"llmMode"`
+	RLSEnforce           bool   `json:"rlsEnforce"`
+	AppPoolActive        bool   `json:"appPoolActive"`
+	LanternAppRoleExists bool   `json:"lanternAppRoleExists"`
+}
+
+// checkRLS checks RLS readiness by reading the fields the control-plane
+// exposes in /healthz.  It is read-only and requires no auth token.
+//
+// The "lanternAppRoleExists" field reflects whether the DB role was found by
+// the running API — so it is only as fresh as the API process's last /healthz
+// call to Postgres.  "appPoolActive" is true only when LANTERN_RLS_ENFORCE=1
+// AND LANTERN_APP_DB_PASSWORD is set in the API process.
+//
+// If the API is not yet running (healthCheck failed) all sub-checks are
+// skipped so the user sees exactly one actionable message.
+func checkRLS(restURL string, health checkResult) []checkResult {
+	if !health.passed {
+		return []checkResult{{
+			label:  "LANTERN_RLS_ENFORCE set on API",
+			passed: false,
+			detail: "skipped — API not reachable (fix HTTP health check first)",
+			hard:   false,
+		}}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, restURL+"/healthz", nil)
+	if err != nil {
+		return []checkResult{{label: "RLS readiness", passed: false, detail: err.Error(), hard: false}}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return []checkResult{{label: "RLS readiness", passed: false, detail: err.Error(), hard: false}}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var h healthzResponse
+	if err := json.Unmarshal(body, &h); err != nil {
+		return []checkResult{{
+			label:  "RLS readiness (parse /healthz)",
+			passed: false,
+			detail: fmt.Sprintf("could not parse healthz body: %v — API may be an older build", err),
+			hard:   false,
+		}}
+	}
+
+	return []checkResult{
+		{
+			label:  "lantern_app role exists in DB",
+			passed: h.LanternAppRoleExists,
+			detail: func() string {
+				if h.LanternAppRoleExists {
+					return "role present (migrations applied)"
+				}
+				return "missing — run migrations: make dev-infra && (restart API to re-migrate)"
+			}(),
+			hard: false,
+		},
+		{
+			label:  "LANTERN_APP_DB_PASSWORD set on API",
+			passed: h.AppPoolActive || !h.RLSEnforce,
+			detail: func() string {
+				if h.AppPoolActive {
+					return "set — AppPool connects as lantern_app"
+				}
+				if h.RLSEnforce {
+					return "LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — AppPool aliased to superuser pool; RLS not enforced at runtime"
+				}
+				return "unset (acceptable in dev; required before flipping LANTERN_RLS_ENFORCE=1)"
+			}(),
+			hard: false,
+		},
+		{
+			label:  "LANTERN_RLS_ENFORCE active on API",
+			passed: h.RLSEnforce && h.AppPoolActive,
+			detail: func() string {
+				if h.RLSEnforce && h.AppPoolActive {
+					return "enforced — AppPool is the non-superuser lantern_app role"
+				}
+				if h.RLSEnforce {
+					return "flag set but AppPool still aliased to superuser (set LANTERN_APP_DB_PASSWORD)"
+				}
+				return "off — run `make rls-validate` to verify readiness, then set LANTERN_RLS_ENFORCE=1"
+			}(),
+			hard: false,
+		},
+	}
 }
 
 // checkHealth probes GET /healthz on restURL.

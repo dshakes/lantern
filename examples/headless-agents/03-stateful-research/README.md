@@ -29,7 +29,7 @@ lantern run examples/headless-agents/03-stateful-research/agent.yaml \
 # In another terminal — drain the node mid-run:
 lantern node drain $(lantern node list -o name)
 
-# Watch the dashboard at localhost:3000/runtime — you'll see:
+# Watch the dashboard at localhost:3001/runtime — you'll see:
 #   * state: running → draining → snapshotting → terminated  (on the old node)
 #   * state: pending → spawning → running  (on a new node, with restore_snapshot_id set)
 #   * the workload picks up at step N, not step 1
