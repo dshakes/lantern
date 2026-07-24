@@ -209,6 +209,22 @@ type Deps struct {
 	// auto-executing. When nil (the default), the feature is completely
 	// bypassed. Controlled at the call site via LANTERN_CONFIDENCE_GATE.
 	ConfidenceGate *ConfidenceGate
+
+	// RecordStep, when non-nil, is called after each node's retry loop
+	// completes (whether the step succeeded, failed, or succeeded after
+	// retries). Callers use this to record OTel step-duration and retry
+	// metrics without the workflow package importing a specific metrics
+	// package.
+	//   nodeType  — node.Type (e.g. "ai-step", "tool", "connector").
+	//   outcome   — "ok", "failed", or "retried" (ok after ≥1 retry).
+	//   ms        — wall-clock duration of the step including all retries.
+	//   retries   — number of extra attempts beyond the first (0 = no retry).
+	RecordStep func(nodeType, outcome string, ms int64, retries int)
+
+	// RecordReplaySkip, when non-nil, is called each time CompletedStep
+	// returns a cached result (crash-resume replay skip). The caller uses
+	// this to increment the lantern.run.replay.skips OTel counter.
+	RecordReplaySkip func()
 }
 
 // ApprovalDisposition reports what the human did with an approval step.
@@ -355,8 +371,11 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 		// default) means a single attempt with no retries — identical to the
 		// prior unconditional call.
 		rp := parseRetryPolicy(node.Data)
+		stepStart := time.Now()
+		var finalAttempt int
 	stepLoop:
 		for attempt := 1; attempt <= rp.MaxAttempts; attempt++ {
+			finalAttempt = attempt
 			if attempt > 1 {
 				// Wait between attempts; bail early if the run context is cancelled.
 				if wait := time.Duration(rp.BackoffMs) * time.Millisecond; wait > 0 {
@@ -380,6 +399,20 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 				break
 			}
 		}
+
+		// Record step metrics via the optional hook (wired by callers that have
+		// access to the OTel meter — the workflow package stays dep-free).
+		if deps.RecordStep != nil {
+			retries := finalAttempt - 1
+			outcome := "ok"
+			if stepErr != nil {
+				outcome = "failed"
+			} else if retries > 0 {
+				outcome = "retried"
+			}
+			deps.RecordStep(node.Type, outcome, time.Since(stepStart).Milliseconds(), retries)
+		}
+
 		res.StepsRan++
 
 		// Accumulate stats and check anomalies immediately after each step.
@@ -473,6 +506,9 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 	case "ai-step", "tool", "connector", "subagent", "approval":
 		if deps.CompletedStep != nil {
 			if cached, done, csErr := deps.CompletedStep(ctx, runID, node.ID); csErr == nil && done {
+				if deps.RecordReplaySkip != nil {
+					deps.RecordReplaySkip()
+				}
 				return cached, nil
 			}
 			// On error we fall through and re-execute — safe to retry.
