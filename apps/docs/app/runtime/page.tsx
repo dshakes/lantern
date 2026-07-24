@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ShieldCheck, Lock, Activity } from "lucide-react";
 import { Diagram } from "../_components/Diagram";
 
 // Tier comparison — reuses .prose table styles, no new CSS needed.
@@ -9,7 +10,7 @@ function TierTable() {
     ["Isolation", "Same OS process — trust first-party code", "Separate kernel (gVisor) or hypervisor (Kata)"],
     ["Latency to first token", "~50–200 ms", "~150 ms warm  /  ~1.5 s cold-boot"],
     ["Egress", "Unrestricted (trusted code)", "Harness allowlist; deny-default; iptables REDIRECT required in prod"],
-    ["Crash resume", "30 s recovery sweep + CompletedStep journal replay", "VM lifecycle; scheduler reschedules idempotent VMs"],
+    ["Crash resume", "30 s recovery sweep + CompletedStep journal replay", "VM lifecycle; recovery sweep re-schedules (≤ 3 attempts)"],
     ["Secret delivery", "Resolved inline at step time, never logged", "Short-TTL JWT over vsock; args stripped from audit"],
     ["Use case", "Loop agents, bridge replies, dashboard runs, trusted workflows", "User-supplied code, exec tools, untrusted packages"],
     ["Downgrade safety", "N/A", "Never falls back to shared — failure is explicit (microvm_unavailable)"],
@@ -42,12 +43,18 @@ export default function RuntimeOverviewPage() {
       <h1>Agent Runtime</h1>
       <p>
         Every Lantern run executes in one of two tiers — <strong>shared</strong>{" "}
-        (the inline executor inside the control-plane) or{" "}
-        <strong>microVM</strong> (the W12 Kubernetes/Firecracker/Kata stack).
-        The tier is a property of the agent version, declared in{" "}
-        <code>manifest.isolation</code>. It cannot be changed by the caller at
-        run time.
+        (inline executor inside the control-plane) or{" "}
+        <strong>microVM</strong> (W12 Kubernetes/Firecracker/Kata stack) —
+        declared in the agent version&apos;s{" "}
+        <code>manifest.isolation</code> at publish time, not overridable by the
+        caller.
       </p>
+
+      {/* Hero diagram — no heading; the diagram IS the overview */}
+      <Diagram
+        name="runtime-two-tier"
+        caption="The isolation gate reads manifest.isolation from the resolved agent version. Both tiers checkpoint to the same journal_events substrate."
+      />
 
       <h2 id="tiers">Two tiers, one journal</h2>
       <p>
@@ -97,9 +104,8 @@ export default function RuntimeOverviewPage() {
       <h2 id="microvm">MicroVM tier</h2>
       <p>
         The microVM tier is required for agents that run user-supplied code,{" "}
-        <code>exec</code> arbitrary tools, or load untrusted packages. It is the
-        architectural answer to invariant #5 ("untrusted code runs in a
-        microVM"). Declare it in the manifest:
+        <code>exec</code> arbitrary tools, or load untrusted packages. Declare
+        it in the manifest:
       </p>
       <pre><code>{`manifest:
   isolation: microvm          # routes this agent version to the W12 stack
@@ -114,30 +120,13 @@ export default function RuntimeOverviewPage() {
         executor.
       </p>
 
-      <h2 id="model">Two-tier routing diagram</h2>
-      <Diagram
-        name="runtime-two-tier"
-        caption="The isolation gate reads manifest.isolation from the resolved agent version. Both tiers write to the shared journal at the bottom."
-      />
-      <p>
-        The control-plane is the gatekeeper: it stamps <code>tenant_id</code>,
-        checks quota, and forwards to the scheduler. The runtime-manager runs
-        inside your VPC and never accepts requests directly from the caller.
-      </p>
-
       <h2 id="health-sweep">Service-health sweep</h2>
       <p>
-        A background loop in the control-plane TCP-probes its peer services
-        every 60 s (configurable via <code>LANTERN_HEALTH_SWEEP_INTERVAL</code>).
-        After 3 consecutive failures it declares the peer <strong>DOWN</strong>{" "}
-        and texts the owner&apos;s self-chat — once, on the first transition, no
-        storms. It recovers with a single UP notification.
-      </p>
-      <p>
-        Services probed (only when their address env var is set):{" "}
-        <code>model-router</code>, <code>runtime-scheduler</code>,{" "}
-        <code>runtime-manager</code>, <code>workflow-engine</code>. Read the
-        current snapshot:
+        A background loop TCP-probes peer services every 60 s (
+        <code>LANTERN_HEALTH_SWEEP_INTERVAL</code>). After 3 consecutive
+        failures it declares the peer <strong>DOWN</strong> and texts the
+        owner&apos;s self-chat — once on transition, no storms. Read the current
+        snapshot:
       </p>
       <pre><code>{`GET /v1/system/health    # JWT-authed`}</code></pre>
       <pre><code>{`{
@@ -147,50 +136,40 @@ export default function RuntimeOverviewPage() {
       "addr": "localhost:50054",
       "up": false,
       "consecutiveFailures": 5,
-      "lastChecked": "2026-07-23T10:00:00Z",
-      "lastTransition": "2026-07-23T09:57:00Z"
+      "lastChecked": "2026-07-23T10:00:00Z"
     }
   ]
 }`}</code></pre>
 
       <h2 id="principles">What makes it different</h2>
-
-      <h3>Durable by default</h3>
-      <p>
-        Work is event-sourced into <code>journal_events</code>. If the process
-        crashes mid-step, the run resumes from the last{" "}
-        <code>step_completed</code> — it does not re-spend tokens or re-fire
-        side effects.{" "}
-        <Link href="/runtime/durable-execution">Read how</Link>.
-      </p>
-
-      <h3>Isolation is a manifest declaration</h3>
-      <p>
-        Isolation strength is declared in the agent version, not chosen by the
-        caller. Untrusted and hostile classes{" "}
-        <strong>fail closed</strong> — they refuse to run without the hardened
-        RuntimeClass, never silently downgrading.{" "}
-        <Link href="/runtime/isolation">Read how</Link>.
-      </p>
-
-      <h3>Per-instance identity (microVM tier)</h3>
-      <p>
-        Each spawn is issued its own <strong>Ed25519 keypair</strong>. The
-        instance authenticates secret-vending calls with it and is externally
-        verifiable. <Link href="/runtime/identity">Read how</Link>.
-      </p>
-
-      <h3>One trace per spawn</h3>
-      <p>
-        Every run emits a single OTel trace correlated by{" "}
-        <code>lantern.tenant_id</code>, <code>lantern.run_id</code>, and{" "}
-        <code>lantern.step_id</code>. On the microVM tier the trace also carries{" "}
-        <code>vm_id</code>, <code>isolation_class</code>, and{" "}
-        <code>agent_instance_id</code> (per-spawn identity) with a W3C{" "}
-        <code>traceparent</code> propagated from the control-plane through
-        scheduler → manager → harness.{" "}
-        <Link href="/runtime/observability">Read how</Link>.
-      </p>
+      <div className="card-grid">
+        <Link href="/runtime/durable-execution" className="card">
+          <div className="card-title">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" /> Durable by default
+          </div>
+          <div className="card-desc">
+            Every step is journaled. A crash-replay skips completed nodes and replays cached LLM outputs — no re-spent tokens, no double side-effects.
+          </div>
+        </Link>
+        <Link href="/runtime/isolation" className="card">
+          <div className="card-title">
+            <Lock className="w-4 h-4 text-sky-400" /> Isolation by manifest
+          </div>
+          <div className="card-desc">
+            Isolation strength is declared in the agent version, not chosen by the caller. Fail-closed: untrusted workloads are refused without the hardened RuntimeClass, never silently downgraded.
+          </div>
+        </Link>
+        <Link href="/runtime/observability" className="card">
+          <div className="card-title">
+            <Activity className="w-4 h-4 text-lantern-400" /> One observability contract
+          </div>
+          <div className="card-desc">
+            One OTel trace per spawn, W3C traceparent end-to-end, five{" "}
+            <code>lantern.run.*</code> metrics, and a shared span-attribute
+            contract from HTTP entry to harness exit.
+          </div>
+        </Link>
+      </div>
 
       <h2 id="guides">In this section</h2>
       <ul>
