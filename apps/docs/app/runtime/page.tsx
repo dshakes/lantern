@@ -171,6 +171,53 @@ export default function RuntimeOverviewPage() {
   ]
 }`}</code></pre>
 
+      <h2 id="operations">Operating it in production</h2>
+      <Concept>
+        Four things an operator cares about, and where each lives: work is
+        never lost (checkpointing), crashed work restarts itself (recovery), a
+        runaway tenant can&apos;t take the platform down (throttling), and you
+        can see all of it (monitoring). Everything below is shipped and
+        test-gated — the knobs are environment variables, the views are REST,
+        CLI, and the dashboard.
+      </Concept>
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>Mechanism</th><th>Knobs / views</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Checkpointing</strong></td>
+            <td>Every step journaled to <code>journal_events</code> before it runs (both tiers) · Firecracker VM snapshots persisted to S3 (ADR 0007)</td>
+            <td><Link href="/runtime/durable-execution">Durable execution</Link></td>
+          </tr>
+          <tr>
+            <td><strong>Auto-restart</strong></td>
+            <td>Recovery sweep steals expired run leases and re-drives from the last completed step · microVM runs re-scheduled with <code>LANTERN_RESUME=1</code>, ≤3 attempts · scheduler is HA via leader election</td>
+            <td><code>LANTERN_RECOVERY_INTERVAL</code> (default 30 s)</td>
+          </tr>
+          <tr>
+            <td><strong>Throttling</strong></td>
+            <td>Budget gate blocks over-budget runs with 402 · per-tenant concurrent-VM hard cap (gRPC <code>ResourceExhausted</code>) · spawn-storm guard returns 429 · per-step timeout</td>
+            <td><code>LANTERN_SPAWN_RATE_PER_MIN</code> (default 120) · <code>LANTERN_SPAWN_BURST</code> · <Link href="/budgets">Budgets</Link></td>
+          </tr>
+          <tr>
+            <td><strong>Job monitoring</strong></td>
+            <td>VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster + quota views</td>
+            <td><code>GET /v1/runtime/vms · /metrics · /cluster · /audit</code> · <code>lantern vm list|get|logs|stop|exec</code> · dashboard <code>/runtime</code></td>
+          </tr>
+          <tr>
+            <td><strong>Telemetry</strong></td>
+            <td>Five <code>lantern.run.*</code> OTel metrics · scheduler Prometheus scrape · alert rules + Grafana dashboards + 8 runbooks in <code>infra/monitoring/</code></td>
+            <td>scheduler <code>:8085/metrics</code> · <Link href="/runtime/observability">Observability</Link></td>
+          </tr>
+          <tr>
+            <td><strong>Traceability</strong></td>
+            <td>W3C trace context propagated control-plane → scheduler → manager → in-VM harness · one correlated identity chain (tenant · run · step · instance) · Ed25519 receipts</td>
+            <td><Link href="/runtime/receipts">Receipts</Link> · <Link href="/runtime/observability">Observability</Link></td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2 id="architecture">System architecture</h2>
       <p>
         The technical view — how the control-plane, scheduler, runtime-manager,
