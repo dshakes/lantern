@@ -37,10 +37,13 @@ import (
 type TakeoverHandler struct {
 	srv  *server.Server
 	auth *AuthHandler
+	// rest, when non-nil, enables immediate redrive of parked runs on grant/release.
+	// Set by NewTakeoverHandler; safe to leave nil (recovery sweep acts as fallback).
+	rest *RESTHandler
 }
 
-func NewTakeoverHandler(srv *server.Server, auth *AuthHandler) *TakeoverHandler {
-	return &TakeoverHandler{srv: srv, auth: auth}
+func NewTakeoverHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler) *TakeoverHandler {
+	return &TakeoverHandler{srv: srv, auth: auth, rest: rest}
 }
 
 func (h *TakeoverHandler) logger() *zap.Logger {
@@ -113,11 +116,13 @@ func (h *TakeoverHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	runID := r.PathValue("id")
 	id := r.PathValue("takeoverId")
 	var body grantBody
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	var rowsAffected int64
+	var runWasWaiting bool
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		tag, e := tx.Exec(ctx, `
 			UPDATE takeover_requests
@@ -131,6 +136,16 @@ func (h *TakeoverHandler) Grant(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		rowsAffected = tag.RowsAffected()
+		if rowsAffected > 0 {
+			// Flip the run from 'waiting' → 'queued' so the recovery sweep
+			// and the inline redrive below can pick it up.
+			t2, e2 := tx.Exec(ctx, `
+				UPDATE runs SET status = 'queued' WHERE id = $1 AND status = 'waiting'
+			`, runID)
+			if e2 == nil && t2.RowsAffected() > 0 {
+				runWasWaiting = true
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -142,6 +157,13 @@ func (h *TakeoverHandler) Grant(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not found or not pending"})
 		return
 	}
+
+	// Kick an immediate redrive for parked runs so approval round-trips are fast.
+	// The recovery sweep is a fallback if this goroutine fails.
+	if runWasWaiting && h.rest != nil {
+		h.rest.redriveParkedRun(runID, tenantID)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":     id,
 		"status": "granted",
@@ -199,9 +221,11 @@ func (h *TakeoverHandler) Release(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	runID := r.PathValue("id")
 	id := r.PathValue("takeoverId")
 
 	var rowsAffected int64
+	var runWasWaiting bool
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		tag, e := tx.Exec(ctx, `
 			UPDATE takeover_requests
@@ -212,6 +236,17 @@ func (h *TakeoverHandler) Release(w http.ResponseWriter, r *http.Request) {
 			return e
 		}
 		rowsAffected = tag.RowsAffected()
+		if rowsAffected > 0 {
+			// Also flip runs.status 'waiting' → 'queued' for parked runs.
+			// This covers the direct-release path (operator skips grant and
+			// calls release immediately to let the workflow proceed).
+			t2, e2 := tx.Exec(ctx, `
+				UPDATE runs SET status = 'queued' WHERE id = $1 AND status = 'waiting'
+			`, runID)
+			if e2 == nil && t2.RowsAffected() > 0 {
+				runWasWaiting = true
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -222,6 +257,11 @@ func (h *TakeoverHandler) Release(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not found or already closed"})
 		return
 	}
+
+	if runWasWaiting && h.rest != nil {
+		h.rest.redriveParkedRun(runID, tenantID)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": "released"})
 }
 

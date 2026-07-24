@@ -29,7 +29,9 @@ import (
 
 func newEnforcedTakeoverHandler(t *testing.T, e *enforcedServer) *TakeoverHandler {
 	t.Helper()
-	return NewTakeoverHandler(e.srv, NewAuthHandler(e.srv, testJWTSecret))
+	// nil RESTHandler: in RLS tests we only exercise the takeover request/list paths,
+	// not the grant/release → redrive path, so the rest pointer is not needed.
+	return NewTakeoverHandler(e.srv, NewAuthHandler(e.srv, testJWTSecret), nil)
 }
 
 func newEnforcedWhatsAppHandler(t *testing.T, e *enforcedServer) *WhatsAppPersonalHandler {

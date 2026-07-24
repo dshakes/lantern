@@ -623,7 +623,7 @@ func main() {
 	// W11a: takeover handshake. Workflow approval nodes pause on these,
 	// the dashboard surfaces them, an operator grants → optionally
 	// exchanges WebRTC SDP → releases when done.
-	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler)
+	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler, restHandler)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", takeoverHandler.Request)
 	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", takeoverHandler.Grant)
