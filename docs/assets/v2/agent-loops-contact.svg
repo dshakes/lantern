@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="294" viewBox="0 0 1240 294" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Contact-facing agent loops — whatsapp-assistant and imessage-assistant. Both follow the same reactive loop: contact messages, understand, draft in your voice, send to contact, repeat. These reply AS YOU to real contacts; owner-only gate, VIP via dashboard draft queue.">
+  <title>Contact-facing agent loops</title>
+  <defs>
+    <radialGradient id="lgv" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="lgg" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#fb7185"/></marker></defs>
+  <rect width="1240" height="294" rx="16" fill="#0a0908"/>
+  <rect width="1240" height="294" rx="16" fill="url(#lgv)"/>
+  <rect width="1240" height="294" rx="16" fill="none" stroke="#2a2118"/>
+  <rect x="20" y="16" width="1200" height="36" rx="9" fill="#fb7185" fill-opacity="0.10" stroke="#fb7185" stroke-opacity="0.4"/>
+  <text x="38" y="39" fill="#fda4af" font-size="11.5" font-weight="700">⚠ These reply AS YOU to real contacts. Owner-only gate enforced · VIP contacts always route through the dashboard draft queue.</text>
+  <rect x="20" y="66" width="1200" height="100" rx="10" fill="#fb7185" fill-opacity="0.07" stroke="#fb7185" stroke-opacity="0.26"/>
+  <text x="42" y="84" fill="#fda4af" font-size="12" font-weight="700">whatsapp-assistant</text>
+  <text x="204" y="84" fill="#8a7d6b" font-size="10.5">reactive · on every inbound WhatsApp message · replies as you</text>
+  <rect x="42" y="96" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="121" y="122" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Contact messages</text>
+  <rect x="222" y="96" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="301" y="122" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Understand</text>
+  <rect x="402" y="96" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="481" y="122" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Draft in your voice</text>
+  <rect x="582" y="96" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="661" y="122" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Send to contact</text>
+  <line x1="202" y1="118" x2="220" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="382" y1="118" x2="400" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="562" y1="118" x2="580" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <path d="M 740 118 C 754 158, 28 158, 42 118" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <rect x="357" y="141" width="68" height="18" rx="9" fill="#0a0908" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="391" y="151" fill="#fda4af" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+  <rect x="20" y="178" width="1200" height="100" rx="10" fill="#fb7185" fill-opacity="0.07" stroke="#fb7185" stroke-opacity="0.26"/>
+  <text x="42" y="196" fill="#fda4af" font-size="12" font-weight="700">imessage-assistant</text>
+  <text x="204" y="196" fill="#8a7d6b" font-size="10.5">reactive · on every inbound iMessage · replies as you · RCS/SMS fallback via Twilio</text>
+  <rect x="42" y="208" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="121" y="234" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Contact messages</text>
+  <rect x="222" y="208" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="301" y="234" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Understand</text>
+  <rect x="402" y="208" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="481" y="234" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Draft in your voice</text>
+  <rect x="582" y="208" width="158" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="661" y="234" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Send to contact</text>
+  <line x1="202" y1="230" x2="220" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="382" y1="230" x2="400" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="562" y1="230" x2="580" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <path d="M 740 230 C 754 270, 28 270, 42 230" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <rect x="357" y="253" width="68" height="18" rx="9" fill="#0a0908" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="391" y="263" fill="#fda4af" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+</svg>

@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="900" viewBox="0 0 1240 900" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Two-tier agent runtime — shared inline executor and isolated microVM tier over one durable journal">
+  <defs>
+    <radialGradient id="lgv" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="lgg" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="tt-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <marker id="tt-arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <marker id="tt-arrp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7e22ce"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .port { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .lang { font-size:10px; font-weight:700; }
+      .edge { fill:#a89e8f; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="900" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="900" rx="16" fill="url(#lgv)"/>
+  <rect x="0" y="0" width="1240" height="900" rx="16" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="44" class="h" font-size="22" filter="url(#lgg)">Agent Runtime</text>
+  <text x="225" y="44" class="sub" font-size="13">two tiers, one journal · every run routed by manifest at creation time · ADR 0022</text>
+  <g transform="translate(1064,30)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#38bdf8"/><text x="20" y="11" class="sub">Go</text>
+    <rect x="58" y="0" width="14" height="14" rx="3" fill="#f59e0b"/><text x="78" y="11" class="sub">Rust</text>
+  </g>
+
+  <!-- ============ BAND 1: RUN CREATION ============ -->
+  <text x="32" y="82" class="band">RUN CREATION</text>
+  <g transform="translate(32,94)">
+    <rect x="0" y="0" width="560" height="58" rx="10" fill="#12100c" stroke="#4a3b28"/>
+    <text x="16" y="23" class="t" font-size="12.5" font-weight="700">Entry points</text>
+    <text x="16" y="42" class="sub">SDK (TS · Py · Go) · CLI (lantern agent dev) · Dashboard · Channels · Cron schedules · A2A · Marketplace</text>
+
+    <rect x="616" y="0" width="560" height="58" rx="10" fill="#1e1813" stroke="#f59e0b"/>
+    <text x="632" y="23" class="t" font-size="12.5" font-weight="700">control-plane <tspan class="lang" fill="#38bdf8">GO</tspan><tspan class="port" dx="250">POST /v1/runs · :8080</tspan></text>
+    <text x="632" y="42" class="sub">JWT / API-key auth · budget gate (hard-fail 402) · cost forecast · reads agent-version manifest</text>
+  </g>
+  <path d="M 592 123 H 646" stroke="#8a7d6b" stroke-width="1.5" fill="none" marker-end="url(#tt-arr)"/>
+
+  <!-- isolation gate -->
+  <g transform="translate(444,190)">
+    <rect x="0" y="0" width="352" height="64" rx="12" fill="#171310" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="176" y="26" text-anchor="middle" class="t" font-size="12" font-weight="700">ISOLATION GATE</text>
+    <text x="176" y="47" text-anchor="middle" class="code" font-size="12">manifest.isolation = "shared" | "microvm"</text>
+  </g>
+  <path d="M 926 152 V 168 Q 926 178 916 178 H 630 Q 620 178 620 188 V 190" stroke="#8a7d6b" stroke-width="1.5" fill="none" marker-end="url(#tt-arr)"/>
+  <path d="M 560 254 Q 560 276 420 284" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#tt-arrg)"/>
+  <path d="M 680 254 Q 680 276 820 284" stroke="#7e22ce" stroke-width="1.5" fill="none" marker-end="url(#tt-arrp)"/>
+  <text x="405" y="272" class="edge" text-anchor="end">"shared" · default · trusted first-party</text>
+  <text x="836" y="272" class="edge">"microvm" · untrusted / exec workloads</text>
+
+  <!-- ============ SHARED TIER ============ -->
+  <g transform="translate(32,292)">
+    <rect x="0" y="0" width="572" height="330" rx="14" fill="#0c1512" stroke="#134e4a"/>
+    <text x="20" y="30" class="band" fill="#5eead4">SHARED TIER — inline executor</text>
+    <text x="20" y="48" class="sub">in-process goroutine · sub-ms dispatch · rest.go executeRunInlineSync</text>
+
+    <rect x="20" y="62" width="532" height="92" rx="10" fill="#12100c" stroke="#4a3b28"/>
+    <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter <tspan class="port" dx="200">internal/workflow</tspan></text>
+    <text x="36" y="104" class="sub">trigger · ai-step · tool · connector · condition · loop · subagent · approval · end</text>
+    <text x="36" y="122" class="sub">per-step retry <tspan class="code">node.retry {maxAttempts, backoffMs, classes}</tspan> · confidence gate → human approval</text>
+    <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled — visible in the run waterfall</text>
+
+    <rect x="20" y="168" width="532" height="74" rx="10" fill="#12100c" stroke="#4a3b28"/>
+    <text x="36" y="190" class="t" font-size="12.5" font-weight="700">LLM tool-use loop</text>
+    <text x="36" y="210" class="sub">capability-addressed via model-router (never a vendor name) · web_search built-in</text>
+    <text x="36" y="228" class="sub">Idempotency-Key on every provider call · token deltas stream to session SSE</text>
+
+    <rect x="20" y="256" width="532" height="56" rx="10" fill="#0e1512" stroke="#134e4a"/>
+    <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#5eead4">Guarantees</text>
+    <text x="36" y="297" class="sub">durable steps · crash-resume from last completed step · exactly-once side effects · budget-metered</text>
+  </g>
+
+  <!-- ============ MICROVM TIER ============ -->
+  <g transform="translate(636,292)">
+    <rect x="0" y="0" width="572" height="330" rx="14" fill="#151022" stroke="#7e22ce"/>
+    <text x="20" y="30" class="band" fill="#c4b5fd">MICROVM TIER — W12 stack</text>
+    <text x="20" y="48" class="sub">hardware isolation per workload · session-scoped VM reuse · invariant #5</text>
+
+    <rect x="20" y="62" width="256" height="80" rx="10" fill="#12100c" stroke="#4a3b28"/>
+    <text x="36" y="84" class="t" font-size="12.5" font-weight="700">runtime-scheduler <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="36" y="102" class="port">:50055 · HA leader election</text>
+    <text x="36" y="122" class="sub">placement: warm-pool · region ·</text>
+    <text x="36" y="136" class="sub">fair-share · cost · health</text>
+
+    <rect x="296" y="62" width="256" height="80" rx="10" fill="#12100c" stroke="#4a3b28"/>
+    <text x="312" y="84" class="t" font-size="12.5" font-weight="700">runtime-manager <tspan class="lang" fill="#f97316">RUST</tspan></text>
+    <text x="312" y="102" class="port">:50054 · per node</text>
+    <text x="312" y="122" class="sub">Firecracker · Kata · K8s Job · Wasm</text>
+    <text x="312" y="136" class="sub">fail-closed isolation gate</text>
+
+    <rect x="20" y="156" width="532" height="86" rx="10" fill="#1b1430" stroke="#7e22ce"/>
+    <text x="36" y="178" class="t" font-size="12.5" font-weight="700">harness <tspan class="lang" fill="#f97316">RUST</tspan> · PID 1 inside the VM</text>
+    <text x="36" y="198" class="sub">in-guest tool runner: <tspan class="code">shell_exec · http_fetch</tspan> (forced through egress allowlist :3128)</text>
+    <text x="36" y="216" class="sub">SO_PEERCRED-authed secrets socket · deny-default egress · audit stream (never args — #10)</text>
+    <text x="36" y="234" class="sub">step events + vm_exit reported up → journal · LANTERN_RESUME=1 crash re-drive (≤3)</text>
+
+    <rect x="20" y="256" width="532" height="56" rx="10" fill="#2a1518" stroke="#7f3a3f"/>
+    <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#fda4af">Honest failure</text>
+    <text x="36" y="297" class="sub">tier unavailable → run fails <tspan class="code">microvm_unavailable</tspan> — NEVER silently downgraded to shared</text>
+  </g>
+
+  <!-- funnels into journal -->
+  <path d="M 318 622 V 654" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#tt-arrg)" stroke-dasharray="5 4"/>
+  <path d="M 922 622 V 654" stroke="#7e22ce" stroke-width="1.5" fill="none" marker-end="url(#tt-arrp)" stroke-dasharray="5 4"/>
+  <text x="334" y="644" class="edge">step events</text>
+  <text x="938" y="644" class="edge">report path · vm_exit</text>
+
+  <!-- ============ JOURNAL SUBSTRATE ============ -->
+  <g transform="translate(32,662)">
+    <rect x="0" y="0" width="1176" height="104" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
+    <text x="20" y="28" class="band" fill="#5eead4">ONE DURABLE SUBSTRATE — BOTH TIERS</text>
+    <text x="20" y="52" class="t" font-size="12.5"><tspan class="code" font-size="12">journal_events</tspan> — event-sourced run log · step_started / step_completed / step_failed / step_retrying · keyed (run_id, seq)</text>
+    <text x="20" y="72" class="sub">crash-resume: recovery sweep (30s) steals expired run_locks → re-drive → CompletedStep replay skips finished work · side-effect dedup (run|step|attempt)</text>
+    <text x="20" y="91" class="sub">powers: run waterfall · SSE + gRPC event streams · Ed25519 receipts (journal hash) · rehearsals · eval evidence</text>
+  </g>
+
+  <!-- ============ OBSERVABILITY STRIP ============ -->
+  <g transform="translate(32,782)">
+    <rect x="0" y="0" width="1176" height="58" rx="10" fill="#171310" stroke="#4a3b28"/>
+    <text x="20" y="24" class="t" font-size="12" font-weight="700">Observability — invariant #9</text>
+    <text x="20" y="44" class="sub">OTel spans + metrics, one attribute contract: <tspan class="code">lantern.tenant_id · run_id · step_id · agent_version</tspan> · metrics: step.duration · step.retries · replay.skips · budget.blocks · run.total · peer health: GET /v1/system/health → owner self-chat alert on transition</text>
+  </g>
+
+  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller — a caller can never downgrade a microvm agent. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
+</svg>

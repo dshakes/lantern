@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="300" viewBox="0 0 1240 300" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern — the production runtime for AI agents. Durable runs, real channels, hard budgets, verifiable receipts — executing in your cloud.">
+  <defs>
+    <radialGradient id="hb-vign" cx="50%" cy="10%" r="80%">
+      <stop offset="0%" stop-color="#2a1c08" stop-opacity=".8"/>
+      <stop offset="60%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="hb-flame" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="35%" stop-color="#fbbf24"/>
+      <stop offset="75%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </radialGradient>
+    <linearGradient id="hb-word" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fdf8ef"/>
+      <stop offset="100%" stop-color="#e7d9bd"/>
+    </linearGradient>
+    <filter id="hb-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="hb-soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sub  { fill:#a89e8f; }
+      .chip { fill:#d8cfc0; font-size:11px; font-weight:600; }
+      .hbflicker { animation:hb-fl 3.2s ease-in-out infinite; }
+      @keyframes hb-fl { 0%,100% { opacity:1; } 42% { opacity:.82; } 58% { opacity:.94; } 74% { opacity:.85; } }
+      @media (prefers-reduced-motion: reduce) { .hbflicker { animation:none; } }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="300" rx="18" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="300" rx="18" fill="url(#hb-vign)"/>
+  <rect x="0" y="0" width="1240" height="300" rx="18" fill="none" stroke="#2a2118"/>
+
+  <!-- faint grid, YC-terminal texture -->
+  <g stroke="#f59e0b" stroke-opacity=".04">
+    <path d="M0 60 H1240 M0 120 H1240 M0 180 H1240 M0 240 H1240"/>
+    <path d="M155 0 V300 M310 0 V300 M465 0 V300 M620 0 V300 M775 0 V300 M930 0 V300 M1085 0 V300"/>
+  </g>
+
+  <!-- lantern mark -->
+  <g transform="translate(484,58)" class="hbflicker">
+    <rect x="14" y="0" width="20" height="8" rx="3" fill="#3a2f24"/>
+    <path d="M6 8 h36 l6 14 v26 a6 6 0 0 1 -6 6 h-36 a6 6 0 0 1 -6 -6 v-26 z" fill="#171310" stroke="#4a3b28" stroke-width="1.5"/>
+    <ellipse cx="24" cy="32" rx="11" ry="14" fill="url(#hb-flame)" filter="url(#hb-glow)"/>
+    <ellipse cx="24" cy="35" rx="4.5" ry="7" fill="#fef9ec"/>
+    <rect x="10" y="54" width="28" height="6" rx="3" fill="#3a2f24"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="556" y="112" font-size="58" font-weight="800" letter-spacing="-.02em" fill="url(#hb-word)" filter="url(#hb-soft)">Lantern</text>
+
+  <text x="620" y="160" text-anchor="middle" class="sub" font-size="17">The production runtime for AI agents — <tspan fill="#fbbf24">your cloud executes, ours just orchestrates</tspan></text>
+  <text x="620" y="186" text-anchor="middle" class="sub" font-size="13">durable runs · real channels · hard budgets · fail-closed isolation · verifiable receipts</text>
+
+  <!-- chips -->
+  <g transform="translate(240,216)">
+    <rect x="0" y="0" width="150" height="30" rx="15" fill="#171310" stroke="#3a2f24"/>
+    <text x="75" y="19" text-anchor="middle" class="chip">Go · Rust · TypeScript</text>
+    <rect x="162" y="0" width="176" height="30" rx="15" fill="#171310" stroke="#3a2f24"/>
+    <text x="250" y="19" text-anchor="middle" class="chip">crash-replay, exactly-once</text>
+    <rect x="350" y="0" width="160" height="30" rx="15" fill="#171310" stroke="#3a2f24"/>
+    <text x="430" y="19" text-anchor="middle" class="chip">budgets that 402</text>
+    <rect x="522" y="0" width="238" height="30" rx="15" fill="#0e1512" stroke="#134e4a"/>
+    <text x="641" y="19" text-anchor="middle" class="chip" fill="#5eead4">runc → gVisor → Kata → Firecracker</text>
+  </g>
+
+  <text x="620" y="280" text-anchor="middle" fill="#fbbf24" font-size="12.5" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">$ lantern dev&#160;&#160;&#160;# Postgres + Redis + MinIO + API + dashboard + bridges — one command</text>
+</svg>
