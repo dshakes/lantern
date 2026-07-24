@@ -81,6 +81,9 @@ interface RunWaterfallProps {
   // Span id to spotlight (e.g. the signal the user clicked, or the
   // reasoning block being replayed). Ringed + auto-readable.
   highlightSpanId?: string | null;
+  // Flight-recorder: called when the user clicks a span bar, so the
+  // recorder can jump the time cursor to that span's step_started.
+  onSpanClick?: (spanId: string, startMs: number) => void;
 }
 
 // Span is defined in run-waterfall-lanes.ts and imported above.
@@ -246,6 +249,7 @@ export function RunWaterfall({
   totals,
   timeCursorMs = null,
   highlightSpanId = null,
+  onSpanClick,
 }: RunWaterfallProps) {
   const { spans, endMs } = useMemo(() => extractSpans(events), [events]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -332,6 +336,7 @@ export function RunWaterfall({
                 onToggle={toggle}
                 cursorMs={timeCursorMs}
                 highlightSpanId={highlightSpanId}
+                onSpanClick={onSpanClick}
               />
             ))}
           </div>
@@ -406,6 +411,7 @@ function LaneRow({
   onToggle,
   cursorMs = null,
   highlightSpanId = null,
+  onSpanClick,
 }: {
   lane: Lane;
   scaleEnd: number;
@@ -416,6 +422,7 @@ function LaneRow({
   onToggle: (id: string) => void;
   cursorMs?: number | null;
   highlightSpanId?: string | null;
+  onSpanClick?: (spanId: string, startMs: number) => void;
 }) {
   const count = lane.rows.reduce((n, r) => n + r.length, 0);
   return (
@@ -456,6 +463,7 @@ function LaneRow({
                 onToggle={() => onToggle(span.id)}
                 cursorMs={cursorMs}
                 highlight={highlightSpanId === span.id}
+                onSpanClick={onSpanClick}
               />
             ))}
           </div>
@@ -477,6 +485,7 @@ function LaneSpan({
   onToggle,
   cursorMs = null,
   highlight = false,
+  onSpanClick,
 }: {
   span: Span;
   scaleEnd: number;
@@ -486,6 +495,7 @@ function LaneSpan({
   onToggle: () => void;
   cursorMs?: number | null;
   highlight?: boolean;
+  onSpanClick?: (spanId: string, startMs: number) => void;
 }) {
   const duration = (span.endMs ?? scaleEnd) - span.startMs;
   const open = span.endMs == null && running;
@@ -517,7 +527,10 @@ function LaneSpan({
     <div>
       <button
         type="button"
-        onClick={onToggle}
+        onClick={() => {
+          onToggle();
+          onSpanClick?.(span.id, span.startMs);
+        }}
         aria-expanded={expanded}
         className={clsx(
           "group flex w-full items-center gap-2 px-3 py-1 text-left transition-all hover:bg-surface-2",
