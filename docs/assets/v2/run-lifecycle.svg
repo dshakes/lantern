@@ -80,7 +80,7 @@
     <text x="20" y="94" class="sub">· capability-routed LLM calls — <tspan class="code">model: "auto"</tspan></text>
     <text x="20" y="112" class="sub">· confidence gate can divert risky steps to a human before they execute</text>
     <text x="20" y="130" class="sub">· approval nodes park WITHOUT compute — goroutine released, run status <tspan class="code">waiting</tspan></text>
-    <text x="20" y="160" class="code">token streaming end-to-end: message_delta {seq} → message_completed {usage}</text>
+    <text x="20" y="160" class="code">tokens stream end-to-end, live</text>
 
     <rect x="612" y="0" width="564" height="190" rx="14" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="632" y="30" class="t" font-size="13" font-weight="700">microVM tier — untrusted code <tspan class="sub" dx="8">(your VPC)</tspan></text>
@@ -88,7 +88,7 @@
     <text x="632" y="76" class="sub">· fail-closed ladder: runc → gVisor → Kata → Firecracker · Wasm — never a bare pod</text>
     <text x="632" y="94" class="sub">· harness (PID 1): deny-default egress proxy · SO_PEERCRED secret vends · tool runner</text>
     <text x="632" y="112" class="sub">· step events + vm_exit stream back token-authenticated, bound to the VM's own run</text>
-    <text x="632" y="130" class="sub">· crash? <tspan class="code">resumeMicroVMRun</tspan> re-drives (cap 3) — else honest <tspan class="code">microvm_resume_exhausted</tspan></text>
+    <text x="632" y="130" class="sub">· crash → re-driven, ≤3 attempts</text>
     <text x="632" y="160" class="code" fill="#2dd4bf">tier unavailable → run FAILS with microvm_unavailable — never silently downgraded</text>
   </g>
 
@@ -100,8 +100,8 @@
   <g transform="translate(32,476)">
     <rect x="0" y="0" width="1176" height="98" rx="14" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5" filter="url(#rl-glow)"/>
     <text x="20" y="28" class="band" fill="#fbbf24" font-size="11">THE DURABILITY SPINE — journal_events (event-sourced, both tiers)</text>
-    <text x="20" y="52" class="sub">every step: <tspan class="code">step_started → step_completed / step_failed / step_retrying / step_waiting</tspan> · run locks lease 60 s · recovery sweep every 30 s steals expired leases</text>
-    <text x="20" y="72" class="sub">replay skips completed steps + dedups side effects — <tspan class="code">sha256(run|step|attempt)</tspan> idempotency</text>
+    <text x="20" y="52" class="sub">every step journaled before it runs · 30 s recovery sweep resumes crashed runs</text>
+    <text x="20" y="72" class="sub">replay skips completed steps · side effects fire exactly once</text>
     <text x="20" y="90" class="code">status truth set: queued → running → succeeded · failed · waiting · cancelled</text>
   </g>
 
@@ -128,5 +128,4 @@
     <text x="818" y="88" class="code">regression vs pinned baseline → HTTP 422</text>
   </g>
 
-  <text x="32" y="746" class="sub">rest.go inline executor · workflow/interpreter.go · recovery.go · runtime_report.go · receipts.go · rehearse.go</text>
 </svg>

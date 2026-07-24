@@ -119,5 +119,4 @@
     <text x="20" y="42" class="sub">step events + vm_exit → journal_events → run waterfall + OTel traces (<tspan class="code">tenant_id · run_id · step_id</tspan>) → Ed25519-signed receipt anyone can verify offline</text>
   </g>
 
-  <text x="32" y="708" class="sub">runtime.proto · runtime-scheduler/ · runtime-manager/ · harness/src — see docs/architecture/04b + ADRs 0002–0008</text>
 </svg>

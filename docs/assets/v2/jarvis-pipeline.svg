@@ -135,7 +135,7 @@
   <g transform="translate(32,492)">
     <rect x="0" y="0" width="1176" height="76" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="16" y="26" class="t" font-size="12.5" font-weight="700">Always-on background loops</text>
-    <text x="16" y="48" class="sub">👎 learning flywheel (mines rejections → style lessons injected into every reply)   ·   anticipation nudges (pre-meeting, anniversaries, overdue replies, open commitments)</text>
-    <text x="16" y="64" class="sub">quiet-hours queue with natural morning replay   ·   owner profile hot-reloads every 30s   ·   Signal self-heal on decrypt drift   ·   operational-drop heads-up to the owner</text>
+    <text x="16" y="48" class="sub">👎 flywheel — rejections become style lessons · anticipation nudges — meetings, anniversaries, overdue replies</text>
+    <text x="16" y="64" class="sub">quiet-hours queue with morning replay · hot-reloaded owner profile · self-healing connections</text>
   </g>
 </svg>

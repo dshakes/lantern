@@ -140,7 +140,5 @@
     <text x="798" y="106" class="sub">session-scoped VM reuse · step events → journal</text>
   </g>
 
-  <text x="32" y="884" class="sub">Invariants: the control plane never runs user code · every long operation is a durable, idempotent step · streaming is end-to-end · every row carries tenant_id ·</text>
-  <text x="32" y="902" class="sub">untrusted code only ever runs behind the fail-closed isolation gate · models are addressed by capability, never by vendor name</text>
-  <text x="32" y="926" class="sub" fill="#8a7d6b">macOS personal-assistant bridges (WhatsApp :3100 · iMessage :3200) connect as ordinary surface clients — see the Jarvis pipeline.</text>
+  <text x="32" y="890" class="sub">The invariants: the control plane never runs user code · every step is durable and idempotent · every row carries tenant_id · isolation fails closed</text>
 </svg>

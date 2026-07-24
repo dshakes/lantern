@@ -34,7 +34,7 @@
   <rect x="0" y="0" width="1240" height="900" rx="16" fill="none" stroke="#3a2f24"/>
 
   <text x="32" y="44" class="h" font-size="22" filter="url(#run-glowf)">Agent Runtime</text>
-  <text x="225" y="44" class="sub" font-size="13">two tiers, one journal · every run routed by manifest at creation time · ADR 0022</text>
+  <text x="225" y="44" class="sub" font-size="13">two tiers, one journal · every run routed by its manifest</text>
   <g transform="translate(1064,30)">
     <rect x="0" y="0" width="14" height="14" rx="3" fill="#38bdf8"/><text x="20" y="11" class="sub">Go</text>
     <rect x="58" y="0" width="14" height="14" rx="3" fill="#f59e0b"/><text x="78" y="11" class="sub">Rust</text>
@@ -69,18 +69,18 @@
   <g transform="translate(32,292)">
     <rect x="0" y="0" width="572" height="330" rx="14" fill="#0e1512" stroke="#134e4a"/>
     <text x="20" y="30" class="band" fill="#5eead4">SHARED TIER — inline executor</text>
-    <text x="20" y="48" class="sub">in-process goroutine · sub-ms dispatch · rest.go executeRunInlineSync</text>
+    <text x="20" y="48" class="sub">in-process goroutine · sub-ms dispatch</text>
 
     <rect x="20" y="62" width="532" height="92" rx="10" fill="#12100c" stroke="#4a3b28"/>
-    <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter <tspan class="port" dx="200">internal/workflow</tspan></text>
+    <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter</text>
     <text x="36" y="104" class="sub">trigger · ai-step · tool · connector · condition · loop · subagent · approval · end</text>
-    <text x="36" y="122" class="sub">per-step retry <tspan class="code">node.retry {maxAttempts, backoffMs, classes}</tspan> · confidence gate → human approval</text>
+    <text x="36" y="122" class="sub">per-step retry · confidence gate can divert a risky step to a human</text>
     <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled — visible in the run waterfall</text>
 
     <rect x="20" y="168" width="532" height="74" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="36" y="190" class="t" font-size="12.5" font-weight="700">LLM tool-use loop</text>
     <text x="36" y="210" class="sub">capability-addressed via model-router (never a vendor name) · web_search built-in</text>
-    <text x="36" y="228" class="sub">Idempotency-Key on every provider call · token deltas stream to session SSE</text>
+    <text x="36" y="228" class="sub">idempotency keys · token deltas stream live</text>
 
     <rect x="20" y="256" width="532" height="56" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#5eead4">Guarantees</text>
@@ -107,9 +107,9 @@
 
     <rect x="20" y="156" width="532" height="86" rx="10" fill="#241a37" stroke="#5b3fa8"/>
     <text x="36" y="178" class="t" font-size="12.5" font-weight="700">harness <tspan class="lang" fill="#f59e0b">RUST</tspan> · PID 1 inside the VM</text>
-    <text x="36" y="198" class="sub">in-guest tool runner: <tspan class="code">shell_exec · http_fetch</tspan> (forced through egress allowlist :3128)</text>
-    <text x="36" y="216" class="sub">SO_PEERCRED-authed secrets socket · deny-default egress · audit stream (never args — #10)</text>
-    <text x="36" y="234" class="sub">step events + vm_exit reported up → journal · LANTERN_RESUME=1 crash re-drive (≤3)</text>
+    <text x="36" y="198" class="sub">in-guest tool runner: <tspan class="code">shell_exec · http_fetch</tspan> — via the egress allowlist</text>
+    <text x="36" y="216" class="sub">kernel-attested secret vends · deny-default egress · audit stream</text>
+    <text x="36" y="234" class="sub">step events + vm_exit reported up → journal · crash re-drive (≤3)</text>
 
     <rect x="20" y="256" width="532" height="56" rx="10" fill="#2a1420" stroke="#9f3860"/>
     <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#fda4af">Honest failure</text>
@@ -127,7 +127,7 @@
     <rect x="0" y="0" width="1176" height="104" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="28" class="band" fill="#5eead4">ONE DURABLE SUBSTRATE — BOTH TIERS</text>
     <text x="20" y="52" class="t" font-size="12.5"><tspan class="code" font-size="12">journal_events</tspan> — event-sourced run log · step_started / step_completed / step_failed / step_retrying · keyed (run_id, seq)</text>
-    <text x="20" y="72" class="sub">crash-resume: recovery sweep (30s) steals expired run_locks → re-drive → CompletedStep replay skips finished work · side-effect dedup (run|step|attempt)</text>
+    <text x="20" y="72" class="sub">crash-resume: 30 s recovery sweep re-drives · replay skips finished steps · side-effect dedup</text>
     <text x="20" y="91" class="sub">powers: run waterfall · SSE + gRPC event streams · Ed25519 receipts (journal hash) · rehearsals · eval evidence</text>
   </g>
 
@@ -135,8 +135,8 @@
   <g transform="translate(32,782)">
     <rect x="0" y="0" width="1176" height="58" rx="10" fill="#171310" stroke="#4a3b28"/>
     <text x="20" y="24" class="t" font-size="12" font-weight="700">Observability — invariant #9</text>
-    <text x="20" y="44" class="sub">OTel spans + metrics, one attribute contract: <tspan class="code">lantern.tenant_id · run_id · step_id · agent_version</tspan> · metrics: step.duration · step.retries · replay.skips · budget.blocks · run.total · peer health: GET /v1/system/health → owner self-chat alert on transition</text>
+    <text x="20" y="44" class="sub">one attribute contract on every span: <tspan class="code">tenant_id · run_id · step_id · agent_version</tspan> · five run metrics · peer-health sweep with alert on transition</text>
   </g>
 
-  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
+  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller.</text>
 </svg>
