@@ -350,6 +350,7 @@ func main() {
 	feedbackHandler := handlers.NewFeedbackHandler(srv, authHandler)
 	rehearseHandler := handlers.NewRehearseHandler(srv, authHandler)
 	immigrationHandler := handlers.NewImmigrationSentinelHandler(srv, authHandler, llmProxyHandler)
+	memoryDistillHandler := handlers.NewMemoryDistillHandler(srv, authHandler, llmProxyHandler)
 
 	// Peer-service health sweeper — created here (before the mux block) so
 	// its HTTP handler can be registered inline. The background loop is
@@ -714,6 +715,12 @@ func main() {
 	httpMux.HandleFunc("GET /v1/immigration/deadlines", immigrationHandler.List)
 	httpMux.HandleFunc("POST /v1/immigration/scan", immigrationHandler.Scan)
 
+	// Memory distillation (LANTERN_MEMORY_DISTILL, default OFF).
+	// LLM-distilled long-term facts/preferences extracted from session
+	// transcripts + timeline events.  Loop started below.
+	httpMux.HandleFunc("GET /v1/memory/distillates", memoryDistillHandler.List)
+	httpMux.HandleFunc("POST /v1/memory/distill", memoryDistillHandler.Trigger)
+
 	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
 	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
@@ -842,6 +849,9 @@ func main() {
 
 	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
 	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
+
+	// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
+	go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
 
 	// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
 	go jarvisHandler.RunBriefScheduler(ctx)
