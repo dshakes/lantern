@@ -114,15 +114,15 @@
   <g transform="translate(32,494)" class="ilpulse">
     <rect x="0" y="0" width="1176" height="64" rx="12" fill="#201414" stroke="#f87171" stroke-width="1.5"/>
     <text x="20" y="26" class="t" font-size="12.5" font-weight="700" fill="#fca5a5">When the hardened class is missing, your workload does not run — and that is the feature.</text>
-    <text x="20" y="48" class="sub">Boot preflight checks the cluster for the gVisor/Kata RuntimeClasses; absent → that capability is disabled and the gate returns a refusal (<tspan class="mono">SECURITY: refusing to schedule</tspan>)</text>
+    <text x="20" y="48" class="sub">sandbox class missing from the cluster → capability disabled, gate still refuses</text>
   </g>
 
   <!-- ============ IN-VM CONTROLS ============ -->
   <g transform="translate(32,582)">
     <rect x="0" y="0" width="1176" height="76" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="26" class="band" fill="#5eead4" font-size="11">AND INSIDE THE VM, THE HARNESS KEEPS ENFORCING</text>
-    <text x="20" y="48" class="t" font-size="12">Egress: everything through the <tspan class="mono">127.0.0.1:3128</tspan> allowlist proxy — metadata IPs blocked, DNS-rebind re-checked, prod always fail-closed</text>
-    <text x="20" y="66" class="t" font-size="12">Secrets: kernel-attested peer auth (<tspan class="mono">SO_PEERCRED</tspan>) on the vend socket · 300 s TTLs · Exec: bearer-token gated, fatal-if-unset in prod</text>
+    <text x="20" y="48" class="t" font-size="12">Egress: allowlist proxy only — metadata IPs blocked, fail-closed in prod</text>
+    <text x="20" y="66" class="t" font-size="12">Secrets: kernel-attested vends, 300 s TTL · Exec: token-gated</text>
   </g>
 
 

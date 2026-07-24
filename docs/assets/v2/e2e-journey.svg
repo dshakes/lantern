@@ -114,7 +114,7 @@
   <g transform="translate(32,506)">
     <rect x="0" y="0" width="1176" height="66" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="26" class="band" fill="#5eead4">THE SUBSTRATE UNDER ALL SIX STAGES</text>
-    <text x="20" y="48" class="sub"><tspan class="code" font-size="11">journal_events</tspan> — durable steps, replay, receipts · crash recovery · exactly-once side effects · tenant isolation</text>
+    <text x="20" y="48" class="sub"><tspan class="code" font-size="11">journal_events</tspan> — durable steps · crash recovery · exactly-once effects</text>
   </g>
 
   <!-- improvement loop caption -->

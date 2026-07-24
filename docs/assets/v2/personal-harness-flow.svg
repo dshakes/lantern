@@ -142,6 +142,6 @@
 
   <!-- footer guard strip -->
   <text x="32" y="496" class="gate">Owner-only ·</text>
-  <text x="128" y="496" class="cs">signals stored locally at ~/.lantern/device-signals.jsonl (mode 0600) — they never leave your Mac · the summary grounds only your own self-chat.</text>
+  <text x="128" y="496" class="cs">signals stay on your Mac — only the distilled summary grounds replies</text>
   <text x="32" y="516" class="cs">The concierge shares availability, never your location · turn it all off with LANTERN_IPHONE_SIGNALS=off.</text>
 </svg>

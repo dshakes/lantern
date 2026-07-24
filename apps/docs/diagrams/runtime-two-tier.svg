@@ -41,15 +41,15 @@
   </g>
 
   <!-- ============ BAND 1: RUN CREATION ============ -->
-  <text x="32" y="82" class="band">RUN CREATION</text>
+  <text x="32" y="82" class="band">1 · A RUN IS CREATED</text>
   <g transform="translate(32,94)">
     <rect x="0" y="0" width="560" height="58" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="16" y="23" class="t" font-size="12.5" font-weight="700">Entry points</text>
-    <text x="16" y="42" class="sub">SDK (TS · Py · Go) · CLI (lantern agent dev) · Dashboard · Channels · Cron schedules · A2A · Marketplace</text>
+    <text x="16" y="42" class="sub">SDK · CLI · dashboard · channels · schedules · A2A</text>
 
     <rect x="616" y="0" width="560" height="58" rx="10" fill="#1a1510" stroke="#4a3b28"/>
     <text x="632" y="23" class="t" font-size="12.5" font-weight="700">control-plane <tspan class="lang" fill="#38bdf8">GO</tspan><tspan class="port" dx="250">POST /v1/runs · :8080</tspan></text>
-    <text x="632" y="42" class="sub">JWT / API-key auth · budget gate (hard-fail 402) · cost forecast · reads agent-version manifest</text>
+    <text x="632" y="42" class="sub">auth → budget gate (402) → reads the agent manifest</text>
   </g>
   <path d="M 592 123 H 646" stroke="#8a7d6b" stroke-width="1.5" fill="none" marker-end="url(#tt-arr)"/>
 
@@ -68,29 +68,29 @@
   <!-- ============ SHARED TIER ============ -->
   <g transform="translate(32,292)">
     <rect x="0" y="0" width="572" height="330" rx="14" fill="#0e1512" stroke="#134e4a"/>
-    <text x="20" y="30" class="band" fill="#5eead4">SHARED TIER — inline executor</text>
+    <text x="20" y="30" class="band" fill="#5eead4">2a · SHARED TIER — trusted code, fast</text>
     <text x="20" y="48" class="sub">in-process goroutine · sub-ms dispatch</text>
 
     <rect x="20" y="62" width="532" height="92" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter</text>
-    <text x="36" y="104" class="sub">trigger · ai-step · tool · connector · condition · loop · subagent · approval · end</text>
+    <text x="36" y="104" class="sub">nine node types — from ai-step to human approval</text>
     <text x="36" y="122" class="sub">per-step retry · confidence gate can divert a risky step to a human</text>
     <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled — visible in the run waterfall</text>
 
     <rect x="20" y="168" width="532" height="74" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="36" y="190" class="t" font-size="12.5" font-weight="700">LLM tool-use loop</text>
-    <text x="36" y="210" class="sub">capability-addressed via model-router (never a vendor name) · web_search built-in</text>
+    <text x="36" y="210" class="sub">capability-addressed models · web search built in</text>
     <text x="36" y="228" class="sub">idempotency keys · token deltas stream live</text>
 
     <rect x="20" y="256" width="532" height="56" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#5eead4">Guarantees</text>
-    <text x="36" y="297" class="sub">durable steps · crash-resume from last completed step · exactly-once side effects · budget-metered</text>
+    <text x="36" y="297" class="sub">crash-resume · exactly-once side effects · budget-metered</text>
   </g>
 
   <!-- ============ MICROVM TIER ============ -->
   <g transform="translate(636,292)">
     <rect x="0" y="0" width="572" height="330" rx="14" fill="#171226" stroke="#5b3fa8"/>
-    <text x="20" y="30" class="band" fill="#c4b5fd">MICROVM TIER — W12 stack</text>
+    <text x="20" y="30" class="band" fill="#c4b5fd">2b · MICROVM TIER — untrusted code, walled in</text>
     <text x="20" y="48" class="sub">hardware isolation per workload · session-scoped VM reuse · invariant #5</text>
 
     <rect x="20" y="62" width="256" height="80" rx="10" fill="#12100c" stroke="#4a3b28"/>
@@ -125,17 +125,17 @@
   <!-- ============ JOURNAL SUBSTRATE ============ -->
   <g transform="translate(32,662)">
     <rect x="0" y="0" width="1176" height="104" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
-    <text x="20" y="28" class="band" fill="#5eead4">ONE DURABLE SUBSTRATE — BOTH TIERS</text>
-    <text x="20" y="52" class="t" font-size="12.5"><tspan class="code" font-size="12">journal_events</tspan> — event-sourced run log · step_started / step_completed / step_failed / step_retrying · keyed (run_id, seq)</text>
+    <text x="20" y="28" class="band" fill="#5eead4">3 · ONE JOURNAL UNDER BOTH — the flight recorder</text>
+    <text x="20" y="52" class="t" font-size="12.5"><tspan class="code" font-size="12">journal_events</tspan> — every step written down before it runs</text>
     <text x="20" y="72" class="sub">crash-resume: 30 s recovery sweep re-drives · replay skips finished steps · side-effect dedup</text>
-    <text x="20" y="91" class="sub">powers: run waterfall · SSE + gRPC event streams · Ed25519 receipts (journal hash) · rehearsals · eval evidence</text>
+    <text x="20" y="91" class="sub">powers the run waterfall, live streams, signed receipts, and rehearsals</text>
   </g>
 
   <!-- ============ OBSERVABILITY STRIP ============ -->
   <g transform="translate(32,782)">
     <rect x="0" y="0" width="1176" height="58" rx="10" fill="#171310" stroke="#4a3b28"/>
     <text x="20" y="24" class="t" font-size="12" font-weight="700">Observability — invariant #9</text>
-    <text x="20" y="44" class="sub">one attribute contract on every span: <tspan class="code">tenant_id · run_id · step_id · agent_version</tspan> · five run metrics · peer-health sweep with alert on transition</text>
+    <text x="20" y="44" class="sub">one attribute contract on every span · five run metrics · peer-health alerts</text>
   </g>
 
   <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller.</text>

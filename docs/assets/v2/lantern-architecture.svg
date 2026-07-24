@@ -105,7 +105,7 @@
 
     <rect x="20" y="188" width="1136" height="46" rx="10" fill="#161207" stroke="#6b5420"/>
     <text x="38" y="207" class="t" font-size="12" font-weight="700">System of record</text>
-    <text x="38" y="226" class="sub">PostgreSQL + pgvector <tspan class="mono">:5432</tspan> (RLS on every tenant table) · Redis <tspan class="mono">:6379</tspan> (cache · queues · SSE pub/sub) · S3 / MinIO <tspan class="mono">:9000</tspan> (bundles · snapshots)</text>
+    <text x="38" y="226" class="sub">Postgres (tenant-fenced rows) · Redis (live events) · S3 (bundles + snapshots)</text>
   </g>
 
   <!-- ============ TUNNEL ============ -->
@@ -140,5 +140,5 @@
     <text x="798" y="106" class="sub">session-scoped VM reuse · step events → journal</text>
   </g>
 
-  <text x="32" y="890" class="sub">The invariants: the control plane never runs user code · every step is durable and idempotent · every row carries tenant_id · isolation fails closed</text>
+  <text x="32" y="890" class="sub">The invariants: no user code in the control plane · durable steps · tenant-fenced rows · isolation fails closed</text>
 </svg>

@@ -27,7 +27,7 @@
 
   <!-- title -->
   <text x="32" y="44" class="h" font-size="22">Lantern — Agent Execution Kernel</text>
-  <text x="32" y="64" class="sub" font-size="12.5">Vendor-operated, multi-tenant, durable agent runtime that executes inside the customer's VPC · Kubernetes-default substrate (ADR&#160;0009)</text>
+  <text x="32" y="64" class="sub" font-size="12.5">the durable agent runtime that executes inside your VPC</text>
 
   <!-- legend -->
   <g transform="translate(880,26)">
@@ -183,6 +183,6 @@
   <g transform="translate(32,892)">
     <rect x="0" y="0" width="1216" height="48" rx="10" fill="#12100c" stroke="#4a3b28"/>
     <text x="16" y="20" class="h" font-size="11.5">One correlated chain per spawn</text>
-    <text x="16" y="38" class="lbl" fill="#d8cfc0">( tenant_id · run_id · step_id · agent_instance_id · trace_id )  —  shared end-to-end · replayable · externally verifiable</text>
+    <text x="16" y="38" class="lbl" fill="#d8cfc0">( tenant · run · step · instance · trace ) — one chain, end to end</text>
   </g>
 </svg>
