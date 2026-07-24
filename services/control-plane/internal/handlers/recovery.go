@@ -28,6 +28,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -241,9 +244,9 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 		input = map[string]any{}
 	}
 
-	// microVM-tier runs (ADR 0022) are tracked via runtime_vms and the
-	// harness→manager→control-plane report path. The inline executor must
-	// never touch them — doing so would violate the isolation invariant.
+	// microVM-tier runs (ADR 0022): check whether a live VM exists for the run.
+	// If yes, the VM is managing itself — skip. If no live VM, attempt crash-resume
+	// by re-scheduling via the microVM dispatcher.
 	// rls-exempt: agent_versions is an RLS-exempt child table; joined through
 	// runs which is keyed by the already-authorized run id.
 	var manifestIsolation string
@@ -254,9 +257,7 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 		WHERE r.id = $1
 	`, run.runID).Scan(&manifestIsolation)
 	if manifestIsolation == "microvm" {
-		h.logger().Info("redriveRun: skipping microVM-tier run (tracked by runtime_vms reconciler)",
-			zap.String("run_id", run.runID))
-		return nil
+		return h.resumeMicroVMRun(runCtx, run)
 	}
 
 	// A loop-agent run that already emitted its loop_complete event has done its
@@ -296,6 +297,139 @@ func recoveryInterval() time.Duration {
 		}
 	}
 	return 30 * time.Second
+}
+
+// maxMicroVMResumeAttempts is the maximum number of VMs that may be spawned
+// for a single run before the recovery sweep gives up and fails the run.
+// ponytail: hardcoded — makes 3 attempts a loud invariant, no config knob until needed.
+const maxMicroVMResumeAttempts = 3
+
+// resumeMicroVMRun handles crash-resume for a microVM-tier run (ADR 0022).
+// Called from redriveRun when the run's agent declares isolation=microvm.
+//
+// Logic:
+//  1. If a live (non-terminal) VM exists for this run → skip (VM is self-managing).
+//  2. Count ALL runtime_vms rows for this run (resume_attempts).
+//  3. If count >= maxMicroVMResumeAttempts → fail run with microvm_resume_exhausted.
+//  4. Otherwise re-schedule a new VM via the microVM dispatcher, injecting
+//     LANTERN_RESUME=1 so the in-VM agent knows it is being re-driven and
+//     can consult the journal CompletedStep cache to skip finished nodes.
+//
+// Span: runtime.recovery.microvm_resume (attrs: lantern.run_id, lantern.tenant_id).
+func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) error {
+	tracer := otel.Tracer("lantern.control-plane")
+	ctx, span := tracer.Start(ctx, "runtime.recovery.microvm_resume")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("lantern.run_id", run.runID),
+		attribute.String("lantern.tenant_id", run.tenantID),
+	)
+
+	log := h.logger().Named("recovery.microvm")
+
+	// 1. Check for a live VM. A live VM means the VM is still managing itself;
+	// we must not create a competing VM.
+	// rls-exempt: background sweep with no request tenant; runtime_vms is
+	// tenant-scoped but this check is keyed by run_id across all tenants.
+	var liveVMCount int
+	_ = h.srv.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM runtime_vms
+		WHERE run_id = $1::uuid
+		  AND state NOT IN ('terminated', 'failed')
+	`, run.runID).Scan(&liveVMCount)
+	if liveVMCount > 0 {
+		log.Info("resumeMicroVMRun: live VM exists, skipping",
+			zap.String("run_id", run.runID),
+			zap.Int("live_vm_count", liveVMCount),
+		)
+		return nil
+	}
+
+	// 2. Count total VMs ever spawned for this run (= resume attempts).
+	var totalVMs int
+	_ = h.srv.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM runtime_vms WHERE run_id = $1::uuid
+	`, run.runID).Scan(&totalVMs)
+
+	span.SetAttributes(attribute.Int("lantern.microvm_attempts", totalVMs))
+
+	// 3. Cap: if maxMicroVMResumeAttempts VMs have already been tried, fail the run.
+	if totalVMs >= maxMicroVMResumeAttempts {
+		log.Warn("resumeMicroVMRun: resume cap reached, failing run",
+			zap.String("run_id", run.runID),
+			zap.Int("attempts", totalVMs),
+		)
+		span.SetStatus(codes.Error, "resume exhausted")
+		errJSON, _ := json.Marshal(map[string]any{
+			"code":     "microvm_resume_exhausted",
+			"attempts": totalVMs,
+		})
+		// rls-exempt: inline executor — runs write keyed by authorized run id.
+		_, _ = h.srv.Pool.Exec(ctx, `
+			UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb
+			WHERE id = $1 AND status NOT IN ('succeeded', 'failed')
+		`, run.runID, string(errJSON))
+		return nil
+	}
+
+	// 4. Re-schedule: dispatcher is nil-safe — if unset, the run stays running
+	// and will be retried on the next sweep (no infinite growth: we cap by totalVMs).
+	if h.microVMDispatcher == nil {
+		log.Warn("resumeMicroVMRun: microVM dispatcher not wired, deferring",
+			zap.String("run_id", run.runID),
+		)
+		return nil
+	}
+
+	// Fetch the agent version id and manifest for this run to pass to the dispatcher.
+	// rls-exempt: agent_versions is an RLS-exempt child table.
+	var agentVersionID, imageDigest string
+	var manifestJSON []byte
+	_ = h.srv.Pool.QueryRow(ctx, `
+		SELECT COALESCE(r.agent_version_id::text, ''),
+		       COALESCE(av.manifest->>'imageDigest', ''),
+		       COALESCE(av.manifest, '{}'::jsonb)
+		FROM runs r
+		JOIN agent_versions av ON av.id = r.agent_version_id
+		WHERE r.id = $1
+	`, run.runID).Scan(&agentVersionID, &imageDigest, &manifestJSON)
+
+	var manifest map[string]any
+	if len(manifestJSON) > 0 {
+		_ = json.Unmarshal(manifestJSON, &manifest)
+	}
+	if manifest == nil {
+		manifest = map[string]any{}
+	}
+
+	// Inject LANTERN_RESUME=1 so the in-VM agent knows it is a re-drive and
+	// can read journal_events CompletedStep rows to skip finished nodes.
+	env := map[string]any{"LANTERN_RESUME": "1"}
+	manifest["env"] = env
+
+	log.Info("resumeMicroVMRun: scheduling new VM for crashed run",
+		zap.String("run_id", run.runID),
+		zap.Int("attempt", totalVMs+1),
+	)
+
+	vmID, err := h.microVMDispatcher.ScheduleRunInMicroVM(ctx, run.tenantID, agentVersionID, run.runID, imageDigest, manifest)
+	if err != nil {
+		log.Error("resumeMicroVMRun: ScheduleRunInMicroVM failed",
+			zap.String("run_id", run.runID),
+			zap.Error(err),
+		)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "reschedule failed")
+		// Return the error so the caller can mark the run failed.
+		return fmt.Errorf("resumeMicroVMRun: %w", err)
+	}
+
+	log.Info("resumeMicroVMRun: new VM scheduled",
+		zap.String("run_id", run.runID),
+		zap.String("vm_id", vmID),
+		zap.Int("attempt", totalVMs+1),
+	)
+	return nil
 }
 
 // RunRecoverySweepAsync launches the recovery sweep in a goroutine and

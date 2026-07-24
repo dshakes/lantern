@@ -58,6 +58,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -96,25 +99,29 @@ const (
 type reportKind string
 
 const (
-	reportKindLog   reportKind = "log"
-	reportKindOTLP  reportKind = "otlp_traces"
-	reportKindProm  reportKind = "prometheus_metrics"
-	reportKindAudit reportKind = "audit"
+	reportKindLog       reportKind = "log"
+	reportKindOTLP      reportKind = "otlp_traces"
+	reportKindProm      reportKind = "prometheus_metrics"
+	reportKindAudit     reportKind = "audit"
+	reportKindStepEvent reportKind = "step_event" // in-VM step journal event → journal_events
+	reportKindVMExit    reportKind = "vm_exit"    // workload exit → closes the associated run
 )
 
 // ---------- Request DTOs ----------
 
 // reportRequest is the exact JSON shape the runtime-manager sends.
-// Only one of Log/OtlpB64/PromB64/Audit is set per call, matching Kind.
+// Only one of Log/OtlpB64/PromB64/Audit/StepEvent/VMExit is set per call, matching Kind.
 type reportRequest struct {
-	VmID     string          `json:"vm_id"`
-	TenantID string          `json:"tenant_id"`
-	RunID    string          `json:"run_id,omitempty"`
-	Kind     reportKind      `json:"kind"`
-	Log      *reportLogEntry `json:"log,omitempty"`
-	OtlpB64  string          `json:"otlp_traces_b64,omitempty"`
-	PromB64  string          `json:"prometheus_b64,omitempty"`
-	Audit    *reportAudit    `json:"audit,omitempty"`
+	VmID      string           `json:"vm_id"`
+	TenantID  string           `json:"tenant_id"`
+	RunID     string           `json:"run_id,omitempty"`
+	Kind      reportKind       `json:"kind"`
+	Log       *reportLogEntry  `json:"log,omitempty"`
+	OtlpB64   string           `json:"otlp_traces_b64,omitempty"`
+	PromB64   string           `json:"prometheus_b64,omitempty"`
+	Audit     *reportAudit     `json:"audit,omitempty"`
+	StepEvent *reportStepEvent `json:"step_event,omitempty"`
+	VMExit    *reportVMExit    `json:"vm_exit,omitempty"`
 }
 
 // reportLogEntry carries a single log line from a VM harness.
@@ -129,6 +136,55 @@ type reportAudit struct {
 	VmID   string         `json:"vm_id"`
 	Action string         `json:"action"`
 	Attrs  map[string]any `json:"attrs,omitempty"`
+}
+
+// reportStepEvent carries a step-lifecycle event from an in-VM workload.
+// The event is written to journal_events so the run-detail waterfall, receipts,
+// and crash-resume CompletedStep cache work identically for microVM runs.
+//
+// # Envelope (kind=step_event)
+//
+//	{
+//	  "vm_id":     "vm-abc123",
+//	  "tenant_id": "...",
+//	  "run_id":    "...",            // required for step_event
+//	  "kind":      "step_event",
+//	  "step_event": {
+//	    "event_kind": "step_started",  // step_started | step_completed | step_failed
+//	    "step_id":    "node-abc",
+//	    "attempt":    1,
+//	    "payload":    { ... }          // arbitrary node output or error detail
+//	  }
+//	}
+type reportStepEvent struct {
+	// EventKind is the journal_events.kind value: step_started, step_completed, step_failed.
+	EventKind string `json:"event_kind"`
+	// StepID is the workflow node id (written to journal_events.step_id).
+	StepID string `json:"step_id"`
+	// Attempt is the retry counter for this step (default 1).
+	Attempt int `json:"attempt,omitempty"`
+	// Payload is the arbitrary node output or error detail, written as BYTEA to journal_events.
+	Payload map[string]any `json:"payload,omitempty"`
+}
+
+// reportVMExit carries a workload exit notification from the harness.
+// Receipt closes the associated run row: exit_code=0 → succeeded; nonzero → failed.
+//
+// # Envelope (kind=vm_exit)
+//
+//	{
+//	  "vm_id":     "vm-abc123",
+//	  "tenant_id": "...",
+//	  "run_id":    "...",    // required for vm_exit
+//	  "kind":      "vm_exit",
+//	  "vm_exit": {
+//	    "exit_code": 0,
+//	    "output":    { ... } // final output payload (only meaningful for exit_code=0)
+//	  }
+//	}
+type reportVMExit struct {
+	ExitCode int            `json:"exit_code"`
+	Output   map[string]any `json:"output,omitempty"`
 }
 
 // ---------- Handler ----------
@@ -226,6 +282,7 @@ type vmBindingRow struct {
 	tenantID        string
 	state           string
 	agentInstanceID string     // may be empty
+	runID           string     // may be empty; populated for step_event / vm_exit fallback
 	terminatedAt    *time.Time // non-nil when the VM has reached a terminal state
 }
 
@@ -277,10 +334,10 @@ func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, t
 	// tenants and compares it to the body-claimed tenant — it must NOT trust the
 	// body tenant, so it runs on the privileged pool and verifies row.tenantID below.
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT tenant_id, state, COALESCE(agent_instance_id, ''), terminated_at
+		SELECT tenant_id, state, COALESCE(agent_instance_id, ''), COALESCE(run_id::text, ''), terminated_at
 		FROM runtime_vms
 		WHERE vm_id = $1
-	`, vmID).Scan(&row.tenantID, &row.state, &row.agentInstanceID, &row.terminatedAt)
+	`, vmID).Scan(&row.tenantID, &row.state, &row.agentInstanceID, &row.runID, &row.terminatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return vmBindingRow{}, vmBindingDenied
@@ -298,8 +355,11 @@ func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, t
 	}
 
 	if isTerminalState(row.state) {
-		// For log and audit kinds, check whether we're still inside the grace window.
-		if kind == reportKindLog || kind == reportKindAudit {
+		// For log, audit, step_event, and vm_exit kinds, check whether we're still inside
+		// the grace window. step_event and vm_exit legitimately arrive as the harness is
+		// shutting down, after the manager has already flipped the VM to terminal.
+		if kind == reportKindLog || kind == reportKindAudit ||
+			kind == reportKindStepEvent || kind == reportKindVMExit {
 			grace := terminalGrace()
 			if grace > 0 && row.terminatedAt != nil && time.Since(*row.terminatedAt) <= grace {
 				// Within grace — allow the report through.
@@ -408,11 +468,12 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Kind {
-	case reportKindLog, reportKindOTLP, reportKindProm, reportKindAudit:
+	case reportKindLog, reportKindOTLP, reportKindProm, reportKindAudit,
+		reportKindStepEvent, reportKindVMExit:
 		// valid
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("unknown kind %q: must be log|otlp_traces|prometheus_metrics|audit", req.Kind),
+			"error": fmt.Sprintf("unknown kind %q: must be log|otlp_traces|prometheus_metrics|audit|step_event|vm_exit", req.Kind),
 		})
 		return
 	}
@@ -524,9 +585,235 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 			zap.String("tenant_id", req.TenantID),
 			zap.Int("text_len", len(decoded)),
 		)
+
+	case reportKindStepEvent:
+		if req.StepEvent == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "step_event payload required for kind=step_event"})
+			return
+		}
+		if err := h.handleStepEvent(ctx, req, vmRow); err != nil {
+			h.logger().Error("runtime report: step_event insert failed",
+				zap.String("vm_id", req.VmID),
+				zap.String("run_id", req.RunID),
+				zap.Error(err),
+			)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		h.logger().Debug("runtime report: step_event written to journal",
+			zap.String("vm_id", req.VmID),
+			zap.String("event_kind", req.StepEvent.EventKind),
+			zap.String("step_id", req.StepEvent.StepID),
+		)
+
+	case reportKindVMExit:
+		if req.VMExit == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm_exit payload required for kind=vm_exit"})
+			return
+		}
+		if err := h.handleVMExit(ctx, req, vmRow); err != nil {
+			h.logger().Error("runtime report: vm_exit finalization failed",
+				zap.String("vm_id", req.VmID),
+				zap.String("run_id", req.RunID),
+				zap.Error(err),
+			)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		h.logger().Info("runtime report: vm_exit run finalized",
+			zap.String("vm_id", req.VmID),
+			zap.Int("exit_code", req.VMExit.ExitCode),
+		)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+// ---------- Step-event and VM-exit helpers (journal parity, run completion) ----------
+
+// resolveRunID returns req.RunID if non-empty, otherwise falls back to the
+// run_id stored on the VM row. Returns "" if neither is available.
+func resolveRunID(req reportRequest, vmRow vmBindingRow) string {
+	if req.RunID != "" {
+		return req.RunID
+	}
+	return vmRow.runID
+}
+
+// validStepEventKinds are the journal_events.kind values the harness may emit.
+// They mirror the inline interpreter's output so the run-detail waterfall
+// renders identically for both tiers (ADR 0022, journal substrate invariant).
+var validStepEventKinds = map[string]bool{
+	"step_started":   true,
+	"step_completed": true,
+	"step_failed":    true,
+}
+
+// handleStepEvent writes a journal_events row for kind=step_event reports.
+// Uses the same seq-generation pattern as dispatchMicroVMRun so the inline
+// and microVM tiers share an identical journal shape.
+//
+// Span: runtime.report.step_event (attrs: lantern.run_id, lantern.vm_id).
+func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
+	tracer := otel.Tracer("lantern.control-plane")
+	ctx, span := tracer.Start(ctx, "runtime.report.step_event")
+	defer span.End()
+
+	runID := resolveRunID(req, vmRow)
+	span.SetAttributes(
+		attribute.String("lantern.run_id", runID),
+		attribute.String("lantern.vm_id", req.VmID),
+	)
+
+	if runID == "" {
+		err := fmt.Errorf("step_event: run_id not provided and not found on VM row")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	se := req.StepEvent
+	if !validStepEventKinds[se.EventKind] {
+		err := fmt.Errorf("step_event: invalid event_kind %q: must be step_started|step_completed|step_failed", se.EventKind)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	attempt := se.Attempt
+	if attempt <= 0 {
+		attempt = 1
+	}
+	raw, _ := json.Marshal(se.Payload)
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
+
+	// rls-exempt: journal_events is an RLS-exempt child table keyed by run_id.
+	// The run_id was either supplied in the verified request or comes from the
+	// runtime_vms row whose tenant ownership was confirmed by checkReportVMBinding.
+	_, err := h.srv.Pool.Exec(ctx, `
+		INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+		SELECT $1::uuid,
+		       COALESCE((SELECT MAX(seq) FROM journal_events WHERE run_id = $1::uuid), 0) + 1,
+		       $2, $3, $4, $5
+		ON CONFLICT (run_id, seq) DO NOTHING
+	`, runID, se.EventKind, se.StepID, attempt, raw)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "journal insert failed")
+		return fmt.Errorf("handleStepEvent: insert journal_events: %w", err)
+	}
+	return nil
+}
+
+// handleVMExit finalizes the run associated with a vm_exit report:
+//  1. Stamps exit_code (and exit_output when exit_code=0) onto runtime_vms.
+//  2. Closes the run: exit_code=0 → succeeded; nonzero → failed with typed error.
+//
+// Idempotent via ON CONFLICT DO NOTHING on the journal seq insert and a
+// conditional UPDATE on runs (WHERE status NOT IN ('succeeded','failed')).
+//
+// Span: runtime.report.vm_exit (attrs: lantern.run_id, lantern.vm_id).
+func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportRequest, vmRow vmBindingRow) error {
+	tracer := otel.Tracer("lantern.control-plane")
+	ctx, span := tracer.Start(ctx, "runtime.report.vm_exit")
+	defer span.End()
+
+	runID := resolveRunID(req, vmRow)
+	span.SetAttributes(
+		attribute.String("lantern.run_id", runID),
+		attribute.String("lantern.vm_id", req.VmID),
+		attribute.Int("lantern.exit_code", req.VMExit.ExitCode),
+	)
+
+	if runID == "" {
+		err := fmt.Errorf("vm_exit: run_id not provided and not found on VM row")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	exitCode := req.VMExit.ExitCode
+
+	// 1. Stamp exit_code on the VM row. Use Pool (cross-tenant trust-boundary path,
+	// RLS-exempt: this endpoint authenticates via the pre-shared runtime token and
+	// the VM binding check has already verified tenant ownership).
+	// rls-exempt: runtime_vms write from service-to-service report path (pre-shared
+	// token + vm binding check already confirmed tenant; no JWT).
+	if exitCode == 0 {
+		outputJSON, _ := json.Marshal(req.VMExit.Output)
+		if len(outputJSON) == 0 {
+			outputJSON = []byte("{}")
+		}
+		_, _ = h.srv.Pool.Exec(ctx, `
+			UPDATE runtime_vms SET exit_code = $2, exit_output = $3::jsonb
+			WHERE vm_id = $1
+		`, req.VmID, exitCode, string(outputJSON))
+	} else {
+		_, _ = h.srv.Pool.Exec(ctx, `
+			UPDATE runtime_vms SET exit_code = $2 WHERE vm_id = $1
+		`, req.VmID, exitCode)
+	}
+
+	// 2. Close the run. WithTenant scopes the write via the RLS GUC.
+	// runs IS RLS-enforced; the ctx already has tenant_id injected.
+	if exitCode == 0 {
+		outputJSON, _ := json.Marshal(req.VMExit.Output)
+		if len(outputJSON) == 0 {
+			outputJSON = []byte("{}")
+		}
+		if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(ctx, `
+				UPDATE runs
+				SET status = 'succeeded', output = $2::jsonb, finished_at = now()
+				WHERE id = $1::uuid AND status NOT IN ('succeeded', 'failed')
+			`, runID, string(outputJSON))
+			return e
+		}); wErr != nil {
+			span.RecordError(wErr)
+			span.SetStatus(codes.Error, "run finalization failed")
+			return fmt.Errorf("handleVMExit: finalize run succeeded: %w", wErr)
+		}
+	} else {
+		errJSON, _ := json.Marshal(map[string]any{
+			"code":     "microvm_exit",
+			"exitCode": exitCode,
+		})
+		if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(ctx, `
+				UPDATE runs
+				SET status = 'failed', error = $2::jsonb, finished_at = now()
+				WHERE id = $1::uuid AND status NOT IN ('succeeded', 'failed')
+			`, runID, string(errJSON))
+			return e
+		}); wErr != nil {
+			span.RecordError(wErr)
+			span.SetStatus(codes.Error, "run finalization failed")
+			return fmt.Errorf("handleVMExit: finalize run failed: %w", wErr)
+		}
+	}
+
+	// 3. Emit a terminal journal event so the run waterfall shows completion.
+	// rls-exempt: journal_events is an RLS-exempt child table.
+	finalKind := "step_completed"
+	if exitCode != 0 {
+		finalKind = "step_failed"
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"node_type": "microvm_exit",
+		"exitCode":  exitCode,
+		"vmId":      req.VmID,
+	})
+	_, _ = h.srv.Pool.Exec(ctx, `
+		INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+		SELECT $1::uuid,
+		       COALESCE((SELECT MAX(seq) FROM journal_events WHERE run_id = $1::uuid), 0) + 1,
+		       $2, 'microvm:exit', 1, $3
+		ON CONFLICT (run_id, seq) DO NOTHING
+	`, runID, finalKind, payload)
+
+	return nil
 }
 
 // decodePromPayload tries base64-standard decoding of s. If decoding fails
