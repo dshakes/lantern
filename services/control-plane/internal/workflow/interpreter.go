@@ -39,6 +39,16 @@ import (
 	"time"
 )
 
+// ErrRunParked is returned by Deps.WaitForApproval (and propagated from
+// runConfidenceGate) to signal that the run has been durably parked:
+// runs.status set to 'waiting' and the run lease released. The calling
+// goroutine should exit without marking the run failed. The run will be
+// re-driven when a human approves via the takeover grant/release endpoints.
+//
+// Callers that need to detect this sentinel must use errors.Is because
+// runConfidenceGate wraps it with fmt.Errorf.
+var ErrRunParked = errors.New("run parked: awaiting human approval")
+
 // ---- Per-step retry policy --------------------------------------------------
 
 // RetryPolicy controls how many times a failed step is retried.
@@ -251,6 +261,11 @@ type Result struct {
 	Failed    bool
 	FailedAt  string
 	LastError string
+	// Parked is true when execution halted at an approval node (or a
+	// confidence-gate divert) and the run was durably parked. The caller
+	// must NOT write a terminal status — runs.status is already 'waiting'.
+	// Re-drive happens via the takeover grant/release endpoints.
+	Parked bool
 }
 
 // ---- Execution --------------------------------------------------------------
@@ -427,6 +442,19 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 		cumulativeStats.CostUSD += stepUsage.CostUSD
 		cumulativeStats.Tokens += stepUsage.TokensIn + stepUsage.TokensOut
 		emitAnomalies(node.ID, cumulativeStats)
+
+		// ErrRunParked: WaitForApproval (or runConfidenceGate wrapping it) durably
+		// parked the run — runs.status is now 'waiting' and the lease is released.
+		// Emit step_waiting so the run waterfall shows the pause point, then exit
+		// without marking the run failed.
+		if errors.Is(stepErr, ErrRunParked) {
+			emit("step_waiting", node.ID, map[string]any{
+				"node_id":    node.ID,
+				"waiting_on": "approval",
+			})
+			res.Parked = true
+			break
+		}
 
 		if stepErr != nil {
 			emit("step_failed", node.ID, map[string]any{

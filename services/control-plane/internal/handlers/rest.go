@@ -2017,59 +2017,55 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			return err
 		},
 		WaitForApproval: func(ctx context.Context, runID, stepID, reason string) (workflow.ApprovalDisposition, error) {
-			// W11a: open a takeover request and poll until a human flips
-			// its status. The dashboard surfaces pending requests and
-			// operators grant/release them. We poll once a second; for
-			// real production load this should switch to LISTEN/NOTIFY
-			// on a Postgres channel — punting that to a follow-up.
-			var takeoverID string
-			// rls-exempt: inline executor — takeover_requests insert carries the
-			// explicit tenant_id; row keyed by run within the authorized run.
-			err := h.srv.Pool.QueryRow(ctx, `
-				INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
-				VALUES ($1, $2, $3, $4, 'pending', now() + interval '30 minutes')
-				RETURNING id::text
-			`, runID, tenantID, stepID, reason).Scan(&takeoverID)
-			if err != nil {
-				return workflow.ApprovalDisposition{}, fmt.Errorf("create takeover row: %w", err)
+			// Grant-check-first: on a re-drive after a prior park, a granted or
+			// released takeover row already exists for this (run, step). Return
+			// immediately so the interpreter can proceed without a new approval
+			// round-trip — this is the idempotent-redrive path (invariant #3).
+			var grantedNotes string
+			// rls-exempt: inline executor — takeover_requests keyed by run_id.
+			grantCheckErr := h.srv.Pool.QueryRow(ctx, `
+				SELECT COALESCE(notes, '')
+				FROM takeover_requests
+				WHERE run_id = $1
+				  AND (step_id = $2 OR step_id IS NULL OR step_id = '')
+				  AND status IN ('granted', 'released')
+				ORDER BY created_at DESC
+				LIMIT 1
+			`, runID, stepID).Scan(&grantedNotes)
+			if grantCheckErr == nil {
+				return workflow.ApprovalDisposition{Granted: true, Reason: grantedNotes}, nil
 			}
 
-			ticker := time.NewTicker(1 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return workflow.ApprovalDisposition{}, ctx.Err()
-				case <-ticker.C:
-					var status, notes string
-					var expiresAt *time.Time
-					// rls-exempt: inline executor — poll the takeover row created
-					// above, keyed by its own id.
-					err := h.srv.Pool.QueryRow(ctx, `
-						SELECT status, COALESCE(notes, ''), expires_at
-						FROM takeover_requests WHERE id = $1
-					`, takeoverID).Scan(&status, &notes, &expiresAt)
-					if err != nil {
-						continue
-					}
-					switch status {
-					case "released":
-						return workflow.ApprovalDisposition{Granted: true, Reason: notes}, nil
-					case "denied":
-						return workflow.ApprovalDisposition{Granted: false, Reason: notes}, nil
-					case "expired":
-						return workflow.ApprovalDisposition{Granted: false, Reason: "approval expired"}, nil
-					}
-					// Mark expired ourselves if the wall-clock passed.
-					if expiresAt != nil && time.Now().After(*expiresAt) {
-						// rls-exempt: inline executor — expire the takeover row by id.
-						_, _ = h.srv.Pool.Exec(ctx, `
-							UPDATE takeover_requests SET status = 'expired' WHERE id = $1
-						`, takeoverID)
-						return workflow.ApprovalDisposition{Granted: false, Reason: "approval timed out"}, nil
-					}
-				}
-			}
+			// Park: create a pending takeover row so the dashboard can surface
+			// it, set runs.status = 'waiting', and release the run lease.
+			// The goroutine exits; the run will be re-driven when the operator
+			// calls grant or release on the takeover row.
+
+			// rls-exempt: inline executor — takeover_requests insert carries the
+			// explicit tenant_id; row keyed by run within the authorized run.
+			_, _ = h.srv.Pool.Exec(ctx, `
+				INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
+				VALUES ($1, $2, $3, $4, 'pending', now() + interval '30 minutes')
+			`, runID, tenantID, stepID, reason)
+
+			// Set status = 'waiting'. The guard on 'running'/'queued' prevents
+			// a concurrent re-drive that already wrote a terminal status from
+			// being overwritten.
+			// rls-exempt: inline executor — runs write keyed by id (authorized run).
+			_, _ = h.srv.Pool.Exec(ctx, `
+				UPDATE runs SET status = 'waiting' WHERE id = $1 AND status IN ('running', 'queued')
+			`, runID)
+
+			// Release the run lease so the row is available for re-drive once
+			// granted. The deferred releaseLease() in executeRunInlineSync will
+			// cancel the renewal goroutine and attempt a best-effort DELETE that
+			// will find no matching row (already gone) — both are safe.
+			// rls-exempt: run_locks is an RLS-exempt child table.
+			_, _ = h.srv.Pool.Exec(ctx, `
+				DELETE FROM run_locks WHERE run_id = $1
+			`, runID)
+
+			return workflow.ApprovalDisposition{}, workflow.ErrRunParked
 		},
 		RunSubAgent: func(subCtx context.Context, agentName string, input map[string]any) (map[string]any, error) {
 			// Depth guard: prevent infinite recursion when a workflow invokes
@@ -2142,6 +2138,15 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		)
 		return true
 	}
+	if res.Parked {
+		// WaitForApproval already set runs.status = 'waiting' and released the
+		// run lease. Don't write any terminal status — the run resumes when the
+		// operator grants/releases the takeover row.
+		h.logger().Info("workflow run parked awaiting approval",
+			zap.String("run_id", runID),
+		)
+		return true
+	}
 	if res.Failed {
 		errJSON, _ := json.Marshal(map[string]any{
 			"code":    "workflow_step_failed",
@@ -2167,6 +2172,46 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		zap.Int("steps_ran", res.StepsRan),
 	)
 	return true
+}
+
+// redriveParkedRun fetches run details and calls redriveRun in a background
+// goroutine, incrementing inFlightRuns so DrainInFlightRuns waits for it.
+// Called by TakeoverHandler.Grant and .Release when a parked run is approved.
+// The recovery sweep is a 30s fallback if this goroutine fails.
+func (h *RESTHandler) redriveParkedRun(runID, tenantID string) {
+	h.inFlightRuns.Add(1)
+	go func() {
+		defer h.inFlightRuns.Done()
+		ctx := context.Background()
+
+		var agentName string
+		var inputJSON []byte
+		// rls-exempt: run-redrive path — keyed by run_id + explicit tenant_id filter.
+		_ = h.srv.Pool.QueryRow(ctx, `
+			SELECT COALESCE(a.name, ''),
+			       COALESCE(r.input, '{}'::jsonb)::text::bytea
+			FROM runs r
+			LEFT JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
+			WHERE r.id = $1 AND r.tenant_id = $2
+		`, runID, tenantID).Scan(&agentName, &inputJSON)
+
+		if agentName == "" {
+			h.logger().Warn("redriveParkedRun: agent not found — recovery sweep will retry",
+				zap.String("run_id", runID))
+			return
+		}
+
+		if err := h.redriveRun(ctx, orphanedRun{
+			runID:     runID,
+			tenantID:  tenantID,
+			agentName: agentName,
+			inputJSON: inputJSON,
+		}); err != nil {
+			h.logger().Warn("redriveParkedRun: redrive failed — recovery sweep will retry",
+				zap.String("run_id", runID),
+				zap.Error(err))
+		}
+	}()
 }
 
 // journalCompletedStep is the resume hook wired into the workflow interpreter
