@@ -190,7 +190,7 @@
     <text x="630" y="24" class="t" font-size="11.5" font-weight="700">Cilium host egress</text>
     <text x="630" y="46" class="sub" font-size="10">CiliumClusterwideNetworkPolicy</text>
     <text x="630" y="62" class="sub" font-size="10">default-deny + credential-injecting</text>
-    <text x="630" y="78" class="sub" font-size="10">forward proxy (deny-all default)</text>
+    <text x="630" y="78" class="sub" font-size="10">forward proxy</text>
     <text x="630" y="94" class="sub" font-size="10">complements in-guest allowlist</text>
 
     <rect x="924" y="0" width="292" height="112" rx="10" fill="#12100c" stroke="#4a3b28"/>

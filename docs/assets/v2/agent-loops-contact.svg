@@ -28,7 +28,7 @@
   <line x1="202" y1="118" x2="220" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
   <line x1="382" y1="118" x2="400" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
   <line x1="562" y1="118" x2="580" y2="118" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
-  <path d="M 740 118 C 754 158, 28 158, 42 118" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <path d="M 740 118 C 754 158, 70 158, 100 142" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
   <rect x="357" y="141" width="68" height="18" rx="9" fill="#0a0908" stroke="#fb7185" stroke-opacity="0.5"/>
   <text x="391" y="151" fill="#fda4af" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
   <rect x="20" y="178" width="1200" height="100" rx="10" fill="#fb7185" fill-opacity="0.07" stroke="#fb7185" stroke-opacity="0.26"/>
@@ -45,7 +45,7 @@
   <line x1="202" y1="230" x2="220" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
   <line x1="382" y1="230" x2="400" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
   <line x1="562" y1="230" x2="580" y2="230" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
-  <path d="M 740 230 C 754 270, 28 270, 42 230" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <path d="M 740 230 C 754 270, 70 270, 100 254" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
   <rect x="357" y="253" width="68" height="18" rx="9" fill="#0a0908" stroke="#fb7185" stroke-opacity="0.5"/>
   <text x="391" y="263" fill="#fda4af" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
 </svg>

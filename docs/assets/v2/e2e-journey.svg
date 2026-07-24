@@ -66,7 +66,7 @@
     <text x="814" y="93" class="t" font-size="12" font-weight="700">Budgets as policy</text>
     <text x="814" y="112" class="sub">cost/day · cost/run · tokens/day · per-tool limits · hard-fail 402</text>
     <text x="814" y="134" class="t" font-size="12" font-weight="700">Isolation by manifest</text>
-    <text x="814" y="153" class="sub">isolation: "shared" | "microvm" — a publish-time property (ADR 0022)</text>
+    <text x="814" y="153" class="sub">isolation: "shared" | "microvm" — a publish-time property</text>
     <text x="814" y="172" class="code">PUT /v1/agents/{name}/budget · POST /v1/experiments</text>
   </g>
 
@@ -125,7 +125,7 @@
 
   <!-- improvement loop caption -->
   <path class="flow" d="M 1120 594 H 240" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#ej-arrg)"/>
-  <text x="620" y="614" text-anchor="middle" class="sub" fill="#5eead4">the loop: production feedback becomes next release's eval cases — the agent gets better because it ran</text>
+  <text x="620" y="614" text-anchor="middle" class="sub" fill="#5eead4">the loop: production feedback becomes next release's eval cases</text>
 
   <text x="32" y="644" class="sub">Copy-pasteable walkthrough: docs/guides/self-service-e2e.md · CLI loop: docs/guides/cli-agent-loop.md</text>
 </svg>

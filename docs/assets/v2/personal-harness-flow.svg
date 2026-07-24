@@ -67,7 +67,6 @@
       <text x="14" y="28" class="cmp">POST /v1/signals</text>
       <text x="14" y="50" class="cs">token-gated · x-lantern-signal-token</text>
       <text x="14" y="68" class="cs">constant-time compare · fails closed</text>
-      <text x="14" y="84" class="cs">token never logged</text>
     </g>
     <g transform="translate(16,160)">
       <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#3a2e18"/>
@@ -80,7 +79,6 @@
       <text x="14" y="26" class="cmp">Tailscale Serve</text>
       <text x="14" y="48" class="cs">private tailnet · phone ⇄ Mac</text>
       <text x="14" y="66" class="cs">never exposed to the public internet</text>
-      <text x="14" y="88" class="cs">URL survives reboots</text>
     </g>
   </g>
 
@@ -98,7 +96,7 @@
       <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#3a2f24"/>
       <text x="14" y="28" class="cmp">freshIphoneSignalsLine()</text>
       <text x="14" y="50" class="cs">reads the file on every owner turn</text>
-      <text x="14" y="68" class="cs">sub-ms, in front of the LLM — zero lag</text>
+      <text x="14" y="68" class="cs">sub-ms, in front of the LLM</text>
     </g>
     <g transform="translate(16,148)">
       <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#3a2f24"/>
@@ -130,19 +128,15 @@
       <text x="13" y="26" class="cmp">👤 You</text>
       <text x="13" y="44" class="cs">self-chat</text>
       <text x="13" y="74" class="cs">“where am I”</text>
-      <text x="13" y="92" class="cs">“what have I</text>
-      <text x="13" y="108" class="cs"> been doing”</text>
-      <text x="13" y="126" class="cs">“am I free at 3?”</text>
+      <text x="13" y="92" class="cs">“am I free at 3?”</text>
     </g>
     <g transform="translate(14,206)">
       <rect width="148" height="158" rx="9" fill="rgba(45,212,191,0.05)" stroke="#3a2f24"/>
       <text x="13" y="26" class="cmp">👥 Contacts</text>
       <text x="13" y="44" class="cs">who DM you</text>
       <text x="13" y="74" class="cs">“is he around?”</text>
-      <text x="13" y="92" class="cs">“when’s he free?”</text>
-      <text x="13" y="110" class="cs">take a message</text>
-      <text x="13" y="136" class="gate">availability</text>
-      <text x="13" y="151" class="gate">only — no place</text>
+      <text x="13" y="100" class="gate">availability</text>
+      <text x="13" y="115" class="gate">only — no place</text>
     </g>
   </g>
 

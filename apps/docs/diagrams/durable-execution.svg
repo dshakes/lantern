@@ -85,7 +85,7 @@
     <rect x="0" y="0" width="360" height="86" rx="10" fill="#221a10" stroke="#f59e0b"/>
     <text x="16" y="26" class="t" font-size="12.5" font-weight="700">recovery sweep <tspan class="code" dx="8">every 30s</tspan></text>
     <text x="16" y="46" class="sub">finds runs in running/queued whose run_locks lease is</text>
-    <text x="16" y="61" class="sub">absent or expired — the crash left one behind</text>
+    <text x="16" y="61" class="sub">absent or expired</text>
     <text x="16" y="78" class="code">internal/handlers/recovery.go · RunRecoveryLoop</text>
 
     <rect x="408" y="0" width="330" height="86" rx="10" fill="#221a10" stroke="#f59e0b"/>

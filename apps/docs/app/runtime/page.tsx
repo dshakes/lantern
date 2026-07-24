@@ -50,10 +50,16 @@ export default function RuntimeOverviewPage() {
         caller.
       </p>
 
-      {/* Hero diagram — customer-facing lifecycle view */}
+      {/* Hero diagram — clickable runtime map */}
+      <Diagram
+        name="runtime-map"
+        caption="The runtime in one view — gated, executed, made durable, and proven. Every card links to its deep-dive page."
+      />
+
+      {/* Detailed lifecycle view */}
       <Diagram
         name="run-lifecycle-live"
-        caption="From POST /v1/runs through auth, budget, and isolation gates to the tier that executes, the status machine, and a signed receipt — every box is real code."
+        caption="The same story in full detail: POST /v1/runs through auth, budget, and isolation gates to the tier that executes, the status machine, and a signed receipt — every box is real code."
       />
 
       <h2 id="tiers">Two tiers, one journal</h2>

@@ -138,5 +138,5 @@
     <text x="20" y="44" class="sub">OTel spans + metrics, one attribute contract: <tspan class="code">lantern.tenant_id · run_id · step_id · agent_version</tspan> · metrics: step.duration · step.retries · replay.skips · budget.blocks · run.total · peer health: GET /v1/system/health → owner self-chat alert on transition</text>
   </g>
 
-  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller — a caller can never downgrade a microvm agent. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
+  <text x="32" y="872" class="sub">Isolation is a property of the agent version, not the caller. · docs/architecture/09-agent-runtime.md · ADR 0022</text>
 </svg>
