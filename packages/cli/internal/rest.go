@@ -1,11 +1,14 @@
 package internal
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -321,5 +324,206 @@ func (c *RESTClient) Ping() error {
 	}
 	c.HTTPClient.Timeout = 3 * time.Second
 	defer func() { c.HTTPClient.Timeout = 30 * time.Second }()
+	return c.do(req, nil)
+}
+
+// --- Agent generation -------------------------------------------------------
+
+// GenerateSpecResult is the response from POST /v1/agents/generate-spec.
+type GenerateSpecResult struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	SystemPrompt string `json:"systemPrompt"`
+	Model        string `json:"model"`
+}
+
+// GenerateSpec calls POST /v1/agents/generate-spec with a plain-English description.
+func (c *RESTClient) GenerateSpec(description string) (*GenerateSpecResult, error) {
+	body := map[string]string{"description": description}
+	req, err := c.newRequest("POST", "/v1/agents/generate-spec", body)
+	if err != nil {
+		return nil, err
+	}
+	var result GenerateSpecResult
+	if err := c.do(req, &result); err != nil {
+		return nil, fmt.Errorf("generate-spec: %w", err)
+	}
+	return &result, nil
+}
+
+// GenerateCode calls POST /v1/agents/generate-code (best-effort; returns the
+// code string if available, empty string + nil error on 404/unsupported).
+func (c *RESTClient) GenerateCode(agentName, description string) (string, error) {
+	body := map[string]string{"agentName": agentName, "description": description}
+	req, err := c.newRequest("POST", "/v1/agents/generate-code", body)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		Code string `json:"code"`
+	}
+	if err := c.do(req, &result); err != nil {
+		// 404 = endpoint not yet wired; ignore gracefully.
+		if strings.Contains(err.Error(), "API 404") || strings.Contains(err.Error(), "API 405") {
+			return "", nil
+		}
+		return "", fmt.Errorf("generate-code: %w", err)
+	}
+	return result.Code, nil
+}
+
+// --- System health ----------------------------------------------------------
+
+// SystemHealth calls GET /v1/system/health and returns the raw JSON map.
+// Returns nil (no error) when the endpoint doesn't exist yet (404/405).
+func (c *RESTClient) SystemHealth() (map[string]any, error) {
+	req, err := c.newRequest("GET", "/v1/system/health", nil)
+	if err != nil {
+		return nil, err
+	}
+	// Short timeout — this is a diagnostic call.
+	saved := c.HTTPClient.Timeout
+	c.HTTPClient.Timeout = 5 * time.Second
+	defer func() { c.HTTPClient.Timeout = saved }()
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil, nil // endpoint not yet wired
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return m, nil
+}
+
+// --- SSE streaming ----------------------------------------------------------
+
+// SSEEvent is a parsed server-sent event from GET /v1/runs/{id}/events.
+type SSEEvent struct {
+	Kind    string         `json:"kind"`
+	StepID  string         `json:"stepId,omitempty"`
+	Seq     int64          `json:"seq,omitempty"`
+	Payload map[string]any `json:"payload,omitempty"`
+}
+
+// StreamRunEventsSSE streams run events from GET /v1/runs/{id}/events.
+// onEvent is called synchronously for each parsed SSE data line until the run
+// reaches a terminal state or ctx is cancelled. The response body is closed on
+// return. A nil onEvent is a no-op (still drains the stream).
+func (c *RESTClient) StreamRunEventsSSE(ctx context.Context, runID string, onEvent func(*SSEEvent)) error {
+	url := c.BaseURL + "/v1/runs/" + runID + "/events"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	} else if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Use a client without a read timeout — SSE streams run until the server closes.
+	streamClient := &http.Client{Transport: c.HTTPClient.Transport}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("connect to event stream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("event stream API %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var ev SSEEvent
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			// Also try parsing as a flat map for unknown shapes.
+			var raw map[string]any
+			if json.Unmarshal([]byte(data), &raw) == nil {
+				if k, ok := raw["kind"].(string); ok {
+					ev.Kind = k
+				}
+				ev.Payload = raw
+			}
+		}
+		if onEvent != nil {
+			onEvent(&ev)
+		}
+		// Stop when the stream signals end.
+		if ev.Kind == "end" || ev.Kind == "stream_end" {
+			return nil
+		}
+	}
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("read event stream: %w", err)
+	}
+	return nil
+}
+
+// --- Eval suites ------------------------------------------------------------
+
+// RESTEvalSuite is a minimal eval suite from GET /v1/eval-suites.
+type RESTEvalSuite struct {
+	ID        string         `json:"id"`
+	AgentName string         `json:"agentName"`
+	Name      string         `json:"name"`
+	Cases     []RESTEvalCase `json:"cases"`
+}
+
+// RESTEvalCase is a single test case within a suite.
+type RESTEvalCase struct {
+	ID       string `json:"id"`
+	Input    any    `json:"input"`
+	Expected string `json:"expected"`
+}
+
+// ListEvalSuites returns eval suites for the given agent name.
+func (c *RESTClient) ListEvalSuites(agentName string) ([]RESTEvalSuite, error) {
+	req, err := c.newRequest("GET", "/v1/eval-suites?agentName="+agentName, nil)
+	if err != nil {
+		return nil, err
+	}
+	var suites []RESTEvalSuite
+	if err := c.do(req, &suites); err != nil {
+		return nil, fmt.Errorf("list eval suites: %w", err)
+	}
+	return suites, nil
+}
+
+// PostEvalRun records eval run results and returns 422 if the run regressed vs baseline.
+func (c *RESTClient) PostEvalRun(suiteID, agentName, agentVersion string, passed bool, score float64, caseResults any) error {
+	body := map[string]any{
+		"suiteId":      suiteID,
+		"agentName":    agentName,
+		"agentVersion": agentVersion,
+		"passed":       passed,
+		"score":        score,
+		"casesResult":  caseResults,
+	}
+	req, err := c.newRequest("POST", "/v1/eval-runs", body)
+	if err != nil {
+		return err
+	}
 	return c.do(req, nil)
 }

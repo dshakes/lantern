@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -30,12 +31,12 @@ func newDoctorCommand() *cobra.Command {
 a pass/fail line for each one. Exits non-zero if any hard check fails.
 
 Checks performed:
-  (a) HTTP health — GET /healthz on :8080 returns {"status":"ok"}
-  (b) Authentication — stored credentials are valid, or the dev default
-      login (admin@lantern.dev / lantern) works.
-  (c) LLM provider — at least one provider key is configured.
-  (d) End-to-end run — creates a throwaway agent, runs it, confirms the
-      run reaches a terminal status, and cleans up.`,
+  (a) HTTP health      — GET /healthz on :8080 returns {"status":"ok"}
+  (b) Authentication   — stored credentials or dev default login.
+  (c) LLM provider     — at least one provider key is configured.
+  (d) End-to-end run   — creates a throwaway agent, runs it, confirms success.
+  (e) Service ports    — TCP reachability of all known service ports.
+  (f) Peer services    — GET /v1/system/health peer-service states (if available).`,
 		SilenceUsage: true,
 		RunE:         runDoctor,
 	}
@@ -49,27 +50,36 @@ type checkResult struct {
 	hard   bool   // hard failures cause a non-zero exit
 }
 
-// runDoctor executes all checks and prints results.
+// runDoctor executes all checks and prints results grouped by section.
 func runDoctor(_ *cobra.Command, _ []string) error {
 	restURL := deriveRESTURL(flags.apiURL)
 
-	results := make([]checkResult, 0, 4)
+	anyFailed := false
+	printSection := func(title string, results []checkResult) {
+		fmt.Fprintf(os.Stderr, "\n%s%s%s\n", colorCyan, title, colorReset)
+		for _, r := range results {
+			icon := colorGreen + "✓" + colorReset
+			if !r.passed {
+				icon = colorRed + "✗" + colorReset
+				if r.hard {
+					anyFailed = true
+				}
+			} else if !r.hard {
+				icon = colorYellow + "~" + colorReset
+			}
+			line := fmt.Sprintf("  %s  %s", icon, r.label)
+			if r.detail != "" {
+				line += "  " + colorDim + r.detail + colorReset
+			}
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
 
-	// (a) Health check — plain HTTP, no auth required.
+	// ── Core checks ───────────────────────────────────────────────────────
 	healthResult := checkHealth(restURL)
-	results = append(results, healthResult)
-
-	// (b) Authentication.
-	var token string
-	authResult, tok := checkAuth(restURL)
-	token = tok
-	results = append(results, authResult)
-
-	// (c) LLM providers — needs auth token.
+	authResult, token := checkAuth(restURL)
 	provResult := checkProviders(restURL, token)
-	results = append(results, provResult)
 
-	// (d) End-to-end run — only attempt if auth succeeded.
 	var runResult checkResult
 	if token != "" {
 		runResult = checkRun(restURL, token)
@@ -77,36 +87,25 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		runResult = checkResult{
 			label:  "end-to-end run",
 			passed: false,
-			detail: "skipped — no auth token (fix check (b) first)",
+			detail: "skipped — no auth token (fix authentication first)",
 			hard:   true,
 		}
 	}
-	results = append(results, runResult)
+	printSection("Core", []checkResult{healthResult, authResult, provResult, runResult})
 
-	// Print results.
-	anyFailed := false
-	for _, r := range results {
-		icon := colorGreen + "✓" + colorReset
-		if !r.passed {
-			icon = colorRed + "✗" + colorReset
-			if r.hard {
-				anyFailed = true
-			}
-		}
-		line := fmt.Sprintf("%s  %s", icon, r.label)
-		if r.detail != "" {
-			line += "  " + colorDim + r.detail + colorReset
-		}
-		fmt.Fprintln(os.Stderr, line)
+	// ── Service ports ─────────────────────────────────────────────────────
+	printSection("Service ports", checkPorts())
+
+	// ── Peer-service health ───────────────────────────────────────────────
+	if peerResults := checkSystemHealth(restURL, token); len(peerResults) > 0 {
+		printSection("Peer services", peerResults)
 	}
 
+	fmt.Fprintln(os.Stderr)
 	if anyFailed {
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, colorRed+"doctor: one or more hard checks failed — see details above"+colorReset)
+		fmt.Fprintln(os.Stderr, colorRed+"doctor: one or more critical checks failed — see details above"+colorReset)
 		return fmt.Errorf("doctor: readiness checks failed")
 	}
-
-	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, colorGreen+"doctor: all checks passed — stack is ready"+colorReset)
 	return nil
 }
@@ -351,6 +350,119 @@ func checkRun(restURL, token string) checkResult {
 			hard:   true,
 		}
 	}
+}
+
+// servicePort describes a known Lantern service port.
+type servicePort struct {
+	port string
+	name string
+	hard bool // true = critical failure; false = soft warning
+}
+
+// knownPorts lists all service ports from the CLAUDE.md port table.
+var knownPorts = []servicePort{
+	{"8080", "control-plane HTTP", true},
+	{"50051", "control-plane gRPC", false},
+	{"50052", "workflow-engine gRPC", false},
+	{"50053", "model-router gRPC", false},
+	{"50054", "runtime-manager gRPC", false},
+	{"50055", "runtime-scheduler gRPC", false},
+	{"3001", "dashboard", false},
+}
+
+// checkPorts dials each known service port and returns one checkResult per port.
+func checkPorts() []checkResult {
+	results := make([]checkResult, 0, len(knownPorts))
+	for _, sp := range knownPorts {
+		addr := "localhost:" + sp.port
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err != nil {
+			remedy := ""
+			if sp.port == "8080" {
+				remedy = " — run: lantern dev (or make run-api)"
+			} else if sp.port == "3001" {
+				remedy = " — run: make dashboard-dev"
+			}
+			results = append(results, checkResult{
+				label:  fmt.Sprintf("%s (:%s)", sp.name, sp.port),
+				passed: false,
+				detail: "unreachable" + remedy,
+				hard:   sp.hard,
+			})
+			continue
+		}
+		_ = conn.Close()
+		results = append(results, checkResult{
+			label:  fmt.Sprintf("%s (:%s)", sp.name, sp.port),
+			passed: true,
+			hard:   sp.hard,
+		})
+	}
+	return results
+}
+
+// checkSystemHealth calls GET /v1/system/health and returns one checkResult per
+// peer service reported. Returns nil when the endpoint is not yet wired (404).
+func checkSystemHealth(restURL, token string) []checkResult {
+	if token == "" {
+		return nil
+	}
+	client := internal.NewRESTClient(restURL, "", token)
+	health, err := client.SystemHealth()
+	if err != nil {
+		return []checkResult{{
+			label:  "peer services (GET /v1/system/health)",
+			passed: false,
+			detail: err.Error(),
+			hard:   false,
+		}}
+	}
+	if health == nil {
+		return nil // endpoint not yet wired — skip section silently
+	}
+
+	// health map is expected to have a "services" key with per-service state.
+	services, _ := health["services"].(map[string]any)
+	if len(services) == 0 {
+		// Flat format: treat every key as a service name with a status string.
+		results := make([]checkResult, 0, len(health))
+		for name, val := range health {
+			status := fmt.Sprintf("%v", val)
+			passed := strings.EqualFold(status, "ok") || strings.EqualFold(status, "healthy") || strings.EqualFold(status, "up")
+			results = append(results, checkResult{
+				label:  name,
+				passed: passed,
+				detail: status,
+				hard:   false,
+			})
+		}
+		return results
+	}
+
+	results := make([]checkResult, 0, len(services))
+	for name, val := range services {
+		var status string
+		switch v := val.(type) {
+		case string:
+			status = v
+		case map[string]any:
+			if s, ok := v["status"].(string); ok {
+				status = s
+			} else {
+				status = fmt.Sprintf("%v", v)
+			}
+		default:
+			status = fmt.Sprintf("%v", v)
+		}
+		passed := strings.EqualFold(status, "ok") || strings.EqualFold(status, "healthy") || strings.EqualFold(status, "up")
+		results = append(results, checkResult{
+			label:  name,
+			passed: passed,
+			detail: status,
+			hard:   false,
+		})
+	}
+	return results
 }
 
 // pollRunUntilTerminal polls GET /v1/runs/{id} every 1 s until the run is in a

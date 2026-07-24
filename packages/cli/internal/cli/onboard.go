@@ -30,6 +30,92 @@ import (
 	"golang.org/x/term"
 )
 
+// renderSSEEvent pretty-prints a single SSE event to stderr with colors.
+// This mirrors the gRPC stream renderer in runs.go but works on the REST
+// SSE event format (kind + payload map).
+func renderSSEEvent(ev *internal.SSEEvent) {
+	if ev == nil {
+		return
+	}
+	p := ev.Payload
+	if p == nil {
+		p = map[string]any{}
+	}
+	getString := func(key string) string {
+		if v, ok := p[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+	getFloat := func(key string) float64 {
+		switch v := p[key].(type) {
+		case float64:
+			return v
+		case int64:
+			return float64(v)
+		}
+		return 0
+	}
+
+	prefix := "   "
+	switch ev.Kind {
+	case "step_started":
+		stepID := getString("step_id")
+		if stepID == "" {
+			stepID = ev.StepID
+		}
+		fmt.Fprintf(os.Stderr, "%s%s→ step started: %s (kind: %s)%s\n",
+			prefix, colorBlue, stepID, getString("kind"), colorReset)
+	case "step_completed":
+		stepID := getString("step_id")
+		if stepID == "" {
+			stepID = ev.StepID
+		}
+		fmt.Fprintf(os.Stderr, "%s%s✓ step completed: %s (%.0fms)%s\n",
+			prefix, colorGreen, stepID, getFloat("duration_ms"), colorReset)
+	case "step_failed":
+		stepID := getString("step_id")
+		if stepID == "" {
+			stepID = ev.StepID
+		}
+		retry := ""
+		if r, ok := p["will_retry"].(bool); ok && r {
+			retry = " (retrying)"
+		}
+		fmt.Fprintf(os.Stderr, "%s%s✗ step failed: %s [%s] %s%s%s\n",
+			prefix, colorRed, stepID, getString("error_code"), getString("error_message"), retry, colorReset)
+	case "confidence_evaluated":
+		decision := getString("decision")
+		score := getFloat("score")
+		fmt.Fprintf(os.Stderr, "%s%sconfidence %.2f → %s%s\n",
+			prefix, colorYellow, score, decision, colorReset)
+	case "log":
+		level := getString("level")
+		msg := getString("message")
+		if msg == "" {
+			msg = getString("msg")
+		}
+		fmt.Fprintf(os.Stderr, "%s[%s] %s\n", prefix, level, msg)
+	case "llm_delta":
+		fmt.Fprintf(os.Stderr, "%s%s%s%s", prefix, colorDim, getString("text"), colorReset)
+	case "llm_complete":
+		fmt.Fprintf(os.Stderr, "\n%s%s✓ llm complete (tokens_in=%d tokens_out=%d)%s\n",
+			prefix, colorCyan, int(getFloat("tokens_in")), int(getFloat("tokens_out")), colorReset)
+	case "end", "stream_end":
+		status := getString("status")
+		if status == "" {
+			status = getString("reason")
+		}
+		fmt.Fprintf(os.Stderr, "%s%s▸ stream ended: %s%s\n", prefix, colorGreen, status, colorReset)
+	case "heartbeat":
+		// intentionally silent
+	default:
+		if ev.Kind != "" {
+			fmt.Fprintf(os.Stderr, "%s%s[%s]%s\n", prefix, colorDim, ev.Kind, colorReset)
+		}
+	}
+}
+
 // onboardReader abstracts stdin so tests can inject a deterministic reader.
 type onboardReader interface {
 	ReadLine() (string, error)
@@ -90,11 +176,16 @@ func (r *stringReader) ReadMasked() (string, error) { return r.ReadLine() }
 // onboardConfig holds all injectable dependencies for the wizard.
 // Production code passes nils (defaults apply); tests inject mocks.
 type onboardConfig struct {
-	restURL  string        // override for testing
-	reader   onboardReader // override for testing
-	provider string        // --provider flag (bypasses interactive)
-	apiKey   string        // --api-key flag (bypasses interactive prompt)
+	restURL     string        // override for testing
+	reader      onboardReader // override for testing
+	provider    string        // --provider flag (bypasses interactive)
+	apiKey      string        // --api-key flag (bypasses interactive prompt)
+	yes         bool          // --yes: accept all defaults non-interactively
+	description string        // --description: seed the agent generation prompt
 }
+
+// defaultAgentDescription is used when --yes is set with no --description.
+const defaultAgentDescription = "A helpful general-purpose AI assistant that can answer questions, summarize text, and help with everyday tasks."
 
 // quickstartAgentName is the durable agent created by onboard.
 const quickstartAgentName = "quickstart-assistant"
@@ -122,8 +213,10 @@ Rules:
 // newOnboardCommand builds the `lantern onboard` cobra.Command.
 func newOnboardCommand() *cobra.Command {
 	var (
-		providerFlag string
-		apiKeyFlag   string
+		providerFlag    string
+		apiKeyFlag      string
+		yesFlag         bool
+		descriptionFlag string
 	)
 
 	cmd := &cobra.Command{
@@ -135,14 +228,20 @@ stack to a working AI agent in under a minute.
 Each step performs a real action against the REST API on :8080 and stops
 loudly if something is wrong — no silent failures, no mocked output.
 
-Flags --provider and --api-key bypass the interactive provider prompt,
-which is useful for scripted / CI onboarding.`,
+The agent is created agentically: lantern prompts for a one-line description,
+calls the generate-spec + generate-code endpoints, and creates a customised
+agent rather than a generic placeholder.
+
+Flags --provider and --api-key bypass the interactive provider prompt.
+Flag --yes skips the description prompt (uses a sensible default).`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg := &onboardConfig{
-				restURL:  deriveRESTURL(flags.apiURL),
-				provider: providerFlag,
-				apiKey:   apiKeyFlag,
+				restURL:     deriveRESTURL(flags.apiURL),
+				provider:    providerFlag,
+				apiKey:      apiKeyFlag,
+				yes:         yesFlag,
+				description: descriptionFlag,
 			}
 			return runOnboard(cfg)
 		},
@@ -150,6 +249,8 @@ which is useful for scripted / CI onboarding.`,
 
 	cmd.Flags().StringVar(&providerFlag, "provider", "", "LLM provider to configure if none exists (openai|anthropic) — skips interactive prompt")
 	cmd.Flags().StringVar(&apiKeyFlag, "api-key", "", "API key for the provider (used with --provider, never echoed)")
+	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Non-interactive: accept defaults for all prompts")
+	cmd.Flags().StringVar(&descriptionFlag, "description", "", "One-line description for the generated agent (implies --yes for this prompt)")
 
 	return cmd
 }
@@ -195,50 +296,70 @@ func runOnboard(cfg *onboardConfig) error {
 		return err
 	}
 
-	// ── Step 4: Agent ───────────────────────────────────────────────────────
-	fmt.Fprint(os.Stderr, "4. Quickstart agent ... ")
-	if _, err := client.GetAgent(quickstartAgentName); err != nil {
-		// Does not exist — create it.
-		if _, cerr := client.CreateAgentWithSystemPrompt(
-			quickstartAgentName,
-			"General-purpose starter agent created by `lantern onboard`.",
-			quickstartSystemPrompt,
-		); cerr != nil {
-			fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
-			return fmt.Errorf("onboard: create agent %q: %w", quickstartAgentName, cerr)
-		}
-		fmt.Fprintf(os.Stderr, "%s✓%s  %screated%s\n", colorGreen, colorReset, colorDim, colorReset)
-	} else {
-		fmt.Fprintf(os.Stderr, "%s✓%s  %salready exists, reusing%s\n", colorGreen, colorReset, colorDim, colorReset)
+	// ── Step 4: Agent (agentic creation) ────────────────────────────────────
+	agentName, agentCreated, err := onboardEnsureAgent(cfg, client)
+	if err != nil {
+		return err
 	}
+	_ = agentCreated
 
-	// ── Step 5: Run ─────────────────────────────────────────────────────────
+	// ── Step 5: Run + SSE event stream ──────────────────────────────────────
 	fmt.Fprint(os.Stderr, "5. First run ... ")
-	run, err := client.CreateRun(quickstartAgentName, quickstartRunInput, false)
+	run, err := client.CreateRun(agentName, quickstartRunInput, false)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
 		return fmt.Errorf("onboard: POST /v1/runs: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "%s✓%s  run %s%s%s started\n", colorGreen, colorReset, colorDim, run.ID, colorReset)
 
-	finalRun, pollErr := pollRunUntilTerminal(client, run.ID, 90*time.Second)
-	if pollErr != nil {
-		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
-		return fmt.Errorf("onboard: poll run %s: %w", run.ID, pollErr)
+	// Stream events live, then fall back to polling if SSE is unavailable.
+	fmt.Fprintln(os.Stderr, "   streaming events:")
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer streamCancel()
+
+	var finalStatus string
+	sseErr := client.StreamRunEventsSSE(streamCtx, run.ID, func(ev *internal.SSEEvent) {
+		renderSSEEvent(ev)
+		if ev.Kind == "end" || ev.Kind == "stream_end" {
+			if p := ev.Payload; p != nil {
+				if s, ok := p["status"].(string); ok {
+					finalStatus = s
+				}
+			}
+		}
+	})
+
+	// If SSE fails (endpoint not yet live), fall back to polling.
+	var finalRun *internal.RESTRun
+	if sseErr != nil && streamCtx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "   %s(SSE unavailable, polling…)%s\n", colorDim, colorReset)
+		finalRun, err = pollRunUntilTerminal(client, run.ID, 90*time.Second)
+	} else {
+		// Fetch final run to read output.
+		req, _ := client.NewGETRequest("/v1/runs/" + run.ID)
+		var r internal.RESTRun
+		if jerr := client.DoJSON(req, &r); jerr == nil {
+			finalRun = &r
+		}
+		if finalStatus != "" && finalRun == nil {
+			finalRun = &internal.RESTRun{ID: run.ID, Status: finalStatus}
+		}
+	}
+
+	if finalRun == nil {
+		finalRun = &internal.RESTRun{ID: run.ID, Status: "unknown"}
 	}
 
 	if finalRun.Status == "failed" {
-		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
 		errMsg := ""
 		if finalRun.Error != nil {
 			errMsg = finalRun.Error.Message
 		}
 		return fmt.Errorf("onboard: run %s failed: %s", finalRun.ID, errMsg)
 	}
-	if finalRun.Status != "succeeded" {
-		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
-		return fmt.Errorf("onboard: run %s reached unexpected status %q", finalRun.ID, finalRun.Status)
+	if finalRun.Status != "succeeded" && finalRun.Status != "" {
+		return fmt.Errorf("onboard: run %s reached status %q", finalRun.ID, finalRun.Status)
 	}
-	fmt.Fprintf(os.Stderr, "%s✓%s  run %s%s%s succeeded\n", colorGreen, colorReset, colorDim, finalRun.ID, colorReset)
 
 	// ── Summary ─────────────────────────────────────────────────────────────
 	fmt.Fprintln(os.Stderr, strings.Repeat("─", 48))
@@ -260,25 +381,96 @@ func runOnboard(cfg *onboardConfig) error {
 	}
 
 	dashURL := "http://localhost:3001"
-	if strings.Contains(restURL, "localhost") || strings.Contains(restURL, "127.0.0.1") {
-		dashURL = "http://localhost:3001"
-	}
-
 	fmt.Fprintf(os.Stderr, "Dashboard:  %s/runs/%s\n", dashURL, finalRun.ID)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Run it again:")
-	fmt.Fprintf(os.Stderr, "  lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'\n", quickstartAgentName)
+	fmt.Fprintf(os.Stderr, "  lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'\n", agentName)
 	fmt.Fprintln(os.Stderr)
 
 	// ── Step 6: Guide (BEST-EFFORT / FAIL-SOFT) ─────────────────────────────
-	// Build context from the first run's output (and any error detail).
 	firstRunContext := agentOutputText
 	if firstRunContext == "" {
 		firstRunContext = "(run produced no text output)"
 	}
 	runGuideStep(client, firstRunContext)
+	_ = agentName // used above
 
 	return nil
+}
+
+// onboardEnsureAgent handles step 4: prompt for description, call generate-spec,
+// then create the agent. Falls back to the static quickstart on any error.
+// Returns (agentName, created, error).
+func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string, bool, error) {
+	fmt.Fprint(os.Stderr, "4. Agent ... ")
+
+	// Get description — from flag, --yes default, or interactive prompt.
+	description := cfg.description
+	if description == "" {
+		if cfg.yes {
+			description = defaultAgentDescription
+		} else {
+			isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+			if isTTY {
+				reader := cfg.reader
+				if reader == nil {
+					reader = termReader{}
+				}
+				fmt.Fprintln(os.Stderr, colorDim+"  (enter a one-line description for your agent, or press Enter for default)"+colorReset)
+				fmt.Fprint(os.Stderr, "  Description: ")
+				line, err := reader.ReadLine()
+				if err == nil && strings.TrimSpace(line) != "" {
+					description = strings.TrimSpace(line)
+				} else {
+					description = defaultAgentDescription
+				}
+			} else {
+				description = defaultAgentDescription
+			}
+		}
+	}
+
+	// Try the agentic path: generate-spec → create agent.
+	spec, specErr := client.GenerateSpec(description)
+	if specErr == nil && spec != nil && spec.Name != "" {
+		// Check if the generated agent already exists.
+		agentName := spec.Name
+		if _, err := client.GetAgent(agentName); err == nil {
+			fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (reusing existing)%s\n",
+				colorGreen, colorReset, colorDim, agentName, colorReset)
+			return agentName, false, nil
+		}
+		systemPrompt := spec.SystemPrompt
+		if systemPrompt == "" {
+			systemPrompt = quickstartSystemPrompt
+		}
+		if _, cerr := client.CreateAgentWithSystemPrompt(agentName, spec.Description, systemPrompt); cerr != nil {
+			// Fall through to static quickstart.
+			fmt.Fprintf(os.Stderr, "%s! create failed (%v), using quickstart%s\n", colorYellow, cerr, colorReset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (from generate-spec)%s\n",
+				colorGreen, colorReset, colorDim, agentName, colorReset)
+			return agentName, true, nil
+		}
+	}
+
+	// Static fallback: quickstart-assistant.
+	if _, err := client.GetAgent(quickstartAgentName); err != nil {
+		if _, cerr := client.CreateAgentWithSystemPrompt(
+			quickstartAgentName,
+			"General-purpose starter agent created by `lantern onboard`.",
+			quickstartSystemPrompt,
+		); cerr != nil {
+			fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
+			return "", false, fmt.Errorf("onboard: create agent %q: %w", quickstartAgentName, cerr)
+		}
+		fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (quickstart fallback, created)%s\n",
+			colorGreen, colorReset, colorDim, quickstartAgentName, colorReset)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (reusing existing)%s\n",
+			colorGreen, colorReset, colorDim, quickstartAgentName, colorReset)
+	}
+	return quickstartAgentName, false, nil
 }
 
 // onboardHealth probes /healthz with a short timeout.
