@@ -34,7 +34,7 @@ We use four languages, each in the layer where it is unambiguously the best choi
 
 - **Go** — `control-plane`, `workflow-engine`, `memory`, `notifier`, `billing`, `scheduler`, `cli`, `sdk-go`
 - **Rust** — `runtime-manager`, `gateway`, `model-router`, snapshotter binaries
-- **TypeScript / Next.js 15** — `apps/web`, `apps/landing`, `apps/docs-site`, `packages/sdk-ts`, `packages/ui-kit`
+- **TypeScript / Next.js 15** — `apps/web`, `apps/landing`, `apps/docs`, `packages/sdk-ts`
 - **Python** — `packages/sdk-python`
 
 A single source of truth for cross-service types lives in `packages/proto/` (protobuf3) and codegens to all four languages.

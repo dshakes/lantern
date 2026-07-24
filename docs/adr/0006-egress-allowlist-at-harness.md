@@ -5,6 +5,18 @@
 - **Deciders:** Lantern runtime, security
 - **Tags:** runtime, network, security
 
+> **Status note (2026-07):** the decision holds — egress is enforced in-guest by the
+> harness with the host as defense-in-depth. The **as-implemented mechanism**
+> (`services/harness/src/egress.rs`) differs from the nftables sketch below: inside
+> the guest, an **iptables REDIRECT** rule forces all outbound TCP into an **in-VM
+> HTTP CONNECT allowlist proxy at `127.0.0.1:3128`** (the proxy does the domain +
+> method matching); the **host firewall (nftables on the worker node)** DROPs all
+> VM egress except to that proxy. When egress rules are declared but the REDIRECT
+> layer is absent, the harness **fails closed in prod** (`LANTERN_ENV=prod/
+> production/staging`) and refuses to start the workload; env-var proxy injection
+> alone is treated as advisory. Read the sections below as the design intent; the
+> proxy + iptables REDIRECT + host-nftables layering is the shipped detail.
+
 ## Context
 
 Untrusted workloads must be prevented from talking to arbitrary destinations on the internet. The author declares `AgentSpec.egress_rules` (a list of `{pattern, http_methods, rate_bps}`) and `AgentSpec.network` (one of `NETWORK_NONE`, `ALLOWLIST_DOMAIN`, `TENANT_VPC`, `OPEN`). The platform must enforce this.

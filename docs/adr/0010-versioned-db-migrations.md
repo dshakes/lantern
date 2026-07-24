@@ -1,6 +1,6 @@
 # ADR 0010 — Versioned DB migrations via golang-migrate (baseline-on-existing)
 
-- Status: Accepted
+- Status: Accepted — implemented (golang-migrate v4 live in `internal/db/migrate.go`; embedded `migrations/NNNN_*.{up,down}.sql`, `0001` baseline through `0017` present)
 - Date: 2026-06-22
 - Deciders: Platform
 - Supersedes: the spike-era idempotent `CREATE TABLE IF NOT EXISTS` runner in `internal/db/migrate.go`
