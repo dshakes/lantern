@@ -144,7 +144,12 @@ func TestConcurrentPoll_ExactlyOnce(t *testing.T) {
 	ensureSchema(t, pool)
 
 	tenantID := seedTenant(t, pool)
-	_ = insertSchedule(t, pool, tenantID, "agent-concurrent", "* * * * *",
+	// Yearly cron: after the claim advances next_fire_at, the next legitimate
+	// fire is months away. With "* * * * *" a poll landing just before a minute
+	// boundary advances next_fire_at <1s into the future, and a delayed second
+	// poller can LEGITIMATELY re-claim it — a clock race in the test, not a
+	// bug in the SKIP LOCKED claim.
+	_ = insertSchedule(t, pool, tenantID, "agent-concurrent", "0 0 1 1 *",
 		time.Now().Add(-1*time.Second), true)
 
 	var fired atomic.Int64

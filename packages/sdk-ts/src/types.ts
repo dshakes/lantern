@@ -170,7 +170,7 @@ export interface LlmJsonOptions<T = unknown> extends LlmOptions {
   schema: z.ZodType<T>;
 }
 
-export interface LlmStreamOptions extends LlmOptions {}
+export type LlmStreamOptions = LlmOptions;
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
@@ -674,9 +674,12 @@ export interface ForecastResult {
   agentName: string;
   model: string;
   provider: string;
-  estimatedTokensIn: number;
-  estimatedTokensOut: number;
-  estimatedCostUsd: number;
+  /** Absent when the agent has no completed run history (`noHistoricalData: true`). */
+  estimatedTokensIn?: number;
+  /** Absent when the agent has no completed run history (`noHistoricalData: true`). */
+  estimatedTokensOut?: number;
+  /** Absent when the agent has no completed run history (`noHistoricalData: true`). */
+  estimatedCostUsd?: number;
   confidence: number;
   calibrated?: boolean;
   noHistoricalData?: boolean;

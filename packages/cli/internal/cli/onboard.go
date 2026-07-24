@@ -207,7 +207,7 @@ const guideSystemPrompt = `You are Lantern's onboarding guide. You receive the o
 
 Rules:
 - Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.
-- End with ONE concrete next command the user can copy-paste (e.g. lantern runs create --agent ...).
+- End with ONE concrete next command the user can copy-paste. Use EXACTLY the command supplied under "Next command:" verbatim — never invent an agent name or a flag (there is no --prompt flag; input is passed with --input '{"prompt":"..."}').
 - Friendly and accurate. No markdown headers. No filler ("Great!", "Certainly!"). If there was an error, say so plainly and tell them how to fix it.`
 
 // newOnboardCommand builds the `lantern onboard` cobra.Command.
@@ -392,7 +392,7 @@ func runOnboard(cfg *onboardConfig) error {
 	if firstRunContext == "" {
 		firstRunContext = "(run produced no text output)"
 	}
-	runGuideStep(client, firstRunContext)
+	runGuideStep(client, firstRunContext, agentName)
 	_ = agentName // used above
 
 	return nil
@@ -737,7 +737,7 @@ func providerNames(providers []map[string]any) string {
 // prints a ✗ that implies onboard failed. Any failure is swallowed or
 // results in a single dim skip line. The deterministic steps 1–5 are
 // the authoritative gate; this is a nice-to-have explanation.
-func runGuideStep(client *internal.RESTClient, firstRunContext string) {
+func runGuideStep(client *internal.RESTClient, firstRunContext, agentName string) {
 	// Create or reuse the guide agent. Prefer the template path so the
 	// budget cap applies automatically.
 	_, templateErr := client.ApplyTemplate("lantern-guide", guideAgentName)
@@ -759,9 +759,12 @@ func runGuideStep(client *internal.RESTClient, firstRunContext string) {
 		// Agent already exists (409) or was just created via fallback — proceed.
 	}
 
-	// Build the guide input from the first run's output context.
+	// Build the guide input from the first run's output context. Hand the
+	// guide the EXACT next command so it can't invent an agent name or flag.
+	nextCommand := fmt.Sprintf("lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'", agentName)
 	guideInput, err := json.Marshal(map[string]string{
-		"prompt": "Here is the output from the user's first Lantern agent run:\n\n" + firstRunContext + "\n\nExplain what happened and suggest one next command.",
+		"prompt": "Here is the output from the user's first Lantern agent run:\n\n" + firstRunContext +
+			"\n\nExplain what happened and suggest one next command.\n\nNext command: " + nextCommand,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — could not build input)%s\n\n", colorDim, colorReset)

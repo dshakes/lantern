@@ -272,7 +272,7 @@ class RuntimeContextManager implements ContextManager {
     const messages: Message[] = [];
     let tokensEstimate = 0;
     let droppedCount = 0;
-    let compactedCount = 0;
+    const compactedCount = 0;
 
     // Always include the system message.
     const systemMessage: Message = { role: "system", content: opts.system };

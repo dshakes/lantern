@@ -2,6 +2,7 @@ package lantern
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -92,5 +93,60 @@ func TestDo_ExhaustsRetriesAndReturnsLastError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected exactly 2 calls (WithMaxRetries(2)), got %d", calls)
+	}
+}
+
+func TestDeleteBudget_CallsDeleteMethod(t *testing.T) {
+	var gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		if r.URL.Path != "/v1/agents/my-agent/budget" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := New(WithBaseURL(srv.URL))
+	if err := c.DeleteBudget(context.Background(), "my-agent"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Fatalf("expected DELETE, got %s", gotMethod)
+	}
+}
+
+func TestListEvalSuites_FiltersAndReturns(t *testing.T) {
+	cases := []struct {
+		name      string
+		agentName string
+		wantQuery string
+	}{
+		{"no filter", "", ""},
+		{"with agent", "my-agent", "agentName=my-agent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/eval-suites" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				if tc.wantQuery != "" && r.URL.RawQuery != tc.wantQuery {
+					t.Errorf("expected query %q, got %q", tc.wantQuery, r.URL.RawQuery)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode([]EvalSuite{{ID: "s1", AgentName: "my-agent", Name: "suite"}})
+			}))
+			defer srv.Close()
+
+			c := New(WithBaseURL(srv.URL))
+			suites, err := c.ListEvalSuites(context.Background(), tc.agentName)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(suites) != 1 || suites[0].ID != "s1" {
+				t.Fatalf("unexpected suites: %+v", suites)
+			}
+		})
 	}
 }
