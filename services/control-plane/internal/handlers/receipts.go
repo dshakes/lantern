@@ -75,6 +75,22 @@ type receiptPayload struct {
 	TokensIn     int64     `json:"tokensIn"`
 	TokensOut    int64     `json:"tokensOut"`
 	Version      int       `json:"version"`
+	// ConfidentialCompute is present ONLY when the run was scheduled
+	// confidential (ADR 0023). Additive: the omitempty pointer is absent from
+	// the canonical signed payload for every non-confidential run, so existing
+	// receipts are byte-identical and their signatures unchanged.
+	ConfidentialCompute *confidentialComputeBlock `json:"confidentialCompute,omitempty"`
+}
+
+// confidentialComputeBlock is the recorded CC evidence for a run. `attested` is
+// ALWAYS false: the launch measurement is RECORDED, not validated on SEV-SNP/TDX
+// hardware — this is not a confidentiality guarantee. See ADR 0023.
+type confidentialComputeBlock struct {
+	Requested         bool   `json:"requested"`
+	Tech              string `json:"tech,omitempty"`
+	RuntimeClass      string `json:"runtimeClass,omitempty"`
+	MeasurementSHA256 string `json:"measurementSha256,omitempty"`
+	Attested          bool   `json:"attested"`
 }
 
 type signedReceipt struct {
@@ -376,6 +392,46 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 	}
 	if versionDigest != nil {
 		p.AgentVersion = *versionDigest
+	}
+
+	// Confidential-compute evidence (ADR 0023). Additive: the block is emitted
+	// ONLY when the run was scheduled confidential. `attested` is always false —
+	// the launch measurement is RECORDED, never validated on hardware.
+	// ponytail: cc_tech/attestation are read here but the backfill that writes
+	// the harness cc_attestation frame into runtime_vms.attestation is the v2
+	// seam (ADR 0023 §v2). Until it lands, tech/runtime_class/measurement_sha256
+	// are empty and the block still honestly reports requested + attested:false.
+	var ccRequested bool
+	var ccTech *string
+	var attestation []byte
+	ccErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT COALESCE(confidential, false), cc_tech, attestation
+			FROM runtime_vms
+			WHERE run_id = $1 AND tenant_id = $2
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, runID, tenantID).Scan(&ccRequested, &ccTech, &attestation)
+	})
+	if ccErr != nil && !errors.Is(ccErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("query runtime_vms for confidential-compute evidence: %w", ccErr)
+	}
+	if ccRequested {
+		block := &confidentialComputeBlock{Requested: true, Attested: false}
+		if ccTech != nil {
+			block.Tech = *ccTech
+		}
+		if len(attestation) > 0 {
+			var att struct {
+				RuntimeClass      string `json:"runtime_class"`
+				MeasurementSHA256 string `json:"measurement_sha256"`
+			}
+			if json.Unmarshal(attestation, &att) == nil {
+				block.RuntimeClass = att.RuntimeClass
+				block.MeasurementSHA256 = att.MeasurementSHA256
+			}
+		}
+		p.ConfidentialCompute = block
 	}
 
 	journalHash, err := h.hashJournal(ctx, runID)

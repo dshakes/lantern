@@ -536,6 +536,15 @@ func migrateRuntimeTables(t *testing.T, pool *pgxpool.Pool) {
 			terminated_at     TIMESTAMPTZ
 		)`,
 	}
+	// Columns added by later migrations that the CREATE-IF-NOT-EXISTS above
+	// won't add to a pre-existing table. Keep these in sync with migrations so
+	// runtime tests work whether or not golang-migrate has been run on this DB.
+	stmts = append(stmts,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS agent_instance_id TEXT`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS cc_tech TEXT`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS attestation JSONB`,
+	)
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
 			t.Fatalf("migrateRuntimeTables: %v", err)

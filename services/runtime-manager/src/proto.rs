@@ -181,6 +181,12 @@ pub struct ScheduleRequest {
     /// NetworkPolicy; domain patterns are enforced in-VM by the harness.
     #[serde(default)]
     pub egress_rules: Vec<EgressRule>,
+    /// Confidential compute (SEV-SNP/TDX). When true the workload MUST land on a
+    /// CC-capable node under the Kata-CC RuntimeClass; the schedule is refused
+    /// fail-closed if the node/backend cannot satisfy it, never downgraded.
+    /// Also upgrades any weaker trust class to HOSTILE-tier isolation (audited).
+    #[serde(default)]
+    pub confidential: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

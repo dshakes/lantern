@@ -10,6 +10,28 @@ import (
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
 )
 
+// TestUpsertNode_RoundTripsCCFields verifies the confidential-compute capability
+// advertised via heartbeat round-trips through UpsertNode → GetNode.
+func TestUpsertNode_RoundTripsCCFields(t *testing.T) {
+	s := cluster.NewInMemoryStore()
+	s.UpsertNode(cluster.Node{
+		Name:          "cc-node",
+		CCCapable:     true,
+		CCTech:        "sev-snp",
+		LastHeartbeat: time.Now(),
+	})
+	got, ok := s.GetNode("cc-node")
+	if !ok {
+		t.Fatal("node cc-node not found")
+	}
+	if !got.CCCapable {
+		t.Error("CCCapable: got false, want true")
+	}
+	if got.CCTech != "sev-snp" {
+		t.Errorf("CCTech: got %q, want sev-snp", got.CCTech)
+	}
+}
+
 // TestReservation_CreateVMReducesEffectiveCapacity verifies that after
 // CreateVM the node's reported free capacity is reduced by the VM's limits,
 // so a concurrent Pick() won't over-commit.

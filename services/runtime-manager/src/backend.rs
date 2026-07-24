@@ -92,6 +92,20 @@ pub trait RuntimeBackend: Send + Sync {
         !matches!(class, IsolationClass::Untrusted | IsolationClass::Hostile)
     }
 
+    /// Return whether this backend can run a *confidential-compute* workload
+    /// (memory-encrypted VM on SEV-SNP / TDX under a Kata-CC RuntimeClass).
+    ///
+    /// # Security invariant
+    ///
+    /// The default is **conservative**: `false`. Confidential compute requires
+    /// hardware memory encryption plus a CC-capable node + RuntimeClass, so any
+    /// backend that does not explicitly opt in cannot accidentally accept a
+    /// confidential workload and silently run it un-encrypted. Only the K8s
+    /// backend with the Kata-CC RuntimeClass configured returns `true`.
+    fn satisfies_confidential(&self) -> bool {
+        false
+    }
+
     /// Run a one-shot command inside a running sandbox and collect its output.
     ///
     /// `command` is the executable; `argv` are additional arguments.  The call

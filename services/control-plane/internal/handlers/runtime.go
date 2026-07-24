@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -417,6 +418,9 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 			}
 		}
 	}
+	if b, ok := spec["confidential"].(bool); ok {
+		a.Confidential = b
+	}
 	return a
 }
 
@@ -513,6 +517,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		"limits":              spec.Limits,
 		"egress_rules":        spec.EgressRules,
 		"secrets":             spec.Secrets,
+		"confidential":        spec.Confidential,
 		"tenant_id":           tenantID,
 	}
 	// Container exec controls — convert []string to []any so agentSpecFromMap's
@@ -567,10 +572,10 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
 			INSERT INTO runtime_vms
-			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
+			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, confidential, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10, $11)
 			ON CONFLICT (vm_id) DO NOTHING
-		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
+		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, spec.Confidential, created)
 		return e
 	}); wErr != nil {
 		h.logger().Error("scheduleAgentSpec: insert runtime_vms failed", zap.Error(wErr))
@@ -580,6 +585,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	h.auditRuntime(ctx, tenantID, vmID, "schedule", map[string]any{
 		"image_digest":      spec.ImageDigest,
 		"isolation":         spec.Isolation,
+		"confidential":      spec.Confidential,
 		"node":              node,
 		"az":                az,
 		"agent_instance_id": instanceID,
@@ -605,6 +611,10 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 	}
 	if lims, ok := manifest["limits"].(map[string]any); ok {
 		spec.Limits = lims
+	}
+	// Agent manifest `confidential: true` flows to the CC gate (ADR 0023).
+	if conf, ok := manifest["confidential"].(bool); ok {
+		spec.Confidential = conf
 	}
 	// env and restoreSnapshotId from the manifest support crash-resume:
 	// the recovery path injects LANTERN_RESUME=1 via manifest["env"] and
@@ -1060,6 +1070,9 @@ type agentSpecDTO struct {
 	Command []string          `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	// Confidential compute (SEV-SNP/TDX under Kata-CC). Refused fail-closed if
+	// no CC-capable node exists; never downgraded. See ADR 0023.
+	Confidential bool `json:"confidential,omitempty"`
 	// Limits / EgressRules / Secrets are passed through opaque so the
 	// scheduler can interpret them without re-defining the structs here.
 	Limits      map[string]any   `json:"limits,omitempty"`
@@ -1267,12 +1280,37 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(attribute.String("lantern.tenant_id", tenantID))
 	defer span.End()
 
+	// Decode via a raw map so we accept both the camelCase REST convention
+	// (imageDigest) AND the snake_case YAML convention that `lantern run`
+	// forwards from agent.yaml (image_digest). Aliases are checked after the
+	// primary JSON struct decode has a chance to populate the field.
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "read body")
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
 	var spec agentSpecDTO
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+	if err := json.Unmarshal(rawBody, &spec); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid body")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
+	}
+	// Snake_case alias fallback: populate empty fields from snake_case keys
+	// emitted by `lantern run` / agent.yaml YAML sources.
+	if spec.ImageDigest == "" {
+		var raw map[string]any
+		_ = json.Unmarshal(rawBody, &raw)
+		if s, ok := raw["image_digest"].(string); ok {
+			spec.ImageDigest = s
+		}
+		if spec.Isolation == "" {
+			if s, ok := raw["isolation_class"].(string); ok {
+				spec.Isolation = s
+			}
+		}
 	}
 	if spec.ImageDigest == "" {
 		span.SetStatus(codes.Error, "imageDigest required")

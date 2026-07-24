@@ -172,6 +172,10 @@ type heartbeatBody struct {
 	WarmPoolImageOnly map[string]int32 `json:"warm_pool_image_only"`
 	RecentOOMCount    int              `json:"recent_oom_count"`
 	RecentKernelEvts  int              `json:"recent_kernel_events"`
+	// Confidential-compute capability advertised by the manager. Additive:
+	// absent → false/"" → zero behavior change for non-CC nodes.
+	CCCapable bool   `json:"cc_capable"`
+	CCTech    string `json:"cc_tech"`
 }
 
 // POST /v1/nodes/heartbeat
@@ -209,6 +213,8 @@ func (h *RESTHandler) NodeHeartbeat(w http.ResponseWriter, r *http.Request, expe
 		LastHeartbeat:      time.Now().UTC(),
 		RecentOOMCount:     body.RecentOOMCount,
 		RecentKernelEvents: body.RecentKernelEvts,
+		CCCapable:          body.CCCapable,
+		CCTech:             body.CCTech,
 	})
 	if h.Metrics != nil {
 		h.Metrics.Nodes.Set(float64(len(h.Store.ListNodes())))

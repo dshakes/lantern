@@ -89,3 +89,66 @@ func TestHint_AcceptsAdequateCapacity(t *testing.T) {
 		t.Errorf("NodeName: got %q, want n1", d.NodeName)
 	}
 }
+
+// Confidential workloads must land ONLY on CC-capable nodes.
+func TestConfidential_PlacesOnlyOnCCNode(t *testing.T) {
+	s := cluster.NewInMemoryStore()
+	s.UpsertNode(cluster.Node{
+		Name: "plain", FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
+	})
+	s.UpsertNode(cluster.Node{
+		Name: "cc", CCCapable: true, CCTech: "sev-snp",
+		FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
+	})
+	e := newEngine(s)
+	spec := &lanternv1.AgentSpec{
+		ImageDigest:  "sha256:abc",
+		TenantId:     "t1",
+		Confidential: true,
+		Limits:       &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+	}
+	d, err := e.Pick(spec, nil, 10)
+	if err != nil {
+		t.Fatalf("expected placement on the CC node, got error: %v", err)
+	}
+	if d.NodeName != "cc" {
+		t.Errorf("confidential workload placed on %q, want cc", d.NodeName)
+	}
+}
+
+// With NO CC-capable node, a confidential workload hits the no-suitable-node
+// path (upstream → microvm_unavailable). Never downgraded onto a plain node.
+func TestConfidential_NoCCNode_NoSuitableNode(t *testing.T) {
+	s := cluster.NewInMemoryStore()
+	s.UpsertNode(cluster.Node{
+		Name: "plain", FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
+	})
+	e := newEngine(s)
+	spec := &lanternv1.AgentSpec{
+		ImageDigest: "sha256:abc", TenantId: "t1", Confidential: true,
+		Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+	}
+	if _, err := e.Pick(spec, nil, 10); err == nil {
+		t.Fatal("expected no-suitable-node error for confidential workload with no CC node, got nil")
+	}
+}
+
+// A non-confidential workload is unaffected by the CC filter — places anywhere.
+func TestNonConfidential_PlacesOnPlainNode(t *testing.T) {
+	s := cluster.NewInMemoryStore()
+	s.UpsertNode(cluster.Node{
+		Name: "plain", FreeVcpuMillis: 8000, FreeMemoryBytes: 8 << 30, LastHeartbeat: time.Now(),
+	})
+	e := newEngine(s)
+	spec := &lanternv1.AgentSpec{
+		ImageDigest: "sha256:abc", TenantId: "t1", // Confidential defaults false
+		Limits: &lanternv1.ResourceLimits{Vcpu: "2", Memory: "2Gi"},
+	}
+	d, err := e.Pick(spec, nil, 10)
+	if err != nil {
+		t.Fatalf("non-confidential workload should place on any node, got error: %v", err)
+	}
+	if d.NodeName != "plain" {
+		t.Errorf("got %q, want plain", d.NodeName)
+	}
+}

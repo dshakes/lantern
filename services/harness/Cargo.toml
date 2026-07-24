@@ -39,6 +39,10 @@ anyhow = "1"
 dashmap = "6"
 # mTLS client: harness presents a per-VM client cert to the manager
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# SHA-256 for cc_attest. ring is already in the dep tree as a transitive dep of
+# rustls (ring = "0.17" in Cargo.lock); this promotes it to a direct dep so
+# cc_attest.rs can import ring::digest. No new crate enters the tree.
+ring = "0.17"
 rustls-pemfile = "2"
 rustls-pki-types = "1"
 

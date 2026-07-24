@@ -518,7 +518,14 @@ type AgentSpec struct {
 	Args []string `protobuf:"bytes,15,rep,name=args,proto3" json:"args,omitempty"`
 	// Extra env passed to the container process. Tenant id and run id are
 	// injected by the runtime; this is for caller-supplied vars.
-	Env           map[string]string `protobuf:"bytes,16,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Env map[string]string `protobuf:"bytes,16,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Confidential compute (SEV-SNP/TDX; implies Kata-CC on a CC-capable node;
+	// refused fail-closed, never downgraded). When true the workload MUST land on
+	// a node advertising confidential-compute capability and run under the CC
+	// RuntimeClass; a node/backend that cannot satisfy it refuses the schedule
+	// rather than downgrading to a weaker isolation. Confidential also upgrades
+	// any weaker trust class to HOSTILE-tier isolation (upgrade only, audited).
+	Confidential  bool `protobuf:"varint,17,opt,name=confidential,proto3" json:"confidential,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -663,6 +670,13 @@ func (x *AgentSpec) GetEnv() map[string]string {
 		return x.Env
 	}
 	return nil
+}
+
+func (x *AgentSpec) GetConfidential() bool {
+	if x != nil {
+		return x.Confidential
+	}
+	return false
 }
 
 type PlacementHint struct {
@@ -2985,7 +2999,7 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\tSecretRef\x12\x19\n" +
 	"\benv_name\x18\x01 \x01(\tR\aenvName\x12\x1d\n" +
 	"\n" +
-	"secret_uri\x18\x02 \x01(\tR\tsecretUri\"\xa6\x06\n" +
+	"secret_uri\x18\x02 \x01(\tR\tsecretUri\"\xca\x06\n" +
 	"\tAgentSpec\x12!\n" +
 	"\fimage_digest\x18\x01 \x01(\tR\vimageDigest\x128\n" +
 	"\tisolation\x18\x02 \x01(\x0e2\x1a.lantern.v1.IsolationClassR\tisolation\x122\n" +
@@ -3005,7 +3019,8 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\x06run_id\x18\r \x01(\tR\x05runId\x12\x18\n" +
 	"\acommand\x18\x0e \x03(\tR\acommand\x12\x12\n" +
 	"\x04args\x18\x0f \x03(\tR\x04args\x120\n" +
-	"\x03env\x18\x10 \x03(\v2\x1e.lantern.v1.AgentSpec.EnvEntryR\x03env\x1a9\n" +
+	"\x03env\x18\x10 \x03(\v2\x1e.lantern.v1.AgentSpec.EnvEntryR\x03env\x12\"\n" +
+	"\fconfidential\x18\x11 \x01(\bR\fconfidential\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a6\n" +
@@ -3048,12 +3063,13 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\n" +
 	"AttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd5\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfe\x01\n" +
 	"\x0fScheduleRequest\x12)\n" +
 	"\x04spec\x18\x01 \x01(\v2\x15.lantern.v1.AgentSpecR\x04spec\x12-\n" +
 	"\x04hint\x18\x02 \x01(\v2\x19.lantern.v1.PlacementHintR\x04hint\x12E\n" +
 	"\x11cold_start_budget\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x0fcoldStartBudget\x12!\n" +
-	"\freserve_only\x18\x04 \x01(\bR\vreserveOnly\"A\n" +
+	"\freserve_only\x18\x04 \x01(\bR\vreserveOnly\x12'\n" +
+	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey\"A\n" +
 	"\rEventsRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"~\n" +

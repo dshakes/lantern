@@ -627,3 +627,67 @@ func TestRuntime_QuotaHardFail402(t *testing.T) {
 		t.Fatal("audit log missing 'schedule_denied' after 402")
 	}
 }
+
+// TestRuntime_ConfidentialCompute is the confidential-compute (ADR 0023) e2e leg.
+//
+// It is SKIPPED by default and never fakes green: a confidential schedule against
+// the dev stub scheduler would fabricate a placement (node-stub), which the
+// fail-closed CC contract forbids proving that way. Set LANTERN_CC_E2E=1 ONLY
+// when the runtime-scheduler is wired to a REAL cluster with a Kata-CC
+// RuntimeClass and CC-capable (SEV-SNP/TDX) nodes labeled
+// lantern.dev/confidential-compute. Attestation remains UNVERIFIED — this leg
+// proves placement + fail-closed refusal, not hardware attestation.
+func TestRuntime_ConfidentialCompute(t *testing.T) {
+	if os.Getenv("LANTERN_CC_E2E") != "1" {
+		t.Skip("SKIP: confidential-compute e2e requires a real SEV-SNP/TDX cluster — a " +
+			"confidential schedule against the dev stub scheduler would fake a green placement, " +
+			"which the fail-closed CC contract forbids. Set LANTERN_CC_E2E=1 with the " +
+			"runtime-scheduler pointed at a CC-capable cluster to run this leg.")
+	}
+	c := newClient(t)
+
+	var vmID string
+	t.Cleanup(func() {
+		if vmID != "" {
+			_ = c.terminate(vmID)
+		}
+	})
+
+	status, resp := c.schedule(map[string]any{
+		"imageDigest":  testImageDigest(),
+		"isolation":    "standard",
+		"confidential": true,
+		"labels":       map[string]string{"e2e": "confidential"},
+	})
+	vmID = resp.VmID
+
+	switch {
+	case status == http.StatusCreated:
+		// A real CC placement: must NOT be the dev stub, and the persisted spec
+		// must still carry confidential:true (never silently downgraded).
+		if resp.Node == "" || resp.Node == "node-stub" {
+			t.Fatalf("confidential schedule landed on the dev stub (node=%q) — not a real CC "+
+				"cluster; point the runtime-scheduler at a CC-capable cluster before setting "+
+				"LANTERN_CC_E2E=1", resp.Node)
+		}
+		found := false
+		for _, vm := range c.listVMs() {
+			if vm.VmID == resp.VmID {
+				found = true
+				if !bytes.Contains(vm.Spec, []byte(`"confidential":true`)) {
+					t.Errorf("scheduled CC vm spec missing confidential:true (downgraded?): %s", vm.Spec)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("scheduled CC vm %s not found in list", resp.VmID)
+		}
+		t.Logf("confidential vm scheduled on real CC node=%s az=%s", resp.Node, resp.Az)
+	case status == http.StatusPaymentRequired, status >= 500:
+		// Fail-closed refusal when no CC node is available is an ACCEPTABLE
+		// outcome — the contract is "refuse, never downgrade".
+		t.Logf("confidential schedule refused fail-closed (HTTP %d) — no CC-capable node; acceptable", status)
+	default:
+		t.Fatalf("unexpected status %d for confidential schedule (want 201 real placement or a fail-closed refusal)", status)
+	}
+}

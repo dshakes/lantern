@@ -115,6 +115,13 @@ message AgentSpec {
   // Extra env passed to the container process. Tenant id and run id are
   // injected by the runtime; this is for caller-supplied vars.
   map<string, string> env                = 16;
+  // Confidential compute (SEV-SNP/TDX; implies Kata-CC on a CC-capable node;
+  // refused fail-closed, never downgraded). When true the workload MUST land on
+  // a node advertising confidential-compute capability and run under the CC
+  // RuntimeClass; a node/backend that cannot satisfy it refuses the schedule
+  // rather than downgrading to a weaker isolation. Confidential also upgrades
+  // any weaker trust class to HOSTILE-tier isolation (upgrade only, audited).
+  bool confidential                      = 17;
 }
 
 message PlacementHint {

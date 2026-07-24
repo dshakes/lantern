@@ -84,6 +84,7 @@ type WorkloadSnapshot struct {
 	TenantLiveVMs      int  // current count of running VMs for this tenant
 	TenantSoftCap      int  // tenant's soft concurrency cap
 	ArchitectureLocked bool // if true, the workload needs x86 specifically
+	Confidential       bool // if true, the workload requires confidential compute
 }
 
 // ScoreNode produces the weighted placement score for (node, workload).

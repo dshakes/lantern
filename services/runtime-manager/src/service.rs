@@ -100,8 +100,23 @@ enum BackendChoice {
 /// backend cannot satisfy the class will never silently downgrade the workload.
 fn choose_backend(
     isolation_class: proto::IsolationClass,
+    confidential: bool,
     default_backend: &Arc<dyn RuntimeBackend>,
 ) -> BackendChoice {
+    // Confidential compute is its OWN capability gate (Kata-CC on SEV-SNP/TDX),
+    // independent of the isolation-class gate. When the workload requests it and
+    // the node's backend cannot satisfy it, refuse fail-closed — never downgrade
+    // to a non-confidential (un-encrypted) VM. This mirrors the HOSTILE-without-
+    // Kata refusal exactly.
+    if confidential && !default_backend.satisfies_confidential() {
+        let name = default_backend.name();
+        return BackendChoice::Unavailable(format!(
+            "confidential compute cannot be satisfied by the '{name}' backend on this node: \
+             confidential requires the Kata-CC RuntimeClass; set LANTERN_RUNTIMECLASS_KATA_CC \
+             on a CC-capable (SEV-SNP/TDX) node."
+        ));
+    }
+
     if default_backend.satisfies_isolation(isolation_class) {
         BackendChoice::Use(Arc::clone(default_backend))
     } else {
@@ -122,6 +137,32 @@ fn choose_backend(
             "isolation_class {:?} cannot be satisfied by the '{}' backend on this node: {}.",
             isolation_class, name, hint
         ))
+    }
+}
+
+/// Apply the confidential-compute ISOLATION FLOOR: a confidential workload runs
+/// under a memory-encrypted microVM, so any weaker trust class is upgraded to
+/// HOSTILE-tier. This is an **upgrade only** (never a downgrade) and is recorded
+/// with a visible audit log line — the upgrade is never silent.
+///
+/// Returns the effective isolation class. When not confidential, or already
+/// HOSTILE, the class is returned unchanged.
+fn apply_confidential_isolation_floor(
+    isolation_class: proto::IsolationClass,
+    confidential: bool,
+    run_id: &str,
+) -> proto::IsolationClass {
+    if confidential && isolation_class != proto::IsolationClass::Hostile {
+        tracing::warn!(
+            target: "lantern_audit",
+            run_id = %run_id,
+            requested_isolation = ?isolation_class,
+            effective_isolation = ?proto::IsolationClass::Hostile,
+            "confidential-compute: upgrading isolation to HOSTILE-tier (upgrade only, audited)"
+        );
+        proto::IsolationClass::Hostile
+    } else {
+        isolation_class
     }
 }
 
@@ -356,12 +397,22 @@ impl RuntimeManagerGrpc {
         &self,
         request: Request<proto::ScheduleRequest>,
     ) -> Result<Response<proto::ScheduleResponse>, Status> {
-        let req = request.into_inner();
+        let mut req = request.into_inner();
 
-        // Select the backend per-request based on isolation class (ADR-0009).
-        // Hostile/Untrusted MUST have hardware/kernel isolation; if the backend
-        // cannot satisfy the class, refuse here — never a silent downgrade.
-        let backend = match choose_backend(req.isolation_class, &self.backend) {
+        // Confidential-compute isolation floor: upgrade any weaker trust class to
+        // HOSTILE-tier (upgrade only, audited). Mutate the request so build_job +
+        // the runtime-class selection see the effective class.
+        req.isolation_class = apply_confidential_isolation_floor(
+            req.isolation_class,
+            req.confidential,
+            &req.run_id,
+        );
+
+        // Select the backend per-request based on isolation class (ADR-0009) and
+        // confidential-compute capability. Hostile/Untrusted MUST have hardware/
+        // kernel isolation; confidential MUST have a CC-capable node. If the
+        // backend cannot satisfy either, refuse here — never a silent downgrade.
+        let backend = match choose_backend(req.isolation_class, req.confidential, &self.backend) {
             BackendChoice::Use(b) => b,
             BackendChoice::Unavailable(reason) => {
                 tracing::error!(
@@ -982,6 +1033,9 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
                 rate_bps: r.rate_bps,
             })
             .collect(),
+        // Confidential compute — set by the control-plane from the agent
+        // manifest; drives the fail-closed CC gate + Kata-CC selection below.
+        confidential: spec.confidential,
     })
 }
 
@@ -2235,6 +2289,8 @@ mod tests {
         /// When `true`, the stub accepts UNTRUSTED and HOSTILE (microVM semantics).
         /// When `false` (default), the conservative trait default applies.
         accepts_hostile: bool,
+        /// When `true`, the stub can satisfy confidential compute (Kata-CC).
+        cc_capable: bool,
     }
 
     impl NamedStub {
@@ -2242,14 +2298,26 @@ mod tests {
             Arc::new(Self {
                 name,
                 accepts_hostile: false,
+                cc_capable: false,
             })
         }
 
-        /// Build a microVM-style stub that accepts all isolation classes.
+        /// Build a microVM-style stub that accepts all isolation classes but is
+        /// NOT confidential-compute capable (regular Kata, no SEV-SNP/TDX).
         fn microvm(name: &'static str) -> Arc<dyn RuntimeBackend> {
             Arc::new(Self {
                 name,
                 accepts_hostile: true,
+                cc_capable: false,
+            })
+        }
+
+        /// Build a microVM-style stub that is ALSO confidential-compute capable.
+        fn microvm_cc(name: &'static str) -> Arc<dyn RuntimeBackend> {
+            Arc::new(Self {
+                name,
+                accepts_hostile: true,
+                cc_capable: true,
             })
         }
     }
@@ -2311,6 +2379,10 @@ mod tests {
                 )
             }
         }
+
+        fn satisfies_confidential(&self) -> bool {
+            self.cc_capable
+        }
     }
 
     // --- choose_backend: trusted/standard always allowed on any backend ---
@@ -2319,16 +2391,86 @@ mod tests {
     fn trusted_allowed_on_docker() {
         let b = NamedStub::arc("docker");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Trusted, &b),
+            choose_backend(proto::IsolationClass::Trusted, false, &b),
             BackendChoice::Use(_)
         ));
+    }
+
+    // --- confidential compute: load-bearing fail-closed refusal ---
+
+    // A microVM backend that accepts HOSTILE but is NOT CC-capable must REFUSE a
+    // confidential workload — never downgrade to a non-confidential VM. This
+    // mirrors the HOSTILE-without-Kata refusal.
+    #[test]
+    fn confidential_refused_when_backend_not_cc_capable() {
+        let b = NamedStub::microvm("k8s"); // accepts hostile, but cc_capable=false
+        match choose_backend(proto::IsolationClass::Hostile, true, &b) {
+            BackendChoice::Unavailable(msg) => {
+                assert!(
+                    msg.contains("confidential"),
+                    "refusal must name confidential: {msg}"
+                );
+                assert!(
+                    msg.contains("LANTERN_RUNTIMECLASS_KATA_CC"),
+                    "refusal must name the CC config var: {msg}"
+                );
+            }
+            BackendChoice::Use(_) => panic!(
+                "confidential workload must be REFUSED on a non-CC-capable backend, never downgraded"
+            ),
+        }
+    }
+
+    #[test]
+    fn confidential_accepted_when_backend_cc_capable() {
+        let b = NamedStub::microvm_cc("k8s");
+        assert!(
+            matches!(
+                choose_backend(proto::IsolationClass::Hostile, true, &b),
+                BackendChoice::Use(_)
+            ),
+            "confidential must be accepted on a CC-capable backend"
+        );
+    }
+
+    // Isolation floor: a confidential workload upgrades any weaker class to
+    // HOSTILE-tier (upgrade only). The audit log line is emitted as a side effect.
+    #[test]
+    fn confidential_isolation_floor_upgrades_weaker_class() {
+        for weaker in [
+            proto::IsolationClass::Unspecified,
+            proto::IsolationClass::Trusted,
+            proto::IsolationClass::Standard,
+            proto::IsolationClass::Untrusted,
+        ] {
+            let eff = apply_confidential_isolation_floor(weaker, true, "run-1");
+            assert_eq!(
+                eff,
+                proto::IsolationClass::Hostile,
+                "confidential must floor {weaker:?} up to HOSTILE"
+            );
+        }
+    }
+
+    #[test]
+    fn confidential_isolation_floor_leaves_hostile_and_non_confidential() {
+        // Already HOSTILE → unchanged.
+        assert_eq!(
+            apply_confidential_isolation_floor(proto::IsolationClass::Hostile, true, "r"),
+            proto::IsolationClass::Hostile,
+        );
+        // Not confidential → never upgraded.
+        assert_eq!(
+            apply_confidential_isolation_floor(proto::IsolationClass::Standard, false, "r"),
+            proto::IsolationClass::Standard,
+        );
     }
 
     #[test]
     fn standard_allowed_on_k8s() {
         let b = NamedStub::arc("k8s");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Standard, &b),
+            choose_backend(proto::IsolationClass::Standard, false, &b),
             BackendChoice::Use(_)
         ));
     }
@@ -2337,7 +2479,7 @@ mod tests {
     fn unspecified_allowed_on_docker() {
         let b = NamedStub::arc("docker");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Unspecified, &b),
+            choose_backend(proto::IsolationClass::Unspecified, false, &b),
             BackendChoice::Use(_)
         ));
     }
@@ -2347,7 +2489,7 @@ mod tests {
     #[test]
     fn hostile_refused_on_docker() {
         let b = NamedStub::arc("docker");
-        match choose_backend(proto::IsolationClass::Hostile, &b) {
+        match choose_backend(proto::IsolationClass::Hostile, false, &b) {
             BackendChoice::Unavailable(msg) => {
                 assert!(
                     msg.contains("Kata RuntimeClass"),
@@ -2365,7 +2507,7 @@ mod tests {
     #[test]
     fn untrusted_refused_on_docker() {
         let b = NamedStub::arc("docker");
-        match choose_backend(proto::IsolationClass::Untrusted, &b) {
+        match choose_backend(proto::IsolationClass::Untrusted, false, &b) {
             BackendChoice::Unavailable(msg) => {
                 assert!(
                     msg.contains("gVisor RuntimeClass"),
@@ -2389,7 +2531,7 @@ mod tests {
     fn hostile_refused_on_k8s_without_kata() {
         let b = NamedStub::arc("k8s");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Hostile, &b),
+            choose_backend(proto::IsolationClass::Hostile, false, &b),
             BackendChoice::Unavailable(_)
         ));
     }
@@ -2398,7 +2540,7 @@ mod tests {
     fn untrusted_refused_on_k8s_without_gvisor() {
         let b = NamedStub::arc("k8s");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Untrusted, &b),
+            choose_backend(proto::IsolationClass::Untrusted, false, &b),
             BackendChoice::Unavailable(_)
         ));
     }
@@ -2409,7 +2551,7 @@ mod tests {
     fn hostile_allowed_on_firecracker() {
         let b = NamedStub::microvm("firecracker");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Hostile, &b),
+            choose_backend(proto::IsolationClass::Hostile, false, &b),
             BackendChoice::Use(_)
         ));
     }
@@ -2418,7 +2560,7 @@ mod tests {
     fn untrusted_allowed_on_firecracker() {
         let b = NamedStub::microvm("firecracker");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Untrusted, &b),
+            choose_backend(proto::IsolationClass::Untrusted, false, &b),
             BackendChoice::Use(_)
         ));
     }
@@ -2427,7 +2569,7 @@ mod tests {
     fn hostile_allowed_on_kata() {
         let b = NamedStub::microvm("kata");
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Hostile, &b),
+            choose_backend(proto::IsolationClass::Hostile, false, &b),
             BackendChoice::Use(_)
         ));
     }
@@ -2482,12 +2624,12 @@ mod tests {
         }
         let b: Arc<dyn RuntimeBackend> = Arc::new(GvisorStub);
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Untrusted, &b),
+            choose_backend(proto::IsolationClass::Untrusted, false, &b),
             BackendChoice::Use(_)
         ));
         // HOSTILE still refused (no Kata).
         assert!(matches!(
-            choose_backend(proto::IsolationClass::Hostile, &b),
+            choose_backend(proto::IsolationClass::Hostile, false, &b),
             BackendChoice::Unavailable(_)
         ));
     }
@@ -3165,6 +3307,7 @@ mod tests {
                 command: vec![],
                 args: vec![],
                 env: HashMap::new(),
+                confidential: false,
             }),
         }
     }
@@ -3238,6 +3381,7 @@ mod tests {
                 command: vec![],
                 args: vec![],
                 env,
+                confidential: false,
             }),
         }
     }
@@ -3310,6 +3454,24 @@ mod tests {
             sched.env.get("MY_VAR").map(String::as_str),
             Some("hello"),
             "unrelated env vars must pass through unchanged"
+        );
+    }
+
+    // spawn_to_schedule copies the confidential flag from the wire spec onto the
+    // internal ScheduleRequest so the CC gate + Kata-CC selection can act on it.
+    #[test]
+    fn spawn_to_schedule_copies_confidential_flag() {
+        let mut req = make_spawn_request("legit", HashMap::new());
+        // Default off → internal off.
+        assert!(
+            !spawn_to_schedule(&req).expect("valid").confidential,
+            "confidential must default off"
+        );
+        // Set on the wire spec → copied onto the internal request.
+        req.spec.as_mut().unwrap().confidential = true;
+        assert!(
+            spawn_to_schedule(&req).expect("valid").confidential,
+            "confidential=true on the wire spec must be copied onto the ScheduleRequest"
         );
     }
 

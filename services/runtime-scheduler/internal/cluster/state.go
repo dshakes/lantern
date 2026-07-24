@@ -48,6 +48,13 @@ type Node struct {
 	LastHeartbeat      time.Time
 	RecentOOMCount     int
 	RecentKernelEvents int
+	// CCCapable is true when this node can run confidential-compute workloads
+	// (Kata-CC on SEV-SNP/TDX). Advertised by the runtime-manager heartbeat;
+	// the placement engine only places `confidential` workloads on such nodes.
+	CCCapable bool
+	// CCTech is the CC hardware technology the node exposes (e.g. "sev-snp"/"tdx"),
+	// "" when unknown. Carried for the receipt/evidence trail.
+	CCTech string
 }
 
 // VM is the scheduler-side record for a placed workload. We keep enough

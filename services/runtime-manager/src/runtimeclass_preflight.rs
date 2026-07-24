@@ -86,6 +86,13 @@ pub fn resolve_available_classes(
         kata: check(cfg.kata.as_deref(), present_in_cluster, "HOSTILE/Kata"),
         // WASM: also checked, same logic.
         wasm: check(cfg.wasm.as_deref(), present_in_cluster, "WASM"),
+        // Kata-CC (confidential): same fail-closed logic — absent in cluster ⇒
+        // confidential capability disabled.
+        kata_cc: check(
+            cfg.kata_cc.as_deref(),
+            present_in_cluster,
+            "CONFIDENTIAL/Kata-CC",
+        ),
         // Non-RuntimeClass fields are passed through unchanged.
         allow_runc_standard: cfg.allow_runc_standard,
         node_label_gvisor: cfg.node_label_gvisor.clone(),
@@ -120,7 +127,8 @@ pub async fn check_and_resolve(
     client: Option<&kube::Client>,
 ) -> RuntimeClassConfig {
     // If no classes are configured for the hardened tiers, nothing to check.
-    let needs_check = cfg.gvisor.is_some() || cfg.kata.is_some() || cfg.wasm.is_some();
+    let needs_check =
+        cfg.gvisor.is_some() || cfg.kata.is_some() || cfg.wasm.is_some() || cfg.kata_cc.is_some();
     if !needs_check {
         tracing::debug!("RuntimeClass preflight: no hardened classes configured; skipping check");
         return cfg;
@@ -310,6 +318,34 @@ mod tests {
         assert!(
             resolved.kata.is_none(),
             "kata-qemu: not in cluster set → capability disabled"
+        );
+    }
+
+    #[test]
+    fn missing_kata_cc_clears_confidential_capability() {
+        let cfg = RuntimeClassConfig {
+            kata_cc: Some("kata-qemu-snp".to_string()),
+            ..Default::default()
+        };
+        // Cluster does NOT have the CC class → capability disabled (fail-closed).
+        let resolved = resolve_available_classes(&cfg, &present(&["kata-qemu"]));
+        assert!(
+            resolved.kata_cc.is_none(),
+            "kata-cc absent from cluster → confidential capability disabled"
+        );
+    }
+
+    #[test]
+    fn present_kata_cc_preserves_confidential_capability() {
+        let cfg = RuntimeClassConfig {
+            kata_cc: Some("kata-qemu-snp".to_string()),
+            ..Default::default()
+        };
+        let resolved = resolve_available_classes(&cfg, &present(&["kata-qemu-snp"]));
+        assert_eq!(
+            resolved.kata_cc,
+            Some("kata-qemu-snp".to_string()),
+            "kata-cc present in cluster → capability preserved"
         );
     }
 

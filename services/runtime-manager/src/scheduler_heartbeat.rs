@@ -30,6 +30,10 @@ struct HeartbeatBody {
     warm_pool_image_only: std::collections::HashMap<String, i32>,
     recent_oom_count: i32,
     recent_kernel_events: i32,
+    /// Confidential-compute capability, advertised so the scheduler only places
+    /// `confidential` workloads on CC-capable nodes.
+    cc_capable: bool,
+    cc_tech: String,
 }
 
 #[derive(Clone)]
@@ -40,6 +44,12 @@ pub struct HeartbeatConfig {
     pub advertise_addr: String,
     pub region: String,
     pub zone: String,
+    /// True when this node can run confidential-compute workloads (Kata-CC
+    /// RuntimeClass configured + cluster-present). Advertised to the scheduler.
+    pub cc_capable: bool,
+    /// CC hardware technology this node exposes (e.g. "sev-snp" / "tdx"); "" when
+    /// unknown. Advertised alongside `cc_capable` for the receipt/evidence trail.
+    pub cc_tech: String,
 }
 
 /// Spawn the heartbeat loop. Returns immediately; the loop runs until the
@@ -89,6 +99,8 @@ pub fn spawn(cfg: HeartbeatConfig) {
                 warm_pool_image_only: Default::default(),
                 recent_oom_count: 0,
                 recent_kernel_events: 0,
+                cc_capable: cfg.cc_capable,
+                cc_tech: cfg.cc_tech.clone(),
             };
 
             let mut req = client.post(&endpoint).json(&body);
