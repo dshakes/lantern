@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
@@ -947,6 +948,374 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 	}
 }
 
+// ---------- Structured SSE streaming helpers ----------
+
+// writeSSEEvent emits a named SSE event (event: X\ndata: Y\n\n) and flushes.
+// Used by callLLMStreamingMessages callers to emit message_delta / message_completed.
+func writeSSEEvent(w http.ResponseWriter, f http.Flusher, eventName string, payload map[string]any) {
+	data, _ := json.Marshal(payload)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, data)
+	if f != nil {
+		f.Flush()
+	}
+}
+
+// callLLMStreamingMessages is the per-token streaming variant for arbitrary
+// message histories (vs callLLMStreamingNoTools which takes separate system/user
+// strings). Used by streamWithFailover and completeSSE.
+//
+// OpenAI: passes messages verbatim (same shape the tool loop uses).
+// Anthropic: extracts the system message and converts the rest.
+// Unknown provider: falls back to non-streaming callLLMSync and emits one delta.
+func (h *LlmProxyHandler) callLLMStreamingMessages(
+	ctx context.Context,
+	provider, model, apiKey string,
+	messages []map[string]any,
+	onDelta func(string),
+) (full string, tokensIn, tokensOut int64, err error) {
+	if onDelta == nil {
+		onDelta = func(string) {}
+	}
+
+	switch provider {
+	case "openai":
+		reqBody := map[string]any{
+			"model":      model,
+			"messages":   messages,
+			"max_tokens": 4096,
+			"stream":     true,
+			"stream_options": map[string]any{
+				"include_usage": true,
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Accept", "text/event-stream")
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, messages))
+		resp, httpErr := h.llmHTTPClient().Do(req)
+		if httpErr != nil {
+			return "", 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			return "", 0, 0, fmt.Errorf("openai stream %d: %s", resp.StatusCode, string(body))
+		}
+		var sb strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			if payload == "[DONE]" {
+				break
+			}
+			var ev struct {
+				Choices []struct {
+					Delta struct {
+						Content string `json:"content"`
+					} `json:"delta"`
+				} `json:"choices"`
+				Usage *struct {
+					PromptTokens     int64 `json:"prompt_tokens"`
+					CompletionTokens int64 `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if jerr := json.Unmarshal([]byte(payload), &ev); jerr != nil {
+				continue
+			}
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.PromptTokens
+				tokensOut = ev.Usage.CompletionTokens
+			}
+			for _, c := range ev.Choices {
+				if c.Delta.Content != "" {
+					sb.WriteString(c.Delta.Content)
+					onDelta(c.Delta.Content)
+				}
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			return sb.String(), tokensIn, tokensOut, scanErr
+		}
+		return sb.String(), tokensIn, tokensOut, nil
+
+	case "anthropic":
+		var system string
+		var antMsgs []map[string]any
+		for _, m := range messages {
+			if role, _ := m["role"].(string); role == "system" {
+				system, _ = m["content"].(string)
+				continue
+			}
+			antMsgs = append(antMsgs, m)
+		}
+		if len(antMsgs) == 0 {
+			antMsgs = []map[string]any{{"role": "user", "content": ""}}
+		}
+		reqBody := map[string]any{
+			"model":      model,
+			"max_tokens": 4096,
+			"stream":     true,
+			"messages":   antMsgs,
+		}
+		if system != "" {
+			reqBody["system"] = system
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("Accept", "text/event-stream")
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, messages))
+		resp, httpErr := h.llmHTTPClient().Do(req)
+		if httpErr != nil {
+			return "", 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			return "", 0, 0, fmt.Errorf("anthropic stream %d: %s", resp.StatusCode, string(body))
+		}
+		var sb strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			var ev struct {
+				Type  string `json:"type"`
+				Delta struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"delta"`
+				Usage *struct {
+					InputTokens  int64 `json:"input_tokens"`
+					OutputTokens int64 `json:"output_tokens"`
+				} `json:"usage"`
+				Message *struct {
+					Usage *struct {
+						InputTokens  int64 `json:"input_tokens"`
+						OutputTokens int64 `json:"output_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+			}
+			if jerr := json.Unmarshal([]byte(payload), &ev); jerr != nil {
+				continue
+			}
+			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
+				sb.WriteString(ev.Delta.Text)
+				onDelta(ev.Delta.Text)
+			}
+			if ev.Type == "message_start" && ev.Message != nil && ev.Message.Usage != nil {
+				tokensIn = ev.Message.Usage.InputTokens
+			}
+			if ev.Type == "message_delta" && ev.Usage != nil {
+				tokensOut = ev.Usage.OutputTokens
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			return sb.String(), tokensIn, tokensOut, scanErr
+		}
+		return sb.String(), tokensIn, tokensOut, nil
+
+	default:
+		// Unknown provider — fall back to non-streaming sync; emit one delta.
+		txt, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, flattenMessages(messages))
+		if txt != "" {
+			onDelta(txt)
+		}
+		return txt, ti, to, e
+	}
+}
+
+// streamWithFailover is the per-token streaming analogue of callLLMWithFailover
+// for no-tool completions. It walks the same candidate chain but uses
+// callLLMStreamingMessages so onDelta fires per token.
+//
+// Failover policy: if a candidate fails AND zero deltas have been emitted
+// from it, try the next candidate (same as the non-streaming loop). Once the
+// first delta is out the stream cannot restart mid-sentence — a provider error
+// at that point is returned immediately as a non-nil error; the caller should
+// emit message_error to signal the client to discard the partial stream.
+//
+// ponytail: skips oversized-input retry (rare for tool-free turns). Rate-limit
+// backoff is applied once per candidate, matching callLLMWithFailover.
+func (h *LlmProxyHandler) streamWithFailover(
+	ctx context.Context,
+	tenantID string,
+	messages []map[string]any,
+	onDelta func(string),
+	onAttempt func(candidateAttempt),
+	userFacing bool,
+) (fullText, usedProvider, usedModel string, tokensIn, tokensOut int64, err error) {
+	chain := resolveCandidateChain(
+		h.providerAvailable(ctx, tenantID, "anthropic"),
+		h.providerAvailable(ctx, tenantID, "openai"),
+		userFacing,
+	)
+	if len(chain) == 0 {
+		return "", "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
+	}
+
+	var lastErr error
+	for _, cand := range chain {
+		// claude-code has no streaming API; skip on the streaming path.
+		if cand.Provider == "claude-code" {
+			continue
+		}
+		apiKey, keyErr := h.resolveProviderKey(ctx, tenantID, cand.Provider)
+		if keyErr != nil {
+			lastErr = keyErr
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: keyErr})
+			}
+			continue
+		}
+
+		// Count deltas from this specific candidate to decide if failover is safe.
+		var candidateDeltas int
+		wrapped := func(chunk string) {
+			candidateDeltas++
+			onDelta(chunk)
+		}
+		text, tin, tout, callErr := h.callLLMStreamingMessages(ctx, cand.Provider, cand.Model, apiKey, messages, wrapped)
+
+		// Rate-limit: back off + retry the same candidate once BEFORE failing over,
+		// but only when no deltas have been emitted (can't restart mid-sentence).
+		if callErr != nil && candidateDeltas == 0 {
+			if backoff := rateLimitBackoff(callErr.Error()); backoff > 0 {
+				h.logger().Info("streaming: rate limited — backing off then retrying",
+					zap.String("provider", cand.Provider),
+					zap.Duration("backoff", backoff))
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+				}
+				if ctx.Err() == nil {
+					candidateDeltas = 0
+					text, tin, tout, callErr = h.callLLMStreamingMessages(ctx, cand.Provider, cand.Model, apiKey, messages, wrapped)
+				}
+			}
+		}
+
+		if callErr == nil {
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model})
+			}
+			text = rewriteUnbackedClaims(text, nil, h.logger())
+			return text, cand.Provider, cand.Model, tin, tout, nil
+		}
+
+		lastErr = callErr
+		if onAttempt != nil {
+			onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: callErr})
+		}
+		// Partial stream: deltas already sent to the client — cannot restart.
+		// Return error immediately; caller emits message_error.
+		if candidateDeltas > 0 {
+			return text, cand.Provider, cand.Model, tin, tout,
+				fmt.Errorf("streaming: %s failed after %d delta(s): %w", cand.Provider, candidateDeltas, callErr)
+		}
+		// Zero deltas + non-retryable: stop early (next provider will also fail).
+		if !isRetryableLLMError(callErr.Error()) {
+			h.logger().Warn("streaming: non-retryable error, not failing over",
+				zap.String("provider", cand.Provider), zap.Error(callErr))
+			break
+		}
+		h.logger().Info("streaming: provider failed before first delta, failing over",
+			zap.String("from", cand.Provider), zap.Error(callErr))
+	}
+	return "", "", "", 0, 0, fmt.Errorf("all configured providers failed: %w", lastErr)
+}
+
+// completeSSE handles POST /v1/completions with stream:true and agentName=="".
+// Emits message_delta per token + message_completed at end using the same named-SSE
+// contract as the session events stream, so SDK/dashboard clients share one parser.
+//
+// Budget: agentless completions have no per-agent budget (no agentName), so
+// CheckBudget is skipped. Usage is recorded under "__agentless__" after the
+// stream completes so tenant-level spend remains visible.
+func (h *LlmProxyHandler) completeSSE(
+	w http.ResponseWriter,
+	ctx context.Context,
+	tenantID string,
+	req *completionRequest,
+) {
+	turnID := uuid.New().String()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, _ := w.(http.Flusher)
+
+	var seq int // goroutine-local counter; no concurrent access
+	onDelta := func(chunk string) {
+		seq++
+		writeSSEEvent(w, flusher, "message_delta", map[string]any{
+			"turnId": turnID,
+			"seq":    seq,
+			"delta":  chunk,
+		})
+	}
+
+	const userFacing = false // agentless completions are developer tools, not end-user
+	msgs := messagesToAny(req.Messages)
+	fullText, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.streamWithFailover(
+		ctx, tenantID, msgs, onDelta, nil, userFacing,
+	)
+	if llmErr != nil {
+		h.logger().Error("completeSSE: streaming failed", zap.Error(llmErr))
+		if seq > 0 {
+			// Partial stream already sent — signal the client to discard it.
+			writeSSEEvent(w, flusher, "message_error", map[string]any{
+				"turnId": turnID,
+				"error":  "provider error — partial response",
+			})
+		} else {
+			writeSSEEvent(w, flusher, "message_error", map[string]any{
+				"turnId": turnID,
+				"error":  llmErr.Error(),
+			})
+		}
+		return
+	}
+
+	costUsd := estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut))
+	writeSSEEvent(w, flusher, "message_completed", map[string]any{
+		"turnId": turnID,
+		"text":   fullText,
+		"usage": map[string]any{
+			"tokensIn":  tokensIn,
+			"tokensOut": tokensOut,
+			"costUsd":   costUsd,
+		},
+	})
+
+	// Record usage post-stream (headers already flushed; safe to write).
+	// Pool may be nil in unit tests; skip DB write gracefully.
+	if h.srv.Pool != nil {
+		if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, "__agentless__", tokensIn, tokensOut, costUsd, nil); recErr != nil {
+			h.logger().Warn("completeSSE: RecordUsage failed",
+				zap.String("tenant_id", tenantID),
+				zap.Error(recErr),
+			)
+		}
+	}
+}
+
 // HandleStreamCompletion serves POST /v1/jarvis/stream-completion —
 // a no-tools streaming endpoint optimized for the bridges' fast
 // "first-sentence-fast" path. Body: {systemPrompt, userPrompt, model?}.
@@ -1215,14 +1584,12 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Streaming agentless completions (req.Stream && req.AgentName == "") pass
-	// through proxyOpenAI / proxyAnthropic below.  Those proxy functions
-	// forward the raw SSE stream directly and do not surface token counts to
-	// this scope; refactoring them to plumb token counts would require
-	// buffering the stream, which breaks the streaming contract.
-	// Documented limitation: streaming agentless /v1/completions calls are
-	// not yet budget-gated or usage-recorded.  Agent-scoped calls
-	// (req.AgentName != "") are fully gated and recorded via proxyAgentWithTools.
+	// Streaming agentless completions → new message_delta / message_completed SSE contract.
+	// Usage is recorded via streamWithFailover → RecordUsage inside completeSSE.
+	if req.AgentName == "" && req.Stream {
+		h.completeSSE(w, ctx, tenantID, &req)
+		return
+	}
 
 	// Agent-scoped budget pre-check: run this BEFORE key resolution so an
 	// over-hard-fail-budget agent gets 402 regardless of key availability.
@@ -1304,10 +1671,13 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 }
 
 // proxyAgentWithTools runs the tool-use loop for an agent-scoped completion
-// (req.AgentName set). Returns either an SSE stream of {type:'tool_call'},
-// {type:'delta'}, {type:'done'} events when req.Stream is true, or a final
-// JSON payload otherwise. Mirrors what the session API does so the chat
-// fallback path produces identical behavior.
+// (req.AgentName set). Streaming path emits:
+//   - unnamed data events for tool_call_started / tool_call_completed / tool_call_failed
+//   - named SSE events (message_delta / message_completed / message_error) for the final text
+//
+// ponytail: tool turns buffer internally (callLLMWithTools is non-streaming);
+// only the final assembled text is emitted as message_delta(s). This is the
+// documented limitation for tool-bearing completion streams.
 func (h *LlmProxyHandler) proxyAgentWithTools(
 	w http.ResponseWriter,
 	ctx context.Context,
@@ -1326,15 +1696,16 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
 	}
 
-	// For streaming completions we want to surface tool calls inline so
-	// the UI can render "Used X" chips while the model thinks. Each
-	// invocation pushes an SSE event before/after dispatch.
+	// Streaming: surface tool calls as unnamed data events so the UI can render
+	// "Used X" chips while the tool loop runs; emit final text via named SSE events.
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		flusher, _ := w.(http.Flusher)
-		writeEvt := func(payload map[string]any) {
+		turnID := uuid.New().String()
+
+		writeData := func(payload map[string]any) {
 			b, _ := json.Marshal(payload)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			if flusher != nil {
@@ -1361,16 +1732,16 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 				}
 				evt["result"] = s
 			}
-			writeEvt(evt)
+			writeData(evt)
 		}
 		text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
 		if err != nil {
-			writeEvt(map[string]any{"type": "error", "message": err.Error()})
+			writeSSEEvent(w, flusher, "message_error", map[string]any{
+				"turnId": turnID,
+				"error":  err.Error(),
+			})
 			return
 		}
-		// Record usage even for streaming: token counts come back when the
-		// stream completes, so this is a post-send write (safe — the response
-		// headers are already flushed).
 		costUsd := estimateCost(provider, model, int(tin), int(tout))
 		if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, req.AgentName, tin, tout, costUsd, nil); recErr != nil {
 			h.logger().Warn("completions: RecordUsage failed (stream)",
@@ -1379,12 +1750,23 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 				zap.Error(recErr),
 			)
 		}
-		// Emit the final text as a single delta then done so existing UI
-		// reassembly (which concatenates delta.content) just works.
+		// Tool turns buffer internally — emit entire text as one message_delta.
 		if text != "" {
-			writeEvt(map[string]any{"type": "delta", "content": text})
+			writeSSEEvent(w, flusher, "message_delta", map[string]any{
+				"turnId": turnID,
+				"seq":    1,
+				"delta":  text,
+			})
 		}
-		writeEvt(map[string]any{"type": "done"})
+		writeSSEEvent(w, flusher, "message_completed", map[string]any{
+			"turnId": turnID,
+			"text":   text,
+			"usage": map[string]any{
+				"tokensIn":  tin,
+				"tokensOut": tout,
+				"costUsd":   costUsd,
+			},
+		})
 		return
 	}
 

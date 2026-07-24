@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
@@ -577,18 +578,62 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		}
 		h.publishEvent(sessionID, evt, payload)
 	}
-	// Run the tool-call loop. Up to 5 turns of tool use. Auto-falls-over
-	// across providers (anthropic ↔ openai) on retryable errors.
 	// userFacing=true: every session reply reaches a real end-user (bridge
 	// contact, dashboard chat), so the local claude-code CLI must never
 	// appear in the provider chain.
 	const userFacing = true
-	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
-		ctx, tenantID,
-		promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
+
+	// Pre-assign a turn ID for the streaming contract.  The same ID appears in
+	// every message_delta and in the final message_completed so clients can
+	// correlate fragments to their turn.
+	turnID := uuid.New().String()
+	var seq int // monotonic per-turn delta counter; goroutine-local, no atomic needed
+
+	onDelta := func(chunk string) {
+		seq++
+		h.publishDeltaEvent(sessionID, "message_delta", map[string]any{
+			"sessionId": sessionID,
+			"turnId":    turnID,
+			"seq":       seq,
+			"delta":     chunk,
+		})
+	}
+
+	var (
+		result                  string
+		usedProvider, usedModel string
+		tokensIn, tokensOut     int64
+		llmErr                  error
 	)
+
+	if len(tools) == 0 {
+		// Streaming path — onDelta publishes message_delta events per token.
+		// ponytail: tool-bearing turns buffer internally (callLLMWithTools is
+		// non-streaming); for those, we fall to the branch below and emit
+		// message_completed without deltas. Documented limitation.
+		result, usedProvider, usedModel, tokensIn, tokensOut, llmErr = h.llmProxy.streamWithFailover(
+			ctx, tenantID, promptMessages, onDelta, onAttempt, userFacing,
+		)
+	} else {
+		// Non-streaming tool loop — up to 5 turns of tool use.
+		var invs []ToolInvocation
+		result, invs, usedProvider, usedModel, tokensIn, tokensOut, llmErr = h.llmProxy.callLLMWithFailover(
+			ctx, tenantID,
+			promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
+		)
+		_ = invs
+	}
+
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
+		// If a partial stream was started (seq > 0), signal the client to discard it.
+		if seq > 0 {
+			h.publishDeltaEvent(sessionID, "message_error", map[string]any{
+				"sessionId": sessionID,
+				"turnId":    turnID,
+				"error":     "provider error — partial response discarded",
+			})
+		}
 		const errContent = "give me a sec — my brain's a bit busy right now, try me again in a moment"
 		h.appendAssistantMessageWithTools(ctx, sessionID, errContent, persisted)
 		h.publishEvent(sessionID, "agent.message", map[string]string{
@@ -615,6 +660,19 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		)
 	}
 
+	// Publish message_completed (new contract) before the legacy agent.message
+	// so clients that listen for named events receive complete usage metadata.
+	h.publishDeltaEvent(sessionID, "message_completed", map[string]any{
+		"sessionId": sessionID,
+		"turnId":    turnID,
+		"text":      result,
+		"usage": map[string]any{
+			"tokensIn":  tokensIn,
+			"tokensOut": tokensOut,
+			"costUsd":   costUsd,
+		},
+	})
+
 	// Append assistant message (with any persisted tool calls) and publish.
 	h.appendAssistantMessageWithTools(ctx, sessionID, result, persisted)
 	finalMsg := map[string]string{
@@ -628,6 +686,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	if docText != "" {
 		finalMsg["docText"] = docText
 	}
+	// Legacy event kept for backward compatibility — bridges and old clients
+	// subscribe to agent.message; new clients use message_completed above.
 	h.publishEvent(sessionID, "agent.message", finalMsg)
 	h.publishEvent(sessionID, "session.status_idle", map[string]string{})
 }
@@ -678,6 +738,27 @@ func (h *SessionHandler) publishEvent(sessionID, eventType string, data map[stri
 	channel := fmt.Sprintf("session:%s:events", sessionID)
 	if err := h.srv.Redis.Publish(context.Background(), channel, string(payload)).Err(); err != nil {
 		h.logger().Warn("publish event failed", zap.String("session_id", sessionID), zap.Error(err))
+	}
+}
+
+// publishDeltaEvent publishes a named SSE event (message_delta / message_completed /
+// message_error) to the session channel. The "_event" key in the payload tells
+// GetEvents to emit the SSE "event:" line so typed EventSource listeners receive
+// it as a named event while legacy clients (which read all events as "data:" lines)
+// simply see a JSON object they can ignore.
+func (h *SessionHandler) publishDeltaEvent(sessionID, eventName string, payload map[string]any) {
+	payload["_event"] = eventName
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	channel := fmt.Sprintf("session:%s:events", sessionID)
+	if pubErr := h.srv.Redis.Publish(context.Background(), channel, string(data)).Err(); pubErr != nil {
+		h.logger().Warn("publish delta event failed",
+			zap.String("session_id", sessionID),
+			zap.String("event", eventName),
+			zap.Error(pubErr),
+		)
 	}
 }
 
@@ -760,7 +841,24 @@ func (h *SessionHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			// Named SSE events (message_delta / message_completed / message_error) carry
+			// "_event" in the JSON payload. Emit them with an "event:" line so typed
+			// EventSource listeners can subscribe by name. Legacy events have no "_event"
+			// key and are forwarded as plain "data:" lines for backward compatibility.
+			var named struct {
+				Event string `json:"_event"`
+			}
+			_ = json.Unmarshal([]byte(msg.Payload), &named)
+			if named.Event != "" {
+				// Strip "_event" from the data payload before forwarding.
+				var inner map[string]json.RawMessage
+				_ = json.Unmarshal([]byte(msg.Payload), &inner)
+				delete(inner, "_event")
+				data, _ := json.Marshal(inner)
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", named.Event, data)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			}
 			flusher.Flush()
 		}
 	}
