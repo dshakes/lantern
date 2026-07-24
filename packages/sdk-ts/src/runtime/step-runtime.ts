@@ -44,6 +44,8 @@ function parseDuration(s: string): number {
 // Retry policy conversion
 // ---------------------------------------------------------------------------
 
+// Retained seam for the gRPC step-runtime wiring; not yet called.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function toGrpcRetryPolicy(policy: RetryPolicy | undefined) {
   if (!policy) return undefined;
   return {

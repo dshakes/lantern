@@ -548,7 +548,15 @@ class TestBareArrayListResponses:
 
 class TestCreateWireContract:
     async def test_runs_create_sends_agentName(self):
-        t = _MockTransport(body={"id": "r1", "tenantId": "t1", "agentId": "a1", "status": "queued", "createdAt": "2026-01-01T00:00:00Z"})
+        t = _MockTransport(
+            body={
+                "id": "r1",
+                "tenantId": "t1",
+                "agentId": "a1",
+                "status": "queued",
+                "createdAt": "2026-01-01T00:00:00Z",
+            }
+        )
         c = _client(t)
         await c.runs.create(agent="triage", input={"q": "hi"})
         body = json.loads(_last(t).content)
@@ -556,9 +564,100 @@ class TestCreateWireContract:
         assert "agent_name" not in body
 
     async def test_sessions_create_sends_agentName(self):
-        t = _MockTransport(body={"id": "s1", "agentId": "a1", "tenantId": "t1", "status": "active", "createdAt": "2026-01-01T00:00:00Z"})
+        t = _MockTransport(
+            body={
+                "id": "s1",
+                "agentId": "a1",
+                "tenantId": "t1",
+                "status": "active",
+                "createdAt": "2026-01-01T00:00:00Z",
+            }
+        )
         c = _client(t)
         await c.sessions.create(agent="triage")
         body = json.loads(_last(t).content)
         assert body["agentName"] == "triage"
         assert "agent_name" not in body
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION: API returns null for labels (AgentInfo, Run) and a minimal
+# {id, status} body for session create — both previously caused pydantic
+# validation errors crashing every list/create call against the real server.
+# ---------------------------------------------------------------------------
+
+
+class TestNullLabelsCoercion:
+    """labels: null from the API must coerce to {} — not raise a validation error."""
+
+    async def test_agent_null_labels_becomes_empty_dict(self):
+        t = _MockTransport(
+            body=[
+                {
+                    "id": "a1",
+                    "name": "triage",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "labels": None,  # real API returns null when no labels set
+                }
+            ]
+        )
+        c = _client(t)
+        resp = await c.agents.list()
+        assert resp.agents[0].labels == {}
+
+    async def test_run_null_labels_becomes_empty_dict(self):
+        t = _MockTransport(
+            body={
+                "id": "r1",
+                "tenantId": "t1",
+                "agentId": "a1",
+                "status": "queued",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "labels": None,  # real API returns null
+            }
+        )
+        c = _client(t)
+        run = await c.runs.create(agent="triage", input={})
+        assert run.labels == {}
+
+    async def test_agent_missing_labels_key_defaults_to_empty_dict(self):
+        """Key absent entirely (forward-compat) also yields {}."""
+        t = _MockTransport(body=[{"id": "a2", "name": "x", "createdAt": "2026-01-01T00:00:00Z"}])
+        c = _client(t)
+        resp = await c.agents.list()
+        assert resp.agents[0].labels == {}
+
+
+class TestSessionMinimalCreateResponse:
+    """Session CREATE returns only {id, status} — agent_id/tenant_id/created_at must be optional."""
+
+    async def test_session_create_minimal_response_parses(self):
+        # Real server shape from POST /v1/sessions
+        t = _MockTransport(body={"id": "s1", "status": "active"})
+        c = _client(t)
+        sess = await c.sessions.create(agent="hello-test")
+        assert sess.id == "s1"
+        assert sess.status == "active"
+        assert sess.agent_id is None
+        assert sess.tenant_id is None
+        assert sess.created_at is None
+
+    async def test_session_get_full_response_parses(self):
+        # Real server shape from GET /v1/sessions/{id}
+        t = _MockTransport(
+            body={
+                "id": "s2",
+                "tenantId": "t1",
+                "agentName": "hello-test",
+                "status": "active",
+                "messages": [],
+                "createdAt": "2026-07-24T00:45:05-04:00",
+                "updatedAt": "2026-07-24T00:45:05-04:00",
+            }
+        )
+        c = _client(t)
+        sess = await c.sessions.get("s2")
+        assert sess.id == "s2"
+        assert sess.tenant_id == "t1"
+        assert sess.agent_name == "hello-test"
+        assert sess.created_at is not None

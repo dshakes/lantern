@@ -8,10 +8,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+# Coerce null labels from the API (returned as JSON null) to an empty dict.
+# ponytail: targeted BeforeValidator beats a model-level validator here — only labels fields need it.
+_Labels = Annotated[dict[str, str], BeforeValidator(lambda v: v if v is not None else {})]
 
 
 class ApiModel(BaseModel):
@@ -210,7 +214,7 @@ class Run(ApiModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime
-    labels: dict[str, str] = Field(default_factory=dict)
+    labels: _Labels = Field(default_factory=dict)
 
 
 class AgentInfo(ApiModel):
@@ -219,7 +223,7 @@ class AgentInfo(ApiModel):
     description: str | None = None
     current_version_id: str | None = None
     created_at: datetime
-    labels: dict[str, str] = Field(default_factory=dict)
+    labels: _Labels = Field(default_factory=dict)
 
 
 class StreamEvent(ApiModel):
@@ -331,25 +335,43 @@ class GuardrailConfig(ApiModel):
 
 
 class SessionMessage(ApiModel):
-    """A message in a session."""
+    """A message in a session.
 
-    id: str
-    session_id: str
+    The server returns messages with a subset of fields depending on context:
+    - Inside session GET/LIST: ``{role, content, timestamp}`` only (no id/sessionId).
+    - ``created_at`` maps to camelCase ``createdAt``; ``timestamp`` is the
+      server's actual key for per-message time.  Both are optional to handle
+      either shape.
+    """
+
+    id: str | None = None
+    session_id: str | None = None
     role: MessageRole
     content: str
-    created_at: datetime
+    # The server sends "timestamp" (not "createdAt") for in-session messages.
+    timestamp: datetime | None = None
+    created_at: datetime | None = None
 
 
 class Session(ApiModel):
-    """A multi-turn interactive session."""
+    """A multi-turn interactive session.
+
+    ``agent_id`` / ``tenant_id`` / ``created_at`` are optional because the
+    server's CREATE response returns only ``{id, status}``; the GET/LIST
+    responses include the full set. ``agent_name`` captures the server's
+    ``agentName`` field (GET/LIST only).
+    """
 
     id: str
-    agent_id: str
-    tenant_id: str
+    # agent_id is present in GET/LIST (as agentId) but absent from CREATE.
+    agent_id: str | None = None
+    # agentName is the field the real server sends (GET/LIST); agentId is not sent.
+    agent_name: str | None = None
+    tenant_id: str | None = None
     status: str = "active"
     messages: list[SessionMessage] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
+    created_at: datetime | None = None
     updated_at: datetime | None = None
 
 

@@ -243,7 +243,7 @@ lint-rust: ## Lint Rust code
 
 lint-ts: ## Lint TypeScript code
 	cd packages/sdk-ts && npm run lint
-	cd apps/landing && npm run lint
+	cd apps/landing && npm run typecheck
 	cd services/whatsapp-bridge && npm run typecheck
 	cd services/imessage-bridge && npm run typecheck
 

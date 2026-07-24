@@ -424,9 +424,13 @@ func TestNewsListHandler_CategoryFilter(t *testing.T) {
 	peopleURL := fmt.Sprintf("https://example.com/cat-people-%d", time.Now().UnixNano())
 
 	for _, row := range []struct{ url, cat string }{{labsURL, "labs"}, {peopleURL, "people"}} {
+		// Score high enough to rank first under ORDER BY score DESC even on a
+		// dirty dev DB full of real news items — the test asserts category
+		// filtering, not ranking, and LIMIT 100 would otherwise drop a score-0
+		// seed below thousands of live rows.
 		_, err := pool.Exec(ctx, `
 			INSERT INTO news_items (tenant_id, source, category, title, url, score)
-			VALUES ($1, 'Test', $2, 'Cat Test', $3, 0)
+			VALUES ($1, 'Test', $2, 'Cat Test', $3, 100000)
 		`, tenantID, row.cat, row.url)
 		if err != nil {
 			t.Fatalf("seed: %v", err)

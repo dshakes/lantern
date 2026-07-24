@@ -84,10 +84,18 @@ func clientConfig() internal.ClientConfig {
 	}
 
 	// If a stored token exists and no API key was provided, use the token.
-	if cfg.APIKey == "" {
+	// Fall back to the tenant captured at login too — the gRPC trust boundary
+	// requires an explicit tenant_id in metadata, so without this every call
+	// after `lantern login` fails with "missing tenant_id in metadata".
+	if cfg.APIKey == "" || cfg.TenantID == "" {
 		creds, err := internal.LoadCredentials()
-		if err == nil && creds != nil && creds.Token != "" {
-			cfg.APIKey = creds.Token
+		if err == nil && creds != nil {
+			if cfg.APIKey == "" && creds.Token != "" {
+				cfg.APIKey = creds.Token
+			}
+			if cfg.TenantID == "" && creds.TenantID != "" {
+				cfg.TenantID = creds.TenantID
+			}
 		}
 	}
 

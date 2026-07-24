@@ -381,6 +381,11 @@ func (c *Client) GetBudget(ctx context.Context, agentName string) (*Budget, erro
 	return &out, err
 }
 
+// DeleteBudget removes the budget configured for an agent.
+func (c *Client) DeleteBudget(ctx context.Context, agentName string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/agents/"+agentName+"/budget", nil, nil)
+}
+
 // ErrNoBudget is returned by GetBudget when no budget is configured.
 var ErrNoBudget = errors.New("lantern: no budget configured")
 
@@ -393,6 +398,17 @@ type EvalSuite struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description,omitempty"`
 	Cases       []EvalCase `json:"cases"`
+}
+
+// ListEvalSuites returns all eval suites for the tenant, optionally filtered by agentName.
+func (c *Client) ListEvalSuites(ctx context.Context, agentName string) ([]EvalSuite, error) {
+	path := "/v1/eval-suites"
+	if agentName != "" {
+		path += "?agentName=" + url.QueryEscape(agentName)
+	}
+	var out []EvalSuite
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
 }
 
 // UpsertEvalSuite creates or updates an eval suite.

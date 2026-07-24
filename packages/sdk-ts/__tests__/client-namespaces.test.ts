@@ -81,6 +81,29 @@ describe("LanternClient namespaces (wire contract)", () => {
     expect(bodyOf(init)).toEqual({ agentName: "triage", input: "hi" });
   });
 
+  it("runs.forecast accepts a server response with no estimatedCostUsd (noHistoricalData case)", async () => {
+    // Server sends estimatedCostUsd/estimatedTokensIn/estimatedTokensOut as omitempty:
+    // when the agent has no run history the fields are absent. The SDK type must not
+    // declare them required or callers crash accessing .estimatedCostUsd on a new agent.
+    mockFetch({
+      agentName: "triage",
+      model: "gpt-4o",
+      provider: "openai",
+      confidence: 0,
+      calibrated: false,
+      noHistoricalData: true,
+      reasoning: {},
+      wouldExceedBudget: false,
+      // estimatedCostUsd / estimatedTokensIn / estimatedTokensOut intentionally absent
+    });
+    const result = await client.runs.forecast({ agentName: "triage", input: "hi" });
+    expect(result.estimatedCostUsd).toBeUndefined();
+    expect(result.estimatedTokensIn).toBeUndefined();
+    expect(result.estimatedTokensOut).toBeUndefined();
+    expect(result.noHistoricalData).toBe(true);
+    expect(result.wouldExceedBudget).toBe(false);
+  });
+
   // -- sessions -------------------------------------------------------
 
   it("sessions.create posts agentName (not agent_name) to /v1/sessions", async () => {

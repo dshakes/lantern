@@ -247,11 +247,10 @@ func newVmListCommand() *cobra.Command {
 			if len(params) > 0 {
 				q += "?" + strings.Join(params, "&")
 			}
-			res, err := apiGet(q)
+			items, err := apiGetArray(q)
 			if err != nil {
 				return err
 			}
-			items, _ := res["items"].([]any)
 			if len(items) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "(no VMs)")
 				return nil
@@ -259,14 +258,14 @@ func newVmListCommand() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "%-22s  %-10s  %-12s  %-22s  %s\n", "VM ID", "STATE", "ISOLATION", "NODE", "AGE")
 			for _, it := range items {
 				m, _ := it.(map[string]any)
-				id, _ := m["vm_id"].(string)
+				id, _ := m["vmId"].(string)
 				st, _ := m["state"].(string)
-				iso, _ := m["isolation_class"].(string)
+				iso, _ := m["isolationClass"].(string)
 				node, _ := m["node"].(string)
 				if node == "" {
 					node = "(unassigned)"
 				}
-				createdAt, _ := m["created_at"].(string)
+				createdAt, _ := m["createdAt"].(string)
 				age := "?"
 				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
 					age = humanDuration(time.Since(t))
@@ -619,7 +618,7 @@ func apiAuthHeader() string {
 	return ""
 }
 
-func apiDo(method, path string, body []byte) (map[string]any, error) {
+func apiRaw(method, path string, body []byte) ([]byte, error) {
 	req, err := http.NewRequest(method, apiBase()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -640,9 +639,34 @@ func apiDo(method, path string, body []byte) (map[string]any, error) {
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("api %s %s → %d: %s", method, path, resp.StatusCode, string(respBody))
 	}
+	return respBody, nil
+}
+
+func apiDo(method, path string, body []byte) (map[string]any, error) {
+	respBody, err := apiRaw(method, path, body)
+	if err != nil {
+		return nil, err
+	}
 	var out map[string]any
 	if len(respBody) > 0 {
 		_ = json.Unmarshal(respBody, &out)
+	}
+	return out, nil
+}
+
+// apiGetArray fetches an endpoint that returns a bare JSON array (e.g.
+// /v1/runtime/vms). apiDo can't be used for these: it unmarshals into a map,
+// so an array body silently yields an empty map.
+func apiGetArray(path string) ([]any, error) {
+	respBody, err := apiRaw("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []any
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			return nil, fmt.Errorf("parse response: %w", err)
+		}
 	}
 	return out, nil
 }

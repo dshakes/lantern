@@ -54,7 +54,7 @@ class OtelTracer implements Tracer {
   constructor(serviceName: string) {
     try {
       // Dynamic import at construction time; OTel is optional.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const api = require("@opentelemetry/api") as {
         trace: {
           getTracer(name: string): {
