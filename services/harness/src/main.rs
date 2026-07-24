@@ -14,6 +14,7 @@
 
 #![allow(clippy::needless_return)]
 
+mod cc_attest;
 mod egress;
 mod exec;
 mod heartbeat;
@@ -127,6 +128,9 @@ async fn main() -> Result<()> {
             report::run(m, report_rx).await;
         })
     };
+
+    // 2b. CC attestation — best-effort; never blocks or aborts boot.
+    cc_attest::run(&manager).await;
 
     // 3. Secrets server — bind /run/lantern/secrets.sock.
     let secrets = Arc::new(SecretCache::new(

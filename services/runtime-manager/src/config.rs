@@ -57,6 +57,11 @@ pub struct Config {
     /// Optional — when unset the Wasm in-process backend is preferred; when
     /// set the K8s backend uses this class for WASM isolation.
     pub runtimeclass_wasm: Option<String>,
+    /// `runtimeClassName` for confidential-compute (Kata-CC on SEV-SNP/TDX).
+    /// Set via `LANTERN_RUNTIMECLASS_KATA_CC` (e.g. `kata-qemu-snp`).
+    /// When unset, confidential workloads are refused (fail-closed) — a
+    /// non-confidential Kata VM is NOT an acceptable substitute.
+    pub runtimeclass_kata_cc: Option<String>,
     /// Allow STANDARD/UNSPECIFIED/DEVCONTAINER workloads to run on bare runc
     /// (shared-kernel) when gVisor is not configured.
     ///
@@ -127,6 +132,9 @@ impl Config {
         let runtimeclass_wasm = std::env::var("LANTERN_RUNTIMECLASS_WASM")
             .ok()
             .filter(|s| !s.trim().is_empty());
+        let runtimeclass_kata_cc = std::env::var("LANTERN_RUNTIMECLASS_KATA_CC")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
 
         // Explicit developer opt-in: set to "1" or "true" to allow bare runc
         // for STANDARD/UNSPECIFIED/DEVCONTAINER without gVisor.  Default false.
@@ -152,6 +160,7 @@ impl Config {
             runtimeclass_gvisor,
             runtimeclass_kata,
             runtimeclass_wasm,
+            runtimeclass_kata_cc,
             allow_runc_standard,
         })
     }

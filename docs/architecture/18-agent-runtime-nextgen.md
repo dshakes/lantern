@@ -584,12 +584,151 @@ real session, observe takeover hand-back with state preserved); A2A card signatu
 verifies; an MCP tool-poisoning attempt is sanitized at the gateway.
 
 ### Phase 6 — Memory + confidential compute (regulated verticals)
-**Scope:**
+
+#### 6a — Memory (scope, not yet landed)
+
 - Temporal validity windows on facts; memory-mutation audit log; MCP-native memory
   endpoint with async (sleep-time) consolidation; cross-agent CRDT shared memory.
-- SEV-SNP/TDX confidential-compute node pool with attestation for HIPAA/Fed verticals.
-**Gate:** memory-mutation audit completeness test; attestation verification test;
-compliance mapping reviewed.
+
+**Gate:** memory-mutation audit completeness test; compliance mapping reviewed.
+
+#### 6b — Confidential compute
+
+**Status:** placement + measurement recording implemented and unit-tested;
+attestation UNVERIFIED — not validated on SEV-SNP/TDX hardware; not a
+confidentiality guarantee. See [ADR 0023](../adr/0023-confidential-compute.md).
+
+##### What was built
+
+`bool confidential = 17` on `AgentSpec` (`packages/proto/lantern/v1/runtime.proto`)
+— a flag orthogonal to `IsolationClass`. It is not a new isolation-class value; it
+composes with any class (see ADR 0023 for why).
+
+**End-to-end flow:**
+
+```
+Control-plane
+  agent manifest confidential:true
+    → agentSpecDTO → specMap
+    → runtime_vms.confidential = true  (persisted at schedule)
+    → runtime_audit_events             (schedule audit)
+          │
+          │ gRPC ScheduleRequest
+          ▼
+Runtime-scheduler
+  node heartbeat carries CCCapable=true/false + CCTech
+  placement filter: skip node if !CCCapable && workload.Confidential
+  no CC node → "no suitable node" → microvm_unavailable upstream
+          │
+          │ gRPC SpawnRequest
+          ▼
+Runtime-manager  (Rust)
+  Gate 1 — choose_backend:
+    confidential && !backend.satisfies_confidential()
+      → gRPC failed_precondition
+      → log "SECURITY: refusing to schedule"
+      → never downgraded, never silent
+  Isolation floor (apply_confidential_isolation_floor):
+    isolation_class != HOSTILE → upgrade to HOSTILE
+    ALWAYS emits a log line recording the upgrade (audited, never silent)
+  Gate 2 — build_job:
+    confidential && kata_cc.is_none() → bail
+    (defense-in-depth behind gate 1)
+  Selects Kata-CC RuntimeClass (LANTERN_RUNTIMECLASS_KATA_CC)
+  Injects LANTERN_CONFIDENTIAL=1 into pod env
+  Adds node affinity + toleration on lantern.dev/confidential-compute label
+          │
+          │ Kata-CC pod  (SEV-SNP / TDX encrypted VM)
+          ▼
+In-VM harness  (Rust, PID 1)
+  Reads LANTERN_CONFIDENTIAL=1
+  Best-effort measurement read:
+    SEV-SNP: /dev/sev   TDX: configfs-tsm or /dev/tdx_guest
+    Absent → measurement_present=false (frame still emits; no panic)
+  sha256 of raw bytes (raw bytes NEVER logged, invariant #10)
+  Forwards cc_attestation audit frame:
+    { cc_tech, runtime_class, measurement_present,
+      measurement_sha256?, verified:"false" }
+  Frame lands in runtime_audit_events via POST /v1/runtime/report
+```
+
+##### Two fail-closed gates
+
+Both gates are unit-tested and described in detail in ADR 0023. The invariant:
+a confidential workload can only be refused or run on a CC-capable node under
+the Kata-CC RuntimeClass. It is never silently scheduled on a non-CC substrate.
+
+| Gate | Location | Refusal |
+|------|----------|---------|
+| `choose_backend` (gate 1) | `services/runtime-manager/src/service.rs` | `gRPC failed_precondition` + SECURITY log |
+| `build_job` (gate 2) | `services/runtime-manager/src/backends/k8s.rs` | Error return before pod spec is emitted |
+
+##### Isolation floor
+
+`apply_confidential_isolation_floor` in `service.rs`: when `confidential=true`
+and the requested `IsolationClass` is weaker than `HOSTILE`, it is silently
+upgraded to `HOSTILE` (the Kata microVM tier). The upgrade is upgrade-only
+(HOSTILE stays HOSTILE; non-confidential runs are never touched) and emits a
+log line so the upgrade is never invisible.
+
+##### Persistence
+
+Migration `0017_confidential_compute` (`internal/db/migrations/`) adds three
+columns to `runtime_vms`:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `confidential` | `BOOLEAN NOT NULL DEFAULT FALSE` | Set at schedule time from the spec. |
+| `cc_tech` | `TEXT` | Hardware tech (`sev-snp`/`tdx`); filled by the scheduler heartbeat / harness report. |
+| `attestation` | `JSONB` | Harness-reported `cc_attestation` frame. Recording only — **attestation is UNVERIFIED**. |
+
+##### Receipt evidence block
+
+`POST /v1/runs/{id}/receipt` for a confidential run gains an additive
+`confidentialCompute` block. It is absent from every non-confidential run, so
+existing receipt verification is unaffected.
+
+```json
+{
+  "requested": true,
+  "tech": "sev-snp",
+  "runtimeClass": "kata-qemu-snp",
+  "measurementSha256": "<hex, if measurement was readable>",
+  "attested": false
+}
+```
+
+`attested` is **always `false`**. The measurement is recorded, not verified.
+Do not read this block as a confidentiality guarantee.
+
+##### Helm opt-in
+
+```yaml
+# infra/helm/lantern-data-plane/values.yaml
+runtimeManager:
+  runtimeClasses:
+    kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED; empty → confidential refused
+  ccTech: ""        # hint injected as LANTERN_CC_TECH (e.g. "sev-snp")
+```
+
+Operators must label and taint CC nodes:
+
+```
+lantern.dev/confidential-compute=<tech>   # mirrors NFD sev-snp/tdx feature labels
+```
+
+Without this label, confidential pods do not land on CC nodes even if the
+RuntimeClass is installed.
+
+##### What is NOT implemented (v2)
+
+- Remote attestation verification against a reference value store.
+- `VendSecret` gated on a verified quote (attestation-gated secret release).
+- Hardware validation on real SEV-SNP or TDX nodes.
+
+**Gate:** hardware validation on a real CC node (SEV-SNP or TDX) proving the
+measurement path reads a non-empty device; attestation-verifier integration test;
+compliance mapping (HIPAA, FedRAMP) reviewed against what is actually enforced.
 
 ---
 

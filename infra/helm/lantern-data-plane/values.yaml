@@ -81,9 +81,19 @@ runtimeManager:
   # Install the matching node runtime (gVisor/containerd-runsc, Kata Containers)
   # BEFORE setting these. Secure default below: empty → only TRUSTED/STANDARD run.
   runtimeClasses:
-    gvisor: ""      # e.g. "gvisor"     — REQUIRED for UNTRUSTED agents
-    kata: ""        # e.g. "kata-qemu"  — REQUIRED for HOSTILE agents
-    wasm: ""        # optional          — for the WASM isolation class
+    gvisor: ""      # e.g. "gvisor"        — REQUIRED for UNTRUSTED agents
+    kata: ""        # e.g. "kata-qemu"     — REQUIRED for HOSTILE agents
+    wasm: ""        # optional             — for the WASM isolation class
+    # Confidential compute (SEV-SNP/TDX under Kata-CC). REQUIRED for agents that
+    # request `confidential: true`; when empty, confidential workloads FAIL
+    # CLOSED (refused, never downgraded). Opt-in — leave empty unless you run a
+    # CC-capable node pool. See ADR 0023. Operators must ALSO label + taint the
+    # CC nodes `lantern.dev/confidential-compute=<tech>` (mirrors the NFD
+    # sev-snp/tdx feature labels) so confidential pods land only there.
+    kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED for confidential agents
+  # CC hardware technology advertised to the scheduler in the manager heartbeat
+  # (e.g. "sev-snp"/"tdx"); "" when unknown. Recording only.
+  ccTech: ""
 
   # When true, render RuntimeClass objects for the names above (handler = the
   # name). Only enable once the node runtime handlers are installed; a

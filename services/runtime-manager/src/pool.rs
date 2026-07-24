@@ -314,6 +314,7 @@ mod tests {
             image: String::new(),
             network_policy: crate::proto::NetworkPolicyClass::default(),
             egress_rules: vec![],
+            confidential: false,
         }
     }
 

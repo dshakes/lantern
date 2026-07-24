@@ -49,6 +49,10 @@ func (e *Engine) Pick(spec *lanternv1.AgentSpec, hint *lanternv1.PlacementHint, 
 		if n.Draining {
 			return nil, fmt.Errorf("hinted node %q is draining", hint.Node)
 		}
+		// Confidential workloads may only pin to CC-capable nodes.
+		if spec.GetConfidential() && !n.CCCapable {
+			return nil, fmt.Errorf("hinted node %q is not confidential-compute capable", hint.Node)
+		}
 		// Capacity check — the hint is "still validated" (see comment on Pick).
 		// GetNode already applies pending reservations to the returned copy.
 		requiredVcpu, requiredMem := requiredCapacity(spec)
@@ -79,6 +83,12 @@ func (e *Engine) Pick(spec *lanternv1.AgentSpec, hint *lanternv1.PlacementHint, 
 
 	for _, n := range nodes {
 		if n.Draining {
+			continue
+		}
+		// Confidential compute: only place on CC-capable nodes. When no CC node
+		// exists, all candidates are excluded and the "no suitable node" error
+		// below fires (upstream maps that to microvm_unavailable). Never downgrade.
+		if spec.GetConfidential() && !n.CCCapable {
 			continue
 		}
 		if requiredVcpu > 0 && n.FreeVcpuMillis < requiredVcpu {
@@ -140,6 +150,7 @@ func buildWorkload(spec *lanternv1.AgentSpec, softCap, live int) scoring.Workloa
 		TenantLiveVMs:      live,
 		TenantSoftCap:      softCap,
 		ArchitectureLocked: arch == "x86_64" || arch == "amd64",
+		Confidential:       spec.GetConfidential(),
 	}
 }
 

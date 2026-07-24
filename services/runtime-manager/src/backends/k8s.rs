@@ -72,6 +72,10 @@ pub struct RuntimeClassConfig {
     pub kata: Option<String>,
     /// `runtimeClassName` for Wasm pods. Sourced from `LANTERN_RUNTIMECLASS_WASM`.
     pub wasm: Option<String>,
+    /// `runtimeClassName` for confidential compute (Kata-CC on SEV-SNP/TDX).
+    /// Sourced from `LANTERN_RUNTIMECLASS_KATA_CC`. `None` ⇒ the cluster has no
+    /// CC RuntimeClass and confidential workloads are refused (fail-closed).
+    pub kata_cc: Option<String>,
     /// When true, STANDARD/UNSPECIFIED/DEVCONTAINER workloads are allowed to
     /// run on bare runc even when gVisor is not configured.
     /// Sourced from `LANTERN_ALLOW_RUNC_STANDARD`. Default **false** (fail-closed).
@@ -249,8 +253,16 @@ impl K8sBackend {
 /// by [`k8s_satisfies_isolation`]; they should never reach here in that state.
 fn isolation_to_runtime_class(
     class: IsolationClass,
+    confidential: bool,
     cfg: &RuntimeClassConfig,
 ) -> (Option<String>, bool) {
+    // Confidential compute overrides the isolation-class → RuntimeClass mapping:
+    // the workload runs under the Kata-CC RuntimeClass regardless of the class
+    // (the class was already floored to HOSTILE-tier upstream). `None` here means
+    // kata_cc is not configured; the fail-closed gate in `build_job` refuses it.
+    if confidential {
+        return (cfg.kata_cc.clone(), false);
+    }
     match class {
         // TRUSTED → bare runc. Deliberate; no warn needed.
         IsolationClass::Trusted => (None, false),
@@ -335,6 +347,24 @@ fn build_job(
         });
     }
 
+    // Confidential compute: tell the in-VM harness it is running confidentially so
+    // its best-effort launch-measurement attestation frame fires. LANTERN_RUNTIME_CLASS
+    // is the Kata-CC class name; cc_tech is left to in-guest device detection.
+    if req.confidential {
+        env_vars.push(EnvVar {
+            name: "LANTERN_CONFIDENTIAL".to_string(),
+            value: Some("1".to_string()),
+            ..Default::default()
+        });
+        if let Some(cc) = &runtime_classes.kata_cc {
+            env_vars.push(EnvVar {
+                name: "LANTERN_RUNTIME_CLASS".to_string(),
+                value: Some(cc.clone()),
+                ..Default::default()
+            });
+        }
+    }
+
     let mut resource_requests = BTreeMap::new();
     let mut resource_limits = BTreeMap::new();
 
@@ -384,10 +414,22 @@ fn build_job(
 
     let labels = job_labels(req);
 
-    // Resolve the runtimeClassName from the isolation class. The warn flag
-    // fires when STANDARD/DEVCONTAINER gracefully degrades to runc.
+    // Resolve the runtimeClassName from the isolation class (or Kata-CC when
+    // confidential). The warn flag fires when STANDARD/DEVCONTAINER degrades to runc.
     let (runtime_class_name, should_warn) =
-        isolation_to_runtime_class(req.isolation_class, runtime_classes);
+        isolation_to_runtime_class(req.isolation_class, req.confidential, runtime_classes);
+
+    // Fail-closed second gate for confidential compute: defense-in-depth behind
+    // `k8s_satisfies_confidential` in `choose_backend`. A future caller that
+    // bypasses that gate (e.g. warm-pool plumbing) must never emit a
+    // non-confidential pod for a confidential request.
+    if req.confidential && runtime_classes.kata_cc.is_none() {
+        bail!(
+            "confidential workload requires the Kata-CC RuntimeClass but \
+             LANTERN_RUNTIMECLASS_KATA_CC is not configured (or is empty); \
+             refusing to emit a non-confidential pod"
+        );
+    }
 
     // Fail-closed second gate: defense-in-depth behind `k8s_satisfies_isolation`.
     // Any future code path that calls `build_job` directly (e.g. warm-pool
@@ -442,7 +484,7 @@ fn build_job(
     // Compute node affinity + NoSchedule tolerations once; both are derived
     // from the same isolation class + config and must be consistent.
     let (node_affinity, node_tolerations) =
-        node_affinity_and_tolerations(req.isolation_class, runtime_classes);
+        node_affinity_and_tolerations(req.isolation_class, req.confidential, runtime_classes);
 
     Ok(Job {
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
@@ -563,6 +605,16 @@ pub(crate) fn k8s_satisfies_isolation(cfg: &RuntimeClassConfig, class: Isolation
         // TRUSTED → bare runc is its canonical substrate; always accepted.
         IsolationClass::Trusted => true,
     }
+}
+
+/// Pure confidential-compute capability check for the K8s backend.
+///
+/// Fail-closed: confidential compute requires the Kata-CC RuntimeClass
+/// (`LANTERN_RUNTIMECLASS_KATA_CC`) to be configured AND present in the cluster
+/// (the preflight clears it when absent). A regular Kata VM is NOT an acceptable
+/// substitute — it lacks the SEV-SNP/TDX memory-encryption boundary.
+pub(crate) fn k8s_satisfies_confidential(cfg: &RuntimeClassConfig) -> bool {
+    cfg.kata_cc.is_some()
 }
 
 #[async_trait]
@@ -812,6 +864,12 @@ impl RuntimeBackend for K8sBackend {
     /// - HOSTILE: only when the Kata RuntimeClass is configured. Fail-closed.
     fn satisfies_isolation(&self, class: IsolationClass) -> bool {
         k8s_satisfies_isolation(&self.runtime_classes, class)
+    }
+
+    /// K8s satisfies confidential compute only when the Kata-CC RuntimeClass is
+    /// configured (and cluster-present after preflight). Fail-closed otherwise.
+    fn satisfies_confidential(&self) -> bool {
+        k8s_satisfies_confidential(&self.runtime_classes)
     }
 
     /// Execute a one-shot command in the running pod for this job handle.
@@ -1090,9 +1148,49 @@ fn pod_security_context() -> PodSecurityContext {
 /// right node but the taint blocks scheduling.
 fn node_affinity_and_tolerations(
     class: IsolationClass,
+    confidential: bool,
     cfg: &RuntimeClassConfig,
 ) -> (Option<Affinity>, Vec<Toleration>) {
     const NODE_LABEL_KEY: &str = "lantern.dev/runtimeclass";
+    // Confidential-compute node label. Operators label CC-capable nodes
+    // `lantern.dev/confidential-compute=<tech>` (mirroring the NFD
+    // `security.sev.snp`/`intel.tdx` feature labels) and taint them the same key
+    // so only confidential workloads land there. We match on presence (Exists),
+    // not a specific value, so a node advertising either SEV-SNP or TDX qualifies.
+    const CC_NODE_LABEL_KEY: &str = "lantern.dev/confidential-compute";
+
+    // Confidential compute dominates the class-based affinity: a CC node is a
+    // specialised HOSTILE-tier node, so we require the CC label + tolerate its
+    // taint (kata_cc presence is already gated in `build_job`).
+    if confidential && cfg.kata_cc.is_some() {
+        let requirement = NodeSelectorRequirement {
+            key: CC_NODE_LABEL_KEY.to_string(),
+            operator: "Exists".to_string(),
+            values: None,
+        };
+        let term = NodeSelectorTerm {
+            match_expressions: Some(vec![requirement]),
+            match_fields: None,
+        };
+        let affinity = Affinity {
+            node_affinity: Some(NodeAffinity {
+                required_during_scheduling_ignored_during_execution: Some(NodeSelector {
+                    node_selector_terms: vec![term],
+                }),
+                preferred_during_scheduling_ignored_during_execution: None,
+            }),
+            pod_affinity: None,
+            pod_anti_affinity: None,
+        };
+        let toleration = Toleration {
+            key: Some(CC_NODE_LABEL_KEY.to_string()),
+            operator: Some("Exists".to_string()),
+            value: None,
+            effect: Some("NoSchedule".to_string()),
+            toleration_seconds: None,
+        };
+        return (Some(affinity), vec![toleration]);
+    }
 
     let label_value: &str = match class {
         IsolationClass::Untrusted => {
@@ -1361,6 +1459,7 @@ mod tests {
             image: "python:3.11-slim".to_string(),
             network_policy: network,
             egress_rules: egress,
+            confidential: false,
         }
     }
 
@@ -2024,6 +2123,7 @@ mod tests {
             image: "python:3.11-slim".to_string(),
             network_policy: NetworkPolicyClass::None,
             egress_rules: vec![],
+            confidential: false,
         }
     }
 
@@ -2227,6 +2327,120 @@ mod tests {
             msg.contains("LANTERN_RUNTIMECLASS_KATA"),
             "error message must name the config var: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Confidential compute (SEV-SNP/TDX under Kata-CC).
+    // -----------------------------------------------------------------------
+
+    fn make_cc_req(isolation: IsolationClass) -> ScheduleRequest {
+        let mut req = make_req(isolation);
+        req.confidential = true;
+        req
+    }
+
+    // Capability: false without kata_cc, true with it (fail-closed default).
+    #[test]
+    fn k8s_satisfies_confidential_false_without_kata_cc() {
+        assert!(
+            !k8s_satisfies_confidential(&RuntimeClassConfig::default()),
+            "confidential must be refused when Kata-CC RuntimeClass is not configured"
+        );
+    }
+
+    #[test]
+    fn k8s_satisfies_confidential_true_with_kata_cc() {
+        let cfg = RuntimeClassConfig {
+            kata_cc: Some("kata-qemu-snp".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            k8s_satisfies_confidential(&cfg),
+            "confidential must be accepted when Kata-CC RuntimeClass is configured"
+        );
+    }
+
+    // Load-bearing refusal: build_job refuses a confidential workload when the
+    // Kata-CC RuntimeClass is absent — a non-confidential pod is never acceptable.
+    #[test]
+    fn build_job_confidential_without_kata_cc_is_err() {
+        let req = make_cc_req(IsolationClass::Hostile);
+        let result = build_job(
+            &req,
+            "img",
+            "job-cc-no-kata-cc",
+            "ns",
+            &RuntimeClassConfig {
+                // Regular Kata present but NOT Kata-CC — must still refuse.
+                kata: Some("kata-qemu".to_string()),
+                kata_cc: None,
+                ..Default::default()
+            },
+        );
+        let err = result.expect_err(
+            "confidential with no Kata-CC config must fail — a non-confidential pod is never acceptable",
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("confidential"),
+            "error must name confidential: {msg}"
+        );
+        assert!(
+            msg.contains("LANTERN_RUNTIMECLASS_KATA_CC"),
+            "error must name the config var: {msg}"
+        );
+    }
+
+    // Confidential selects the Kata-CC RuntimeClass regardless of isolation class.
+    #[test]
+    fn isolation_to_runtime_class_confidential_picks_kata_cc() {
+        let cfg = RuntimeClassConfig {
+            gvisor: Some("gvisor".to_string()),
+            kata: Some("kata-qemu".to_string()),
+            kata_cc: Some("kata-qemu-snp".to_string()),
+            ..Default::default()
+        };
+        // Even a TRUSTED class, when confidential, resolves to Kata-CC.
+        let (rc, warn) = isolation_to_runtime_class(IsolationClass::Trusted, true, &cfg);
+        assert_eq!(
+            rc.as_deref(),
+            Some("kata-qemu-snp"),
+            "confidential must select the Kata-CC RuntimeClass, not kata/gvisor"
+        );
+        assert!(!warn, "no runc-degradation warning for confidential");
+    }
+
+    // Confidential pods get the CC node affinity + toleration.
+    #[test]
+    fn build_job_confidential_gets_cc_node_affinity() {
+        let req = make_cc_req(IsolationClass::Hostile);
+        let job = build_job(
+            &req,
+            "img",
+            "job-cc-affinity",
+            "ns",
+            &RuntimeClassConfig {
+                kata_cc: Some("kata-qemu-snp".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with Kata-CC configured");
+
+        assert_eq!(
+            affinity_label_key(&job).as_deref(),
+            Some("lantern.dev/confidential-compute"),
+            "confidential pods must require the CC node label"
+        );
+        // The pod runs under the Kata-CC RuntimeClass.
+        let rc = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.runtime_class_name.clone());
+        assert_eq!(rc.as_deref(), Some("kata-qemu-snp"));
+        // And tolerates the CC node taint.
+        let tol = first_toleration(&job).expect("confidential pod must have a toleration");
+        assert_eq!(tol.key.as_deref(), Some("lantern.dev/confidential-compute"));
     }
 
     // -----------------------------------------------------------------------

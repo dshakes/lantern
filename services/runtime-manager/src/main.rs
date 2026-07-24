@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
                 gvisor: config.runtimeclass_gvisor.clone(),
                 kata: config.runtimeclass_kata.clone(),
                 wasm: config.runtimeclass_wasm.clone(),
+                kata_cc: config.runtimeclass_kata_cc.clone(),
                 allow_runc_standard: config.allow_runc_standard,
                 node_label_gvisor: std::env::var("LANTERN_NODE_LABEL_GVISOR")
                     .ok()
@@ -104,6 +105,16 @@ async fn main() -> anyhow::Result<()> {
     };
 
     tracing::info!(backend = backend.name(), "runtime backend initialized");
+
+    // Confidential-compute capability advertised to the scheduler. `cc_capable`
+    // is sourced from the backend (K8s returns true only when the Kata-CC
+    // RuntimeClass is configured + cluster-present after preflight); `cc_tech` is
+    // the operator-declared hardware technology (SEV-SNP/TDX), empty when unset.
+    let cc_capable = backend.satisfies_confidential();
+    let cc_tech = std::env::var("LANTERN_CC_TECH")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_default();
 
     // Secret resolver — build() selects the relay (ADR 0008) when both
     // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
@@ -149,6 +160,8 @@ async fn main() -> anyhow::Result<()> {
         advertise_addr: config.node_advertise_addr.clone(),
         region: config.node_region.clone(),
         zone: config.node_zone.clone(),
+        cc_capable,
+        cc_tech,
     });
 
     tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");
