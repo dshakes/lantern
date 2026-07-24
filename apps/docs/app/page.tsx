@@ -121,6 +121,13 @@ export default function DocsHome() {
         Your prompts, tokens, and data never leave your VPC.
         The control plane orchestrates by metadata — your cloud executes.
       </p>
+      <p>
+        <strong>What is Lantern?</strong> It&apos;s the infrastructure that runs
+        your AI agents in production — so you don&apos;t have to build crash
+        recovery, spending limits, sandboxing, or audit trails yourself. You
+        write the agent; Lantern makes sure it finishes what it started, never
+        overspends, can&apos;t escape its sandbox, and can prove what it did.
+      </p>
 
       <pre>
         <code>{`lantern dev      # Postgres · Redis · API · dashboard · a live agent`}</code>
@@ -167,6 +174,13 @@ export default function DocsHome() {
 
       {/* ── Feature grid ──────────────────────────────────────────────── */}
       <h2 id="features">What the runtime gives you</h2>
+      <p>
+        Six things every production agent needs and almost nobody wants to
+        build: the ability to survive a crash, a safe place to run untrusted
+        code, live output as it happens, visibility into what ran, a spending
+        cap that actually stops a run, and a way to catch quality regressions
+        before your users do.
+      </p>
       <div className="card-grid">
         {features.map((f) => (
           <Link key={f.href} href={f.href} className="card lp-feature-card">

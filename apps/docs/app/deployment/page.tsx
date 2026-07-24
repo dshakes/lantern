@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Diagram } from "../_components/Diagram";
+import { Concept } from "../_components/Concept";
 
 export default function DeploymentPage() {
   return (
@@ -9,13 +10,24 @@ export default function DeploymentPage() {
         Lantern splits into a <strong>control plane</strong> (scheduling, routing, dashboard) and a <strong>data plane</strong> (microVMs, execution, secrets). The data plane runs in your cloud — agent data never leaves your VPC.
       </p>
 
+      <Concept>
+        Two halves: the <em>control plane</em> is the brain (dashboards,
+        scheduling, budgets — it decides what should run), and the{" "}
+        <em>data plane</em> is the muscle (where agent code actually executes,
+        with your API keys and your data). The point of the split: you can keep
+        the muscle inside your own cloud account, so prompts, credentials, and
+        customer data never leave your infrastructure — while the brain is run
+        for you as a service. Pick the mix that fits: fully managed, hybrid, or
+        everything self-hosted.
+      </Concept>
+
       <h2 id="architecture">Architecture — the CP/DP split</h2>
       <Diagram
-        name="lantern-architecture.svg"
+        name="lantern-architecture"
         caption="The full system: channels → gateways → control plane → your data plane. The control plane never runs user code."
       />
       <Diagram
-        name="cp-dp-architecture.svg"
+        name="cp-dp-architecture"
         caption="What crosses the boundary: specs, identity, and trace context go down; heartbeats, step events, and audit come back. Token-authenticated (mTLS hardening planned) — prompts and data never leave your VPC."
       />
 

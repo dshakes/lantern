@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { Concept } from "../_components/Concept";
+
 export default function ApiReferencePage() {
   return (
     <>
@@ -8,6 +11,14 @@ export default function ApiReferencePage() {
         require a Bearer API key. Auth and internal endpoints use separate
         mechanisms described below.
       </p>
+
+      <Concept>
+        Everything in Lantern — the dashboard, the CLI, the SDKs — talks to
+        this one HTTP API. This page is the raw reference for when you want to
+        call it directly with <code>curl</code> or your own code. If you&apos;d
+        rather not hand-write requests, the <Link href="/sdk">SDKs</Link> wrap
+        all of these endpoints in typed methods.
+      </Concept>
 
       <h2 id="auth">Authentication</h2>
       <p>

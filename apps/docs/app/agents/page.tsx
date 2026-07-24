@@ -1,15 +1,25 @@
 import Link from "next/link";
+import { Concept } from "../_components/Concept";
 
 export default function AgentsPage() {
   return (
     <>
       <h1>Agents</h1>
       <p>
-        Agents are the core unit of work in Lantern. An agent is a durable
-        function that receives input, executes a series of steps (LLM calls,
-        tool invocations, API requests), and produces output. This page covers
-        how to create, configure, test, run, and schedule agents.
+        Agents are the core unit of work in Lantern. An agent receives input,
+        works through a series of steps (LLM calls, tool invocations, API
+        requests), and produces output. This page covers how to create,
+        configure, test, run, and schedule agents.
       </p>
+
+      <Concept>
+        Think of an agent as a job description for an AI: who it is, what
+        it&apos;s allowed to use, and how it should behave. Once defined, you
+        can run it on demand, on a schedule, or in response to a message or
+        webhook — and Lantern keeps a full record of everything it does. If the
+        machine running it crashes mid-task, the agent picks up where it left
+        off rather than starting over.
+      </Concept>
 
       <h2 id="create">Creating an agent</h2>
       <p>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BrandGrid } from "../_components/Brands";
+import { Concept } from "../_components/Concept";
 
 export default function SurfacesPage() {
   return (
@@ -10,6 +11,14 @@ export default function SurfacesPage() {
         with agents. Lantern supports 7 built-in surfaces, all two-way —
         agents reply in the same channel you messaged from.
       </p>
+
+      <Concept>
+        A surface is where people talk to your agent. Rather than making
+        everyone visit a dashboard, you put the agent where the conversation
+        already happens — WhatsApp, Slack, a phone call, a chat widget on your
+        site. Same agent, same memory, same guardrails on every channel; the
+        surface only changes the doorway.
+      </Concept>
 
       <BrandGrid items={[
         { name: "WhatsApp", sub: "Baileys · self-host", href: "#whatsapp" },

@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function SdkReferencePage() {
   return (
     <>
@@ -8,6 +10,14 @@ export default function SdkReferencePage() {
         agents, runs, sessions, connectors, budgets, evals, experiments,
         marketplace, MCP, receipts, feedback, and rehearsals.
       </p>
+
+      <Concept>
+        The SDK is the same Lantern API you&apos;ve seen in these docs, wrapped
+        in a typed library so you call <code>client.runs.create(...)</code>{" "}
+        from your own code instead of hand-writing HTTP requests. Everything
+        the dashboard can do, the SDK can do — use it to trigger agents from
+        your app, wire runs into your backend, or script bulk operations.
+      </Concept>
 
       <h2 id="typescript">TypeScript SDK</h2>
 

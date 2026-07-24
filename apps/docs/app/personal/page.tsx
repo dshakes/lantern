@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../_components/Concept";
 import { PersonalHarnessArchitecture } from "../_components/PersonalHarnessArchitecture";
 import { PersonalHarnessDiagram } from "../_components/PersonalHarnessDiagram";
 import { AgentLoop } from "../_components/AgentLoop";
@@ -17,6 +18,16 @@ export default function PersonalHarnessPage() {
         owner-only and local, with nothing about your whereabouts ever revealed
         to a contact.
       </p>
+
+      <Concept>
+        This is Lantern as a personal assistant that lives in your own
+        messaging apps. It reads incoming texts on your Mac, drafts replies in
+        your voice, keeps track of who people are and what you last talked
+        about, and handles routine follow-ups — while you stay in control:
+        risky replies come to you as drafts first, a thumbs-down teaches it,
+        and a kill switch stops everything. Nothing here runs in anyone
+        else&apos;s cloud; your conversations stay on your machine.
+      </Concept>
 
       <h2 id="harness">The harness, end to end</h2>
       <p>

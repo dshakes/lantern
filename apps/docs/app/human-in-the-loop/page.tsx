@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function HumanInTheLoopPage() {
   return (
     <>
@@ -9,6 +11,16 @@ export default function HumanInTheLoopPage() {
         steps). Both use the same takeover API to record the human decision and
         resume the workflow.
       </p>
+
+      <Concept>
+        Some actions are too consequential to let an AI take alone — sending an
+        email to 500 customers, issuing a refund, deleting records. Human-in-
+        the-loop means the agent stops at those moments and asks a person
+        first. You can place the checkpoint yourself (an approval step in the
+        workflow), or let Lantern add one automatically whenever the agent
+        seems unsure of what it&apos;s about to do. While waiting for your
+        answer, the run costs nothing — it&apos;s parked, not spinning.
+      </Concept>
 
       <h2 id="approval">Approval workflow nodes</h2>
       <p>

@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function EvaluationsPage() {
   return (
     <>
@@ -8,6 +10,16 @@ export default function EvaluationsPage() {
         experiments, and collecting human feedback — all from the same API the
         dashboard uses.
       </p>
+
+      <Concept>
+        How do you know your agent is actually good — and stays good after you
+        change its prompt? Evaluations are the answer: a set of example
+        questions with known-good answers that you run against the agent like a
+        test suite. Pin today&apos;s score as your baseline, and if a future
+        change makes the agent worse, Lantern blocks it in CI before your users
+        ever see the regression. A/B experiments and thumbs-up/down feedback
+        feed the same loop.
+      </Concept>
 
       <h2 id="eval-suites">Eval suites</h2>
       <p>
