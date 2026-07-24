@@ -5,6 +5,16 @@
 - **Deciders:** Lantern runtime, workflow-engine
 - **Tags:** runtime, workflow-engine, proto, tool-execution
 
+> **Status note (2026-07):** the in-guest tool runner named below as the follow-up
+> has **since shipped** (`services/harness/src/tool_runner.rs`). For the
+> **Firecracker** backend `exec_tool` now forwards the call to the harness over a
+> JSON-over-`Exec` channel (magic command `__lantern_tool_call__`, port 50056) and
+> maps the harness result: `ok:true` → `TOOL_STATUS_OK` + result, `ok:false` →
+> `TOOL_STATUS_ERROR`, harness unreachable → `TOOL_STATUS_UNAVAILABLE`. Built-in
+> tools today are `shell_exec` and `http_fetch` (the latter routed through the
+> egress proxy). `TOOL_STATUS_UNAVAILABLE` now means only "no reachable harness" or
+> "non-Firecracker backend" — see the corrected sections below.
+
 ## Context
 
 The workflow engine executes `tool_call` steps (`services/workflow-engine/internal/engine/step_executor.go`).
@@ -79,20 +89,24 @@ build/backend" without string-matching error text. The engine maps:
 The engine derives `idempotency_key = run_id:step_id:attempt` (invariant #8) and
 forwards it so the manager can de-duplicate a retried tool side-effect.
 
-### Honest server-side status (this change)
+### Honest server-side status
 
-There is **no in-VM single-tool dispatch path yet** — the harness serves a raw
-`Exec` (shell) channel, not a typed tool registry. The Rust handler
-(`services/runtime-manager/src/service.rs::exec_tool`) therefore:
+*As originally written (P2-B3), there was no in-VM tool dispatch path and the
+handler returned `TOOL_STATUS_UNAVAILABLE` — never a fabricated `OK`. That
+follow-up has since shipped.* The Rust handler
+(`services/runtime-manager/src/service.rs::exec_tool`) today:
 
 1. validates the request (`tool_name` required; `vm_id` or `run_id` required);
 2. `NOT_FOUND`s an explicit `vm_id` that is not in the registry;
-3. otherwise returns `TOOL_STATUS_UNAVAILABLE` with a clear reason — **not** a
-   fabricated `OK`.
+3. for a **Firecracker** VM with a connected harness, forwards the call to the
+   in-guest tool runner (`services/harness/src/tool_runner.rs`) and maps its
+   outcome: `ok:true` → `TOOL_STATUS_OK` + `result`, `ok:false` →
+   `TOOL_STATUS_ERROR`;
+4. for a **non-Firecracker** backend or an **unreachable** harness, returns
+   `TOOL_STATUS_UNAVAILABLE` with a clear reason — **not** a fabricated `OK`.
 
-When the in-guest tool-runner lands, the `UNAVAILABLE` branch is swapped for a
-forward to the harness that maps its outcome onto `OK`/`ERROR` + `result`. The
-wire contract and the engine wiring do not change at that point.
+The wire contract and the engine wiring are unchanged from the original design;
+only step 3's placeholder was swapped for the real harness forward.
 
 ## Code generation
 
@@ -116,9 +130,10 @@ at compile time.
 
 ### Negative
 
-1. The server side is honest-but-incomplete: `ExecTool` returns `UNAVAILABLE`
-   until the in-guest tool-runner ships. Workflows that use `tool_call` steps
-   still fail (visibly) until then — by design, not silently.
+1. `ExecTool` is wired end-to-end for the Firecracker backend (the in-guest tool
+   runner has shipped). It still returns a visible `UNAVAILABLE` — never a
+   fabricated success — for non-Firecracker backends or an unreachable harness, so
+   `tool_call` steps on those paths fail visibly by design, not silently.
 2. One more RPC on `RuntimeManager` to maintain across the Go stubs and the
    Rust server.
 

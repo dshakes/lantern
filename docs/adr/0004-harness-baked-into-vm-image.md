@@ -5,6 +5,13 @@
 - **Deciders:** Lantern runtime team
 - **Tags:** runtime, harness, security, boot
 
+> **Note (2026-07):** the harness ships baked into the image as decided. The
+> egress-enforcement *mechanism* referenced below has since been implemented as an
+> in-VM HTTP CONNECT proxy at `127.0.0.1:3128` plus an **iptables REDIRECT** to it,
+> with **nftables applied on the host** (worker node) as the outer DROP — not
+> nftables inside the guest. See [ADR 0006](0006-egress-allowlist-at-harness.md) and
+> `services/harness/src/egress.rs`.
+
 ## Context
 
 Every Lantern microVM runs an in-guest init process — the **harness**. It is PID 1 in the guest, supervises the worker, terminates the `Heartbeat` / `VendSecret` / `Report` streams to the manager (see `RuntimeHarness` in `runtime.proto`), and enforces the egress allowlist from inside the guest.
@@ -35,7 +42,7 @@ Snapshots are taken *after* the harness has booted and is waiting on its first h
 2. **Smaller trusted boot surface.** No virtio-fs share, no manager-prepared initramfs. The boot path is `kernel → init=/sbin/lantern-harness`, nothing else.
 3. **Auditability.** The harness binary is signed when the base image is built and the digest is in the image manifest. We can prove which harness ran a given workload from `agent_versions.bundle_digest`.
 4. **Simpler manager.** No per-VM filesystem prep step on spawn. The Firecracker driver is just "boot this image with these resources."
-5. **Egress allowlist works at boot.** The nftables rules are applied by the harness *before* the worker exec, so there is no window where the worker can talk to the internet unfiltered.
+5. **Egress allowlist works at boot.** The in-VM CONNECT proxy + iptables REDIRECT rule are applied/verified by the harness *before* the worker exec (fail-closed in prod when the REDIRECT is absent), so there is no window where the worker can talk to the internet unfiltered.
 
 ### Negative
 
