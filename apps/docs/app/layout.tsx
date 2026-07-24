@@ -69,10 +69,16 @@ const sections: NavSection[] = [
       { href: "/runtime/isolation#decision", label: "Decision tree" }, { href: "/runtime/isolation#classes", label: "The classes" }, { href: "/runtime/isolation#fail-closed", label: "Fail-closed gate" },
     ]},
     { href: "/runtime/durable-execution", label: "Durable Execution", icon: Clock, subs: [
-      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#completedstep", label: "CompletedStep replay" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery sweep" }, { href: "/runtime/durable-execution#retry", label: "Per-step retry" },
+      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#completedstep", label: "CompletedStep replay" }, { href: "/runtime/durable-execution#retry", label: "Per-step retry" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery sweep" }, { href: "/runtime/durable-execution#microvm-resume", label: "MicroVM resume" },
+    ]},
+    { href: "/runtime/streaming", label: "Token Streaming", icon: BarChart3, subs: [
+      { href: "/runtime/streaming#events", label: "The three events" }, { href: "/runtime/streaming#sdk", label: "SDK streamMessage()" }, { href: "/runtime/streaming#sse", label: "SSE transport" }, { href: "/runtime/streaming#provider", label: "Provider streaming" },
+    ]},
+    { href: "/runtime/sessions-and-memory", label: "Sessions & Memory", icon: Brain, subs: [
+      { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
     ]},
     { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
-      { href: "/runtime/observability#trace", label: "Span attributes" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "Metrics endpoint" },
+      { href: "/runtime/observability#span-attrs", label: "Span attributes" }, { href: "/runtime/observability#otel-metrics", label: "lantern.run.* metrics" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "VM metrics" },
     ]},
     { href: "/runtime/identity", label: "Identity & Secrets", icon: Code, subs: [
       { href: "/runtime/identity#identity", label: "Per-instance identity" }, { href: "/runtime/identity#vending", label: "Secret vending" }, { href: "/runtime/identity#ref-form", label: "Ref form" },
