@@ -416,6 +416,11 @@ export interface SessionEvent {
   timestamp: string;
 }
 
+/** Discriminated-union events yielded by `sessions.streamMessage()`. */
+export type SessionStreamEvent =
+  | { type: "delta"; delta: string }
+  | { type: "completed"; text: string; usage: { tokensIn: number; tokensOut: number; costUsd: number } };
+
 // ---------------------------------------------------------------------------
 // Connectors
 // ---------------------------------------------------------------------------
