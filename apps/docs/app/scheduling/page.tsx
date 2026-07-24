@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../_components/Concept";
 
 export default function SchedulingPage() {
   return (
@@ -9,6 +10,16 @@ export default function SchedulingPage() {
         so one agent can have many schedules with different inputs and timezones.
         They are managed through <code>/v1/schedules</code>.
       </p>
+
+      <Concept>
+        A schedule makes an agent run itself — &quot;every weekday at 9am,
+        summarize my inbox&quot; — with no one clicking a button. The
+        &quot;cron expression&quot; below is just the standard shorthand for
+        describing when: five fields for minute, hour, day, month, and weekday.
+        You can attach several schedules to one agent, each with its own input
+        and its own timezone, and every scheduled run shows up in the dashboard
+        like any other.
+      </Concept>
 
       <h2 id="cron">Cron expressions</h2>
       <p>

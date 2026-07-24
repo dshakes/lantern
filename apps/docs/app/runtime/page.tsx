@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ShieldCheck, Lock, Activity } from "lucide-react";
 import { Diagram } from "../_components/Diagram";
+import { Concept } from "../_components/Concept";
 
 // Tier comparison — reuses .prose table styles, no new CSS needed.
 function TierTable() {
@@ -50,6 +51,17 @@ export default function RuntimeOverviewPage() {
         caller.
       </p>
 
+      <Concept>
+        The runtime is the engine room — the part of Lantern that actually
+        executes your agents. The one decision you make is trust: agents
+        running code you wrote go in the fast <em>shared</em> lane, and agents
+        running code you don&apos;t fully trust (user uploads, arbitrary shell
+        commands, packages from the internet) go in the <em>microVM</em> lane,
+        where each run gets its own tiny disposable virtual machine that
+        can&apos;t touch anything else. Everything downstream — crash recovery,
+        live streaming, receipts — works the same in both lanes.
+      </Concept>
+
       {/* Hero diagram — clickable runtime map */}
       <Diagram
         name="runtime-map"
@@ -64,9 +76,15 @@ export default function RuntimeOverviewPage() {
 
       <h2 id="tiers">Two tiers, one journal</h2>
       <p>
-        Both tiers write to the same <code>journal_events</code> table. The run
-        waterfall, Ed25519 receipts, and crash-replay are tier-agnostic — there
-        is no second event store.
+        The journal is the runtime&apos;s flight recorder: every step of every
+        run is written down before it executes, in one place, regardless of
+        which tier ran it. That one habit is what makes crash recovery, the
+        dashboard waterfall, and signed receipts possible.
+      </p>
+      <p>
+        Concretely: both tiers write to the same <code>journal_events</code>{" "}
+        table. The run waterfall, Ed25519 receipts, and crash-replay are
+        tier-agnostic — there is no second event store.
       </p>
       <TierTable />
 

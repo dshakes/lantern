@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function SecurityPage() {
   return (
     <>
@@ -7,6 +9,17 @@ export default function SecurityPage() {
         Security is not an add-on -- it is built into every layer of the
         architecture, from the microVM runtime to the model router.
       </p>
+
+      <Concept>
+        Three questions this page answers. Can one customer&apos;s agent ever
+        see another customer&apos;s data? (No — every record is fenced by
+        tenant, enforced down to the database row.) What happens if an agent
+        runs malicious code? (It&apos;s trapped in its own micro virtual
+        machine with no network access beyond an explicit allowlist.) Can you
+        prove what an agent did? (Yes — every run ends with a
+        cryptographically signed receipt anyone can verify.) Everything below
+        is labeled shipped or planned — no vaporware.
+      </Concept>
 
       <div className="callout callout-warning">
         <strong>Status note (2026-06-23):</strong> The controls described below

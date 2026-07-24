@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function BudgetsPage() {
   return (
     <>
@@ -9,6 +11,15 @@ export default function BudgetsPage() {
         <code>POST /v1/runs/forecast</code> to check whether a run would exceed
         budget before submitting it.
       </p>
+
+      <Concept>
+        AI agents spend real money with every model call — and a buggy loop can
+        burn through a month&apos;s budget in an afternoon. A budget is a
+        spending cap you set per agent: dollars per day, dollars per run, or
+        even &quot;this agent may only send 10 emails a day&quot;. With hard-fail
+        on, Lantern refuses to start a run that would blow the cap — the money
+        is never spent, rather than flagged after the fact.
+      </Concept>
 
       <h2 id="policy">Setting a budget</h2>
       <pre>

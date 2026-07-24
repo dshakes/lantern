@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeReceiptsPage() {
   return (
@@ -11,6 +12,16 @@ export default function RuntimeReceiptsPage() {
         journal hash, so any post-hoc edit to the run&apos;s event log
         invalidates the signature.
       </p>
+
+      <Concept>
+        A receipt is proof, not a promise. When an agent claims &quot;I did
+        the task&quot;, the receipt lets anyone — an auditor, a customer, a
+        counterparty who doesn&apos;t trust you — check that claim
+        mathematically: which agent ran, what steps it took, what it cost, and
+        that nobody edited the record afterward. Verification needs no Lantern
+        account and no running server; the signature either checks out or it
+        doesn&apos;t.
+      </Concept>
 
       <h2 id="what">What a receipt attests</h2>
       <p>

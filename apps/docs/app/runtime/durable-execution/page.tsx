@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeDurableExecutionPage() {
   return (
@@ -12,6 +13,17 @@ export default function RuntimeDurableExecutionPage() {
         event-sourced <code>journal_events</code> table and a{" "}
         <code>CompletedStep</code> replay gate.
       </p>
+
+      <Concept>
+        Imagine an agent that&apos;s three steps into a five-step task —
+        it&apos;s already sent an email and spent money on model calls — and
+        the server restarts. Without durability you&apos;d either lose the run
+        or start over and send that email twice. Lantern writes each step to
+        the database the moment it finishes, like a checkpoint in a video
+        game. After a crash, the run reloads at the last checkpoint: finished
+        steps are skipped (their saved results are reused), and only the
+        unfinished work runs again.
+      </Concept>
 
       <Diagram
         name="durable-execution"

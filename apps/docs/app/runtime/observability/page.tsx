@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeObservabilityPage() {
   return (
@@ -8,6 +9,16 @@ export default function RuntimeObservabilityPage() {
       <p>
         One OTel trace per spawn, GenAI token telemetry, real-time anomaly detection — wired through standard OpenTelemetry.
       </p>
+
+      <Concept>
+        Observability answers &quot;what is my agent doing right now, and what
+        did it do last Tuesday?&quot; Every run produces a trace — a timeline
+        of each step with its timing, model, tokens, and cost — and every
+        trace is tagged with who, which run, and which step, so you can filter
+        straight to the one that matters. It plugs into the monitoring tools
+        teams already use (Grafana, Datadog, anything OpenTelemetry-
+        compatible), and it&apos;s free when switched off.
+      </Concept>
 
       <Diagram
         name="observability-flow"

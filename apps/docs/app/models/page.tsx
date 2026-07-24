@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function ModelsPage() {
   return (
     <>
@@ -9,6 +11,15 @@ export default function ModelsPage() {
         providers at runtime. You never hardcode a vendor model name in agent
         code.
       </p>
+
+      <Concept>
+        Instead of telling Lantern &quot;use GPT-4o&quot; or &quot;use
+        Claude&quot;, you tell it what kind of intelligence the task needs —
+        deep reasoning, quick chat, image understanding, code. Lantern picks the
+        best available model that fits. The payoff: when a better or cheaper
+        model ships, or a provider has an outage, your agents keep working
+        without a single code change.
+      </Concept>
 
       <h2 id="providers">Supported providers</h2>
       <p>

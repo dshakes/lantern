@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeIdentityPage() {
   return (
@@ -11,6 +12,18 @@ export default function RuntimeIdentityPage() {
         variable on disk. The two are linked: the per-instance identity is what
         authenticates the secret-vending call.
       </p>
+
+      <Concept>
+        Agents need API keys to do their jobs — and API keys are exactly what
+        an attacker wants. Lantern&apos;s approach: never put the real key
+        anywhere the agent&apos;s code can casually find it. The agent config
+        holds only a reference (a name, not a value); the actual key is handed
+        over at the last possible second, expires quickly, and is delivered
+        only to a process that can cryptographically prove it is the agent it
+        claims to be. Each spawn also gets its own identity — like a
+        single-use employee badge — so anything it does can be traced back to
+        exactly that one run.
+      </Concept>
 
       <h2 id="identity">Per-instance Ed25519 identity</h2>
       <p>

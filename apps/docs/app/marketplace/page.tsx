@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function MarketplacePage() {
   return (
     <>
@@ -8,6 +10,16 @@ export default function MarketplacePage() {
         with A2A Agent Cards, it enables cross-platform agent discovery and
         interop.
       </p>
+
+      <Concept>
+        The marketplace is an app store for agents. Instead of building from
+        scratch, browse what others have published, fork one into your own
+        workspace (your private copy — the author never sees your data), and
+        customize it. &quot;A2A&quot; is the emerging open standard that lets
+        agents discover and call each other across platforms — an agent card is
+        simply the public résumé an agent publishes so others know what it can
+        do.
+      </Concept>
 
       <h2 id="what">What is the Marketplace</h2>
       <p>

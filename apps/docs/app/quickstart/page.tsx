@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../_components/Concept";
 
 export default function QuickStartPage() {
   return (
@@ -7,6 +8,14 @@ export default function QuickStartPage() {
       <p>
         Create an agent, run it, and watch the real-time event stream — in 5 minutes.
       </p>
+
+      <Concept>
+        Three words you&apos;ll see everywhere in Lantern. An <em>agent</em> is
+        an AI worker you define with a name and instructions. A <em>run</em> is
+        one execution of that agent — you give it input, it works, it returns
+        output. The <em>event stream</em> is the live play-by-play of a run, so
+        you can watch each step as it happens instead of waiting for the end.
+      </Concept>
 
       <div className="callout callout-info">
         <strong>Verify your stack first: <code>lantern doctor</code></strong>

@@ -1,3 +1,5 @@
+import { Concept } from "../_components/Concept";
+
 export default function CliPage() {
   return (
     <>
@@ -7,6 +9,15 @@ export default function CliPage() {
         covers the entire development lifecycle: local dev, agent iteration,
         run inspection, headless VM management, and data-plane infra.
       </p>
+
+      <Concept>
+        The CLI is Lantern in your terminal — one installed command,{" "}
+        <code>lantern</code>, that starts the local stack, creates and runs
+        agents, tails live output, and checks that everything is healthy. If
+        you&apos;re just getting started, you only need two of its commands:{" "}
+        <code>lantern dev</code> to boot everything and{" "}
+        <code>lantern onboard</code> to be walked through your first agent.
+      </Concept>
 
       <h3>Install</h3>
       <pre>

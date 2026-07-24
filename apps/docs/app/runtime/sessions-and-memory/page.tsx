@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeSessionsAndMemoryPage() {
   return (
@@ -10,6 +11,16 @@ export default function RuntimeSessionsAndMemoryPage() {
         preferences distilled by the LLM from raw session transcripts and
         timeline events, stored and re-injected into future sessions.
       </p>
+
+      <Concept>
+        A session is a conversation — the back-and-forth kind, where the agent
+        remembers what you said two messages ago. Memory is what survives
+        after the conversation ends: instead of storing every word forever,
+        Lantern periodically distills transcripts into durable facts
+        (&quot;prefers morning meetings&quot;, &quot;works at Acme&quot;) and
+        quietly brings those facts into future conversations. Talk to the
+        agent next month and it still knows you.
+      </Concept>
 
       <h2 id="sessions">Sessions</h2>
       <p>

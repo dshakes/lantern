@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeQuickstartPage() {
   return (
@@ -11,6 +12,16 @@ export default function RuntimeQuickstartPage() {
         <a href="https://github.com/dshakes/lantern/tree/master/examples/headless-agents" target="_blank" rel="noopener noreferrer"><code>examples/headless-agents/</code></a>{" "}
         are the reference; this page builds the smallest one from scratch.
       </p>
+
+      <Concept>
+        &quot;Headless&quot; means no conversation — this kind of agent is a
+        background worker, not a chatbot. You package your code as a container
+        image, describe it in a short <code>agent.yaml</code> file (what to
+        run, how much CPU and memory, how strong a sandbox, which sites it may
+        reach), and hand it to Lantern. Lantern finds a machine, builds the
+        sandbox, runs it, streams the logs, and cleans up. This guide walks
+        that full loop once with the smallest possible example.
+      </Concept>
 
       <h2 id="prerequisites">Prerequisites</h2>
       <p>

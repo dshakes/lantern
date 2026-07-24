@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeIsolationPage() {
   return (
@@ -12,6 +13,17 @@ export default function RuntimeIsolationPage() {
         isolation is a tier on the pod, not a separate backend (
         <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0009-kubernetes-default-runtime-substrate.md" target="_blank" rel="noopener noreferrer">ADR 0009</a>).
       </p>
+
+      <Concept>
+        An isolation class answers one question: how strong should the walls
+        around this agent be? Code you wrote yourself gets normal walls. Code
+        that pulls packages from the internet or was written by an LLM gets a
+        sandbox that fakes the operating system. Truly hostile input gets a
+        full virtual machine — its own kernel, its own everything. You declare
+        the level once in the agent&apos;s config; if the cluster can&apos;t
+        provide walls that strong, Lantern refuses to run the workload rather
+        than quietly using weaker ones.
+      </Concept>
 
       <Diagram
         name="isolation-ladder"

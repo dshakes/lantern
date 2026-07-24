@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Concept } from "../_components/Concept";
 
 export default function InstallationPage() {
   return (
@@ -7,6 +8,15 @@ export default function InstallationPage() {
       <p>
         Clone, start the stack, verify it&apos;s healthy — under two minutes.
       </p>
+
+      <Concept>
+        The &quot;stack&quot; is everything Lantern needs to run on your laptop:
+        a database that remembers your agents and their runs (Postgres), a fast
+        in-memory helper for live updates (Redis), file storage for agent
+        bundles (MinIO), the API server that does the work, and the dashboard
+        you&apos;ll use in the browser. One command starts all of it — you
+        don&apos;t need to know how any individual piece works to use Lantern.
+      </Concept>
 
       <div className="steps">
 

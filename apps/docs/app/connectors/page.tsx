@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { BrandGrid } from "../_components/Brands";
+import { Concept } from "../_components/Concept";
 
 export default function ConnectorsPage() {
   return (
@@ -10,6 +12,16 @@ export default function ConnectorsPage() {
         and write to that service -- searching emails, creating GitHub issues,
         posting Slack messages, and more.
       </p>
+
+      <Concept>
+        A connector is how you give an agent hands. On its own, an agent can
+        only think and answer; connect Gmail and it can search your inbox,
+        connect Slack and it can post to a channel, connect Stripe and it can
+        look up a payment. You sign in to each service once (usually a normal
+        OAuth &quot;Allow&quot; screen), and every agent you authorize can then
+        use it — with per-tool rate limits from{" "}
+        <Link href="/budgets">Budgets</Link> keeping usage in check.
+      </Concept>
 
       <BrandGrid items={[
         { name: "Gmail", sub: "read · search · send", href: "#email-calendar" },

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
+import { Concept } from "../../_components/Concept";
 
 export default function RuntimeStreamingPage() {
   return (
@@ -11,6 +12,18 @@ export default function RuntimeStreamingPage() {
         sequence of three named SSE events on{" "}
         <code>GET /v1/sessions/&#123;id&#125;/events</code>.
       </p>
+
+      <Concept>
+        Streaming is why chat UIs feel alive: instead of waiting ten seconds
+        for a finished answer, words appear as the model writes them. Lantern
+        passes each fragment (&quot;token&quot;) straight through to your app
+        the moment it arrives — nothing along the path holds the response back
+        to deliver it in one lump. Your app listens on a single long-lived
+        HTTP connection (&quot;SSE&quot; — server-sent events, the same
+        technique every chat product uses) and receives three kinds of
+        messages: a fragment arrived, the reply finished, or something went
+        wrong.
+      </Concept>
 
       <Diagram
         name="streaming-sequence"
