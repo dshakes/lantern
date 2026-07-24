@@ -39,9 +39,14 @@ Boot all three runtime services + wire them together via env vars:
 
 ```bash
 # Terminal 1 — runtime-manager (Rust, the per-node sandbox executor)
+# SCHEDULER_URL and NODE_ADVERTISE_ADDR let it self-register with the scheduler.
+# Without them the scheduler has no nodes and all placements fail.
 cd services/runtime-manager
 LISTEN_ADDR=0.0.0.0:50054 \
   RUNTIME_BACKEND=docker \
+  SCHEDULER_URL=http://localhost:8085 \
+  NODE_NAME=local-dev \
+  NODE_ADVERTISE_ADDR=localhost:50054 \
   cargo run
 
 # Terminal 2 — runtime-scheduler (Go, placement)
@@ -60,6 +65,7 @@ Log lines to grep for:
 - control-plane: `gRPC scheduler client wired`
 - scheduler: `using gRPC manager dialer`
 - runtime-manager: `gRPC server starting`
+- runtime-manager: `heartbeat ok` (confirms node registration with the scheduler)
 
 ### Single-tier run (stub fallback, for quick UI work)
 
@@ -119,29 +125,55 @@ In the dashboard: open <http://localhost:3001/runtime>. You'll see:
 ## 3. Quotas (HTTP 402 enforcement)
 
 ```bash
-# Pin a tight quota
+# Pin the concurrent-VM hard cap to 1. Docker containers for local dev exit
+# fast (< 1s), so the slot frees before the next request lands — use a
+# sleep-based image to hold the slot open for a few seconds.
 curl -s -X PUT http://localhost:8080/v1/runtime/quota \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"max_concurrent_vms":1,"max_cost_usd_per_day":0.01}' | jq
+  -d '{"max_concurrent_vms":1,"max_cost_usd_per_day":100}' | jq
 
-# Schedule 3 in a row — second/third should 402
-for i in 1 2 3; do
-  curl -s -o /dev/null -w "attempt $i → HTTP %{http_code}\n" \
-    -X POST http://localhost:8080/v1/runtime/schedule \
-    -H "Authorization: Bearer $TOKEN" \
-    -H 'Content-Type: application/json' \
-    -d '{"image_digest":"sha256:test","isolation_class":"trusted"}'
-done
+# Schedule a long-running VM (sleep 10)
+VM_ID=$(curl -s -X POST http://localhost:8080/v1/runtime/schedule \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"imageDigest":"python:3.12-alpine","isolation":"trusted","command":["sleep","10"]}' \
+  | jq -r .vmId)
+echo "first VM: $VM_ID"
+
+# Immediately try to schedule a second — should 402
+curl -s -o /dev/null -w "attempt 2 → HTTP %{http_code}\n" \
+  -X POST http://localhost:8080/v1/runtime/schedule \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"imageDigest":"python:3.12-alpine","isolation":"trusted","command":["sleep","10"]}'
+
+# Reset to generous limits after the test
+curl -s -X PUT http://localhost:8080/v1/runtime/quota \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"max_concurrent_vms":20,"max_cost_usd_per_day":100}' | jq
 ```
 
-Expected:
+Expected: `attempt 2 → HTTP 402`.
 
-```
-attempt 1 → HTTP 200
-attempt 2 → HTTP 402
-attempt 3 → HTTP 402
-```
+> **Note:** Without the harness as PID 1 (local Docker dev path), container
+> exit is not propagated back to the control-plane, so VMs stay `running` in
+> `runtime_vms` until the reconciler's next sweep or until you terminate them
+> explicitly. The concurrent-VM quota check queries `runtime_vms` for live
+> rows. If you ran many earlier tests, mark them terminated before this test:
+>
+> ```bash
+> # Terminate all open test VMs so the DB count is clean
+> curl -s 'http://localhost:8080/v1/runtime/vms?state=running' \
+>   -H "Authorization: Bearer $TOKEN" | \
+>   jq -r '.[].vmId' | \
+>   xargs -I{} curl -s -X DELETE "http://localhost:8080/v1/runtime/vms/{}?grace=0s" \
+>     -H "Authorization: Bearer $TOKEN" > /dev/null
+> ```
+>
+> A `sleep`-based command holds the first slot open long enough that the
+> second request definitively 402s.
 
 Inspect via CLI:
 
@@ -157,7 +189,7 @@ Every schedule / terminate / exec writes a row to `runtime_audit_events`:
 
 ```bash
 curl -s http://localhost:8080/v1/runtime/audit \
-  -H "Authorization: Bearer $TOKEN" | jq '.items[:5]'
+  -H "Authorization: Bearer $TOKEN" | jq '.events[:5]'
 ```
 
 The dashboard's per-VM debug view renders the same data in the

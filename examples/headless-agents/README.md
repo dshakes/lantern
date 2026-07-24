@@ -48,16 +48,23 @@ make run-scheduler
 make run-api-runtime
 
 # Build all four demo images locally
-make -C examples/headless-agents build-all
+docker build -t lantern/demos/hello:latest examples/headless-agents/01-hello
+docker build -t lantern/demos/web-scraper:latest examples/headless-agents/02-web-scraper
+docker build -t lantern/demos/stateful-research:latest examples/headless-agents/03-stateful-research
+docker build -t lantern/demos/ml-inference:latest examples/headless-agents/04-ml-inference
 
 # Schedule + tail logs for one demo
 lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
-# Or via REST directly
+# Or via REST directly (imageDigest field, camelCase)
 curl -X POST http://localhost:8080/v1/runtime/schedule \
   -H "Authorization: Bearer $LANTERN_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @examples/headless-agents/01-hello/spec.json
+  -d '{
+    "imageDigest": "lantern/demos/hello:latest",
+    "isolation": "trusted",
+    "limits": {"vcpu": "100m", "memory": "64Mi", "timeout_secs": 30}
+  }'
 ```
 
 The dashboard at `localhost:3001/runtime` shows the live VM, its log stream,

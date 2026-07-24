@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,14 +90,21 @@ Examples:
 			if err != nil {
 				return err
 			}
-			vmID, _ := res["vm_id"].(string)
+			// Server returns camelCase vmId; accept snake_case vm_id and
+			// handle.vm_id for backward-compat / alternate response shapes.
+			vmID, _ := res["vmId"].(string)
+			if vmID == "" {
+				vmID, _ = res["vm_id"].(string)
+			}
 			if vmID == "" {
 				if h, ok := res["handle"].(map[string]any); ok {
-					vmID, _ = h["vm_id"].(string)
+					if vmID, _ = h["vmId"].(string); vmID == "" {
+						vmID, _ = h["vm_id"].(string)
+					}
 				}
 			}
 			if vmID == "" {
-				return fmt.Errorf("schedule response missing vm_id: %v", res)
+				return fmt.Errorf("schedule response missing vmId: %v", res)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "scheduled vm_id=%s\n", vmID)
 
@@ -127,6 +135,95 @@ func newVmCommand() *cobra.Command {
 	cmd.AddCommand(newVmExecCommand())
 	cmd.AddCommand(newVmClusterCommand())
 	cmd.AddCommand(newVmQuotaCommand())
+	cmd.AddCommand(newVmValidateCommand())
+	return cmd
+}
+
+// newVmValidateCommand — `lantern vm validate`
+//
+// Shells scripts/validate-cluster.sh to run the gVisor/Kata cluster validation
+// harness. Requires kubectl and a KUBECONFIG pointing at a real cluster; exits
+// non-zero if any runnable leg fails; SKIPPED legs (RuntimeClass absent) are
+// not treated as failures.
+func newVmValidateCommand() *cobra.Command {
+	var (
+		kubeconfig string
+		context    string
+		report     string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate gVisor/Kata isolation on a real cluster (operator harness)",
+		Long: `Runs the cluster validation harness against an operator-provided Kubernetes
+cluster. Performs preflight checks, runs the always-on isolation legs
+(egress default-deny, securityContext, PSA, fail-closed RuntimeClass refusal),
+then runs the gVisor execution leg (g) and Kata execution legs (h/i) — each
+leg is SKIPPED (not failed) when the required RuntimeClass is absent, so an
+operator can validate incrementally as they provision sandbox node pools.
+
+Requires: kubectl in PATH, KUBECONFIG pointing at the target cluster.
+
+Examples:
+  lantern vm validate --kubeconfig ~/.kube/gke-sandbox.yaml
+  KUBECONFIG=~/.kube/gke-sandbox.yaml lantern vm validate
+  lantern vm validate --kubeconfig ./k.yaml --context gke_project_us-central1_cluster
+  lantern vm validate --report /tmp/validation-$(date +%Y%m%d).md
+
+Setup (GKE Agent Sandbox + Kata):
+  infra/k8s/gke-agent-sandbox-setup.sh
+
+See also: docs/runbooks/cluster-validation.md`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repoRoot, err := findRepoRoot()
+			if err != nil {
+				return fmt.Errorf("locate repo root: %w (run from inside the Lantern repo)", err)
+			}
+
+			scriptPath := filepath.Join(repoRoot, "scripts", "validate-cluster.sh")
+			if _, err := os.Stat(scriptPath); err != nil {
+				return fmt.Errorf("validate-cluster.sh not found at %s: %w", scriptPath, err)
+			}
+
+			argv := []string{scriptPath}
+			if kubeconfig != "" {
+				argv = append(argv, "--kubeconfig", kubeconfig)
+			}
+			if context != "" {
+				argv = append(argv, "--context", context)
+			}
+			if report != "" {
+				argv = append(argv, "--report", report)
+			}
+
+			c := exec.Command("bash", argv...)
+			c.Stdout = cmd.OutOrStdout()
+			c.Stderr = cmd.ErrOrStderr()
+			c.Dir = repoRoot
+
+			// Pass the caller's environment so KUBECONFIG, LANTERN_*, etc. are visible.
+			c.Env = os.Environ()
+
+			if err := c.Run(); err != nil {
+				// exec.ExitError carries the script's exit code; surface it cleanly.
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					return fmt.Errorf("cluster validation failed (exit %d) — see output above",
+						exitErr.ExitCode())
+				}
+				return fmt.Errorf("run validate-cluster.sh: %w", err)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "",
+		"Path to kubeconfig file (default: $KUBECONFIG env or current context)")
+	cmd.Flags().StringVar(&context, "context", "",
+		"Kubernetes context to use (default: current-context in kubeconfig)")
+	cmd.Flags().StringVar(&report, "report", "",
+		"Path for the markdown report (default: cluster-validation-report.md in cwd)")
+
 	return cmd
 }
 

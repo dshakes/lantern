@@ -16,7 +16,7 @@ docker build -t lantern/demos/hello:latest examples/headless-agents/01-hello
 lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
 # Watch the live log in the dashboard
-open http://localhost:3000/runtime
+open http://localhost:3001/runtime
 ```
 
 ## What you'll see end-to-end

@@ -359,7 +359,7 @@ func main() {
 
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
-	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		// JSON body so dev-doctor (and humans) can see runtime config at a
 		// glance — most importantly which LLM routing mode is active so
 		// the user knows whether they're spending API credits or not.
@@ -369,9 +369,29 @@ func main() {
 		if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
 			llmMode = "claude-code-local"
 		}
+
+		// RLS readiness fields — safe to expose (no secret material, only booleans).
+		rlsEnforce := os.Getenv("LANTERN_RLS_ENFORCE") == "1"
+		appPoolActive := rlsEnforce && os.Getenv("LANTERN_APP_DB_PASSWORD") != ""
+
+		// Check whether the lantern_app role exists. Best-effort: if the DB is
+		// unreachable the field reports false rather than erroring the health probe.
+		var lanternAppRoleExists bool
+		ctx, cancel := r.Context(), func() {}
+		if deadline, ok := r.Context().Deadline(); !ok || time.Until(deadline) > 2*time.Second {
+			ctx, cancel = context.WithTimeout(r.Context(), 2*time.Second)
+		}
+		defer cancel()
+		_ = pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app')`,
+		).Scan(&lanternAppRoleExists)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"ok","llmMode":%q}`+"\n", llmMode)
+		fmt.Fprintf(w,
+			`{"status":"ok","llmMode":%q,"rlsEnforce":%v,"appPoolActive":%v,"lanternAppRoleExists":%v}`+"\n",
+			llmMode, rlsEnforce, appPoolActive, lanternAppRoleExists,
+		)
 	})
 	httpMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

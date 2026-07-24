@@ -1,4 +1,4 @@
-.PHONY: help dev build test test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -49,6 +49,9 @@ run-runtime-manager: ## Run the Rust runtime-manager locally on :50054 (Docker b
 	LISTEN_ADDR="0.0.0.0:50054" \
 	RUNTIME_BACKEND="docker" \
 	LOG_LEVEL="debug" \
+	SCHEDULER_URL="http://localhost:8085" \
+	NODE_NAME="local-dev" \
+	NODE_ADVERTISE_ADDR="localhost:50054" \
 	cargo run
 
 run-api-runtime: ## Run the control-plane API wired to the real runtime-scheduler at :50055
@@ -124,6 +127,9 @@ local-kind: ## Set up a local Kind cluster with Helm
 
 k8s-validate: ## Validate K8s Job isolation end-to-end on a throwaway kind cluster (Calico-enforced default-deny + seccomp + cap-drop)
 	@bash infra/k8s/validate.sh
+
+validate-cluster: ## Run gVisor/Kata cluster validation against KUBECONFIG=<path> (operator harness; closes README "live Kata" gap)
+	@bash scripts/validate-cluster.sh
 
 seed: ## Seed sample data into running services
 	./scripts/seed-data.sh
@@ -219,6 +225,9 @@ test-db: ## Start dev Postgres if needed, then run Go tests that require a live 
 	cd services/runtime-scheduler && \
 		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 		go test -race -count=1 ./...
+
+rls-validate: ## Validate RLS policies + handler cutover before flipping LANTERN_RLS_ENFORCE=1
+	@bash scripts/rls-validate.sh
 
 # ---------- Lint ----------
 

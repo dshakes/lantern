@@ -1,0 +1,14 @@
+{
+  "imageDigest": "lantern/demos/hello:latest",
+  "isolation": "trusted",
+  "limits": {
+    "vcpu": "100m",
+    "memory": "64Mi",
+    "timeout_secs": 30
+  },
+  "command": ["sh", "-c", "echo '{\"name\":\"Ada\"}' | python /app/workload.py"],
+  "env": {
+    "LANTERN_RUN_ID": "run-hello-local",
+    "LANTERN_VM_ID": "vm-hello-local"
+  }
+}
