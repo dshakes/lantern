@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   GitCompare,
   X,
+  Clapperboard,
 } from "lucide-react";
+import clsx from "clsx";
 import { api } from "@/lib/api";
 import { useRun, useRunEvents } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
@@ -47,6 +49,9 @@ export default function RunDetailPage() {
 
   const [cancelled, setCancelled] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // Flight recorder mode — gates the time-travel cockpit chrome.
+  const [recorderMode, setRecorderMode] = useState(false);
 
   // Run compare (regression diffing) — entering a second run id stacks its
   // trace below this one. Held behind a control; off by default (clean).
@@ -198,13 +203,32 @@ export default function RunDetailPage() {
         <div className="flex flex-[2] flex-col overflow-hidden border-r border-zinc-800/40">
           {events.length > 0 && (
             <div className="border-b border-zinc-800/40 p-4">
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="font-mono text-[11px] text-zinc-500">{run.id}</span>
-                <StatusBadge status={effectiveStatus} />
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] text-zinc-500">{run.id}</span>
+                  <StatusBadge status={effectiveStatus} />
+                </div>
+                {/* Flight recorder toggle */}
+                <button
+                  type="button"
+                  onClick={() => setRecorderMode((m) => !m)}
+                  className={clsx(
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    recorderMode
+                      ? "bg-lantern-600/20 text-lantern-300 ring-1 ring-lantern-500/30"
+                      : "bg-surface-2 text-zinc-400 hover:bg-surface-3 hover:text-zinc-200",
+                  )}
+                  title={recorderMode ? "Exit flight recorder" : "Enter flight recorder"}
+                >
+                  <Clapperboard className="h-3 w-3" />
+                  Flight recorder
+                </button>
               </div>
               <FlightRecorder
                 events={events}
                 running={isRunning}
+                recorderMode={recorderMode}
+                status={effectiveStatus}
                 totals={{
                   costUsd: run.costUsd,
                   tokensIn: run.tokensIn,
