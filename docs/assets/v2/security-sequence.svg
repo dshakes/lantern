@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="510" viewBox="0 0 1240 510"
+     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+     role="img" aria-label="Security flow: JWT caller → Control Plane → Data Plane, with secret vending, audit, and signed receipt">
+  <title>Security sequence — schedule, vend, audit, receipt</title>
+  <defs>
+    <radialGradient id="lgv" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="lgg" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <!-- backdrop -->
+  <rect width="1240" height="510" rx="16" fill="#0a0908"/>
+  <rect width="1240" height="510" rx="16" fill="url(#lgv)"/>
+  <rect width="1240" height="510" rx="16" fill="none" stroke="#2a2118"/>
+
+  <!-- title -->
+  <text x="32" y="38" fill="#fdf8ef" font-size="20" font-weight="700" filter="url(#lgg)">Security sequence</text>
+  <text x="244" y="38" fill="#a89e8f" font-size="13">schedule → quota gate → identity mint → spawn → secret vend → audit → signed receipt</text>
+
+  <!-- ── Participants ── -->
+  <!-- U: Caller (JWT) -->
+  <rect x="30" y="55" width="200" height="52" rx="8" fill="#171310" stroke="#4a3b28"/>
+  <text x="130" y="78" fill="#fbbf24" font-size="12" font-weight="700" text-anchor="middle">Caller</text>
+  <text x="130" y="96" fill="#a89e8f" font-size="10" text-anchor="middle">JWT · RBAC: runtime:write</text>
+
+  <!-- CP: Control Plane -->
+  <rect x="480" y="55" width="220" height="52" rx="8" fill="#1e1813" stroke="#f59e0b"/>
+  <text x="590" y="78" fill="#fbbf24" font-size="12" font-weight="700" text-anchor="middle">Control Plane</text>
+  <text x="590" y="96" fill="#a89e8f" font-size="10" text-anchor="middle">SaaS · :8080 / :50051</text>
+
+  <!-- DP: Data Plane -->
+  <rect x="960" y="55" width="240" height="52" rx="8" fill="#0c1512" stroke="#2dd4bf"/>
+  <text x="1080" y="78" fill="#5eead4" font-size="12" font-weight="700" text-anchor="middle">Data Plane</text>
+  <text x="1080" y="96" fill="#a89e8f" font-size="10" text-anchor="middle">agent instance · in-VM harness</text>
+
+  <!-- Lifelines -->
+  <line x1="130" y1="107" x2="130" y2="478" stroke="#3a2f24" stroke-dasharray="3,5" stroke-width="1.5"/>
+  <line x1="590" y1="107" x2="590" y2="478" stroke="#3a2f24" stroke-dasharray="3,5" stroke-width="1.5"/>
+  <line x1="1080" y1="107" x2="1080" y2="478" stroke="#3a2f24" stroke-dasharray="3,5" stroke-width="1.5"/>
+
+  <!-- Activation bars -->
+  <rect x="586" y="148" width="8" height="310" rx="2" fill="#f59e0b" fill-opacity="0.25"/>
+  <rect x="1076" y="310" width="8" height="110" rx="2" fill="#2dd4bf" fill-opacity="0.25"/>
+
+  <!-- ── Message 1: U → CP: schedule ── -->
+  <line x1="132" y1="152" x2="582" y2="152" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#ab)"/>
+  <text x="358" y="143" fill="#f5f0e8" font-size="11" font-weight="600" text-anchor="middle">schedule(AgentSpec)</text>
+  <text x="358" y="167" fill="#a89e8f" font-size="9.5" text-anchor="middle">RBAC: runtime:write · gRPC with tenant_id in metadata</text>
+
+  <!-- ── Message 2: CP self-loop: quota + budget ── -->
+  <path d="M594,195 L648,195 L648,217 L594,217" fill="none" stroke="#2dd4bf" stroke-width="1.4"/>
+  <circle cx="594" cy="206" r="3" fill="#2dd4bf" fill-opacity="0.6"/>
+  <text x="656" y="202" fill="#5eead4" font-size="11" font-weight="600">quota + budget gate</text>
+  <text x="656" y="218" fill="#a89e8f" font-size="9.5">pre-run forecast · HTTP 402 if over cap</text>
+
+  <!-- ── Message 3: CP self-loop: mint identity ── -->
+  <path d="M594,250 L664,250 L664,272 L594,272" fill="none" stroke="#f59e0b" stroke-width="1.4"/>
+  <circle cx="594" cy="261" r="3" fill="#f59e0b" fill-opacity="0.6"/>
+  <text x="672" y="257" fill="#fbbf24" font-size="11" font-weight="600">mint per-instance identity</text>
+  <text x="672" y="273" fill="#a89e8f" font-size="9.5">HS256 agent-instance JWT · injected as LANTERN_AGENT_INSTANCE_TOKEN</text>
+
+  <!-- ── Message 4: CP → DP: spawn ── -->
+  <line x1="598" y1="312" x2="1072" y2="312" stroke="#2dd4bf" stroke-width="1.6" marker-end="url(#ag)"/>
+  <text x="836" y="303" fill="#f5f0e8" font-size="11" font-weight="600" text-anchor="middle">spawn(authenticated tenant · injected identity)</text>
+  <text x="836" y="327" fill="#a89e8f" font-size="9.5" text-anchor="middle">RuntimeClass tier · pod securityContext · NetworkPolicy deny</text>
+
+  <!-- ── Message 5: DP → CP: vend secret ── -->
+  <line x1="1072" y1="362" x2="598" y2="362" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="836" y="353" fill="#f5f0e8" font-size="11" font-weight="600" text-anchor="middle">vend secret (token-auth + instance token · mTLS planned)</text>
+  <text x="836" y="377" fill="#a89e8f" font-size="9.5" text-anchor="middle">SO_PEERCRED peer-auth · short-TTL response</text>
+
+  <!-- ── Message 6: DP -->> CP: audit events (dashed) ── -->
+  <line x1="1072" y1="412" x2="598" y2="412" stroke="#8a7d6b" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#a)"/>
+  <text x="836" y="403" fill="#a89e8f" font-size="11" font-weight="600" text-anchor="middle">audit events (agent_instance_id)</text>
+  <text x="836" y="426" fill="#8a7d6b" font-size="9.5" text-anchor="middle">streamed to journal_events · immutable · never dropped</text>
+
+  <!-- ── Message 7: CP → U: signed receipt ── -->
+  <line x1="582" y1="463" x2="138" y2="463" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#av)"/>
+  <text x="358" y="454" fill="#f5f0e8" font-size="11" font-weight="600" text-anchor="middle">Ed25519-signed receipt</text>
+  <text x="358" y="478" fill="#a89e8f" font-size="9.5" text-anchor="middle">covers journal SHA-256 · verify offline at /proof (no auth required)</text>
+</svg>

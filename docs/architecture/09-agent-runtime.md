@@ -16,7 +16,7 @@ Every agent run executes in one of two tiers. The tier is a property of the **ag
 | Executor | Goroutine inside the control-plane (`executeRunInlineSync`) | W12 stack: scheduler → manager → VM harness |
 | Typical latency | ~50–200ms to first token | ~150ms (warm pool) to ~1.5s (cold boot) |
 | Checkpointing | `journal_events` per step; crash-replay via recovery sweep | `journal_events` via harness→manager report path |
-| Crash resume | Recovery sweep re-drives within 30s | VM lifecycle owns it; recovery sweep skips microVM runs |
+| Crash resume | Recovery sweep re-drives within 30s | Recovery sweep re-schedules (same `run_id`, `LANTERN_RESUME=1`, ≤3 attempts); exhausted → `microvm_resume_exhausted` |
 | Isolation | Trust boundary: same OS process as control-plane | Separate kernel (gVisor) or separate hypervisor (Kata microVM) |
 | Egress control | Outbound allowed (trust-first-party code) | Harness enforces allowlist + iptables REDIRECT; deny-default |
 | Secret vending | Resolved inline via `lantern.secret/…` refs | Short-TTL JWT over vsock; harness caches with declared TTL |
@@ -63,6 +63,8 @@ Any of these creates a run on the shared tier (when the agent has no `isolation`
 3. A goroutine calls `executeRunInline(runID, tenantID, agentName, input)`, which calls `executeRunInlineSync` synchronously inside the goroutine.
 4. The `runs` row flips to `status=running`.
 
+**Valid `runs.status` values:** `queued` → `running` → `succeeded` | `failed` | `waiting` | `cancelled`. `waiting` means the run is parked at an approval node (lease released, goroutine freed). `cancelled` is set by `CancelRun`.
+
 ### Step execution {#step-execution}
 
 `executeRunInlineSync` drives either:
@@ -90,9 +92,11 @@ Events:
 | `step_completed` | After the side-effect completes successfully |
 | `step_failed` | After a non-retryable failure |
 | `step_retrying` | Between attempts (includes `attempt`, `of`, `error`) |
+| `step_waiting` | Workflow hit an approval/park node; `runs.status` set to `waiting` and lease released |
 | `microvm:schedule` | Shared-tier journal event for microVM-tier dispatch |
 | `anomaly_detected` | Token budget breach mid-run |
-| `confidence_evaluated` | Confidence gate decision (when enabled) |
+| `confidence_evaluated` | Confidence gate decision (when enabled); payload includes `score`, `threshold`, `decision`, `estimator` |
+| `confidence_gate_bypassed` | Gated node bypassed because `WaitForApproval` is nil (no handler wired) |
 
 The run waterfall in the dashboard (`apps/web/app/(dashboard)/runs/[id]`) reads these events via `GET /v1/runs/{id}/events` (SSE) to render the step timeline.
 
@@ -109,7 +113,14 @@ The run waterfall in the dashboard (`apps/web/app/(dashboard)/runs/[id]`) reads 
 3. For each candidate: attempts the `run_locks` UPSERT. The winning replica proceeds; losers skip silently.
 4. The winner calls `redriveRun` → `runWorkflowIfPresent` / `executeRunInlineSync`.
 
-**MicroVM runs are skipped by the recovery sweep.** The VM lifecycle (scheduler + manager) owns those; the sweep touching them would race with the scheduler's own state machine.
+**MicroVM runs are handled differently by the recovery sweep.** When a run's `manifest.isolation` is `"microvm"`, `redriveRun` delegates to `resumeMicroVMRun` instead of the inline executor. That function:
+
+1. Checks for a live (non-terminal) VM for the run — if one exists, the VM is self-managing and the sweep returns immediately.
+2. Counts all `runtime_vms` rows for the run (resume attempts so far).
+3. If the count equals or exceeds `maxMicroVMResumeAttempts` (3), marks the run `failed` with error code `microvm_resume_exhausted`.
+4. Otherwise re-schedules a new VM via `scheduleAgentSpec`, injecting `LANTERN_RESUME=1` into the manifest env so the in-VM agent reads `journal_events` `CompletedStep` rows and skips nodes it already finished.
+
+This means a crashed microVM run gets up to three recovery attempts before being abandoned. The OTel span is `runtime.recovery.microvm_resume`.
 
 ### CompletedStep replay {#completedstep-replay}
 
@@ -123,8 +134,8 @@ The plain-LLM path has the analogous `checkCachedLLMStep` cache.
 
 Every external side-effect carries a key derived from `(run_id, step_id, attempt)`:
 
-- **LLM provider calls** — `Idempotency-Key` HTTP header on every request to OpenAI and Anthropic. Derived in `internal/handlers/llm_idempotency.go` via a one-way hash. A crash-replay retry to the same provider dedups at the provider instead of double-billing.
-- **Connector/tool calls** — `claimSideEffect` reserves an `(run:step:attempt)` key in `side_effect_receipts` before dispatching. A re-drive that reaches the same step finds the receipt and short-circuits.
+- **Connector/tool calls** — `claimSideEffect` in `durable_replay.go` reserves `hex(sha256(runID|stepID|attempt))` (pipe-separated) in `side_effect_receipts` before dispatching. A re-drive that reaches the same step finds the receipt and short-circuits.
+- **LLM provider calls** — `Idempotency-Key` HTTP header on every request to OpenAI and Anthropic. Derived in `internal/handlers/llm_idempotency.go`: the run-scoped base is `runID:stepID:attempt` (colon-separated), then hashed per-provider as `sha256(base|provider)`. A crash-replay retry to the same provider dedups at the provider instead of double-billing; a failover to a different provider gets a distinct key.
 - **MicroVM dispatch** — `microvm:schedule` step event in `journal_events`; the UPSERT uses `ON CONFLICT DO NOTHING`.
 
 ---
@@ -184,6 +195,14 @@ When `manifest.isolation == "microvm"`, the run executor calls `scheduleAgentSpe
 3. On success: inserts a `vms` row, journals `step_completed` with the `vm_id`, and returns.
 4. On any error (scheduler unreachable, quota exceeded, stub): marks the run `failed` with code `microvm_unavailable` and journals `step_failed`. **No fallback to the shared tier.**
 
+**MicroVM failure codes** (in `runs.error->>"code"`):
+
+| Code | When set |
+|---|---|
+| `microvm_unavailable` | Scheduler dial failed, quota exceeded, or dispatcher not wired at run creation |
+| `microvm_resume_exhausted` | Recovery sweep hit the 3-VM cap for this run |
+| `microvm_exit` | VM exited with a non-zero exit code; the harness sets this on abnormal termination |
+
 The scheduler performs 5-factor placement (warm pool, region, cost, health, fair-share) and dispatches to the runtime-manager on the selected node.
 
 ### In-guest tool runner {#in-guest-tool-runner}
@@ -212,6 +231,8 @@ The harness streams `step_started`/`step_completed`/`step_failed` events to the 
 Interactive sessions (`POST /v1/sessions`) run on the shared tier. Each `POST /v1/sessions/{id}/messages` call triggers an inline run for that turn. Sessions maintain a `messages` JSONB column on the `sessions` table and stream events via `GET /v1/sessions/{id}/events` (SSE).
 
 Sessions are not workflow-graph runs — they use the plain-LLM tool-use loop. The same durability primitives apply: each turn's LLM call carries an idempotency key and the result is journaled.
+
+**Streaming limitation:** tool-using turns buffer internally (`callLLMWithTools` is non-streaming); only the final assembled text is emitted as `message_delta` events. Tool-free turns stream individual token deltas as they arrive from the provider. This is a documented limitation in `llm_proxy.go` (`proxyAgentWithTools`).
 
 ---
 

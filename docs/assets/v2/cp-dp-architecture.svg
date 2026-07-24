@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Control-plane / data-plane split — the SaaS control plane authenticates, budgets, mints identity, and dispatches; the data plane in your VPC schedules, spawns, and runs the workload; only token-authenticated metadata flows back up to the receipt signer">
+  <defs>
+    <radialGradient id="cd-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="cd-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="cd-arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
+    </marker>
+    <marker id="cd-arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <style>
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .mono { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.16em; }
+      .lang { font-size:9.5px; font-weight:800; letter-spacing:.04em; }
+      .cdflow { stroke-dasharray:6 6; animation:cd-dash 1.4s linear infinite; }
+      .cdup   { stroke-dasharray:6 6; animation:cd-up 1.4s linear infinite; }
+      @keyframes cd-dash { to { stroke-dashoffset:-24; } }
+      @keyframes cd-up   { to { stroke-dashoffset:24; } }
+      @media (prefers-reduced-motion: reduce) { .cdflow,.cdup { animation:none; } }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="720" rx="18" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="720" rx="18" fill="url(#cd-vign)"/>
+  <rect x="0" y="0" width="1240" height="720" rx="18" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="46" class="h" font-size="24" filter="url(#cd-glow)">Your cloud runs the code. Ours never sees it.</text>
+  <text x="560" y="46" class="sub" font-size="13">the control plane orchestrates by metadata — prompts, data, and code stay in your VPC</text>
+
+  <!-- ============ CONTROL PLANE ============ -->
+  <text x="32" y="92" class="band" fill="#fbbf24">CONTROL PLANE — MANAGED SAAS</text>
+  <g transform="translate(32,104)">
+    <rect x="0" y="0" width="1176" height="176" rx="14" fill="#12100c" stroke="#4a3b28" stroke-width="1.5"/>
+
+    <rect x="20" y="18" width="268" height="88" rx="12" fill="#1e1813" stroke="#3a2f24"/>
+    <text x="36" y="42" class="t" font-size="12.5" font-weight="700">1 · Authenticate</text>
+    <text x="36" y="62" class="sub">JWT / API key (<tspan class="code">hlx_live_</tspan>) · RBAC</text>
+    <text x="36" y="78" class="sub">tenant_id stamped on every row,</text>
+    <text x="36" y="93" class="sub">span, and gRPC call · RLS policies</text>
+
+    <rect x="316" y="18" width="268" height="88" rx="12" fill="#1e1813" stroke="#3a2f24"/>
+    <text x="332" y="42" class="t" font-size="12.5" font-weight="700">2 · Budget + quota</text>
+    <text x="332" y="62" class="sub">forecast → hard-fail limits → <tspan class="code">402</tspan></text>
+    <text x="332" y="78" class="sub">per-tenant VM quota + spawn</text>
+    <text x="332" y="93" class="sub">rate limits (<tspan class="code">402/429</tspan>)</text>
+
+    <rect x="612" y="18" width="268" height="88" rx="12" fill="#1e1813" stroke="#3a2f24"/>
+    <text x="628" y="42" class="t" font-size="12.5" font-weight="700">3 · Mint identity</text>
+    <text x="628" y="62" class="sub">Ed25519 per-instance identity at</text>
+    <text x="628" y="78" class="sub">spawn · short-TTL secret refs —</text>
+    <text x="628" y="93" class="sub">values resolve only at execution</text>
+
+    <rect x="908" y="18" width="248" height="88" rx="12" fill="#1e1813" stroke="#f59e0b" filter="url(#cd-glow)"/>
+    <text x="924" y="42" class="t" font-size="12.5" font-weight="700">4 · Dispatch</text>
+    <text x="924" y="62" class="sub">gRPC to the data plane, service-</text>
+    <text x="924" y="78" class="sub">token authenticated · W3C trace</text>
+    <text x="924" y="93" class="sub">context rides the whole way down</text>
+
+    <text x="20" y="134" class="sub">also here: workflow engine (durable steps) · model router (capability → vendor) · memory + people graph · evals · marketplace · notifier</text>
+    <text x="20" y="158" class="code">PostgreSQL + pgvector · Redis · S3 — the system of record never leaves the control plane either: it stores metadata, costs, and journals, not your data payloads</text>
+
+    <path class="cdflow" d="M 288 62 H 310" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#cd-arrA)"/>
+    <path class="cdflow" d="M 584 62 H 606" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#cd-arrA)"/>
+    <path class="cdflow" d="M 880 62 H 902" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#cd-arrA)"/>
+  </g>
+
+  <!-- ============ TUNNEL ============ -->
+  <path class="cdflow" d="M 500 280 V 316" stroke="#2dd4bf" stroke-width="1.6" fill="none" marker-end="url(#cd-arrT)"/>
+  <path class="cdup"   d="M 740 316 V 280" stroke="#2dd4bf" stroke-width="1.6" fill="none" marker-end="url(#cd-arrT)"/>
+  <g transform="translate(370,318)">
+    <rect x="0" y="0" width="500" height="58" rx="29" fill="#0e1512" stroke="#2dd4bf" stroke-width="1.5" filter="url(#cd-glow)"/>
+    <text x="250" y="25" text-anchor="middle" class="t" font-size="12.5" font-weight="700" fill="#5eead4">THE TRUST BOUNDARY — TOKEN-AUTHENTICATED, METADATA ONLY</text>
+    <text x="250" y="45" text-anchor="middle" class="sub">↓ specs, identity, trace context · ↑ heartbeats, step events, audit — mTLS hardening planned</text>
+  </g>
+
+  <!-- ============ DATA PLANE ============ -->
+  <text x="32" y="418" class="band" fill="#5eead4">DATA PLANE — YOUR VPC (EKS · GKE · AKS · A LAPTOP)</text>
+  <g transform="translate(32,430)">
+    <rect x="0" y="0" width="1176" height="180" rx="14" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
+
+    <rect x="20" y="18" width="360" height="118" rx="12" fill="#12100c" stroke="#3a2f24"/>
+    <text x="36" y="42" class="t" font-size="12.5" font-weight="700">runtime-scheduler <tspan class="lang" fill="#38bdf8">GO</tspan><tspan class="mono" dx="70">:50055</tspan></text>
+    <text x="36" y="64" class="sub">HA leader election · 5-factor placement:</text>
+    <text x="36" y="80" class="sub">warm-pool · region · fair-share · cost · health</text>
+    <text x="36" y="102" class="sub">picks the node, hands the spec to that node's manager</text>
+
+    <rect x="408" y="18" width="380" height="118" rx="12" fill="#12100c" stroke="#3a2f24"/>
+    <text x="424" y="42" class="t" font-size="12.5" font-weight="700">runtime-manager <tspan class="lang" fill="#f97316">RUST</tspan><tspan class="mono" dx="70">:50054</tspan></text>
+    <text x="424" y="64" class="sub">fail-closed isolation gate — never a bare pod:</text>
+    <text x="424" y="82" class="code">runc → gVisor → Kata → Firecracker · Wasm</text>
+    <text x="424" y="102" class="sub">snapshot / restore · warm pools · hardened K8s Jobs</text>
+
+    <rect x="816" y="18" width="340" height="118" rx="12" fill="#171020" stroke="#7e22ce"/>
+    <text x="832" y="42" class="t" font-size="12.5" font-weight="700">workload VM + harness <tspan class="lang" fill="#f97316">RUST, PID 1</tspan></text>
+    <text x="832" y="64" class="sub">deny-default egress allowlist proxy (<tspan class="mono">:3128</tspan>)</text>
+    <text x="832" y="80" class="sub">kernel-attested secret vends (<tspan class="mono">SO_PEERCRED</tspan>)</text>
+    <text x="832" y="96" class="sub">in-guest tool runner · session-scoped VM reuse</text>
+    <text x="832" y="116" class="sub">reports bound to the VM's OWN run — forgery → 403</text>
+
+    <path class="cdflow" d="M 380 76 H 402" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#cd-arrT)"/>
+    <path class="cdflow" d="M 788 76 H 810" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#cd-arrT)"/>
+
+    <text x="20" y="164" class="code" fill="#5eead4">your LLM keys, your prompts, your customer data, your code — all of it executes and stays here</text>
+  </g>
+
+  <!-- ============ EVIDENCE RETURN ============ -->
+  <g transform="translate(32,636)">
+    <rect x="0" y="0" width="1176" height="52" rx="12" fill="#1e1813" stroke="#f59e0b" stroke-width="1.2"/>
+    <text x="20" y="22" class="band" fill="#fbbf24" font-size="11">WHAT COMES BACK UP</text>
+    <text x="20" y="42" class="sub">step events + vm_exit → journal_events → run waterfall + OTel traces (<tspan class="code">tenant_id · run_id · step_id</tspan>) → Ed25519-signed receipt anyone can verify offline</text>
+  </g>
+
+  <text x="32" y="708" class="sub">runtime.proto · runtime-scheduler/ · runtime-manager/ · harness/src · runtime_report.go · receipts.go — see docs/architecture/04b + ADRs 0002–0008</text>
+</svg>
