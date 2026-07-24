@@ -104,7 +104,6 @@
     <text x="20" y="72" class="sub">One tenant_id + run_id filters all of it. No cross-referencing five dashboards.</text>
   </g>
 
-  <text x="32" y="656" class="sub">middleware/span.go · middleware/metrics.go · run_events.go · health_sweep.go · receipts.go · budgets.go</text>
 
   <!-- ============ NAVIGATION HOTSPOTS ============ -->
   <!-- Receipts box → /runtime/receipts (absolute: x=32+398=430, y=336, w=380, h=116) -->

@@ -125,7 +125,6 @@
     <text x="20" y="66" class="t" font-size="12">Secrets: kernel-attested peer auth (<tspan class="mono">SO_PEERCRED</tspan>) on the vend socket · 300 s TTLs · Exec: bearer-token gated, fatal-if-unset in prod</text>
   </g>
 
-  <text x="32" y="684" class="sub">Backends: services/runtime-manager/src/backends/ · gate: service.rs choose_backend · preflight: runtimeclass_preflight.rs · harness: services/harness/src</text>
 
   <!-- ============ NAVIGATION HOTSPOTS ============ -->
   <!-- In-VM harness controls box → /runtime/isolation#classes -->

@@ -93,7 +93,6 @@
     <text x="622" y="64" class="sub">it emits one <tspan class="mono">message_completed</tspan>. Tool-free turns always stream.</text>
   </g>
 
-  <text x="32" y="628" class="sub">sessions.go processMessage / GetSessionEvents · llm_proxy.go streamWithFailover / completeSSE · sdk-ts sessions.streamMessage</text>
 
   <!-- ============ NAVIGATION HOTSPOTS ============ -->
   <!-- "your client" lane header → /runtime/streaming#sse (absolute: x=32, y=80+300=380, w=260, h=44) -->

@@ -155,5 +155,4 @@
     <text x="20" y="46" class="sub">exactly-once side effects · at-least-once step execution with idempotent dedup at every boundary (DB, provider, webhook) · resume point = first step without a step_completed row · identical machinery on both tiers</text>
   </g>
   <text x="32" y="648" class="sub">Tests: workflow_resume · crash_replay_* · recovery_* · microvm_durability_* — the animation pauses under prefers-reduced-motion.</text>
-  <text x="32" y="676" class="sub">docs/architecture/09-agent-runtime.md · CLAUDE.md invariants #3 (durable) and #8 (idempotent side effects)</text>
 </svg>

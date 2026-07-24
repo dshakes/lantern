@@ -45,7 +45,6 @@
     <text x="18" y="112" class="sub">watch → republish → smoke run → step waterfall · --eval per save</text>
     <text x="18" y="134" class="t" font-size="12" font-weight="700">Visual workflow editor · SDKs (TS / Py / Go)</text>
     <text x="18" y="153" class="sub">graphs that execute · connectors · MCP attachments</text>
-    <text x="18" y="172" class="code">POST /v1/agents · /v1/agents/generate-spec</text>
 
     <!-- TEST -->
     <rect x="398" y="0" width="378" height="186" rx="12" fill="#12100c" stroke="#4a3b28"/>
@@ -56,7 +55,6 @@
     <text x="416" y="112" class="sub">replay real production failures against the candidate BEFORE traffic</text>
     <text x="416" y="134" class="t" font-size="12" font-weight="700">Cost forecast</text>
     <text x="416" y="153" class="sub">tokens + cost + would-exceed-budget, pre-run</text>
-    <text x="416" y="172" class="code">POST /v1/eval-runs · /v1/runs/rehearse · /v1/runs/forecast</text>
 
     <!-- DEPLOY -->
     <rect x="796" y="0" width="380" height="186" rx="12" fill="#12100c" stroke="#4a3b28"/>
@@ -67,7 +65,6 @@
     <text x="814" y="112" class="sub">cost/day · cost/run · tokens/day · per-tool limits · hard-fail 402</text>
     <text x="814" y="134" class="t" font-size="12" font-weight="700">Isolation by manifest</text>
     <text x="814" y="153" class="sub">isolation: "shared" | "microvm" — a publish-time property</text>
-    <text x="814" y="172" class="code">PUT /v1/agents/{name}/budget · POST /v1/experiments</text>
   </g>
 
   <path class="flow" d="M 410 169 H 428" stroke="#8a7d6b" stroke-width="1.5" fill="none" marker-end="url(#ej-arr)"/>
@@ -84,7 +81,6 @@
     <text x="18" y="112" class="sub">message_delta SSE · step waterfall · park-without-compute approvals</text>
     <text x="18" y="134" class="t" font-size="12" font-weight="700">Channels · schedules · loop agents</text>
     <text x="18" y="153" class="sub">WhatsApp / iMessage / Slack / voice / webchat · tz-aware cron</text>
-    <text x="18" y="172" class="code">POST /v1/runs · /v1/sessions · isolation routed at creation</text>
 
     <!-- OBSERVE -->
     <rect x="398" y="0" width="378" height="186" rx="12" fill="#12100c" stroke="#4a3b28"/>
@@ -95,7 +91,6 @@
     <text x="416" y="112" class="sub">Ed25519 over the journal hash — externally checkable at /proof</text>
     <text x="416" y="134" class="t" font-size="12" font-weight="700">Peer-service health</text>
     <text x="416" y="153" class="sub">debounced down/up transitions alert the owner's self-chat</text>
-    <text x="416" y="172" class="code">GET /v1/runs/{id}/events · /v1/system/health · /.well-known/lantern-receipts</text>
 
     <!-- IMPROVE -->
     <rect x="796" y="0" width="380" height="186" rx="12" fill="#151022" stroke="#7e22ce"/>
@@ -106,7 +101,6 @@
     <text x="814" y="112" class="sub">realized regret lowers auto-execute confidence per (agent, action)</text>
     <text x="814" y="134" class="t" font-size="12" font-weight="700">Memory distillation <tspan class="sub">(flag-gated)</tspan></text>
     <text x="814" y="153" class="sub">LLM-distilled durable facts from sessions — confidence-floored</text>
-    <text x="814" y="172" class="code">POST /v1/runs/{id}/feedback · /v1/memory/distill</text>
   </g>
 
   <path class="flow" d="M 410 383 H 428" stroke="#8a7d6b" stroke-width="1.5" fill="none" marker-end="url(#ej-arr)"/>
@@ -120,12 +114,11 @@
   <g transform="translate(32,506)">
     <rect x="0" y="0" width="1176" height="66" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="26" class="band" fill="#5eead4">THE SUBSTRATE UNDER ALL SIX STAGES</text>
-    <text x="20" y="48" class="sub"><tspan class="code" font-size="11">journal_events</tspan> (durable steps · replay · receipts) · <tspan class="code" font-size="11">run_locks</tspan> + recovery sweep (crash-resume) · idempotency keys at every side-effect boundary · RLS multi-tenancy · capability-addressed models</text>
+    <text x="20" y="48" class="sub"><tspan class="code" font-size="11">journal_events</tspan> — durable steps, replay, receipts · crash recovery · exactly-once side effects · tenant isolation</text>
   </g>
 
   <!-- improvement loop caption -->
   <path class="flow" d="M 1120 594 H 240" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#ej-arrg)"/>
   <text x="620" y="614" text-anchor="middle" class="sub" fill="#5eead4">the loop: production feedback becomes next release's eval cases</text>
 
-  <text x="32" y="644" class="sub">Copy-pasteable walkthrough: docs/guides/self-service-e2e.md · CLI loop: docs/guides/cli-agent-loop.md</text>
 </svg>

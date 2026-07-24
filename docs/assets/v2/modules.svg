@@ -104,7 +104,7 @@
   <g transform="translate(32,490)">
     <rect x="0" y="0" width="1176" height="76" rx="14" fill="#12100c" stroke="#4a3b28" stroke-width="1.5"/>
     <text x="20" y="28" class="band" fill="#fbbf24" font-size="11">THE SHARED SUBSTRATE UNDER ALL FIVE</text>
-    <text x="20" y="52" class="sub">event-sourced <tspan class="code">journal_events</tspan> durability · capability model routing · budget enforcement · RLS multi-tenancy · OTel observability · Postgres + pgvector · Redis · S3</text>
+    <text x="20" y="52" class="sub">durable <tspan class="code">journal_events</tspan> log · capability model routing · budgets · tenant isolation · observability</text>
     <text x="20" y="68" class="sub">a Jarvis reply, a workflow run, and a marketplace invocation are all the same thing underneath: a budgeted, journaled, receipted run</text>
   </g>
 
