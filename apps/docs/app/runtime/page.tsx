@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ShieldCheck, Lock, Activity } from "lucide-react";
 import { Diagram } from "../_components/Diagram";
 import { Concept } from "../_components/Concept";
+import { RuntimeArchitectureMap } from "../_components/RuntimeArchitectureMap";
 
 // Tier comparison — reuses .prose table styles, no new CSS needed.
 function TierTable() {
@@ -62,11 +63,14 @@ export default function RuntimeOverviewPage() {
         live streaming, receipts — works the same in both lanes.
       </Concept>
 
-      {/* Hero diagram — clickable runtime map */}
-      <Diagram
-        name="runtime-map"
-        caption="The runtime in one view — gated, executed, made durable, and proven. Every card links to its deep-dive page."
-      />
+      {/* Hero — the runtime in one interactive view (personal-harness style) */}
+      <h2 id="map">The runtime, end to end</h2>
+      <p>
+        A run arrives from any entry point, passes the gates, executes in its
+        tier, checkpoints to the journal, streams live, and ends with proof.
+        Every cell is clickable.
+      </p>
+      <RuntimeArchitectureMap />
 
       {/* Detailed lifecycle view */}
       <Diagram
