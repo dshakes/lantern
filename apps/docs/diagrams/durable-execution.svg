@@ -9,21 +9,21 @@
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <marker id="de-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#8a7d6b"/>
     </marker>
     <marker id="de-arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#34d399"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
     </marker>
     <marker id="de-arra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
     </marker>
     <style>
-      .t    { fill:#e2e8f0; }
-      .sub  { fill:#94a3b8; font-size:11px; }
-      .h    { fill:#f8fafc; font-weight:700; }
-      .code { fill:#93c5fd; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-      .band { fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
-      .edge { fill:#94a3b8; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .edge { fill:#a89e8f; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
       .flow  { stroke-dasharray:6 6; animation:de-dash 1.2s linear infinite; }
       .flow2 { stroke-dasharray:6 6; animation:de-dash 1.2s linear infinite; animation-delay:.6s; }
       .pulse { animation:de-pulse 1.6s ease-in-out infinite; transform-origin:center; transform-box:fill-box; }
@@ -36,8 +36,9 @@
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1240" height="720" rx="16" fill="#0b1120"/>
-  <rect x="0" y="0" width="1240" height="720" rx="16" fill="none" stroke="#1e293b"/>
+  <rect x="0" y="0" width="1240" height="720" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="720" rx="16" fill="url(#dur-vign)"/>
+  <rect x="0" y="0" width="1240" height="720" rx="16" fill="none" stroke="#3a2f24"/>
 
   <text x="32" y="44" class="h" font-size="22" filter="url(#dur-glowf)">Durable Execution</text>
   <text x="262" y="44" class="sub" font-size="13">a crash costs one step, never the run — and never a double-spent side effect</text>
@@ -45,22 +46,22 @@
   <!-- ============ BAND 1: THE RUN ============ -->
   <text x="32" y="86" class="band">1 · THE RUN — every step checkpointed to the journal</text>
   <g transform="translate(32,100)">
-    <rect x="0" y="0" width="150" height="70" rx="10" fill="#13233b" stroke="#2b5c8f"/>
+    <rect x="0" y="0" width="150" height="70" rx="10" fill="#1a1510" stroke="#4a3b28"/>
     <text x="16" y="26" class="t" font-size="12.5" font-weight="700">run created</text>
     <text x="16" y="46" class="code">POST /v1/runs</text>
     <text x="16" y="60" class="sub">run_locks lease</text>
 
-    <rect x="186" y="0" width="180" height="70" rx="10" fill="#10241b" stroke="#2f9e6e"/>
+    <rect x="186" y="0" width="180" height="70" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="202" y="26" class="t" font-size="12.5" font-weight="700">step 1 ✓</text>
     <text x="202" y="46" class="code">step_completed → journal</text>
     <text x="202" y="60" class="sub">output cached in the event row</text>
 
-    <rect x="402" y="0" width="180" height="70" rx="10" fill="#10241b" stroke="#2f9e6e"/>
+    <rect x="402" y="0" width="180" height="70" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="418" y="26" class="t" font-size="12.5" font-weight="700">step 2 ✓</text>
     <text x="418" y="46" class="code">connector call · dedup key</text>
-    <text x="418" y="60" class="sub">(run_id : step_id : attempt)</text>
+    <text x="418" y="60" class="sub">(run_id | step_id | attempt)</text>
 
-    <rect x="618" y="0" width="200" height="70" rx="10" fill="#1c2336" stroke="#334155"/>
+    <rect x="618" y="0" width="200" height="70" rx="10" fill="#171310" stroke="#4a3b28"/>
     <text x="634" y="26" class="t" font-size="12.5" font-weight="700">step 3 · in flight…</text>
     <text x="634" y="46" class="code">LLM call · Idempotency-Key</text>
     <text x="634" y="60" class="sub">step_started journaled, no completion yet</text>
@@ -72,28 +73,28 @@
       <text x="870" y="60" class="sub">the goroutine is simply gone</text>
     </g>
 
-    <path class="flow" d="M 150 35 H 180" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
-    <path class="flow" d="M 366 35 H 396" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
-    <path class="flow" d="M 582 35 H 612" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 150 35 H 180" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 366 35 H 396" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 582 35 H 612" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
     <path d="M 818 35 H 848" stroke="#ef4444" stroke-width="1.5" fill="none" marker-end="url(#de-arr)"/>
   </g>
 
   <!-- ============ BAND 2: RECOVERY ============ -->
   <text x="32" y="248" class="band" fill="#fbbf24">2 · RECOVERY — nothing is asked of the caller</text>
   <g transform="translate(32,262)">
-    <rect x="0" y="0" width="360" height="86" rx="10" fill="#221a10" stroke="#b8860b"/>
+    <rect x="0" y="0" width="360" height="86" rx="10" fill="#221a10" stroke="#f59e0b"/>
     <text x="16" y="26" class="t" font-size="12.5" font-weight="700">recovery sweep <tspan class="code" dx="8">every 30s</tspan></text>
     <text x="16" y="46" class="sub">finds runs in running/queued whose run_locks lease is</text>
     <text x="16" y="61" class="sub">absent or expired — the crash left one behind</text>
     <text x="16" y="78" class="code">internal/handlers/recovery.go · RunRecoveryLoop</text>
 
-    <rect x="408" y="0" width="330" height="86" rx="10" fill="#221a10" stroke="#b8860b"/>
+    <rect x="408" y="0" width="330" height="86" rx="10" fill="#221a10" stroke="#f59e0b"/>
     <text x="424" y="26" class="t" font-size="12.5" font-weight="700">lease steal</text>
     <text x="424" y="46" class="sub">run_locks UPSERT that only wins an EXPIRED lease —</text>
     <text x="424" y="61" class="sub">two replicas can race; exactly one wins</text>
     <text x="424" y="78" class="code">acquireRecoveryLock</text>
 
-    <rect x="786" y="0" width="390" height="86" rx="10" fill="#221a10" stroke="#b8860b"/>
+    <rect x="786" y="0" width="390" height="86" rx="10" fill="#221a10" stroke="#f59e0b"/>
     <text x="802" y="26" class="t" font-size="12.5" font-weight="700">re-drive</text>
     <text x="802" y="46" class="sub">shared tier: interpreter re-walks the graph from the trigger</text>
     <text x="802" y="61" class="sub">microVM tier: re-schedule same run_id · LANTERN_RESUME=1 · ≤3 attempts</text>
@@ -108,49 +109,49 @@
   <text x="600" y="194" class="edge" text-anchor="middle">lease expires — the sweep notices on its next tick</text>
 
   <!-- ============ BAND 3: THE REPLAY ============ -->
-  <text x="32" y="410" class="band" fill="#6ee7b7">3 · THE REPLAY — completed work is never re-executed</text>
+  <text x="32" y="410" class="band" fill="#5eead4">3 · THE REPLAY — completed work is never re-executed</text>
   <g transform="translate(32,424)">
-    <rect x="0" y="0" width="180" height="70" rx="10" fill="#0e1c17" stroke="#1f6f4e" stroke-dasharray="4 3"/>
-    <text x="16" y="26" class="t" font-size="12.5" font-weight="700" fill="#6ee7b7">step 1 — skipped</text>
+    <rect x="0" y="0" width="180" height="70" rx="10" fill="#0e1512" stroke="#134e4a" stroke-dasharray="4 3"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700" fill="#5eead4">step 1 — skipped</text>
     <text x="16" y="46" class="code">CompletedStep cache hit</text>
     <text x="16" y="60" class="sub">journal row returns the output</text>
 
-    <rect x="216" y="0" width="180" height="70" rx="10" fill="#0e1c17" stroke="#1f6f4e" stroke-dasharray="4 3"/>
-    <text x="232" y="26" class="t" font-size="12.5" font-weight="700" fill="#6ee7b7">step 2 — skipped</text>
+    <rect x="216" y="0" width="180" height="70" rx="10" fill="#0e1512" stroke="#134e4a" stroke-dasharray="4 3"/>
+    <text x="232" y="26" class="t" font-size="12.5" font-weight="700" fill="#5eead4">step 2 — skipped</text>
     <text x="232" y="46" class="code">side effect NOT re-fired</text>
     <text x="232" y="60" class="sub">claimSideEffect dedup</text>
 
-    <rect x="432" y="0" width="220" height="70" rx="10" fill="#10241b" stroke="#2f9e6e"/>
+    <rect x="432" y="0" width="220" height="70" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="448" y="26" class="t" font-size="12.5" font-weight="700">step 3 — re-executes</text>
     <text x="448" y="46" class="code">SAME Idempotency-Key sent</text>
     <text x="448" y="60" class="sub">provider dedups — no double-billed tokens</text>
 
-    <rect x="688" y="0" width="180" height="70" rx="10" fill="#10241b" stroke="#2f9e6e"/>
+    <rect x="688" y="0" width="180" height="70" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="704" y="26" class="t" font-size="12.5" font-weight="700">step 4 ✓</text>
     <text x="704" y="46" class="sub">first genuinely new work</text>
     <text x="704" y="60" class="sub">since the crash</text>
 
-    <rect x="904" y="0" width="272" height="70" rx="10" fill="#13233b" stroke="#2b5c8f"/>
+    <rect x="904" y="0" width="272" height="70" rx="10" fill="#1a1510" stroke="#4a3b28"/>
     <text x="920" y="26" class="t" font-size="12.5" font-weight="700">run succeeded · receipt issued</text>
     <text x="920" y="46" class="code">Ed25519 over the journal hash</text>
     <text x="920" y="60" class="sub">the crash is visible in the waterfall, not the output</text>
 
-    <path class="flow" d="M 180 35 H 210" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
-    <path class="flow" d="M 396 35 H 426" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
-    <path class="flow" d="M 652 35 H 682" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
-    <path class="flow" d="M 868 35 H 898" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 180 35 H 210" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 396 35 H 426" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 652 35 H 682" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+    <path class="flow" d="M 868 35 H 898" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
   </g>
 
   <!-- recovery → replay connector -->
-  <path class="flow" d="M 1000 348 V 366 Q 1000 376 990 376 H 132 Q 122 376 122 386 V 420" stroke="#34d399" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
+  <path class="flow" d="M 1000 348 V 366 Q 1000 376 990 376 H 132 Q 122 376 122 386 V 420" stroke="#2dd4bf" stroke-width="1.5" fill="none" marker-end="url(#de-arrg)"/>
 
   <!-- footer -->
   <g transform="translate(32,528)">
     <rect x="0" y="0" width="1176" height="0" fill="none"/>
   </g>
   <g transform="translate(32,536)">
-    <rect x="0" y="0" width="1176" height="64" rx="10" fill="#10241b" stroke="#2f9e6e"/>
-    <text x="20" y="26" class="t" font-size="12" font-weight="700" fill="#6ee7b7">The guarantee</text>
+    <rect x="0" y="0" width="1176" height="64" rx="10" fill="#0e1512" stroke="#134e4a"/>
+    <text x="20" y="26" class="t" font-size="12" font-weight="700" fill="#5eead4">The guarantee</text>
     <text x="20" y="46" class="sub">exactly-once side effects · at-least-once step execution with idempotent dedup at every boundary (DB, provider, webhook) · resume point = first step without a step_completed row · identical machinery on both tiers</text>
   </g>
   <text x="32" y="648" class="sub">Tests: workflow_resume · crash_replay_* · recovery_* · microvm_durability_* — the animation pauses under prefers-reduced-motion.</text>
