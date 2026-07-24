@@ -17,10 +17,14 @@ export default function SecurityPage() {
 
       <h2 id="what-is-shipped">What is shipped today</h2>
       <ul>
-        <li><strong>AES-256-GCM encryption at rest</strong> for connector credentials and LLM provider keys (<code>LANTERN_CREDENTIAL_KEY</code>).</li>
+        <li><strong>AES-256-GCM encryption at rest</strong> for connector credentials and LLM provider keys. Active only when <code>LANTERN_CREDENTIAL_KEY</code> is set — when unset, these columns are stored as plaintext pass-through, so set the key in any real deployment.</li>
         <li><strong>HttpOnly JWT cookies</strong> -- dashboard auth tokens are issued server-side and never exposed to client-side JavaScript.</li>
-        <li><strong>Row-Level Security (RLS)</strong> policies on all 34 tenant tables (<code>USING</code> + <code>WITH CHECK</code>). Enforcement is staged: policies are installed and tested, and will be activated per-environment via <code>LANTERN_RLS_ENFORCE=1</code> as handler cutovers complete.</li>
-        <li><strong>gRPC service-token auth</strong> on <code>:50051</code> -- constant-time check, runs before tenant extraction, fail-closed in production.</li>
+        <li><strong>Row-Level Security (RLS)</strong> policies on every tenant-scoped table (<code>USING</code> + <code>WITH CHECK</code>), guarded by a catalog gate-test — a new tenant table without RLS (or an explicit exemption) fails CI. Enforcement is staged per-environment via <code>LANTERN_RLS_ENFORCE=1</code>; the handler cutover is complete and <code>make rls-validate</code> proves the policies end-to-end against a live database.</li>
+        <li><strong>gRPC service-token auth</strong> on all three trust-boundary ports -- control-plane <code>:50051</code>, workflow-engine <code>:50052</code>, and runtime-scheduler <code>:50055</code>. Constant-time check, runs before tenant extraction, fail-closed in production.</li>
+        <li><strong>Runtime report binding</strong> -- step events and exit reports from a microVM are bound to that VM&apos;s own run: a report carrying another run&apos;s <code>run_id</code> is rejected with 403, so a compromised harness cannot spoof another tenant&apos;s audit or log stream.</li>
+        <li><strong>Ed25519-signed run receipts</strong> -- a SHA-256 of the run&apos;s full <code>journal_events</code> stream is signed (HMAC-SHA256 fallback when <code>LANTERN_RECEIPT_ED25519_SEED</code> is unset) and verifiable with no Lantern account at <code>/proof</code> and <code>/.well-known/lantern-receipts</code>.</li>
+        <li><strong>Per-endpoint API-key scopes</strong> -- mutating endpoints are annotated with required scopes (<code>agents:write</code>, <code>runs:execute</code>, …). Enforcement is flag-gated via <code>LANTERN_AUTHZ_ENFORCE</code> and default-OFF today; when off, missing scopes are logged, not rejected.</li>
+        <li><strong>Fail-closed token gates</strong> -- the gateway&apos;s API-key introspection endpoint and the personal <code>/v1/signals</code> endpoint both refuse (403/401) when their shared token env is unset, and validate with constant-time compares when set.</li>
         <li><strong>A2A tenant isolation</strong> -- <code>GetAgentCard</code> / <code>InvokeAgent</code> gate on <code>is_public OR caller-tenant</code>; private agents return 404 to cross-tenant callers.</li>
         <li><strong>Bridge retry + surface-gateway tenant resolution</strong> -- the surface gateway resolves a real Lantern <code>LANTERN_TENANT_ID</code> instead of using platform IDs; unknown installs are rejected.</li>
         <li><strong>LLM idempotency keys</strong> on all provider calls -- derived from <code>(run_id, step_id, attempt)</code>, reused across same-provider retries.</li>
@@ -138,8 +142,9 @@ export default function SecurityPage() {
         <li>
           <strong>Connector credentials</strong> and{" "}
           <strong>LLM provider API keys</strong> are AES-256-GCM encrypted
-          at the application layer (
-          <code>LANTERN_CREDENTIAL_KEY</code>). Other Postgres columns use
+          at the application layer when <code>LANTERN_CREDENTIAL_KEY</code> is
+          configured; when it is unset they are stored unencrypted
+          (plaintext pass-through). Other Postgres columns use
           standard Postgres storage — disk-level encryption is the
           responsibility of the host.
         </li>
@@ -152,7 +157,8 @@ export default function SecurityPage() {
       <h3>In transit</h3>
       <ul>
         <li>
-          All external traffic uses TLS 1.3
+          All external traffic uses modern TLS — the gateway is built on
+          rustls safe defaults (TLS 1.2 and 1.3)
         </li>
         <li>
           Internal gRPC traffic is authenticated with a pre-shared service
@@ -193,8 +199,9 @@ export default function SecurityPage() {
       <h2>Isolation</h2>
       <p>
         Agent runs execute inside isolated sandboxes. The isolation class depends
-        on the workload type. In local development, Docker containers are the
-        default backend (<code>RUNTIME_BACKEND=docker</code>). In production,
+        on the workload type. The default backend is Kubernetes
+        (<code>RUNTIME_BACKEND=k8s</code>); Docker is available for local
+        development (<code>RUNTIME_BACKEND=docker</code>). In production,
         the runtime-manager supports gVisor (standard), Kata microVM (hostile),
         and Firecracker-backed Kata for the highest isolation tier. Fail-closed:
         untrusted/hostile workloads are refused unless the appropriate
@@ -207,12 +214,15 @@ export default function SecurityPage() {
           filesystem, and network namespace
         </li>
         <li>
-          <strong>seccomp filtering</strong> -- only allowed syscalls can
-          execute
+          <strong>seccomp filtering</strong> -- syscall restriction is a
+          property of the configured RuntimeClass (gVisor / Kata), not a
+          Lantern-shipped profile
         </li>
         <li>
-          <strong>Egress control</strong> -- network access is restricted to
-          explicitly allowed domains
+          <strong>Egress control</strong> -- an allowlist CONNECT proxy
+          restricts outbound domains. Enforcement is fail-closed in production
+          and requires the VM host/image to install the iptables REDIRECT rule;
+          proxy env-var injection alone is advisory
         </li>
         <li>
           <strong>Resource limits</strong> -- CPU, memory, and disk are capped
@@ -229,10 +239,11 @@ export default function SecurityPage() {
 
       <h2>Secret management</h2>
       <p>
-        Secrets (API keys, OAuth tokens, credentials) are never stored in
-        plaintext. Lantern uses the <code>lantern.secret/...</code> reference
-        form throughout the system. Secrets are resolved at execution time
-        inside the microVM, and never appear in:
+        Secrets (API keys, OAuth tokens, credentials) are referenced via the{" "}
+        <code>lantern.secret/...</code> form and resolved at execution time by
+        the runtime secret resolver inside the sandbox; stored credentials are
+        AES-256-GCM encrypted when <code>LANTERN_CREDENTIAL_KEY</code> is
+        configured. Resolved values never appear in:
       </p>
       <ul>
         <li>Logs or traces</li>
@@ -242,9 +253,10 @@ export default function SecurityPage() {
       </ul>
 
       <div className="callout callout-tip">
-        <strong>Tip:</strong> Rotate secrets from{" "}
-        <strong>Settings &gt; Secrets</strong>. Old versions are retained for
-        running agents to complete, then automatically purged.
+        <strong>Tip:</strong> Rotate LLM provider keys from{" "}
+        <strong>Settings &gt; LLM Providers</strong>; rotate connector
+        credentials by re-installing the connector from{" "}
+        <strong>Integrations</strong>.
       </div>
     </>
   );
