@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Download, Rocket, Bot, Server, ShieldCheck, Boxes, Cloud, Activity } from "lucide-react";
 import { SystemDiagram } from "./_components/SystemDiagram";
 import { CodeTabs } from "./_components/CodeTabs";
+import { Diagram } from "./_components/Diagram";
 
 export default function DocsHome() {
   return (
@@ -100,6 +101,18 @@ run = requests.post(
           <div className="card-desc">Per-agent budgets (402), eval-in-CI gates (422), Ed25519-signed receipts.</div>
         </div>
       </div>
+
+      <h2 id="loop">From first commit to closed feedback loop</h2>
+      <Diagram
+        name="e2e-journey"
+        caption="Six stages — develop, test, deploy, run, observe, improve — all on the same durable substrate. Production feedback becomes the next release's eval cases."
+      />
+      <p>
+        Every stage shares the same primitives: the journal for durability, the model
+        router for capability addressing, RLS for tenant isolation. There is no glue
+        layer to maintain.{" "}
+        <Link href="/runtime">Runtime reference →</Link>
+      </p>
 
       <h2 id="concepts">Core concepts</h2>
       <ul>
