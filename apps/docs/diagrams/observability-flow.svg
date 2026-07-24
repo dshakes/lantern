@@ -31,13 +31,13 @@
   <rect x="0" y="0" width="1240" height="680" rx="16" fill="none" stroke="#2a2118"/>
 
   <text x="32" y="44" class="h" font-size="22" filter="url(#obs-glowf)">One run, one story</text>
-  <text x="230" y="44" class="sub" font-size="13">every signal — span, metric, journal row, health probe, receipt — speaks the same identifiers, so nothing needs correlation glue</text>
+  <text x="230" y="44" class="sub" font-size="13">every signal speaks the same identifiers — nothing needs correlation glue</text>
 
   <!-- ============ THE CONTRACT ============ -->
   <g transform="translate(32,72)">
     <rect x="0" y="0" width="1176" height="54" rx="12" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5"/>
     <text x="20" y="23" class="band" fill="#fbbf24" font-size="11">THE ATTRIBUTE CONTRACT — STAMPED EVERYWHERE</text>
-    <text x="20" y="43" class="code" font-size="12">lantern.tenant_id · lantern.run_id · lantern.step_id · lantern.user_id   <tspan class="sub">(middleware.EnrichSpan — HTTP, gRPC, and step spans all funnel through it)</tspan></text>
+    <text x="20" y="43" class="code" font-size="12">tenant_id · run_id · step_id · user_id — stamped on every span</text>
   </g>
 
   <!-- ============ FIVE SIGNALS ============ -->
@@ -100,7 +100,7 @@
   <g transform="translate(32,520)">
     <rect x="0" y="0" width="1176" height="100" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
     <text x="20" y="28" class="band" fill="#5eead4">WHAT THIS BUYS YOU AT 3 AM</text>
-    <text x="20" y="52" class="t" font-size="12.5">A failing run gives you: the exact step that failed (waterfall) → its span with the provider error (trace) → whether it was retried and how often (metrics)</text>
+    <text x="20" y="52" class="t" font-size="12.5">a failing run: the exact step → its trace → what it cost — in one click-path</text>
     <text x="20" y="72" class="sub">One tenant_id + run_id filters all of it. No cross-referencing five dashboards.</text>
   </g>
 

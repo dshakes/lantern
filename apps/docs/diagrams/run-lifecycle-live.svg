@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="780" viewBox="0 0 1240 780" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="The life of a Lantern run — from POST /v1/runs through gates, tier execution, and the journal to a signed receipt">
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="664" viewBox="0 0 1240 664" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="The life of a Lantern run — gates, execution tier, status machine, evidence">
   <defs>
     <radialGradient id="run-vign" cx="50%" cy="0%" r="90%">
       <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
@@ -33,68 +33,60 @@
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1240" height="780" rx="16" fill="#0a0908"/>
-  <rect x="0" y="0" width="1240" height="780" rx="16" fill="url(#run-vign)"/>
-  <rect x="0" y="0" width="1240" height="780" rx="16" fill="none" stroke="#2a2118"/>
+  <rect x="0" y="0" width="1240" height="664" rx="16" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="664" rx="16" fill="url(#run-vign)"/>
+  <rect x="0" y="0" width="1240" height="664" rx="16" fill="none" stroke="#2a2118"/>
 
   <text x="32" y="44" class="h" font-size="22" filter="url(#run-glowf)">The life of your run</text>
-  <text x="248" y="44" class="sub" font-size="13">what actually happens between POST /v1/runs and a signed receipt — every box is real code</text>
+  <text x="248" y="44" class="sub" font-size="13">read top to bottom: gated → executed → tracked → proven</text>
 
-  <!-- ============ GATES ============ -->
-  <text x="32" y="84" class="band" fill="#fbbf24">BEFORE ANYTHING RUNS — THE GATES</text>
+  <!-- ============ 1 · GATES ============ -->
+  <text x="32" y="84" class="band" fill="#fbbf24">1 · THE GATES — before anything runs</text>
   <g transform="translate(32,96)">
-    <rect x="0" y="0" width="230" height="66" rx="10" fill="#171310" stroke="#3a2f24"/>
-    <text x="16" y="24" class="t" font-size="12.5" font-weight="700">Your request</text>
-    <text x="16" y="43" class="code">POST /v1/runs</text>
-    <text x="16" y="58" class="sub">SDK · CLI · dashboard · schedule · A2A</text>
+    <rect x="0" y="0" width="230" height="62" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700">Your request</text>
+    <text x="16" y="47" class="code">POST /v1/runs</text>
 
-    <rect x="266" y="0" width="220" height="66" rx="10" fill="#171310" stroke="#3a2f24"/>
-    <text x="282" y="24" class="t" font-size="12.5" font-weight="700">Auth + tenancy</text>
-    <text x="282" y="43" class="sub">JWT / API key · every row and</text>
-    <text x="282" y="58" class="sub">span carries your tenant_id</text>
+    <rect x="266" y="0" width="220" height="62" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="282" y="26" class="t" font-size="12.5" font-weight="700">Who are you?</text>
+    <text x="282" y="47" class="sub">auth · everything tenant-fenced</text>
 
-    <rect x="522" y="0" width="220" height="66" rx="10" fill="#171310" stroke="#3a2f24"/>
-    <text x="538" y="24" class="t" font-size="12.5" font-weight="700">Budget gate</text>
-    <text x="538" y="43" class="sub">per-agent cost/day · cost/run ·</text>
-    <text x="538" y="58" class="sub">tokens/day — hard-fail = HTTP 402</text>
+    <rect x="522" y="0" width="220" height="62" rx="10" fill="#171310" stroke="#3a2f24"/>
+    <text x="538" y="26" class="t" font-size="12.5" font-weight="700">Can you afford it?</text>
+    <text x="538" y="47" class="sub">over budget → HTTP 402, no spend</text>
 
-    <rect x="778" y="0" width="398" height="66" rx="10" fill="#1e1813" stroke="#f59e0b"/>
-    <text x="794" y="24" class="t" font-size="12.5" font-weight="700">Isolation gate</text>
-    <text x="794" y="43" class="code">manifest.isolation → "shared" (default) | "microvm"</text>
-    <text x="794" y="58" class="sub">declared at publish, never overridable per request</text>
+    <rect x="778" y="0" width="398" height="62" rx="10" fill="#1e1813" stroke="#f59e0b"/>
+    <text x="794" y="26" class="t" font-size="12.5" font-weight="700">How sandboxed?</text>
+    <text x="794" y="47" class="sub">the manifest decides: <tspan class="code">shared</tspan> or <tspan class="code">microvm</tspan> — caller can't override</text>
 
-    <path class="rlflow" d="M 230 33 H 260" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
-    <path class="rlflow" d="M 486 33 H 516" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
-    <path class="rlflow" d="M 742 33 H 772" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
+    <path class="rlflow" d="M 230 31 H 260" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
+    <path class="rlflow" d="M 486 31 H 516" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
+    <path class="rlflow" d="M 742 31 H 772" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
   </g>
 
-  <!-- ============ EXECUTION ============ -->
-  <text x="32" y="216" class="band" fill="#fbbf24">EXECUTION — YOUR TIER, YOUR GUARANTEES</text>
-  <g transform="translate(32,228)">
-    <rect x="0" y="0" width="572" height="200" rx="12" fill="#0e1512" stroke="#134e4a"/>
-    <text x="18" y="26" class="band" fill="#bef264" font-size="11">SHARED TIER</text>
-    <text x="18" y="46" class="sub">goroutine in the control-plane · first token in ~50–200 ms</text>
-    <text x="18" y="72" class="t" font-size="12">• run lease taken (60 s, renewed every 20 s)</text>
-    <text x="18" y="94" class="t" font-size="12">• workflow graph or plain LLM loop · per-step timeout 60 s</text>
-    <text x="18" y="116" class="t" font-size="12">• per-step retry policy <tspan class="code">retry {maxAttempts, backoffMs, classes}</tspan></text>
-    <text x="18" y="138" class="t" font-size="12">• approval waits PARK the run — status <tspan class="st" fill="#fbbf24">waiting</tspan>, zero compute held</text>
-    <text x="18" y="160" class="t" font-size="12">• tool-free turns stream tokens live to your session SSE</text>
+  <!-- ============ 2 · EXECUTION ============ -->
+  <text x="32" y="200" class="band" fill="#fbbf24">2 · EXECUTION — one of two tiers</text>
+  <g transform="translate(32,212)">
+    <rect x="0" y="0" width="572" height="146" rx="12" fill="#0e1512" stroke="#134e4a"/>
+    <text x="18" y="26" class="band" fill="#bef264" font-size="11">SHARED TIER — your own code, fast</text>
+    <text x="18" y="46" class="sub">first token in ~50–200 ms · tokens stream live</text>
+    <text x="18" y="74" class="t" font-size="12">• workflow graph or plain LLM loop — every step journaled</text>
+    <text x="18" y="98" class="t" font-size="12">• risky steps can wait for a human — parked at zero compute</text>
+    <text x="18" y="122" class="t" font-size="12">• crash-safe: resumes at the last completed step</text>
 
-    <rect x="604" y="0" width="572" height="200" rx="12" fill="#1c1520" stroke="#7e22ce"/>
-    <text x="622" y="26" class="band" fill="#d8b4fe" font-size="11">MICROVM TIER</text>
-    <text x="622" y="46" class="sub">scheduler → manager → VM · hardware isolation for untrusted code</text>
-    <text x="622" y="72" class="t" font-size="12">• quota gate (concurrent VMs + cost/day) → placement → spawn</text>
-    <text x="622" y="94" class="t" font-size="12">• interactive sessions reuse ONE VM (30 m idle TTL, then reaped)</text>
-    <text x="622" y="116" class="t" font-size="12">• in-VM harness runs your tools: <tspan class="code">shell_exec · http_fetch</tspan> (egress-allowlisted)</text>
-    <text x="622" y="138" class="t" font-size="12">• VM dies mid-run? re-scheduled with <tspan class="code">LANTERN_RESUME=1</tspan>, up to 3 attempts</text>
-    <text x="622" y="160" class="t" font-size="12">• tier down? your run FAILS <tspan class="code">microvm_unavailable</tspan></text>
+    <rect x="604" y="0" width="572" height="146" rx="12" fill="#1c1520" stroke="#7e22ce"/>
+    <text x="622" y="26" class="band" fill="#d8b4fe" font-size="11">MICROVM TIER — untrusted code, walled in</text>
+    <text x="622" y="46" class="sub">its own virtual machine per workload</text>
+    <text x="622" y="74" class="t" font-size="12">• separate kernel · internet access only by allowlist</text>
+    <text x="622" y="98" class="t" font-size="12">• tools run inside the VM: <tspan class="code">shell_exec · http_fetch</tspan></text>
+    <text x="622" y="122" class="t" font-size="12">• tier down? the run fails loudly — never quietly downgraded</text>
   </g>
-  <path class="rlflow" d="M 900 162 Q 700 200 320 226" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
-  <path class="rlflow" d="M 1080 162 Q 1060 196 920 226" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
+  <path class="rlflow" d="M 860 158 Q 660 186 320 210" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
+  <path class="rlflow" d="M 1060 158 Q 1040 186 920 210" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#rl-amber)"/>
 
-  <!-- ============ STATUS MACHINE ============ -->
-  <text x="32" y="464" class="band" fill="#fbbf24">EVERY STATUS YOUR RUN CAN HAVE — THE REAL STATE MACHINE</text>
-  <g transform="translate(32,478)">
+  <!-- ============ 3 · STATUS ============ -->
+  <text x="32" y="396" class="band" fill="#fbbf24">3 · STATUS — where your run is right now</text>
+  <g transform="translate(32,410)">
     <rect x="0" y="0" width="1176" height="92" rx="12" fill="#171310" stroke="#3a2f24"/>
     <g transform="translate(24,20)">
       <rect x="0" y="6" width="86" height="30" rx="8" fill="#2a2118" stroke="#8a7d6b"/><text x="43" y="26" text-anchor="middle" class="st" fill="#d8cfc0">queued</text>
@@ -108,41 +100,34 @@
       <path d="M 228 33 Q 330 52 424 33" stroke="#f87171" stroke-width="1.2" fill="none" marker-end="url(#rl-red)"/>
       <path d="M 228 9 Q 400 -12 552 12" stroke="#eab308" stroke-width="1.2" fill="none" marker-end="url(#rl-arr)"/>
       <path d="M 648 21 Q 672 40 700 50 Q 500 66 140 40" stroke="#eab308" stroke-width="1.2" fill="none" stroke-dasharray="4 3"/>
-      <text x="836" y="24" class="sub">crash in running → recovery sweep re-drives within 30 s,</text>
-      <text x="836" y="40" class="sub">completed steps replayed from the journal, never re-billed</text>
+      <text x="836" y="30" class="sub">a crash re-drives within 30 s — finished work is never re-billed</text>
     </g>
   </g>
 
-  <!-- ============ EVIDENCE ============ -->
-  <g transform="translate(32,594)">
-    <rect x="0" y="0" width="1176" height="120" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
-    <text x="20" y="28" class="band" fill="#5eead4">WHAT YOU CAN HOLD IN YOUR HAND AFTERWARD</text>
-    <text x="20" y="52" class="t" font-size="12.5"><tspan class="mono">journal_events</tspan> — the append-only record of every step (started · completed · failed · retrying · waiting), streamed live over SSE and gRPC</text>
-    <text x="20" y="74" class="t" font-size="12.5"><tspan class="mono">Ed25519 receipt</tspan> — signs the SHA-256 chain of that journal; anyone can verify at <tspan class="mono">POST /v1/runs/receipts/verify</tspan> — no Lantern account needed</text>
-    <text x="20" y="96" class="t" font-size="12.5"><tspan class="mono">OTel traces + metrics</tspan> — one attribute contract (<tspan class="mono">lantern.tenant_id · run_id · step_id</tspan>) from HTTP entry to the last step</text>
+  <!-- ============ 4 · EVIDENCE ============ -->
+  <text x="32" y="540" class="band" fill="#5eead4">4 · YOUR EVIDENCE — what you hold afterward</text>
+  <g transform="translate(32,552)">
+    <rect x="0" y="0" width="1176" height="84" rx="12" fill="#0e1512" stroke="#134e4a" stroke-width="1.5"/>
+    <text x="20" y="26" class="t" font-size="12.5"><tspan class="mono">journal_events</tspan> — every step on the record, streamed live</text>
+    <text x="20" y="50" class="t" font-size="12.5"><tspan class="mono">Ed25519 receipt</tspan> — signed proof anyone can verify, no account needed</text>
+    <text x="20" y="74" class="t" font-size="12.5"><tspan class="mono">OTel traces</tspan> — tenant · run · step on every span</text>
   </g>
 
-  <text x="32" y="748" class="sub">The clocks: step 60 s · lease 60 s · recovery sweep 30 s · resume ≤3 · park expiry 30 m</text>
-
   <!-- ============ NAVIGATION HOTSPOTS ============ -->
-  <!-- Shared tier header → /runtime/#shared -->
   <a href="/runtime/#shared">
-    <title>Shared tier — inline goroutine executor</title>
-    <rect class="hotspot" x="32" y="228" width="572" height="40" rx="12"/>
+    <title>Shared tier</title>
+    <rect class="hotspot" x="32" y="212" width="572" height="40" rx="12"/>
   </a>
-  <!-- MicroVM tier header → /runtime/#microvm -->
   <a href="/runtime/#microvm">
-    <title>MicroVM tier — Firecracker / Kata / K8s</title>
-    <rect class="hotspot" x="636" y="228" width="572" height="40" rx="12"/>
+    <title>MicroVM tier</title>
+    <rect class="hotspot" x="636" y="212" width="572" height="40" rx="12"/>
   </a>
-  <!-- "approval waits PARK" bullet → /runtime/durable-execution -->
   <a href="/runtime/durable-execution">
-    <title>Durable execution — park-and-resume</title>
-    <rect class="hotspot" x="32" y="354" width="570" height="22"/>
+    <title>Durable execution — crash-safe resume</title>
+    <rect class="hotspot" x="32" y="322" width="570" height="24"/>
   </a>
-  <!-- "tool-free turns stream" bullet → /runtime/streaming -->
-  <a href="/runtime/streaming">
-    <title>Token streaming</title>
-    <rect class="hotspot" x="32" y="376" width="570" height="22"/>
+  <a href="/runtime/receipts">
+    <title>Verifiable receipts</title>
+    <rect class="hotspot" x="34" y="588" width="1170" height="24"/>
   </a>
 </svg>

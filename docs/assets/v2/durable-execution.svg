@@ -152,7 +152,6 @@
   <g transform="translate(32,536)">
     <rect x="0" y="0" width="1176" height="64" rx="10" fill="#0e1512" stroke="#134e4a"/>
     <text x="20" y="26" class="t" font-size="12" font-weight="700" fill="#5eead4">The guarantee</text>
-    <text x="20" y="46" class="sub">exactly-once side effects · at-least-once step execution with idempotent dedup at every boundary (DB, provider, webhook) · resume point = first step without a step_completed row · identical machinery on both tiers</text>
+    <text x="20" y="46" class="sub">exactly-once side effects — dedup at every boundary</text>
   </g>
-  <text x="32" y="648" class="sub">Tests: workflow_resume · crash_replay_* · recovery_* · microvm_durability_* — the animation pauses under prefers-reduced-motion.</text>
 </svg>

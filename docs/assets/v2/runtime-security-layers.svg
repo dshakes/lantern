@@ -103,6 +103,6 @@
     <rect x="0" y="0" width="1216" height="84" rx="12" fill="#161207" stroke="#6b5420"/>
     <text x="16" y="28" class="h" font-size="12.5">Built against the forcing functions</text>
     <text x="16" y="52" class="item">OWASP Agentic Top-10 · EU AI Act event logging &amp; oversight · IETF agent audit trails · OTel GenAI semconv</text>
-    <text x="16" y="70" class="sub" font-size="10.5">prompt injection is unsolved at the model layer — so the defense lives in the runtime: egress, secrets, and audit</text>
+    <text x="16" y="70" class="sub" font-size="10.5">prompt injection is unsolved at the model layer — the runtime is the defense</text>
   </g>
 </svg>

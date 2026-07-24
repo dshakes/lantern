@@ -66,8 +66,8 @@
     <text x="924" y="78" class="sub">token authenticated · W3C trace</text>
     <text x="924" y="93" class="sub">context rides the whole way down</text>
 
-    <text x="20" y="134" class="sub">also here: workflow engine (durable steps) · model router (capability → vendor) · memory + people graph · evals · marketplace · notifier</text>
-    <text x="20" y="158" class="code">PostgreSQL + pgvector · Redis · S3 — the system of record never leaves the control plane either: it stores metadata, costs, and journals, not your data payloads</text>
+    <text x="20" y="134" class="sub">also here: workflow engine · model router · memory · evals · marketplace · notifier</text>
+    <text x="20" y="158" class="code">Postgres · Redis · S3 — stores metadata, costs, and journals, never your data</text>
 
     <path class="cdflow" d="M 288 62 H 310" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#cd-arrA)"/>
     <path class="cdflow" d="M 584 62 H 606" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#cd-arrA)"/>
@@ -117,7 +117,7 @@
   <g transform="translate(32,636)">
     <rect x="0" y="0" width="1176" height="52" rx="12" fill="#1e1813" stroke="#f59e0b" stroke-width="1.2"/>
     <text x="20" y="22" class="band" fill="#fbbf24" font-size="11">WHAT COMES BACK UP</text>
-    <text x="20" y="42" class="sub">step events + vm_exit → journal_events → run waterfall + OTel traces (<tspan class="code">tenant_id · run_id · step_id</tspan>) → Ed25519-signed receipt anyone can verify offline</text>
+    <text x="20" y="42" class="sub">step events → journal → run waterfall + traces → a signed receipt anyone can verify</text>
   </g>
 
 </svg>
