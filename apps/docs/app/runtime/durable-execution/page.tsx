@@ -36,9 +36,11 @@ run_1      step_c         step_started   ◀── crash here
       <p>
         Other event kinds you will see in the waterfall:{" "}
         <code>step_retrying</code> (between retry attempts),{" "}
-        <code>anomaly_detected</code> (token budget breach), and{" "}
+        <code>step_waiting</code> (run parked at an approval node),{" "}
+        <code>anomaly_detected</code> (token budget breach),{" "}
         <code>confidence_evaluated</code> (confidence gate decision, when
-        enabled).
+        enabled), and <code>confidence_gate_bypassed</code> (gating is on but
+        no handler is wired — step auto-approves).
       </p>
 
       <h2 id="completedstep">CompletedStep replay</h2>
@@ -74,9 +76,10 @@ run_1      step_c         step_started   ◀── crash here
 
       <h2 id="idempotency">Side-effect dedup via idempotency keys</h2>
       <p>
-        Every external side effect carries a key derived from:
+        Every external side effect carries a key derived from a one-way hash of
+        the three identifiers, pipe-delimited:
       </p>
-      <pre><code>{`idempotency_key = (run_id, step_id, attempt)`}</code></pre>
+      <pre><code>{`idempotency_key = sha256("runID|stepID|attempt")`}</code></pre>
       <p>
         <strong>LLM provider calls</strong> receive an{" "}
         <code>Idempotency-Key</code> HTTP header on every request to OpenAI and
@@ -137,9 +140,12 @@ run_1      step_c         step_started   ◀── crash here
         </div>
       </div>
       <div className="callout callout-info">
-        <strong>MicroVM runs are skipped by the recovery sweep.</strong> The
-        VM lifecycle (scheduler + manager) owns those runs. The sweep touching
-        them would race with the scheduler&apos;s own state machine.
+        <strong>MicroVM runs are handled separately by the recovery sweep.</strong>{" "}
+        When the sweep finds an orphaned microVM run it calls{" "}
+        <code>resumeMicroVMRun</code> — see{" "}
+        <a href="#microvm-resume">MicroVM-tier crash-resume</a> below — rather
+        than re-driving it via the shared-tier inline executor. The two paths are
+        distinct to avoid racing with the scheduler&apos;s own state machine.
       </div>
 
       <h2 id="ha">Scheduler HA (microVM tier)</h2>

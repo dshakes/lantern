@@ -436,3 +436,102 @@ a, button, .card, .sys-comp, .sys-actor { transition: color .15s ease, backgroun
 .agent-loop-emerald { border-left: 3px solid rgba(52,211,153,0.55); }
 /* Rose: contact-facing — visually distinct, matches harness-rail rose */
 .agent-loop-rose { border: 1px solid rgba(251,113,133,0.32); border-left: 3px solid rgba(251,113,133,0.80); background: linear-gradient(160deg, rgba(251,113,133,0.06), rgba(251,113,133,0.01)); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Landing page — hero CTAs, facts band, feature cards, footer CTA.
+   Stone/amber palette matching diagram identity: #1c1917 panels, #44403c
+   borders, #f59e0b/#fbbf24 amber, #2dd4bf teal for data-plane accent.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Hero kicker — small uppercase label above h1. */
+.lp-kicker {
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: #f59e0b; margin: 0 0 0.5rem;
+  line-height: 1;
+}
+
+/* Pillar cards — 3-up grid; reuse .card-grid / .card, just tighten the column min. */
+.lp-pillars { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 2rem; }
+
+/* Hero CTA pair — sits below the quickstart pre block. */
+.lp-ctas { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.5rem 0 2.5rem; }
+
+/* Primary amber button — overrides .prose a cascade with higher specificity. */
+.prose .lp-cta-primary {
+  display: inline-flex; align-items: center;
+  background: #f59e0b; color: #0c0a09; font-size: 0.9rem; font-weight: 700;
+  border-radius: 9px; padding: 0.6rem 1.25rem;
+  text-decoration: none; border-bottom: none;
+  box-shadow: 0 4px 18px -6px rgba(245,158,11,0.55);
+  transition: background .15s, transform .15s, box-shadow .2s;
+}
+.prose .lp-cta-primary:hover {
+  background: #fbbf24; color: #0c0a09; border-bottom: none;
+  transform: translateY(-1px); box-shadow: 0 8px 28px -8px rgba(245,158,11,0.7);
+}
+
+/* Ghost secondary button. */
+.prose .lp-cta-ghost {
+  display: inline-flex; align-items: center;
+  background: transparent; color: #a8a29e; font-size: 0.9rem; font-weight: 500;
+  border-radius: 9px; padding: 0.6rem 1.25rem;
+  text-decoration: none; border: 1px solid #44403c; border-bottom: 1px solid #44403c;
+  transition: border-color .15s, color .15s, transform .15s;
+}
+.prose .lp-cta-ghost:hover {
+  border-color: #78716c; border-bottom-color: #78716c;
+  color: #fafaf9; transform: translateY(-1px);
+}
+
+/* Facts / numbers band — 6 chips in a responsive grid. */
+.lp-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 0.65rem; margin: 2.5rem 0;
+}
+.lp-fact {
+  border: 1px solid #44403c; border-radius: 12px;
+  background: #1c1917; padding: 1rem 1.15rem;
+}
+.lp-fact-num {
+  display: block; font-size: 1.55rem; font-weight: 700; letter-spacing: -0.03em;
+  color: #fbbf24; line-height: 1; margin-bottom: 0.22rem;
+  font-variant-numeric: tabular-nums;
+}
+.lp-fact-unit {
+  display: block; font-size: 0.8rem; font-weight: 600; color: #fafaf9;
+  margin-bottom: 0.28rem;
+}
+.lp-fact-sub { display: block; font-size: 0.71rem; color: #78716c; line-height: 1.4; }
+
+/* Amber arrow affordance at bottom of each feature card. */
+.lp-feature-card .lp-card-arrow {
+  margin-top: 0.75rem; font-size: 0.9rem; color: #f59e0b; font-weight: 700;
+}
+
+/* Teal accent for the outbound-tunnel label in the "how it fits" arch strip.
+   The ::before / ::after pseudo-elements on .arch-link-label add the arrows;
+   override their color so the whole connector reads in teal. */
+.lp-teal-label,
+.lp-teal-label::before,
+.lp-teal-label::after { color: #2dd4bf !important; }
+
+/* Footer CTA panel — warm stone card with two links. */
+.lp-footer-cta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;
+  margin: 3.5rem 0 1.5rem; padding: 1.4rem 1.6rem;
+  border-radius: 14px; background: #1c1917; border: 1px solid #44403c;
+  box-shadow: 0 12px 34px -24px rgba(0,0,0,0.85);
+}
+.prose .lp-footer-link {
+  font-size: 0.95rem; font-weight: 600; color: #fbbf24;
+  text-decoration: none; border-bottom: none;
+  transition: color .15s;
+}
+.prose .lp-footer-link:hover { color: #fde68a; border-bottom: none; }
+.lp-footer-sep { color: #44403c; font-weight: 400; }
+
+@media (max-width: 640px) {
+  .lp-facts { grid-template-columns: repeat(2, 1fr); }
+  .lp-ctas { flex-direction: column; }
+  .prose .lp-cta-primary, .prose .lp-cta-ghost { width: fit-content; }
+}

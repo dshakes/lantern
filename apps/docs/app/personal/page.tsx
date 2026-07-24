@@ -30,7 +30,7 @@ export default function PersonalHarnessPage() {
 
       <h2 id="agents">Your agents</h2>
       <p>
-        Fifteen agents make up the personal suite across three execution models.
+        Sixteen agents make up the personal suite across three execution models.
         Ten are <strong>owner-facing</strong> — they nudge or brief you in your
         self-chat and never touch your contacts. Only the two{" "}
         <strong>assistant</strong> agents reply to contacts as you. Four{" "}
@@ -406,6 +406,36 @@ export default function PersonalHarnessPage() {
         life-events. Because both channels write the <em>same</em> person and the
         same timeline, a fact learned on one channel is recalled on the other for
         the same canonical person.
+      </p>
+
+      <h3 id="life-events">Life-event engine</h3>
+      <p>
+        Inbound email and messages are classified into typed life-events:{" "}
+        <code>bill</code>, <code>delivery</code>, <code>appointment</code>,{" "}
+        <code>fraud_alert</code>, <code>otp</code>, <code>travel</code>,{" "}
+        <code>receipt</code>, <code>promo</code>. Each event lands in the{" "}
+        <code>life_events</code> table and is routed by your per-category trust
+        toggle: <code>auto</code>, <code>ask</code>, or <code>off</code>.
+        Endpoints: <code>POST /v1/life-events</code>,{" "}
+        <code>GET /v1/life-events</code> (feed, newest-first),{" "}
+        <code>GET /v1/life-events/prefs</code>,{" "}
+        <code>PUT /v1/life-events/prefs</code>. Deduped on{" "}
+        <code>(tenant, idempotencyKey)</code>.
+      </p>
+
+      <h3 id="immigration-sentinel">Immigration sentinel</h3>
+      <p>
+        When <code>LANTERN_IMMIGRATION_SENTINEL=1</code>, a flag-gated sentinel
+        reasons over the family&apos;s immigration PDFs and arriving USCIS /
+        attorney email to surface <em>derived</em> deadlines that nobody typed
+        in — EAD/AP expiry, I-485 windows, biometrics / RFE clocks. The LLM is
+        capability-addressed (never a hardcoded vendor), doc and mail PII are
+        never logged, and a deadline is dropped unless the LLM grounds it in a
+        non-blank <code>source_ref</code> with <code>confidence ≥ 0.6</code>.
+        Endpoints: <code>POST /v1/immigration/scan</code>,{" "}
+        <code>GET /v1/immigration/deadlines</code>. Default OFF — unset means
+        the scan is inert and endpoints return{" "}
+        <code>{`{"enabled":false}`}</code>.
       </p>
 
       <h2 id="reason">L3 · Reason — decisioning &amp; orchestration</h2>

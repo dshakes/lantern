@@ -7,7 +7,7 @@ export default function SurfacesPage() {
       <h1>Surfaces</h1>
       <p>
         Surfaces are the communication channels through which users interact
-        with agents. Lantern supports 11 built-in surfaces, all two-way --
+        with agents. Lantern supports 7 built-in surfaces, all two-way —
         agents reply in the same channel you messaged from.
       </p>
 
@@ -53,7 +53,6 @@ export default function SurfacesPage() {
         <li>Scan the QR code with your WhatsApp app</li>
         <li>The bridge connects and your agent is now reachable via WhatsApp</li>
       </ol>
-      <p>[Screenshot: WhatsApp QR code pairing screen]</p>
 
       <div className="callout callout-info">
         <strong>Note:</strong> The WhatsApp bridge service runs as a sidecar
@@ -121,24 +120,103 @@ export default function SurfacesPage() {
         </li>
       </ol>
 
-      <h3 id="twilio">Twilio (SMS and Voice)</h3>
+      <h3 id="twilio">Voice (Twilio + LiveKit)</h3>
       <p>
-        Connect your Twilio account for SMS and voice call surfaces:
+        Phone numbers route inbound calls to a Lantern agent. Two providers are
+        supported:
       </p>
-      <ol>
+      <ul>
         <li>
-          Navigate to <strong>Settings &gt; Surfaces &gt; Twilio</strong>
+          <strong>Twilio</strong> -- TwiML webhooks for inbound PSTN calls. The
+          control-plane verifies Twilio&apos;s webhook signature and replies with
+          TwiML. SMS is also available on the same Twilio connector.
         </li>
-        <li>Enter your Twilio Account SID, Auth Token, and phone number</li>
         <li>
-          Choose <strong>SMS</strong>, <strong>Voice</strong>, or both
+          <strong>LiveKit</strong> -- realtime audio; the control-plane mints a
+          short-lived join token and the audio loop runs in a separately-deployed
+          LiveKit Agents worker (media last-mile).
         </li>
-      </ol>
+      </ul>
+
+      <h4>Budget gating</h4>
       <p>
-        For voice calls, agents use text-to-speech for responses and
-        speech-to-text for input. The conversation flows naturally as a phone
-        call.
+        Voice spend counts against the same <code>agent_budgets</code> as runs.
+        A Twilio inbound call over a hard-fail budget is declined with{" "}
+        <code>&lt;Reject&gt;</code> (no carrier cost). A LiveKit join token is
+        refused with HTTP 402 (no token means no media). A flat cost estimate
+        is recorded on connect; the provider&apos;s status callback at{" "}
+        <code>POST /v1/voice/calls/status/&#123;provider&#125;</code> reconciles
+        to actual duration cost when the call ends.
       </p>
+
+      <h4>Voice API</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>POST</code></td>
+            <td><code>/v1/voice/numbers</code></td>
+            <td>Link a phone number to an agent (provider + config)</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td>
+            <td><code>/v1/voice/numbers</code></td>
+            <td>List linked numbers</td>
+          </tr>
+          <tr>
+            <td><code>DELETE</code></td>
+            <td><code>/v1/voice/numbers/&#123;id&#125;</code></td>
+            <td>Unlink a number</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td>
+            <td><code>/v1/voice/calls</code></td>
+            <td>Recent calls with duration and cost</td>
+          </tr>
+          <tr>
+            <td><code>POST</code></td>
+            <td><code>/v1/voice/token</code></td>
+            <td>Mint a short-lived LiveKit join token</td>
+          </tr>
+          <tr>
+            <td><code>POST</code></td>
+            <td><code>/v1/voice/webhook/&#123;provider&#125;</code></td>
+            <td>Inbound call webhook (Twilio TwiML or LiveKit JWT)</td>
+          </tr>
+          <tr>
+            <td><code>POST</code></td>
+            <td><code>/v1/voice/calls/status/&#123;provider&#125;</code></td>
+            <td>Call-end status callback — reconciles actual cost into budget rollup. Point Twilio&apos;s &ldquo;call status changes&rdquo; webhook here.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>Env vars</h4>
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>LANTERN_VOICE_CALLER_ID</code></td>
+            <td>E.164 caller-ID shown on outbound calls. Must be a Twilio verified number.</td>
+          </tr>
+          <tr>
+            <td><code>LANTERN_VOICE_SMS_HEADSUP</code></td>
+            <td><code>on</code> (default) — sends an SMS heads-up before the call so recipients recognize the number.</td>
+          </tr>
+          <tr>
+            <td><code>LANTERN_VOICE_CLONE</code></td>
+            <td>Optional — <code>1</code> speaks outbound calls in the owner&apos;s cloned voice via ElevenLabs. Requires <code>LANTERN_ELEVENLABS_API_KEY</code> and <code>LANTERN_ELEVENLABS_VOICE_ID</code>.</td>
+          </tr>
+        </tbody>
+      </table>
 
       <h3>Email</h3>
       <p>
@@ -158,7 +236,8 @@ export default function SurfacesPage() {
         Embed a chat widget on any website:
       </p>
       <pre>
-        <code>{`<script src="https://cdn.lantern.run/chat.js"
+        <code>{`<!-- widget.js is served from the same origin as the control-plane -->
+<script src="http://localhost:8080/widget.js"
   data-agent="your-agent-name"
   data-tenant="your-tenant-id">
 </script>`}</code>
@@ -185,10 +264,10 @@ export default function SurfacesPage() {
         <Link href="/api">API Reference</Link> for full details.
       </p>
       <pre>
-        <code>{`curl -X POST https://api.lantern.run/v1/agents/my-agent/runs \\
+        <code>{`curl -X POST http://localhost:8080/v1/runs \\
   -H "Authorization: Bearer $LANTERN_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"input": {"topic": "quantum computing"}}'`}</code>
+  -d '{"agentName": "my-agent", "input": {"topic": "quantum computing"}}'`}</code>
       </pre>
 
       <h2>Assigning surfaces to agents</h2>

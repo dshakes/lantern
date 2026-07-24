@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Diagram } from "../../_components/Diagram";
 
 export default function RuntimeIsolationPage() {
   return (
@@ -11,6 +12,11 @@ export default function RuntimeIsolationPage() {
         isolation is a tier on the pod, not a separate backend (
         <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0009-kubernetes-default-runtime-substrate.md" target="_blank" rel="noopener noreferrer">ADR 0009</a>).
       </p>
+
+      <Diagram
+        name="isolation-ladder"
+        caption="You declare how much you trust the code — the runtime either honors it or refuses. There is no third option."
+      />
 
       <h2 id="decision">The decision tree</h2>
       <p>

@@ -52,10 +52,10 @@ const sections: NavSection[] = [
       { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
     ]},
     { href: "/models", label: "Models", icon: Brain, subs: [
-      { href: "/models#providers", label: "Providers" }, { href: "/models#routing", label: "Capability routing" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#keys", label: "API keys" },
+      { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" },
     ]},
     { href: "/scheduling", label: "Scheduling", icon: Clock, subs: [
-      { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#ai", label: "AI-assisted cron" }, { href: "/scheduling#email", label: "Email delivery" }, { href: "/scheduling#webhooks", label: "Webhooks" },
+      { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#api", label: "Schedule API" }, { href: "/scheduling#timezone", label: "Timezone" },
     ]},
   ]},
   { label: "Runtime", items: [
@@ -98,15 +98,24 @@ const sections: NavSection[] = [
       { href: "/marketplace#what", label: "What is the Marketplace" }, { href: "/marketplace#a2a", label: "A2A Agent Cards" }, { href: "/marketplace#publishing", label: "Publishing agents" }, { href: "/marketplace#discovering", label: "Discovering & forking" }, { href: "/marketplace#interop", label: "Cross-platform interop" },
     ]},
     { href: "/evaluations", label: "Evaluations", icon: BarChart3, subs: [
-      { href: "/evaluations#metrics", label: "Performance metrics" }, { href: "/evaluations#cost", label: "Cost attribution" }, { href: "/evaluations#model-usage", label: "Model usage" }, { href: "/evaluations#quality", label: "Quality signals" }, { href: "/evaluations#alerts", label: "Alerts (future)" },
+      { href: "/evaluations#eval-suites", label: "Eval suites" }, { href: "/evaluations#eval-runs", label: "CI gate" }, { href: "/evaluations#baselines", label: "Baselines" }, { href: "/evaluations#experiments", label: "A/B experiments" }, { href: "/evaluations#feedback", label: "Feedback" }, { href: "/evaluations#rehearsals", label: "Rehearsals" },
     ]},
   ]},
   { label: "Reference", items: [
     { href: "/api", label: "API Reference", icon: Code, subs: [
-      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#connectors", label: "Connectors" },
+      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" }, { href: "/api#schedules", label: "Schedules" }, { href: "/api#errors", label: "Errors" },
     ]},
     { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
-      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" },
+      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#agent-runtime", label: "Agent runtime" },
+    ]},
+    { href: "/cli", label: "CLI Reference", icon: Code, subs: [
+      { href: "/cli#onboard", label: "onboard" }, { href: "/cli#doctor", label: "doctor" }, { href: "/cli#dev", label: "dev" }, { href: "/cli#agents", label: "agents" }, { href: "/cli#runs", label: "runs" }, { href: "/cli#vm", label: "vm" }, { href: "/cli#deploy", label: "deploy" }, { href: "/cli#auth", label: "login / whoami" },
+    ]},
+    { href: "/budgets", label: "Budgets", icon: BarChart3, subs: [
+      { href: "/budgets#policy", label: "Setting a budget" }, { href: "/budgets#forecast", label: "Cost forecast" }, { href: "/budgets#voice", label: "Voice gating" },
+    ]},
+    { href: "/human-in-the-loop", label: "Human-in-the-loop", icon: Shield, subs: [
+      { href: "/human-in-the-loop#approval", label: "Approval workflow" }, { href: "/human-in-the-loop#confidence-gate", label: "Confidence gate" },
     ]},
   ]},
 ];

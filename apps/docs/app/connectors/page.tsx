@@ -12,48 +12,115 @@ export default function ConnectorsPage() {
       </p>
 
       <BrandGrid items={[
-        { name: "Gmail", sub: "read · search · send", href: "#gmail" },
-        { name: "Google", sub: "Calendar · Drive · Sheets", href: "#gmail" },
-        { name: "GitHub", sub: "issues · PRs · repos", href: "#gmail" },
-        { name: "Slack", sub: "post · read channels", href: "#gmail" },
-        { name: "Notion", sub: "pages · databases", href: "#gmail" },
-        { name: "Linear", sub: "issues · projects", href: "#gmail" },
+        { name: "Gmail", sub: "read · search · send", href: "#email-calendar" },
+        { name: "Google Calendar", sub: "events · availability", href: "#email-calendar" },
+        { name: "Slack", sub: "post · read channels", href: "#communication" },
+        { name: "GitHub", sub: "issues · PRs · repos", href: "#dev-tools" },
+        { name: "Notion", sub: "pages · databases", href: "#docs-storage" },
+        { name: "Stripe", sub: "payments · billing", href: "#commerce" },
+        { name: "HubSpot", sub: "CRM · contacts · deals", href: "#crm-sales" },
+        { name: "Jira", sub: "issues · agile", href: "#dev-tools" },
       ]} />
 
-      <h2 id="gmail">Available connectors</h2>
-      <p>Lantern ships with built-in connectors for:</p>
+      <h2 id="available">Available connectors (17)</h2>
+
+      <h3 id="communication">Communication</h3>
       <ul>
         <li>
-          <strong>Gmail</strong> -- read, search, draft, and send emails
+          <strong>Slack</strong> (<code>slack</code>) -- read channels, post
+          messages, manage threads; OAuth or bot token
         </li>
         <li>
-          <strong>Google Calendar</strong> -- read and create events, check
-          availability
+          <strong>Discord</strong> (<code>discord</code>) -- bot integration for
+          servers and DMs
         </li>
         <li>
-          <strong>Slack</strong> -- read channels, post messages, manage threads
+          <strong>Telegram</strong> (<code>telegram</code>) -- bot messaging with
+          inline buttons and media
         </li>
         <li>
-          <strong>GitHub</strong> -- read repos, create issues, manage PRs,
-          search code
-        </li>
-        <li>
-          <strong>Linear</strong> -- read and create issues, manage projects
-        </li>
-        <li>
-          <strong>Notion</strong> -- read and update pages, search databases
-        </li>
-        <li>
-          <strong>Google Drive</strong> -- read and search documents
-        </li>
-        <li>
-          <strong>Web Search</strong> -- search the web via configurable
-          providers
-        </li>
-        <li>
-          <strong>Web Scrape</strong> -- read and extract content from URLs
+          <strong>Twilio</strong> (<code>twilio</code>) -- SMS, voice calls, and
+          WhatsApp messaging; Account SID + Auth Token + phone number
         </li>
       </ul>
+
+      <h3 id="email-calendar">Email &amp; Calendar</h3>
+      <ul>
+        <li>
+          <strong>Gmail</strong> (<code>gmail</code>) -- read, search, draft, and
+          send emails; Google OAuth or app password
+        </li>
+        <li>
+          <strong>Google Calendar</strong> (<code>google-calendar</code>) -- read
+          and create events, check availability
+        </li>
+      </ul>
+
+      <h3 id="docs-storage">Docs &amp; Storage</h3>
+      <ul>
+        <li>
+          <strong>Google Drive</strong> (<code>google-drive</code>) -- access
+          files and manage permissions
+        </li>
+        <li>
+          <strong>Google Sheets</strong> (<code>google-sheets</code>) -- read and
+          write spreadsheet data
+        </li>
+        <li>
+          <strong>Notion</strong> (<code>notion</code>) -- access databases and
+          workspace content; integration token
+        </li>
+      </ul>
+
+      <h3 id="dev-tools">Dev Tools</h3>
+      <ul>
+        <li>
+          <strong>GitHub</strong> (<code>github</code>) -- repositories, issues,
+          pull requests; OAuth or personal access token
+        </li>
+        <li>
+          <strong>Linear</strong> (<code>linear</code>) -- issue tracking and
+          project management; API key
+        </li>
+        <li>
+          <strong>Jira</strong> (<code>jira</code>) -- issue tracking and agile
+          management; email + API token + domain
+        </li>
+        <li>
+          <strong>Sentry</strong> (<code>sentry</code>) -- error tracking and
+          performance monitoring; auth token
+        </li>
+        <li>
+          <strong>Vercel</strong> (<code>vercel</code>) -- deployment management
+          and project config; access token
+        </li>
+      </ul>
+
+      <h3 id="crm-sales">CRM &amp; Sales</h3>
+      <ul>
+        <li>
+          <strong>HubSpot</strong> (<code>hubspot</code>) -- CRM contacts, deals,
+          and marketing; API key
+        </li>
+        <li>
+          <strong>Salesforce</strong> (<code>salesforce</code>) -- CRM platform
+          with full API access; username + password + security token
+        </li>
+      </ul>
+
+      <h3 id="commerce">Commerce</h3>
+      <ul>
+        <li>
+          <strong>Stripe</strong> (<code>stripe</code>) -- payments, subscriptions,
+          and billing; secret key
+        </li>
+      </ul>
+
+      <div className="callout callout-info">
+        <strong>Web search and web scrape</strong> are built-in agent tools, not
+        connectors -- no installation required. They are always available and
+        enabled per-session via the <code>webSearch</code> session flag.
+      </div>
 
       <div className="callout callout-info">
         <strong>Note:</strong> Custom connectors can be added by implementing
@@ -81,7 +148,7 @@ export default function ConnectorsPage() {
           The connector is now available and can be attached to any agent
         </li>
       </ol>
-      <p>[Screenshot: Connectors settings page with OAuth flow]</p>
+
 
       <div className="callout callout-tip">
         <strong>Tip:</strong> You can connect multiple accounts for the same
@@ -144,7 +211,6 @@ export default function ConnectorsPage() {
           Click <strong>Save</strong>
         </li>
       </ol>
-      <p>[Screenshot: Agent configuration with connector toggles]</p>
 
       <h2>How agents use connectors</h2>
       <p>

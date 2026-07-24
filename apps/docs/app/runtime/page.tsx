@@ -50,10 +50,10 @@ export default function RuntimeOverviewPage() {
         caller.
       </p>
 
-      {/* Hero diagram — no heading; the diagram IS the overview */}
+      {/* Hero diagram — customer-facing lifecycle view */}
       <Diagram
-        name="runtime-two-tier"
-        caption="The isolation gate reads manifest.isolation from the resolved agent version. Both tiers checkpoint to the same journal_events substrate."
+        name="run-lifecycle-live"
+        caption="From POST /v1/runs through auth, budget, and isolation gates to the tier that executes, the status machine, and a signed receipt — every box is real code."
       />
 
       <h2 id="tiers">Two tiers, one journal</h2>
@@ -80,9 +80,11 @@ export default function RuntimeOverviewPage() {
       <div className="callout callout-warning">
         <strong>No silent downgrade.</strong> If the microVM tier is
         unavailable (scheduler unreachable, quota exceeded, manager down), the
-        run fails with code <code>microvm_unavailable</code>. It never falls
-        back to the shared tier — that isolation declaration is a security
-        boundary.
+        run fails with code <code>microvm_unavailable</code>. A VM that exits
+        unexpectedly produces <code>microvm_exit</code>; exhausting the 3-attempt
+        resume limit produces <code>microvm_resume_exhausted</code>. None of
+        these ever fall back to the shared tier — the isolation declaration is a
+        security boundary.
       </div>
 
       <h2 id="shared">Shared tier</h2>
@@ -140,6 +142,17 @@ export default function RuntimeOverviewPage() {
     }
   ]
 }`}</code></pre>
+
+      <h2 id="architecture">System architecture</h2>
+      <p>
+        The technical view — how the control-plane, scheduler, runtime-manager,
+        and in-VM harness collaborate across both tiers on the same{" "}
+        <code>journal_events</code> substrate.
+      </p>
+      <Diagram
+        name="runtime-two-tier"
+        caption="The isolation gate reads manifest.isolation from the resolved agent version. Both tiers checkpoint to the same journal_events substrate."
+      />
 
       <h2 id="principles">What makes it different</h2>
       <div className="card-grid">

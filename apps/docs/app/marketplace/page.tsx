@@ -34,46 +34,38 @@ export default function MarketplacePage() {
         author cannot see your data or runs.
       </div>
 
-      <h2 id="a2a">How A2A Agent Cards work</h2>
+      <h2 id="a2a">A2A Agent Cards and visibility</h2>
       <p>
         Lantern implements the{" "}
         <strong>Agent-to-Agent (A2A) protocol</strong> for cross-platform agent
-        discovery. Every deployed agent can expose an <strong>Agent Card</strong>{" "}
-        -- a machine-readable JSON document describing its capabilities,
-        inputs, outputs, and endpoint.
+        discovery. Agents are <strong>private by default</strong> (
+        <code>agents.is_public = false</code>). The card, the well-known
+        directory, and A2A invoke only expose an agent to a non-owner when it
+        is explicitly made public.
       </p>
 
-      <h3>Agent Card endpoints</h3>
+      <h3>Visibility rules</h3>
       <ul>
         <li>
-          <code>GET /v1/agents/&#123;name&#125;/card</code> -- returns the A2A
-          card for a specific agent
+          An authenticated caller always sees and can invoke their{" "}
+          <strong>own</strong> agents regardless of visibility.
         </li>
         <li>
-          <code>GET /.well-known/agent.json</code> -- well-known discovery
-          endpoint that returns the default agent card for the tenant
+          A card or invoke for another tenant&apos;s agent returns{" "}
+          <strong>404</strong> (not 403) when the agent is not public — to
+          avoid leaking that the agent exists.
+        </li>
+        <li>
+          <code>GET /.well-known/agent.json</code> lists only{" "}
+          <code>is_public = true</code> agents.
         </li>
       </ul>
 
-      <h3>Card structure</h3>
+      <h3>Agent Card endpoints</h3>
       <pre>
-        <code>{`{
-  "name": "my-research-agent",
-  "description": "Researches topics and produces summaries",
-  "version": "1.2.0",
-  "capabilities": ["text-generation", "web-search", "summarization"],
-  "inputs": [{ "name": "query", "type": "string", "required": true }],
-  "outputs": [{ "name": "summary", "type": "string" }],
-  "endpoint": "https://my-agent.lantern.cloud/v1/run",
-  "auth": { "type": "bearer" }
-}`}</code>
+        <code>{`GET /v1/agents/{name}/card          — own agent or is_public; else 404
+GET /.well-known/agent.json          — lists only public agents`}</code>
       </pre>
-
-      <p>
-        External platforms can fetch this card to understand what your agent
-        does and how to invoke it, enabling seamless composition across
-        different agent frameworks.
-      </p>
 
       <h2 id="publishing">Publishing your agent</h2>
       <p>
@@ -135,6 +127,28 @@ export default function MarketplacePage() {
         original.
       </p>
 
+      <h2 id="commerce">Cross-tenant invocation (commerce)</h2>
+      <p>
+        Buyers can invoke a published marketplace agent without forking it.
+        The run executes on the <strong>seller&apos;s</strong> tenant (their LLM
+        keys, their budgets); the buyer receives the output plus an HMAC-signed
+        receipt verifiable via the same <code>/proof</code> endpoint as run
+        receipts.
+      </p>
+      <pre>
+        <code>{`POST /v1/marketplace/{slug}/invoke
+{ "input": { "topic": "..." } }
+
+Response:
+{
+  "output": { "summary": "..." },
+  "receipt": { "signature": "...", "payload": {...} }
+}
+
+GET /v1/marketplace/invocations?role=buyer   — buyer-side history
+GET /v1/marketplace/invocations?role=seller  — seller-side history`}</code>
+      </pre>
+
       <h2 id="interop">Cross-platform interop</h2>
       <p>
         A2A Agent Cards enable interoperability beyond the Lantern ecosystem:
@@ -159,8 +173,9 @@ export default function MarketplacePage() {
       </ul>
 
       <div className="callout callout-tip">
-        <strong>Tip:</strong> Use the <code>lantern agent card</code> CLI
-        command to inspect any agent&apos;s A2A card locally before deploying.
+        <strong>Tip:</strong> The <code>/.well-known/agent.json</code> endpoint
+        is compatible with any A2A-aware platform. External orchestrators can
+        discover and invoke your public Lantern agents without a Lantern account.
       </div>
     </>
   );

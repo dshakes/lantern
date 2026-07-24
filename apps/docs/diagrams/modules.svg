@@ -1,108 +1,112 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern — five modules, one runtime">
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="620" viewBox="0 0 1240 620" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern's five modules — Agent Runtime, Personal Agent, Trust and Governance, Channels and Reach, Developer Experience — all running on one shared runtime substrate">
   <defs>
+    <radialGradient id="mo-vign" cx="50%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#201607" stop-opacity=".55"/>
+      <stop offset="55%" stop-color="#0a0908" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="mo-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="mo-arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
+    </marker>
     <style>
-      .h{fill:#f8fafc;font-weight:700} .sub{fill:#94a3b8;font-size:11.5px}
-      .mt{font-size:10px;font-weight:700}
-      .mod{fill:#e2e8f0;font-size:15px;font-weight:700}
-      .cmp{fill:#cbd5e1;font-size:10.5px}
-      .band{fill:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:.14em}
+      .t    { fill:#f5f0e8; }
+      .sub  { fill:#a89e8f; font-size:11px; }
+      .h    { fill:#fdf8ef; font-weight:700; }
+      .code { fill:#fbbf24; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .mono { fill:#d8cfc0; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band { fill:#d8cfc0; font-size:12px; font-weight:700; letter-spacing:.16em; }
+      .num  { fill:#f59e0b; font-size:28px; font-weight:800; }
+      .chip { font-size:9.5px; font-weight:800; letter-spacing:.06em; }
+      .moflow { stroke-dasharray:6 6; animation:mo-dash 1.4s linear infinite; }
+      @keyframes mo-dash { to { stroke-dashoffset:-24; } }
+      @media (prefers-reduced-motion: reduce) { .moflow { animation:none; } }
     </style>
   </defs>
-  <rect width="1240" height="720" rx="16" fill="#0b1120"/>
-  <rect width="1240" height="720" rx="16" fill="none" stroke="#1e293b"/>
 
-  <text x="32" y="46" class="h" font-size="22">Lantern — five modules, one runtime</text>
-  <text x="32" y="70" class="sub" font-size="13">one substrate powers both a production agent platform and a personal agent</text>
-  <!-- maturity legend -->
-  <g transform="translate(840,34)">
-    <rect x="0" y="0" width="12" height="12" rx="3" fill="#34d399"/><text x="18" y="11" class="sub">prod-ready</text>
-    <rect x="98" y="0" width="12" height="12" rx="3" fill="#8b5cf6"/><text x="116" y="11" class="sub">live</text>
-    <rect x="158" y="0" width="12" height="12" rx="3" fill="#f59e0b"/><text x="176" y="11" class="sub">alpha · fail-closed</text>
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="#0a0908"/>
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="url(#mo-vign)"/>
+  <rect x="0" y="0" width="1240" height="620" rx="18" fill="none" stroke="#2a2118"/>
+
+  <text x="32" y="46" class="h" font-size="24" filter="url(#mo-glow)">Five modules, one runtime</text>
+  <text x="370" y="46" class="sub" font-size="13">every module is a lens on the same durable, budgeted, multi-tenant core — nothing is a bolt-on</text>
+
+  <!-- ============ ROW 1: three modules ============ -->
+  <g transform="translate(32,80)">
+    <!-- 1 runtime -->
+    <rect x="0" y="0" width="376" height="176" rx="14" fill="#1e1813" stroke="#f59e0b" stroke-width="1.5" filter="url(#mo-glow)"/>
+    <text x="20" y="40" class="num">1</text>
+    <text x="48" y="34" class="t" font-size="13.5" font-weight="700">Agent Runtime</text>
+    <rect x="270" y="18" width="88" height="20" rx="10" fill="#292117" stroke="#f59e0b"/>
+    <text x="314" y="32" text-anchor="middle" class="chip" fill="#fbbf24">THE CORE</text>
+    <text x="20" y="66" class="sub">Durable workflow engine · capability-based multi-</text>
+    <text x="20" y="82" class="sub">LLM router · K8s-default substrate with the fail-</text>
+    <text x="20" y="98" class="sub">closed isolation ladder (runc → gVisor → Kata →</text>
+    <text x="20" y="114" class="sub">Firecracker) · crash-replay with no re-spent tokens ·</text>
+    <text x="20" y="130" class="sub">one W3C trace per spawn · Ed25519 instance identity</text>
+    <text x="20" y="158" class="code">two tiers: shared inline · microVM — one journal</text>
+
+    <!-- 2 jarvis -->
+    <rect x="400" y="0" width="376" height="176" rx="14" fill="#171310" stroke="#3a2f24"/>
+    <text x="420" y="40" class="num">2</text>
+    <text x="448" y="34" class="t" font-size="13.5" font-weight="700">Personal Agent — "Jarvis"</text>
+    <rect x="694" y="18" width="62" height="20" rx="10" fill="#0e1512" stroke="#134e4a"/>
+    <text x="725" y="32" text-anchor="middle" class="chip" fill="#5eead4">LIVE</text>
+    <text x="420" y="66" class="sub">WhatsApp + iMessage assistant that texts AS you —</text>
+    <text x="420" y="82" class="sub">owner-only, learns your real voice · agentic macOS</text>
+    <text x="420" y="98" class="sub">actions · cross-channel memory · life-events engine ·</text>
+    <text x="420" y="114" class="sub">skill forge · event scout · time-travel recap ·</text>
+    <text x="420" y="130" class="sub">immigration deadline sentinel · draft-and-confirm</text>
+    <text x="420" y="158" class="code">the dogfood: 16 agents running the founder's life</text>
+
+    <!-- 3 trust -->
+    <rect x="800" y="0" width="376" height="176" rx="14" fill="#171310" stroke="#3a2f24"/>
+    <text x="820" y="40" class="num">3</text>
+    <text x="848" y="34" class="t" font-size="13.5" font-weight="700">Trust &amp; Governance</text>
+    <text x="820" y="66" class="sub">Policy-as-code budgets (hard-fail 402) · eval-in-CI +</text>
+    <text x="820" y="82" class="sub">rehearsals (replay real failures pre-merge) · Ed25519</text>
+    <text x="820" y="98" class="sub">verifiable receipts · RBAC scopes · gRPC service-token</text>
+    <text x="820" y="114" class="sub">trust boundaries · OTel with tenant/run/step ids ·</text>
+    <text x="820" y="130" class="sub">AES-256-GCM secrets · RLS on every tenant table</text>
+    <text x="820" y="158" class="code">provider idempotency keys — no double-billed retry</text>
   </g>
 
-  <!-- ===== Module cards ===== -->
-  <text x="32" y="104" class="band">MODULES</text>
+  <!-- ============ ROW 2: two modules ============ -->
+  <g transform="translate(32,280)">
+    <!-- 4 channels -->
+    <rect x="0" y="0" width="564" height="140" rx="14" fill="#171310" stroke="#3a2f24"/>
+    <text x="20" y="40" class="num">4</text>
+    <text x="48" y="34" class="t" font-size="13.5" font-weight="700">Channels &amp; Reach</text>
+    <text x="20" y="66" class="sub">WhatsApp · iMessage · Slack · Telegram · Discord · voice (Twilio / LiveKit) ·</text>
+    <text x="20" y="82" class="sub">embeddable webchat (<tspan class="code">/widget.js</tspan>, one script tag) · email — signature-verified,</text>
+    <text x="20" y="98" class="sub">naturally paced, all riding the same sessions API</text>
+    <text x="20" y="124" class="code">a channel is an entry point, not a fork of your agent</text>
 
-  <!-- 1 Agent Runtime -->
-  <g transform="translate(32,118)">
-    <rect width="380" height="196" rx="12" fill="#0e1626" stroke="#38bdf8"/>
-    <circle cx="28" cy="34" r="13" fill="#13233b" stroke="#38bdf8"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#7dd3fc">1</text>
-    <text x="52" y="32" class="mod">Agent Runtime</text>
-    <text x="52" y="50" class="sub">run agents in YOUR cloud</text>
-    <text x="20" y="82" class="cmp">• control-plane (Go) — system of record</text>
-    <text x="20" y="102" class="cmp">• workflow-engine — durable, replayable steps</text>
-    <text x="20" y="122" class="cmp">• model-router (Rust) — capability routing "auto"</text>
-    <text x="20" y="142" class="cmp">• scheduler · runtime-manager · harness</text>
-    <text x="20" y="162" class="cmp">• gateway — TLS edge · streaming</text>
-    <rect x="20" y="172" width="220" height="16" rx="8" fill="#241a37"/>
-    <text x="28" y="184" class="mt" fill="#fcd34d">core prod-ready · microVM boot alpha</text>
+    <!-- 5 dx -->
+    <rect x="612" y="0" width="564" height="140" rx="14" fill="#171310" stroke="#3a2f24"/>
+    <text x="632" y="40" class="num">5</text>
+    <text x="660" y="34" class="t" font-size="13.5" font-weight="700">Developer Experience</text>
+    <text x="632" y="66" class="sub">TS · Python · Go SDKs · agentic CLI — <tspan class="code">lantern onboard</tspan> (description → running</text>
+    <text x="632" y="82" class="sub">agent), <tspan class="code">lantern doctor</tspan>, <tspan class="code">lantern agents dev</tspan> (hot reload → smoke run → live</text>
+    <text x="632" y="98" class="sub">waterfall) · visual workflow editor that EXECUTES · MCP registry · A2A cards ·</text>
+    <text x="632" y="114" class="sub">forkable agent marketplace with signed settlement</text>
+    <text x="632" y="124" class="code" dy="8">one command boots the whole stack: lantern dev</text>
   </g>
 
-  <!-- 2 Personal Agent -->
-  <g transform="translate(430,118)">
-    <rect width="380" height="196" rx="12" fill="#160e26" stroke="#8b5cf6"/>
-    <circle cx="28" cy="34" r="13" fill="#1e1635" stroke="#8b5cf6"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#c4b5fd">2</text>
-    <text x="52" y="32" class="mod">Personal Agent — "Jarvis"</text>
-    <text x="52" y="50" class="sub">texts AS you, indistinguishably</text>
-    <text x="20" y="82" class="cmp">• WhatsApp + iMessage bridges (owner-only)</text>
-    <text x="20" y="102" class="cmp">• learns your voice from real history</text>
-    <text x="20" y="122" class="cmp">• agentic macOS: Calendar / Notes / Mail</text>
-    <text x="20" y="142" class="cmp">• cross-channel memory · urgent alerts</text>
-    <text x="20" y="162" class="cmp">• privacy guards (no whereabouts leak)</text>
-    <rect x="20" y="172" width="70" height="16" rx="8" fill="#1e1635"/>
-    <text x="28" y="184" class="mt" fill="#c4b5fd">live</text>
+  <!-- arrows into substrate -->
+  <path class="moflow" d="M 220 456 V 484" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#mo-arrA)"/>
+  <path class="moflow" d="M 620 456 V 484" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#mo-arrA)"/>
+  <path class="moflow" d="M 1020 456 V 484" stroke="#f59e0b" stroke-width="1.5" fill="none" marker-end="url(#mo-arrA)"/>
+
+  <!-- ============ SUBSTRATE ============ -->
+  <g transform="translate(32,490)">
+    <rect x="0" y="0" width="1176" height="76" rx="14" fill="#12100c" stroke="#4a3b28" stroke-width="1.5"/>
+    <text x="20" y="28" class="band" fill="#fbbf24" font-size="11">THE SHARED SUBSTRATE UNDER ALL FIVE</text>
+    <text x="20" y="52" class="sub">event-sourced <tspan class="code">journal_events</tspan> durability · capability model routing · budget enforcement · RLS multi-tenancy · OTel observability · Postgres + pgvector · Redis · S3</text>
+    <text x="20" y="68" class="sub">a Jarvis reply, a workflow run, and a marketplace invocation are all the same thing underneath: a budgeted, journaled, receipted run</text>
   </g>
 
-  <!-- 3 Trust & Governance -->
-  <g transform="translate(828,118)">
-    <rect width="380" height="196" rx="12" fill="#0c1a14" stroke="#34d399"/>
-    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">3</text>
-    <text x="52" y="32" class="mod">Trust &amp; Governance</text>
-    <text x="52" y="50" class="sub">finance- and audit-grade controls</text>
-    <text x="20" y="82" class="cmp">• budgets — pre-run forecast + hard-fail 402</text>
-    <text x="20" y="102" class="cmp">• eval-in-CI + rehearsals (regress → 422)</text>
-    <text x="20" y="122" class="cmp">• HMAC-verifiable run receipts (/proof)</text>
-    <text x="20" y="142" class="cmp">• multi-tenant RLS · AES-256-GCM secrets</text>
-    <text x="20" y="162" class="cmp">• fail-closed in production</text>
-    <rect x="20" y="172" width="70" height="16" rx="8" fill="#10241b"/>
-    <text x="28" y="184" class="mt" fill="#6ee7b7">prod-ready</text>
-  </g>
-
-  <!-- 4 Channels & Reach -->
-  <g transform="translate(230,330)">
-    <rect width="380" height="150" rx="12" fill="#0c1a14" stroke="#34d399"/>
-    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">4</text>
-    <text x="52" y="32" class="mod">Channels &amp; Reach</text>
-    <text x="52" y="50" class="sub">agents where people already are</text>
-    <text x="20" y="82" class="cmp">WhatsApp · iMessage · Slack · Telegram · Discord</text>
-    <text x="20" y="102" class="cmp">Voice (Twilio / LiveKit) · Webchat · Email</text>
-    <text x="20" y="122" class="cmp">signature-verified inbound · natural paced replies</text>
-    <rect x="300" y="14" width="70" height="16" rx="8" fill="#10241b"/>
-    <text x="335" y="26" text-anchor="middle" class="mt" fill="#6ee7b7">prod-ready</text>
-  </g>
-
-  <!-- 5 Developer Experience -->
-  <g transform="translate(628,330)">
-    <rect width="380" height="150" rx="12" fill="#0c1a14" stroke="#34d399"/>
-    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">5</text>
-    <text x="52" y="32" class="mod">Developer Experience</text>
-    <text x="52" y="50" class="sub">clone → run → ship</text>
-    <text x="20" y="82" class="cmp">TS · Python · Go SDKs · `lantern` CLI</text>
-    <text x="20" y="102" class="cmp">one-command dev · visual workflow editor (executes)</text>
-    <text x="20" y="122" class="cmp">MCP registry · A2A cards · agent marketplace</text>
-    <rect x="300" y="14" width="70" height="16" rx="8" fill="#10241b"/>
-    <text x="335" y="26" text-anchor="middle" class="mt" fill="#6ee7b7">prod-ready</text>
-  </g>
-
-  <!-- ===== Shared runtime base ===== -->
-  <text x="32" y="528" class="band">SHARED RUNTIME · YOUR CLOUD</text>
-  <g transform="translate(32,542)">
-    <rect width="1176" height="120" rx="12" fill="#11182a" stroke="#334155"/>
-    <text x="20" y="34" class="mod" font-size="13">Control-plane / data-plane split</text>
-    <text x="20" y="56" class="cmp">control plane never touches user code · data plane runs in your EKS/GKE/AKS · outbound-only mTLS tunnel (metadata only)</text>
-    <text x="20" y="84" class="mod" font-size="13" fill="#fde68a">Stores</text>
-    <text x="110" y="84" class="cmp" fill="#e7c98b">PostgreSQL + pgvector · Redis · S3 / MinIO</text>
-    <text x="20" y="106" class="cmp">capability-based multi-LLM routing (bring your own keys) · microVM isolation for untrusted code · OTel everywhere · idempotent durable steps</text>
-  </g>
-  <text x="32" y="694" class="sub">Apache-2.0 · self-host everything · the managed cloud is convenience, not a paywall.</text>
+  <text x="32" y="606" class="sub">module map: services/ · packages/bridge-core · packages/sdk-* · apps/web — maturity detail in the table below this diagram</text>
 </svg>
