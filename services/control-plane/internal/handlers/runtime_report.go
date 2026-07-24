@@ -592,6 +592,14 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.handleStepEvent(ctx, req, vmRow); err != nil {
+			if errors.Is(err, vmBindingDenied) {
+				// Body run_id disagreed with the VM's own run binding — same
+				// opaque rejection as the tenant check (no oracle).
+				h.logger().Warn("runtime report: step_event run binding denied",
+					zap.String("vm_id", req.VmID))
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
 			h.logger().Error("runtime report: step_event insert failed",
 				zap.String("vm_id", req.VmID),
 				zap.String("run_id", req.RunID),
@@ -612,6 +620,12 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.handleVMExit(ctx, req, vmRow); err != nil {
+			if errors.Is(err, vmBindingDenied) {
+				h.logger().Warn("runtime report: vm_exit run binding denied",
+					zap.String("vm_id", req.VmID))
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
 			h.logger().Error("runtime report: vm_exit finalization failed",
 				zap.String("vm_id", req.VmID),
 				zap.String("run_id", req.RunID),
@@ -631,13 +645,20 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Step-event and VM-exit helpers (journal parity, run completion) ----------
 
-// resolveRunID returns req.RunID if non-empty, otherwise falls back to the
-// run_id stored on the VM row. Returns "" if neither is available.
-func resolveRunID(req reportRequest, vmRow vmBindingRow) string {
-	if req.RunID != "" {
-		return req.RunID
+// resolveRunID returns the run the reporting VM is actually bound to. The VM
+// row is authoritative: journal_events is RLS-exempt and written on the
+// privileged pool, so a body-supplied run_id must never steer the write. A
+// body run_id that disagrees with the VM's own binding — or that names a run
+// when the VM has none — is treated as a forgery attempt and rejected with the
+// same vmBindingDenied sentinel as the tenant check (no oracle). Without this,
+// any runtime-token holder with one valid (vm_id, tenant_id) could inject
+// step events into ANY tenant's run, poisoning its receipt hash and its
+// CompletedStep resume cache.
+func resolveRunID(req reportRequest, vmRow vmBindingRow) (string, error) {
+	if req.RunID != "" && req.RunID != vmRow.runID {
+		return "", vmBindingDenied
 	}
-	return vmRow.runID
+	return vmRow.runID, nil
 }
 
 // validStepEventKinds are the journal_events.kind values the harness may emit.
@@ -659,7 +680,12 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 	ctx, span := tracer.Start(ctx, "runtime.report.step_event")
 	defer span.End()
 
-	runID := resolveRunID(req, vmRow)
+	runID, ridErr := resolveRunID(req, vmRow)
+	if ridErr != nil {
+		span.RecordError(ridErr)
+		span.SetStatus(codes.Error, "run binding denied")
+		return ridErr
+	}
 	span.SetAttributes(
 		attribute.String("lantern.run_id", runID),
 		attribute.String("lantern.vm_id", req.VmID),
@@ -720,7 +746,12 @@ func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportReque
 	ctx, span := tracer.Start(ctx, "runtime.report.vm_exit")
 	defer span.End()
 
-	runID := resolveRunID(req, vmRow)
+	runID, ridErr := resolveRunID(req, vmRow)
+	if ridErr != nil {
+		span.RecordError(ridErr)
+		span.SetStatus(codes.Error, "run binding denied")
+		return ridErr
+	}
 	span.SetAttributes(
 		attribute.String("lantern.run_id", runID),
 		attribute.String("lantern.vm_id", req.VmID),

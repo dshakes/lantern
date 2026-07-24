@@ -415,3 +415,79 @@ func TestMicroVMDurability_CrashResume_Cap(t *testing.T) {
 		t.Errorf("run.error: got %s, want code=microvm_resume_exhausted", errJSON)
 	}
 }
+
+// ---------- Security: forged run_id in the report body is rejected ----------
+
+// TestMicroVMDurability_ForgedRunIDRejected: a runtime-token holder with a
+// valid (vm_id, tenant_id) must NOT be able to journal events into a run the
+// VM is not bound to (audit finding 2026-07: cross-tenant journal injection
+// would poison the target run's receipt hash and CompletedStep resume cache).
+func TestMicroVMDurability_ForgedRunIDRejected(t *testing.T) {
+	pool := openTestPool(t)
+	setReportToken(t, testRuntimeSecretToken)
+
+	tenantID := recoveryTestDevTenantID
+	ownRunID, _ := seedMicroVMRun(t, tenantID)
+	victimRunID, _ := seedMicroVMRun(t, tenantID)
+
+	// VM bound to ownRunID.
+	vmID := fmt.Sprintf("vm-forge-%d", time.Now().UnixNano())
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, run_id, state, spec, created_at)
+		VALUES ($1, $2, $3::uuid, 'running', '{}', now())
+	`, vmID, tenantID, ownRunID); err != nil {
+		t.Fatalf("seed vm: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM runtime_vms WHERE vm_id = $1`, vmID)
+	})
+
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	h := NewRuntimeReportHandler(srv)
+
+	forged := map[string]any{
+		"vm_id":     vmID,
+		"tenant_id": tenantID,
+		"run_id":    victimRunID, // NOT this VM's run
+		"kind":      "step_event",
+		"step_event": map[string]any{
+			"event_kind": "step_completed",
+			"step_id":    "tool:poisoned",
+			"attempt":    1,
+			"payload":    map[string]any{"output": "attacker-controlled"},
+		},
+	}
+	w := doReportReq(h, forged)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("forged run_id: got HTTP %d, want 403; body: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM journal_events WHERE run_id = $1`, victimRunID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count victim journal: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("victim run has %d journal rows — forged write landed", count)
+	}
+
+	// vm_exit with a forged run_id must be rejected the same way.
+	w = doReportReq(h, map[string]any{
+		"vm_id": vmID, "tenant_id": tenantID, "run_id": victimRunID,
+		"kind":    "vm_exit",
+		"vm_exit": map[string]any{"exit_code": 0, "output": map[string]any{"result": "x"}},
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("forged vm_exit: got HTTP %d, want 403; body: %s", w.Code, w.Body.String())
+	}
+
+	// The legitimate run_id still works.
+	legit := forged
+	legit["run_id"] = ownRunID
+	w = doReportReq(h, legit)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("legit run_id after fix: got HTTP %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+}
