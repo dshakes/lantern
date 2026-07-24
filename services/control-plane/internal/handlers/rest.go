@@ -615,6 +615,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 				zap.String("agent", body.AgentName),
 				zap.String("reason", bc.Reason),
 			)
+			middleware.RecordBudgetBlock(r.Context(), body.AgentName)
 			writeJSON(w, http.StatusPaymentRequired, map[string]any{
 				"error":  "agent budget limit reached: " + bc.Reason,
 				"reason": bc.Reason,
@@ -1220,6 +1221,21 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		return "", "", nil
 	}
 	defer releaseLease()
+
+	// Deferred lantern.run.total counter. Fires once per lease-held run at
+	// the actual function return so it sees the final outErr value.
+	// ponytail: workflow step failures set DB status='failed' but return
+	// outErr=nil here (runWorkflowIfPresent manages its own DB writes); those
+	// runs are counted as "succeeded" by this metric. Per-step metrics
+	// (lantern.run.step.duration outcome=failed) capture step-level failures
+	// accurately. Fix when runWorkflowIfPresent returns a richer result.
+	defer func() {
+		status := "succeeded"
+		if outErr != nil {
+			status = "failed"
+		}
+		middleware.RecordRunTotal(ctx, agentName, "shared", status)
+	}()
 
 	// 1c. Deferred safety net: if this function returns with an error and the
 	// run is still in a non-terminal state (e.g. we panicked or hit an early
@@ -2103,6 +2119,17 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		// heuristic confidence for side-effecting nodes before executing them.
 		// Nil by default so the feature is completely opt-in per deployment.
 		ConfidenceGate: h.buildConfidenceGate(tenantID, agentName),
+		// OTel metric hooks — closures capture agentName and tier ("shared"
+		// for the inline executor) so the workflow package stays import-clean.
+		RecordStep: func(nodeType, outcome string, ms int64, retries int) {
+			middleware.RecordStepDuration(ctx, agentName, nodeType, "shared", outcome, float64(ms))
+			if retries > 0 {
+				middleware.RecordStepRetries(ctx, agentName, nodeType, "shared", int64(retries))
+			}
+		},
+		RecordReplaySkip: func() {
+			middleware.RecordReplaySkip(ctx, agentName)
+		},
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)

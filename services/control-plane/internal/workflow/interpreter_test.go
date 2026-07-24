@@ -1296,6 +1296,165 @@ func TestParseRetryPolicy_FullSpec(t *testing.T) {
 	}
 }
 
+// TestRun_MetricHooks verifies that the RecordStep and RecordReplaySkip hooks
+// on Deps are called at the right times with the right arguments.
+func TestRun_MetricHooks(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	type stepRecord struct {
+		nodeType string
+		outcome  string
+		retries  int
+	}
+
+	var mu sync.Mutex
+	var steps []stepRecord
+	var replaySkips int
+
+	stub := newStubDeps(map[string]string{"hello": "hi"})
+	d := stub.deps()
+	d.RecordStep = func(nodeType, outcome string, ms int64, retries int) {
+		mu.Lock()
+		defer mu.Unlock()
+		steps = append(steps, stepRecord{nodeType, outcome, retries})
+		if ms < 0 {
+			t.Errorf("RecordStep: negative duration %d ms", ms)
+		}
+	}
+	d.RecordReplaySkip = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		replaySkips++
+	}
+
+	_, err := Run(context.Background(), "run_metrics", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Expect two step records: trigger + ai-step (end node is not stepped).
+	if len(steps) != 2 {
+		t.Fatalf("want 2 RecordStep calls, got %d: %v", len(steps), steps)
+	}
+	if steps[0].nodeType != "trigger" || steps[0].outcome != "ok" || steps[0].retries != 0 {
+		t.Errorf("step[0] = %+v, want {trigger ok 0}", steps[0])
+	}
+	if steps[1].nodeType != "ai-step" || steps[1].outcome != "ok" || steps[1].retries != 0 {
+		t.Errorf("step[1] = %+v, want {ai-step ok 0}", steps[1])
+	}
+	// No completed-step cache, so no replay skips.
+	if replaySkips != 0 {
+		t.Errorf("want 0 replay skips, got %d", replaySkips)
+	}
+}
+
+// TestRun_MetricHooks_ReplaySkip verifies that RecordReplaySkip fires when
+// CompletedStep reports a cached result.
+func TestRun_MetricHooks_ReplaySkip(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	var mu sync.Mutex
+	var replaySkips int
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// Wire CompletedStep to always return a cached result for "a".
+	d.CompletedStep = func(_ context.Context, _, stepID string) (map[string]any, bool, error) {
+		if stepID == "a" {
+			return map[string]any{"cached": true}, true, nil
+		}
+		return nil, false, nil
+	}
+	d.RecordReplaySkip = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		replaySkips++
+	}
+
+	_, err := Run(context.Background(), "run_replay", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if replaySkips != 1 {
+		t.Errorf("want 1 replay skip (for node a), got %d", replaySkips)
+	}
+}
+
+// TestRun_MetricHooks_FailedOutcome verifies RecordStep reports "failed" when
+// a node errors.
+func TestRun_MetricHooks_FailedOutcome(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	var mu sync.Mutex
+	var outcomes []string
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	d.CallLLM = func(_ context.Context, _, _ string) (string, error) {
+		return "", errors.New("model overloaded")
+	}
+	d.RecordStep = func(nodeType, outcome string, _ int64, _ int) {
+		mu.Lock()
+		defer mu.Unlock()
+		outcomes = append(outcomes, nodeType+":"+outcome)
+	}
+
+	res, err := Run(context.Background(), "run_fail", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+	if !res.Failed {
+		t.Fatal("expected run to be marked failed")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// trigger:ok then ai-step:failed
+	if len(outcomes) < 2 {
+		t.Fatalf("want ≥2 RecordStep calls, got %v", outcomes)
+	}
+	last := outcomes[len(outcomes)-1]
+	if last != "ai-step:failed" {
+		t.Errorf("last outcome = %q, want ai-step:failed", last)
+	}
+}
+
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
