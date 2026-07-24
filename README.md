@@ -142,6 +142,17 @@ Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 
 
 **By the numbers:** per-step timeout 60 s · run lease 60 s · recovery sweep 30 s · resume cap ≤ 3 · approval park 30 m · session VM idle TTL 30 m
 
+**Operating it** — every ops concern has a shipped, test-gated answer:
+
+| Concern | Mechanism | Knob / view |
+|---|---|---|
+| Checkpointing | every step journaled before it runs · Firecracker snapshots → S3 | [durable execution](https://dshakes.github.io/lantern/runtime/durable-execution) |
+| Auto-restart | recovery sweep re-drives from the last completed step · scheduler HA | `LANTERN_RECOVERY_INTERVAL` (30 s) |
+| Throttling | budget gate `402` · concurrent-VM hard cap · spawn-storm guard `429` | `LANTERN_SPAWN_RATE_PER_MIN` (120) · `LANTERN_SPAWN_BURST` |
+| Job monitoring | VM list / detail / audit / live logs / cluster / quota | `lantern vm list\|get\|logs\|stop\|exec` · `GET /v1/runtime/*` |
+| Telemetry | five `lantern.run.*` OTel metrics · Prometheus scrape · alerts + 8 runbooks | scheduler `:8085/metrics` · `infra/monitoring/` |
+| Traceability | W3C trace context CP → scheduler → manager → in-VM harness · signed receipts | [observability](https://dshakes.github.io/lantern/runtime/observability) |
+
 <p align="center">
   <img src="docs/assets/v2/durable-execution.svg" alt="Durable execution — a run crashes mid-step; the 30s recovery sweep steals the expired lease, re-drives, replay skips completed steps and side effects, and the run finishes with the same idempotency keys (animated)" width="100%">
 </p>
