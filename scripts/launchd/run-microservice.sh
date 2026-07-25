@@ -20,6 +20,12 @@ SVC="${1:?usage: run-microservice.sh <service>}"
 # launchd hands us a minimal PATH — restore go + cargo + homebrew.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Shared wiring defaults, also sourced by the `make run-*` targets so the two
+# cannot drift. Only fills values that are unset, so a plist's
+# EnvironmentVariables still wins.
+# shellcheck source=./service-env.sh
+. "$REPO_ROOT/scripts/launchd/service-env.sh"
+
 # Wait up to 120s for a TCP port; warn + continue if it never comes up
 # (the service's own retry/backoff handles a late upstream).
 wait_port() {
@@ -47,6 +53,27 @@ run_rust() {
   exec "$bin"
 }
 
+# Build a Go service to a real binary, then exec it.
+#
+# NOT `go run`: that leaves a parent process supervising a child in the build
+# cache, so launchd's pid is the wrapper rather than the server. Signals then
+# land on the wrong process — `launchctl kickstart -k` and a plain `kill` both
+# leave an orphan holding the port, and the next start fails with "address
+# already in use". exec-ing a real binary gives launchd the actual server.
+run_go() {
+  local svc="$1" pkg="$2"
+  cd "$REPO_ROOT/services/$svc"
+  local bin="bin/$(basename "$pkg")"
+  # Rebuild whenever a source file is newer than the binary, so a deploy that
+  # only pulls source still starts the new code.
+  if [[ ! -x "$bin" ]] || [[ -n "$(find . -name '*.go' -newer "$bin" -print -quit 2>/dev/null)" ]]; then
+    echo "[$(date +%T)] building $svc -> $bin"
+    go build -o "$bin" "$pkg"
+  fi
+  echo "[$(date +%T)] starting $svc -> $bin"
+  exec "$bin"
+}
+
 case "$SVC" in
   gateway)
     wait_port 6379 redis
@@ -59,6 +86,10 @@ case "$SVC" in
     ;;
   runtime-manager)
     wait_port 9000 minio
+    # The scheduler is where this node self-registers. Waiting avoids a burst
+    # of failed first beats at boot; the heartbeat's own backoff covers a late
+    # scheduler, so this only ever delays, never blocks.
+    wait_port 8085 runtime-scheduler
     run_rust lantern-runtime-manager
     ;;
   surface-gateway)
@@ -67,9 +98,8 @@ case "$SVC" in
     run_rust lantern-surface-gateway
     ;;
   runtime-scheduler)
-    cd "$REPO_ROOT/services/runtime-scheduler"
     echo "[$(date +%T)] starting runtime-scheduler on :50055 (grpc) / :8085 (rest)"
-    exec go run ./cmd/scheduler
+    run_go runtime-scheduler ./cmd/scheduler
     ;;
   workflow-engine)
     wait_port 5432 postgres
