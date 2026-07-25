@@ -666,6 +666,36 @@ func scanAndNudgeCommitments(
 			zap.String("tenant", tenantID), zap.Int64("count", n))
 	}
 
+	// Age out INFORMATIONAL items, which the sweep above never touched because
+	// it requires a deadline and FYI rows have none.
+	//
+	// Measured on the live queue: 855 open commitments, 538 of them urgency
+	// 'fyi' with no deadline, the oldest from nearly a month earlier — CI-run
+	// notifications and order confirmations. They are 63% of the queue, so
+	// the dashboard (which loads the first 200 open items) showed almost
+	// nothing else, and the 18 items marked 'now' were unreachable. An FYI is
+	// a heads-up, not a promise: if it has not been acted on within a week it
+	// is moot, and keeping it open buries the things that are not.
+	//
+	// Only 'fyi' ages out this way. A deadline-less 'normal'/'soon'/'now' item
+	// is a real commitment with no date attached, and silently closing those
+	// would lose work the owner still intends to do.
+	// ponytail: fixed 7-day window; make it configurable if it proves wrong.
+	if tag, expErr := pool.Exec(ctx, `
+		UPDATE commitments
+		SET status = 'expired', updated_at = now()
+		WHERE tenant_id = $1
+		  AND status IN ('open', 'suggested')
+		  AND deadline IS NULL
+		  AND urgency = 'fyi'
+		  AND created_at < now() - interval '7 days'
+	`, tenantID); expErr != nil {
+		logger.Warn("loop-agent: fyi auto-expire failed", zap.Error(expErr))
+	} else if n := tag.RowsAffected(); n > 0 {
+		logger.Info("loop-agent: aged out stale FYI commitments",
+			zap.String("tenant", tenantID), zap.Int64("count", n))
+	}
+
 	type dueRow struct {
 		id          string
 		title       string

@@ -272,7 +272,22 @@ func (h *CommitmentHandler) ListCommitments(w http.ResponseWriter, r *http.Reque
 			WHERE tenant_id = $1
 			  AND ($2 = '' OR status = $2)
 			  AND ($3 = '' OR tier = $3)
-			ORDER BY created_at DESC
+			-- Urgency first, then recency.
+			--
+			-- Plain created_at DESC buried the things that matter: on the live
+			-- queue 18 items were marked 'now' and 45 'soon', but the most
+			-- RECENT rows were overwhelmingly 'fyi' CI notifications, so a
+			-- client fetching the first 200 open items saw almost none of the
+			-- urgent ones. Callers can still sort client-side; this just stops
+			-- the default from being actively misleading.
+			-- A deadline that has passed or is imminent outranks its nominal
+			-- urgency, so an overdue 'normal' item does not hide behind a
+			-- freshly-created 'soon' one.
+			ORDER BY
+			  CASE urgency WHEN 'now' THEN 0 WHEN 'soon' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+			  (deadline IS NOT NULL AND deadline < now() + interval '2 days') DESC,
+			  deadline ASC NULLS LAST,
+			  created_at DESC
 			LIMIT $4
 		`, tenantID, statusFilter, tierFilter, limit)
 		if qErr != nil {
