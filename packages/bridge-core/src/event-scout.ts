@@ -43,6 +43,21 @@ export interface EventScoutState {
   // (picks message sets it to the pick count; "events more" advances it).
   shown: number;
   lastScanAt: number;
+  // eventKey → YYYY-MM-DD of the last upcoming-reminder sent for it.
+  //
+  // `seen` dedupes DISCOVERY: an event is recorded the moment it is found and
+  // never announced again. That made the scout write-once — the Fairfax 4-H
+  // Fair was found 11 days out and would never have been mentioned again, not
+  // even the day before. This tracks REMINDERS separately so an event can be
+  // surfaced once on discovery and again as it approaches.
+  reminded?: Record<string, string>;
+  // True when the last scan completed with at least one batch failing.
+  //
+  // A partial scan silently under-delivers: two of three batches aborting
+  // means the owner gets ~5 events instead of ~15 and has no way to tell.
+  // Waiting a full week to try again compounds it, so the scheduler retries
+  // sooner when this is set.
+  lastScanPartial?: boolean;
 }
 
 export const DEFAULT_SCOUT_CATEGORIES = [
@@ -70,7 +85,86 @@ export function defaultScoutState(): EventScoutState {
     pending: [],
     shown: 0,
     lastScanAt: 0,
+    reminded: {},
+    lastScanPartial: false,
   };
+}
+
+/** Days until an event, in whole days (0 = today, negative = past). */
+export function daysUntil(ev: ScoutEvent, now: Date): number {
+  const d = new Date(`${ev.date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return Number.POSITIVE_INFINITY;
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((d.getTime() - midnight.getTime()) / 86_400_000);
+}
+
+/** Local YYYY-MM-DD, used as the once-per-day reminder stamp. */
+export function localDayStamp(now: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+
+/**
+ * Events worth reminding the owner about right now.
+ *
+ * Fires on a "ladder" rather than every day, so a month-out event does not
+ * nag daily: 7 days out (enough time to plan), 1 day out (tomorrow), and the
+ * morning of. An event entering the window late — found 2 days before it
+ * happens — still gets its 1-day and day-of nudges.
+ *
+ * At most one reminder per event per calendar day, tracked in `reminded`, so
+ * a proactive tick running every ~45 minutes cannot spam.
+ */
+export function dueReminders(
+  state: EventScoutState,
+  now: Date,
+  maxPerRun = 3,
+): ScoutEvent[] {
+  const today = localDayStamp(now);
+  const reminded = state.reminded || {};
+  const out: ScoutEvent[] = [];
+
+  for (const ev of state.pending || []) {
+    const key = eventKey(ev);
+    if (reminded[key] === today) continue; // already nudged today
+    const d = daysUntil(ev, now);
+    if (d < 0) continue; // past
+    // Ladder: a week out, the day before, and the day itself.
+    if (d === 7 || d === 1 || d === 0) {
+      out.push(ev);
+      continue;
+    }
+    // Catch-up: an event already INSIDE the window that has never been
+    // reminded at all. Without this, anything discovered less than 7 days out
+    // — or already pending when reminders were introduced — stays silent
+    // until the day before. Observed live: a county fair sitting 5 days away
+    // with no nudge scheduled until the eve of it.
+    if (d < 7 && reminded[key] === undefined) out.push(ev);
+  }
+
+  // Soonest first, and cap so one tick cannot produce a wall of messages.
+  out.sort((a, b) => daysUntil(a, now) - daysUntil(b, now));
+  return out.slice(0, maxPerRun);
+}
+
+/** Human phrasing for how close an event is. */
+export function whenPhrase(ev: ScoutEvent, now: Date): string {
+  const d = daysUntil(ev, now);
+  if (d < 0) return "past";
+  if (d === 0) return "today";
+  if (d === 1) return "tomorrow";
+  return `in ${d} days`;
+}
+
+/** The owner-facing reminder message for approaching events. */
+export function formatReminders(events: ScoutEvent[], now: Date): string {
+  const lines = events.map((e) => {
+    const when = whenPhrase(e, now);
+    const time = e.time ? ` ${friendlyTime(e.time)}` : "";
+    const where = e.venue ? ` — ${e.venue}` : e.city ? ` — ${e.city}` : "";
+    return `• ${e.title} — ${when}${time}${where}`;
+  });
+  return `🎟 coming up:\n${lines.join("\n")}`;
 }
 
 export const SCOUT_PAGE_SIZE = 6;

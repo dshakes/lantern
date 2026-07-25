@@ -176,6 +176,19 @@ app.get("/session/:tenantId/attention", (req, res) => {
   res.json(s.getAttentionSnapshot());
 });
 
+// GET /session/:tenantId/events — what the event scout has found and is
+// holding. The scout previously had NO surface outside a single self-chat
+// message at discovery time: 5 scans and 60 events, every one announced once
+// and then invisible. This makes its output inspectable.
+app.get("/session/:tenantId/events", (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) {
+    res.json({ lastScanAt: null, upcoming: [], location: "", categories: [], partial: false });
+    return;
+  }
+  res.json(s.getEventScoutSnapshot());
+});
+
 app.post("/session/:tenantId/bot/mute", (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }
