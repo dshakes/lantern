@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 
 use crate::adapter::SurfaceAdapter;
 use crate::adapters::twilio::TwilioAdapter;
@@ -30,7 +30,10 @@ pub struct RouteState {
 pub fn build_router(state: RouteState) -> Router {
     Router::new()
         .route("/webhooks/slack", post(slack_webhook))
-        .route("/webhooks/whatsapp", get(whatsapp_verify).post(whatsapp_webhook))
+        .route(
+            "/webhooks/whatsapp",
+            get(whatsapp_verify).post(whatsapp_webhook),
+        )
         .route("/webhooks/telegram", post(telegram_webhook))
         .route("/webhooks/twilio/sms", post(twilio_sms_webhook))
         .route("/webhooks/twilio/voice", post(twilio_voice_webhook))
@@ -90,14 +93,13 @@ async fn slack_webhook(
                 ));
             }
 
-            let params: HashMap<String, String> =
-                url::form_urlencoded::parse(form_str.as_bytes())
-                    .map(
-                        |(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
-                            (k.to_string(), v.to_string())
-                        },
-                    )
-                    .collect();
+            let params: HashMap<String, String> = url::form_urlencoded::parse(form_str.as_bytes())
+                .map(
+                    |(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
+                        (k.to_string(), v.to_string())
+                    },
+                )
+                .collect();
 
             if let Some(payload_json) = params.get("payload") {
                 Bytes::from(payload_json.clone().into_bytes())
@@ -125,15 +127,16 @@ async fn slack_webhook(
 
     // Handle URL verification challenge.
     if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
-        && payload["type"].as_str() == Some("url_verification") {
-            let challenge = payload["challenge"].as_str().unwrap_or("");
-            return Ok((
-                StatusCode::OK,
-                [("content-type", "application/json")],
-                serde_json::json!({ "challenge": challenge }).to_string(),
-            )
-                .into_response());
-        }
+        && payload["type"].as_str() == Some("url_verification")
+    {
+        let challenge = payload["challenge"].as_str().unwrap_or("");
+        return Ok((
+            StatusCode::OK,
+            [("content-type", "application/json")],
+            serde_json::json!({ "challenge": challenge }).to_string(),
+        )
+            .into_response());
+    }
 
     let events = adapter.parse_event(&headers, &body_bytes).await?;
 
@@ -319,12 +322,7 @@ async fn twilio_voice_webhook(
 
     // Return TwiML greeting for inbound calls.
     let twiml = crate::adapters::twilio::voice_twiml_greeting();
-    Ok((
-        StatusCode::OK,
-        [("content-type", "application/xml")],
-        twiml,
-    )
-        .into_response())
+    Ok((StatusCode::OK, [("content-type", "application/xml")], twiml).into_response())
 }
 
 async fn twilio_transcription_webhook(
@@ -381,14 +379,15 @@ async fn discord_webhook(
 
     // Handle Discord PING interaction (type 1) — must respond with type 1 PONG.
     if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body)
-        && payload["type"].as_u64() == Some(1) {
-            return Ok((
-                StatusCode::OK,
-                [("content-type", "application/json")],
-                serde_json::json!({ "type": 1 }).to_string(),
-            )
-                .into_response());
-        }
+        && payload["type"].as_u64() == Some(1)
+    {
+        return Ok((
+            StatusCode::OK,
+            [("content-type", "application/json")],
+            serde_json::json!({ "type": 1 }).to_string(),
+        )
+            .into_response());
+    }
 
     let events = adapter.parse_event(&headers, &body).await?;
 

@@ -86,14 +86,8 @@ pub struct SurfaceMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessageBlock {
     Text(String),
-    Code {
-        language: String,
-        code: String,
-    },
-    Image {
-        url: String,
-        alt: String,
-    },
+    Code { language: String, code: String },
+    Image { url: String, alt: String },
     Actions(Vec<ActionButton>),
     Divider,
 }

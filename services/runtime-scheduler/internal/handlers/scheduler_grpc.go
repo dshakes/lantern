@@ -315,6 +315,9 @@ func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest)
 			Spec:   v.Spec,
 			State:  v.State,
 			Usage:  v.Usage,
+			// The store has always recorded WHY a VM failed; nothing exposed
+			// it, so callers saw state=FAILED with no explanation.
+			Reason: v.Reason,
 		}
 		if !v.LastHeartbeat.IsZero() {
 			item.LastHeartbeat = timestamppb.New(v.LastHeartbeat)

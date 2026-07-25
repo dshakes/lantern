@@ -167,9 +167,10 @@ impl SessionStore {
             let json: Option<String> = conn.get(&key).await?;
             if let Some(json) = json
                 && let Ok(session) = serde_json::from_str::<Session>(&json)
-                    && session.session_id == session_id {
-                        return Ok(Some(session));
-                    }
+                && session.session_id == session_id
+            {
+                return Ok(Some(session));
+            }
         }
 
         Ok(None)

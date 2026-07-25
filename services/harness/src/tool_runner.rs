@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 use tonic::Status;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{self, pb, AuditEvent, HarnessReport};
+use crate::proto::{self, AuditEvent, HarnessReport, pb};
 
 // ---------------------------------------------------------------------------
 // Wire types shared with the manager

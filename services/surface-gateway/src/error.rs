@@ -51,7 +51,9 @@ impl AppError {
             }
             AppError::BadRequest(_) => "https://lantern.run/errors/bad-request",
             AppError::NotFound(_) => "https://lantern.run/errors/not-found",
-            AppError::AdapterNotConfigured(_) => "https://lantern.run/errors/adapter-not-configured",
+            AppError::AdapterNotConfigured(_) => {
+                "https://lantern.run/errors/adapter-not-configured"
+            }
             AppError::Upstream(_) => "https://lantern.run/errors/upstream",
             AppError::Internal(_) => "https://lantern.run/errors/internal",
         }

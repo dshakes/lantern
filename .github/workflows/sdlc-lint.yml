@@ -1,7 +1,7 @@
 # Lint — PR gate that runs all three linter stacks (Go, Rust, TypeScript) and
 # fails fast on the first violation. Mirrors the targets in the top-level Makefile:
 #   lint-go  → golangci-lint on every Go module
-#   lint-rust → cargo clippy -D warnings on every Rust crate
+#   lint-rust → cargo fmt --check + cargo clippy -D warnings on every Rust crate
 #   lint-ts  → eslint/tsc/next lint on all TS packages
 #
 # Named job "lint" so it can be pinned as a required branch-protection check.
@@ -72,7 +72,27 @@ jobs:
         with:
           # rust-toolchain.toml at repo root pins channel + clippy component
           toolchain: "1.93"
-          components: clippy
+          components: clippy, rustfmt
+
+      # Formatting ran BEFORE clippy: it needs no protoc and no build, so a
+      # formatting-only failure reports in seconds instead of after a full
+      # compile of five crates.
+      #
+      # This gate was previously absent, and every crate had drifted — a
+      # `cargo fmt` in one service produced diff noise across files nobody
+      # touched, which buries real changes in review.
+      - name: cargo fmt --check (all crates)
+        run: |
+          set -euo pipefail
+          fail=0
+          for manifest in services/*/Cargo.toml; do
+            crate="$(dirname "$manifest")"
+            if ! cargo fmt --manifest-path "$manifest" --check; then
+              echo "::error file=$manifest::$crate is not rustfmt-clean — run: cargo fmt --manifest-path $manifest"
+              fail=1
+            fi
+          done
+          exit $fail
 
       # Rust crates with prost/tonic build.rs (runtime-manager, surface-gateway,
       # gateway) need protoc to compile — qa installs it, the lint job didn't.

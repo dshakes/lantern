@@ -19,7 +19,7 @@
 //   // _otel_shutdown flushes pending spans on drop at process exit
 
 use opentelemetry::propagation::{Extractor, Injector};
-use opentelemetry::{global, Context};
+use opentelemetry::{Context, global};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
@@ -154,7 +154,9 @@ pub fn extract_from_metadata(metadata: &MetadataMap) -> Context {
 mod tests {
     use super::*;
     use opentelemetry::propagation::TextMapPropagator;
-    use opentelemetry::trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState};
+    use opentelemetry::trace::{
+        SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
+    };
     use opentelemetry_sdk::propagation::TraceContextPropagator;
 
     /// A `traceparent` injected into gRPC metadata survives extract → inject unchanged.

@@ -11,9 +11,9 @@ mod service;
 use std::sync::Arc;
 
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 use crate::cache::PromptCache;
 use crate::config::Config;
@@ -35,8 +35,8 @@ async fn main() -> anyhow::Result<()> {
     // every tracing span into the OTLP exporter when OTel is active.  The JSON
     // fmt layer is always present for structured log output.
     let otel_layer = tracing_opentelemetry::layer();
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     tracing_subscriber::registry()
         .with(env_filter)

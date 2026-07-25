@@ -23,7 +23,7 @@
 //   // _otel_shutdown flushes pending spans on drop at process exit
 
 use opentelemetry::propagation::{Extractor, Injector};
-use opentelemetry::{global, Context};
+use opentelemetry::{Context, global};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};

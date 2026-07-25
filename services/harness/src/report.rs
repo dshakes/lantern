@@ -188,7 +188,7 @@ async fn forward_until_break(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{now_unix_ms, AuditEvent, LogLine};
+    use crate::proto::{AuditEvent, LogLine, now_unix_ms};
     use std::collections::HashMap;
 
     fn egress_deny() -> HarnessReport {

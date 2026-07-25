@@ -2805,6 +2805,12 @@ type ListResponse_Item struct {
 	State         VmState                `protobuf:"varint,3,opt,name=state,proto3,enum=lantern.v1.VmState" json:"state,omitempty"`
 	Usage         *ResourceUsage         `protobuf:"bytes,4,opt,name=usage,proto3" json:"usage,omitempty"`
 	LastHeartbeat *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_heartbeat,json=lastHeartbeat,proto3" json:"last_heartbeat,omitempty"`
+	// Why the VM is in its current state. Populated for FAILED (spawn
+	// refused, isolation unsatisfiable, backend error) and TERMINATED.
+	// Without this a caller sees state=FAILED with no way to learn why —
+	// e.g. a spec asking for an isolation class the node cannot provide
+	// was accepted with 201 and then failed silently.
+	Reason        string `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2872,6 +2878,13 @@ func (x *ListResponse_Item) GetLastHeartbeat() *timestamppb.Timestamp {
 		return x.LastHeartbeat
 	}
 	return nil
+}
+
+func (x *ListResponse_Item) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 type ClusterResponse_Node struct {
@@ -3076,15 +3089,16 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\vListRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12+\n" +
 	"\x06states\x18\x02 \x03(\x0e2\x13.lantern.v1.VmStateR\x06states\x12%\n" +
-	"\x0elabel_selector\x18\x03 \x01(\tR\rlabelSelector\"\xc4\x02\n" +
+	"\x0elabel_selector\x18\x03 \x01(\tR\rlabelSelector\"\xdc\x02\n" +
 	"\fListResponse\x123\n" +
-	"\x05items\x18\x01 \x03(\v2\x1d.lantern.v1.ListResponse.ItemR\x05items\x1a\xfe\x01\n" +
+	"\x05items\x18\x01 \x03(\v2\x1d.lantern.v1.ListResponse.ItemR\x05items\x1a\x96\x02\n" +
 	"\x04Item\x12,\n" +
 	"\x06handle\x18\x01 \x01(\v2\x14.lantern.v1.VmHandleR\x06handle\x12)\n" +
 	"\x04spec\x18\x02 \x01(\v2\x15.lantern.v1.AgentSpecR\x04spec\x12)\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x13.lantern.v1.VmStateR\x05state\x12/\n" +
 	"\x05usage\x18\x04 \x01(\v2\x19.lantern.v1.ResourceUsageR\x05usage\x12A\n" +
-	"\x0elast_heartbeat\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\rlastHeartbeat\"p\n" +
+	"\x0elast_heartbeat\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\rlastHeartbeat\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason\"p\n" +
 	"\x10TerminateRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12/\n" +
 	"\x05grace\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12\x16\n" +

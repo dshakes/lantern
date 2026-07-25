@@ -1,0 +1,12 @@
+-- 0018: record WHY a runtime VM reached its current state.
+--
+-- Before this, a VM whose spawn was refused (isolation class the node cannot
+-- satisfy, backend error, quota) landed in state='failed' with no explanation
+-- anywhere in the control plane. The scheduler had the reason all along and
+-- never exposed it; ListResponse.Item.reason (proto field 6) now carries it,
+-- and this column is where the control-plane mirrors it so
+-- GET /v1/runtime/vms{,/id} can answer "why did this fail?".
+--
+-- Nullable with no default: existing rows keep NULL, which reads as "unknown"
+-- rather than falsely claiming a reason.
+ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS state_reason TEXT;

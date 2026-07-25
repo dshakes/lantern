@@ -2144,12 +2144,8 @@ impl FirecrackerBackend {
             // id never got reaped. Kill the stale handle defensively.
             // Propagate — booting on top of a stale process we can't kill is
             // worse than failing fast (force_kill is idempotent for dead procs).
-            prev.force_kill().with_context(|| {
-                format!(
-                    "force-kill stale process on collision: {}",
-                    cfg.vm_id
-                )
-            })?;
+            prev.force_kill()
+                .with_context(|| format!("force-kill stale process on collision: {}", cfg.vm_id))?;
             tracing::warn!(vm_id = %cfg.vm_id, "process table collision; killed stale child");
         }
 

@@ -106,7 +106,7 @@ async fn flush(manager: &ManagerClient, pending: &mut Vec<u8>) {
 
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::TraceContextExt as _;
-use opentelemetry::{global, Context};
+use opentelemetry::{Context, global};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tonic::metadata::MetadataMap;
 
@@ -166,7 +166,9 @@ pub fn init_propagator() -> Context {
                     "otel: joined distributed trace from LANTERN_TRACE_PARENT"
                 );
             } else {
-                tracing::debug!("otel: LANTERN_TRACE_PARENT present but malformed; starting fresh trace");
+                tracing::debug!(
+                    "otel: LANTERN_TRACE_PARENT present but malformed; starting fresh trace"
+                );
             }
             cx
         }
@@ -205,8 +207,7 @@ mod tests {
 
         let trace_id = TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").unwrap();
         let span_id = SpanId::from_hex("00f067aa0ba902b7").unwrap();
-        let tp_value =
-            format!("00-{:032x}-{:016x}-01", trace_id, span_id);
+        let tp_value = format!("00-{:032x}-{:016x}-01", trace_id, span_id);
 
         // Extract from the env-style carrier.
         let cx = propagator.extract(&EnvCarrier(tp_value.clone()));

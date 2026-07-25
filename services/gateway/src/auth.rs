@@ -217,7 +217,7 @@ fn decode_jwt(token: &str, secret: &str) -> Result<Claims, AppError> {
 mod tests {
     use super::*;
     use axum::http::Method;
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
 
     fn make_jwt(claims: &Claims, secret: &str) -> String {
         encode(

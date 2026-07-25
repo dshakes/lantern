@@ -22,8 +22,7 @@ impl Config {
         let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
         let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
 
-        let log_level =
-            std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
         Ok(Config {
             listen_addr,

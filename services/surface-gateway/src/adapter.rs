@@ -30,11 +30,7 @@ pub trait SurfaceAdapter: Send + Sync {
     ) -> Result<Vec<SurfaceEvent>, AppError>;
 
     /// Send a message to the given session. Returns the platform's message ID.
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError>;
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError>;
 
     /// Send an approval card (approve/deny buttons) for a pending human-in-the-loop decision.
     /// Returns the platform's message ID.

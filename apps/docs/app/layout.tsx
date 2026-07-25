@@ -37,6 +37,9 @@ const sections: NavSection[] = [
     { href: "/quickstart", label: "Quickstart", icon: Rocket, subs: [
       { href: "/quickstart#prerequisites", label: "Prerequisites" }, { href: "/quickstart#step1", label: "Start the stack" }, { href: "/quickstart#step3", label: "Create an agent" }, { href: "/quickstart#step4", label: "Run the agent" }, { href: "/quickstart#step5", label: "Stream events" },
     ]},
+    { href: "/stack", label: "The Stack", icon: Server, subs: [
+      { href: "/stack#rule", label: "The rule" }, { href: "/stack#languages", label: "Languages" }, { href: "/stack#glossary", label: "What these things are" }, { href: "/stack#data", label: "Data stores" }, { href: "/stack#e2e", label: "End to end" }, { href: "/stack#invariants", label: "Invariants" }, { href: "/stack#tradeoffs", label: "What it costs" },
+    ]},
   ]},
   { label: "Build", items: [
     { href: "/agents", label: "Agents", icon: Bot, subs: [

@@ -75,6 +75,9 @@ Examples:
 				// Backwards-compat: top-level spec
 				spec = raw
 			}
+			if err := validateRuntimeSpec(spec, raw, specPath); err != nil {
+				return err
+			}
 			if inputJSON != "" {
 				// Stash the workload input on the spec — bridge picks it up
 				// and pipes it to stdin via the harness.
@@ -105,6 +108,21 @@ Examples:
 			}
 			if vmID == "" {
 				return fmt.Errorf("schedule response missing vmId: %v", res)
+			}
+			// A stubbed control-plane synthesizes vmIds and spawns nothing.
+			// Printing plain "scheduled" there is worse than an error: the
+			// caller believes work is running. Fail loudly instead.
+			if stub, _ := res["stub"].(bool); stub {
+				warning, _ := res["warning"].(string)
+				if warning == "" {
+					warning = "no scheduler wired; nothing was spawned"
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"\n  ✗ NOT SCHEDULED — %s\n\n"+
+						"    vm_id=%s is synthetic. Nothing is running.\n"+
+						"    Start the control-plane with LANTERN_SCHEDULER_GRPC_ADDR set, e.g.:\n"+
+						"      make run-api-runtime\n\n", warning, vmID)
+				return fmt.Errorf("scheduler not wired: no workload was spawned")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "scheduled vm_id=%s\n", vmID)
 
@@ -636,10 +654,97 @@ func apiRaw(method, path string, body []byte) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("api %s %s → %d: %s%s",
+			method, path, resp.StatusCode, string(respBody), authHint())
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("api %s %s → %d: %s", method, path, resp.StatusCode, string(respBody))
 	}
 	return respBody, nil
+}
+
+// validateRuntimeSpec catches the two agent.yaml shapes being confused.
+//
+// `lantern init` scaffolds a CONTROL-PLANE agent (deployed with
+// `lantern deploy`): name/model/instructions, `isolation.class` nested. The
+// microVM runtime wants an AgentSpec: `image_digest` plus a flat `isolation`.
+// Feeding the first to `lantern run` used to produce a bare
+// "400: invalid body" from the server with no clue that the file was simply
+// the wrong kind. Diagnose it here, where the file is in hand.
+//
+// It also normalizes the nested `isolation: {class: X}` form, which is a
+// harmless spelling of the same thing.
+func validateRuntimeSpec(spec, raw map[string]any, path string) error {
+	// Nested isolation → flat, so the two spellings both work.
+	if nested, ok := spec["isolation"].(map[string]any); ok {
+		if class, ok := nested["class"].(string); ok && class != "" {
+			spec["isolation"] = class
+		}
+	}
+
+	if s, ok := spec["image_digest"].(string); ok && s != "" {
+		return nil
+	}
+	if s, ok := spec["imageDigest"].(string); ok && s != "" {
+		return nil
+	}
+
+	// No image. Is this a control-plane agent manifest?
+	_, hasModel := raw["model"]
+	_, hasName := raw["name"]
+	if hasModel || hasName {
+		name, _ := raw["name"].(string)
+		if name == "" {
+			name = "your-agent"
+		}
+		return fmt.Errorf(
+			"%s looks like a control-plane agent manifest, not a microVM AgentSpec\n\n"+
+				"  `lantern run` schedules a container image in the microVM runtime and needs:\n"+
+				"      spec:\n"+
+				"        image_digest: your-registry/%s:latest\n"+
+				"        isolation: trusted\n\n"+
+				"  To deploy this agent to the control plane instead, use:\n"+
+				"      lantern deploy\n\n"+
+				"  See examples/headless-agents/01-hello/agent.yaml for a runnable AgentSpec",
+			path, name)
+	}
+
+	return fmt.Errorf("%s is missing required field `image_digest` "+
+		"(the container image to run, e.g. `myorg/agent:latest`)", path)
+}
+
+// authHint turns a bare 401/403 into something actionable.
+//
+// A stored credential takes precedence over LANTERN_API_TOKEN, so a stale
+// ~/.lantern/credentials.json silently shadows a perfectly good env token and
+// every call fails with an unexplained "unauthorized". Naming which credential
+// was actually sent is the difference between a 30-second fix and an hour.
+func authHint() string {
+	stored := ""
+	if c := restClient(); c != nil {
+		switch {
+		case c.Token != "":
+			stored = "session token from ~/.lantern/credentials.json"
+		case c.APIKey != "":
+			stored = "API key from ~/.lantern/credentials.json"
+		}
+	}
+	envSet := os.Getenv("LANTERN_API_TOKEN") != ""
+
+	switch {
+	case stored != "" && envSet:
+		return "\n\nhint: sent the " + stored + ", which takes precedence over the " +
+			"LANTERN_API_TOKEN you also set. If the stored one is stale, run `lantern login` " +
+			"(or delete ~/.lantern/credentials.json to fall back to the env var)."
+	case stored != "":
+		return "\n\nhint: sent the " + stored + " — it may be expired. Run `lantern login`."
+	case envSet:
+		return "\n\nhint: sent LANTERN_API_TOKEN — it may be expired or for a different " +
+			"control-plane. Check LANTERN_API_URL, or run `lantern login`."
+	default:
+		return "\n\nhint: no credentials found. Run `lantern login`, or set LANTERN_API_TOKEN."
+	}
 }
 
 func apiDo(method, path string, body []byte) (map[string]any, error) {

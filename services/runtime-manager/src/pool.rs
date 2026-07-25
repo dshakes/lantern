@@ -9,10 +9,20 @@ use crate::backend::{Handle, RuntimeBackend};
 use crate::proto::{IsolationClass, ScheduleRequest};
 
 /// A warm handle held in the pool, with creation timestamp for TTL reaping.
+///
+/// `image` and `size_key` are carried so the pool can publish an inventory in
+/// the shape the SCHEDULER scores against. The internal `PoolKey` is keyed by
+/// bundle_digest, which the scheduler has never seen — reporting that would be
+/// useless to it.
 #[derive(Debug)]
 struct WarmHandle {
     handle: Handle,
     created_at: Instant,
+    /// `ScheduleRequest.image` — matches `AgentSpec.image_digest` on the wire.
+    image: String,
+    /// Canonical `"{vcpu}/{memory}"` size key. MUST stay byte-identical to
+    /// `cluster.SizeKey` in the scheduler or warm-pool scoring silently misses.
+    size_key: String,
 }
 
 /// Key for indexing warm handles: (isolation_class, hex-encoded bundle_digest).
@@ -29,6 +39,40 @@ impl PoolKey {
             bundle_digest: hex::encode(bundle_digest),
         }
     }
+}
+
+/// Canonical size key, mirroring `cluster.SizeKey` on the scheduler side.
+pub fn size_key(limits: &crate::proto::ResourceLimits) -> String {
+    format!("{}/{}", limits.cpu, limits.memory)
+}
+
+/// Wire name for an isolation class, matching the Go protobuf `String()`
+/// output the scheduler builds its composite key from.
+fn isolation_wire_name(class: IsolationClass) -> &'static str {
+    match class {
+        IsolationClass::Unspecified => "ISOLATION_UNSPECIFIED",
+        IsolationClass::Trusted => "ISOLATION_TRUSTED",
+        IsolationClass::Standard => "ISOLATION_STANDARD",
+        IsolationClass::Untrusted => "ISOLATION_UNTRUSTED",
+        IsolationClass::Hostile => "ISOLATION_HOSTILE",
+        IsolationClass::Wasm => "ISOLATION_WASM",
+        IsolationClass::Devcontainer => "ISOLATION_DEVCONTAINER",
+    }
+}
+
+/// Build the composite warm-pool key the scheduler's `warmPoolExactKey`
+/// produces: `<image>@<ISOLATION_NAME>@<vcpu>/<memory>`.
+fn exact_key(image: &str, class: IsolationClass, size: &str) -> String {
+    format!("{}@{}@{}", image, isolation_wire_name(class), size)
+}
+
+/// The node's warm-pool inventory, in the two shapes the scheduler scores on.
+#[derive(Debug, Default, Clone)]
+pub struct WarmInventory {
+    /// `<image>@<class>@<size>` → count.
+    pub exact: std::collections::HashMap<String, i32>,
+    /// `<image>` → count.
+    pub image_only: std::collections::HashMap<String, i32>,
 }
 
 /// Hex-encode bytes without pulling in the `hex` crate.
@@ -109,12 +153,40 @@ impl WarmPool {
         Some(warm.handle)
     }
 
+    /// Snapshot the warm pool in the shape the scheduler scores against.
+    ///
+    /// Warm-pool match is the highest-weighted placement signal (0.40). The
+    /// heartbeat used to send empty maps unconditionally, so that entire term
+    /// evaluated to zero on every placement — the warm pool existed but never
+    /// influenced where anything landed.
+    pub fn inventory(&self) -> WarmInventory {
+        let mut inv = WarmInventory::default();
+        for entry in self.pool.iter() {
+            let class = entry.key().isolation_class;
+            for wh in entry.value() {
+                if wh.image.is_empty() {
+                    continue; // nothing the scheduler could match on
+                }
+                *inv.exact
+                    .entry(exact_key(&wh.image, class, &wh.size_key))
+                    .or_insert(0) += 1;
+                *inv.image_only.entry(wh.image.clone()).or_insert(0) += 1;
+            }
+        }
+        inv
+    }
+
     /// Return a handle to the pool after use, or discard if pool is full.
-    pub fn release(&self, isolation_class: IsolationClass, bundle_digest: &[u8], handle: Handle) {
-        let key = PoolKey::new(isolation_class, bundle_digest);
+    ///
+    /// Takes the originating request so the warm entry records the image and
+    /// size the scheduler will later try to match against.
+    pub fn release(&self, req: &ScheduleRequest, handle: Handle) {
+        let key = PoolKey::new(req.isolation_class, &req.bundle_digest);
         let warm = WarmHandle {
             handle: handle.clone(),
             created_at: Instant::now(),
+            image: req.image.clone(),
+            size_key: size_key(&req.limits),
         };
 
         let mut entry = self.pool.entry(key).or_default();
@@ -189,7 +261,7 @@ impl WarmPool {
         for _ in 0..needed {
             match self.backend.schedule(req).await {
                 Ok(handle) => {
-                    self.release(req.isolation_class, &req.bundle_digest, handle);
+                    self.release(req, handle);
                     created += 1;
                 }
                 Err(e) => {
@@ -229,18 +301,19 @@ impl WarmPool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
     use super::*;
     use crate::proto::{IsolationClass, ScheduleRequest};
     use futures::stream::BoxStream;
 
     // --- minimal stub backend ---
 
-    struct StubBackend {
+    pub(super) struct StubBackend {
         call_count: std::sync::atomic::AtomicUsize,
     }
 
     impl StubBackend {
-        fn new() -> Arc<Self> {
+        pub(super) fn new() -> Arc<Self> {
             Arc::new(Self {
                 call_count: std::sync::atomic::AtomicUsize::new(0),
             })
@@ -298,7 +371,7 @@ mod tests {
         }
     }
 
-    fn make_req(run_id: &str, digest: &[u8], iso: IsolationClass) -> ScheduleRequest {
+    pub(super) fn make_req(run_id: &str, digest: &[u8], iso: IsolationClass) -> ScheduleRequest {
         ScheduleRequest {
             run_id: run_id.to_string(),
             tenant_id: "test-tenant".to_string(),
@@ -339,7 +412,7 @@ mod tests {
             node_name: "node-1".to_string(),
             cold_start_ms: 20.0,
         };
-        pool.release(req.isolation_class, &req.bundle_digest, handle);
+        pool.release(&req, handle);
         assert_eq!(pool.total_warm(), 1);
 
         let acquired = pool.acquire(&req);
@@ -356,8 +429,7 @@ mod tests {
 
         for i in 0..3u32 {
             pool.release(
-                req.isolation_class,
-                &req.bundle_digest,
+                &req,
                 Handle {
                     id: format!("h-{i}"),
                     node_name: "n".to_string(),
@@ -386,8 +458,7 @@ mod tests {
 
         for i in 0..5u32 {
             pool.release(
-                req.isolation_class,
-                &req.bundle_digest,
+                &req,
                 Handle {
                     id: format!("h-{i}"),
                     node_name: "n".to_string(),
@@ -409,8 +480,7 @@ mod tests {
         let req_b = make_req("r2", b"digest-b", IsolationClass::Standard);
 
         pool.release(
-            req_a.isolation_class,
-            &req_a.bundle_digest,
+            &req_a,
             Handle {
                 id: "for-a".to_string(),
                 node_name: "n".to_string(),
@@ -430,8 +500,7 @@ mod tests {
         let digest = b"same-digest";
 
         pool.release(
-            IsolationClass::Standard,
-            digest,
+            &make_req("r1", digest, IsolationClass::Standard),
             Handle {
                 id: "standard-h".to_string(),
                 node_name: "n".to_string(),
@@ -460,8 +529,7 @@ mod tests {
         let req = make_req("r1", b"dg", IsolationClass::Standard);
 
         pool.release(
-            req.isolation_class,
-            &req.bundle_digest,
+            &req,
             Handle {
                 id: "old-handle".to_string(),
                 node_name: "n".to_string(),
@@ -488,8 +556,7 @@ mod tests {
         let req = make_req("r1", b"dg", IsolationClass::Standard);
 
         pool.release(
-            req.isolation_class,
-            &req.bundle_digest,
+            &req,
             Handle {
                 id: "fresh-handle".to_string(),
                 node_name: "n".to_string(),
@@ -510,8 +577,7 @@ mod tests {
         let req = make_req("r1", b"dg", IsolationClass::Standard);
 
         pool.release(
-            req.isolation_class,
-            &req.bundle_digest,
+            &req,
             Handle {
                 id: "warm-h".to_string(),
                 node_name: "n".to_string(),
@@ -555,5 +621,98 @@ mod tests {
     fn pool_key_empty_digest() {
         let key = PoolKey::new(IsolationClass::Standard, &[]);
         assert_eq!(key.bundle_digest, "");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-service key-parity tests.
+//
+// The warm-pool inventory only influences placement if the key the MANAGER
+// emits is byte-identical to the key the SCHEDULER builds in
+// `scoring.warmPoolExactKey`. There is no shared type across the language
+// boundary, so both sides pin the same literal; a change to either format
+// fails one of the two tests instead of silently zeroing the 0.40-weighted
+// warm-pool term.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod key_parity_tests {
+    use super::*;
+    use crate::proto::ResourceLimits;
+
+    #[test]
+    fn exact_key_matches_scheduler_format() {
+        // Mirrors scoring_test.go: TestWarmPoolExactKey_ManagerParity
+        assert_eq!(
+            exact_key("demo:latest", IsolationClass::Trusted, "500m/512Mi"),
+            "demo:latest@ISOLATION_TRUSTED@500m/512Mi"
+        );
+        assert_eq!(
+            exact_key("img@sha256:ab", IsolationClass::Untrusted, "1/1Gi"),
+            "img@sha256:ab@ISOLATION_UNTRUSTED@1/1Gi"
+        );
+    }
+
+    #[test]
+    fn size_key_matches_cluster_sizekey() {
+        let limits = ResourceLimits {
+            cpu: "500m".to_string(),
+            memory: "512Mi".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(size_key(&limits), "500m/512Mi");
+    }
+
+    #[test]
+    fn inventory_counts_warm_handles_under_both_keys() {
+        let backend = tests::StubBackend::new();
+        let pool = WarmPool::new(backend, PoolConfig::default());
+
+        let mut req = tests::make_req("r1", b"dg", IsolationClass::Trusted);
+        req.image = "demo:latest".to_string();
+        req.limits.cpu = "500m".to_string();
+        req.limits.memory = "512Mi".to_string();
+
+        pool.release(
+            &req,
+            Handle {
+                id: "h-1".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 10.0,
+            },
+        );
+
+        let inv = pool.inventory();
+        assert_eq!(
+            inv.exact.get("demo:latest@ISOLATION_TRUSTED@500m/512Mi"),
+            Some(&1),
+            "exact key must match what the scheduler looks up"
+        );
+        assert_eq!(inv.image_only.get("demo:latest"), Some(&1));
+    }
+
+    /// A warm handle with no image is unmatchable by the scheduler, so it must
+    /// not be advertised — advertising it would inflate the warm score for a
+    /// slot no workload can actually reuse.
+    #[test]
+    fn imageless_handles_are_not_advertised() {
+        let backend = tests::StubBackend::new();
+        let pool = WarmPool::new(backend, PoolConfig::default());
+        let req = tests::make_req("r1", b"dg", IsolationClass::Trusted); // image: ""
+
+        pool.release(
+            &req,
+            Handle {
+                id: "h-1".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 10.0,
+            },
+        );
+
+        let inv = pool.inventory();
+        assert!(
+            inv.exact.is_empty(),
+            "imageless handle must not be advertised"
+        );
+        assert!(inv.image_only.is_empty());
     }
 }

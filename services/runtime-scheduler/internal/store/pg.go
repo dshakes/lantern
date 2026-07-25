@@ -316,6 +316,14 @@ func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, 
 }
 
 // DeleteVM removes from memory and from Postgres.
+// MarkVMsSeenOnNode is in-memory only. It records liveness confirmation from
+// the current heartbeat, which is inherently transient — after a restart the
+// dispatch grace correctly applies again, since this scheduler has not itself
+// seen the node confirm those VMs.
+func (s *WriteThroughStore) MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time) {
+	s.mem.MarkVMsSeenOnNode(nodeName, vmIDs, at)
+}
+
 func (s *WriteThroughStore) DeleteVM(vmID string) bool {
 	ok := s.mem.DeleteVM(vmID)
 	if !ok {

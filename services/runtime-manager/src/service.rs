@@ -173,7 +173,7 @@ fn apply_confidential_isolation_floor(
 #[derive(Clone)]
 pub struct RuntimeManagerGrpc {
     backend: Arc<dyn RuntimeBackend>,
-    pool: Arc<WarmPool>,
+    pub(crate) pool: Arc<WarmPool>,
     pub(crate) registry: Arc<HandleRegistry>,
     pub(crate) secret_resolver: Arc<dyn SecretResolver>,
     snapshot_store: Arc<SnapshotStore>,
@@ -402,11 +402,8 @@ impl RuntimeManagerGrpc {
         // Confidential-compute isolation floor: upgrade any weaker trust class to
         // HOSTILE-tier (upgrade only, audited). Mutate the request so build_job +
         // the runtime-class selection see the effective class.
-        req.isolation_class = apply_confidential_isolation_floor(
-            req.isolation_class,
-            req.confidential,
-            &req.run_id,
-        );
+        req.isolation_class =
+            apply_confidential_isolation_floor(req.isolation_class, req.confidential, &req.run_id);
 
         // Select the backend per-request based on isolation class (ADR-0009) and
         // confidential-compute capability. Hostile/Untrusted MUST have hardware/
@@ -1049,8 +1046,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // span of the scheduler's (Go) span — one distributed trace per spawn.
         let parent_cx = otel::extract_from_metadata(request.metadata());
         let tracer = opentelemetry::global::tracer("lantern.runtime-manager");
-        let span = tracer
-            .start_with_context("RuntimeManager.Spawn", &parent_cx);
+        let span = tracer.start_with_context("RuntimeManager.Spawn", &parent_cx);
         let spawn_cx = parent_cx.with_span(span);
 
         let req = request.into_inner();
@@ -1094,7 +1090,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             );
             return Ok(Response::new(pb::SpawnResponse {
                 handle: Some(h.clone()),
-                boot_duration: Some(prost_types::Duration { seconds: 0, nanos: 0 }),
+                boot_duration: Some(prost_types::Duration {
+                    seconds: 0,
+                    nanos: 0,
+                }),
                 from_snapshot,
             }));
         }
@@ -1111,7 +1110,9 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             let mut tp_meta = tonic::metadata::MetadataMap::new();
             otel::inject_into_metadata(&spawn_cx, &mut tp_meta);
             if let Some(val) = tp_meta.get("traceparent").and_then(|v| v.to_str().ok()) {
-                internal.env.insert("LANTERN_TRACE_PARENT".to_string(), val.to_string());
+                internal
+                    .env
+                    .insert("LANTERN_TRACE_PARENT".to_string(), val.to_string());
             }
         }
 
@@ -3332,8 +3333,15 @@ mod tests {
             .expect("first spawn must succeed")
             .into_inner();
         let vm_id_1 = resp1.handle.as_ref().expect("handle present").vm_id.clone();
-        assert_eq!(vm_id_1, "wire-vm-idem", "first spawn must return the wire vm_id");
-        assert_eq!(svc.registry.len(), 1, "exactly one handle after first spawn");
+        assert_eq!(
+            vm_id_1, "wire-vm-idem",
+            "first spawn must return the wire vm_id"
+        );
+        assert_eq!(
+            svc.registry.len(),
+            1,
+            "exactly one handle after first spawn"
+        );
 
         // Simulate the client-side timeout → retry with the same wire vm_id.
         let req2 = make_spawn_request_with_handle("tenant-idem", "run-idem", "wire-vm-idem");
@@ -3343,7 +3351,10 @@ mod tests {
             .expect("idempotent retry must succeed")
             .into_inner();
         let vm_id_2 = resp2.handle.as_ref().expect("handle present").vm_id.clone();
-        assert_eq!(vm_id_2, "wire-vm-idem", "retry must return the same wire vm_id");
+        assert_eq!(
+            vm_id_2, "wire-vm-idem",
+            "retry must return the same wire vm_id"
+        );
         // The registry must NOT have grown — no second backend workload was spawned.
         assert_eq!(
             svc.registry.len(),
@@ -3678,8 +3689,7 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued =
-            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -3716,8 +3726,7 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued =
-            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()

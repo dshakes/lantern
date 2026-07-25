@@ -11,6 +11,7 @@ mod handle_registry;
 mod otel;
 mod pool;
 mod proto;
+mod reaper;
 mod report_forwarder;
 mod runtimeclass_preflight;
 mod scheduler_heartbeat;
@@ -88,13 +89,13 @@ async fn main() -> anyhow::Result<()> {
             // We need a temporary kube client for the preflight; the backend
             // creates its own client internally after this check.
             let preflight_client = kube::Client::try_default().await.ok();
-            let rc_cfg = runtimeclass_preflight::check_and_resolve(
-                raw_rc_cfg,
-                preflight_client.as_ref(),
-            )
-            .await;
+            let rc_cfg =
+                runtimeclass_preflight::check_and_resolve(raw_rc_cfg, preflight_client.as_ref())
+                    .await;
 
-            Arc::new(K8sBackend::new_with_runtime_classes(config.agent_image.clone(), rc_cfg).await?)
+            Arc::new(
+                K8sBackend::new_with_runtime_classes(config.agent_image.clone(), rc_cfg).await?,
+            )
         }
         RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
         RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
@@ -125,7 +126,22 @@ async fn main() -> anyhow::Result<()> {
     // (its fields are all `Arc`-wrapped), which lets the generated tonic
     // server hold it by value while still sharing the underlying state.
     let pool_config = PoolConfig::default();
-    let grpc_service = RuntimeManagerGrpc::new(backend, pool_config, Arc::clone(&resolver));
+    let grpc_service =
+        RuntimeManagerGrpc::new(Arc::clone(&backend), pool_config, Arc::clone(&resolver));
+
+    // Registry reaper: notices workloads that exited on their own so the
+    // registry (and therefore the heartbeat inventory the scheduler places
+    // and bills against) reflects reality. Without it a finished batch agent
+    // stays "running" forever. Conservative — see reaper.rs.
+    let registry = Arc::clone(&grpc_service.registry);
+    let pool_for_heartbeat = Arc::clone(&grpc_service.pool);
+    reaper::spawn(Arc::clone(&registry), Arc::clone(&backend));
+
+    // Any change to live-handle membership (spawn, rekey, reap) wakes the
+    // heartbeat, so the scheduler confirms a new VM and notices an exited one
+    // within seconds instead of up to a full heartbeat interval.
+    let inventory_changed = Arc::new(tokio::sync::Notify::new());
+    registry.set_change_notify(Arc::clone(&inventory_changed));
 
     // rustls 0.23 requires a process-level CryptoProvider. We pin the `ring`
     // provider (Cargo.toml: rustls default-features off + features=["ring"]),
@@ -162,6 +178,9 @@ async fn main() -> anyhow::Result<()> {
         zone: config.node_zone.clone(),
         cc_capable,
         cc_tech,
+        registry: Some(Arc::clone(&registry)),
+        pool: Some(Arc::clone(&pool_for_heartbeat)),
+        wake: Some(inventory_changed),
     });
 
     tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");
