@@ -242,6 +242,42 @@ export function fetchAttention(
   return get<AttentionSnapshot>(channel, `/session/${encodeURIComponent(tenantId)}/attention`);
 }
 
+/** One event the scout is holding, already resolved to "how soon". */
+export interface ScoutUpcoming {
+  title: string;
+  date: string;
+  time?: string;
+  venue?: string;
+  city?: string;
+  category?: string;
+  cost?: string;
+  url?: string;
+  daysUntil: number;
+  when: string;
+}
+
+export interface EventScoutSnapshot {
+  lastScanAt: number | null;
+  location: string;
+  categories: string[];
+  /** True when the last scan had a batch fail, so the list is under-filled. */
+  partial: boolean;
+  upcoming: ScoutUpcoming[];
+}
+
+/**
+ * What the event scout has found and is holding.
+ *
+ * The scout had no surface outside a single self-chat message at discovery
+ * time — 5 scans and 60 events, each announced once and then invisible.
+ */
+export function fetchEventScout(
+  tenantId: string,
+  channel: BridgeChannel = "imessage",
+): Promise<EventScoutSnapshot> {
+  return get<EventScoutSnapshot>(channel, `/session/${encodeURIComponent(tenantId)}/events`);
+}
+
 // ---- WebSocket URL ----------------------------------------------------------
 //
 // Components open their own WS to handle reconnection/cleanup, but the URL

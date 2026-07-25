@@ -65,8 +65,10 @@ import { Sparkline } from "../runtime/cockpit-ui";
 import { useAuth } from "@/lib/auth";
 import {
   fetchAttention,
+  fetchEventScout,
   type AttentionSnapshot,
   type AttentionItem,
+  type EventScoutSnapshot,
 } from "@/lib/bridge-client";
 import type { BridgeChannel } from "@/lib/bridge-types";
 
@@ -1006,6 +1008,78 @@ type ChannelAttention = {
   loaded: boolean;
 };
 
+/**
+ * What the event scout has found, and when it last looked.
+ *
+ * The scout runs weekly and announced each find exactly once in self-chat, so
+ * its output evaporated: 60 events discovered, none visible anywhere after the
+ * moment they were sent. This is the durable view — soonest first, past events
+ * dropped, and an explicit note when the last scan was partial so an
+ * under-filled list is never mistaken for "nothing on".
+ */
+function UpcomingEvents({ tenantId }: { tenantId: string }) {
+  const [snap, setSnap] = useState<EventScoutSnapshot | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const s = await fetchEventScout(tenantId, "imessage");
+        if (!cancelled) { setSnap(s); setFailed(false); }
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    }
+    load();
+    const id = setInterval(load, 120_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [tenantId]);
+
+  // Nothing to show and nothing to explain — stay out of the way.
+  if (failed || !snap || snap.upcoming.length === 0) return null;
+
+  return (
+    <section className="mb-6 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-zinc-100">Events coming up</h2>
+        <span className="text-[11px] text-zinc-500">
+          {snap.lastScanAt ? `scanned ${formatRelative(snap.lastScanAt)}` : "not scanned yet"}
+        </span>
+      </div>
+      {snap.partial && (
+        <p className="mt-1 text-[11px] text-amber-400">
+          Last scan was incomplete — some categories failed, so this list is short. Retrying soon.
+        </p>
+      )}
+      <ul className="mt-3 space-y-2">
+        {snap.upcoming.slice(0, 8).map((e) => (
+          <li key={`${e.title}-${e.date}`} className="flex items-baseline gap-3 text-[13px]">
+            <span
+              className={clsx(
+                "w-20 shrink-0 font-medium",
+                e.daysUntil <= 1 ? "text-amber-400" : "text-zinc-500",
+              )}
+            >
+              {e.when}
+            </span>
+            <span className="min-w-0">
+              <span className="text-zinc-100">{e.title}</span>
+              {(e.venue || e.city) && (
+                <span className="text-zinc-500"> — {e.venue || e.city}</span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[11px] text-zinc-600">
+        Reply <span className="text-zinc-400">book 1</span> in your assistant chat to add one to your calendar.
+      </p>
+    </section>
+  );
+}
+
 function PersonalAttention({ tenantId }: { tenantId: string }) {
   const toast = useToast();
   const [channels, setChannels] = useState<ChannelAttention[]>(() =>
@@ -1071,6 +1145,7 @@ function PersonalAttention({ tenantId }: { tenantId: string }) {
 
   return (
     <div className="flex-1 px-6 pb-10 pt-5 md:px-8">
+      <UpcomingEvents tenantId={tenantId} />
       {!anyLoaded ? (
         <AttentionSkeleton />
       ) : totalItems === 0 && allErrored ? (
