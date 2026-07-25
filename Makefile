@@ -1,4 +1,4 @@
-.PHONY: help dev build test test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test check-launchd-env test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -22,6 +22,9 @@ dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
 dev-doctor: ## Health-check every service + infra (run this when things feel weird)
 	@bash scripts/dev-doctor.sh
 
+check-launchd-env: ## Verify LaunchAgent plists carry the wiring their services need
+	@bash scripts/launchd/check-env-drift.sh
+
 whatsapp-reset: ## Nuclear reset for stuck WhatsApp 'Waiting for this message' loops
 	@bash scripts/whatsapp-nuclear-reset.sh
 
@@ -37,31 +40,28 @@ run-api: ## Run the control-plane API server locally
 
 run-scheduler: ## Run the runtime-scheduler locally on :50055 (gRPC) and :8085 (REST)
 	@bash scripts/kill-port.sh 50055 8085
+	. scripts/launchd/service-env.sh; \
 	cd services/runtime-scheduler && \
-	LANTERN_DEFAULT_MANAGER_ADDR="localhost:50054" \
-	JWT_SECRET="lantern-dev-jwt-secret-do-not-use-in-production" \
 	LOG_LEVEL="debug" \
 	go run ./cmd/scheduler
 
 run-runtime-manager: ## Run the Rust runtime-manager locally on :50054 (Docker backend)
 	@bash scripts/kill-port.sh 50054
+	. scripts/launchd/service-env.sh; \
 	cd services/runtime-manager && \
 	LISTEN_ADDR="0.0.0.0:50054" \
 	RUNTIME_BACKEND="docker" \
 	LOG_LEVEL="debug" \
-	SCHEDULER_URL="http://localhost:8085" \
-	NODE_NAME="local-dev" \
-	NODE_ADVERTISE_ADDR="localhost:50054" \
 	cargo run
 
 run-api-runtime: ## Run the control-plane API wired to the real runtime-scheduler at :50055
 	@bash scripts/kill-port.sh 8080 50051
+	. scripts/launchd/service-env.sh; \
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
-	LANTERN_SCHEDULER_GRPC_ADDR="localhost:50055" \
 	go run ./cmd/server
 
 run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 — uses Claude Max subscription)

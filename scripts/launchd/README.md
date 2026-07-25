@@ -1,8 +1,9 @@
-# Lantern bridges as macOS LaunchAgents
+# Lantern services as macOS LaunchAgents
 
-Prod-grade always-on setup so the WhatsApp + iMessage bridges
-auto-start at login and auto-restart if they crash. Use this when
-you want Lantern running 24/7 on your Mac without typing
+Prod-grade always-on setup so the bridges **and the backend services**
+(API, dashboard, gateway, model-router, workflow-engine, runtime-manager,
+runtime-scheduler) auto-start at login and auto-restart if they crash. Use
+this when you want Lantern running 24/7 on your Mac without typing
 `make run-*` each time.
 
 ## Install
@@ -29,6 +30,46 @@ Logs land in `~/Library/Logs/Lantern/<bridge>.{out,err}.log`. Tail with:
 tail -f ~/Library/Logs/Lantern/imessage-bridge.err.log
 tail -f ~/Library/Logs/Lantern/whatsapp-bridge.err.log
 ```
+
+## Service wiring lives in one place
+
+The `make run-*` targets and the plists used to define the same ports and
+addresses separately, and they agreed only by luck. When they drifted the
+failure was silent: `dev.lantern.runtime-manager.plist` was missing
+`SCHEDULER_URL`, so under launchd the runtime-manager never self-registered —
+the scheduler marked the node draining and every placement failed with
+`FailedPrecondition`, while the manager process itself stayed healthy and
+logged nothing alarming. It only ever worked when someone happened to start it
+with `make run-runtime-manager`, which did set the variable.
+
+Shared defaults now live in **`scripts/launchd/service-env.sh`**, sourced by
+both `run-microservice.sh` (the launchd path) and the `make run-*` targets.
+Each entry uses `: "${VAR:=default}"`, so precedence is:
+
+1. Anything already exported — a plist's `EnvironmentVariables`, or an
+   operator running `SCHEDULER_URL=... make run-runtime-manager`
+2. The shared defaults
+
+A plist can still override for a real multi-node deployment; the shared file
+only guarantees a sane single-host value is never simply *absent*.
+
+Verify before you trust it:
+
+```bash
+make check-launchd-env
+```
+
+That fails if a plist is missing wiring its service cannot run without, or if
+a plist and the shared defaults disagree. Worth running after editing either.
+
+## Go services build a binary, not `go run`
+
+`run-microservice.sh` compiles Go services to `services/<svc>/bin/<name>` and
+execs that, rather than `go run`. `go run` supervises a child process in the
+build cache, so launchd's pid is the wrapper and not the server — signals land
+on the wrong process, and `launchctl kickstart -k` or a plain `kill` leaves an
+orphan holding the port, so the next start fails with "address already in use".
+The binary is rebuilt whenever a `.go` file is newer than it.
 
 ## macOS permissions (iMessage bridge)
 
