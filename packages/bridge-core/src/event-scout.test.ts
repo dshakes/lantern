@@ -21,6 +21,11 @@ import {
   parseBookReply,
   parseScoutCommand,
   parseScoutEvents,
+  dueReminders,
+  formatReminders,
+  localDayStamp,
+  whenPhrase,
+  type ScoutEvent,
 } from "./event-scout.ts";
 
 const NOW = new Date(2026, 6, 4, 9, 0, 0); // 2026-07-04 local
@@ -211,4 +216,105 @@ test("calendarSpecFor: start/end, notes, and 1d+2h alarms", () => {
   assert.equal(calendarSpecFor({ title: "x", date: "2026-07-10" }).start, "2026-07-10T10:00:00");
   // Late event → end clamped to same day.
   assert.equal(calendarSpecFor({ title: "x", date: "2026-07-10", time: "22:30" }).end, "2026-07-10T23:30:00");
+});
+
+// ---------------------------------------------------------------------------
+// Upcoming-event reminders.
+//
+// The scout was write-once: `seen` was stamped at DISCOVERY, so an event found
+// 11 days out was never mentioned again — not the week before, not the day
+// before. Verified live: 5 scans, 60 events found, every one announced exactly
+// once and then silent. These lock in the re-surfacing ladder.
+// ---------------------------------------------------------------------------
+test("dueReminders fires on the 7/1/0-day ladder, not every day", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  const mk = (title: string, date: string): ScoutEvent => ({ title, date });
+  const st = {
+    ...defaultScoutState(),
+    pending: [
+      mk("week out", "2026-08-01"),   // +7  → due
+      mk("tomorrow", "2026-07-26"),   // +1  → due
+      mk("today", "2026-07-25"),      //  0  → due
+      mk("inside window", "2026-07-29"), // +4  → catch-up (never reminded)
+      mk("far off", "2026-09-15"),       // +52 → silent
+      mk("past", "2026-07-20"),          // -5  → never
+    ],
+    // Everything except "inside window" has already had its first nudge, so
+    // only the ladder rungs apply to them.
+    reminded: {
+      [eventKey(mk("week out", "2026-08-01"))]: "2026-07-01",
+      [eventKey(mk("tomorrow", "2026-07-26"))]: "2026-07-01",
+      [eventKey(mk("today", "2026-07-25"))]: "2026-07-01",
+      [eventKey(mk("far off", "2026-09-15"))]: "2026-07-01",
+    },
+  };
+
+  const due = dueReminders(st, now, 10).map((e) => e.title);
+  assert.deepEqual(
+    due,
+    ["today", "tomorrow", "inside window", "week out"],
+    "soonest first: ladder rungs plus the never-nudged event inside the window",
+  );
+});
+
+test("an event is reminded at most once per day", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  const ev: ScoutEvent = { title: "Fair", date: "2026-07-26" };
+  const st = { ...defaultScoutState(), pending: [ev] };
+
+  assert.equal(dueReminders(st, now).length, 1, "first tick of the day nudges");
+
+  // The proactive tick runs every ~45 min; without this guard it would spam.
+  st.reminded = { [eventKey(ev)]: localDayStamp(now) };
+  assert.equal(dueReminders(st, now).length, 0, "later ticks the same day stay quiet");
+
+  const tomorrow = new Date("2026-07-26T09:00:00");
+  assert.equal(dueReminders(st, tomorrow).length, 1, "day-of nudge still fires");
+});
+
+test("one tick cannot produce a wall of messages", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  const st = {
+    ...defaultScoutState(),
+    pending: Array.from({ length: 9 }, (_, i) => ({ title: `e${i}`, date: "2026-07-26" })),
+  };
+  assert.equal(dueReminders(st, now).length, 3, "capped");
+});
+
+test("whenPhrase reads like a person wrote it", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  assert.equal(whenPhrase({ title: "x", date: "2026-07-25" }, now), "today");
+  assert.equal(whenPhrase({ title: "x", date: "2026-07-26" }, now), "tomorrow");
+  assert.equal(whenPhrase({ title: "x", date: "2026-08-01" }, now), "in 7 days");
+});
+
+test("formatReminders names the event, when, and where", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  const msg = formatReminders(
+    [{ title: "Fairfax County 4-H Fair", date: "2026-07-26", venue: "Frying Pan Park" }],
+    now,
+  );
+  assert.match(msg, /Fairfax County 4-H Fair/);
+  assert.match(msg, /tomorrow/);
+  assert.match(msg, /Frying Pan Park/);
+});
+
+test("an event already inside the window still gets a first nudge", () => {
+  const now = new Date("2026-07-25T09:00:00");
+  // 5 days out: past the 7-day rung, not yet at the 1-day rung. Before the
+  // catch-up rule this produced silence until the eve of the event.
+  const ev: ScoutEvent = { title: "Fairfax County 4-H Fair", date: "2026-07-30" };
+  const st = { ...defaultScoutState(), pending: [ev] };
+
+  assert.equal(dueReminders(st, now).length, 1, "first-ever nudge fires inside the window");
+
+  st.reminded = { [eventKey(ev)]: "2026-07-25" };
+  assert.equal(dueReminders(st, now).length, 0, "but only once");
+
+  // And it still gets the normal day-before nudge.
+  assert.equal(dueReminders(st, new Date("2026-07-29T09:00:00")).length, 1);
+});
+
+test("whenPhrase does not emit negative days", () => {
+  assert.equal(whenPhrase({ title: "x", date: "2026-07-20" }, new Date("2026-07-25T09:00:00")), "past");
 });

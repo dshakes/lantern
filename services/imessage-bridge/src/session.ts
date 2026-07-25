@@ -265,6 +265,11 @@ import {
   formatScoutList,
   formatScoutPage,
   formatScoutPicks,
+  dueReminders,
+  formatReminders,
+  localDayStamp,
+  daysUntil,
+  whenPhrase,
   SCOUT_PAGE_SIZE,
   parseCuration,
   friendlyDate,
@@ -2644,11 +2649,79 @@ export class IMessageSession {
     }
   }
 
+  /**
+   * The event scout's current findings, for the dashboard.
+   *
+   * Only UPCOMING events (today onward) in date order — a list containing
+   * last month's fair is worse than no list. `partial` flags a scan where a
+   * batch failed, so under-delivery is visible rather than silent.
+   */
+  getEventScoutSnapshot(): {
+    lastScanAt: number | null;
+    location: string;
+    categories: string[];
+    partial: boolean;
+    upcoming: Array<ScoutEvent & { daysUntil: number; when: string }>;
+  } {
+    const st = this.ensureScoutState();
+    const now = new Date();
+    const upcoming = (st.pending || [])
+      .map((e) => ({ ...e, daysUntil: daysUntil(e, now), when: whenPhrase(e, now) }))
+      .filter((e) => e.daysUntil >= 0)
+      .sort((a, b) => a.daysUntil - b.daysUntil);
+    return {
+      lastScanAt: st.lastScanAt || null,
+      location: st.location,
+      categories: st.categories,
+      partial: Boolean(st.lastScanPartial),
+      upcoming,
+    };
+  }
+
   private maybeRunEventScout(target: string, now: number): void {
     if ((process.env.LANTERN_EVENT_SCOUT || "1") === "0") return;
     const st = this.ensureScoutState();
-    if (now - st.lastScanAt < IMessageSession.SCOUT_SCAN_INTERVAL_MS) return;
+    // Remind about events that are ACTUALLY APPROACHING, independently of the
+    // weekly scan. Discovery and reminding were the same event before, so an
+    // event found 11 days out was announced once and never mentioned again —
+    // not the week before it happened, not the day before.
+    void this.sendDueEventReminders(target);
+    // A partial scan retries in 6h instead of waiting out the week, so a
+    // transient batch failure does not cost the owner a full cycle of events.
+    const interval = st.lastScanPartial
+      ? Math.min(6 * 60 * 60 * 1000, IMessageSession.SCOUT_SCAN_INTERVAL_MS)
+      : IMessageSession.SCOUT_SCAN_INTERVAL_MS;
+    if (now - st.lastScanAt < interval) return;
     void this.runEventScoutScan(target, false);
+  }
+
+  /**
+   * Nudge the owner about events on the 7-day / 1-day / day-of ladder.
+   *
+   * Runs on the proactive tick, so it inherits killswitch, mute, and
+   * quiet-hours gating like every other loop. At most one reminder per event
+   * per calendar day (tracked in state), and at most a few per tick, so a
+   * ~45-minute tick can never turn into a wall of messages.
+   */
+  private async sendDueEventReminders(target: string): Promise<void> {
+    if (!target) return;
+    try {
+      const st = this.ensureScoutState();
+      const now = new Date();
+      const due = dueReminders(st, now);
+      if (due.length === 0) return;
+
+      const ok = await this.send(target, formatReminders(due, now)).then((r) => r.ok, () => false);
+      if (!ok) return; // retry on the next tick rather than marking as told
+
+      const stamp = localDayStamp(now);
+      st.reminded = st.reminded || {};
+      for (const ev of due) st.reminded[eventKey(ev)] = stamp;
+      this.persistScoutState();
+      this.logger.info({ count: due.length }, "event scout: sent upcoming-event reminders");
+    } catch (err) {
+      this.logger.warn({ err }, "event reminder tick failed (non-fatal)");
+    }
   }
 
   private async runEventScoutScan(target: string, manual: boolean): Promise<void> {
@@ -2668,16 +2741,42 @@ export class IMessageSession {
       const merged = new Map<string, ScoutEvent>();
       const batches = chunkCategories(st.categories);
       let batchesOk = 0;
+      let batchesFailed = 0;
       for (let i = 0; i < batches.length; i++) {
         const prompt = buildScoutPrompt(st, new Date(), batches[i]);
-        // 8-min per-batch timeout: a multi-search batch legitimately runs
-        // 3-6 min (measured live); the 180s default aborted every scan.
         this.scoutAgent ??= new AgentClient(this.logger, { agentName: process.env.LANTERN_EVENT_SCOUT_AGENT || "event-scout" });
-        const raw = (await this.scoutAgent.respondTo(`${target}::eventscout${i}`, prompt, "", { webSearch: true, timeoutMs: 480_000 })) || "";
-        const events = parseScoutEvents(raw);
+
+        // Retry an empty batch once. The observed failure is an SSE
+        // AbortError mid-stream — transient, and exactly what a retry is for.
+        // Before this, two of three batches aborting meant 5 events found
+        // instead of ~15, with nothing surfaced to say the scan was partial.
+        let events: ScoutEvent[] = [];
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          // Fresh session key per attempt so a retry never resumes the
+          // aborted turn's context.
+          const key = `${target}::eventscout${i}${attempt > 1 ? `r${attempt}` : ""}`;
+          const raw = (await this.scoutAgent.respondTo(key, prompt, "", { webSearch: true, timeoutMs: 480_000 })) || "";
+          events = parseScoutEvents(raw);
+          if (events.length > 0) break;
+          this.logger.warn(
+            { batch: batches[i], attempt, rawPreview: raw.slice(0, 200) },
+            "event scout: batch returned no events",
+          );
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 5_000));
+        }
+
         if (events.length > 0) batchesOk += 1;
-        else this.logger.warn({ batch: batches[i], rawPreview: raw.slice(0, 200) }, "event scout: batch returned no events");
+        else batchesFailed += 1;
         for (const e of events) if (!merged.has(eventKey(e))) merged.set(eventKey(e), e);
+      }
+      // A partial scan under-delivers silently. Record it so the scheduler
+      // retries in hours rather than a full week.
+      st.lastScanPartial = batchesFailed > 0;
+      if (batchesFailed > 0) {
+        this.logger.warn(
+          { failed: batchesFailed, total: batches.length },
+          "event scout: partial scan — will retry sooner than the weekly interval",
+        );
       }
       const all = [...merged.values()].sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
       if (batchesOk === 0) {
