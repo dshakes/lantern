@@ -92,6 +92,13 @@ func (h *ConnectorHandler) InstallConnector(w http.ResponseWriter, r *http.Reque
 				config = EXCLUDED.config,
 				scopes = EXCLUDED.scopes,
 				status = 'connected',
+				-- Reconnecting is the recovery step for a quarantined install,
+				-- so clear the quarantine bookkeeping too. Leaving a stale
+				-- status_reason would keep telling the owner to re-authorize a
+				-- connector they just re-authorized.
+				status_reason = NULL,
+				status_changed_at = now(),
+				failure_count = 0,
 				updated_at = now()
 			RETURNING id
 		`, tenantID, body.ConnectorID, body.DisplayName, encConfig, body.Scopes, tenantID).Scan(&id)
@@ -134,7 +141,8 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		rows, qErr := tx.Query(ctx, `
 			SELECT id, connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
-			       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
+			       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token,
+			       coalesce(status_reason, ''), failure_count
 			FROM connector_installs
 			WHERE tenant_id = $1
 			ORDER BY installed_at DESC
@@ -152,8 +160,10 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 				installedBy                          *string
 				installedAt, updatedAt               time.Time
 				hasOAuthToken                        bool
+				statusReason                         string
+				failureCount                         int
 			)
-			if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken); err != nil {
+			if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken, &statusReason, &failureCount); err != nil {
 				h.logger().Error("scan connector row failed", zap.Error(err))
 				continue
 			}
@@ -178,6 +188,17 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 			if installedBy != nil {
 				entry["installedBy"] = *installedBy
 			}
+			// Why a connector is unusable, and how many consecutive permanent
+			// failures it has seen. Without this the dashboard shows a broken
+			// integration as plain "connected" and the owner has no way to
+			// learn that re-authorization is what is needed.
+			if statusReason != "" {
+				entry["statusReason"] = statusReason
+			}
+			if failureCount > 0 {
+				entry["failureCount"] = failureCount
+			}
+			entry["needsReauth"] = status == ConnectorStatusNeedsReauth
 			result = append(result, entry)
 		}
 		return rows.Err()
@@ -535,6 +556,11 @@ func (h *ConnectorHandler) OAuthCallback(w http.ResponseWriter, r *http.Request)
 				status = 'connected',
 				oauth_token_encrypted = EXCLUDED.oauth_token_encrypted,
 				scopes = EXCLUDED.scopes,
+				-- A completed OAuth callback IS the recovery: clear quarantine
+				-- state so scheduled agents resume on their next tick.
+				status_reason = NULL,
+				status_changed_at = now(),
+				failure_count = 0,
 				updated_at = now()
 		`, stateData.TenantID, stateData.ConnectorID, stateData.ConnectorID, encToken, provider.Scopes, stateData.TenantID)
 		return execErr

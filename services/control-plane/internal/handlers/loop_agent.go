@@ -977,6 +977,18 @@ func runInboxAutopilot(
 			emitInboxSwept(ctx, pool, runID, 0, 0)
 			return 0, 0, nil
 		}
+		// A permanently unusable credential is recorded ON THE CONNECTOR and
+		// the run is skipped, not failed. Failing every scheduled tick
+		// produced 124 identical failed runs in 7 days that nobody acted on —
+		// noise, not signal. The connector's needs_reauth status is the
+		// durable, actionable signal; re-authorizing clears it.
+		if IsConnectorNeedsReauth(gmailErr) {
+			PersistConnectorQuarantinePool(ctx, pool, logger, tenantID, gmailErr)
+			logger.Warn("inbox-autopilot: gmail needs re-authorization, skipping until reconnected",
+				zap.String("tenant", tenantID), zap.Error(gmailErr))
+			emitInboxSwept(ctx, pool, runID, 0, 0)
+			return 0, 0, nil
+		}
 		emitInboxSwept(ctx, pool, runID, 0, 0)
 		return 0, 0, fmt.Errorf("inbox-autopilot: gmail fetch: %w", gmailErr)
 	}
@@ -1622,6 +1634,15 @@ func runDomainTracker(
 		if isConnectorNotInstalled(gmailErr) {
 			logger.Debug("domain-tracker: gmail connector not installed, skipping",
 				zap.String("tenant", tenantID), zap.String("domain", domain))
+			emitDomainSwept(ctx, pool, runID, domain, 0, 0)
+			return 0, 0, nil
+		}
+		// See inbox-autopilot: a permanently unusable credential is recorded on
+		// the connector and the run is skipped, not failed.
+		if IsConnectorNeedsReauth(gmailErr) {
+			PersistConnectorQuarantinePool(ctx, pool, logger, tenantID, gmailErr)
+			logger.Warn("domain-tracker: gmail needs re-authorization, skipping until reconnected",
+				zap.String("tenant", tenantID), zap.String("domain", domain), zap.Error(gmailErr))
 			emitDomainSwept(ctx, pool, runID, domain, 0, 0)
 			return 0, 0, nil
 		}
@@ -2302,6 +2323,15 @@ func runInboxTriage(
 		if isConnectorNotInstalled(gmailErr) {
 			logger.Debug("inbox-triage: gmail connector not installed, skipping",
 				zap.String("tenant", tenantID))
+			emitInboxTriaged(ctx, pool, runID, 0, 0, 0)
+			return 0, 0, nil
+		}
+		// See inbox-autopilot: a permanently unusable credential is recorded on
+		// the connector and the run is skipped, not failed.
+		if IsConnectorNeedsReauth(gmailErr) {
+			PersistConnectorQuarantinePool(ctx, pool, logger, tenantID, gmailErr)
+			logger.Warn("inbox-triage: gmail needs re-authorization, skipping until reconnected",
+				zap.String("tenant", tenantID), zap.Error(gmailErr))
 			emitInboxTriaged(ctx, pool, runID, 0, 0, 0)
 			return 0, 0, nil
 		}

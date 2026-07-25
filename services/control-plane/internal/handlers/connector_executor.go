@@ -175,6 +175,12 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	// A permanent credential failure is recorded AFTER the transaction above
+	// has closed — writing it inside would be rolled back with the failed
+	// operation. This is what stops the next scheduled run repeating it.
+	if execErr != nil {
+		PersistConnectorQuarantine(ctx, h.srv, h.logger(), tenantID, execErr)
+	}
 	if execErr != nil {
 		// Map the not-installed sentinel to 404; everything else is 502.
 		if isConnectorNotInstalled(execErr) {
@@ -239,23 +245,44 @@ func executeConnectorAction(
 
 	var configJSON []byte
 	var oauthTokenJSON []byte
+	var status, statusReason string
 	err := q.QueryRow(ctx, `
-		SELECT config, oauth_token_encrypted
+		SELECT config, oauth_token_encrypted, status, coalesce(status_reason, '')
 		FROM connector_installs
-		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
-	`, tenantID, connectorID).Scan(&configJSON, &oauthTokenJSON)
+		WHERE tenant_id = $1 AND connector_id = $2
+	`, tenantID, connectorID).Scan(&configJSON, &oauthTokenJSON, &status, &statusReason)
 	if err != nil {
+		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
+	}
+
+	// Already quarantined: fail fast with the stored explanation rather than
+	// re-deriving the same permanent failure. This is what stops a scheduled
+	// agent burning a run (and LLM tokens) once per hour against a credential
+	// that cannot work until a human re-authorizes.
+	if status == ConnectorStatusNeedsReauth {
+		return nil, &errConnectorNeedsReauth{ConnectorID: connectorID, Reason: statusReason}
+	}
+	if status != "connected" {
 		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
 	}
 
 	// Credentials are stored encrypted-at-rest (see internal/secrets).
 	// Decrypt transparently; legacy plaintext rows pass through unchanged.
-	if configJSON, err = secrets.Decrypt(configJSON); err != nil {
-		return nil, fmt.Errorf("decrypt connector config: %w", err)
+	//
+	// A decrypt failure is classified: transient errors propagate unchanged,
+	// permanent ones (missing/wrong key, revoked grant) quarantine the install
+	// so the next attempt short-circuits above instead of repeating this.
+	decryptedConfig, dErr := secrets.Decrypt(configJSON)
+	if dErr != nil {
+		return nil, noteCredentialFailure(connectorID, fmt.Errorf("decrypt connector config: %w", dErr))
 	}
-	if oauthTokenJSON, err = secrets.Decrypt(oauthTokenJSON); err != nil {
-		return nil, fmt.Errorf("decrypt connector oauth token: %w", err)
+	configJSON = decryptedConfig
+
+	decryptedToken, dErr := secrets.Decrypt(oauthTokenJSON)
+	if dErr != nil {
+		return nil, noteCredentialFailure(connectorID, fmt.Errorf("decrypt connector oauth token: %w", dErr))
 	}
+	oauthTokenJSON = decryptedToken
 
 	config := make(map[string]any)
 	if len(configJSON) > 0 {

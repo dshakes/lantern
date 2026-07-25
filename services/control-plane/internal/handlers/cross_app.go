@@ -102,6 +102,13 @@ func (h *CrossAppHandler) connectorCall(
 	if txErr != nil && execErr == nil {
 		return nil, fmt.Errorf("connector call: %w", txErr)
 	}
+	// Recorded after the transaction closes — a quarantine written inside it
+	// would be rolled back along with the failed operation. This is the path
+	// scheduled agents take, so it is what stops an unusable credential being
+	// retried every hour.
+	if execErr != nil {
+		PersistConnectorQuarantine(ctx, h.srv, h.logger(), tenantID, execErr)
+	}
 	return result, execErr
 }
 
