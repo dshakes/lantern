@@ -70,6 +70,16 @@ type VM struct {
 	LastEventAt   time.Time
 	LastHeartbeat time.Time
 	Reason        string
+	// InventorySeenAt is when the owning node last reported this VM as live
+	// in a heartbeat inventory. Zero means the node has never confirmed it.
+	//
+	// This is what lets reconciliation be fast AND safe. The dispatch grace
+	// exists only because a VM row is created before the node registers it;
+	// once a node has confirmed a VM even once, a later inventory omitting it
+	// is authoritative immediately, whatever the VM's age. Without this
+	// distinction every short-lived agent had to wait out the full grace
+	// window before its terminal state was recorded.
+	InventorySeenAt time.Time
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -87,6 +97,10 @@ type ClusterStore interface {
 	GetVM(vmID string) (*VM, bool)
 	ListVMs(tenantID string, filter func(*VM) bool) []*VM
 	DeleteVM(vmID string) bool
+	// MarkVMsSeenOnNode records that `nodeName` reported these vm_ids as live.
+	// Only VMs actually owned by that node are stamped, so one node's
+	// inventory can never vouch for another's.
+	MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time)
 
 	IncrTenantVMs(tenantID string, delta int)
 	TenantLiveVMs(tenantID string) int
@@ -270,6 +284,18 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	if !ok {
 		return false
 	}
+	// Node occupancy is decremented on the NON-TERMINAL → TERMINAL edge.
+	// Previously only DeleteVM decremented, so a VM that reached TERMINATED
+	// or FAILED without being deleted kept occupying its node forever — the
+	// node kept advertising VMs it was no longer running, which skewed both
+	// placement load scoring and the cluster view. Guarded on the edge so a
+	// repeated terminal update cannot double-decrement.
+	if !isTerminalVMState(v.State) && isTerminalVMState(state) {
+		if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
+			n.RunningVms--
+		}
+		s.releaseReservationLocked(vmID)
+	}
 	v.State = state
 	v.Reason = reason
 	if usage != nil {
@@ -277,6 +303,12 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	}
 	v.LastEventAt = at
 	return true
+}
+
+// isTerminalVMState reports whether a VM occupies no further node capacity.
+func isTerminalVMState(s lanternv1.VmState) bool {
+	return s == lanternv1.VmState_VM_STATE_TERMINATED ||
+		s == lanternv1.VmState_VM_STATE_FAILED
 }
 
 func (s *InMemoryStore) GetVM(vmID string) (*VM, bool) {
@@ -310,6 +342,19 @@ func (s *InMemoryStore) ListVMs(tenantID string, filter func(*VM) bool) []*VM {
 	return out
 }
 
+func (s *InMemoryStore) MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time) {
+	if nodeName == "" || len(vmIDs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range vmIDs {
+		if v, ok := s.vms[id]; ok && v.NodeName == nodeName {
+			v.InventorySeenAt = at
+		}
+	}
+}
+
 func (s *InMemoryStore) DeleteVM(vmID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,29 +363,40 @@ func (s *InMemoryStore) DeleteVM(vmID string) bool {
 		return false
 	}
 	delete(s.vms, vmID)
-	if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
-		n.RunningVms--
+	// Only decrement when the VM was still occupying the node — a VM already
+	// moved to a terminal state gave its slot back in UpdateVMState.
+	if !isTerminalVMState(v.State) {
+		if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
+			n.RunningVms--
+		}
 	}
-	// Release the pending capacity reservation so subsequent Pick() calls
-	// see the freed capacity even before the next heartbeat.
-	if cap, ok := s.vmCapReserved[vmID]; ok {
-		r := s.nodeReservations[cap.nodeName]
-		r.vcpuMillis -= cap.vcpuMillis
-		if r.vcpuMillis < 0 {
-			r.vcpuMillis = 0
-		}
-		r.memBytes -= cap.memBytes
-		if r.memBytes < 0 {
-			r.memBytes = 0
-		}
-		if r.vcpuMillis == 0 && r.memBytes == 0 {
-			delete(s.nodeReservations, cap.nodeName)
-		} else {
-			s.nodeReservations[cap.nodeName] = r
-		}
-		delete(s.vmCapReserved, vmID)
-	}
+	s.releaseReservationLocked(vmID)
 	return true
+}
+
+// releaseReservationLocked returns a VM's pending capacity reservation so
+// subsequent Pick() calls see the freed capacity before the next heartbeat.
+// Idempotent. Caller must hold s.mu.
+func (s *InMemoryStore) releaseReservationLocked(vmID string) {
+	cap, ok := s.vmCapReserved[vmID]
+	if !ok {
+		return
+	}
+	r := s.nodeReservations[cap.nodeName]
+	r.vcpuMillis -= cap.vcpuMillis
+	if r.vcpuMillis < 0 {
+		r.vcpuMillis = 0
+	}
+	r.memBytes -= cap.memBytes
+	if r.memBytes < 0 {
+		r.memBytes = 0
+	}
+	if r.vcpuMillis == 0 && r.memBytes == 0 {
+		delete(s.nodeReservations, cap.nodeName)
+	} else {
+		s.nodeReservations[cap.nodeName] = r
+	}
+	delete(s.vmCapReserved, vmID)
 }
 
 // ---------------------------------------------------------------------

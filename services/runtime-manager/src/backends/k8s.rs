@@ -1774,7 +1774,10 @@ mod tests {
             .and_then(|s| s.template.spec.as_ref())
             .and_then(|ps| ps.affinity.as_ref())
             .and_then(|a| a.node_affinity.as_ref())
-            .and_then(|na| na.required_during_scheduling_ignored_during_execution.as_ref())
+            .and_then(|na| {
+                na.required_during_scheduling_ignored_during_execution
+                    .as_ref()
+            })
             .and_then(|ns| ns.node_selector_terms.first())
             .and_then(|t| t.match_expressions.as_ref())
             .and_then(|exprs| exprs.first())
@@ -1789,7 +1792,10 @@ mod tests {
             .and_then(|s| s.template.spec.as_ref())
             .and_then(|ps| ps.affinity.as_ref())
             .and_then(|a| a.node_affinity.as_ref())
-            .and_then(|na| na.required_during_scheduling_ignored_during_execution.as_ref())
+            .and_then(|na| {
+                na.required_during_scheduling_ignored_during_execution
+                    .as_ref()
+            })
             .and_then(|ns| ns.node_selector_terms.first())
             .and_then(|t| t.match_expressions.as_ref())
             .and_then(|exprs| exprs.first())

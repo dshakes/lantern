@@ -58,6 +58,15 @@ import (
 
 // ---------- Scheduler client (stubbed, interface-shaped) ----------
 
+// VMStateInfo is the scheduler's view of one VM: its state plus WHY it is in
+// that state. The reason matters for terminal states — a spawn refused
+// because the node cannot satisfy the requested isolation class used to
+// surface as a bare `failed` with no explanation anywhere.
+type VMStateInfo struct {
+	State  string
+	Reason string
+}
+
 // SchedulerClient is the thin abstraction the runtime handler talks to.
 // The real implementation will dial the RuntimeScheduler gRPC at :50055;
 // for now stubSchedulerClient stamps runtime_vms and logs intent so the
@@ -71,7 +80,7 @@ type SchedulerClient interface {
 	// keyed by vm_id. Used by the reconciler to write authoritative state
 	// back to runtime_vms. Returns an empty map (not an error) when the
 	// scheduler has no live VMs.
-	ListStates(ctx context.Context, tenantID string) (map[string]string, error)
+	ListStates(ctx context.Context, tenantID string) (map[string]VMStateInfo, error)
 }
 
 type stubSchedulerClient struct {
@@ -116,9 +125,9 @@ func (s *stubSchedulerClient) Cluster(_ context.Context) (map[string]any, error)
 	}, nil
 }
 
-func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[string]string, error) {
+func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[string]VMStateInfo, error) {
 	// Stub: no scheduler to ask, so the reconciler has nothing to do.
-	return map[string]string{}, nil
+	return map[string]VMStateInfo{}, nil
 }
 
 // ---------- Real gRPC scheduler client ----------
@@ -316,13 +325,13 @@ func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, erro
 	}, nil
 }
 
-func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (map[string]string, error) {
+func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (map[string]VMStateInfo, error) {
 	ctx = withTenant(ctx, tenantID)
 	resp, err := c.client.List(ctx, &lanternv1.ListRequest{TenantId: tenantID})
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]string)
+	out := make(map[string]VMStateInfo)
 	if resp == nil {
 		return out, nil
 	}
@@ -331,7 +340,10 @@ func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (
 		if h == nil || h.GetVmId() == "" {
 			continue
 		}
-		out[h.GetVmId()] = vmStateString(item.GetState())
+		out[h.GetVmId()] = VMStateInfo{
+			State:  vmStateString(item.GetState()),
+			Reason: item.GetReason(),
+		}
 	}
 	return out, nil
 }
@@ -550,7 +562,14 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		return "", "", "", "", time.Time{}, fmt.Errorf("scheduler.Schedule: %w", err)
 	}
 
-	specJSON, _ := json.Marshal(specMap)
+	// Invariant #10: the spec we PERSIST must not carry secret material.
+	// LANTERN_AGENT_INSTANCE_TOKEN is a live bearer credential — it has to
+	// ride the spawn request so the harness can authenticate VendSecret, but
+	// storing it means it survives in runtime_vms.spec and is served verbatim
+	// by GET /v1/runtime/vms for the whole of its TTL. Strip it from the
+	// persisted copy only; `specMap` above already went to the scheduler with
+	// the token intact.
+	specJSON, _ := json.Marshal(redactSpecSecrets(specMap))
 	if len(specJSON) == 0 {
 		specJSON = []byte("{}")
 	}
@@ -992,12 +1011,18 @@ func (h *RuntimeHandler) reconcileOnce() {
 		// request); inject it so the reconcile writes are RLS-scoped.
 		tctx := middleware.InjectTenantID(ctx, tenantID)
 		// Update each live VM the scheduler still knows about.
-		for vmID, state := range states {
+		for vmID, info := range states {
 			err := h.srv.WithTenant(tctx, func(tx pgx.Tx) error {
+				// COALESCE keeps a previously-recorded reason when the
+				// scheduler reports none, so an explanation is never
+				// overwritten with blank on a later sweep.
 				_, e := tx.Exec(tctx, `
-					UPDATE runtime_vms SET state = $1
-					WHERE vm_id = $2 AND tenant_id = $3 AND state <> $1
-				`, state, vmID, tenantID)
+					UPDATE runtime_vms
+					SET state = $1,
+					    state_reason = COALESCE(NULLIF($4, ''), state_reason)
+					WHERE vm_id = $2 AND tenant_id = $3
+					  AND (state <> $1 OR (state_reason IS DISTINCT FROM $4 AND $4 <> ''))
+				`, info.State, vmID, tenantID, info.Reason)
 				return e
 			})
 			if err != nil {
@@ -1085,18 +1110,32 @@ type scheduleResponse struct {
 	Node      string    `json:"node"`
 	Az        string    `json:"az"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Stub is true when no real scheduler is wired
+	// (LANTERN_SCHEDULER_GRPC_ADDR unset) and this vmId was SYNTHESIZED —
+	// nothing was spawned and no scheduler ever saw it. Without this flag a
+	// stubbed schedule is indistinguishable from a real one at the API and
+	// CLI, which turns a misconfiguration into silent data loss. The prod
+	// startup guard already refuses to boot in this state; this is the dev
+	// signal. Omitted entirely on the real path.
+	Stub bool `json:"stub,omitempty"`
+	// Warning carries the human-readable explanation alongside Stub.
+	Warning string `json:"warning,omitempty"`
 }
 
 type vmRow struct {
-	VmID            string          `json:"vmId"`
-	TenantID        string          `json:"tenantId"`
-	AgentVersionID  *string         `json:"agentVersionId,omitempty"`
-	RunID           *string         `json:"runId,omitempty"`
-	Node            *string         `json:"node,omitempty"`
-	Az              *string         `json:"az,omitempty"`
-	Region          *string         `json:"region,omitempty"`
-	IsolationClass  *string         `json:"isolationClass,omitempty"`
-	State           string          `json:"state"`
+	VmID           string  `json:"vmId"`
+	TenantID       string  `json:"tenantId"`
+	AgentVersionID *string `json:"agentVersionId,omitempty"`
+	RunID          *string `json:"runId,omitempty"`
+	Node           *string `json:"node,omitempty"`
+	Az             *string `json:"az,omitempty"`
+	Region         *string `json:"region,omitempty"`
+	IsolationClass *string `json:"isolationClass,omitempty"`
+	State          string  `json:"state"`
+	// StateReason explains a terminal state — e.g. "isolation class
+	// 'untrusted' not satisfiable by the 'docker' backend". Absent when the
+	// scheduler never supplied one.
+	StateReason     *string         `json:"stateReason,omitempty"`
 	Spec            json.RawMessage `json:"spec"`
 	LastHeartbeatAt *time.Time      `json:"lastHeartbeatAt,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
@@ -1361,12 +1400,101 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	)
 
 	span.SetStatus(codes.Ok, "")
-	writeJSON(w, http.StatusCreated, scheduleResponse{
+	resp := scheduleResponse{
 		VmID:      vmID,
 		Node:      node,
 		Az:        az,
 		CreatedAt: created,
-	})
+	}
+	if h.schedulerIsStub() {
+		resp.Stub = true
+		resp.Warning = stubScheduleWarning
+		span.SetAttributes(attribute.Bool("lantern.scheduler_stub", true))
+		h.logger().Warn("scheduled against the STUB scheduler — no workload was spawned",
+			zap.String("vm_id", vmID), zap.String("tenant_id", tenantID))
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// redactedValue replaces secret material in persisted / returned specs.
+const redactedValue = "[redacted]"
+
+// secretSpecEnvKeys are env keys whose values are credentials, never config.
+var secretSpecEnvKeys = []string{
+	"LANTERN_AGENT_INSTANCE_TOKEN",
+}
+
+// redactSpecSecrets returns a copy of an AgentSpec map with credential-bearing
+// env values replaced. The input map is NOT mutated — callers dispatch the
+// original to the scheduler, which legitimately needs the real token.
+//
+// Applied on the write path (so nothing secret reaches Postgres) and again on
+// the read path (so rows written before this fix are not served).
+func redactSpecSecrets(spec map[string]any) map[string]any {
+	if spec == nil {
+		return nil
+	}
+	env, ok := spec["env"].(map[string]any)
+	if !ok || len(env) == 0 {
+		return spec
+	}
+	needsRedaction := false
+	for _, k := range secretSpecEnvKeys {
+		if v, present := env[k]; present && v != redactedValue {
+			needsRedaction = true
+			break
+		}
+	}
+	if !needsRedaction {
+		return spec
+	}
+
+	safeEnv := make(map[string]any, len(env))
+	for k, v := range env {
+		safeEnv[k] = v
+	}
+	for _, k := range secretSpecEnvKeys {
+		if _, present := safeEnv[k]; present {
+			safeEnv[k] = redactedValue
+		}
+	}
+	out := make(map[string]any, len(spec))
+	for k, v := range spec {
+		out[k] = v
+	}
+	out["env"] = safeEnv
+	return out
+}
+
+// redactSpecJSON redacts secret env values in a raw spec JSON blob read back
+// from runtime_vms. Unparseable input is returned unchanged rather than
+// dropped — a malformed spec is a display problem, not a reason to 500.
+func redactSpecJSON(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return raw
+	}
+	redacted := redactSpecSecrets(spec)
+	out, err := json.Marshal(redacted)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// stubScheduleWarning is returned verbatim to API clients so the CLI and
+// dashboard can surface it without duplicating the wording.
+const stubScheduleWarning = "no scheduler wired (LANTERN_SCHEDULER_GRPC_ADDR unset): " +
+	"this vmId was synthesized and NO workload was spawned"
+
+// schedulerIsStub reports whether the handler is running against the
+// synthesizing stub rather than a real RuntimeScheduler.
+func (h *RuntimeHandler) schedulerIsStub() bool {
+	_, ok := h.scheduler.(*stubSchedulerClient)
+	return ok
 }
 
 // ListVMs handles GET /v1/runtime/vms.
@@ -1392,7 +1520,7 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-		       isolation_class, state, spec, last_heartbeat_at, created_at, terminated_at
+		       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at
 		FROM runtime_vms
 		WHERE tenant_id = $1
 	`
@@ -1414,14 +1542,14 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 			var v vmRow
 			var specJSON []byte
 			if err := rows.Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
-				&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
+				&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &v.StateReason, &specJSON,
 				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); err != nil {
 				continue
 			}
 			if len(specJSON) == 0 {
 				specJSON = []byte("{}")
 			}
-			v.Spec = specJSON
+			v.Spec = redactSpecJSON(specJSON)
 			out = append(out, v)
 		}
 		return rows.Err()
@@ -1458,11 +1586,11 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		if e := tx.QueryRow(ctx, `
 			SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-			       isolation_class, state, spec, last_heartbeat_at, created_at, terminated_at
+			       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at
 			FROM runtime_vms
 			WHERE vm_id = $1 AND tenant_id = $2
 		`, vmID, tenantID).Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
-			&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
+			&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &v.StateReason, &specJSON,
 			&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); e != nil {
 			return e
 		}
@@ -1500,7 +1628,7 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 	if len(specJSON) == 0 {
 		specJSON = []byte("{}")
 	}
-	v.Spec = specJSON
+	v.Spec = redactSpecJSON(specJSON)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"vm":     v,

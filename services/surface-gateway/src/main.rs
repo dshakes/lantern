@@ -32,8 +32,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
         )
         .json()
         .init();
@@ -144,8 +143,7 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(bot_token), Some(public_key)) =
         (&config.discord_bot_token, &config.discord_public_key)
     {
-        let adapter =
-            adapters::discord::DiscordAdapter::new(bot_token.clone(), public_key.clone());
+        let adapter = adapters::discord::DiscordAdapter::new(bot_token.clone(), public_key.clone());
         adapters.insert(SurfaceId::Discord, Arc::new(adapter));
         tracing::info!("registered Discord adapter");
     }
@@ -182,11 +180,9 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let control_plane = ControlPlaneClient::connect(
-        &config.control_plane_addr,
-        config.service_token.clone(),
-    )
-    .await?;
+    let control_plane =
+        ControlPlaneClient::connect(&config.control_plane_addr, config.service_token.clone())
+            .await?;
 
     let dispatcher = Arc::new(Dispatcher::new(
         adapters.clone(),

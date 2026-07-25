@@ -11,8 +11,8 @@
 
 use prost::Message;
 use prost_types::Struct;
-use tonic::transport::Channel;
 use tonic::Request;
+use tonic::transport::Channel;
 
 use crate::error::AppError;
 
@@ -98,7 +98,9 @@ impl ControlPlaneClient {
         if let Ok(val) = tenant_id.parse() {
             md.insert("tenant_id", val);
         }
-        if !self.service_token.is_empty() && let Ok(val) = self.service_token.parse() {
+        if !self.service_token.is_empty()
+            && let Ok(val) = self.service_token.parse()
+        {
             md.insert("x-lantern-service-token", val);
         }
     }
@@ -201,7 +203,7 @@ impl ControlPlaneClient {
 /// the proto schema expects `google.protobuf.Struct`.  The Go server's `GetInput()`
 /// will successfully unmarshal these as a `*structpb.Struct`.
 pub(crate) fn struct_to_bytes(fields: &[(&str, &str)]) -> Result<Vec<u8>, AppError> {
-    use prost_types::{value::Kind, Value};
+    use prost_types::{Value, value::Kind};
     let s = Struct {
         fields: fields
             .iter()
@@ -229,7 +231,7 @@ pub(crate) fn struct_to_bytes(fields: &[(&str, &str)]) -> Result<Vec<u8>, AppErr
 mod tests {
     use super::*;
     use prost::Message;
-    use prost_types::{value::Kind, Struct};
+    use prost_types::{Struct, value::Kind};
 
     /// struct_to_bytes must produce valid proto that round-trips through prost.
     #[test]

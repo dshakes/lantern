@@ -22,8 +22,8 @@ use rustls::ServerConfig;
 use rustls_pemfile::{certs, private_key};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 
 /// Returns the rustls `ServerConfig` when TLS env vars are present, or `None`
 /// in dev mode when they are absent.  Exits the process in production when

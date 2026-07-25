@@ -1,5 +1,8 @@
+use std::sync::{Arc, OnceLock};
+
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use tokio::sync::Notify;
 
 use crate::proto::{IsolationClass, ResourceLimits};
 
@@ -28,12 +31,41 @@ pub struct HandleInfo {
 /// queries by handle ID or tenant.
 pub struct HandleRegistry {
     handles: DashMap<String, HandleInfo>,
+    /// Signalled whenever the set of live handles changes.
+    ///
+    /// The heartbeat publishes this registry as the node's VM inventory, and
+    /// the scheduler reconciles placement, quota, and billing against it.
+    /// Waiting for the next fixed-interval beat means a workload that exited
+    /// stays "running" cluster-wide for up to that interval, and a workload
+    /// that just started is not confirmed for the same. Signalling on every
+    /// membership change collapses both to ~immediate.
+    ///
+    /// `Notify::notify_one` stores at most one permit, so a burst of spawns
+    /// coalesces into a single extra beat rather than one per handle.
+    change: OnceLock<Arc<Notify>>,
 }
 
 impl HandleRegistry {
     pub fn new() -> Self {
         Self {
             handles: DashMap::new(),
+            change: OnceLock::new(),
+        }
+    }
+
+    /// Attach the change notifier the heartbeat waits on.
+    ///
+    /// Takes `&self` so it can be wired after the registry is already behind
+    /// an `Arc` (it is constructed inside `RuntimeManagerGrpc::new`). Set-once;
+    /// a second call is ignored.
+    pub fn set_change_notify(&self, n: Arc<Notify>) {
+        let _ = self.change.set(n);
+    }
+
+    /// Signal that live-handle membership changed. No-op when unwired.
+    fn signal_change(&self) {
+        if let Some(n) = self.change.get() {
+            n.notify_one();
         }
     }
 
@@ -47,6 +79,7 @@ impl HandleRegistry {
             "registering handle"
         );
         self.handles.insert(info.handle_id.clone(), info);
+        self.signal_change();
     }
 
     /// Reassign the public key under which a handle is registered. The
@@ -76,6 +109,9 @@ impl HandleRegistry {
                 "rekeyed handle to wire vm_id"
             );
             self.handles.insert(new_id.to_string(), info);
+            // The key IS the vm_id published in the inventory, so a rekey
+            // changes what the scheduler sees.
+            self.signal_change();
             true
         } else {
             false
@@ -91,6 +127,7 @@ impl HandleRegistry {
                 run_id = %info.run_id,
                 "deregistered handle"
             );
+            self.signal_change();
         }
         removed
     }
@@ -107,6 +144,25 @@ impl HandleRegistry {
             .filter(|entry| entry.value().tenant_id == tenant_id)
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    /// List every registered handle as `(wire vm_id, HandleInfo)`.
+    ///
+    /// The key is the wire-level vm_id the scheduler minted (post-`rekey`),
+    /// which is what the heartbeat inventory and the reaper both need —
+    /// `HandleInfo.handle_id` is the backend's own container/VM id and is NOT
+    /// interchangeable with it.
+    pub fn list_all(&self) -> Vec<(String, HandleInfo)> {
+        self.handles
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
+    }
+
+    /// The wire-level vm_ids of every registered handle. This is the node's
+    /// live inventory as reported to the scheduler on each heartbeat.
+    pub fn live_vm_ids(&self) -> Vec<String> {
+        self.handles.iter().map(|e| e.key().clone()).collect()
     }
 
     /// Find a handle by `run_id`, returning the registry key (wire vm_id) and
@@ -331,5 +387,111 @@ mod tests {
         assert_eq!(reg.len(), 2);
         reg.deregister("h1");
         assert_eq!(reg.len(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inventory-change notification
+//
+// The heartbeat publishes this registry as the node's VM inventory and the
+// scheduler reconciles placement, quota, and billing against it. On a fixed
+// 30s cadence a workload that exits stays "running" cluster-wide for up to
+// that interval, and a workload that just started is not confirmed for the
+// same — which in turn forces the scheduler's dispatch grace to apply. These
+// tests pin the signal so that latency cannot silently return.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod change_notify_tests {
+    use super::*;
+
+    fn info(id: &str) -> HandleInfo {
+        make_info_for_notify(id)
+    }
+
+    fn make_info_for_notify(handle_id: &str) -> HandleInfo {
+        HandleInfo {
+            handle_id: handle_id.to_string(),
+            run_id: "run-1".to_string(),
+            tenant_id: "t1".to_string(),
+            backend: "docker".to_string(),
+            isolation_class: IsolationClass::Standard,
+            created_at: Utc::now(),
+            resource_limits: ResourceLimits::default(),
+            node_name: "node-1".to_string(),
+            declared_secret_uris: vec![],
+        }
+    }
+
+    /// A pending `notified()` future resolves only if the permit was stored.
+    fn was_signalled(n: &Notify) -> bool {
+        // notify_one stores at most one permit; notified() consumes it
+        // without awaiting when one is available.
+        futures::FutureExt::now_or_never(Box::pin(n.notified())).is_some()
+    }
+
+    #[tokio::test]
+    async fn register_signals_change() {
+        let reg = HandleRegistry::new();
+        let n = Arc::new(Notify::new());
+        reg.set_change_notify(Arc::clone(&n));
+
+        reg.register(info("c-1"));
+
+        assert!(
+            was_signalled(&n),
+            "a new handle must wake the heartbeat so the scheduler confirms it"
+        );
+    }
+
+    #[tokio::test]
+    async fn deregister_signals_change() {
+        let reg = HandleRegistry::new();
+        let n = Arc::new(Notify::new());
+        reg.register(info("c-1"));
+        reg.set_change_notify(Arc::clone(&n)); // wire AFTER register
+
+        reg.deregister("c-1");
+
+        assert!(
+            was_signalled(&n),
+            "a reaped handle must wake the heartbeat so the exit is published"
+        );
+    }
+
+    /// Removing something that was never there is not a membership change.
+    #[tokio::test]
+    async fn deregister_of_absent_handle_does_not_signal() {
+        let reg = HandleRegistry::new();
+        let n = Arc::new(Notify::new());
+        reg.set_change_notify(Arc::clone(&n));
+
+        reg.deregister("never-existed");
+
+        assert!(!was_signalled(&n), "a no-op removal must not wake anything");
+    }
+
+    /// rekey changes the KEY, and the key is the vm_id the inventory reports.
+    #[tokio::test]
+    async fn rekey_signals_change() {
+        let reg = HandleRegistry::new();
+        reg.register(info("backend-id"));
+        let n = Arc::new(Notify::new());
+        reg.set_change_notify(Arc::clone(&n));
+
+        assert!(reg.rekey("backend-id", "vm-wire-id"));
+
+        assert!(
+            was_signalled(&n),
+            "rekey changes the reported vm_id, so the inventory changed"
+        );
+    }
+
+    /// An unwired registry must work exactly as before.
+    #[tokio::test]
+    async fn unwired_registry_is_a_noop() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-1"));
+        reg.deregister("c-1");
+        assert!(reg.is_empty());
     }
 }
