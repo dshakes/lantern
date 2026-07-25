@@ -72,7 +72,12 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 	calendar := h.upcomingCalendar(ctx, tenantID)
 	emails := h.recentEmails(ctx, tenantID)
 	awaiting := h.awaitingReply(ctx, tenantID)
-	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting)
+	// Commitments are where every agent's findings land, and the brief did not
+	// read them at all. On the live queue that meant a morning brief could go
+	// out saying "nothing on the radar" while 18 items were marked 'now' —
+	// including unreviewed card-not-present fraud alerts.
+	urgent := h.urgentCommitments(ctx, tenantID)
+	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting, urgent)
 
 	// Additive: prepend any upcoming immigration deadlines when the sentinel is
 	// enabled (LANTERN_IMMIGRATION_SENTINEL=1). Empty-string when flag is off
@@ -86,6 +91,47 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 	}
 
 	return brief, calendar, emails, awaiting
+}
+
+// urgentCommitments returns the open commitments the owner should act on
+// today: anything marked 'now' or 'soon', plus anything already overdue.
+//
+// Capped at 5. A brief is a prompt to act, not an inventory — 431 open items
+// pasted into a morning message is the same failure as sending none.
+func (h *JarvisHandler) urgentCommitments(ctx context.Context, tenantID string) []string {
+	var out []string
+	_ = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT title, urgency, deadline
+			FROM commitments
+			WHERE tenant_id = $1
+			  AND status IN ('open', 'in_progress')
+			  AND (urgency IN ('now', 'soon') OR (deadline IS NOT NULL AND deadline < now()))
+			ORDER BY
+			  CASE urgency WHEN 'now' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END,
+			  deadline ASC NULLS LAST,
+			  created_at DESC
+			LIMIT 5
+		`, tenantID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var title, urgency string
+			var deadline *time.Time
+			if scanErr := rows.Scan(&title, &urgency, &deadline); scanErr != nil {
+				continue
+			}
+			line := title
+			if deadline != nil && deadline.Before(time.Now()) {
+				line += " (overdue)"
+			}
+			out = append(out, line)
+		}
+		return rows.Err()
+	})
+	return out
 }
 
 // upcomingCalendar returns event-kind timeline rows from now through the
@@ -190,12 +236,21 @@ func (h *JarvisHandler) awaitingReply(ctx context.Context, tenantID string) []br
 // phraseBrief turns the structured sections into a terse natural brief via
 // the LLM. Falls back to a plain assembled brief when the LLM is absent or
 // errors — and to a short status line when there's nothing to report.
-func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calendar []string, emails []briefEmail, awaiting []briefReply) string {
-	if len(calendar) == 0 && len(emails) == 0 && len(awaiting) == 0 {
+func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calendar []string, emails []briefEmail, awaiting []briefReply, urgent []string) string {
+	if len(calendar) == 0 && len(emails) == 0 && len(awaiting) == 0 && len(urgent) == 0 {
 		return "nothing on the radar right now — calendar's clear and no one's waiting on you."
 	}
 
 	var data strings.Builder
+	// Listed first: these are the things the owner has to DO, as opposed to
+	// things that merely happened.
+	if len(urgent) > 0 {
+		data.WriteString("NEEDS YOU:\n")
+		for _, u := range urgent {
+			data.WriteString("- " + u + "\n")
+		}
+		data.WriteString("\n")
+	}
 	if len(calendar) > 0 {
 		data.WriteString("UPCOMING (next 24h):\n")
 		for _, c := range calendar {
@@ -306,7 +361,10 @@ func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
 		if now.Hour() == hour && lastSentDay != today {
 			lastSentDay = today // mark up front so a delivery error doesn't spam the hour
 			brief, cal, emails, awaiting := h.composeBrief(ctx, tenantID)
-			if len(cal) == 0 && len(emails) == 0 && len(awaiting) == 0 {
+			// A brief with urgent commitments must never be skipped, even on a
+			// day with an empty calendar and no new mail.
+			hasUrgent := len(h.urgentCommitments(ctx, tenantID)) > 0
+			if len(cal) == 0 && len(emails) == 0 && len(awaiting) == 0 && !hasUrgent {
 				h.logger().Info("morning brief: nothing to report, skipping send")
 			} else {
 				h.deliverBrief(ctx, tenantID, brief)
