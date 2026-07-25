@@ -45,6 +45,11 @@ import (
 // be used and will not become usable on its own.
 const ConnectorStatusNeedsReauth = "needs_reauth"
 
+// connectorLogger serves the free-function connector paths, which have no
+// server struct in scope. zap.L() is the process-global logger and is a safe
+// no-op when none is installed.
+func connectorLogger() *zap.Logger { return zap.L() }
+
 // errConnectorNeedsReauth is returned instead of a bare "not installed" when
 // the connector IS installed but quarantined. The distinction matters: one
 // means "go install it", the other means "your credential broke, re-authorize".

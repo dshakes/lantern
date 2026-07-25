@@ -62,6 +62,52 @@ make check-launchd-env
 That fails if a plist is missing wiring its service cannot run without, or if
 a plist and the shared defaults disagree. Worth running after editing either.
 
+## Credential encryption (`LANTERN_CREDENTIAL_KEY`)
+
+Connector OAuth tokens and LLM API keys are AES-256-GCM encrypted at rest in
+Postgres. The master key is `LANTERN_CREDENTIAL_KEY`: a **base64- or
+hex-encoded 32-byte** value you generate yourself — it is not issued by any
+provider.
+
+```bash
+openssl rand -hex 32
+```
+
+It lives in **`~/.lantern/control-plane.env`** (mode `0600`), sourced only by
+`run-api-wrapper.sh`. Deliberately *not* in `bridge.env`: that file is also
+sourced by the dashboard and both bridge wrappers, and none of them need the
+key. Least privilege — it exists only in the process that encrypts with it.
+
+When the variable is unset, storage silently falls back to plaintext. That is
+fine for a scratch database and wrong everywhere else; `LANTERN_ENV=prod`
+refuses to boot without it.
+
+### Back the key up
+
+Losing it makes every encrypted credential permanently unreadable. This is not
+hypothetical — it already happened here: the Gmail and Google Calendar tokens
+were written under a key that was later lost, so they decrypt to nothing and
+those connectors must be re-authorized. No tool can recover them.
+
+### Re-encrypting after setting or rotating a key
+
+Setting a key does not retroactively encrypt existing rows; `internal/secrets`
+detects legacy plaintext on read and re-stores it encrypted only on the next
+write, which for an API key may be never. To do it now:
+
+```bash
+cd services/control-plane
+LANTERN_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials -dry-run
+LANTERN_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials
+```
+
+Each row is decrypted back and compared byte-for-byte before the transaction
+commits; a mismatch aborts everything. Rows already encrypted under the current
+key are skipped, so it is idempotent. Values encrypted under a *different* key
+are reported and left untouched.
+
+The same command is the re-encrypt half of a key rotation (ADR 0008).
+
 ## Go services build a binary, not `go run`
 
 Every Go service — control-plane, runtime-scheduler, workflow-engine — compiles

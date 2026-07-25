@@ -255,16 +255,10 @@ func executeConnectorAction(
 		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
 	}
 
-	// Already quarantined: fail fast with the stored explanation rather than
-	// re-deriving the same permanent failure. This is what stops a scheduled
-	// agent burning a run (and LLM tokens) once per hour against a credential
-	// that cannot work until a human re-authorizes.
-	if status == ConnectorStatusNeedsReauth {
-		return nil, &errConnectorNeedsReauth{ConnectorID: connectorID, Reason: statusReason}
-	}
-	if status != "connected" {
+	if status != "connected" && status != ConnectorStatusNeedsReauth {
 		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
 	}
+	_ = statusReason // superseded by the freshly-derived reason below
 
 	// Credentials are stored encrypted-at-rest (see internal/secrets).
 	// Decrypt transparently; legacy plaintext rows pass through unchanged.
@@ -272,6 +266,18 @@ func executeConnectorAction(
 	// A decrypt failure is classified: transient errors propagate unchanged,
 	// permanent ones (missing/wrong key, revoked grant) quarantine the install
 	// so the next attempt short-circuits above instead of repeating this.
+	// Decryption is always attempted, even for an already-quarantined install.
+	//
+	// A stored status_reason is a SNAPSHOT of why it broke. Serving it verbatim
+	// goes stale the moment the operator acts: after setting
+	// LANTERN_CREDENTIAL_KEY the install kept saying "set
+	// LANTERN_CREDENTIAL_KEY", which is worse than useless. Re-deriving costs a
+	// local AES attempt measured in microseconds — the expense worth avoiding
+	// was the run and the LLM tokens downstream, not this.
+	//
+	// It also makes recovery automatic: if the credential became readable again
+	// (correct key restored, or a re-authorization landed elsewhere) the
+	// quarantine is lifted below without anyone intervening.
 	decryptedConfig, dErr := secrets.Decrypt(configJSON)
 	if dErr != nil {
 		return nil, noteCredentialFailure(connectorID, fmt.Errorf("decrypt connector config: %w", dErr))
@@ -283,6 +289,28 @@ func executeConnectorAction(
 		return nil, noteCredentialFailure(connectorID, fmt.Errorf("decrypt connector oauth token: %w", dErr))
 	}
 	oauthTokenJSON = decryptedToken
+
+	// Self-heal: the credential reads cleanly but the install is still marked
+	// broken, so lift the quarantine. Written inline because — unlike the
+	// failure path — this transaction commits when the operation succeeds.
+	//
+	// Consequence, deliberately accepted: if the credential is now readable but
+	// the downstream API call still fails (an unrelated 403, a network blip),
+	// this UPDATE rolls back with it and the install stays quarantined until a
+	// call fully succeeds. That errs toward "still marked broken" rather than
+	// declaring health on the strength of a decrypt alone, and the error text
+	// is freshly derived either way, so nothing misreports WHY.
+	if status == ConnectorStatusNeedsReauth {
+		if _, cErr := q.Exec(ctx, `
+			UPDATE connector_installs
+			SET status = 'connected', status_reason = NULL,
+			    status_changed_at = now(), failure_count = 0, updated_at = now()
+			WHERE tenant_id = $1 AND connector_id = $2 AND status = $3
+		`, tenantID, connectorID, ConnectorStatusNeedsReauth); cErr == nil {
+			connectorLogger().Info("connector recovered: credential is readable again, quarantine lifted",
+				zap.String("connector_id", connectorID))
+		}
+	}
 
 	config := make(map[string]any)
 	if len(configJSON) > 0 {
