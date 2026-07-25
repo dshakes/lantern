@@ -108,6 +108,15 @@ export interface ConnectorInstall {
   //   "api-key"      → generic API-key / bot-token install.
   //   ""             → unknown / not installed.
   authMethod?: "oauth" | "app-password" | "api-key" | "";
+  // True when the stored credential is structurally unusable — key rotated
+  // or lost, grant revoked — and only a human re-authorization can fix it.
+  // The install still exists and `status` reads "needs_reauth"; agents skip
+  // it rather than failing every scheduled run against it.
+  needsReauth?: boolean;
+  // Operator-facing explanation of what broke and what to do about it.
+  statusReason?: string;
+  // Consecutive distinct breakages since the last success.
+  failureCount?: number;
 }
 
 export interface InstallConnectorInput {
