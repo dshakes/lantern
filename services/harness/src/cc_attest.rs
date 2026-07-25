@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use ring::digest;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, HarnessReport};
+use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 
 // ---------------------------------------------------------------------------
 // Gate

@@ -33,7 +33,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{self, pb, AuditEvent, HarnessReport};
+use crate::proto::{self, AuditEvent, HarnessReport, pb};
 
 /// Default listen address for the in-guest exec server.
 pub const DEFAULT_EXEC_ADDR: &str = "0.0.0.0:50056";

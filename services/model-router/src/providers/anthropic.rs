@@ -74,7 +74,12 @@ impl AnthropicProvider {
     fn map_error(&self, status: u16, body: &str, retry_after_ms: u64) -> ProviderError {
         // Untrusted upstream body: log at debug only, never surface a raw
         // auth-error body to the caller or into run state.
-        tracing::debug!(provider = self.name(), status, body, "provider error response");
+        tracing::debug!(
+            provider = self.name(),
+            status,
+            body,
+            "provider error response"
+        );
         if status == 429 {
             ProviderError::RateLimited {
                 provider: self.name().into(),
@@ -671,17 +676,13 @@ impl Provider for AnthropicProvider {
                                                 id: state.msg_id.clone(),
                                                 model_used: state.model_used.clone(),
                                                 tier: 0,
-                                                data: Some(
-                                                    proto::complete_chunk::Data::TextDelta(
-                                                        text.clone(),
-                                                    ),
-                                                ),
+                                                data: Some(proto::complete_chunk::Data::TextDelta(
+                                                    text.clone(),
+                                                )),
                                             };
                                             return Some((Ok(chunk), (byte_stream, state)));
                                         }
-                                        AnthropicStreamDelta::InputJsonDelta {
-                                            partial_json,
-                                        } => {
+                                        AnthropicStreamDelta::InputJsonDelta { partial_json } => {
                                             let chunk = CompleteChunk {
                                                 id: state.msg_id.clone(),
                                                 model_used: state.model_used.clone(),
@@ -690,9 +691,7 @@ impl Provider for AnthropicProvider {
                                                     proto::complete_chunk::Data::ToolCallDelta(
                                                         ToolCallMessage {
                                                             id: state.current_tool_id.clone(),
-                                                            name: state
-                                                                .current_tool_name
-                                                                .clone(),
+                                                            name: state.current_tool_name.clone(),
                                                             arguments: partial_json.clone(),
                                                         },
                                                     ),
@@ -712,48 +711,38 @@ impl Provider for AnthropicProvider {
                             }
                             "message_delta" => {
                                 if let Some(ref delta) = event.delta
-                                    && let AnthropicStreamDelta::MessageDelta {
-                                        stop_reason,
-                                        usage,
-                                    } = delta
-                                    {
-                                        let output_tokens = usage
-                                            .as_ref()
-                                            .map(|u| u.output_tokens)
-                                            .unwrap_or(0);
+                                    && let AnthropicStreamDelta::MessageDelta { stop_reason, usage } =
+                                        delta
+                                {
+                                    let output_tokens =
+                                        usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
 
-                                        // Emit usage chunk.
-                                        let usage_chunk = CompleteChunk {
-                                            id: state.msg_id.clone(),
-                                            model_used: state.model_used.clone(),
-                                            tier: 0,
-                                            data: Some(proto::complete_chunk::Data::Usage(
-                                                ChunkUsage {
-                                                    tokens_in: state.input_tokens,
-                                                    tokens_out: output_tokens,
-                                                    cost_usd: 0.0,
-                                                    cache_kind: String::new(),
-                                                },
-                                            )),
-                                        };
+                                    // Emit usage chunk.
+                                    let usage_chunk = CompleteChunk {
+                                        id: state.msg_id.clone(),
+                                        model_used: state.model_used.clone(),
+                                        tier: 0,
+                                        data: Some(proto::complete_chunk::Data::Usage(
+                                            ChunkUsage {
+                                                tokens_in: state.input_tokens,
+                                                tokens_out: output_tokens,
+                                                cost_usd: 0.0,
+                                                cache_kind: String::new(),
+                                            },
+                                        )),
+                                    };
 
-                                        // We return usage first; done will come at message_stop
-                                        // or we pack both here since message_stop has no data.
-                                        if stop_reason.is_some() {
-                                            // We'll emit usage now, done on next iteration.
-                                            // Actually, let's just return usage and let
-                                            // message_stop handle the done signal.
-                                            return Some((
-                                                Ok(usage_chunk),
-                                                (byte_stream, state),
-                                            ));
-                                        }
-
-                                        return Some((
-                                            Ok(usage_chunk),
-                                            (byte_stream, state),
-                                        ));
+                                    // We return usage first; done will come at message_stop
+                                    // or we pack both here since message_stop has no data.
+                                    if stop_reason.is_some() {
+                                        // We'll emit usage now, done on next iteration.
+                                        // Actually, let's just return usage and let
+                                        // message_stop handle the done signal.
+                                        return Some((Ok(usage_chunk), (byte_stream, state)));
                                     }
+
+                                    return Some((Ok(usage_chunk), (byte_stream, state)));
+                                }
                                 continue;
                             }
                             "message_stop" => {
@@ -829,9 +818,7 @@ mod tests {
 
     #[test]
     fn idempotency_header_absent_when_key_empty() {
-        let req = with_idempotency_key(dummy_builder(), "")
-            .build()
-            .unwrap();
+        let req = with_idempotency_key(dummy_builder(), "").build().unwrap();
         assert!(req.headers().get("Idempotency-Key").is_none());
     }
 }

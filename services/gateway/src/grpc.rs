@@ -6,7 +6,7 @@ use tonic::transport::Channel;
 use tonic::{Request, Streaming};
 
 use crate::auth::Claims;
-use crate::error::{grpc_status_to_app_error, AppError};
+use crate::error::{AppError, grpc_status_to_app_error};
 
 // ---------------------------------------------------------------------------
 // Proto message definitions (hand-rolled prost structs matching the protos)
@@ -488,7 +488,9 @@ impl ControlPlaneClient {
         // Authenticate to the control-plane gRPC trust boundary. Only attached
         // when configured; the control-plane fails closed in prod if it expects
         // a token and the header is missing/wrong.
-        if !self.service_token.is_empty() && let Ok(val) = self.service_token.parse() {
+        if !self.service_token.is_empty()
+            && let Ok(val) = self.service_token.parse()
+        {
             metadata.insert("x-lantern-service-token", val);
         }
         Ok(())

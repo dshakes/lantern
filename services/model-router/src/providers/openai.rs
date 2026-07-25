@@ -90,7 +90,12 @@ impl OpenAiProvider {
         // Upstream error bodies are untrusted and may carry operator/secret
         // detail; log at debug only, and never surface a raw auth-error body
         // to the caller or into run state.
-        tracing::debug!(provider = self.name(), status, body, "provider error response");
+        tracing::debug!(
+            provider = self.name(),
+            status,
+            body,
+            "provider error response"
+        );
         if status == 429 {
             ProviderError::RateLimited {
                 provider: self.name().into(),
@@ -458,11 +463,14 @@ impl Provider for OpenAiProvider {
 
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
 
-        let choice = oai.choices.first().ok_or_else(|| ProviderError::ServerError {
-            provider: self.name().into(),
-            status: 200,
-            message: "no choices in response".into(),
-        })?;
+        let choice = oai
+            .choices
+            .first()
+            .ok_or_else(|| ProviderError::ServerError {
+                provider: self.name().into(),
+                status: 200,
+                message: "no choices in response".into(),
+            })?;
 
         let tool_calls: Vec<ToolCallMessage> = choice
             .message
@@ -574,12 +582,7 @@ impl Provider for OpenAiProvider {
         let byte_stream = resp.bytes_stream();
 
         let stream = futures::stream::unfold(
-            (
-                byte_stream,
-                String::new(),
-                provider_name,
-                model_id,
-            ),
+            (byte_stream, String::new(), provider_name, model_id),
             |(mut byte_stream, mut buffer, provider_name, model_id)| async move {
                 use futures::StreamExt;
 
@@ -630,34 +633,33 @@ impl Provider for OpenAiProvider {
                             }
 
                             if let Some(ref tool_calls) = choice.delta.tool_calls
-                                && let Some(tc) = tool_calls.first() {
-                                    let proto_chunk = CompleteChunk {
-                                        id: chunk.id.clone(),
-                                        model_used: chunk.model.clone(),
-                                        tier: 0,
-                                        data: Some(
-                                            proto::complete_chunk::Data::ToolCallDelta(
-                                                ToolCallMessage {
-                                                    id: tc.id.clone().unwrap_or_default(),
-                                                    name: tc
-                                                        .function
-                                                        .as_ref()
-                                                        .and_then(|f| f.name.clone())
-                                                        .unwrap_or_default(),
-                                                    arguments: tc
-                                                        .function
-                                                        .as_ref()
-                                                        .and_then(|f| f.arguments.clone())
-                                                        .unwrap_or_default(),
-                                                },
-                                            ),
-                                        ),
-                                    };
-                                    return Some((
-                                        Ok(proto_chunk),
-                                        (byte_stream, buffer, provider_name, model_id),
-                                    ));
-                                }
+                                && let Some(tc) = tool_calls.first()
+                            {
+                                let proto_chunk = CompleteChunk {
+                                    id: chunk.id.clone(),
+                                    model_used: chunk.model.clone(),
+                                    tier: 0,
+                                    data: Some(proto::complete_chunk::Data::ToolCallDelta(
+                                        ToolCallMessage {
+                                            id: tc.id.clone().unwrap_or_default(),
+                                            name: tc
+                                                .function
+                                                .as_ref()
+                                                .and_then(|f| f.name.clone())
+                                                .unwrap_or_default(),
+                                            arguments: tc
+                                                .function
+                                                .as_ref()
+                                                .and_then(|f| f.arguments.clone())
+                                                .unwrap_or_default(),
+                                        },
+                                    )),
+                                };
+                                return Some((
+                                    Ok(proto_chunk),
+                                    (byte_stream, buffer, provider_name, model_id),
+                                ));
+                            }
 
                             if let Some(ref finish_reason) = choice.finish_reason {
                                 // If usage info is present in the final chunk, emit it first.
@@ -727,11 +729,7 @@ impl Provider for OpenAiProvider {
     }
 
     #[instrument(skip(self, req), fields(provider = "openai", model))]
-    async fn embed(
-        &self,
-        model: &str,
-        req: &EmbedRequest,
-    ) -> Result<EmbedResponse, ProviderError> {
+    async fn embed(&self, model: &str, req: &EmbedRequest) -> Result<EmbedResponse, ProviderError> {
         tracing::Span::current().record("model", model);
 
         let oai_req = OaiEmbedRequest {
@@ -815,9 +813,7 @@ mod tests {
 
     #[test]
     fn idempotency_header_absent_when_key_empty() {
-        let req = with_idempotency_key(dummy_builder(), "")
-            .build()
-            .unwrap();
+        let req = with_idempotency_key(dummy_builder(), "").build().unwrap();
         assert!(req.headers().get("Idempotency-Key").is_none());
     }
 }

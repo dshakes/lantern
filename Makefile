@@ -239,10 +239,21 @@ lint-go: ## Lint Go code (same four modules as CI sdlc-lint)
 	cd services/runtime-scheduler && golangci-lint run ./...
 	cd services/scheduler && golangci-lint run ./...
 
-lint-rust: ## Lint Rust code
+lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/gateway && cargo clippy -- -D warnings
 	cd services/model-router && cargo clippy -- -D warnings
 	cd services/runtime-manager && cargo clippy -- -D warnings
+	cd services/surface-gateway && cargo clippy -- -D warnings
+	cd services/harness && cargo clippy -- -D warnings
+
+lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)
+	@fail=0; for m in services/*/Cargo.toml; do \
+		cargo fmt --manifest-path $$m --check || { \
+			echo "  ↳ fix with: cargo fmt --manifest-path $$m"; fail=1; }; \
+	done; exit $$fail
+
+fmt-rust: ## Format every Rust crate in place
+	@for m in services/*/Cargo.toml; do cargo fmt --manifest-path $$m; done
 
 lint-ts: ## Lint TypeScript code
 	cd packages/sdk-ts && npm run lint

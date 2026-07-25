@@ -30,14 +30,7 @@ impl ModelService for ModelServiceImpl {
     #[instrument(
         skip(self, request),
         fields(
-            tenant_id,
-            run_id,
-            step_id,
-            model_used,
-            tokens_in,
-            tokens_out,
-            cost_usd,
-            escalated,
+            tenant_id, run_id, step_id, model_used, tokens_in, tokens_out, cost_usd, escalated,
         )
     )]
     async fn complete(
@@ -51,12 +44,17 @@ impl ModelService for ModelServiceImpl {
 
         // Check cache first.
         if let Some(ref cache) = self.cache
-            && let Some(cached) = cache.get(&req).await {
-                info!("returning cached response");
-                return Ok(tonic::Response::new(cached));
-            }
+            && let Some(cached) = cache.get(&req).await
+        {
+            info!("returning cached response");
+            return Ok(tonic::Response::new(cached));
+        }
 
-        let resp = self.router.complete(&req).await.map_err(tonic::Status::from)?;
+        let resp = self
+            .router
+            .complete(&req)
+            .await
+            .map_err(tonic::Status::from)?;
 
         // Record routing outcome on the span so it appears in traces.
         let span = tracing::Span::current();
@@ -79,15 +77,7 @@ impl ModelService for ModelServiceImpl {
         Ok(tonic::Response::new(resp))
     }
 
-    #[instrument(
-        skip(self, request),
-        fields(
-            tenant_id,
-            run_id,
-            step_id,
-            model_used,
-        )
-    )]
+    #[instrument(skip(self, request), fields(tenant_id, run_id, step_id, model_used,))]
     async fn complete_stream(
         &self,
         request: tonic::Request<CompleteRequest>,
