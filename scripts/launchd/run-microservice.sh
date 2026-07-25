@@ -20,6 +20,12 @@ SVC="${1:?usage: run-microservice.sh <service>}"
 # launchd hands us a minimal PATH — restore go + cargo + homebrew.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# Shared wiring defaults, also sourced by the `make run-*` targets so the two
+# cannot drift. Only fills values that are unset, so a plist's
+# EnvironmentVariables still wins.
+# shellcheck source=./service-env.sh
+. "$REPO_ROOT/scripts/launchd/service-env.sh"
+
 # Wait up to 120s for a TCP port; warn + continue if it never comes up
 # (the service's own retry/backoff handles a late upstream).
 wait_port() {
