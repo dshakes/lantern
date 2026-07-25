@@ -16,7 +16,7 @@ import type { Agent } from "@/lib/mock-data";
 
 interface Field { key: string; label: string; placeholder: string; type?: "text" | "password"; prefix?: string; minLength?: number; helpUrl?: string; helpText?: string; required?: boolean }
 interface ConnectorDef { id: string; name: string; description: string; category: string; icon: typeof Mail; iconColor: string; iconBg: string; oauthProvider?: string; oauthLabel?: string; fields: Field[]; manualLabel?: string }
-interface ConnectorState { installed: boolean; connectedAccount?: string; installedAt?: string; backendId?: string; credentials?: Record<string, string>; authMethod?: "oauth" | "app-password" | "api-key" | "" }
+interface ConnectorState { installed: boolean; connectedAccount?: string; installedAt?: string; backendId?: string; credentials?: Record<string, string>; authMethod?: "oauth" | "app-password" | "api-key" | ""; needsReauth?: boolean; statusReason?: string }
 
 const googleFields: Field[] = [
   { key: "email", label: "Email address", placeholder: "you@gmail.com", type: "text", minLength: 5, required: true },
@@ -156,6 +156,12 @@ export default function ConnectorsPage() {
           installedAt: ci.installedAt,
           backendId: ci.id,
           authMethod: ci.authMethod,
+          // A stored credential can be structurally unusable (key rotated or
+          // lost, grant revoked) while the install still exists. Without this
+          // the card renders a green dot over a connector that cannot work,
+          // and the only symptom is agents quietly skipping it.
+          needsReauth: ci.needsReauth ?? false,
+          statusReason: ci.statusReason,
         };
       }
       setStates(m);
@@ -525,11 +531,16 @@ export default function ConnectorsPage() {
               >
                 <div className="flex items-start justify-between">
                   <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", con.iconBg)}><I className={clsx("h-5 w-5", con.iconColor)} /></div>
-                  {on && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />}
+                  {on && (s?.needsReauth
+                    ? <span className="h-2 w-2 rounded-full bg-amber-400" title={s?.statusReason || "Needs re-authorization"} />
+                    : <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />)}
                 </div>
                 <h3 className="mt-3 text-sm font-semibold text-zinc-100">{con.name}</h3>
                 <p className="mt-1 text-[12px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
-                {on && s?.connectedAccount && (
+                {on && s?.needsReauth && (
+                  <p className="mt-1.5 text-[12px] font-medium text-amber-400">Needs re-authorization — click to reconnect</p>
+                )}
+                {on && !s?.needsReauth && s?.connectedAccount && (
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <p className="truncate text-[12px] text-emerald-400/70">{s.connectedAccount}</p>
                     {s.authMethod && (
