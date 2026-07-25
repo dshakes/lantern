@@ -44,6 +44,26 @@ func NewRESTHandler(svc *SchedulerService, store cluster.ClusterStore, secret []
 	}
 }
 
+// SchedulableNodeCount returns how many registered nodes could actually
+// receive a placement right now — i.e. registered and not draining. This is
+// the same draining filter the placement engine applies, so a zero here means
+// every Schedule call will fail with FailedPrecondition.
+//
+// Used by /readyz: process-up is not the same as can-place-work, and
+// conflating the two is how a cluster stays unschedulable unnoticed.
+func SchedulableNodeCount(store cluster.ClusterStore) int {
+	if store == nil {
+		return 0
+	}
+	n := 0
+	for _, node := range store.ListNodes() {
+		if !node.Draining {
+			n++
+		}
+	}
+	return n
+}
+
 // authedContext validates the bearer token and returns a context with
 // the tenant_id injected (so the gRPC handlers can pull it out via the
 // shared middleware helper).
@@ -176,6 +196,15 @@ type heartbeatBody struct {
 	// absent → false/"" → zero behavior change for non-CC nodes.
 	CCCapable bool   `json:"cc_capable"`
 	CCTech    string `json:"cc_tech"`
+	// VMs is the node's COMPLETE live vm_id inventory (not a delta). The
+	// scheduler reconciles its own view against it so workloads that exited
+	// on their own stop counting as RUNNING forever.
+	VMs []string `json:"vms"`
+	// ReportsInventory distinguishes "the node has no live VMs" from "this
+	// manager build does not report inventory". Only the former may
+	// reconcile — without the flag, a rolling upgrade from an older manager
+	// would mass-terminate every live VM on that node.
+	ReportsInventory bool `json:"reports_inventory"`
 }
 
 // POST /v1/nodes/heartbeat
@@ -219,5 +248,16 @@ func (h *RESTHandler) NodeHeartbeat(w http.ResponseWriter, r *http.Request, expe
 	if h.Metrics != nil {
 		h.Metrics.Nodes.Set(float64(len(h.Store.ListNodes())))
 	}
+
+	// Settle our view of this node against what it actually has running.
+	if terminated := ReconcileNodeInventory(
+		h.Store, body.Name, body.VMs, body.ReportsInventory, time.Now().UTC(),
+	); len(terminated) > 0 {
+		h.Logger.Info("reconciled VMs the node no longer reports as live",
+			zap.String("node", body.Name),
+			zap.Int("terminated", len(terminated)),
+			zap.Strings("vm_ids", terminated))
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

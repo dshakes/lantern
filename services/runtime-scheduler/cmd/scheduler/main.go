@@ -257,7 +257,18 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	})
+	// /readyz reports whether this scheduler can actually place work, not
+	// merely whether the process is up. A scheduler with zero schedulable
+	// nodes fails every Schedule with FailedPrecondition; reporting 200 in
+	// that state is how a cluster stays silently unschedulable for days
+	// behind a green dashboard. Liveness stays on /healthz so a
+	// node-starved scheduler is not restart-looped by the orchestrator.
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if n := handlers.SchedulableNodeCount(clusterStore); n == 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintln(w, "not ready: 0 schedulable nodes (all draining or none registered)")
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	})

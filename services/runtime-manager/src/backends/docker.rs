@@ -260,17 +260,41 @@ impl RuntimeBackend for DockerBackend {
         // bridge by default. The harness-enforced egress allowlist sits on
         // top of bridge in the production microVM path; on a bare Docker
         // dev host we approximate with bridge / none.
-        let network_mode = match req.isolation_class {
-            crate::proto::IsolationClass::Untrusted | crate::proto::IsolationClass::Hostile => {
-                "none"
-            }
+        //
+        // The DECLARED network policy is honored too. Keying only off the
+        // isolation class meant a spec asking for `network: none` still got a
+        // bridge with full egress — the declaration was silently ignored,
+        // which is exactly the kind of quiet downgrade invariant #5 exists to
+        // prevent. Whichever of the two is more restrictive wins.
+        let network_mode = match (req.isolation_class, req.network_policy) {
+            (
+                crate::proto::IsolationClass::Untrusted | crate::proto::IsolationClass::Hostile,
+                _,
+            ) => "none",
+            (_, crate::proto::NetworkPolicyClass::None) => "none",
             _ => "bridge",
         };
 
+        // Baseline container hardening. None of this substitutes for a
+        // microVM — untrusted/hostile are refused by this backend
+        // (`satisfies_isolation`) precisely because a container is not a
+        // sufficient boundary for them. These are the cheap controls that
+        // limit blast radius for the classes the backend DOES accept.
         let host_config = bollard::models::HostConfig {
             memory,
             nano_cpus,
             network_mode: Some(network_mode.to_string()),
+            // Drop every Linux capability. Agent workloads are userspace
+            // processes; none of them need CAP_NET_RAW, CAP_SYS_ADMIN, or the
+            // rest of the default docker set.
+            cap_drop: Some(vec!["ALL".to_string()]),
+            // Block privilege escalation via setuid binaries, so a compromised
+            // workload cannot become root inside the container.
+            security_opt: Some(vec!["no-new-privileges:true".to_string()]),
+            // Bound the process table. Without this a fork bomb in one
+            // workload takes down every other container on the node.
+            pids_limit: Some(512),
+            privileged: Some(false),
             // Auto-remove keeps the demo Docker host tidy. For prod where you
             // want post-mortem `docker logs`, flip this to false and let the
             // reaper handle GC. Today the manager has no reaper, so auto-rm
@@ -794,6 +818,25 @@ impl RuntimeBackend for DockerBackend {
             network_bytes_in,
             network_bytes_out,
         })
+    }
+
+    /// Liveness via `docker inspect`. `State.Running == false` means the
+    /// workload exited on its own and the registry entry can be reaped.
+    ///
+    /// A container docker no longer knows about (404) is dead — it was
+    /// removed out from under us. Any OTHER error (daemon unreachable,
+    /// timeout) returns `Err`, which the reaper treats as "unknown, keep",
+    /// so a docker hiccup never reaps live workloads en masse.
+    async fn is_alive(&self, handle_id: &str) -> Result<bool> {
+        match self.client.inspect_container(handle_id, None).await {
+            Ok(info) => Ok(info.state.and_then(|s| s.running).unwrap_or(false)),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(false),
+            Err(e) => Err(e).with_context(|| {
+                format!("docker inspect failed for {handle_id}; liveness unknown")
+            }),
+        }
     }
 }
 

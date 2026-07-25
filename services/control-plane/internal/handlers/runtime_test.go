@@ -197,8 +197,8 @@ func (r *recScheduler) Cluster(_ context.Context) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 
-func (r *recScheduler) ListStates(_ context.Context, _ string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (r *recScheduler) ListStates(_ context.Context, _ string) (map[string]VMStateInfo, error) {
+	return map[string]VMStateInfo{}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +530,7 @@ func migrateRuntimeTables(t *testing.T, pool *pgxpool.Pool) {
 			region            TEXT,
 			isolation_class   TEXT,
 			state             TEXT NOT NULL DEFAULT 'pending',
+			state_reason      TEXT,
 			spec              JSONB NOT NULL DEFAULT '{}',
 			last_heartbeat_at TIMESTAMPTZ,
 			created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

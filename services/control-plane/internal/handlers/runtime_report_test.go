@@ -92,6 +92,7 @@ func migrateReportTables(t *testing.T, pool *pgxpool.Pool) {
 			region            TEXT,
 			isolation_class   TEXT,
 			state             TEXT NOT NULL DEFAULT 'pending',
+			state_reason      TEXT,
 			spec              JSONB NOT NULL DEFAULT '{}',
 			last_heartbeat_at TIMESTAMPTZ,
 			created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

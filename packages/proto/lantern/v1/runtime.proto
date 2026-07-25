@@ -229,6 +229,12 @@ message ListResponse {
     VmState  state            = 3;
     ResourceUsage usage       = 4;
     google.protobuf.Timestamp last_heartbeat = 5;
+    // Why the VM is in its current state. Populated for FAILED (spawn
+    // refused, isolation unsatisfiable, backend error) and TERMINATED.
+    // Without this a caller sees state=FAILED with no way to learn why —
+    // e.g. a spec asking for an isolation class the node cannot provide
+    // was accepted with 201 and then failed silently.
+    string reason             = 6;
   }
   repeated Item items         = 1;
 }

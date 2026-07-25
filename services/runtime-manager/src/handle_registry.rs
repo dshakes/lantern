@@ -109,6 +109,25 @@ impl HandleRegistry {
             .collect()
     }
 
+    /// List every registered handle as `(wire vm_id, HandleInfo)`.
+    ///
+    /// The key is the wire-level vm_id the scheduler minted (post-`rekey`),
+    /// which is what the heartbeat inventory and the reaper both need —
+    /// `HandleInfo.handle_id` is the backend's own container/VM id and is NOT
+    /// interchangeable with it.
+    pub fn list_all(&self) -> Vec<(String, HandleInfo)> {
+        self.handles
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
+    }
+
+    /// The wire-level vm_ids of every registered handle. This is the node's
+    /// live inventory as reported to the scheduler on each heartbeat.
+    pub fn live_vm_ids(&self) -> Vec<String> {
+        self.handles.iter().map(|e| e.key().clone()).collect()
+    }
+
     /// Find a handle by `run_id`, returning the registry key (wire vm_id) and
     /// the `HandleInfo`. O(n) scan; intended for the exec_tool path where the
     /// caller has only a `run_id` and no `vm_id`.

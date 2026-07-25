@@ -168,4 +168,25 @@ pub trait RuntimeBackend: Send + Sync {
             handle_id,
         );
     }
+
+    /// Report whether the workload behind `handle_id` is still running.
+    ///
+    /// This is the liveness signal the registry reaper uses to notice that a
+    /// workload exited on its own. Without it a batch agent — the normal case
+    /// for a headless runtime — stays "running" forever in the manager's
+    /// registry and, via the heartbeat, in the scheduler's placement and quota
+    /// accounting.
+    ///
+    /// # Safety contract
+    ///
+    /// The default is **conservative: `Ok(true)`** — unknown means alive.
+    /// Reaping a live VM is far worse than carrying a stale entry: it would
+    /// orphan a running workload with no way to stop or bill it. Backends that
+    /// can answer accurately override this; those that cannot keep today's
+    /// behavior rather than guessing.
+    ///
+    /// An `Err` is "could not determine" and MUST NOT be treated as dead.
+    async fn is_alive(&self, _handle_id: &str) -> Result<bool> {
+        Ok(true)
+    }
 }
