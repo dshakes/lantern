@@ -62,6 +62,11 @@ func ReconcileNodeInventory(
 		live[id] = struct{}{}
 	}
 
+	// Record that the node vouched for these VMs. A VM confirmed even once no
+	// longer needs the dispatch grace, so the NEXT inventory that omits it is
+	// acted on immediately rather than after the full grace window.
+	store.MarkVMsSeenOnNode(nodeName, liveVMIDs, now)
+
 	// Every VM this scheduler thinks is non-terminal on this node.
 	stale := store.ListVMs("", func(v *cluster.VM) bool {
 		if v == nil || v.Handle == nil || v.NodeName != nodeName {
@@ -84,8 +89,14 @@ func ReconcileNodeInventory(
 		if _, ok := live[id]; ok {
 			continue // node still has it
 		}
-		if createdAt(v).Add(reconcileGrace).After(now) {
-			continue // still inside the dispatch window
+		// The dispatch grace protects VMs the node has NEVER confirmed — the
+		// window between creating the row and the node registering the
+		// workload. Once a node has reported a VM as live, its absence from a
+		// later inventory is authoritative straight away; making a
+		// short-lived agent wait out the grace just to record a terminal
+		// state it already reached is pure latency.
+		if v.InventorySeenAt.IsZero() && createdAt(v).Add(reconcileGrace).After(now) {
+			continue // never confirmed, still inside the dispatch window
 		}
 		if store.UpdateVMState(id, lanternv1.VmState_VM_STATE_TERMINATED,
 			"reconciled: node no longer reports this VM as live", nil, now) {

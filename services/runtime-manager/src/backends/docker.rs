@@ -15,7 +15,7 @@ use futures::stream::BoxStream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
-use crate::backend::{ExecOutput, Handle, RuntimeBackend, SnapshotInfo, StatsSample};
+use crate::backend::{ExecOutput, Handle, Liveness, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
     LogLine, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
 };
@@ -828,11 +828,51 @@ impl RuntimeBackend for DockerBackend {
     /// timeout) returns `Err`, which the reaper treats as "unknown, keep",
     /// so a docker hiccup never reaps live workloads en masse.
     async fn is_alive(&self, handle_id: &str) -> Result<bool> {
+        Ok(self.liveness(handle_id).await? == Liveness::Alive)
+    }
+
+    /// Docker reports `State.Status` as one of created / running / paused /
+    /// restarting / removing / exited / dead, which is exactly the
+    /// starting-vs-finished distinction the reaper needs. A container that has
+    /// `exited` is unambiguously over, so it is reaped without waiting out the
+    /// spawn grace — that grace exists only for the `created` window.
+    ///
+    /// A container docker no longer knows about (404) is gone: it was removed
+    /// out from under us, which is also terminal. Any OTHER error returns
+    /// `Err`, which the reaper treats as "unknown, keep", so a docker hiccup
+    /// never mass-reaps live workloads.
+    async fn liveness(&self, handle_id: &str) -> Result<Liveness> {
         match self.client.inspect_container(handle_id, None).await {
-            Ok(info) => Ok(info.state.and_then(|s| s.running).unwrap_or(false)),
+            Ok(info) => {
+                let state = info.state;
+                let running = state.as_ref().and_then(|s| s.running).unwrap_or(false);
+                if running {
+                    return Ok(Liveness::Alive);
+                }
+                let status = state
+                    .as_ref()
+                    .and_then(|s| s.status.as_ref())
+                    .map(|s| format!("{s:?}").to_ascii_lowercase())
+                    .unwrap_or_default();
+                // A non-zero FinishedAt is the backstop when Status is absent
+                // or an unrecognised variant: docker only sets it once the
+                // container has actually run.
+                let finished = state
+                    .as_ref()
+                    .and_then(|s| s.finished_at.as_deref())
+                    .map(|f| !f.is_empty() && !f.starts_with("0001-01-01"))
+                    .unwrap_or(false);
+
+                if status.contains("exited") || status.contains("dead") || finished {
+                    Ok(Liveness::Exited)
+                } else {
+                    // created / restarting / removing — may still come up.
+                    Ok(Liveness::Starting)
+                }
+            }
             Err(bollard::errors::Error::DockerResponseServerError {
                 status_code: 404, ..
-            }) => Ok(false),
+            }) => Ok(Liveness::Exited),
             Err(e) => Err(e).with_context(|| {
                 format!("docker inspect failed for {handle_id}; liveness unknown")
             }),

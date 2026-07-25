@@ -183,6 +183,10 @@ pub struct HeartbeatConfig {
     /// Warm pool, for the warm-pool inventory the placement engine weights at
     /// 0.40. `None` reports an empty pool.
     pub pool: Option<Arc<WarmPool>>,
+    /// Signalled by the reaper when a workload exits, so the corrected
+    /// inventory is published immediately instead of up to one INTERVAL late.
+    /// `None` keeps the plain fixed-interval cadence.
+    pub wake: Option<Arc<tokio::sync::Notify>>,
 }
 
 /// Spawn the heartbeat loop. Returns immediately; the loop runs until the
@@ -263,7 +267,24 @@ pub fn spawn(cfg: HeartbeatConfig) {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::debug!(node = %cfg.node_name, "heartbeat ok");
                     backoff_ms = 500;
-                    tokio::time::sleep(INTERVAL).await;
+                    // Sleep until the next interval OR until the reaper says
+                    // the inventory changed, whichever comes first. Only the
+                    // success arm is interruptible: waking early on a failure
+                    // would defeat the backoff.
+                    match cfg.wake.as_ref() {
+                        Some(wake) => {
+                            tokio::select! {
+                                _ = tokio::time::sleep(INTERVAL) => {}
+                                _ = wake.notified() => {
+                                    tracing::debug!(
+                                        node = %cfg.node_name,
+                                        "heartbeat: woken early by reaper; publishing inventory"
+                                    );
+                                }
+                            }
+                        }
+                        None => tokio::time::sleep(INTERVAL).await,
+                    }
                 }
                 Ok(resp) => {
                     let status = resp.status();

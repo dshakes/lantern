@@ -70,6 +70,16 @@ type VM struct {
 	LastEventAt   time.Time
 	LastHeartbeat time.Time
 	Reason        string
+	// InventorySeenAt is when the owning node last reported this VM as live
+	// in a heartbeat inventory. Zero means the node has never confirmed it.
+	//
+	// This is what lets reconciliation be fast AND safe. The dispatch grace
+	// exists only because a VM row is created before the node registers it;
+	// once a node has confirmed a VM even once, a later inventory omitting it
+	// is authoritative immediately, whatever the VM's age. Without this
+	// distinction every short-lived agent had to wait out the full grace
+	// window before its terminal state was recorded.
+	InventorySeenAt time.Time
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -87,6 +97,10 @@ type ClusterStore interface {
 	GetVM(vmID string) (*VM, bool)
 	ListVMs(tenantID string, filter func(*VM) bool) []*VM
 	DeleteVM(vmID string) bool
+	// MarkVMsSeenOnNode records that `nodeName` reported these vm_ids as live.
+	// Only VMs actually owned by that node are stamped, so one node's
+	// inventory can never vouch for another's.
+	MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time)
 
 	IncrTenantVMs(tenantID string, delta int)
 	TenantLiveVMs(tenantID string) int
@@ -326,6 +340,19 @@ func (s *InMemoryStore) ListVMs(tenantID string, filter func(*VM) bool) []*VM {
 		return out[i].Handle.VmId < out[j].Handle.VmId
 	})
 	return out
+}
+
+func (s *InMemoryStore) MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time) {
+	if nodeName == "" || len(vmIDs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range vmIDs {
+		if v, ok := s.vms[id]; ok && v.NodeName == nodeName {
+			v.InventorySeenAt = at
+		}
+	}
 }
 
 func (s *InMemoryStore) DeleteVM(vmID string) bool {

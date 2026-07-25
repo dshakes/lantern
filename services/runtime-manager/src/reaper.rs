@@ -25,20 +25,27 @@
 //! handle is kept. Backends that cannot answer inherit the conservative
 //! `is_alive` default of `Ok(true)` and are never reaped by this loop.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::backend::RuntimeBackend;
+use crate::backend::{Liveness, RuntimeBackend};
 use crate::handle_registry::HandleRegistry;
 
 /// How often to sweep the registry.
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Grace period after registration before a handle is eligible for reaping.
+/// Grace period after registration before a handle the backend has NEVER
+/// reported alive becomes eligible for reaping.
 ///
-/// A container can be registered a beat before the backend reports it running.
-/// Without this window a fast sweep could observe `running == false` on a
-/// still-starting workload and reap it mid-spawn.
+/// A container is registered before the backend reports it running, so a fast
+/// sweep could otherwise observe `running == false` on a still-starting
+/// workload and reap it mid-spawn.
+///
+/// The grace applies ONLY until the backend confirms the handle alive once.
+/// After that a `running == false` is a genuine exit and is acted on
+/// immediately — a 2-second agent should not sit "running" cluster-wide for
+/// 30 seconds just because it finished faster than its own start-up window.
 const SPAWN_GRACE: Duration = Duration::from_secs(30);
 
 /// Read the sweep interval from `LANTERN_REAPER_INTERVAL_SECS`.
@@ -53,6 +60,11 @@ fn interval_from_env() -> Duration {
 }
 
 /// Spawn the reaper loop. Runs until process exit.
+///
+/// Reaping publishes immediately: `HandleRegistry::deregister` signals the
+/// registry's change notifier, which wakes the heartbeat, so the scheduler
+/// learns of an exit within the sweep interval rather than up to a full
+/// heartbeat later.
 pub fn spawn(registry: Arc<HandleRegistry>, backend: Arc<dyn RuntimeBackend>) {
     let interval = interval_from_env();
     tracing::info!(
@@ -65,9 +77,12 @@ pub fn spawn(registry: Arc<HandleRegistry>, backend: Arc<dyn RuntimeBackend>) {
         let mut ticker = tokio::time::interval(interval);
         // A slow sweep must not cause a burst of catch-up ticks.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // handle_ids the backend has confirmed alive at least once. These no
+        // longer need the spawn grace.
+        let mut confirmed: HashSet<String> = HashSet::new();
         loop {
             ticker.tick().await;
-            let reaped = sweep_once(&registry, backend.as_ref()).await;
+            let reaped = sweep_once(&registry, backend.as_ref(), &mut confirmed).await;
             if reaped > 0 {
                 tracing::info!(
                     reaped,
@@ -80,21 +95,43 @@ pub fn spawn(registry: Arc<HandleRegistry>, backend: Arc<dyn RuntimeBackend>) {
 }
 
 /// One sweep. Returns how many handles were reaped. Exposed for tests.
-pub async fn sweep_once(registry: &HandleRegistry, backend: &dyn RuntimeBackend) -> usize {
+///
+/// `confirmed` accumulates handle_ids the backend has reported alive at least
+/// once; those skip the spawn grace on later sweeps. Callers own the set so it
+/// persists across sweeps.
+pub async fn sweep_once(
+    registry: &HandleRegistry,
+    backend: &dyn RuntimeBackend,
+    confirmed: &mut HashSet<String>,
+) -> usize {
     let now = chrono::Utc::now();
     let mut reaped = 0;
+    let live: HashSet<String> = registry
+        .list_all()
+        .iter()
+        .map(|(_, i)| i.handle_id.clone())
+        .collect();
+    // Do not grow without bound as handles come and go.
+    confirmed.retain(|h| live.contains(h));
 
     for (vm_id, info) in registry.list_all() {
-        // Respect the spawn grace window.
-        let age = now.signed_duration_since(info.created_at);
-        if age.num_seconds() < SPAWN_GRACE.as_secs() as i64 {
-            continue;
-        }
-
         // Liveness is asked of the BACKEND handle, not the wire vm_id.
-        match backend.is_alive(&info.handle_id).await {
-            Ok(true) => {}
-            Ok(false) => {
+        match backend.liveness(&info.handle_id).await {
+            Ok(Liveness::Alive) => {
+                confirmed.insert(info.handle_id.clone());
+            }
+            Ok(state @ (Liveness::Exited | Liveness::Starting)) => {
+                let age = now.signed_duration_since(info.created_at);
+                // The grace covers exactly one uncertainty: a handle that may
+                // not have started yet. A confirmed EXIT carries no such
+                // doubt, and neither does a handle the backend previously
+                // reported alive — both are reaped at once. Without this a
+                // workload finishing faster than one sweep interval sat
+                // "running" cluster-wide for the whole grace window.
+                let certain = state == Liveness::Exited || confirmed.contains(&info.handle_id);
+                if !certain && age.num_seconds() < SPAWN_GRACE.as_secs() as i64 {
+                    continue;
+                }
                 tracing::info!(
                     vm_id = %vm_id,
                     handle_id = %info.handle_id,
@@ -134,9 +171,10 @@ mod tests {
     use std::collections::HashSet;
 
     /// Backend whose liveness answer is scripted per handle_id.
-    struct ScriptedBackend {
+    pub(super) struct ScriptedBackend {
         dead: HashSet<String>,
         unknown: HashSet<String>,
+        exited: HashSet<String>,
     }
 
     #[async_trait]
@@ -168,9 +206,26 @@ mod tests {
             }
             Ok(!self.dead.contains(handle_id))
         }
+
+        /// `dead` handles report Starting by default so the pre-existing
+        /// grace-window tests keep exercising the grace path. Tests that want
+        /// a definitive exit use `exited()`.
+        async fn liveness(&self, handle_id: &str) -> Result<crate::backend::Liveness> {
+            if self.unknown.contains(handle_id) {
+                anyhow::bail!("liveness unknown for {handle_id}");
+            }
+            if self.exited.contains(handle_id) {
+                return Ok(crate::backend::Liveness::Exited);
+            }
+            Ok(if self.dead.contains(handle_id) {
+                crate::backend::Liveness::Starting
+            } else {
+                crate::backend::Liveness::Alive
+            })
+        }
     }
 
-    fn info(handle_id: &str, age_secs: i64) -> HandleInfo {
+    pub(super) fn info(handle_id: &str, age_secs: i64) -> HandleInfo {
         HandleInfo {
             handle_id: handle_id.to_string(),
             run_id: "run-1".to_string(),
@@ -184,10 +239,20 @@ mod tests {
         }
     }
 
-    fn scripted(dead: &[&str], unknown: &[&str]) -> ScriptedBackend {
+    pub(super) fn scripted(dead: &[&str], unknown: &[&str]) -> ScriptedBackend {
         ScriptedBackend {
             dead: dead.iter().map(|s| s.to_string()).collect(),
             unknown: unknown.iter().map(|s| s.to_string()).collect(),
+            exited: HashSet::new(),
+        }
+    }
+
+    /// Backend reporting these handles as DEFINITIVELY exited.
+    pub(super) fn exited(ids: &[&str]) -> ScriptedBackend {
+        ScriptedBackend {
+            dead: ids.iter().map(|s| s.to_string()).collect(),
+            unknown: HashSet::new(),
+            exited: ids.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -197,7 +262,7 @@ mod tests {
         reg.register(info("c-alive", 120));
         reg.register(info("c-dead", 120));
 
-        let reaped = sweep_once(&reg, &scripted(&["c-dead"], &[])).await;
+        let reaped = sweep_once(&reg, &scripted(&["c-dead"], &[]), &mut HashSet::new()).await;
 
         assert_eq!(reaped, 1, "exactly the exited handle should be reaped");
         assert!(reg.get("c-alive").is_some(), "running handle must survive");
@@ -212,7 +277,7 @@ mod tests {
         reg.register(info("c-1", 120));
         reg.register(info("c-2", 120));
 
-        let reaped = sweep_once(&reg, &scripted(&[], &["c-1", "c-2"])).await;
+        let reaped = sweep_once(&reg, &scripted(&[], &["c-1", "c-2"]), &mut HashSet::new()).await;
 
         assert_eq!(reaped, 0, "unknown liveness must never reap");
         assert_eq!(reg.len(), 2, "registry must be untouched on error");
@@ -224,7 +289,7 @@ mod tests {
         let reg = HandleRegistry::new();
         reg.register(info("c-new", 2)); // 2s old, inside the grace window
 
-        let reaped = sweep_once(&reg, &scripted(&["c-new"], &[])).await;
+        let reaped = sweep_once(&reg, &scripted(&["c-new"], &[]), &mut HashSet::new()).await;
 
         assert_eq!(
             reaped, 0,
@@ -261,7 +326,143 @@ mod tests {
 
         let reg = HandleRegistry::new();
         reg.register(info("c-1", 300));
-        assert_eq!(sweep_once(&reg, &SilentBackend).await, 0);
+        assert_eq!(
+            sweep_once(&reg, &SilentBackend, &mut HashSet::new()).await,
+            0
+        );
         assert_eq!(reg.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod confirm_once_tests {
+    use super::tests::{info, scripted};
+    use super::*;
+
+    /// The latency bug: a 2-second agent had to wait out the full 30s spawn
+    /// grace before the reaper would touch it, so the whole cluster believed
+    /// it was still running. Once the backend has confirmed a handle alive,
+    /// a later "not running" is a genuine exit and is acted on at once.
+    #[tokio::test]
+    async fn confirmed_handle_is_reaped_immediately_after_exit() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-fast", 2)); // 2s old — deep inside the grace
+        let mut confirmed = HashSet::new();
+
+        // Sweep 1: backend reports it alive → confirmed, nothing reaped.
+        let reaped = sweep_once(&reg, &scripted(&[], &[]), &mut confirmed).await;
+        assert_eq!(reaped, 0);
+        assert!(
+            confirmed.contains("c-fast"),
+            "alive handle must be confirmed"
+        );
+
+        // Sweep 2: it exited. Still young, but previously confirmed.
+        let reaped = sweep_once(&reg, &scripted(&["c-fast"], &[]), &mut confirmed).await;
+        assert_eq!(
+            reaped, 1,
+            "a confirmed handle must reap without waiting out the grace"
+        );
+        assert!(reg.get("c-fast").is_none());
+    }
+
+    /// The grace must still protect a handle the backend has never confirmed —
+    /// the create-then-start window it exists for.
+    #[tokio::test]
+    async fn never_confirmed_handle_still_gets_grace() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-starting", 2));
+        let mut confirmed = HashSet::new();
+
+        let reaped = sweep_once(&reg, &scripted(&["c-starting"], &[]), &mut confirmed).await;
+
+        assert_eq!(reaped, 0, "a never-confirmed, young handle must survive");
+        assert!(reg.get("c-starting").is_some());
+    }
+
+    /// Past the grace, a never-confirmed handle is reaped — a spawn that never
+    /// came up must not leak forever.
+    #[tokio::test]
+    async fn never_confirmed_handle_is_reaped_after_grace() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-stillborn", 120));
+        let mut confirmed = HashSet::new();
+
+        let reaped = sweep_once(&reg, &scripted(&["c-stillborn"], &[]), &mut confirmed).await;
+
+        assert_eq!(reaped, 1);
+    }
+
+    /// The confirmed set must not grow without bound as handles come and go.
+    #[tokio::test]
+    async fn confirmed_set_is_pruned_to_live_handles() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-1", 60));
+        let mut confirmed = HashSet::new();
+
+        sweep_once(&reg, &scripted(&[], &[]), &mut confirmed).await;
+        assert!(confirmed.contains("c-1"));
+
+        reg.deregister("c-1");
+        sweep_once(&reg, &scripted(&[], &[]), &mut confirmed).await;
+
+        assert!(
+            confirmed.is_empty(),
+            "entries for gone handles must be pruned"
+        );
+    }
+}
+
+#[cfg(test)]
+mod exited_fast_path_tests {
+    use super::tests::{exited, info, scripted};
+    use super::*;
+
+    /// The latency bug, root cause. A workload can finish faster than one
+    /// sweep interval, so the reaper NEVER observes it alive and
+    /// confirm-once cannot help. Measured live: a ~1s agent took 35s to be
+    /// reaped (30s grace + one 5s sweep) and stayed "running" cluster-wide
+    /// for all of it. A backend-confirmed EXIT has no start-up ambiguity, so
+    /// it skips the grace outright.
+    #[tokio::test]
+    async fn definitive_exit_skips_the_grace_entirely() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-fast", 1)); // 1s old, never seen alive
+        let mut confirmed = HashSet::new();
+
+        let reaped = sweep_once(&reg, &exited(&["c-fast"]), &mut confirmed).await;
+
+        assert_eq!(
+            reaped, 1,
+            "a confirmed exit must be reaped on the first sweep"
+        );
+        assert!(reg.get("c-fast").is_none());
+    }
+
+    /// `Starting` keeps the grace — that is the create-then-start window and
+    /// reaping there would kill a workload mid-spawn.
+    #[tokio::test]
+    async fn starting_still_waits_out_the_grace() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-starting", 1));
+        let mut confirmed = HashSet::new();
+
+        let reaped = sweep_once(&reg, &scripted(&["c-starting"], &[]), &mut confirmed).await;
+
+        assert_eq!(reaped, 0, "a maybe-starting handle must not be reaped");
+        assert!(reg.get("c-starting").is_some());
+    }
+
+    /// Unknown is still never fatal, even on the fast path.
+    #[tokio::test]
+    async fn unknown_liveness_is_never_reaped() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-1", 1));
+        let mut confirmed = HashSet::new();
+
+        let reaped = sweep_once(&reg, &scripted(&[], &["c-1"]), &mut confirmed).await;
+
+        assert_eq!(reaped, 0);
+        assert!(reg.get("c-1").is_some());
     }
 }

@@ -6,6 +6,19 @@ use crate::proto::{
     IsolationClass, RestoreRequest, RuntimeEvent, ScheduleRequest, SnapshotRequest,
 };
 
+/// What a backend can say about a handle right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Liveness {
+    /// Confirmed running.
+    Alive,
+    /// Confirmed finished — it ran and is over. Safe to reap at once; there is
+    /// no "maybe it is still coming up" ambiguity to wait out.
+    Exited,
+    /// Not running, and the backend cannot say whether it ever started. The
+    /// spawn grace applies so a workload mid-create is never reaped.
+    Starting,
+}
+
 /// A handle to a running sandbox instance.
 #[derive(Clone, Debug)]
 pub struct Handle {
@@ -169,6 +182,16 @@ pub trait RuntimeBackend: Send + Sync {
         );
     }
 
+    /// What the backend can say about a handle's liveness.
+    ///
+    /// The distinction that matters is `Starting` vs `Exited`. A workload can
+    /// finish faster than the reaper's sweep interval, so "not running" alone
+    /// is ambiguous: it covers both a container that has not started yet and
+    /// one that already ran to completion. Treating both as "maybe starting"
+    /// forces every short-lived agent to wait out the full spawn grace before
+    /// its exit is noticed; treating both as "exited" would reap workloads
+    /// mid-spawn. Backends that can tell them apart should.
+    ///
     /// Report whether the workload behind `handle_id` is still running.
     ///
     /// This is the liveness signal the registry reaper uses to notice that a
@@ -188,5 +211,20 @@ pub trait RuntimeBackend: Send + Sync {
     /// An `Err` is "could not determine" and MUST NOT be treated as dead.
     async fn is_alive(&self, _handle_id: &str) -> Result<bool> {
         Ok(true)
+    }
+
+    /// Richer liveness: distinguishes a workload that has not started yet from
+    /// one that has already exited.
+    ///
+    /// The default derives from [`Self::is_alive`] and is deliberately
+    /// conservative — a non-running handle reports [`Liveness::Starting`], so
+    /// backends that cannot tell the difference keep the spawn-grace behavior
+    /// they had. Overriding this is what makes exit detection fast.
+    async fn liveness(&self, handle_id: &str) -> Result<Liveness> {
+        Ok(if self.is_alive(handle_id).await? {
+            Liveness::Alive
+        } else {
+            Liveness::Starting
+        })
     }
 }

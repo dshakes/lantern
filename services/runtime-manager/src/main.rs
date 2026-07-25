@@ -137,6 +137,12 @@ async fn main() -> anyhow::Result<()> {
     let pool_for_heartbeat = Arc::clone(&grpc_service.pool);
     reaper::spawn(Arc::clone(&registry), Arc::clone(&backend));
 
+    // Any change to live-handle membership (spawn, rekey, reap) wakes the
+    // heartbeat, so the scheduler confirms a new VM and notices an exited one
+    // within seconds instead of up to a full heartbeat interval.
+    let inventory_changed = Arc::new(tokio::sync::Notify::new());
+    registry.set_change_notify(Arc::clone(&inventory_changed));
+
     // rustls 0.23 requires a process-level CryptoProvider. We pin the `ring`
     // provider (Cargo.toml: rustls default-features off + features=["ring"]),
     // and with only `ring` enabled rustls does NOT auto-install a default — so
@@ -174,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         cc_tech,
         registry: Some(Arc::clone(&registry)),
         pool: Some(Arc::clone(&pool_for_heartbeat)),
+        wake: Some(inventory_changed),
     });
 
     tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");

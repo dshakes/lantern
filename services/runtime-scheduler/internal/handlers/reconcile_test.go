@@ -128,3 +128,58 @@ func TestReconcile_IgnoresTerminalStates(t *testing.T) {
 		t.Fatalf("terminal VMs must be skipped, got %v", got)
 	}
 }
+
+// Once a node has confirmed a VM in an inventory, the dispatch grace no
+// longer applies — a later inventory omitting it is authoritative at once.
+// Without this a short-lived agent (exits in ~1s) sat in RUNNING for the full
+// 90s grace before its terminal state was recorded.
+func TestReconcile_ConfirmedVMSkipsGraceOnNextBeat(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	// 5s old — well inside the dispatch grace.
+	seedVM(store, "vm-fast", "node-a", "t1", lanternv1.VmState_VM_STATE_RUNNING, 5)
+
+	// Beat 1: node reports it live. Nothing to terminate, but it is confirmed.
+	if got := ReconcileNodeInventory(store, "node-a", []string{"vm-fast"}, true, time.Now().UTC()); len(got) != 0 {
+		t.Fatalf("a VM the node reports live must not be terminated, got %v", got)
+	}
+
+	// Beat 2: it exited. Still inside the grace by age, but confirmed once.
+	got := ReconcileNodeInventory(store, "node-a", []string{}, true, time.Now().UTC())
+
+	if len(got) != 1 || got[0] != "vm-fast" {
+		t.Fatalf("a previously-confirmed VM must reconcile immediately, got %v", got)
+	}
+	if s := stateOf(t, store, "vm-fast"); s != lanternv1.VmState_VM_STATE_TERMINATED {
+		t.Fatalf("want TERMINATED, got %v", s)
+	}
+}
+
+// The grace must still protect VMs the node has never confirmed — that is the
+// create-row-then-dispatch window it exists for.
+func TestReconcile_UnconfirmedVMStillGetsGrace(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	seedVM(store, "vm-dispatching", "node-a", "t1", lanternv1.VmState_VM_STATE_PENDING, 5)
+
+	// Node has never reported it, and it is young.
+	got := ReconcileNodeInventory(store, "node-a", []string{}, true, time.Now().UTC())
+
+	if len(got) != 0 {
+		t.Fatalf("an unconfirmed, in-grace VM must be left alone, got %v", got)
+	}
+}
+
+// One node's inventory must not vouch for another node's VM.
+func TestReconcile_ConfirmationIsNodeScoped(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	seedVM(store, "vm-b", "node-b", "t1", lanternv1.VmState_VM_STATE_RUNNING, 5)
+
+	// node-a wrongly claims vm-b. It must not become "confirmed" on node-b.
+	ReconcileNodeInventory(store, "node-a", []string{"vm-b"}, true, time.Now().UTC())
+
+	// node-b now omits it; still young and never legitimately confirmed.
+	got := ReconcileNodeInventory(store, "node-b", []string{}, true, time.Now().UTC())
+
+	if len(got) != 0 {
+		t.Fatalf("cross-node confirmation must not bypass the grace, got %v", got)
+	}
+}
