@@ -26,63 +26,19 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/opt/homebrew/opt
 # shellcheck source=./service-env.sh
 . "$REPO_ROOT/scripts/launchd/service-env.sh"
 
-# Wait up to 120s for a TCP port; warn + continue if it never comes up
-# (the service's own retry/backoff handles a late upstream).
-wait_port() {
-  local port="$1" name="$2"
-  for i in {1..60}; do
-    if nc -z localhost "$port" 2>/dev/null; then
-      echo "[$(date +%T)] $name (:$port) reachable (after $((i*2))s)"
-      return 0
-    fi
-    sleep 2
-  done
-  echo "[$(date +%T)] WARN: $name (:$port) not reachable after 120s — starting $SVC anyway" >&2
-}
-
-# Build the Rust release binary if absent, then exec it.
-run_rust() {
-  local pkg="$1"
-  cd "$REPO_ROOT/services/$SVC"
-  local bin="target/release/$pkg"
-  if [[ ! -x "$bin" ]]; then
-    echo "[$(date +%T)] $bin missing — building (first boot, this is slow)…"
-    cargo build --release
-  fi
-  echo "[$(date +%T)] starting $SVC -> $bin"
-  exec "$bin"
-}
-
-# Build a Go service to a real binary, then exec it.
-#
-# NOT `go run`: that leaves a parent process supervising a child in the build
-# cache, so launchd's pid is the wrapper rather than the server. Signals then
-# land on the wrong process — `launchctl kickstart -k` and a plain `kill` both
-# leave an orphan holding the port, and the next start fails with "address
-# already in use". exec-ing a real binary gives launchd the actual server.
-run_go() {
-  local svc="$1" pkg="$2"
-  cd "$REPO_ROOT/services/$svc"
-  local bin="bin/$(basename "$pkg")"
-  # Rebuild whenever a source file is newer than the binary, so a deploy that
-  # only pulls source still starts the new code.
-  if [[ ! -x "$bin" ]] || [[ -n "$(find . -name '*.go' -newer "$bin" -print -quit 2>/dev/null)" ]]; then
-    echo "[$(date +%T)] building $svc -> $bin"
-    go build -o "$bin" "$pkg"
-  fi
-  echo "[$(date +%T)] starting $svc -> $bin"
-  exec "$bin"
-}
+# Shared launch helpers (wait_port / run_go / run_rust).
+# shellcheck source=./lib.sh
+. "$REPO_ROOT/scripts/launchd/lib.sh"
 
 case "$SVC" in
   gateway)
     wait_port 6379 redis
     wait_port 50051 control-plane
-    run_rust lantern-gateway
+    run_rust gateway lantern-gateway
     ;;
   model-router)
     wait_port 6379 redis
-    run_rust lantern-model-router
+    run_rust model-router lantern-model-router
     ;;
   runtime-manager)
     wait_port 9000 minio
@@ -90,12 +46,12 @@ case "$SVC" in
     # of failed first beats at boot; the heartbeat's own backoff covers a late
     # scheduler, so this only ever delays, never blocks.
     wait_port 8085 runtime-scheduler
-    run_rust lantern-runtime-manager
+    run_rust runtime-manager lantern-runtime-manager
     ;;
   surface-gateway)
     wait_port 6379 redis
     wait_port 50051 control-plane
-    run_rust lantern-surface-gateway
+    run_rust surface-gateway lantern-surface-gateway
     ;;
   runtime-scheduler)
     echo "[$(date +%T)] starting runtime-scheduler on :50055 (grpc) / :8085 (rest)"
@@ -104,9 +60,8 @@ case "$SVC" in
   workflow-engine)
     wait_port 5432 postgres
     wait_port 6379 redis
-    cd "$REPO_ROOT/services/workflow-engine"
     echo "[$(date +%T)] starting workflow-engine on :50052"
-    exec go run ./cmd/server
+    run_go workflow-engine ./cmd/server workflow-engine
     ;;
   *)
     echo "unknown service: $SVC" >&2

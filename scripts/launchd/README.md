@@ -64,12 +64,26 @@ a plist and the shared defaults disagree. Worth running after editing either.
 
 ## Go services build a binary, not `go run`
 
-`run-microservice.sh` compiles Go services to `services/<svc>/bin/<name>` and
-execs that, rather than `go run`. `go run` supervises a child process in the
-build cache, so launchd's pid is the wrapper and not the server — signals land
-on the wrong process, and `launchctl kickstart -k` or a plain `kill` leaves an
-orphan holding the port, so the next start fails with "address already in use".
-The binary is rebuilt whenever a `.go` file is newer than it.
+Every Go service — control-plane, runtime-scheduler, workflow-engine — compiles
+to `services/<svc>/bin/<name>` and is exec'd. `go run` compiles to a temp binary
+and then *supervises* it, so the process tree was:
+
+```
+launchd → go run → server      ← launchd's pid is the wrapper
+launchd → server               ← what we have now
+```
+
+With the wrapper in between, signals land on the wrong process: `launchctl
+kickstart -k` and a plain `kill` both leave the real server orphaned and still
+holding its port, so the next start dies with "address already in use".
+
+The binary is rebuilt whenever a `.go` file is newer than it, which preserves
+the one property `go run` gave us for free — pulling source is enough to pick
+up changes on the next restart.
+
+Shared launch helpers (`wait_port`, `run_go`, `run_rust`) live in
+`scripts/launchd/lib.sh`, sourced by both `run-microservice.sh` and
+`run-api-wrapper.sh`.
 
 ## macOS permissions (iMessage bridge)
 

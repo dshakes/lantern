@@ -49,6 +49,11 @@
 : "${LANTERN_DEFAULT_MANAGER_ADDR:=localhost:50054}"
 
 # --- shared --------------------------------------------------------------
+# LOCAL DEV ONLY. This is the same well-known value the control-plane already
+# falls back to, so setting it here changes nothing — it just means the
+# scheduler and API agree without the Makefile restating it. It is NOT a way
+# to run in production: handlers.GetJWTSecret() treats this exact string as
+# unset when LANTERN_ENV is prod, and runStartupGuards then refuses to boot.
 : "${JWT_SECRET:=lantern-dev-jwt-secret-do-not-use-in-production}"
 
 export LANTERN_SCHEDULER_GRPC_ADDR SCHEDULER_HTTP_ADDR \

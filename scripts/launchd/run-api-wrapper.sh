@@ -6,12 +6,28 @@
 
 set -uo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
-cd "$REPO_ROOT/services/control-plane"
+
+# launchd hands us a minimal PATH — restore go + homebrew.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Shared wiring defaults (scheduler address, node identity, JWT secret), also
+# sourced by the `make run-*` targets so the two cannot drift.
+# shellcheck source=./service-env.sh
+. "$REPO_ROOT/scripts/launchd/service-env.sh"
+
+# Shared launch helpers (wait_port / run_go).
+# shellcheck source=./lib.sh
+. "$REPO_ROOT/scripts/launchd/lib.sh"
 
 # Shared local env — same file the bridge + dashboard wrappers source. Feature
 # flags (LANTERN_CONFIDENCE_*, LANTERN_IMMIGRATION_SENTINEL, …) live here so a
-# plain `kickstart -k` reloads them (read at runtime by `go run`), with no plist
-# bootout/bootstrap. Loaded before the API starts.
+# plain `kickstart -k` reloads them with no plist bootout/bootstrap: launchd
+# re-runs this wrapper, which re-sources the file every start. That still holds
+# now the server is a compiled binary rather than `go run` — the reload comes
+# from re-sourcing here, not from how the process is launched.
+#
+# Sourced AFTER service-env.sh so anything set here wins over the shared
+# defaults.
 if [ -f "$HOME/.lantern/bridge.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -19,18 +35,10 @@ if [ -f "$HOME/.lantern/bridge.env" ]; then
   set +a
 fi
 
-# Wait up to 90s for Postgres to accept TCP.
-for i in {1..45}; do
-  if nc -z localhost 5432 2>/dev/null; then
-    echo "[$(date +%T)] postgres reachable (after ${i}x2s)"
-    break
-  fi
-  if [[ $i -eq 45 ]]; then
-    echo "[$(date +%T)] postgres never became reachable — is docker-compose up?" >&2
-    exit 1
-  fi
-  sleep 2
-done
+# Postgres is `required`: without it the API cannot serve anything, so a
+# timeout exits non-zero and lets launchd retry on its ThrottleInterval
+# rather than booting into a guaranteed-broken state.
+wait_port 5432 postgres required || exit 1
 
 echo "[$(date +%T)] starting control-plane API on :8080"
-exec /opt/homebrew/bin/go run ./cmd/server
+run_go control-plane ./cmd/server server
