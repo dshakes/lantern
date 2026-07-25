@@ -35,6 +35,24 @@ if [ -f "$HOME/.lantern/bridge.env" ]; then
   set +a
 fi
 
+# Control-plane-ONLY secrets, sourced last so they win.
+#
+# Kept out of bridge.env deliberately: that file is also sourced by the
+# dashboard and both bridge wrappers, and none of them need the credential
+# master key. Least privilege — the key exists only in the one process that
+# encrypts and decrypts with it.
+#
+# LANTERN_CREDENTIAL_KEY is the AES-256 key for connector tokens and LLM API
+# keys at rest. Unset means plaintext storage, which is how the Gmail and
+# Google Calendar tokens ended up stranded: they were written under a key that
+# was later lost, leaving ciphertext nothing could read.
+if [ -f "$HOME/.lantern/control-plane.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.lantern/control-plane.env"
+  set +a
+fi
+
 # Postgres is `required`: without it the API cannot serve anything, so a
 # timeout exits non-zero and lets launchd retry on its ThrottleInterval
 # rather than booting into a guaranteed-broken state.
