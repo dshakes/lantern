@@ -18,6 +18,21 @@
 		<string>local</string>
 		<key>NODE_ZONE</key>
 		<string>local-a</string>
+		<!-- Without SCHEDULER_URL the manager's self-register heartbeat
+		     short-circuits at startup ("scheduler_url not set; skipping
+		     self-register heartbeat"), so the node NEVER appears to the
+		     scheduler. The scheduler's stale-node reaper then marks it
+		     draining and every placement fails FailedPrecondition — a
+		     cluster-wide outage with no error anywhere, because the manager
+		     itself is healthy. This was observed live: a node draining for
+		     days while the process ran fine. -->
+		<key>SCHEDULER_URL</key>
+		<string>http://localhost:8085</string>
+		<!-- Pinned so the node keeps a stable identity across reboots;
+		     unset falls back to the machine hostname, which changes on some
+		     networks and silently registers a second node. -->
+		<key>NODE_NAME</key>
+		<string>local-dev</string>
 		<key>LOG_LEVEL</key>
 		<string>info</string>
 		<key>PATH</key>
