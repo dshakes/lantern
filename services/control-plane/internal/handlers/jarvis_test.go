@@ -38,7 +38,7 @@ func TestBriefChannel(t *testing.T) {
 
 func TestPhraseBriefEmpty(t *testing.T) {
 	h := &JarvisHandler{} // llm nil
-	got := h.phraseBrief(context.Background(), "t", nil, nil, nil)
+	got := h.phraseBrief(context.Background(), "t", nil, nil, nil, nil)
 	if !strings.Contains(strings.ToLower(got), "nothing on the radar") {
 		t.Errorf("empty brief should be a clear status line, got %q", got)
 	}
@@ -50,6 +50,7 @@ func TestPhraseBriefFallback(t *testing.T) {
 		[]string{"Standup 9am"},
 		[]briefEmail{{From: "Bob", Content: "invoice attached"}},
 		[]briefReply{{Person: "Madhu", Content: "lunch friday?"}},
+		nil,
 	)
 	for _, want := range []string{"UPCOMING", "Standup 9am", "AWAITING YOUR REPLY", "Madhu", "RECENT EMAIL", "Bob"} {
 		if !strings.Contains(got, want) {
@@ -88,5 +89,34 @@ func TestStripAssistantPreamble(t *testing.T) {
 		if got := stripAssistantPreamble(in); got != want {
 			t.Errorf("stripAssistantPreamble(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Commitments are where every agent's findings land, and the brief did not
+// read them. Live consequence: a morning brief could say "nothing on the
+// radar" while 18 items were marked 'now', including unreviewed
+// card-not-present fraud alerts.
+func TestPhraseBriefLeadsWithCommitments(t *testing.T) {
+	h := &JarvisHandler{} // llm nil → deterministic fallback, no network
+	got := h.phraseBrief(context.Background(), "t", nil, nil, nil,
+		[]string{"Review the flagged Amex charge", "Call Krishna back (overdue)"})
+
+	if !strings.Contains(got, "NEEDS YOU") {
+		t.Errorf("commitments should be their own section, got:\n%s", got)
+	}
+	for _, want := range []string{"flagged Amex charge", "Call Krishna back"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("brief missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+// A day with an empty calendar and no mail is NOT an empty day when there is
+// urgent work outstanding.
+func TestPhraseBriefNotEmptyWhenOnlyCommitments(t *testing.T) {
+	h := &JarvisHandler{}
+	got := h.phraseBrief(context.Background(), "t", nil, nil, nil, []string{"Pay the water bill"})
+	if strings.Contains(strings.ToLower(got), "nothing on the radar") {
+		t.Errorf("must not claim an empty day while work is outstanding, got %q", got)
 	}
 }
