@@ -166,9 +166,10 @@ func (h *JarvisHandler) urgentCommitments(ctx context.Context, tenantID string) 
 // silently drift as commitments are created or completed, and closing the
 // wrong item is unrecoverable — the owner believes it is handled.
 func (h *JarvisHandler) rememberBriefItems(ctx context.Context, tenantID string, items []briefItem) {
-	if len(items) == 0 {
-		return
-	}
+	// NOTE: no early return on an empty list. A brief with no action block must
+	// still CLEAR the previous mapping, or yesterday's numbers stay live and
+	// "done 1" mutates an item from an older brief — precisely the stale-number
+	// resolution this table exists to prevent.
 	err := h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
 		if _, delErr := tx.Exec(ctx, `DELETE FROM brief_items WHERE tenant_id = $1`, tenantID); delErr != nil {
 			return delErr
@@ -335,8 +336,11 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	}
 	fallback := strings.TrimSpace(data.String())
 
-	if h.llm == nil {
-		// No LLM is exactly when the owner most needs the list to still work.
+	// No model input left once the action block is excluded: everything the
+	// brief has to say IS the numbered list. Asking the model to write a brief
+	// from empty source data invites invented prose in front of the real
+	// items, so return the block alone.
+	if h.llm == nil || fallback == "" {
 		return withActionBlock(fallback, urgent)
 	}
 	ownerName := strings.TrimSpace(os.Getenv("LANTERN_OWNER_NAME"))

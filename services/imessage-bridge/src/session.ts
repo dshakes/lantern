@@ -6619,6 +6619,10 @@ export class IMessageSession {
     // Catch them here so the same command vocabulary works from both
     // topologies.
     if (text && !isGroup && this.isOwnerChatRow(row)) {
+      // Brief replies ("done 1" / "snooze 2") must work from BOTH owner
+      // topologies. Wiring only the isFromMe branch left the feature dead in
+      // dedicated-bot mode, where the owner DMs a separate bot account.
+      if (this.maybeHandleBriefReply(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       // Presence / "I'm away" status (set place + timer, or clear).
       const pres = parsePresenceCommand(text);
       if (pres) {
