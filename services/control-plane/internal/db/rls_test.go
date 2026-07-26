@@ -386,6 +386,7 @@ var rlsTenantTables = []string{
 	"gmail_poll_cursors",
 	"domain_records",
 	"errands", "dnc_numbers",
+	"brief_items",
 	"immigration_deadlines",
 	"memory_distillates",
 }

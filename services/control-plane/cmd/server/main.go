@@ -488,6 +488,12 @@ func main() {
 
 	// Proactive Jarvis — daily brief from the unified timeline.
 	httpMux.HandleFunc("GET /v1/jarvis/brief", jarvisHandler.Brief)
+	// Two-way brief: "done 1" / "snooze 2" resolved against the numbering
+	// persisted when that brief was sent.
+	// Mutating: closes/snoozes/dismisses a commitment, so it carries a write
+	// scope. Without WithScope a read-scoped API key could mutate under
+	// LANTERN_AUTHZ_ENFORCE=1.
+	httpMux.HandleFunc("POST /v1/jarvis/brief/act", authHandler.WithScope(handlers.ScopeRunsWrite, jarvisHandler.BriefAct))
 
 	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
 	// 1:1 to Shortcut steps. Plain-text responses so Siri can speak
