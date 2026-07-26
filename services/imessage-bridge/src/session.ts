@@ -337,6 +337,7 @@ import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } fr
 import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
+import { parseBriefReply, formatBriefAck } from "@lantern/bridge-core/brief-reply";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { isInnerCircle, formatOwnerLocationBlock, formatOwnerSelfLocationBlock } from "@lantern/bridge-core/device-signals";
@@ -3074,6 +3075,45 @@ export class IMessageSession {
   /** Owner self-chat hook. Returns true when handled. Gathers what landed
    *  since a cutoff (contacts waiting + the assistant's own recent actions)
    *  and narrates it in the owner's voice; deterministic fallback on failure. */
+  /**
+   * Two-way morning brief: "done 1" / "snooze 2" / "dismiss 3".
+   *
+   * The brief numbers its items; replying with a number closes that item. The
+   * number is resolved SERVER-side against the mapping stored when the brief
+   * was sent, never by re-ranking, so it always means the line the owner is
+   * looking at.
+   *
+   * The acknowledgement names what changed — the cheapest guard against a
+   * mistyped number quietly closing the wrong thing.
+   */
+  private maybeHandleBriefReply(jid: string, text: string): boolean {
+    const cmd = parseBriefReply(text);
+    if (!cmd) return false;
+    void (async () => {
+      try {
+        const r = await authedFetch("/v1/jarvis/brief/act", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ n: cmd.n, action: cmd.action }),
+        });
+        const body = (await r.json().catch(() => ({}))) as {
+          ok?: boolean; title?: string; error?: string;
+        };
+        if (!r.ok || !body.ok) {
+          // Say WHY rather than failing silently — an unrecognised number is
+          // usually a stale brief, and the owner needs to know nothing changed.
+          await this.send(jid, `🎟 ${body.error || "couldn't update that item"}`).catch(() => {});
+          return;
+        }
+        await this.send(jid, formatBriefAck(cmd.action, body.title || "item")).catch(() => {});
+      } catch (err) {
+        this.logger.warn({ err }, "brief reply failed");
+        await this.send(jid, "🎟 couldn't reach the brief right now — try again in a bit.").catch(() => {});
+      }
+    })();
+    return true;
+  }
+
   private maybeHandleRecap(jid: string, text: string, force = false): boolean {
     if (!force && !looksLikeRecapRequest(text)) return false;
     void (async () => {
@@ -6265,6 +6305,7 @@ export class IMessageSession {
       // EVENT SCOUT commands ("scan events" / "events add <cat>" /
       // "book 1,3") — strict anchored grammar, so a normal self-chat
       // message never trips it.
+      if (this.maybeHandleBriefReply(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       if (this.maybeHandleRecap(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       if (this.maybeHandleScout(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;
       if (this.maybeHandleSkillForge(row.handle || this.ownHandleGuess() || this.lastSelfHandle || "", text)) return;

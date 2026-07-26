@@ -13,6 +13,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -76,7 +77,14 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 	// read them at all. On the live queue that meant a morning brief could go
 	// out saying "nothing on the radar" while 18 items were marked 'now' —
 	// including unreviewed card-not-present fraud alerts.
-	urgent := h.urgentCommitments(ctx, tenantID)
+	urgentItems := h.urgentCommitmentItems(ctx, tenantID)
+	urgent := make([]string, 0, len(urgentItems))
+	for _, it := range urgentItems {
+		urgent = append(urgent, it.Title)
+	}
+	// Persist the numbering the owner is about to see, so a later "done 2"
+	// resolves to that exact commitment.
+	h.rememberBriefItems(ctx, tenantID, urgentItems)
 	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting, urgent)
 
 	// Additive: prepend any upcoming immigration deadlines when the sentinel is
@@ -98,11 +106,18 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 //
 // Capped at 5. A brief is a prompt to act, not an inventory — 431 open items
 // pasted into a morning message is the same failure as sending none.
-func (h *JarvisHandler) urgentCommitments(ctx context.Context, tenantID string) []string {
-	var out []string
+// briefItem is one numbered line in the brief, paired with the commitment it
+// refers to so a reply of "done 2" resolves to the row the owner actually saw.
+type briefItem struct {
+	ID    string
+	Title string
+}
+
+func (h *JarvisHandler) urgentCommitmentItems(ctx context.Context, tenantID string) []briefItem {
+	var out []briefItem
 	_ = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT title, urgency, deadline
+			SELECT id::text, title, urgency, deadline
 			FROM commitments
 			WHERE tenant_id = $1
 			  AND status IN ('open', 'in_progress')
@@ -118,20 +133,74 @@ func (h *JarvisHandler) urgentCommitments(ctx context.Context, tenantID string) 
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var title, urgency string
+			var id, title, urgency string
 			var deadline *time.Time
-			if scanErr := rows.Scan(&title, &urgency, &deadline); scanErr != nil {
+			if scanErr := rows.Scan(&id, &title, &urgency, &deadline); scanErr != nil {
 				continue
 			}
 			line := title
 			if deadline != nil && deadline.Before(time.Now()) {
 				line += " (overdue)"
 			}
-			out = append(out, line)
+			out = append(out, briefItem{ID: id, Title: line})
 		}
 		return rows.Err()
 	})
 	return out
+}
+
+// urgentCommitments is the title-only view used when composing text.
+func (h *JarvisHandler) urgentCommitments(ctx context.Context, tenantID string) []string {
+	items := h.urgentCommitmentItems(ctx, tenantID)
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.Title)
+	}
+	return out
+}
+
+// rememberBriefItems replaces the number→commitment mapping for this tenant.
+//
+// Written when the brief is SENT, so "done 1" always resolves against the list
+// the owner is looking at. Recomputing the ranked query at reply time would
+// silently drift as commitments are created or completed, and closing the
+// wrong item is unrecoverable — the owner believes it is handled.
+func (h *JarvisHandler) rememberBriefItems(ctx context.Context, tenantID string, items []briefItem) {
+	if len(items) == 0 {
+		return
+	}
+	err := h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		if _, delErr := tx.Exec(ctx, `DELETE FROM brief_items WHERE tenant_id = $1`, tenantID); delErr != nil {
+			return delErr
+		}
+		for i, it := range items {
+			if _, insErr := tx.Exec(ctx, `
+				INSERT INTO brief_items (tenant_id, position, commitment_id, brief_sent_at)
+				VALUES ($1, $2, $3, now())
+			`, tenantID, i+1, it.ID); insErr != nil {
+				return insErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		h.logger().Warn("could not remember brief item numbering", zap.Error(err))
+	}
+}
+
+// ResolveBriefItem maps a 1-based brief number to its commitment id.
+func (h *JarvisHandler) ResolveBriefItem(ctx context.Context, tenantID string, n int) (string, bool) {
+	var id string
+	err := h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT commitment_id::text FROM brief_items
+			WHERE tenant_id = $1 AND position = $2
+		`, tenantID, n).Scan(&id)
+	})
+	if err != nil || id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 // upcomingCalendar returns event-kind timeline rows from now through the
@@ -244,13 +313,8 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	var data strings.Builder
 	// Listed first: these are the things the owner has to DO, as opposed to
 	// things that merely happened.
-	if len(urgent) > 0 {
-		data.WriteString("NEEDS YOU:\n")
-		for _, u := range urgent {
-			data.WriteString("- " + u + "\n")
-		}
-		data.WriteString("\n")
-	}
+	// NOTE: `urgent` is deliberately NOT part of the LLM input. It is appended
+	// verbatim after phrasing — see numberedActionBlock.
 	if len(calendar) > 0 {
 		data.WriteString("UPCOMING (next 24h):\n")
 		for _, c := range calendar {
@@ -272,7 +336,8 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	fallback := strings.TrimSpace(data.String())
 
 	if h.llm == nil {
-		return fallback
+		// No LLM is exactly when the owner most needs the list to still work.
+		return withActionBlock(fallback, urgent)
 	}
 	ownerName := strings.TrimSpace(os.Getenv("LANTERN_OWNER_NAME"))
 	if ownerName == "" {
@@ -290,9 +355,43 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	out, err := h.llm.CompleteInternal(ctx, tenantID, system, data.String(), 400)
 	if err != nil || strings.TrimSpace(out) == "" {
 		h.logger().Debug("brief LLM phrasing failed; returning raw sections", zap.Error(err))
-		return fallback
+		return withActionBlock(fallback, urgent)
 	}
-	return stripAssistantPreamble(out)
+	return withActionBlock(stripAssistantPreamble(out), urgent)
+}
+
+// numberedActionBlock renders the actionable items with STABLE numbers.
+//
+// This block is never passed through the model. A first attempt included it in
+// the LLM input and the model helpfully reformatted the numbered list into
+// bullets — deleting the very numbers the owner replies with. The list is an
+// interface with side effects ("done 2" closes something), so its numbering
+// has to be produced by code and match the mapping persisted at send time,
+// exactly and always.
+func numberedActionBlock(urgent []string) string {
+	if len(urgent) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("NEEDS YOU — reply \"done 1\" or \"snooze 1\":\n")
+	for i, u := range urgent {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, u))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// withActionBlock appends the deterministic numbered list to phrased prose.
+func withActionBlock(prose string, urgent []string) string {
+	block := numberedActionBlock(urgent)
+	prose = strings.TrimSpace(prose)
+	switch {
+	case block == "":
+		return prose
+	case prose == "":
+		return block
+	default:
+		return prose + "\n\n" + block
+	}
 }
 
 // stripAssistantPreamble removes meta-preamble some models (notably the
@@ -304,6 +403,25 @@ func stripAssistantPreamble(s string) string {
 	// If a "---" fence appears near the top, the real content is after it.
 	if idx := strings.Index(s, "\n---\n"); idx >= 0 && idx < 320 {
 		s = strings.TrimSpace(s[idx+len("\n---\n"):])
+	}
+	// Some models narrate a PLAN before the output:
+	//
+	//   1. Review the source data provided (no tools needed).
+	//   2. Identify time-sensitive items.
+	//   Here's the brief:
+	//   Summary: ...
+	//
+	// The prefix matcher below cannot remove that — its first line starts
+	// with "1." and matches nothing, so it stops and keeps the lot. Observed
+	// live in a real brief. It matters twice over here: the plan is noise,
+	// and it is NUMBERED, so it collides with the "done 1" reply grammar.
+	// Cut at the last announcement marker near the top.
+	lower := strings.ToLower(s)
+	for _, marker := range []string{"here's the brief:", "here is the brief:", "the brief:"} {
+		if idx := strings.LastIndex(lower, marker); idx >= 0 && idx < 700 {
+			s = strings.TrimSpace(s[idx+len(marker):])
+			break
+		}
 	}
 	metaPrefixes := []string{
 		"this is a ", "let me ", "here's ", "here is ", "sure,", "okay,",

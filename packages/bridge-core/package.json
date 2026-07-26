@@ -70,6 +70,7 @@
     "./contact-priority": "./src/contact-priority.ts",
     "./anticipation": "./src/anticipation.ts",
     "./event-scout": "./src/event-scout.ts",
+    "./brief-reply": "./src/brief-reply.ts",
     "./emotional-register": "./src/emotional-register.ts",
     "./life-events-emit": "./src/life-events-emit.ts",
     "./mac-usage": "./src/mac-usage.ts",
