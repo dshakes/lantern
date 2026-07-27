@@ -44,6 +44,17 @@ jobs:
             ~/.cargo/git
           key: qa-deps-${{ runner.os }}-${{ hashFiles('**/go.sum', '**/package-lock.json', '**/pnpm-lock.yaml', '**/Cargo.lock', '**/requirements*.txt', '**/uv.lock', '**/poetry.lock') }}
           restore-keys: qa-deps-${{ runner.os }}-
+      # lantern needs protoc for prost-build (template: add stack deps before tests)
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+      - name: Install JS deps (make test-ts runs vitest in these two packages)
+        run: |
+          (cd packages/sdk-ts && npm ci --no-audit)
+          (cd packages/bridge-core && npm ci --no-audit)
+      - name: Install Python deps (make test-python runs pytest in packages/sdk-python)
+        run: |
+          python3 -m pip install --quiet pytest pytest-asyncio
+          python3 -m pip install --quiet -e packages/sdk-python
       - name: Run test suite
         id: test
         run: |
