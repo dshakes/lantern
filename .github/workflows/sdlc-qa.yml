@@ -10,69 +10,40 @@ name: "sdlc · qa (tests)"
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # merge-queue support: the queue re-runs required checks on the speculative merge
+  # commit; without this trigger a queued PR would wait forever on `qa`.
+  merge_group:
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: sdlc-qa-${{ github.event.pull_request.number }}
+  group: sdlc-qa-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   qa:
     name: qa               # stable check name — referenced by branch-protection required checks
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: lantern
-          POSTGRES_PASSWORD: lantern
-          POSTGRES_DB: lantern
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U lantern -d lantern"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable
-      GOTOOLCHAIN: go1.26.5   # pin to the toolchain that fixes GO-2026-5856 (crypto/tls ECH leak) and all stdlib CVEs through go1.26.5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # protoc + the well-known-type .proto includes are required by the Rust
-      # runtime-manager's build.rs (prost-build). protobuf-compiler alone gives
-      # protoc but NOT google/protobuf/{timestamp,duration}.proto, so the build
-      # fails with "google/protobuf/timestamp.proto: File not found". libprotobuf-dev
-      # ships those includes under /usr/include/google/protobuf.
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
-      # Apply the control-plane schema so DB-gated Go tests have their tables.
-      # Without this the runtime-secrets / RLS / identity tests fail with
-      # 'table "runtime_audit_events" not found'. The server normally migrates
-      # on boot; cmd/migrate applies the same schema without booting it.
-      - name: Apply DB migrations
-        run: cd services/control-plane && SEED_DEV=1 go run ./cmd/migrate
-      # `make test` -> `test-ts` runs `npx vitest run` in packages/sdk-ts, which needs
-      # vitest (a devDependency) installed. Without `npm ci` first, npx tries to fetch
-      # vitest on the fly and fails to resolve `vitest/config`, breaking test-ts.
-      - name: Install SDK-TS deps (test-ts runs vitest)
-        run: cd packages/sdk-ts && npm ci
-      # `make test` -> `test-ts` also runs `npm test` in packages/bridge-core, which is
-      # `node --import=tsx/esm --test src/*.test.ts` and needs tsx (a devDependency).
-      # Without `npm ci` here, all 50+ bridge-core test files fail to load (ERR_MODULE_NOT_FOUND tsx).
-      - name: Install bridge-core deps (test-ts runs node --test via tsx)
-        run: cd packages/bridge-core && npm ci
-      # `make test` -> `test-python` runs pytest in packages/sdk-python, but pytest is a
-      # dev extra (pyproject [project.optional-dependencies].dev). Without installing the
-      # package's dev deps, pytest is absent and test-python fails with "No module named
-      # pytest". Install the package with its dev extra so pytest + pytest-asyncio exist.
-      - name: Install SDK-Python deps (test-python runs pytest)
-        run: cd packages/sdk-python && python3 -m pip install --quiet '.[dev]'
+      # Dependency cache (stack-agnostic): keyed on the lockfiles that exist, restores
+      # the common per-tool caches. A miss is harmless — the run just downloads as before.
+      - name: Cache dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.npm
+            ~/.cache/pip
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: qa-deps-${{ runner.os }}-${{ hashFiles('**/go.sum', '**/package-lock.json', '**/pnpm-lock.yaml', '**/Cargo.lock', '**/requirements*.txt', '**/uv.lock', '**/poetry.lock') }}
+          restore-keys: qa-deps-${{ runner.os }}-
       - name: Run test suite
         id: test
         run: |
@@ -90,8 +61,40 @@ jobs:
           echo "log=$log" >> "$GITHUB_OUTPUT"
           tail -60 "$log"
           exit "$rc"
+      # Coverage gate (opt-in): set repo var SDLC_COVERAGE_MIN (e.g. "70") to enforce a
+      # minimum total-coverage %. Unset → the step is skipped and nothing changes.
+      # Supports the same stacks the test step auto-detects (Go, pytest, npm).
+      - name: Coverage gate
+        if: ${{ vars.SDLC_COVERAGE_MIN != '' }}
+        env:
+          MIN: ${{ vars.SDLC_COVERAGE_MIN }}
+        run: |
+          set -uo pipefail
+          # Detection mirrors the test step's elif order exactly, so the gate never runs a
+          # different toolchain than the tests did. A `coverage:` Makefile target wins and
+          # must PRINT a total percentage; its stack-specific setup then applies here too.
+          pct=""
+          if [ -f Makefile ] && grep -qE '^coverage:' Makefile; then
+            pct="$(make coverage 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)?%' | tail -1 | tr -d '%')" || true
+          elif [ -f go.mod ]; then
+            go test -coverprofile="$RUNNER_TEMP/cover.out" ./... >/dev/null 2>&1 || true
+            pct="$(go tool cover -func="$RUNNER_TEMP/cover.out" 2>/dev/null | awk '/^total:/{gsub(/%/,"",$3); print $3}')"
+          elif [ -f Cargo.toml ]; then
+            if command -v cargo-llvm-cov >/dev/null 2>&1; then
+              pct="$(cargo llvm-cov --summary-only 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+%' | tail -1 | tr -d '%')" || true
+            else
+              echo "coverage gate: Cargo project but cargo-llvm-cov is not installed — add a setup step or a 'coverage:' Makefile target, or unset SDLC_COVERAGE_MIN"; exit 1
+            fi
+          elif [ -f package.json ] && grep -q '"coverage"' package.json; then
+            pct="$(npm run coverage --silent 2>/dev/null | grep -Eo 'All files[^0-9]*[0-9.]+' | grep -Eo '[0-9.]+' | head -1)" || true
+          elif [ -f pyproject.toml ] || [ -d tests ]; then
+            pct="$(pytest -q --cov --cov-report=term 2>/dev/null | awk '/^TOTAL/{gsub(/%/,"",$NF); print $NF}')" || true
+          fi
+          [ -n "$pct" ] || { echo "coverage gate: no coverage tooling detected for this stack — add a 'coverage:' Makefile target or unset SDLC_COVERAGE_MIN"; exit 1; }
+          echo "coverage: ${pct}% (min ${MIN}%)"
+          awk "BEGIN{exit !($pct >= $MIN)}" || { echo "coverage ${pct}% is below the ${MIN}% floor"; exit 1; }
       - name: Comment on failure
-        if: ${{ always() && steps.test.outputs.rc != '0' }}
+        if: ${{ always() && steps.test.outputs.rc != '0' && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
