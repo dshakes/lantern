@@ -701,3 +701,5 @@ bash scripts/kill-port.sh 8080 50051 50054 50055
 ## License
 
 [Apache 2.0](LICENSE). No catches — every differentiator above lives in this repo.
+
+<!-- PRs gated by compass: agent review, security, cross-model audits, tests. -->
