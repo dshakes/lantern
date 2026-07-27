@@ -47,8 +47,10 @@ jobs:
       # lantern needs protoc for prost-build (template: add stack deps before tests)
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
-      - name: Install JS deps (vitest half of make test needs node_modules)
-        run: npm ci --no-audit --silent
+      - name: Install JS deps (make test-ts runs vitest in these two packages)
+        run: |
+          (cd packages/sdk-ts && npm ci --no-audit)
+          (cd packages/bridge-core && npm ci --no-audit)
       - name: Run test suite
         id: test
         run: |
