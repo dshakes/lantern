@@ -51,6 +51,8 @@ jobs:
         run: |
           (cd packages/sdk-ts && npm ci --no-audit)
           (cd packages/bridge-core && npm ci --no-audit)
+      - name: Install Python deps (make test-python runs pytest in packages/sdk-python)
+        run: python3 -m pip install --quiet pytest && python3 -m pip install --quiet -e packages/sdk-python 2>/dev/null || python3 -m pip install --quiet pytest
       - name: Run test suite
         id: test
         run: |
