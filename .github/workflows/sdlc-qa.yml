@@ -44,6 +44,9 @@ jobs:
             ~/.cargo/git
           key: qa-deps-${{ runner.os }}-${{ hashFiles('**/go.sum', '**/package-lock.json', '**/pnpm-lock.yaml', '**/Cargo.lock', '**/requirements*.txt', '**/uv.lock', '**/poetry.lock') }}
           restore-keys: qa-deps-${{ runner.os }}-
+      # lantern needs protoc for prost-build (template: add stack deps before tests)
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
       - name: Run test suite
         id: test
         run: |
