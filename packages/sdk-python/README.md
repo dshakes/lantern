@@ -22,6 +22,12 @@ pip install "git+https://github.com/dshakes/lantern.git#subdirectory=packages/sd
 Dependencies pulled in automatically: `httpx>=0.27`, `pydantic>=2.0`, `grpcio>=1.62`,
 `protobuf>=5.0`, `opentelemetry-api>=1.20`.
 
+Optional extras:
+
+| Extra        | Pulls in           | For                                                        |
+| ------------ | ------------------ | ---------------------------------------------------------- |
+| `deepagents` | `deepagents>=0.6`  | Run a LangChain deepagents agent on a Lantern microVM — see [deepagents integration](#deepagents-integration) |
+
 ---
 
 ## Quick start
@@ -261,6 +267,56 @@ The `lantern-runner` entry point (installed by `pip install`) does the same:
 ```bash
 lantern-runner --agent hello-world --input '{"name": "World"}'
 ```
+
+---
+
+## deepagents integration
+
+`pip install "lantern-sdk[deepagents]"` adds a
+[deepagents](https://github.com/langchain-ai/deepagents) sandbox backend that runs
+the agent's shell and filesystem inside a Lantern microVM instead of on the host.
+Egress allowlist, secret vending, and per-tenant quota are enforced by the runtime,
+not by the prompt — untrusted agent code never touches a bare shell (invariant #5).
+
+```python
+from deepagents import create_deep_agent
+from lantern.integrations.deepagents_sandbox import LanternSandbox
+
+with LanternSandbox.create(image_digest="sha256:...") as sandbox:
+    agent = create_deep_agent(backend=sandbox)
+    agent.invoke({"messages": [{"role": "user", "content": "run the tests"}]})
+```
+
+`LanternSandbox` implements deepagents' `SandboxBackendProtocol`. deepagents'
+`BaseSandbox` derives the full filesystem toolset (`ls`/`read`/`write`/`edit`/
+`glob`/`grep`) from three primitives, so the backend is just those three mapped
+onto the runtime REST surface:
+
+| Backend method                   | Lantern endpoint                          |
+| -------------------------------- | ----------------------------------------- |
+| `execute()`                      | `POST /v1/runtime/vms/{id}/exec`          |
+| `upload_files()`/`download_files()` | base64 over the same exec channel      |
+| `create()` / `close()`           | `POST /v1/runtime/schedule` / `DELETE /v1/runtime/vms/{id}` |
+
+Constructors:
+
+- `LanternSandbox.create(image_digest=..., **spec)` — schedules a fresh microVM and
+  polls until it is `running`. Extra kwargs pass through to `/v1/runtime/schedule`
+  (`limits`, `egressRules`, `secrets`, `labels`, ...). Terminates the VM on exit.
+- `LanternSandbox.connect(vm_id)` — attaches to an already-running VM; does **not**
+  terminate it on close.
+
+Composes with deepagents' own `CompositeBackend` so state can outlive the VM —
+mount a store at `/memories/` while everything else executes in the sandbox. See
+[`examples/deepagents_sandbox_agent.py`](examples/deepagents_sandbox_agent.py) for a
+runnable version that also wires `RubricMiddleware` for in-loop self-evaluation.
+
+Reads `LANTERN_API_URL` / `LANTERN_API_KEY` like the main client; pass `base_url` /
+`api_key` explicitly to override.
+
+**Known ceilings.** File transfer is base64-inline over the exec channel — fine for
+agent-sized files, but a large binary should move via object storage. A microVM
+image digest is required; the sandbox does not build one for you.
 
 ---
 
