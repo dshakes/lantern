@@ -59,11 +59,31 @@ class LanternRuntimeClient:
         return self._request("POST", "/v1/runtime/schedule", json=body)
 
     def get_vm(self, vm_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/v1/runtime/vms/{vm_id}")
+        """GET /v1/runtime/vms/{id}, normalized to the bare VM row.
 
-    def exec(self, vm_id: str, command: str) -> tuple[str, str, int]:
-        """POST /v1/runtime/vms/{id}/exec. Returns (stdout, stderr, exit_code)."""
-        data = self._request("POST", f"/v1/runtime/vms/{vm_id}/exec", json={"command": command})
+        The detail endpoint wraps the row as ``{"vm": {...}, "events": [...]}``
+        while the list endpoint returns bare rows; callers (and ``wait_running``)
+        want the row either way.
+        """
+        data = self._request("GET", f"/v1/runtime/vms/{vm_id}")
+        if isinstance(data, dict) and isinstance(data.get("vm"), dict):
+            return data["vm"]
+        return data
+
+    def exec(self, vm_id: str, command: str, argv: list[str] | None = None) -> tuple[str, str, int]:
+        """POST /v1/runtime/vms/{id}/exec. Returns (stdout, stderr, exit_code).
+
+        Lantern's exec contract is execve-style: ``command`` is the executable
+        and ``argv`` its arguments, with NO implicit shell — matching
+        ``lantern vm exec <id> -- <cmd> [args]`` and the in-VM harness. So when
+        ``argv`` is omitted we run the string through ``/bin/sh -c``, since the
+        sandbox backend emits shell syntax (pipes, redirects, ``&&``).
+        """
+        if argv is None:
+            payload: dict[str, Any] = {"command": "/bin/sh", "argv": ["-c", command]}
+        else:
+            payload = {"command": command, "argv": argv}
+        data = self._request("POST", f"/v1/runtime/vms/{vm_id}/exec", json=payload)
         return data.get("stdout", ""), data.get("stderr", ""), int(data.get("exitCode", 0))
 
     def terminate(self, vm_id: str, *, grace: str = "30s") -> None:

@@ -87,7 +87,14 @@ class LanternSandbox(BaseSandbox):
 
         Extra ``spec`` kwargs pass through to ``/v1/runtime/schedule``
         (``labels``, ``limits``, ``egressRules``, ``secrets``, ...).
+
+        A sandbox is a long-lived exec target, not a one-shot workload, so we
+        default the entrypoint to a sleep: an image whose own entrypoint runs
+        to completion (``python:3.11-slim`` just starts a REPL and exits) would
+        be reaped by the runtime before the agent could exec into it. Pass an
+        explicit ``command`` to override.
         """
+        spec.setdefault("command", ["sleep", "infinity"])
         client = LanternRuntimeClient(base_url, api_key)
         placed = client.schedule(image_digest, isolation=isolation, **spec)
         vm_id = placed["vmId"]

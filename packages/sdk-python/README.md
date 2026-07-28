@@ -314,6 +314,22 @@ runnable version that also wires `RubricMiddleware` for in-loop self-evaluation.
 Reads `LANTERN_API_URL` / `LANTERN_API_KEY` like the main client; pass `base_url` /
 `api_key` explicitly to override.
 
+`create()` defaults the entrypoint to `sleep infinity`. A sandbox is a long-lived
+exec target, so an image whose own entrypoint runs to completion (`python:3.11-slim`
+just starts a REPL and exits) would be reaped by the runtime before the agent could
+exec into it. Pass an explicit `command` to override.
+
+**Verified against a real VM.** The full path — `LanternSandbox` → control-plane
+→ runtime-scheduler → runtime-manager → real container — is exercised end to end
+on the `docker` backend, covering `execute`, binary upload/download roundtrip, and
+the BaseSandbox-derived `write`/`read`/`ls`/`edit`/`grep` the agent actually calls.
+The Go-side regression test is
+`services/control-plane/internal/handlers/runtime_exec_e2e_test.go` (opt-in via
+`LANTERN_RUNTIME_E2E=1`). The **Firecracker** path specifically is not verifiable
+on macOS (no `/dev/kvm`) — that is covered by the `microvm · integration` CI job on
+a KVM runner. Exec routing differs between them: the manager sends Firecracker VMs
+to the in-guest harness and everything else through the backend.
+
 **Known ceilings.** File transfer is base64-inline over the exec channel — fine for
 agent-sized files, but a large binary should move via object storage. A microVM
 image digest is required; the sandbox does not build one for you.

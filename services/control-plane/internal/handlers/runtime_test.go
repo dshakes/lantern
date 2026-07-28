@@ -160,6 +160,7 @@ type recScheduler struct {
 	node         string
 	az           string
 	calls        []string // "schedule", "terminate", etc.
+	execNode     string   // node passed to the most recent Exec call
 }
 
 func (r *recScheduler) Schedule(_ context.Context, _ map[string]any) (string, string, string, error) {
@@ -187,8 +188,11 @@ func (r *recScheduler) Terminate(_ context.Context, vmID, _ string) error {
 	return r.terminateErr
 }
 
-func (r *recScheduler) Exec(_ context.Context, _, _ string, _ []string) (string, string, int32, error) {
+func (r *recScheduler) Exec(_ context.Context, node, _, _ string, _ []string) (string, string, int32, error) {
+	// Record the node so tests can assert exec is routed to the manager on the
+	// VM's OWN node (a default would misroute in multi-node deployments).
 	r.calls = append(r.calls, "exec")
+	r.execNode = node
 	return "", "", 0, nil
 }
 
