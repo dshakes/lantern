@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "ruff", "mypy"]
+deepagents = ["deepagents>=0.6"]
 
 [project.scripts]
 lantern-runner = "lantern.runtime.runner:main"
