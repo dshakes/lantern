@@ -28,6 +28,7 @@
   <!-- title -->
   <text x="32" y="44" class="h" font-size="22">Lantern — Agent Execution Kernel</text>
   <text x="32" y="64" class="sub" font-size="12.5">Vendor-operated, multi-tenant, durable agent runtime that executes inside the customer's VPC · Kubernetes-default substrate (ADR&#160;0009)</text>
+  <text x="32" y="82" class="sub" font-size="10.5">Entry points: Dashboard /runtime · <tspan class="mono">lantern</tspan> CLI · SDK runtime clients · LangChain deepagents sandbox backend (<tspan class="mono">lantern-sdk[deepagents]</tspan>) → <tspan class="mono">POST /v1/runtime/schedule · /exec</tspan></text>
 
   <!-- legend -->
   <g transform="translate(880,26)">

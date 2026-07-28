@@ -37,6 +37,8 @@ Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors
 
 **Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
 
+**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under Lantern's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install with `pip install "lantern-sdk[deepagents]"`; conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
+
 **Known endpoint fixes (2026-06)**:
 - `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
 - `sessions.close` — was `POST /v1/sessions/{id}/close` (404). Fixed to `DELETE /v1/sessions/{id}`. `close()` kept as a backward-compat alias; `delete()` is canonical. `stop()` added for `POST /v1/sessions/{id}/stop`.
