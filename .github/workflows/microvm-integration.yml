@@ -34,7 +34,12 @@ on:
       - "infra/firecracker/**"
       - "packages/proto/lantern/v1/runtime.proto"
       - ".github/workflows/microvm-integration.yml"
-  workflow_dispatch: {}        # allow manual runs against a KVM runner
+  workflow_dispatch:           # allow manual runs against a KVM runner
+    inputs:
+      require_kvm:
+        description: "Fail (instead of skipping) when /dev/kvm is absent"
+        type: boolean
+        default: false
   schedule:
     - cron: "0 7 * * 1"        # weekly Monday 07:00 UTC nightly-style guard
 
@@ -69,6 +74,25 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::warning::/dev/kvm absent on this runner — SKIPPING live microVM boot. \
             Set vars.MICROVM_RUNNER_LABEL to a KVM-capable runner to run it for real."
+            # A skipped boot and a real boot both render as a green check, so
+            # say so in the job summary — otherwise this workflow's history
+            # reads as "Firecracker verified" when it has never booted a VM.
+            {
+              echo "### ⚠️ microVM boot NOT verified"
+              echo
+              echo "\`/dev/kvm\` is absent on this runner, so the live Firecracker"
+              echo "boot was **skipped**. This check is green because skipping is"
+              echo "expected here — it is **not** evidence that Firecracker works."
+              echo
+              echo "To verify for real, set the \`MICROVM_RUNNER_LABEL\` repo variable"
+              echo "to a KVM-capable self-hosted runner label."
+            } >> "$GITHUB_STEP_SUMMARY"
+            # Opt-in hard failure for callers that need a real boot (e.g. a
+            # release gate): dispatch with require_kvm=true.
+            if [ "${{ inputs.require_kvm }}" = "true" ]; then
+              echo "::error::require_kvm=true but /dev/kvm is absent — failing instead of silently skipping."
+              exit 1
+            fi
           fi
 
       - name: Install toolchain (Rust musl + Firecracker + grpcurl)

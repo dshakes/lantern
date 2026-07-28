@@ -80,6 +80,9 @@ MANAGER_ADDR="127.0.0.1:50054"
 MANAGER_LOG="${WORK}/manager.log"
 SECRET_URI="lantern.secret://dev/itest/key/OPENAI_API_KEY"
 SECRET_VALUE="itest-secret-value-do-not-log"
+# Every scheduled workload must carry a tenant (multi-tenancy invariant); the
+# manager rejects an untenanted spec outright.
+ITEST_TENANT_ID="00000000-0000-0000-0000-000000000001"
 
 cleanup() {
   [ -n "${MANAGER_PID:-}" ] && kill "${MANAGER_PID}" 2>/dev/null || true
@@ -186,8 +189,11 @@ pass "Firecracker backend available (Linux + firecracker + /dev/kvm)"
 #    the test secret so VendSecret's allowlist check passes inside the guest.
 # ---------------------------------------------------------------------------
 log "Scheduling hello microVM (Spawn)"
-SPAWN_REQ=$(jq -n --arg uri "${SECRET_URI}" '{
+# tenant_id is REQUIRED: the manager refuses to schedule an untenanted
+# workload ("spec.tenant_id is required"), per the multi-tenancy invariant.
+SPAWN_REQ=$(jq -n --arg uri "${SECRET_URI}" --arg tenant "${ITEST_TENANT_ID}" '{
   spec: {
+    tenant_id: $tenant,
     image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
     isolation: "ISOLATION_HOSTILE",
     limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
