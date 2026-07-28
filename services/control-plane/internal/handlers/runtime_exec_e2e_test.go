@@ -48,7 +48,7 @@ func runtimeE2EOrSkip(t *testing.T) (schedAddr string) {
 
 // scheduleE2EVM spawns a long-lived workload and returns its wire vm_id,
 // registering termination for cleanup.
-func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, tenantID string) string {
+func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, tenantID string) (vmID, node string) {
 	t.Helper()
 
 	vmID, node, _, err := c.Schedule(ctx, map[string]any{
@@ -85,7 +85,7 @@ func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, te
 	// Spawn is dispatched asynchronously; give the workload a moment to be
 	// registered and running before exec'ing into it.
 	time.Sleep(3 * time.Second)
-	return vmID
+	return vmID, node
 }
 
 func newE2EClient(t *testing.T, schedAddr string) *grpcSchedulerClient {
@@ -109,10 +109,10 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	tctx := withTenant(ctx, tenantID)
 
 	c := newE2EClient(t, schedAddr)
-	vmID := scheduleE2EVM(tctx, t, c, tenantID)
+	vmID, node := scheduleE2EVM(tctx, t, c, tenantID)
 
 	t.Run("stdout is real command output", func(t *testing.T) {
-		stdout, stderr, exit, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "echo lantern-e2e-marker"})
+		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo lantern-e2e-marker"})
 		if err != nil {
 			t.Fatalf("Exec: %v (stderr=%q)", err, stderr)
 		}
@@ -131,7 +131,7 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	t.Run("command really runs inside the VM", func(t *testing.T) {
 		// Proves we reached the workload image, not the host: this python
 		// lives in the container.
-		stdout, stderr, exit, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "python3 -c 'print(6*7)'"})
+		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "python3 -c 'print(6*7)'"})
 		if err != nil {
 			t.Fatalf("Exec: %v (stderr=%q)", err, stderr)
 		}
@@ -146,7 +146,7 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	t.Run("nonzero exit code is propagated", func(t *testing.T) {
 		// The stub always returned 0; a real failure must surface as nonzero
 		// or callers cannot tell success from failure.
-		_, stderr, exit, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "exit 7"})
+		_, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "exit 7"})
 		if err != nil {
 			t.Fatalf("Exec: %v (stderr=%q)", err, stderr)
 		}
@@ -156,7 +156,7 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	})
 
 	t.Run("stderr is captured separately", func(t *testing.T) {
-		stdout, stderr, _, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "echo to-err >&2"})
+		stdout, stderr, _, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo to-err >&2"})
 		if err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
@@ -171,10 +171,10 @@ func TestRuntimeExecE2E_RealVM(t *testing.T) {
 	t.Run("filesystem writes persist across execs", func(t *testing.T) {
 		// This is the property the deepagents sandbox backend depends on:
 		// write in one exec, read it back in the next.
-		if _, stderr, exit, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "echo persisted > /tmp/lantern-e2e.txt"}); err != nil || exit != 0 {
+		if _, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "echo persisted > /tmp/lantern-e2e.txt"}); err != nil || exit != 0 {
 			t.Fatalf("write exec: err=%v exit=%d stderr=%q", err, exit, stderr)
 		}
-		stdout, stderr, exit, err := c.Exec(tctx, vmID, "/bin/sh", []string{"-c", "cat /tmp/lantern-e2e.txt"})
+		stdout, stderr, exit, err := c.Exec(tctx, node, vmID, "/bin/sh", []string{"-c", "cat /tmp/lantern-e2e.txt"})
 		if err != nil || exit != 0 {
 			t.Fatalf("read exec: err=%v exit=%d stderr=%q", err, exit, stderr)
 		}
@@ -196,7 +196,7 @@ func TestRuntimeExecE2E_UnknownVM(t *testing.T) {
 
 	c := newE2EClient(t, schedAddr)
 
-	stdout, _, exit, err := c.Exec(tctx, "vm-does-not-exist", "/bin/sh", []string{"-c", "echo hi"})
+	stdout, _, exit, err := c.Exec(tctx, "", "vm-does-not-exist", "/bin/sh", []string{"-c", "echo hi"})
 	if err == nil && exit == 0 && strings.Contains(stdout, "hi") {
 		t.Fatal("exec against an unknown vm reported success — it must fail")
 	}

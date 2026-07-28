@@ -75,7 +75,11 @@ type VMStateInfo struct {
 type SchedulerClient interface {
 	Schedule(ctx context.Context, spec map[string]any) (vmID, node, az string, err error)
 	Terminate(ctx context.Context, vmID, reason string) error
-	Exec(ctx context.Context, vmID, command string, argv []string) (stdout, stderr string, exitCode int32, err error)
+	// Exec runs a command in a VM. `node` is the VM's scheduled placement
+	// (from runtime_vms.node) and selects WHICH runtime-manager to dial —
+	// passing "" falls back to the default manager, which is only correct
+	// on a single-node deployment.
+	Exec(ctx context.Context, node, vmID, command string, argv []string) (stdout, stderr string, exitCode int32, err error)
 	Cluster(ctx context.Context) (map[string]any, error)
 	// ListStates returns the scheduler's current view of live VM states,
 	// keyed by vm_id. Used by the reconciler to write authoritative state
@@ -107,9 +111,11 @@ func (s *stubSchedulerClient) Terminate(_ context.Context, vmID, reason string) 
 	return nil
 }
 
-func (s *stubSchedulerClient) Exec(_ context.Context, vmID, command string, _ []string) (string, string, int32, error) {
-	// TODO(runtime-grpc): replace with real RuntimeManager.Exec stream proxy.
+func (s *stubSchedulerClient) Exec(_ context.Context, node, vmID, command string, _ []string) (string, string, int32, error) {
+	// The stub spawns nothing, so there is nothing to exec into; the real
+	// implementation is grpcSchedulerClient.Exec.
 	s.logger.Info("stub scheduler: exec",
+		zap.String("node", node),
 		zap.String("vm_id", vmID),
 		zap.String("command", command),
 	)
@@ -278,11 +284,17 @@ func (c *grpcSchedulerClient) Terminate(ctx context.Context, vmID, reason string
 	return err
 }
 
-func (c *grpcSchedulerClient) Exec(ctx context.Context, vmID, command string, argv []string) (string, string, int32, error) {
+func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command string, argv []string) (string, string, int32, error) {
 	// Exec dispatches DIRECTLY to the runtime-manager, mirroring the Logs SSE
 	// proxy: the scheduler places workloads, but the manager owns the exec
-	// channel into them. Node "" resolves to LANTERN_DEFAULT_MANAGER_ADDR.
-	mgr, err := c.managerClient("")
+	// channel into them.
+	//
+	// Dial the manager on the VM's OWN node — a workload placed on node-B is
+	// unreachable from node-A's manager, so a hardcoded default would misroute
+	// every exec in a multi-node deployment. resolveManagerAddr falls back to
+	// LANTERN_DEFAULT_MANAGER_ADDR when node is "" or has no explicit override,
+	// which keeps single-node dev working.
+	mgr, err := c.managerClient(node)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -1930,10 +1942,13 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Confirm ownership (tenant-scoped; cross-tenant vm_id → no row → 404).
+	// Confirm ownership (tenant-scoped; cross-tenant vm_id → no row → 404) and
+	// capture the VM's node placement — exec must reach the manager on the node
+	// the workload actually runs on, not a default (mirrors StreamLogs).
 	var owner string
+	var node *string
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`, vmID, tenantID).Scan(&owner)
+		return tx.QueryRow(ctx, `SELECT tenant_id, node FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`, vmID, tenantID).Scan(&owner, &node)
 	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
@@ -1957,7 +1972,11 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stdout, stderr, exit, err := h.scheduler.Exec(withTenant(ctx, tenantID), vmID, body.Command, body.Argv)
+	nodeName := ""
+	if node != nil {
+		nodeName = *node
+	}
+	stdout, stderr, exit, err := h.scheduler.Exec(withTenant(ctx, tenantID), nodeName, vmID, body.Command, body.Argv)
 	if err != nil {
 		h.logger().Error("scheduler.Exec failed", zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "scheduler error"})
