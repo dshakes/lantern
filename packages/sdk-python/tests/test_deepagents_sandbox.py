@@ -41,7 +41,9 @@ def test_schedule_and_exec_contract():
             assert body["isolation"] == "firecracker"
             return httpx.Response(200, json={"vmId": "vm-1", "node": "n1", "az": "a", "stub": True})
         if request.url.path == "/v1/runtime/vms/vm-1/exec":
-            assert json.loads(request.content) == {"command": "echo hi"}
+            # Lantern's exec is execve-style (command = executable, argv = args),
+            # so a bare shell line must be wrapped in /bin/sh -c.
+            assert json.loads(request.content) == {"command": "/bin/sh", "argv": ["-c", "echo hi"]}
             return httpx.Response(200, json={"stdout": "hi\n", "stderr": "", "exitCode": 0})
         raise AssertionError(f"unexpected {request.url.path}")
 
@@ -62,11 +64,30 @@ def test_terminate_sends_grace_param():
     _client(handler).terminate("vm-9", grace="10s")
 
 
+def test_get_vm_unwraps_detail_envelope():
+    """GET /v1/runtime/vms/{id} really returns {"vm": {...}, "events": [...]}.
+
+    Regression: the client used to read `state` off the envelope, so it was
+    always None and wait_running() spun until it timed out.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"vm": {"vmId": "vm-2", "state": "running"}, "events": [{"action": "schedule"}]},
+        )
+
+    vm = _client(handler).get_vm("vm-2")
+    assert vm["state"] == "running"
+    assert vm["vmId"] == "vm-2"
+
+
 def test_wait_running_polls_then_returns():
     states = iter(["pending", "spawning", "running"])
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"vmId": "vm-2", "state": next(states)})
+        # Real detail-endpoint envelope, not a flattened row.
+        return httpx.Response(200, json={"vm": {"vmId": "vm-2", "state": next(states)}, "events": []})
 
     vm = _client(handler).wait_running("vm-2", timeout=5, poll_interval=0)
     assert vm["state"] == "running"
@@ -74,10 +95,18 @@ def test_wait_running_polls_then_returns():
 
 def test_wait_running_raises_on_terminal_state():
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"vmId": "vm-3", "state": "failed", "stateReason": "oom"})
+        return httpx.Response(200, json={"vm": {"vmId": "vm-3", "state": "failed", "stateReason": "oom"}, "events": []})
 
     with pytest.raises(RuntimeError, match="oom"):
         _client(handler).wait_running("vm-3", timeout=5, poll_interval=0)
+
+
+def test_exec_with_explicit_argv_is_not_shell_wrapped():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content) == {"command": "python3", "argv": ["-c", "print(1)"]}
+        return httpx.Response(200, json={"stdout": "1\n", "stderr": "", "exitCode": 0})
+
+    assert _client(handler).exec("vm-1", "python3", ["-c", "print(1)"]) == ("1\n", "", 0)
 
 
 def test_api_error_surfaces_status():

@@ -27,6 +27,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -278,18 +279,88 @@ func (c *grpcSchedulerClient) Terminate(ctx context.Context, vmID, reason string
 }
 
 func (c *grpcSchedulerClient) Exec(ctx context.Context, vmID, command string, argv []string) (string, string, int32, error) {
-	// TODO(runtime-grpc): RuntimeManager.Exec is a bidi-stream RPC. The
-	// stub generated client in gen/go/lantern/v1/runtime_grpc.pb.go does
-	// not yet expose it (the proto defines it but `make proto` hasn't
-	// regenerated). Until then we surface a clear error so callers know
-	// Exec is not wired and can fall back. Tracked as TODO(W12-exec).
-	_ = ctx
-	c.logger.Warn("grpc scheduler: Exec not wired through proto stub",
-		zap.String("vm_id", vmID),
-		zap.String("command", command),
-		zap.Int("argv_len", len(argv)),
-	)
-	return "", "exec not yet wired through runtime-manager proto stub\n", 0, nil
+	// Exec dispatches DIRECTLY to the runtime-manager, mirroring the Logs SSE
+	// proxy: the scheduler places workloads, but the manager owns the exec
+	// channel into them. Node "" resolves to LANTERN_DEFAULT_MANAGER_ADDR.
+	mgr, err := c.managerClient("")
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	stream, err := mgr.Exec(ctx)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open exec stream: %w", err)
+	}
+
+	// The first frame MUST carry vm_id + command. We pipe no stdin, so
+	// half-close immediately and just drain the response side.
+	if err := stream.Send(&lanternv1.ExecRequest{
+		VmId:    vmID,
+		Command: command,
+		Argv:    argv,
+	}); err != nil {
+		return "", "", 0, fmt.Errorf("send exec request: %w", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		return "", "", 0, fmt.Errorf("close exec send: %w", err)
+	}
+
+	var stdout, stderr []byte
+	var exitCode int32
+	truncated := false
+
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			// Return what we collected alongside the error so a partial
+			// failure is still diagnosable.
+			return string(stdout), string(stderr), exitCode, fmt.Errorf("exec stream: %w", err)
+		}
+
+		var tOut, tErr bool
+		stdout, tOut = appendCapped(stdout, resp.Stdout)
+		stderr, tErr = appendCapped(stderr, resp.Stderr)
+		truncated = truncated || tOut || tErr
+
+		// The manager marks the terminal frame with done=true and the real
+		// exit code; frames before it carry only output.
+		if resp.Done {
+			exitCode = resp.ExitCode
+			break
+		}
+	}
+
+	if truncated {
+		stderr = append(stderr, "\n[lantern: output truncated at 1 MiB by control-plane cap]\n"...)
+	}
+
+	return string(stdout), string(stderr), exitCode, nil
+}
+
+// execMaxOutputBytes caps how much stdout/stderr a single exec accumulates in
+// control-plane memory. Output originates in an untrusted workload (invariant
+// #5), so a runaway command must not be able to OOM the control plane; past
+// the cap we stop appending and say so in stderr rather than truncating
+// silently.
+const execMaxOutputBytes = 1 << 20 // 1 MiB per stream
+
+// appendCapped appends src to dst up to execMaxOutputBytes, reporting whether
+// anything had to be dropped.
+func appendCapped(dst, src []byte) ([]byte, bool) {
+	if len(src) == 0 {
+		return dst, false
+	}
+	room := execMaxOutputBytes - len(dst)
+	if room <= 0 {
+		return dst, true
+	}
+	if len(src) > room {
+		return append(dst, src[:room]...), true
+	}
+	return append(dst, src...), false
 }
 
 func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, error) {
