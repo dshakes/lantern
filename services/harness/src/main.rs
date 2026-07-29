@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
     // instead. Translate it BEFORE anything reads configuration (including
     // LANTERN_TRACE_PARENT below), and before any thread exists, since
     // set_var mutates process-global state.
-    bootenv::hydrate_env_from_cmdline();
+    bootenv::bootstrap();
 
     // Set the W3C propagator globally and parse LANTERN_TRACE_PARENT so every
     // outgoing gRPC call to the manager carries the spawn trace's traceparent.
