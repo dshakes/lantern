@@ -77,7 +77,20 @@ pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
                 .map_err(|e| anyhow::anyhow!("cannot read {ENV_MANAGER_CA} {ca:?}: {e}"))?;
 
             let config = build_client_tls_config_from_pem(&cert_pem, &key_pem, &ca_pem)?;
-            tracing::info!(cert = %cert, ca = %ca, "harness: mTLS client cert loaded");
+            // Fingerprint the trust material actually loaded. A CA that looks
+            // right by path but differs by bytes shows up as UnknownIssuer at
+            // handshake time with nothing to distinguish it from an
+            // unreachable host, so make the loaded identity checkable.
+            let ca_fp = ring::digest::digest(&ring::digest::SHA256, &ca_pem);
+            let cert_fp = ring::digest::digest(&ring::digest::SHA256, &cert_pem);
+            tracing::info!(
+                cert = %cert,
+                ca = %ca,
+                ca_sha256 = %hex_prefix(ca_fp.as_ref()),
+                ca_bytes = ca_pem.len(),
+                client_cert_sha256 = %hex_prefix(cert_fp.as_ref()),
+                "harness: mTLS client cert loaded"
+            );
             Ok(Some(config))
         }
         _ => {
@@ -149,6 +162,12 @@ pub fn build_client_tls_config_from_pem(
         .domain_name(server_name);
 
     Ok(config)
+}
+
+/// First 8 bytes of a digest as hex — enough to compare identities in logs
+/// without dumping full material.
+fn hex_prefix(bytes: &[u8]) -> String {
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
