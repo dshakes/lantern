@@ -44,8 +44,31 @@ const CERT_FILES: [&str; 3] = ["tls.crt", "tls.key", "manager-ca.crt"];
 /// (which never resolve in the guest) are correctly ignored.
 pub fn bootstrap() {
     ensure_procfs();
+    report_entropy_source();
     mount_cert_drive();
     hydrate_env_from_cmdline();
+}
+
+/// Report whether the guest has a usable kernel entropy source.
+///
+/// A minimal rootfs ships an empty `/dev`, and every TLS handshake needs
+/// randomness. If `/dev/urandom` is missing or unreadable the failure surfaces
+/// far from its cause, so state it plainly at boot.
+fn report_entropy_source() {
+    let path = std::path::Path::new("/dev/urandom");
+    if !path.exists() {
+        tracing::error!(
+            "entropy: /dev/urandom is ABSENT — TLS and any RNG-dependent path will fail"
+        );
+        return;
+    }
+    // Existing but unreadable is just as fatal, and looks identical from afar.
+    let mut probe = [0u8; 16];
+    match std::fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut probe)) {
+        Ok(n) if n > 0 => tracing::debug!(bytes = n, "entropy: /dev/urandom readable"),
+        Ok(_) => tracing::error!("entropy: /dev/urandom returned no bytes"),
+        Err(e) => tracing::error!(error = %e, "entropy: /dev/urandom unreadable"),
+    }
 }
 
 /// Mount procfs if `/proc/cmdline` is not readable yet.
