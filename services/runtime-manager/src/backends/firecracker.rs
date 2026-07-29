@@ -196,6 +196,8 @@ pub struct VmConfig {
     /// attached as a dedicated drive so the in-guest `tls_cert_path` etc.
     /// resolve. Built from the provisioned `/run/lantern/certs/<vm_id>/` tree.
     pub certs_image_path: String,
+    /// Point-to-point addressing for this VM's TAP link.
+    pub network: VmNetwork,
 }
 
 /// Defaults injected when the ScheduleRequest does not set a limit.
@@ -245,12 +247,16 @@ impl VmConfig {
         let tls_key_path = format!("/run/lantern/certs/{vm_id}/tls.key");
         let manager_ca_path = "/run/lantern/certs/manager-ca.crt".to_string();
 
+        // Point-to-point /30 for this VM; the guest learns it via ip= below.
+        let network = VmNetwork::allocate();
+
         let boot_args = build_boot_args(
             vm_id,
             &req.run_id,
             &tls_cert_path,
             &tls_key_path,
             &manager_ca_path,
+            &network,
             req,
         );
 
@@ -270,6 +276,7 @@ impl VmConfig {
             tls_key_path,
             manager_ca_path,
             certs_image_path: format!("/run/lantern/certs/{vm_id}/certs.img"),
+            network,
         }
     }
 
@@ -394,12 +401,121 @@ pub fn parse_mem_limit(mem: &str) -> Option<u32> {
 /// Lantern env contract as kernel parameters the init process picks up.
 ///
 /// Pure function — unit-testable.
+/// Number of /30 blocks carved out of 172.16.0.0/16 (4 addresses each).
+const VM_SUBNET_COUNT: u32 = 16_384;
+
+/// Monotonic allocator index for per-VM subnets.
+static VM_SUBNET_NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Point-to-point networking for a single microVM.
+///
+/// Each VM gets its own /30 out of 172.16.0.0/16 on its own TAP device: the
+/// host takes `.1`, the guest `.2`. A dedicated link per VM — rather than a
+/// shared bridge — means two microVMs are never on the same L2 segment and
+/// cannot address each other, which is the isolation the HOSTILE tier exists
+/// to provide.
+///
+/// The guest has no DHCP client (its rootfs holds only the harness), so the
+/// address is handed over via the kernel's `ip=` autoconfiguration parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VmNetwork {
+    pub host_ip: String,
+    pub guest_ip: String,
+    pub netmask: String,
+}
+
+impl VmNetwork {
+    /// Derive the addresses for allocation `index` (wraps at `VM_SUBNET_COUNT`).
+    pub fn from_index(index: u32) -> Self {
+        // 4 addresses per /30: [network, host, guest, broadcast].
+        let base = (index % VM_SUBNET_COUNT) * 4;
+        let third = base / 256;
+        let fourth = base % 256;
+        VmNetwork {
+            host_ip: format!("172.16.{third}.{}", fourth + 1),
+            guest_ip: format!("172.16.{third}.{}", fourth + 2),
+            netmask: "255.255.255.252".to_string(),
+        }
+    }
+
+    /// Allocate the next subnet whose host address is not already assigned.
+    ///
+    /// The counter alone is not enough: it restarts at 0 whenever the manager
+    /// process does, while TAP devices from previously-spawned VMs still hold
+    /// their addresses. Reusing one puts two TAPs on the same /30, the host
+    /// then has duplicate routes for it, and replies leave via the wrong (often
+    /// dead) device — the VM looks booted but is unreachable. So skip anything
+    /// the host is already using.
+    pub fn allocate() -> Self {
+        let in_use = host_ips_in_use();
+        for _ in 0..VM_SUBNET_COUNT {
+            let index = VM_SUBNET_NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let net = Self::from_index(index);
+            if !in_use.contains(&net.host_ip) {
+                return net;
+            }
+        }
+        // Pool exhausted: hand back the next candidate anyway so tap setup
+        // fails loudly rather than this silently looping forever.
+        let index = VM_SUBNET_NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::error!("VM subnet pool exhausted — reusing {}", index % VM_SUBNET_COUNT);
+        Self::from_index(index)
+    }
+
+    /// The `ip=` kernel parameter that configures eth0 in the guest.
+    ///
+    /// Format: `client:server:gateway:netmask:hostname:device:autoconf`. The
+    /// NFS-server and hostname fields are unused and left empty.
+    pub fn kernel_ip_param(&self) -> String {
+        format!(
+            "ip={}::{}:{}::eth0:off",
+            self.guest_ip, self.host_ip, self.netmask
+        )
+    }
+}
+
+/// IPv4 addresses currently assigned to any interface on this host.
+///
+/// Best-effort: if `ip` cannot be run we return an empty set, which degrades to
+/// counter-only allocation rather than blocking the spawn.
+fn host_ips_in_use() -> std::collections::HashSet<String> {
+    let Ok(output) = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show"])
+        .output()
+    else {
+        return std::collections::HashSet::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            // "3: fc-abc inet 172.16.0.1/30 scope global fc-abc ..."
+            let mut fields = line.split_whitespace();
+            let addr = fields.find(|f| *f == "inet").and(fields.next())?;
+            addr.split_once('/').map(|(ip, _)| ip.to_string())
+        })
+        .collect()
+}
+
+/// The address the guest should dial to reach the runtime-manager.
+///
+/// The manager listens on the host; from inside the VM its own loopback is a
+/// different machine, so the guest must use the host end of its point-to-point
+/// link. The port comes from the manager's own `LISTEN_ADDR`.
+fn manager_addr_for_guest(net: &VmNetwork) -> String {
+    let port = std::env::var("LISTEN_ADDR")
+        .ok()
+        .and_then(|addr| addr.rsplit_once(':').map(|(_, p)| p.to_string()))
+        .unwrap_or_else(|| "50054".to_string());
+    format!("{}:{}", net.host_ip, port)
+}
+
 pub fn build_boot_args(
     vm_id: &str,
     run_id: &str,
     tls_cert_path: &str,
     tls_key_path: &str,
     manager_ca_path: &str,
+    net: &VmNetwork,
     req: &ScheduleRequest,
 ) -> String {
     // Encode extra env vars from the ScheduleRequest as k=v pairs on the
@@ -417,13 +533,22 @@ pub fn build_boot_args(
         })
         .collect();
 
+    // Static addressing via the kernel's ip= parameter, plus the manager
+    // endpoint the harness should dial. Without these the guest has no L3
+    // configuration at all and falls back to 127.0.0.1 — its own loopback,
+    // not the host — so it can never reach the manager.
+    let ip_param = net.kernel_ip_param();
+    let manager_addr = manager_addr_for_guest(net);
+
     format!(
         "console=ttyS0 reboot=k panic=1 pci=off \
+         {ip_param} \
          lantern.vm_id={vm_id} \
          lantern.run_id={run_id} \
          lantern.tls_cert={tls_cert_path} \
          lantern.tls_key={tls_key_path} \
-         lantern.manager_ca={manager_ca_path}{extra_env}"
+         lantern.manager_ca={manager_ca_path} \
+         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{extra_env}"
     )
 }
 
@@ -1082,7 +1207,11 @@ async fn wait_for_socket(socket_path: &str, timeout: Duration) -> Result<()> {
 /// calls (rtnetlink crate) to avoid the fork overhead.
 ///
 /// Integration-tested on a Linux host with `ip` from iproute2.
-pub async fn setup_tap_device(tap_name: &str, bridge_name: Option<&str>) -> Result<()> {
+pub async fn setup_tap_device(
+    tap_name: &str,
+    bridge_name: Option<&str>,
+    host_ip: Option<&str>,
+) -> Result<()> {
     use tokio::process::Command;
 
     // Create the TAP device.
@@ -1093,6 +1222,21 @@ pub async fn setup_tap_device(tap_name: &str, bridge_name: Option<&str>) -> Resu
         .context("failed to run 'ip tuntap add'")?;
     if !status.success() {
         bail!("ip tuntap add {tap_name} mode tap failed: {status}");
+    }
+
+    // Give the host end of the point-to-point link an address. Without this
+    // the TAP is up but has no L3 configuration, so nothing in the guest can
+    // reach the manager. Skipped in bridge mode, where addressing belongs to
+    // the bridge rather than the individual TAP.
+    if let (Some(ip), None) = (host_ip, bridge_name) {
+        let status = Command::new("ip")
+            .args(["addr", "add", &format!("{ip}/30"), "dev", tap_name])
+            .status()
+            .await
+            .context("failed to run 'ip addr add'")?;
+        if !status.success() {
+            bail!("ip addr add {ip}/30 dev {tap_name} failed: {status}");
+        }
     }
 
     // Bring the TAP interface up.
@@ -2099,7 +2243,12 @@ impl FirecrackerBackend {
 
         // Step 1: TAP device.
         // LINUX-ONLY: requires CAP_NET_ADMIN / root.
-        setup_tap_device(&cfg.tap_dev, self.bridge_name.as_deref()).await?;
+        setup_tap_device(
+            &cfg.tap_dev,
+            self.bridge_name.as_deref(),
+            Some(&cfg.network.host_ip),
+        )
+        .await?;
 
         // Step 1.5 (jailed launches only): stage artifacts into the jail and
         // derive the jail-relative view of the config.  The chrooted
@@ -3310,6 +3459,59 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn vm_network_gives_each_index_a_distinct_p2p_pair() {
+        // Two VMs must never share a subnet: overlapping addresses would put
+        // them on the same link and break the per-VM isolation this exists for.
+        let a = VmNetwork::from_index(0);
+        let b = VmNetwork::from_index(1);
+        assert_eq!(a.host_ip, "172.16.0.1");
+        assert_eq!(a.guest_ip, "172.16.0.2");
+        assert_eq!(b.host_ip, "172.16.0.5");
+        assert_eq!(b.guest_ip, "172.16.0.6");
+        assert_ne!(a.guest_ip, b.guest_ip);
+    }
+
+    #[test]
+    fn vm_network_host_and_guest_always_differ_and_stay_in_range() {
+        for i in [0u32, 1, 63, 64, 255, 4095, VM_SUBNET_COUNT - 1] {
+            let n = VmNetwork::from_index(i);
+            assert_ne!(n.host_ip, n.guest_ip, "index {i}");
+            assert!(n.host_ip.starts_with("172.16."), "index {i}: {}", n.host_ip);
+            assert!(n.guest_ip.starts_with("172.16."), "index {i}");
+            // Last octet must stay a valid host address in the /30.
+            let last: u32 = n.guest_ip.rsplit('.').next().unwrap().parse().unwrap();
+            assert!(last <= 254, "index {i} produced {}", n.guest_ip);
+        }
+    }
+
+    #[test]
+    fn vm_network_index_wraps_instead_of_overflowing() {
+        // Wrapping keeps the octet arithmetic in range rather than panicking
+        // or producing a malformed address once the pool is exhausted.
+        assert_eq!(VmNetwork::from_index(VM_SUBNET_COUNT), VmNetwork::from_index(0));
+    }
+
+    #[test]
+    fn kernel_ip_param_is_the_static_autoconf_form() {
+        // The guest has no DHCP client, so this must be a fully static
+        // assignment with autoconf explicitly off.
+        let n = VmNetwork::from_index(0);
+        assert_eq!(n.kernel_ip_param(), "ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off");
+    }
+
+    #[test]
+    fn boot_args_configure_the_guest_network() {
+        // Regression: without ip= the guest had no L3 config at all, and
+        // without a manager address it dialled its own loopback.
+        let req = minimal_schedule_req();
+        let net = VmNetwork::from_index(0);
+        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &net, &req);
+        assert!(args.contains("ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off"), "{args}");
+        assert!(args.contains("lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:"), "{args}");
+        assert!(!args.contains("LANTERN_MANAGER_ADDR=127.0.0.1"), "{args}");
+    }
+
+    #[test]
     fn boot_args_contains_required_fields() {
         let req = minimal_schedule_req();
         let args = build_boot_args(
@@ -3318,6 +3520,7 @@ mod tests {
             "/certs/vm-123/tls.crt",
             "/certs/vm-123/tls.key",
             "/certs/manager-ca.crt",
+            &VmNetwork::from_index(0),
             &req,
         );
         assert!(args.contains("console=ttyS0"));
@@ -3333,7 +3536,7 @@ mod tests {
         let mut req = minimal_schedule_req();
         req.env
             .insert("LANTERN_TENANT_ID".to_string(), "t-999".to_string());
-        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &req);
+        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &VmNetwork::from_index(0), &req);
         assert!(
             args.contains("lantern.env.LANTERN_TENANT_ID=t-999"),
             "env var must appear in boot args: {args}"
@@ -3345,7 +3548,7 @@ mod tests {
         let mut req = minimal_schedule_req();
         req.env
             .insert("MY_VAR".to_string(), "value with spaces".to_string());
-        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &req);
+        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &VmNetwork::from_index(0), &req);
         // Spaces replaced with underscores so the kernel cmdline isn't split.
         assert!(
             !args.contains("value with spaces"),

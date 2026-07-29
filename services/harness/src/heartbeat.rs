@@ -141,8 +141,12 @@ impl Heartbeat {
                     send_handle.abort();
                 }
                 Err(e) => {
+                    // `{:#}` prints the whole anyhow chain. Display alone shows
+                    // only the outermost context ("could not connect to
+                    // manager at ..."), which makes a TLS handshake rejection
+                    // indistinguishable from the host being unreachable.
                     tracing::warn!(
-                        error = %e,
+                        error = format!("{e:#}"),
                         backoff_ms = backoff.as_millis() as u64,
                         "manager unreachable, will retry"
                     );
