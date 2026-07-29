@@ -14,6 +14,7 @@
 
 #![allow(clippy::needless_return)]
 
+mod bootenv;
 mod cc_attest;
 mod egress;
 mod exec;
@@ -56,9 +57,12 @@ fn parse_env() -> Result<HarnessEnv> {
     let vm_id = std::env::var("LANTERN_VM_ID").context("LANTERN_VM_ID env var required")?;
     let manager_addr =
         std::env::var("LANTERN_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
-    let workload_cmd_raw = std::env::var("LANTERN_WORKLOAD_CMD")
-        .context("LANTERN_WORKLOAD_CMD env var required (space-separated argv)")?;
-    let workload_cmd: Vec<String> = workload_cmd_raw
+    // Space-separated argv. A VM may legitimately declare NO workload — a
+    // boot/verification VM whose job is to come up, serve the secrets + exec
+    // channels, and heartbeat until it is stopped. Absent or blank therefore
+    // means "supervise nothing", not a configuration error.
+    let workload_cmd: Vec<String> = std::env::var("LANTERN_WORKLOAD_CMD")
+        .unwrap_or_default()
         .split_whitespace()
         .map(|s| s.to_string())
         .collect();
@@ -100,6 +104,13 @@ async fn main() -> Result<()> {
         .json()
         .with_target(false)
         .init();
+
+    // As PID 1 in a microVM the harness starts with an essentially empty
+    // environment — the kernel passes the spawn contract on the command line
+    // instead. Translate it BEFORE anything reads configuration (including
+    // LANTERN_TRACE_PARENT below), and before any thread exists, since
+    // set_var mutates process-global state.
+    bootenv::hydrate_env_from_cmdline();
 
     // Set the W3C propagator globally and parse LANTERN_TRACE_PARENT so every
     // outgoing gRPC call to the manager carries the spawn trace's traceparent.
@@ -234,6 +245,21 @@ async fn main() -> Result<()> {
 
     // 10. Main task: run the supervisor on the foreground. When it returns,
     //     the workload either succeeded (exit clean) or exhausted restarts.
+    //     With no workload declared there is nothing to supervise, and the
+    //     supervisor treats an empty argv as fatal — so idle on the shutdown
+    //     signal instead, keeping the secrets/exec/heartbeat channels served.
+    if env.workload_cmd.is_empty() {
+        tracing::info!("no workload declared — idling until stopped (boot-only VM)");
+        drop(supervisor);
+        drop(stdio_tx);
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "failed to await shutdown signal");
+        }
+        tracing::info!("shutdown signal received");
+        report_handle.abort();
+        return Ok(());
+    }
+
     let supervisor_task = tokio::spawn(async move { supervisor.run(stdio_tx).await });
 
     let result = tokio::select! {
