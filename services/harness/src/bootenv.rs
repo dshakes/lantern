@@ -20,6 +20,34 @@
 /// Where the kernel exposes the boot command line.
 const CMDLINE_PATH: &str = "/proc/cmdline";
 
+/// In-guest mount point for the per-VM cert drive.
+#[cfg(target_os = "linux")]
+const CERT_MOUNT: &str = "/run/lantern/certs";
+
+/// Block devices to probe for the cert drive.
+///
+/// Firecracker exposes drives as virtio-blk in configuration order — rootfs is
+/// `/dev/vda` and the cert drive `/dev/vdb` — but nothing in the API contract
+/// guarantees that, so probe a few and verify the contents before trusting one.
+#[cfg(target_os = "linux")]
+const CERT_DEVICE_CANDIDATES: [&str; 3] = ["/dev/vdb", "/dev/vdc", "/dev/vdd"];
+
+/// Filenames the manager packs at the root of `certs.img`
+/// (see runtime-manager `backends/firecracker.rs::build_cert_image`).
+#[cfg(target_os = "linux")]
+const CERT_FILES: [&str; 3] = ["tls.crt", "tls.key", "manager-ca.crt"];
+
+/// Prepare the environment for a microVM boot.
+///
+/// Order matters: the cert drive is mounted BEFORE boot-args are translated, so
+/// the in-guest TLS paths are already published and the boot-args' host paths
+/// (which never resolve in the guest) are correctly ignored.
+pub fn bootstrap() {
+    ensure_procfs();
+    mount_cert_drive();
+    hydrate_env_from_cmdline();
+}
+
 /// Mount procfs if `/proc/cmdline` is not readable yet.
 ///
 /// As PID 1 in a microVM the harness starts with nothing mounted — the rootfs
@@ -58,6 +86,105 @@ fn ensure_procfs() {
 
 #[cfg(not(target_os = "linux"))]
 fn ensure_procfs() {}
+
+/// Mount the read-only per-VM cert drive and publish the in-guest TLS paths.
+///
+/// The manager provisions each VM's mTLS material into a small ext4 image and
+/// attaches it as a second, read-only drive — "the guest must never be able to
+/// rewrite its own identity". It names that material by HOST path in boot-args,
+/// which cannot resolve inside the guest; the drive has to be mounted and the
+/// paths rewritten to where they actually live. Nothing did that, so the
+/// harness→manager channel silently stayed plaintext.
+///
+/// Mounted `MS_RDONLY` (plus nosuid/nodev/noexec) to preserve the read-only
+/// property the manager relies on. Best-effort: any failure leaves the TLS env
+/// unset, which degrades to the plaintext channel rather than refusing to boot.
+#[cfg(target_os = "linux")]
+fn mount_cert_drive() {
+    // Already resolvable — a real environment was injected (docker/K8s), or
+    // this ran once already. Never re-mount over working material.
+    if std::env::var_os("LANTERN_VM_TLS_CERT")
+        .map(|p| std::path::Path::new(&p).exists())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(CERT_MOUNT) {
+        tracing::warn!(error = %e, dir = CERT_MOUNT, "certs: cannot create cert mount point");
+        return;
+    }
+
+    for device in CERT_DEVICE_CANDIDATES {
+        if !std::path::Path::new(device).exists() || !mount_ro_ext4(device, CERT_MOUNT) {
+            continue;
+        }
+
+        // Verify this really is the cert drive before publishing anything —
+        // probing means we may have just mounted some other volume.
+        let paths: Vec<String> = CERT_FILES
+            .iter()
+            .map(|name| format!("{CERT_MOUNT}/{name}"))
+            .collect();
+        if paths.iter().all(|p| std::path::Path::new(p).exists()) {
+            // SAFETY: called from main before any thread is spawned.
+            unsafe {
+                std::env::set_var("LANTERN_VM_TLS_CERT", &paths[0]);
+                std::env::set_var("LANTERN_VM_TLS_KEY", &paths[1]);
+                std::env::set_var("LANTERN_MANAGER_TLS_CA", &paths[2]);
+            }
+            tracing::info!(
+                device,
+                mount = CERT_MOUNT,
+                "certs: mounted per-VM cert drive (read-only) — harness→manager channel is mTLS"
+            );
+            return;
+        }
+
+        // Wrong volume: leave nothing mounted behind for the next candidate.
+        umount(CERT_MOUNT);
+    }
+
+    tracing::warn!(
+        candidates = ?CERT_DEVICE_CANDIDATES,
+        "certs: no per-VM cert drive found — harness→manager channel will be PLAINTEXT"
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn mount_cert_drive() {}
+
+/// Mount `device` at `target` as read-only ext4. Returns whether it succeeded.
+#[cfg(target_os = "linux")]
+fn mount_ro_ext4(device: &str, target: &str) -> bool {
+    use std::ffi::CString;
+    let (Ok(src), Ok(tgt), Ok(fstype)) = (
+        CString::new(device),
+        CString::new(target),
+        CString::new("ext4"),
+    ) else {
+        return false;
+    };
+    // MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC
+    let flags: libc::c_ulong = 0x1 | 0x2 | 0x4 | 0x8;
+    let rc = unsafe {
+        libc::mount(
+            src.as_ptr(),
+            tgt.as_ptr(),
+            fstype.as_ptr(),
+            flags,
+            std::ptr::null(),
+        )
+    };
+    rc == 0
+}
+
+#[cfg(target_os = "linux")]
+fn umount(target: &str) {
+    if let Ok(t) = std::ffi::CString::new(target) {
+        unsafe { libc::umount(t.as_ptr()) };
+    }
+}
 
 /// Map one boot-arg key to the environment variable the harness reads.
 ///
