@@ -77,6 +77,10 @@ command -v firecracker >/dev/null 2>&1 || [ -n "${FC_BINARY_PATH:-}" ] \
 
 WORK="$(mktemp -d)"
 MANAGER_ADDR="127.0.0.1:50054"
+# The guest reaches the manager over its point-to-point TAP link (172.16.x.1),
+# never loopback, so the manager has to bind all interfaces. grpcurl still
+# talks to it on 127.0.0.1 via MANAGER_ADDR above.
+MANAGER_LISTEN_ADDR="0.0.0.0:50054"
 MANAGER_LOG="${WORK}/manager.log"
 SECRET_URI="lantern.secret://dev/itest/key/OPENAI_API_KEY"
 SECRET_VALUE="itest-secret-value-do-not-log"
@@ -116,7 +120,7 @@ openssl req -newkey rsa:2048 -nodes \
   || fail "server CSR generation failed"
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" \
   -CAcreateserial -days 1 -out "${WORK}/server.crt" \
-  -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 \
+  -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 \
   || fail "server cert signing failed"
 
 # The manager enforces mTLS (client_ca_root) on EVERY service, including the
@@ -153,7 +157,7 @@ log "Starting runtime-manager (RUNTIME_BACKEND=firecracker) on ${MANAGER_ADDR}"
 env \
   RUNTIME_BACKEND=firecracker \
   LANTERN_RUNTIME_BACKEND=firecracker \
-  LISTEN_ADDR="${MANAGER_ADDR}" \
+  LISTEN_ADDR="${MANAGER_LISTEN_ADDR}" \
   LOG_LEVEL=info \
   FC_KERNEL_PATH="${FC_KERNEL_PATH}" \
   FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
