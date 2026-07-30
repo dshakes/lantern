@@ -458,7 +458,10 @@ impl VmNetwork {
         // Pool exhausted: hand back the next candidate anyway so tap setup
         // fails loudly rather than this silently looping forever.
         let index = VM_SUBNET_NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        tracing::error!("VM subnet pool exhausted — reusing {}", index % VM_SUBNET_COUNT);
+        tracing::error!(
+            "VM subnet pool exhausted — reusing {}",
+            index % VM_SUBNET_COUNT
+        );
         Self::from_index(index)
     }
 
@@ -3488,7 +3491,10 @@ mod tests {
     fn vm_network_index_wraps_instead_of_overflowing() {
         // Wrapping keeps the octet arithmetic in range rather than panicking
         // or producing a malformed address once the pool is exhausted.
-        assert_eq!(VmNetwork::from_index(VM_SUBNET_COUNT), VmNetwork::from_index(0));
+        assert_eq!(
+            VmNetwork::from_index(VM_SUBNET_COUNT),
+            VmNetwork::from_index(0)
+        );
     }
 
     #[test]
@@ -3496,7 +3502,10 @@ mod tests {
         // The guest has no DHCP client, so this must be a fully static
         // assignment with autoconf explicitly off.
         let n = VmNetwork::from_index(0);
-        assert_eq!(n.kernel_ip_param(), "ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off");
+        assert_eq!(
+            n.kernel_ip_param(),
+            "ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off"
+        );
     }
 
     #[test]
@@ -3506,8 +3515,14 @@ mod tests {
         let req = minimal_schedule_req();
         let net = VmNetwork::from_index(0);
         let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &net, &req);
-        assert!(args.contains("ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off"), "{args}");
-        assert!(args.contains("lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:"), "{args}");
+        assert!(
+            args.contains("ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off"),
+            "{args}"
+        );
+        assert!(
+            args.contains("lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:"),
+            "{args}"
+        );
         assert!(!args.contains("LANTERN_MANAGER_ADDR=127.0.0.1"), "{args}");
     }
 
@@ -3536,7 +3551,15 @@ mod tests {
         let mut req = minimal_schedule_req();
         req.env
             .insert("LANTERN_TENANT_ID".to_string(), "t-999".to_string());
-        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &VmNetwork::from_index(0), &req);
+        let args = build_boot_args(
+            "vm-1",
+            "run-1",
+            "/c",
+            "/k",
+            "/ca",
+            &VmNetwork::from_index(0),
+            &req,
+        );
         assert!(
             args.contains("lantern.env.LANTERN_TENANT_ID=t-999"),
             "env var must appear in boot args: {args}"
@@ -3548,7 +3571,15 @@ mod tests {
         let mut req = minimal_schedule_req();
         req.env
             .insert("MY_VAR".to_string(), "value with spaces".to_string());
-        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &VmNetwork::from_index(0), &req);
+        let args = build_boot_args(
+            "vm-1",
+            "run-1",
+            "/c",
+            "/k",
+            "/ca",
+            &VmNetwork::from_index(0),
+            &req,
+        );
         // Spaces replaced with underscores so the kernel cmdline isn't split.
         assert!(
             !args.contains("value with spaces"),
