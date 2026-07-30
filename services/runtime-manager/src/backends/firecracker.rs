@@ -1273,16 +1273,59 @@ pub async fn setup_tap_device(
 pub async fn teardown_tap_device(tap_name: &str) -> Result<()> {
     use tokio::process::Command;
 
-    let status = Command::new("ip")
-        .args(["tuntap", "del", tap_name, "mode", "tap"])
+    // Retry briefly: the VMM still holds the TAP for a moment after it is
+    // signalled, and deleting a device that is still open fails. A single
+    // attempt therefore lost the race routinely — `Stop` returned OK while the
+    // device (and the /30 assigned to it) stayed on the host forever, because
+    // the failure was only a warning. Deletion is idempotent, so retrying is
+    // safe; the device being already gone also ends the loop.
+    const ATTEMPTS: u32 = 10;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+    for attempt in 1..=ATTEMPTS {
+        let status = Command::new("ip")
+            .args(["tuntap", "del", tap_name, "mode", "tap"])
+            .status()
+            .await
+            .context("failed to run 'ip tuntap del'")?;
+
+        if status.success() {
+            if attempt > 1 {
+                tracing::debug!(tap_name, attempt, "TAP removed after retry");
+            }
+            return Ok(());
+        }
+
+        // Already gone is success, not a retry: nothing left to leak.
+        if !tap_device_exists(tap_name).await {
+            return Ok(());
+        }
+
+        if attempt < ATTEMPTS {
+            tokio::time::sleep(DELAY).await;
+        }
+    }
+
+    // Still present after every attempt: say so loudly. This is a real leak —
+    // the address stays assigned and the subnet is never reused.
+    tracing::warn!(
+        tap_name,
+        attempts = ATTEMPTS,
+        "TAP device could NOT be removed — it and its subnet are leaked"
+    );
+    Ok(())
+}
+
+/// Whether a TAP device is still present on the host.
+async fn tap_device_exists(tap_name: &str) -> bool {
+    tokio::process::Command::new("ip")
+        .args(["link", "show", tap_name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await
-        .context("failed to run 'ip tuntap del'")?;
-    if !status.success() {
-        // Log but don't bail — teardown errors should not mask the primary error.
-        tracing::warn!(tap_name, "ip tuntap del failed: {status}");
-    }
-    Ok(())
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -2253,6 +2296,35 @@ impl FirecrackerBackend {
         )
         .await?;
 
+        // Everything past this point runs with the TAP already created, and
+        // every step below can fail. An early return would leave the device
+        // behind: its /30 stays assigned, so the allocator skips that subnet
+        // forever, and orphaned TAPs accumulate until the host has duplicate
+        // routes for the same network and replies leave via a dead device.
+        // Tear it down on any failure so a failed boot leaks nothing.
+        match self.boot_vm_after_tap(cfg, binary).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                match teardown_tap_device(&cfg.tap_dev).await {
+                    Ok(()) => tracing::info!(
+                        vm_id = %cfg.vm_id, tap = %cfg.tap_dev,
+                        "boot failed; removed the TAP device"
+                    ),
+                    Err(te) => tracing::warn!(
+                        vm_id = %cfg.vm_id, tap = %cfg.tap_dev, error = %te,
+                        "boot failed and TAP cleanup ALSO failed — device may be orphaned"
+                    ),
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// The boot sequence from the point the TAP device exists onward.
+    ///
+    /// Split out of `boot_vm` so a failure anywhere in here can be caught and
+    /// the TAP removed; see the call site.
+    async fn boot_vm_after_tap(&self, cfg: &VmConfig, binary: &str) -> Result<()> {
         // Step 1.5 (jailed launches only): stage artifacts into the jail and
         // derive the jail-relative view of the config.  The chrooted
         // firecracker resolves every path it opens inside the jail, so the
