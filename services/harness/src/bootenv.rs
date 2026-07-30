@@ -47,6 +47,65 @@ pub fn bootstrap() {
     report_entropy_source();
     mount_cert_drive();
     hydrate_env_from_cmdline();
+    pin_manager_hostname();
+}
+
+/// Name the manager is reached by from inside the guest.
+///
+/// Must match a DNS SAN on the manager's server certificate.
+const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
+
+/// Make the manager reachable by NAME rather than by address.
+///
+/// Every microVM sits on its own point-to-point link, so the manager's address
+/// differs per VM (172.16.x.1) and can never be a certificate SAN. The intended
+/// fix was `ClientTlsConfig::domain_name`, but rustls is observably still
+/// verifying against `IpAddress(172.16.x.1)` — the override does not reach the
+/// connection — so the server certificate is checked against an address it was
+/// never issued for.
+///
+/// Pin the name in `/etc/hosts` and dial that instead. The URI itself then
+/// carries a DNS name, so the TLS server name is correct by construction and
+/// does not depend on a library override taking effect. One certificate with a
+/// `DNS:manager.lantern.internal` SAN covers every VM.
+///
+/// Best-effort: if the address cannot be parsed or `/etc/hosts` cannot be
+/// written, the original address is left in place and the connection behaves
+/// exactly as before.
+fn pin_manager_hostname() {
+    let Ok(addr) = std::env::var("LANTERN_MANAGER_ADDR") else {
+        return;
+    };
+    // Only an IP literal needs pinning; a name already resolves.
+    let Some((host, port)) = addr.rsplit_once(':') else {
+        return;
+    };
+    if host.parse::<std::net::Ipv4Addr>().is_err() {
+        return;
+    }
+
+    let entry = format!("{host}\t{MANAGER_HOSTNAME}\n");
+    let existing = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    if !existing.contains(MANAGER_HOSTNAME) {
+        let contents = if existing.is_empty() {
+            format!("127.0.0.1\tlocalhost\n{entry}")
+        } else {
+            format!("{existing}{entry}")
+        };
+        if let Err(e) = std::fs::write("/etc/hosts", contents) {
+            tracing::warn!(error = %e, "bootenv: cannot write /etc/hosts; dialing the manager by IP");
+            return;
+        }
+    }
+
+    let named = format!("{MANAGER_HOSTNAME}:{port}");
+    // SAFETY: called from main before any thread is spawned.
+    unsafe { std::env::set_var("LANTERN_MANAGER_ADDR", &named) };
+    tracing::info!(
+        manager_ip = host,
+        manager_addr = %named,
+        "bootenv: pinned the manager hostname so TLS verifies against a name, not an address"
+    );
 }
 
 /// Report whether the guest has a usable kernel entropy source.
