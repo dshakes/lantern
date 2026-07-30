@@ -43,6 +43,12 @@ pub const ENV_VM_CERT: &str = "LANTERN_VM_TLS_CERT";
 pub const ENV_VM_KEY: &str = "LANTERN_VM_TLS_KEY";
 pub const ENV_MANAGER_CA: &str = "LANTERN_MANAGER_TLS_CA";
 
+/// Name the manager's server certificate is verified against.
+///
+/// Deliberately not an address: every microVM reaches the manager on its own
+/// point-to-point link, so the IP differs per VM while the identity does not.
+pub const DEFAULT_MANAGER_SERVER_NAME: &str = "manager.lantern.internal";
+
 /// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
@@ -71,7 +77,20 @@ pub fn build_client_tls_config() -> anyhow::Result<Option<ClientTlsConfig>> {
                 .map_err(|e| anyhow::anyhow!("cannot read {ENV_MANAGER_CA} {ca:?}: {e}"))?;
 
             let config = build_client_tls_config_from_pem(&cert_pem, &key_pem, &ca_pem)?;
-            tracing::info!(cert = %cert, ca = %ca, "harness: mTLS client cert loaded");
+            // Fingerprint the trust material actually loaded. A CA that looks
+            // right by path but differs by bytes shows up as UnknownIssuer at
+            // handshake time with nothing to distinguish it from an
+            // unreachable host, so make the loaded identity checkable.
+            let ca_fp = ring::digest::digest(&ring::digest::SHA256, &ca_pem);
+            let cert_fp = ring::digest::digest(&ring::digest::SHA256, &cert_pem);
+            tracing::info!(
+                cert = %cert,
+                ca = %ca,
+                ca_sha256 = %hex_prefix(ca_fp.as_ref()),
+                ca_bytes = ca_pem.len(),
+                client_cert_sha256 = %hex_prefix(cert_fp.as_ref()),
+                "harness: mTLS client cert loaded"
+            );
             Ok(Some(config))
         }
         _ => {
@@ -129,15 +148,26 @@ pub fn build_client_tls_config_from_pem(
     let identity = Identity::from_pem(cert_pem, key_pem);
     let ca_cert = Certificate::from_pem(ca_pem);
 
+    // Verify the manager against a STABLE name rather than whatever address
+    // the endpoint happens to use. Each microVM sits on its own point-to-point
+    // /30, so the manager's address differs per VM (172.16.x.1); pinning to a
+    // name means one server cert covers every VM instead of needing a SAN for
+    // each allocated host IP. Override with LANTERN_MANAGER_SERVER_NAME.
+    let server_name = std::env::var("LANTERN_MANAGER_SERVER_NAME")
+        .unwrap_or_else(|_| DEFAULT_MANAGER_SERVER_NAME.to_string());
+
     let config = ClientTlsConfig::new()
         .identity(identity)
         .ca_certificate(ca_cert)
-        // The server name must match the manager's cert CN/SAN.
-        // Default: tls_config applies to the host derived from the endpoint URI.
-        // Override with `.domain_name("manager.lantern.internal")` if needed.
-        ;
+        .domain_name(server_name);
 
     Ok(config)
+}
+
+/// First 8 bytes of a digest as hex — enough to compare identities in logs
+/// without dumping full material.
+fn hex_prefix(bytes: &[u8]) -> String {
+    bytes.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
