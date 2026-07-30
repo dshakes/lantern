@@ -38,7 +38,17 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 anyhow = "1"
 dashmap = "6"
 # mTLS client: harness presents a per-VM client cert to the manager
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# `logging` is a rustls DEFAULT feature that default-features = false dropped.
+# Without it rustls cannot report why it rejects a certificate chain, which left
+# `UnknownIssuer` with no explanation and made the guest's handshake failure
+# diagnosable only from the outside. It routes through the `log` crate, which
+# tracing-subscriber bridges into tracing, so set RUST_LOG=rustls=trace to see it.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
 # SHA-256 for cc_attest. ring is already in the dep tree as a transitive dep of
 # rustls (ring = "0.17" in Cargo.lock); this promotes it to a direct dep so
 # cc_attest.rs can import ring::digest. No new crate enters the tree.
