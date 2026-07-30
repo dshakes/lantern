@@ -7,7 +7,8 @@
 #
 #   1. The runtime-manager Firecracker backend reports itself AVAILABLE
 #      (Linux + firecracker binary + /dev/kvm).
-#   2. A "hello" microVM is scheduled (Spawn) and BOOTS.
+#   2. A "hello" microVM is scheduled (Spawn), BOOTS, and the guest actually
+#      comes up (the harness runs as PID 1; no kernel panic).
 #   3. The in-guest harness (PID 1) comes up LIVE and connects back to the
 #      manager over the mTLS harness↔manager channel.
 #   4. The harness VENDS a declared secret over that mTLS channel (client cert
@@ -21,8 +22,13 @@
 #
 # Assertions are made against the manager's structured (JSON) log stream:
 #   - "Firecracker backend: available"        -> backend gate   (step 1)
-#   - "Firecracker: microVM started"          -> boot           (step 2)
+#   - "Firecracker: microVM started"          -> hypervisor launched  (step 2a)
+#   - "starting lantern-harness (PID 1)"      -> GUEST came up        (step 2b)
 #   - "VendSecret: issued (value NOT logged)" -> mTLS vend       (steps 3 + 4)
+#
+# Step 2a is host-side and proves only that Firecracker accepted a config; a
+# guest that panics on boot still satisfies it. Step 2b is the one that proves
+# the VM is real, and a kernel panic anywhere in the log is a hard failure.
 #
 # NOTE on heartbeat: the manager-side Heartbeat handler is currently a stub that
 # accepts the harness stream but logs nothing (services/runtime-manager/src/
@@ -218,7 +224,7 @@ VM_ID=$(printf '%s' "${SPAWN_RESP}" | jq -r '.handle.vmId // .handle.id // empty
 log "Spawned vm_id=${VM_ID}"
 
 # ---------------------------------------------------------------------------
-# Assertion 2: the microVM booted.
+# Assertion 2a: Firecracker launched the VM (host-side).
 # ---------------------------------------------------------------------------
 for _ in $(seq 1 100); do
   grep -q "Firecracker: microVM started" "${MANAGER_LOG}" && break
@@ -226,7 +232,41 @@ for _ in $(seq 1 100); do
 done
 grep -q "Firecracker: microVM started" "${MANAGER_LOG}" \
   || fail "microVM never reported started. Log:\n$(tail -50 "${MANAGER_LOG}")"
-pass "microVM booted (vm_id=${VM_ID})"
+
+# ---------------------------------------------------------------------------
+# Assertion 2b: the GUEST actually came up.
+#
+# "microVM started" is host-side only — it means Firecracker launched a VM, not
+# that anything inside it survived. A guest that panics milliseconds later still
+# satisfies it. That is not hypothetical: when the harness could not read
+# LANTERN_VM_ID, PID 1 exited and the kernel panicked ("Attempted to kill
+# init!") ~3s into every boot, and this test reported PASS for all of them.
+#
+# So require POSITIVE evidence from inside the guest, and fail loudly on a
+# panic. The marker is the harness's own startup line, which can only be
+# emitted after the guest booted, mounted its filesystems, and read its
+# configuration — i.e. it is proof the in-guest contract held, not just that
+# the hypervisor accepted a config.
+#
+# Depends on the guest console being captured into MANAGER_LOG (Firecracker
+# inherits the manager's stdio). If that ever stops being true this assertion
+# fails, which is correct: a test that cannot see inside the guest cannot
+# claim the guest booted.
+# ---------------------------------------------------------------------------
+GUEST_ALIVE_MARKER="starting lantern-harness (PID 1)"
+for _ in $(seq 1 100); do
+  grep -q "Kernel panic" "${MANAGER_LOG}" && break
+  grep -q "${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" && break
+  sleep 0.3
+done
+
+if grep -q "Kernel panic" "${MANAGER_LOG}"; then
+  fail "guest KERNEL PANICKED during boot — the VM did NOT come up.\n$(grep -B 8 'Kernel panic' "${MANAGER_LOG}" | tail -20)"
+fi
+grep -q "${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" \
+  || fail "guest never reported the harness running as PID 1 — the VM launched but nothing came up inside it. Log:\n$(tail -50 "${MANAGER_LOG}")"
+
+pass "microVM booted AND guest is live (vm_id=${VM_ID})"
 
 # ---------------------------------------------------------------------------
 # Assertions 3 + 4 (PENDING the in-guest harness agent): the harness is LIVE
