@@ -140,6 +140,29 @@ pub async fn sweep_once(
                     age_secs = age.num_seconds(),
                     "reaper: workload exited on its own; deregistering"
                 );
+                // Deregistering frees the REGISTRY entry, not the host
+                // resources the backend allocated for this VM. Firecracker
+                // creates a TAP device per VM and only removes it in
+                // `cancel()`, so a workload that exits on its own — including
+                // one that panics on boot — used to leave its TAP behind,
+                // holding the /30 it was assigned. Orphans accumulate until
+                // the host has duplicate routes for the same subnet and
+                // replies leave via a dead device.
+                //
+                // Ask the backend to release them. Best-effort: the VM is
+                // already gone, so a cleanup failure must not stop the sweep
+                // or keep the handle alive.
+                if let Err(e) = backend
+                    .cancel(&info.handle_id, "reaped: workload exited")
+                    .await
+                {
+                    tracing::warn!(
+                        vm_id = %vm_id,
+                        handle_id = %info.handle_id,
+                        error = %e,
+                        "reaper: backend cleanup failed; host resources may be orphaned"
+                    );
+                }
                 registry.deregister(&vm_id);
                 reaped += 1;
             }
@@ -175,6 +198,8 @@ mod tests {
         dead: HashSet<String>,
         unknown: HashSet<String>,
         exited: HashSet<String>,
+        /// handle_ids the reaper asked the backend to clean up.
+        cancelled: std::sync::Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -182,8 +207,9 @@ mod tests {
         async fn schedule(&self, _req: &ScheduleRequest) -> Result<Handle> {
             unimplemented!()
         }
-        async fn cancel(&self, _handle_id: &str, _reason: &str) -> Result<()> {
-            unimplemented!()
+        async fn cancel(&self, handle_id: &str, _reason: &str) -> Result<()> {
+            self.cancelled.lock().unwrap().push(handle_id.to_string());
+            Ok(())
         }
         async fn stream(&self, _handle_id: &str) -> Result<BoxStream<'static, RuntimeEvent>> {
             unimplemented!()
@@ -244,6 +270,7 @@ mod tests {
             dead: dead.iter().map(|s| s.to_string()).collect(),
             unknown: unknown.iter().map(|s| s.to_string()).collect(),
             exited: HashSet::new(),
+            cancelled: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -253,6 +280,7 @@ mod tests {
             dead: ids.iter().map(|s| s.to_string()).collect(),
             unknown: HashSet::new(),
             exited: ids.iter().map(|s| s.to_string()).collect(),
+            cancelled: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -267,6 +295,68 @@ mod tests {
         assert_eq!(reaped, 1, "exactly the exited handle should be reaped");
         assert!(reg.get("c-alive").is_some(), "running handle must survive");
         assert!(reg.get("c-dead").is_none(), "exited handle must be removed");
+    }
+
+    /// The failure this guards: deregistering frees the registry entry but NOT
+    /// the host resources the backend allocated. Firecracker removes a VM's TAP
+    /// device only in `cancel()`, so reaping without it left the device — and
+    /// the /30 it held — behind for every workload that exited on its own.
+    /// Orphans then accumulated into duplicate host routes for the same subnet.
+    #[tokio::test]
+    async fn reaping_releases_backend_resources() {
+        let reg = HandleRegistry::new();
+        reg.register(info("c-alive", 120));
+        reg.register(info("c-dead", 120));
+
+        let backend = scripted(&["c-dead"], &[]);
+        let reaped = sweep_once(&reg, &backend, &mut HashSet::new()).await;
+        assert_eq!(reaped, 1);
+
+        let cancelled = backend.cancelled.lock().unwrap().clone();
+        assert_eq!(
+            cancelled,
+            vec!["c-dead".to_string()],
+            "the reaped handle must have its backend resources released, and only that one"
+        );
+    }
+
+    /// A cleanup failure must not keep a dead handle registered — the workload
+    /// is already gone, so refusing to deregister would re-inflate the node
+    /// inventory this reaper exists to correct.
+    #[tokio::test]
+    async fn cleanup_failure_still_deregisters() {
+        struct FailingCleanup;
+        #[async_trait]
+        impl RuntimeBackend for FailingCleanup {
+            async fn schedule(&self, _r: &ScheduleRequest) -> Result<Handle> {
+                unimplemented!()
+            }
+            async fn cancel(&self, _h: &str, _r: &str) -> Result<()> {
+                Err(anyhow::anyhow!("tap teardown exploded"))
+            }
+            async fn stream(&self, _h: &str) -> Result<BoxStream<'static, RuntimeEvent>> {
+                unimplemented!()
+            }
+            async fn liveness(&self, _h: &str) -> Result<Liveness> {
+                Ok(Liveness::Exited)
+            }
+            async fn snapshot(&self, _r: &SnapshotRequest) -> Result<SnapshotInfo> {
+                unimplemented!()
+            }
+            async fn restore(&self, _u: &str, _r: &RestoreRequest) -> Result<Handle> {
+                unimplemented!()
+            }
+            fn name(&self) -> &'static str {
+                "failing-cleanup"
+            }
+        }
+
+        let reg = HandleRegistry::new();
+        reg.register(info("c-dead", 120));
+
+        let reaped = sweep_once(&reg, &FailingCleanup, &mut HashSet::new()).await;
+        assert_eq!(reaped, 1, "a cleanup failure must not block reaping");
+        assert!(reg.get("c-dead").is_none(), "handle must still be removed");
     }
 
     /// The failure this guards: a docker outage answering Err for every handle
@@ -308,7 +398,7 @@ mod tests {
                 unimplemented!()
             }
             async fn cancel(&self, _h: &str, _r: &str) -> Result<()> {
-                unimplemented!()
+                Ok(())
             }
             async fn stream(&self, _h: &str) -> Result<BoxStream<'static, RuntimeEvent>> {
                 unimplemented!()
