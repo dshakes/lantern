@@ -199,6 +199,32 @@ build_rootfs() {
   sudo cp "${HARNESS_BIN}" "${mnt}/sbin/init"
   sudo chmod 0755 "${mnt}/usr/local/bin/lantern-harness" "${mnt}/sbin/init"
 
+  # A static shell, so the guest can actually run a tool.
+  #
+  # The harness's `shell_exec` tool spawns `/bin/sh -c <command>`; without a
+  # shell in the image every tool call fails with "spawn failed: No such file
+  # or directory", so the in-guest tool path cannot be exercised at all. Must
+  # be STATIC — this rootfs has no libc.
+  #
+  # Optional: when no static busybox is present the image is built without a
+  # shell exactly as before, and only shell_exec is unavailable.
+  if [ -n "${FC_BUSYBOX_BIN:-}" ] && [ -x "${FC_BUSYBOX_BIN}" ]; then
+    BUSYBOX_SRC="${FC_BUSYBOX_BIN}"
+  elif [ -x /bin/busybox ] && file /bin/busybox 2>/dev/null | grep -q "statically linked"; then
+    BUSYBOX_SRC=/bin/busybox
+  else
+    BUSYBOX_SRC=""
+  fi
+  if [ -n "${BUSYBOX_SRC}" ]; then
+    sudo mkdir -p "${mnt}/bin"
+    sudo cp "${BUSYBOX_SRC}" "${mnt}/bin/busybox"
+    sudo chmod 0755 "${mnt}/bin/busybox"
+    sudo ln -sf busybox "${mnt}/bin/sh"
+    log "Installed static shell: ${BUSYBOX_SRC} -> /bin/sh"
+  else
+    log "No static busybox found — image has NO /bin/sh; shell_exec tool calls will fail"
+  fi
+
   # Minimal defaults file (ADR-0004). The manager overrides these via the
   # kernel cmdline (build_boot_args) and the per-VM env contract.
   sudo tee "${mnt}/etc/lantern/harness.toml" >/dev/null <<'TOML'
