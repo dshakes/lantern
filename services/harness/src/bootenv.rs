@@ -74,7 +74,8 @@ pub fn preinit_log_filter() {
         return;
     };
     if let Some(filter) = log_filter_from_cmdline(&cmdline) {
-        // SAFETY: called at the top of main, before any thread is spawned.
+        // SAFETY: `main` runs this before it builds the Tokio runtime, so the
+        // process is still single-threaded. See the contract on `main`.
         unsafe { std::env::set_var("RUST_LOG", filter) };
     }
 }
@@ -132,7 +133,7 @@ fn assemble_declared_secrets() {
     let count = declared.len();
     match serde_json::to_string(&declared) {
         Ok(json) => {
-            // SAFETY: called from main before any thread is spawned.
+            // SAFETY: single-threaded startup — see the contract on `main`.
             unsafe { std::env::set_var("LANTERN_DECLARED_SECRETS", &json) };
             // Names only — a secret URI can identify sensitive material.
             tracing::info!(count, "bootenv: assembled declared secrets from boot-args");
@@ -190,7 +191,7 @@ fn pin_manager_hostname() {
     }
 
     let named = format!("{MANAGER_HOSTNAME}:{port}");
-    // SAFETY: called from main before any thread is spawned.
+    // SAFETY: single-threaded startup — see the contract on `main`.
     unsafe { std::env::set_var("LANTERN_MANAGER_ADDR", &named) };
     tracing::info!(
         manager_ip = host,
@@ -302,7 +303,7 @@ fn mount_cert_drive() {
             .map(|name| format!("{CERT_MOUNT}/{name}"))
             .collect();
         if paths.iter().all(|p| std::path::Path::new(p).exists()) {
-            // SAFETY: called from main before any thread is spawned.
+            // SAFETY: single-threaded startup — see the contract on `main`.
             unsafe {
                 std::env::set_var("LANTERN_VM_TLS_CERT", &paths[0]);
                 std::env::set_var("LANTERN_VM_TLS_KEY", &paths[1]);
@@ -431,8 +432,9 @@ pub fn hydrate_env_from_cmdline() {
             unresolved.push(name);
             continue;
         }
-        // SAFETY: called from main before any thread is spawned, so no other
-        // thread can be reading the environment concurrently.
+        // SAFETY: single-threaded startup — `main` does all of this before the
+        // Tokio runtime exists, so no other thread can be reading the
+        // environment concurrently. See the contract on `main`.
         unsafe { std::env::set_var(&name, &value) };
         applied.push(name);
     }

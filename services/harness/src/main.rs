@@ -94,12 +94,21 @@ fn parse_env() -> Result<HarnessEnv> {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // BEFORE the subscriber is built: EnvFilter reads RUST_LOG once, at
-    // initialisation, so a filter arriving via boot-args has to be published
-    // first or it can never take effect. Silent by necessity — there is
-    // nothing to log to yet.
+/// Single-threaded startup, then the async runtime.
+///
+/// NOT `#[tokio::main]`. That macro builds the (multi-threaded) runtime and
+/// only then runs the async body — so its worker threads are already alive by
+/// the time the body's first statement executes. Every `std::env::set_var` in
+/// `bootenv` would then be mutating process-global state with other threads
+/// running, which is unsound; that is exactly why `set_var` is `unsafe` in
+/// edition 2024. Doing the environment work here, before the runtime exists,
+/// is what makes those SAFETY comments true rather than aspirational.
+fn main() -> Result<()> {
+    // ---- single-threaded phase: no runtime, no threads ---------------------
+
+    // EnvFilter reads RUST_LOG once, when the subscriber is built, so a filter
+    // arriving via boot-args has to be published before that or it can never
+    // take effect. Silent by necessity — there is nothing to log to yet.
     bootenv::preinit_log_filter();
 
     tracing_subscriber::fmt()
@@ -113,11 +122,19 @@ async fn main() -> Result<()> {
 
     // As PID 1 in a microVM the harness starts with an essentially empty
     // environment — the kernel passes the spawn contract on the command line
-    // instead. Translate it BEFORE anything reads configuration (including
-    // LANTERN_TRACE_PARENT below), and before any thread exists, since
-    // set_var mutates process-global state.
+    // instead. Translate it before anything reads configuration (including
+    // LANTERN_TRACE_PARENT below).
     bootenv::bootstrap();
 
+    // ---- async phase: the environment is now frozen ------------------------
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build the Tokio runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     // Set the W3C propagator globally and parse LANTERN_TRACE_PARENT so every
     // outgoing gRPC call to the manager carries the spawn trace's traceparent.
     let _spawn_cx = otel::init_propagator();
