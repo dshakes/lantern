@@ -71,7 +71,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           # rust-toolchain.toml at repo root pins channel + clippy component
-          toolchain: "1.93"
+          toolchain: "1.94"
           components: clippy, rustfmt
 
       # Formatting ran BEFORE clippy: it needs no protoc and no build, so a
