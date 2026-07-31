@@ -47,7 +47,52 @@ pub fn bootstrap() {
     report_entropy_source();
     mount_cert_drive();
     hydrate_env_from_cmdline();
+    assemble_declared_secrets();
     pin_manager_hostname();
+}
+
+/// Rebuild `LANTERN_DECLARED_SECRETS` from the per-secret boot-args keys.
+///
+/// The manager emits one `lantern.secret.<ENV_NAME>=<uri>` per declared secret
+/// (a JSON blob cannot survive the kernel command line: args are
+/// whitespace-separated and quotes are stripped from values). The rest of the
+/// harness reads a JSON array, so assemble it here.
+///
+/// Without this the secret cache sees nothing declared and refuses every
+/// request, so a spec declaring secrets behaves exactly like one declaring
+/// none — VendSecret is never reached.
+fn assemble_declared_secrets() {
+    // An explicitly-provided value wins, as everywhere else in this module.
+    if std::env::var_os("LANTERN_DECLARED_SECRETS").is_some() {
+        return;
+    }
+    let Ok(cmdline) = std::fs::read_to_string(CMDLINE_PATH) else {
+        return;
+    };
+
+    let declared: Vec<serde_json::Value> = cmdline
+        .split_whitespace()
+        .filter_map(|token| token.split_once('='))
+        .filter_map(|(key, uri)| {
+            key.strip_prefix("lantern.secret.")
+                .filter(|name| !name.is_empty() && !uri.is_empty())
+                .map(|name| serde_json::json!({ "env_name": name, "secret_uri": uri }))
+        })
+        .collect();
+
+    if declared.is_empty() {
+        return;
+    }
+    let count = declared.len();
+    match serde_json::to_string(&declared) {
+        Ok(json) => {
+            // SAFETY: called from main before any thread is spawned.
+            unsafe { std::env::set_var("LANTERN_DECLARED_SECRETS", &json) };
+            // Names only — a secret URI can identify sensitive material.
+            tracing::info!(count, "bootenv: assembled declared secrets from boot-args");
+        }
+        Err(e) => tracing::warn!(error = %e, "bootenv: could not encode declared secrets"),
+    }
 }
 
 /// Name the manager is reached by from inside the guest.
