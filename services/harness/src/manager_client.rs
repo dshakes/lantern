@@ -149,14 +149,27 @@ impl ManagerClient {
             endpoint
         };
 
-        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
-            .await
-            .with_context(|| {
-                format!(
-                    "heartbeat: could not connect to manager at {}",
-                    self.manager_addr
-                )
-            })?;
+        // NOTE: connect via `endpoint.connect()`, NOT `Client::connect(endpoint)`.
+        // The generated client's `connect` routes through
+        // `tonic::transport::Endpoint::new`, which for an https:// URI does:
+        //
+        //     return me.tls_config(ClientTlsConfig::new().with_enabled_roots());
+        //
+        // — silently REPLACING the TLS config set above with a default one. And
+        // `with_enabled_roots` discards its receiver, so with neither
+        // `tls-native-roots` nor `tls-webpki-roots` enabled the result is an
+        // EMPTY root store, no client identity, and no domain name. That is
+        // exactly what the guest saw: UnknownIssuer (no roots), "client auth
+        // requested but no cert available" (no identity), and verification
+        // against the URI's address (no domain). `Endpoint::connect` does not
+        // go through `Endpoint::new`, so the configured TLS survives.
+        let channel = endpoint.connect().await.with_context(|| {
+            format!(
+                "heartbeat: could not connect to manager at {}",
+                self.manager_addr
+            )
+        })?;
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::new(channel);
 
         // Outbound channel: heartbeat.rs pushes HeartbeatRequest here; we
         // forward each one (converted to pb) into the tonic stream.
@@ -281,14 +294,27 @@ impl ManagerClient {
             endpoint
         };
 
-        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
-            .await
-            .with_context(|| {
-                format!(
-                    "report: could not connect to manager at {}",
-                    self.manager_addr
-                )
-            })?;
+        // NOTE: connect via `endpoint.connect()`, NOT `Client::connect(endpoint)`.
+        // The generated client's `connect` routes through
+        // `tonic::transport::Endpoint::new`, which for an https:// URI does:
+        //
+        //     return me.tls_config(ClientTlsConfig::new().with_enabled_roots());
+        //
+        // — silently REPLACING the TLS config set above with a default one. And
+        // `with_enabled_roots` discards its receiver, so with neither
+        // `tls-native-roots` nor `tls-webpki-roots` enabled the result is an
+        // EMPTY root store, no client identity, and no domain name. That is
+        // exactly what the guest saw: UnknownIssuer (no roots), "client auth
+        // requested but no cert available" (no identity), and verification
+        // against the URI's address (no domain). `Endpoint::connect` does not
+        // go through `Endpoint::new`, so the configured TLS survives.
+        let channel = endpoint.connect().await.with_context(|| {
+            format!(
+                "report: could not connect to manager at {}",
+                self.manager_addr
+            )
+        })?;
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::new(channel);
 
         // Convert internal HarnessReport → pb on the fly as the stream is
         // consumed. ReceiverStream + map keeps this allocation-light: no
@@ -373,14 +399,27 @@ impl ManagerClient {
             endpoint
         };
 
-        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
-            .await
-            .with_context(|| {
-                format!(
-                    "vend_secret: could not connect to manager at {}",
-                    self.manager_addr
-                )
-            })?;
+        // NOTE: connect via `endpoint.connect()`, NOT `Client::connect(endpoint)`.
+        // The generated client's `connect` routes through
+        // `tonic::transport::Endpoint::new`, which for an https:// URI does:
+        //
+        //     return me.tls_config(ClientTlsConfig::new().with_enabled_roots());
+        //
+        // — silently REPLACING the TLS config set above with a default one. And
+        // `with_enabled_roots` discards its receiver, so with neither
+        // `tls-native-roots` nor `tls-webpki-roots` enabled the result is an
+        // EMPTY root store, no client identity, and no domain name. That is
+        // exactly what the guest saw: UnknownIssuer (no roots), "client auth
+        // requested but no cert available" (no identity), and verification
+        // against the URI's address (no domain). `Endpoint::connect` does not
+        // go through `Endpoint::new`, so the configured TLS survives.
+        let channel = endpoint.connect().await.with_context(|| {
+            format!(
+                "vend_secret: could not connect to manager at {}",
+                self.manager_addr
+            )
+        })?;
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::new(channel);
 
         let ttl_proto = if req.ttl_secs > 0 {
             Some(prost_types::Duration {

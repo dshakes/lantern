@@ -379,6 +379,44 @@ impl SecretCache {
     }
 
     /// Background refresh sweep — keeps active secrets ahead of expiry.
+    /// Vend every declared secret once, at boot.
+    ///
+    /// `refresh_loop` only renews entries ALREADY cached, and `get_or_vend` is
+    /// driven by the workload asking over the secrets socket — so nothing ever
+    /// populated the cache on its own. A VM with no workload (a boot or
+    /// verification VM) therefore never exercised the vend path at all, which
+    /// is precisely the security-critical part of the boot contract: the
+    /// per-VM client cert presented over mTLS and the manager's allowlist
+    /// check. Warming here makes that path run on every boot, and removes the
+    /// first-use stall for workloads that do ask.
+    ///
+    /// Best-effort by design: a secret that cannot be vended must not stop the
+    /// VM from booting — the workload gets the error when it asks.
+    ///
+    /// Note this does mean a declared-but-unused secret is held in guest memory
+    /// for the life of the VM. That is already true of any secret the workload
+    /// touches once, and declared secrets are by definition ones it may use.
+    pub async fn prefetch_declared(self: &Arc<Self>) {
+        let names: Vec<String> = self.declared.iter().map(|e| e.key().clone()).collect();
+        if names.is_empty() {
+            return;
+        }
+        let total = names.len();
+        let mut ok = 0usize;
+        for name in names {
+            match self.get_or_vend(&name).await {
+                Ok(_) => ok += 1,
+                // Names only — never the value or the URI.
+                Err(e) => tracing::warn!(env = %name, error = %e, "secrets: prefetch failed"),
+            }
+        }
+        tracing::info!(
+            vended = ok,
+            declared = total,
+            "secrets: prefetched declared secrets"
+        );
+    }
+
     pub async fn refresh_loop(self: Arc<Self>) {
         let mut ticker = tokio::time::interval(Duration::from_secs(15));
         loop {
