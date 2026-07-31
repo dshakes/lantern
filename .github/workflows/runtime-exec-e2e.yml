@@ -76,23 +76,6 @@ jobs:
       - name: Pre-pull the workload image
         run: docker pull python:3.11-slim
 
-      - name: Start runtime-manager (docker backend)
-        run: |
-          set -euo pipefail
-          RUNTIME_BACKEND=docker \
-          LISTEN_ADDR=0.0.0.0:50054 \
-          AGENT_IMAGE=python:3.11-slim \
-          LOG_LEVEL=info \
-          ./services/runtime-manager/target/debug/lantern-runtime-manager \
-            > /tmp/manager.log 2>&1 &
-          for _ in $(seq 1 60); do
-            (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&- && break
-            sleep 1
-          done
-          (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null \
-            || { echo "::error::runtime-manager never listened on :50054"; tail -50 /tmp/manager.log; exit 1; }
-          echo "runtime-manager up"
-
       - name: Start runtime-scheduler
         run: |
           set -euo pipefail
@@ -111,6 +94,59 @@ jobs:
           (exec 3<>/dev/tcp/127.0.0.1/50055) 2>/dev/null \
             || { echo "::error::runtime-scheduler never listened on :50055"; tail -50 /tmp/scheduler.log; exit 1; }
           echo "runtime-scheduler up"
+
+      - name: Start runtime-manager (docker backend)
+        run: |
+          set -euo pipefail
+          RUNTIME_BACKEND=docker \
+          SCHEDULER_URL=http://localhost:8085 \
+          NODE_NAME=ci-node \
+          NODE_ADVERTISE_ADDR=localhost:50054 \
+          RUST_LOG=info,lantern_runtime_manager::scheduler_heartbeat=debug \
+          LISTEN_ADDR=0.0.0.0:50054 \
+          AGENT_IMAGE=python:3.11-slim \
+          LOG_LEVEL=info \
+          ./services/runtime-manager/target/debug/lantern-runtime-manager \
+            > /tmp/manager.log 2>&1 &
+          for _ in $(seq 1 60); do
+            (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&- && break
+            sleep 1
+          done
+          (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null \
+            || { echo "::error::runtime-manager never listened on :50054"; tail -50 /tmp/manager.log; exit 1; }
+          echo "runtime-manager up"
+
+      # The manager self-registers with the scheduler (POST /v1/nodes/heartbeat)
+      # via SCHEDULER_URL. Placement fails with "no nodes registered in cluster"
+      # until that lands, so wait for the node rather than racing it — the
+      # LaunchAgent setup this was rehearsed against already had SCHEDULER_URL,
+      # which is why the gap only appeared in CI.
+      # The manager self-registers with the scheduler (POST /v1/nodes/heartbeat)
+      # via SCHEDULER_URL. Placement fails with "no nodes registered in cluster"
+      # until that lands, so wait for it rather than racing it — the LaunchAgent
+      # setup this was rehearsed against already had SCHEDULER_URL, which is why
+      # the gap only appeared in CI.
+      #
+      # Waits on the manager's own log, not GET /v1/cluster: that endpoint
+      # requires an Authorization header, so polling it would 401 forever and
+      # burn the timeout instead of reporting anything useful.
+      - name: Wait for the manager to register as a node
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if grep -q "heartbeat ok" /tmp/manager.log 2>/dev/null; then
+              echo "node registered with the scheduler"; exit 0
+            fi
+            if grep -qE "heartbeat (rejected|send failed)" /tmp/manager.log 2>/dev/null; then
+              echo "::error::the manager could not register with the scheduler"
+              tail -40 /tmp/manager.log; exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::manager never registered with the scheduler (timeout)"
+          echo "--- manager ---";   tail -40 /tmp/manager.log   || true
+          echo "--- scheduler ---"; tail -40 /tmp/scheduler.log || true
+          exit 1
 
       # A skipped test reports as a pass to `go test`, which would make this
       # gate green while proving nothing — the exact failure mode the boot
