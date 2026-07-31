@@ -94,12 +94,62 @@ SECRET_VALUE="itest-secret-value-do-not-log"
 # manager rejects an untenanted spec outright.
 ITEST_TENANT_ID="00000000-0000-0000-0000-000000000001"
 
+# Is something listening on the manager's gRPC port?
+#
+# Defined up here because cleanup uses it too: the port — not the pid — is what
+# the NEXT run actually needs back. No `nc` dependency; bash /dev/tcp is enough.
+port_open() { (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&-; }
+
+# Reap the manager AND everything it spawned.
+#
+# `kill "${MANAGER_PID}"` was not enough, in two ways that compound: the manager
+# does not reliably exit on SIGTERM, and its firecracker children are reparented
+# rather than killed when it does. A failed run therefore left a live manager
+# holding :50054, and every LATER run then failed to bind and reported
+# "Firecracker backend did not report available" — a symptom that points at the
+# backend, or at whatever was last edited, rather than at the leaked process.
+# That cost three runs and briefly looked like a code regression.
+#
+# The manager is started in its own process group (see `setsid` below) so the
+# whole tree can be signalled by group id. Deliberately NOT a host-wide
+# `pkill -f firecracker`: that would kill unrelated VMs, and on the usual dev
+# host — a Lima VM named `firecracker-dev` — the pattern also matches the
+# caller's own shell command line and kills the session running this script.
 cleanup() {
-  [ -n "${MANAGER_PID:-}" ] && kill "${MANAGER_PID}" 2>/dev/null || true
-  # Best-effort teardown of any leaked TAPs / sockets from a failed boot.
+  if [ -n "${MANAGER_PGID:-}" ]; then
+    kill -TERM "-${MANAGER_PGID}" 2>/dev/null || true
+    # Give a graceful shutdown a bounded chance (~6s), then stop asking.
+    for _ in $(seq 1 30); do
+      port_open || break
+      sleep 0.2
+    done
+    kill -KILL "-${MANAGER_PGID}" 2>/dev/null || true
+  fi
+
+  # Confirm the port came back. If it did not, say so HERE — the next run would
+  # otherwise fail with the misleading message described above.
+  for _ in $(seq 1 25); do
+    port_open || break
+    sleep 0.2
+  done
+  if port_open; then
+    printf '\033[1;33m[integration] WARN:\033[0m %s\n' \
+      "port 50054 still held after teardown; the next run will fail to bind. \
+Find it with: sudo ss -lntp | grep 50054" >&2
+  fi
+
   rm -rf "${WORK}" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# Fail fast, and for the RIGHT reason, if the port is already taken — by a
+# manager leaked from an earlier run, or by anything else. Without this the
+# script starts a manager that cannot bind and reports a backend problem.
+if port_open; then
+  fail "something is already listening on 127.0.0.1:50054 (likely a runtime-manager
+  leaked by an earlier run). This script cannot start its own manager until that
+  is gone. Find and stop it with:  sudo ss -lntp | grep 50054"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Mint a manager mTLS CA + server cert. The Firecracker backend issues a
@@ -160,7 +210,10 @@ fi
 [ -x "${MANAGER_BIN}" ] || fail "manager binary not found at ${MANAGER_BIN}"
 
 log "Starting runtime-manager (RUNTIME_BACKEND=firecracker) on ${MANAGER_ADDR}"
-env \
+# `setsid` puts the manager in its own process group so cleanup can reap it and
+# every firecracker VM it spawns as one unit, without signalling anything else
+# on the host.
+setsid env \
   RUNTIME_BACKEND=firecracker \
   LANTERN_RUNTIME_BACKEND=firecracker \
   LISTEN_ADDR="${MANAGER_LISTEN_ADDR}" \
@@ -176,10 +229,16 @@ env \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
 MANAGER_PID=$!
+# Read the group id back rather than assuming it equals MANAGER_PID: `setsid`
+# execs in place when the caller is not already a group leader, but forks when
+# it is, and only one of those keeps the pid we captured. The group id is what
+# cleanup signals, so derive it instead of inferring it.
+MANAGER_PGID="$(ps -o pgid= -p "${MANAGER_PID}" 2>/dev/null | tr -d ' ')"
+: "${MANAGER_PGID:=${MANAGER_PID}}"
 
 # Wait for the gRPC port to accept connections. The manager has no gRPC
-# reflection, so probe the raw TCP port via bash /dev/tcp (no nc dependency).
-port_open() { (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&-; }
+# reflection, so probe the raw TCP port (port_open is defined near cleanup,
+# which needs it too).
 for _ in $(seq 1 100); do
   port_open && break
   kill -0 "${MANAGER_PID}" 2>/dev/null || fail "manager exited early; log:\n$(cat "${MANAGER_LOG}")"
