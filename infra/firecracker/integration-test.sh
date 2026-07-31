@@ -120,6 +120,34 @@ port_open() { (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&-; 
 # host — a Lima VM named `firecracker-dev` — the pattern also matches the
 # caller's own shell command line and kills the session running this script.
 cleanup() {
+  # 1. Stop the VM through the manager FIRST, while the manager is still alive.
+  #
+  # Killing the manager's process group does NOT reap its VMs: the backend
+  # launches each firecracker with `pre_exec(libc::setsid())` (see
+  # services/runtime-manager/src/backends/firecracker.rs), so every VM leaves
+  # the manager's session before exec and survives a group kill. A run that
+  # failed after Spawn but before the explicit Stop would leave a live VM — and
+  # since the manager itself does die, the port check below would come back
+  # clean and report success while the VM leaked.
+  #
+  # Stop is also the only path that releases the VM's TAP, so this is a clean
+  # shutdown rather than a kill. Best-effort: before the certs exist, or with
+  # the manager already gone, grpcurl simply fails and the kill below covers it.
+  if [ -n "${VM_ID:-}" ] && [ -s "${WORK}/client.crt" ] && port_open; then
+    grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
+      -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+      -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"integration-test cleanup"}')" \
+      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
+  fi
+
+  # The pgid may have been published after the handshake loop gave up, so read
+  # the file again rather than trusting only the variable. Without this, a
+  # handshake that times out while the manager IS running leaks it — the very
+  # thing `MANAGER_PID=$!` used to cover.
+  if [ -z "${MANAGER_PGID:-}" ] && [ -s "${MANAGER_PGID_FILE:-/nonexistent}" ]; then
+    MANAGER_PGID="$(tr -dc '0-9' <"${MANAGER_PGID_FILE}" 2>/dev/null)"
+  fi
+
   # Never signal our own process group, whatever went wrong upstream: that would
   # kill this script (and, under CI, the runner step) instead of the manager.
   # The handshake below should make this unreachable; it is here because the
@@ -137,6 +165,27 @@ cleanup() {
       sleep 0.2
     done
     kill -KILL "-${MANAGER_PGID}" 2>/dev/null || true
+  elif [ -n "${MANAGER_LAUNCH_PID:-}" ]; then
+    # No usable group id — the wrapper never published one. Fall back to the pid
+    # `&` gave us, which is what the pre-handshake code always used. It is the
+    # manager itself when setsid exec'd, and a already-exited wrapper when setsid
+    # forked, so this is safe either way and strictly better than leaking.
+    kill -TERM "${MANAGER_LAUNCH_PID}" 2>/dev/null || true
+    sleep 1
+    kill -KILL "${MANAGER_LAUNCH_PID}" 2>/dev/null || true
+  fi
+
+  # Backstop for any VM that outlived the manager (each firecracker setsid()s
+  # into its own session, so nothing above reaches it). Matched on THIS run's
+  # vm_id in the api socket path — a uuid, so it cannot match another run's VM,
+  # an unrelated hypervisor, or this script's own command line. That last part
+  # matters: a broad `pkill -f firecracker` also matches the usual dev host's
+  # Lima VM name and the shell running this script.
+  if [ -n "${VM_ID:-}" ]; then
+    for pid in $(pgrep -f "/run/firecracker/${VM_ID}.sock" 2>/dev/null); do
+      [ "${pid}" = "$$" ] && continue
+      kill -KILL "${pid}" 2>/dev/null || true
+    done
   fi
 
   # Confirm the port came back. If it did not, say so HERE — the next run would
@@ -260,6 +309,11 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
+# Recorded BEFORE the handshake so an early failure still has something to kill:
+# every `fail` from here on runs cleanup, and until the pgid is published this is
+# the only handle on the manager.
+MANAGER_LAUNCH_PID=$!
+
 # Wait for the wrapper to publish its pid — this is a handshake, not a guess, so
 # there is no race left to lose.
 for _ in $(seq 1 50); do
