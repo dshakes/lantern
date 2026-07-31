@@ -2986,6 +2986,84 @@ impl RuntimeBackend for FirecrackerBackend {
 //      Linux — the jailed launch itself is microvm-CI / Lima territory)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Startup reconciliation of orphaned TAP devices
+// ---------------------------------------------------------------------------
+
+/// Prefix every per-VM TAP name carries.
+const TAP_PREFIX: &str = "fc-";
+
+/// Pick the TAP devices that no live VM is using, from `ip -br link show`.
+///
+/// A TAP whose VMM is alive keeps its carrier and reports state `UP`; when the
+/// process goes away the carrier drops and the device falls to `DOWN`. So only
+/// `DOWN` devices are treated as orphans — a running VM's TAP is never touched,
+/// which matters because deleting it would cut that VM's only link.
+///
+/// Input lines look like:
+///   `fc-abc12345     DOWN   0a:ea:36:cd:01:25 <NO-CARRIER,BROADCAST,UP>`
+///   `fc-def67890     UP     0a:ea:36:cd:01:26 <BROADCAST,MULTICAST,UP,LOWER_UP>`
+pub fn orphaned_tap_names(ip_output: &str) -> Vec<String> {
+    ip_output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            let state = fields.next()?;
+            // `ip -br` may render a name as "fc-x@if7"; take the device part.
+            let name = name.split('@').next().unwrap_or(name);
+            (name.starts_with(TAP_PREFIX) && state.eq_ignore_ascii_case("DOWN"))
+                .then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Delete TAP devices left behind by a previous manager process.
+///
+/// `cancel()` removes a VM's TAP, but a manager that is SIGKILLed or crashes
+/// never gets to run it. The device — and the /30 assigned to it — then stays
+/// on the host forever: the subnet allocator skips that block, and orphans
+/// accumulate until the host has duplicate routes for the same network.
+///
+/// Runs once at startup, before any VM is scheduled. LINUX-ONLY and
+/// best-effort: any failure is logged and the manager starts normally.
+pub async fn reconcile_orphaned_taps() -> usize {
+    let output = match tokio::process::Command::new("ip")
+        .args(["-br", "link", "show"])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            tracing::warn!(status = ?o.status, "tap reconcile: 'ip -br link show' failed");
+            return 0;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "tap reconcile: cannot run 'ip'");
+            return 0;
+        }
+    };
+
+    let orphans = orphaned_tap_names(&String::from_utf8_lossy(&output.stdout));
+    if orphans.is_empty() {
+        return 0;
+    }
+
+    let mut removed = 0usize;
+    for tap in &orphans {
+        match teardown_tap_device(tap).await {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::warn!(tap = %tap, error = %e, "tap reconcile: removal failed"),
+        }
+    }
+    tracing::info!(
+        removed,
+        found = orphans.len(),
+        "tap reconcile: cleaned up TAP devices orphaned by a previous manager"
+    );
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3551,6 +3629,52 @@ mod tests {
     // -----------------------------------------------------------------------
     // 6. boot_args construction
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Startup TAP reconciliation
+    // -----------------------------------------------------------------------
+
+    /// The failure this guards: deleting the TAP of a RUNNING VM cuts its only
+    /// link. Only devices whose VMM is gone (carrier dropped, state DOWN) may
+    /// be reclaimed.
+    #[test]
+    fn reconcile_never_touches_a_live_vms_tap() {
+        let out = concat!(
+            "fc-aaaaaaaa     UP     0a:ea:36:cd:01:26 <BROADCAST,MULTICAST,UP,LOWER_UP>\n",
+            "fc-bbbbbbbb     DOWN   0a:ea:36:cd:01:25 <NO-CARRIER,BROADCAST,UP>\n",
+        );
+        assert_eq!(orphaned_tap_names(out), vec!["fc-bbbbbbbb".to_string()]);
+    }
+
+    /// Only Lantern's own devices are eligible — never the host's networking.
+    #[test]
+    fn reconcile_ignores_non_lantern_devices() {
+        let out = concat!(
+            "lo        UNKNOWN 00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP>\n",
+            "eth0      DOWN    52:54:00:12:34:56 <BROADCAST,MULTICAST>\n",
+            "docker0   DOWN    02:42:9e:11:22:33 <NO-CARRIER,BROADCAST,UP>\n",
+            "tap0      DOWN    0a:00:00:00:00:01 <BROADCAST,UP>\n",
+            "fc-cccccccc DOWN  0a:ea:36:cd:01:27 <NO-CARRIER,BROADCAST,UP>\n",
+        );
+        assert_eq!(orphaned_tap_names(out), vec!["fc-cccccccc".to_string()]);
+    }
+
+    #[test]
+    fn reconcile_handles_ifindex_suffix_and_junk() {
+        // `ip -br` can render a name as "dev@if7"; malformed lines must not panic.
+        let out = concat!(
+            "fc-dddddddd@if7 DOWN 0a:ea:36:cd:01:28 <NO-CARRIER,BROADCAST,UP>\n",
+            "garbage\n",
+            "fc-eeeeeeee     UP   0a:ea:36:cd:01:29 <BROADCAST,UP,LOWER_UP>\n",
+        );
+        assert_eq!(orphaned_tap_names(out), vec!["fc-dddddddd".to_string()]);
+    }
+
+    #[test]
+    fn reconcile_on_a_clean_host_finds_nothing() {
+        assert!(orphaned_tap_names("lo UNKNOWN 00:00:00:00:00:00 <LOOPBACK,UP>\n").is_empty());
+        assert!(orphaned_tap_names("").is_empty());
+    }
 
     #[test]
     fn vm_network_gives_each_index_a_distinct_p2p_pair() {
