@@ -586,6 +586,12 @@ pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
         .add_service(
             pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
                 svc,
+                // clippy::result_large_err (tightened in Rust 1.94) flags the
+                // 176-byte `tonic::Status` here. Both halves of that signature
+                // are tonic's, not ours: `Interceptor` requires exactly
+                // `FnMut(Request<()>) -> Result<Request<()>, Status>`, so the
+                // error cannot be boxed without failing to implement the trait.
+                #[allow(clippy::result_large_err)]
                 move |req: tonic::Request<()>| check_bearer_token(req, &token_for_interceptor),
             ),
         )
