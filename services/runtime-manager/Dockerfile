@@ -1,4 +1,4 @@
-FROM rust:1.93-slim AS builder
+FROM rust:1.94-slim AS builder
 # openssl-sys needs the system OpenSSL headers + pkg-config; tonic-build/prost
 # need protoc (protobuf-compiler). libprotobuf-dev ships the well-known
 # google/protobuf/*.proto files under /usr/include that runtime.proto imports.
