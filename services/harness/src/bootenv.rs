@@ -37,6 +37,48 @@ const CERT_DEVICE_CANDIDATES: [&str; 3] = ["/dev/vdb", "/dev/vdc", "/dev/vdd"];
 #[cfg(target_os = "linux")]
 const CERT_FILES: [&str; 3] = ["tls.crt", "tls.key", "manager-ca.crt"];
 
+/// Set when this process mounted procfs itself, so `bootstrap` can report it
+/// once tracing exists — `ensure_procfs` may run before the subscriber does.
+#[cfg(target_os = "linux")]
+static PROCFS_MOUNTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The log filter carried in boot-args, if any.
+///
+/// Split out so the selection is testable without touching `/proc` or process
+/// environment.
+pub fn log_filter_from_cmdline(cmdline: &str) -> Option<String> {
+    env_from_cmdline(cmdline)
+        .into_iter()
+        .find(|(name, _)| name == "RUST_LOG")
+        .map(|(_, value)| value)
+}
+
+/// Publish `RUST_LOG` from boot-args BEFORE the tracing subscriber is built.
+///
+/// `EnvFilter::try_from_default_env` reads `RUST_LOG` once, at initialisation.
+/// The rest of the boot-args bridge runs after that — deliberately, so its work
+/// is visible in the log — which left no way to configure logging from
+/// boot-args at all: a `lantern.env.RUST_LOG=...` was applied long after the
+/// filter had been fixed. Diagnosing a guest therefore meant editing the
+/// harness's compiled-in default and rebuilding the image.
+///
+/// So this one variable is resolved first, silently (there is nothing to log
+/// to yet). Everything else stays in `bootstrap`, which runs after the
+/// subscriber exists. An explicit `RUST_LOG` in the environment still wins.
+pub fn preinit_log_filter() {
+    if std::env::var_os("RUST_LOG").is_some() {
+        return;
+    }
+    ensure_procfs();
+    let Ok(cmdline) = std::fs::read_to_string(CMDLINE_PATH) else {
+        return;
+    };
+    if let Some(filter) = log_filter_from_cmdline(&cmdline) {
+        // SAFETY: called at the top of main, before any thread is spawned.
+        unsafe { std::env::set_var("RUST_LOG", filter) };
+    }
+}
+
 /// Prepare the environment for a microVM boot.
 ///
 /// Order matters: the cert drive is mounted BEFORE boot-args are translated, so
@@ -44,6 +86,10 @@ const CERT_FILES: [&str; 3] = ["tls.crt", "tls.key", "manager-ca.crt"];
 /// (which never resolve in the guest) are correctly ignored.
 pub fn bootstrap() {
     ensure_procfs();
+    #[cfg(target_os = "linux")]
+    if PROCFS_MOUNTED.load(std::sync::atomic::Ordering::Relaxed) {
+        tracing::debug!("bootenv: mounted /proc");
+    }
     report_entropy_source();
     mount_cert_drive();
     hydrate_env_from_cmdline();
@@ -202,7 +248,9 @@ fn ensure_procfs() {
         )
     };
     if rc == 0 {
-        tracing::debug!("bootenv: mounted /proc");
+        // Cannot log yet: this may run before tracing is initialised (see
+        // `preinit_log_filter`). Record it and let `bootstrap` report it.
+        PROCFS_MOUNTED.store(true, std::sync::atomic::Ordering::Relaxed);
     } else {
         let errno = std::io::Error::last_os_error();
         if errno.raw_os_error() != Some(libc::EBUSY) {
@@ -415,6 +463,24 @@ fn is_guest_path_var(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_filter_is_picked_out_of_boot_args() {
+        // The whole point: a filter passed as a boot-arg must be findable
+        // before tracing exists.
+        let cmdline = "console=ttyS0 lantern.vm_id=vm-1 \
+             lantern.env.RUST_LOG=info,rustls=trace lantern.env.OTHER=x";
+        assert_eq!(
+            log_filter_from_cmdline(cmdline).as_deref(),
+            Some("info,rustls=trace")
+        );
+    }
+
+    #[test]
+    fn no_log_filter_in_boot_args_is_none() {
+        assert!(log_filter_from_cmdline("console=ttyS0 lantern.vm_id=vm-1").is_none());
+        assert!(log_filter_from_cmdline("").is_none());
+    }
 
     #[test]
     fn maps_the_documented_contract_keys() {
