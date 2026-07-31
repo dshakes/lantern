@@ -158,13 +158,13 @@ cleanup() {
     MANAGER_PGID=""
   fi
   if [ -n "${MANAGER_PGID:-}" ]; then
-    kill -TERM "-${MANAGER_PGID}" 2>/dev/null || true
+    kill -TERM -- "-${MANAGER_PGID}" 2>/dev/null || true
     # Give a graceful shutdown a bounded chance (~6s), then stop asking.
     for _ in $(seq 1 30); do
       port_open || break
       sleep 0.2
     done
-    kill -KILL "-${MANAGER_PGID}" 2>/dev/null || true
+    kill -KILL -- "-${MANAGER_PGID}" 2>/dev/null || true
   elif [ -n "${MANAGER_LAUNCH_PID:-}" ]; then
     # No usable group id — the wrapper never published one. Fall back to the pid
     # `&` gave us, which is what the pre-handshake code always used. It is the
@@ -181,10 +181,18 @@ cleanup() {
   # an unrelated hypervisor, or this script's own command line. That last part
   # matters: a broad `pkill -f firecracker` also matches the usual dev host's
   # Lima VM name and the shell running this script.
+  # Matched on the vm_id ANYWHERE in a firecracker process's argv, not on the
+  # bare `/run/firecracker/<id>.sock` path: under jailer mode the socket lives
+  # inside the jail root instead, so a path match would miss it and leak the VM.
+  # The id is a uuid minted for this run, and only processes actually named
+  # `firecracker` are considered, so this cannot match another run, an unrelated
+  # hypervisor, or this script.
   if [ -n "${VM_ID:-}" ]; then
-    for pid in $(pgrep -f "/run/firecracker/${VM_ID}.sock" 2>/dev/null); do
+    for pid in $(pgrep -x firecracker 2>/dev/null); do
       [ "${pid}" = "$$" ] && continue
-      kill -KILL "${pid}" 2>/dev/null || true
+      if tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${VM_ID}"; then
+        kill -KILL "${pid}" 2>/dev/null || true
+      fi
     done
   fi
 
