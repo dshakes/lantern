@@ -82,6 +82,10 @@ command -v firecracker >/dev/null 2>&1 || [ -n "${FC_BINARY_PATH:-}" ] \
 [ -s "${FC_ROOTFS_PATH:-}" ] || fail "FC_ROOTFS_PATH unset/empty — run build-image.sh first"
 
 WORK="$(mktemp -d)"
+# This script's own process group — cleanup refuses to signal it (see cleanup).
+SELF_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -dc '0-9')"
+# Where the manager wrapper publishes its process group id (see the launch).
+MANAGER_PGID_FILE="${WORK}/manager.pgid"
 MANAGER_ADDR="127.0.0.1:50054"
 # The guest reaches the manager over its point-to-point TAP link (172.16.x.1),
 # never loopback, so the manager has to bind all interfaces. grpcurl still
@@ -116,6 +120,15 @@ port_open() { (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&-; 
 # host — a Lima VM named `firecracker-dev` — the pattern also matches the
 # caller's own shell command line and kills the session running this script.
 cleanup() {
+  # Never signal our own process group, whatever went wrong upstream: that would
+  # kill this script (and, under CI, the runner step) instead of the manager.
+  # The handshake below should make this unreachable; it is here because the
+  # cost of being wrong is losing the run and its diagnostics.
+  if [ -n "${MANAGER_PGID:-}" ] && [ "${MANAGER_PGID}" = "${SELF_PGID:-}" ]; then
+    printf '\033[1;33m[integration] WARN:\033[0m %s\n' \
+      "refusing to signal process group ${MANAGER_PGID} — it is this script's own" >&2
+    MANAGER_PGID=""
+  fi
   if [ -n "${MANAGER_PGID:-}" ]; then
     kill -TERM "-${MANAGER_PGID}" 2>/dev/null || true
     # Give a graceful shutdown a bounded chance (~6s), then stop asking.
@@ -213,7 +226,26 @@ log "Starting runtime-manager (RUNTIME_BACKEND=firecracker) on ${MANAGER_ADDR}"
 # `setsid` puts the manager in its own process group so cleanup can reap it and
 # every firecracker VM it spawns as one unit, without signalling anything else
 # on the host.
-setsid env \
+#
+# The wrapper publishes the group id ITSELF rather than letting us infer it,
+# because `setsid` behaves two different ways and neither is safe to guess at:
+#
+#   - caller is NOT already a group leader (a script under CI, job control off):
+#     setsid execs in place, so the leader keeps the pid `$!` gave us — but only
+#     AFTER setsid() has run. Reading the pgid right after `&` is a race, and
+#     losing it returns the SCRIPT'S OWN pgid. Cleanup would then `kill` the
+#     test script's process group: the same self-kill this file already warns
+#     about for `pkill -f firecracker`, arrived at from the other direction.
+#   - caller IS a group leader (sourced from an interactive shell): setsid
+#     forks, `$!` is the short-lived wrapper, and the pid we captured exits at
+#     once — so the health check below would declare the manager dead, and a
+#     pgid derived from it would be wrong.
+#
+# Inside the wrapper, `$$` is the session leader in BOTH cases, so it is the one
+# value that is always right. It writes that, then execs the manager, which
+# inherits the pid and stays the leader.
+setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
+  env \
   RUNTIME_BACKEND=firecracker \
   LANTERN_RUNTIME_BACKEND=firecracker \
   LISTEN_ADDR="${MANAGER_LISTEN_ADDR}" \
@@ -228,13 +260,18 @@ setsid env \
   LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
-MANAGER_PID=$!
-# Read the group id back rather than assuming it equals MANAGER_PID: `setsid`
-# execs in place when the caller is not already a group leader, but forks when
-# it is, and only one of those keeps the pid we captured. The group id is what
-# cleanup signals, so derive it instead of inferring it.
-MANAGER_PGID="$(ps -o pgid= -p "${MANAGER_PID}" 2>/dev/null | tr -d ' ')"
-: "${MANAGER_PGID:=${MANAGER_PID}}"
+# Wait for the wrapper to publish its pid — this is a handshake, not a guess, so
+# there is no race left to lose.
+for _ in $(seq 1 50); do
+  [ -s "${MANAGER_PGID_FILE}" ] && break
+  sleep 0.1
+done
+MANAGER_PGID="$(tr -dc '0-9' <"${MANAGER_PGID_FILE}" 2>/dev/null)"
+[ -n "${MANAGER_PGID}" ] || fail "manager wrapper never published its process group id"
+# The wrapper exec'd into the manager, so the leader's pid IS the manager's pid.
+# Use it for liveness rather than `$!`, which is the setsid wrapper when setsid
+# forks and would look dead immediately.
+MANAGER_PID="${MANAGER_PGID}"
 
 # Wait for the gRPC port to accept connections. The manager has no gRPC
 # reflection, so probe the raw TCP port (port_open is defined near cleanup,
