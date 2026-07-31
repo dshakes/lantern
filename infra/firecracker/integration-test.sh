@@ -302,6 +302,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 4b. Invoke a tool in the guest via ExecTool.
+#
+# This is the workflow-engine's tool_call path end to end: manager -> in-guest
+# harness exec server -> tool registry -> real execution -> typed result. It can
+# only succeed after the harness has opened its Heartbeat stream (that is what
+# gives the manager the guest address to dial back on), so it also proves the
+# harness is reachable, not just that it started.
+#
+# Needs a shell in the image; build-image.sh installs a static busybox when one
+# is available, and skips this assertion when it did not.
+# ---------------------------------------------------------------------------
+log "Invoking a tool in the guest (ExecTool -> shell_exec)"
+TOOL_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+  -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+  -d "{\"vm_id\":\"${VM_ID}\",\"run_id\":\"itest-run-001\",\"step_id\":\"itest-step-1\",\"tool_name\":\"shell_exec\",\"args\":{\"command\":\"echo lantern-tool-marker\"},\"idempotency_key\":\"itest-run-001:itest-step-1:1\"}" \
+  "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || TOOL_RESP=""
+
+if printf '%s' "${TOOL_RESP}" | grep -q "lantern-tool-marker"; then
+  pass "tool invoked in-guest and returned its output (ExecTool -> shell_exec)"
+elif printf '%s' "${TOOL_RESP}" | grep -q "No such file or directory"; then
+  skip "in-guest tool ran but the image has no /bin/sh — install a static busybox to assert execution"
+else
+  fail "ExecTool did not return the tool's output. Response:\n${TOOL_RESP}\nLog:\n$(tail -30 "${MANAGER_LOG}")"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Tear down.
 # ---------------------------------------------------------------------------
 log "Tearing down vm_id=${VM_ID} (Stop)"
