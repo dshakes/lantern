@@ -1,0 +1,144 @@
+# runtime · exec e2e — live control-plane → scheduler → manager → container.
+#
+# Guards the exec dispatch path against the regression it was born from: for a
+# long time `grpcSchedulerClient.Exec` returned a canned string with exit code
+# 0, so a MISSING implementation was indistinguishable from a command that ran
+# and printed nothing. Mocks cannot catch that — only a real workload can.
+#
+# NO KVM REQUIRED. The runtime-manager's `docker` backend spawns a real
+# container, and GitHub's hosted runners have Docker. That is the whole reason
+# this can be a normal PR gate while the Firecracker boot job
+# (microvm-integration.yml) still needs a nested-virt runner.
+name: "runtime · exec e2e (docker backend)"
+
+on:
+  pull_request:
+    paths:
+      - "services/control-plane/internal/handlers/runtime*.go"
+      - "services/runtime-manager/**"
+      - "services/runtime-scheduler/**"
+      - "packages/proto/lantern/v1/runtime.proto"
+      - ".github/workflows/runtime-exec-e2e.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-exec-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exec-e2e:
+    name: exec-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/control-plane/go.mod
+
+      - name: Set up Rust (pinned by rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93"
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            services/runtime-manager/target
+          key: exec-e2e-cargo-${{ runner.os }}-${{ hashFiles('services/runtime-manager/Cargo.lock') }}
+          restore-keys: exec-e2e-cargo-${{ runner.os }}-
+
+      # Debug build: this test exercises wiring, not performance, and a release
+      # build costs several minutes per run.
+      - name: Build runtime-manager + runtime-scheduler
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path services/runtime-manager/Cargo.toml
+          (cd services/runtime-scheduler && go build -o bin/scheduler ./cmd/scheduler)
+
+      # Pre-pull so the first Schedule is not also an image pull; a pull inside
+      # the test's own wait window is a flake source, not a signal.
+      - name: Pre-pull the workload image
+        run: docker pull python:3.11-slim
+
+      - name: Start runtime-manager (docker backend)
+        run: |
+          set -euo pipefail
+          RUNTIME_BACKEND=docker \
+          LISTEN_ADDR=0.0.0.0:50054 \
+          AGENT_IMAGE=python:3.11-slim \
+          LOG_LEVEL=info \
+          ./services/runtime-manager/target/debug/lantern-runtime-manager \
+            > /tmp/manager.log 2>&1 &
+          for _ in $(seq 1 60); do
+            (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null && exec 3>&- 3<&- && break
+            sleep 1
+          done
+          (exec 3<>/dev/tcp/127.0.0.1/50054) 2>/dev/null \
+            || { echo "::error::runtime-manager never listened on :50054"; tail -50 /tmp/manager.log; exit 1; }
+          echo "runtime-manager up"
+
+      - name: Start runtime-scheduler
+        run: |
+          set -euo pipefail
+          # DATABASE_URL intentionally unset: the scheduler then uses its
+          # in-memory store and runs always-leader, which is what a
+          # single-node test wants — no Postgres service needed.
+          LISTEN_ADDR=:50055 \
+          HTTP_ADDR=:8085 \
+          LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+          LOG_LEVEL=info \
+          ./services/runtime-scheduler/bin/scheduler > /tmp/scheduler.log 2>&1 &
+          for _ in $(seq 1 60); do
+            (exec 3<>/dev/tcp/127.0.0.1/50055) 2>/dev/null && exec 3>&- 3<&- && break
+            sleep 1
+          done
+          (exec 3<>/dev/tcp/127.0.0.1/50055) 2>/dev/null \
+            || { echo "::error::runtime-scheduler never listened on :50055"; tail -50 /tmp/scheduler.log; exit 1; }
+          echo "runtime-scheduler up"
+
+      # A skipped test reports as a pass to `go test`, which would make this
+      # gate green while proving nothing — the exact failure mode the boot
+      # assertion had. So require the subtests to have actually RUN.
+      - name: Run the exec e2e test
+        env:
+          LANTERN_RUNTIME_E2E: "1"
+          LANTERN_SCHEDULER_GRPC_ADDR: localhost:50055
+          LANTERN_DEFAULT_MANAGER_ADDR: localhost:50054
+        run: |
+          set -euo pipefail
+          cd services/control-plane
+          go test ./internal/handlers/ -run TestRuntimeExecE2E -v -count=1 -timeout 10m \
+            2>&1 | tee /tmp/exec-e2e.log
+
+          if grep -q -- "--- SKIP" /tmp/exec-e2e.log; then
+            echo "::error::the exec e2e test SKIPPED — this gate must run it, not skip it"
+            exit 1
+          fi
+          if ! grep -q -- "--- PASS: TestRuntimeExecE2E_RealVM" /tmp/exec-e2e.log; then
+            echo "::error::TestRuntimeExecE2E_RealVM did not report PASS"
+            exit 1
+          fi
+          echo "exec e2e ran for real"
+
+      - name: Service logs (on failure)
+        if: failure()
+        run: |
+          echo "----- runtime-manager -----";  tail -100 /tmp/manager.log   || true
+          echo "----- runtime-scheduler ---";  tail -100 /tmp/scheduler.log || true
+          echo "----- containers ----------";  docker ps -a --filter "name=lantern-run" || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker ps -aq --filter "name=lantern-run" | xargs -r docker rm -f || true
+          pkill -f lantern-runtime-manager || true
+          pkill -f 'bin/scheduler' || true
