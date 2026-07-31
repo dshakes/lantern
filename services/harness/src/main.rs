@@ -155,6 +155,13 @@ async fn main() -> Result<()> {
                 tracing::error!(error = %e, "secrets: server exited");
             }
         });
+        // Warm the cache before the workload can ask, so the mTLS vend path
+        // runs on every boot rather than only when something requests a
+        // secret. Spawned: a slow or unreachable manager must not delay boot.
+        let s = Arc::clone(&secrets);
+        tokio::spawn(async move {
+            s.prefetch_declared().await;
+        });
         let s = Arc::clone(&secrets);
         tokio::spawn(async move {
             s.refresh_loop().await;

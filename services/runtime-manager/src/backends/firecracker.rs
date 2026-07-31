@@ -543,6 +543,25 @@ pub fn build_boot_args(
     let ip_param = net.kernel_ip_param();
     let manager_addr = manager_addr_for_guest(net);
 
+    // Declared secrets, one key each. The harness needs these to know which
+    // secrets a workload may request — with none declared its cache refuses
+    // every request, so VendSecret is never reached and a spec that declares a
+    // secret behaves exactly like one that declares none.
+    //
+    // One key per secret rather than a JSON blob: the harness assembles the
+    // JSON itself. Kernel args are whitespace-separated and build_boot_args
+    // strips quotes from values, so serialised JSON would arrive mangled.
+    let declared_secrets: String = req
+        .secrets
+        .iter()
+        .filter(|s| !s.env_var.is_empty() && !s.vault_ref.is_empty())
+        .map(|s| {
+            let env = s.env_var.replace([' ', '"', '\'', '='], "_");
+            let uri = s.vault_ref.replace([' ', '"', '\''], "_");
+            format!(" lantern.secret.{env}={uri}")
+        })
+        .collect();
+
     format!(
         "console=ttyS0 reboot=k panic=1 pci=off \
          {ip_param} \
@@ -551,7 +570,7 @@ pub fn build_boot_args(
          lantern.tls_cert={tls_cert_path} \
          lantern.tls_key={tls_key_path} \
          lantern.manager_ca={manager_ca_path} \
-         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{extra_env}"
+         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env}"
     )
 }
 
