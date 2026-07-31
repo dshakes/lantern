@@ -56,6 +56,13 @@ jobs:
           key: exec-e2e-cargo-${{ runner.os }}-${{ hashFiles('services/runtime-manager/Cargo.lock') }}
           restore-keys: exec-e2e-cargo-${{ runner.os }}-
 
+      # The runtime-manager's build.rs compiles the runtime proto with
+      # prost-build, which shells out to protoc. Hosted runners do not ship it
+      # (a dev Mac usually does, which is exactly why this only showed up in
+      # CI). Same step sdlc-qa uses.
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
       # Debug build: this test exercises wiring, not performance, and a release
       # build costs several minutes per run.
       - name: Build runtime-manager + runtime-scheduler
