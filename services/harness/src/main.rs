@@ -96,6 +96,12 @@ fn parse_env() -> Result<HarnessEnv> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // BEFORE the subscriber is built: EnvFilter reads RUST_LOG once, at
+    // initialisation, so a filter arriving via boot-args has to be published
+    // first or it can never take effect. Silent by necessity — there is
+    // nothing to log to yet.
+    bootenv::preinit_log_filter();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
