@@ -97,7 +97,16 @@ async fn main() -> anyhow::Result<()> {
                 K8sBackend::new_with_runtime_classes(config.agent_image.clone(), rc_cfg).await?,
             )
         }
-        RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
+        RuntimeBackendKind::Firecracker => {
+            // Reclaim TAP devices a previous manager left behind. `cancel()`
+            // removes a VM's TAP, but a manager that is SIGKILLed or crashes
+            // never runs it, and the device keeps its /30 assigned forever —
+            // the allocator then skips that subnet and orphans pile up into
+            // duplicate host routes. Safe to do here: this runs before any VM
+            // is scheduled, and only DOWN devices (no live VMM) are removed.
+            crate::backends::firecracker::reconcile_orphaned_taps().await;
+            Arc::new(FirecrackerBackend::new())
+        }
         RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
             &config.docker_socket,
             config.agent_image.clone(),
