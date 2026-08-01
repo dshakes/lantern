@@ -10,18 +10,21 @@
 # ---------------------------------------------------------------------------
 # RUNNER REQUIREMENT: KVM / nested virtualization
 # ---------------------------------------------------------------------------
-# Firecracker needs /dev/kvm. GitHub's standard `ubuntu-latest` hosted runners
-# do NOT expose nested virt, so this job will SKIP there (gracefully — green,
-# not red). To actually RUN the live boot, target one of:
+# Firecracker needs /dev/kvm — and GitHub's standard `ubuntu-latest` hosted
+# runners DO expose it, since the January 2024 runner image update. What they do
+# not do is put the runner user in the `kvm` group, so the device is present and
+# unreadable; the udev step below fixes that. This job used to report that state
+# as "/dev/kvm absent" and skip, which read as "hosted runners cannot do this"
+# and made a paid KVM runner look necessary. It is not.
 #
-#   - A self-hosted runner on a bare-metal / nested-virt-enabled host
-#     (label it `kvm`), OR
-#   - A cloud VM that exposes KVM (e.g. GCP nested virt, AWS .metal,
-#     Azure Dv5 with nested virt), registered as a self-hosted runner.
+# GitHub does not document the guarantee, so treat it as best-effort: the probe
+# still self-skips (green, not red) if a future runner image drops the device,
+# and `require_kvm: true` turns that skip into a hard failure for callers that
+# need a real boot. If it ever does go away, `MICROVM_RUNNER_LABEL` still points
+# the job at a self-hosted / cloud KVM runner without touching this file.
 #
-# Point the job at it by setting the repo/org variable `MICROVM_RUNNER_LABEL`
-# (e.g. `kvm`); it defaults to `ubuntu-latest` so the workflow is valid out of
-# the box and self-skips when /dev/kvm is absent.
+# ARM runners are NOT equivalent — virtualization is disabled there. Keep this
+# job on x86_64.
 name: "microvm · integration (firecracker)"
 
 on:
@@ -64,15 +67,48 @@ jobs:
       # Probe for nested virt up front. When absent we mark the job skipped
       # (every later step guards on `steps.kvm.outputs.present`) so the check
       # is GREEN on a runner without KVM rather than a misleading failure.
+      # GitHub's standard Linux runners have exposed /dev/kvm since the January
+      # 2024 runner image update, but the runner user is not in the `kvm` group,
+      # so the device is present and NOT READABLE. The probe below tested
+      # readability and reported "absent", which is how this job came to skip on
+      # a runner that can in fact boot a VM — and why a KVM runner looked like
+      # the only option. This is the documented udev fix (same one the Android
+      # emulator action ships). Best-effort: on a runner with no /dev/kvm at all
+      # it changes nothing and the probe still skips honestly.
+      - name: Grant access to /dev/kvm
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+              | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            ls -l /dev/kvm
+          else
+            echo "no /dev/kvm on this runner; nothing to grant"
+          fi
+
       - name: Probe for KVM
         id: kvm
         run: |
+          # Distinguish the two states the old probe collapsed into "absent":
+          # a device that is missing is a runner without nested virt, while one
+          # that is present but unreadable is a PERMISSIONS problem we can fix.
+          # Reporting the second as "absent" sent this work down a blind alley.
+          if [ -e /dev/kvm ] && [ ! -r /dev/kvm ]; then
+            echo "::warning::/dev/kvm exists but is not readable by $(id -un) \
+          (groups: $(id -Gn)) — the udev step above did not take effect."
+          fi
           if [ -e /dev/kvm ] && [ -r /dev/kvm ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "::notice::/dev/kvm present — running live Firecracker boot validation."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::/dev/kvm absent on this runner — SKIPPING live microVM boot. \
+            if [ -e /dev/kvm ]; then
+              reason="/dev/kvm is present but UNREADABLE (permissions)"
+            else
+              reason="/dev/kvm is absent (no nested virt on this runner)"
+            fi
+            echo "::warning::${reason} — SKIPPING live microVM boot. \
             Set vars.MICROVM_RUNNER_LABEL to a KVM-capable runner to run it for real."
             # A skipped boot and a real boot both render as a green check, so
             # say so in the job summary — otherwise this workflow's history
@@ -80,7 +116,7 @@ jobs:
             {
               echo "### ⚠️ microVM boot NOT verified"
               echo
-              echo "\`/dev/kvm\` is absent on this runner, so the live Firecracker"
+              echo "${reason}, so the live Firecracker"
               echo "boot was **skipped**. This check is green because skipping is"
               echo "expected here — it is **not** evidence that Firecracker works."
               echo
