@@ -213,8 +213,17 @@ jobs:
           LANTERN_RUNTIME_BACKEND: firecracker
         run: |
           set -euo pipefail
+          # Same reason as the image build: the script would `cargo build` the
+          # manager itself, but it runs under sudo where ~/.cargo/bin is off the
+          # PATH. Build it here as the runner user and pass it in via the
+          # script's MANAGER_BIN hook, so nothing under sudo needs cargo.
+          cargo build --release --manifest-path services/runtime-manager/Cargo.toml
+          MANAGER_BIN="$PWD/services/runtime-manager/target/release/lantern-runtime-manager"
+          [ -x "$MANAGER_BIN" ] || { echo "::error::no runtime-manager binary at $MANAGER_BIN"; exit 1; }
+
           # Firecracker + loop devices + TAP setup need root.
           sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,LANTERN_RUNTIME_BACKEND \
+            MANAGER_BIN="$MANAGER_BIN" EXPECT_VENDSECRET=1 \
             bash infra/firecracker/integration-test.sh
 
       - name: Skipped (no KVM on this runner)
