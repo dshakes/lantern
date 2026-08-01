@@ -1,6 +1,6 @@
 # Auditor (Codex) — independent cross-audit. Runs automatically when a PR opens (an
 # independent second opinion to the Claude reviewer) and on demand via the `agent:audit`
-# label. Read-only; posts Codex's verdict as a PR comment. Needs secret OPENAI_API_KEY.
+# label, which also keeps auditing every later push (see below). Read-only; posts Codex's verdict as a PR comment. Needs secret OPENAI_API_KEY.
 # Re-auditing, and why it is opt-in: a plain push does NOT re-audit, so the fix
 # loop's pushes don't re-spend Codex credits each round. Label the PR `agent:audit`
 # and every subsequent push re-audits until the label comes off — which is the ONLY
