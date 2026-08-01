@@ -186,8 +186,20 @@ jobs:
         if: steps.kvm.outputs.present == 'true'
         run: |
           set -euo pipefail
+          # Build the harness as the RUNNER user, not under sudo: sudo resets
+          # PATH via secure_path, so ~/.cargo/bin is not on it and the script
+          # died with "cargo not found". Only the rootfs loop-mount actually
+          # needs root — the compile does not — so hand the finished binary to
+          # the script through its FC_HARNESS_BIN hook instead of trying to make
+          # cargo reachable from root's PATH.
+          cargo build --release --target x86_64-unknown-linux-musl \
+            --manifest-path services/harness/Cargo.toml
+          HARNESS_BIN="$PWD/services/harness/target/x86_64-unknown-linux-musl/release/lantern-harness"
+          [ -x "$HARNESS_BIN" ] || { echo "::error::harness build produced no binary at $HARNESS_BIN"; exit 1; }
+
           # rootfs build needs loop-mount (root); run under sudo, preserve env.
           sudo --preserve-env=GITHUB_ENV,FC_KERNEL_VERSION,ARCH \
+            FC_HARNESS_BIN="$HARNESS_BIN" \
             bash infra/firecracker/build-image.sh "$RUNNER_TEMP/fc-image"
 
       # --- Run the live boot validation ----------------------------------
