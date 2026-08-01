@@ -136,7 +136,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -y
-          sudo apt-get install -y musl-tools e2fsprogs jq curl
+          # protobuf-compiler: runtime-manager's build.rs drives prost-build,
+          # which shells out to protoc. Missing here since this job was written —
+          # it never surfaced because the KVM gate skipped every step below it.
+          sudo apt-get install -y musl-tools e2fsprogs jq curl protobuf-compiler
 
           # Rust musl target for the static harness binary.
           rustup target add x86_64-unknown-linux-musl
