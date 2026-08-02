@@ -83,8 +83,19 @@ jobs:
         # at — it would outlive the job and weaken the operator's machine, so we
         # do not touch it: a KVM runner is expected to grant access itself, and
         # if it has not, the probe below now says so precisely.
-        if: env.RUNNER_ENVIRONMENT == 'github-hosted'
         run: |
+          # The hosted-runner check lives HERE, in the shell, not in an `if:`
+          # expression. `env.RUNNER_ENVIRONMENT` in an `if:` is always empty —
+          # the env CONTEXT only holds variables declared in `env:` blocks, not
+          # the ones the runner injects — so gating the step on it silently
+          # skipped the grant on every runner, and the job then skipped the boot
+          # and still reported green on the PR. $RUNNER_ENVIRONMENT in the shell
+          # is the real thing.
+          echo "RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-<unset>}"
+          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+            echo "not a hosted runner — leaving /dev/kvm permissions alone"
+            exit 0
+          fi
           if [ -e /dev/kvm ]; then
             echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
               | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
