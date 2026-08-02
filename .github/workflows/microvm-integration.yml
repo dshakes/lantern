@@ -76,6 +76,14 @@ jobs:
       # emulator action ships). Best-effort: on a runner with no /dev/kvm at all
       # it changes nothing and the probe still skips honestly.
       - name: Grant access to /dev/kvm
+        # HOSTED RUNNERS ONLY. The rule is persistent (/etc/udev/rules.d) and
+        # mode 0666 opens /dev/kvm to every local process. On an ephemeral
+        # GitHub VM that is scoped to this job and destroyed with it. On a
+        # SELF-HOSTED runner — which `MICROVM_RUNNER_LABEL` can point this job
+        # at — it would outlive the job and weaken the operator's machine, so we
+        # do not touch it: a KVM runner is expected to grant access itself, and
+        # if it has not, the probe below now says so precisely.
+        if: env.RUNNER_ENVIRONMENT == 'github-hosted'
         run: |
           if [ -e /dev/kvm ]; then
             echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
