@@ -25,6 +25,26 @@ use crate::manager_client::ManagerClient;
 use crate::proto::{AuditEvent, HarnessReport, SecretRef, VendSecretRequest, now_unix_ms};
 
 const REFRESH_LEAD_MS: i64 = 30_000; // refresh 30s before expiry
+
+/// Attempts a boot-time secret prefetch gets before giving up.
+///
+/// Not a hand-rolled retry by preference: the repo's canonical `lantern-retry`
+/// crate does not exist yet (same gap as `@lantern/retry` in TS), so this is a
+/// deliberately small local loop to be replaced when it lands.
+const PREFETCH_ATTEMPTS: u32 = 5;
+
+/// First backoff step; doubles per attempt.
+const PREFETCH_BACKOFF_BASE_MS: u64 = 250;
+
+/// Backoff before the attempt AFTER `attempt` (1-based): 250ms, 500ms, 1s, 2s.
+///
+/// Pure so the schedule is testable without a live manager. Capped so a wedged
+/// manager cannot stretch the prefetch out indefinitely — the workload can vend
+/// on demand, and this is only the warm.
+fn prefetch_backoff(attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(3); // cap at 8x base = 2s
+    Duration::from_millis(PREFETCH_BACKOFF_BASE_MS.saturating_mul(1u64 << shift))
+}
 const DEFAULT_TTL_SECS: i64 = 300;
 
 // ---------------------------------------------------------------------------
@@ -397,18 +417,51 @@ impl SecretCache {
     /// for the life of the VM. That is already true of any secret the workload
     /// touches once, and declared secrets are by definition ones it may use.
     pub async fn prefetch_declared(self: &Arc<Self>) {
-        let names: Vec<String> = self.declared.iter().map(|e| e.key().clone()).collect();
-        if names.is_empty() {
+        let mut pending: Vec<String> = self.declared.iter().map(|e| e.key().clone()).collect();
+        if pending.is_empty() {
             return;
         }
-        let total = names.len();
+        let total = pending.len();
         let mut ok = 0usize;
-        for name in names {
-            match self.get_or_vend(&name).await {
-                Ok(_) => ok += 1,
-                // Names only — never the value or the URI.
-                Err(e) => tracing::warn!(env = %name, error = %e, "secrets: prefetch failed"),
+
+        // Retry, because a single failure here is not recoverable later. This
+        // runs moments after boot and can lose a startup race — the manager's
+        // listener may not be accepting yet when the guest's network comes up.
+        // `refresh_loop` cannot rescue it: that loop only re-vends keys ALREADY
+        // in the cache, so a prefetch that never landed leaves nothing to
+        // refresh and the mTLS vend never happens for the life of the VM. The
+        // workload can still vend on demand, but the boot-time warm is gone —
+        // and the integration test asserts on exactly that vend, so a lost race
+        // reads as a failed security contract rather than a slow start.
+        //
+        // Still best-effort overall: this is spawned off the boot path, the
+        // total wait is bounded (~3.75s), and giving up never blocks the VM.
+        for attempt in 1..=PREFETCH_ATTEMPTS {
+            let mut failed: Vec<String> = Vec::new();
+            for name in std::mem::take(&mut pending) {
+                match self.get_or_vend(&name).await {
+                    Ok(_) => ok += 1,
+                    Err(e) => {
+                        // Names only — never the value or the URI.
+                        tracing::warn!(env = %name, attempt, error = %e, "secrets: prefetch failed");
+                        failed.push(name);
+                    }
+                }
             }
+            pending = failed;
+            if pending.is_empty() || attempt == PREFETCH_ATTEMPTS {
+                break;
+            }
+            tokio::time::sleep(prefetch_backoff(attempt)).await;
+        }
+
+        if !pending.is_empty() {
+            tracing::warn!(
+                unvended = pending.len(),
+                declared = total,
+                attempts = PREFETCH_ATTEMPTS,
+                "secrets: giving up on prefetch; the workload will vend on demand"
+            );
         }
         tracing::info!(
             vended = ok,
@@ -443,6 +496,27 @@ impl SecretCache {
 
 #[cfg(test)]
 mod tests {
+    // The prefetch backoff exists because a lost startup race is UNRECOVERABLE:
+    // `refresh_loop` only re-vends keys already in the cache, so a prefetch that
+    // never landed leaves nothing to refresh. Guard both halves of the schedule
+    // — that it actually backs off, and that it stays bounded.
+    #[test]
+    fn prefetch_backoff_doubles_then_caps() {
+        assert_eq!(prefetch_backoff(1), Duration::from_millis(250));
+        assert_eq!(prefetch_backoff(2), Duration::from_millis(500));
+        assert_eq!(prefetch_backoff(3), Duration::from_millis(1000));
+        assert_eq!(prefetch_backoff(4), Duration::from_millis(2000));
+        // Capped: a wedged manager must not stretch the warm out indefinitely.
+        assert_eq!(prefetch_backoff(5), Duration::from_millis(2000));
+        assert_eq!(prefetch_backoff(99), Duration::from_millis(2000));
+
+        // Total sleep across the real attempt budget stays a few seconds. This
+        // runs off the boot path, but "off the boot path" is not "unbounded".
+        let total: Duration = (1..PREFETCH_ATTEMPTS).map(prefetch_backoff).sum();
+        assert_eq!(total, Duration::from_millis(3750));
+        assert!(total < Duration::from_secs(10));
+    }
+
     use super::*;
 
     const WORKLOAD_UID: u32 = 1000;
