@@ -140,6 +140,15 @@ func main() {
 	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
 	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
 	//
+	// GRANTS MATTER HERE, and this is the step that will bite. A tenant-scoped
+	// transaction in this service touches more than runs/agents: journal_events,
+	// run_locks and step_state are written inside the SAME transaction. If
+	// lantern_app has no grants on those, enforcement does not merely restrict
+	// rows — the engine starts failing with permission errors on ordinary work.
+	// Verify the role can read AND write every one of:
+	//   runs, agents, journal_events, run_locks, step_state
+	// before turning this on in an environment you care about.
+	//
 	// The privileged pool stays the connection for everything that must span
 	// tenants: the scheduler's poll, run_locks bookkeeping, and migrations.
 	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {

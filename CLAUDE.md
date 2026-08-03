@@ -697,6 +697,12 @@ because a restricted connection with no GUC matches no rows and the engine would
 stop picking up work. Unset (the default, and every dev setup) falls back to the
 single pool — GUC set, RLS not enforced, behaviour unchanged.
 
+**Before enabling enforcement, check the `lantern_app` GRANTs.** A tenant-scoped
+transaction in the engine touches `runs`, `agents`, `journal_events`,
+`run_locks` and `step_state` — the journal write and the run-status update are
+one transaction. Missing grants do not restrict rows, they fail ordinary work
+with permission errors.
+
 `TestRLSCatalog_NoUnscopedTenantQueries` is a permanent gate: a new raw-pool
 query touching `runs`/`agents`/`agent_versions` fails the build unless it is
 scoped or carries an `rls-exempt:` reason. Adding an exemption is fine —
