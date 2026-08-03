@@ -504,7 +504,7 @@ func (se *StepExecutor) executeSleep(ctx context.Context, state *RunState, stepI
 	)
 
 	// Journal that we're sleeping.
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
@@ -537,7 +537,7 @@ func (se *StepExecutor) executeSleep(ctx context.Context, state *RunState, stepI
 	}
 
 	// Journal sleep completed.
-	tx2, err := se.pool.Begin(ctx)
+	tx2, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
@@ -579,7 +579,7 @@ func (se *StepExecutor) executeWaitSignal(ctx context.Context, state *RunState, 
 	)
 
 	// Journal that we're waiting.
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
@@ -635,7 +635,7 @@ func (se *StepExecutor) executeWaitSignal(ctx context.Context, state *RunState, 
 		return nil, fmt.Errorf("signal %q timed out or cancelled", req.SignalName)
 	case value := <-ch:
 		// Journal signal received.
-		tx2, err := se.pool.Begin(ctx)
+		tx2, err := se.beginTenantTx(ctx, state.TenantID)
 		if err != nil {
 			return nil, fmt.Errorf("begin tx: %w", err)
 		}
@@ -719,7 +719,7 @@ func (se *StepExecutor) executeApproval(ctx context.Context, state *RunState, st
 	)
 
 	// Journal approval_requested.
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
@@ -776,7 +776,7 @@ func (se *StepExecutor) executeApproval(ctx context.Context, state *RunState, st
 	select {
 	case <-waitCtx.Done():
 		// Timeout — treat as denial.
-		tx3, err := se.pool.Begin(ctx)
+		tx3, err := se.beginTenantTx(ctx, state.TenantID)
 		if err != nil {
 			return nil, fmt.Errorf("begin tx: %w", err)
 		}
@@ -808,7 +808,7 @@ func (se *StepExecutor) executeApproval(ctx context.Context, state *RunState, st
 		}
 		json.Unmarshal(valueBytes, &response) //nolint:errcheck
 
-		tx4, err := se.pool.Begin(ctx)
+		tx4, err := se.beginTenantTx(ctx, state.TenantID)
 		if err != nil {
 			return nil, fmt.Errorf("begin tx: %w", err)
 		}
@@ -852,7 +852,7 @@ func (se *StepExecutor) executeApproval(ctx context.Context, state *RunState, st
 
 // journalStepStarted writes a step_started event to the journal.
 func (se *StepExecutor) journalStepStarted(ctx context.Context, state *RunState, stepID string, attempt int, payload *StepPayload) error {
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -891,7 +891,7 @@ func (se *StepExecutor) journalStepStarted(ctx context.Context, state *RunState,
 
 // journalStepCompleted writes a step_completed event to the journal.
 func (se *StepExecutor) journalStepCompleted(ctx context.Context, state *RunState, stepID string, attempt int, result *StepResult, durationMs float64) error {
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -931,7 +931,7 @@ func (se *StepExecutor) journalStepCompleted(ctx context.Context, state *RunStat
 
 // journalStepFailed writes a step_failed event to the journal.
 func (se *StepExecutor) journalStepFailed(ctx context.Context, state *RunState, stepID string, attempt int, result *StepResult, willRetry bool) error {
-	tx, err := se.pool.Begin(ctx)
+	tx, err := se.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}

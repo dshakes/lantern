@@ -8,11 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
 
@@ -236,7 +239,9 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 
 	// Load the run's input from the database.
 	var inputJSON []byte
-	err := e.pool.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
+	err := lanterndb.WithTenant(ctx, e.pool, state.TenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
+	})
 	if err != nil {
 		return fmt.Errorf("load run input: %w", err)
 	}
@@ -286,11 +291,15 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 // 'running' and dispatches it.
 func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID string) error {
 	// Update run status to running.
-	tag, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'running', started_at = now()
-		WHERE id = $1 AND status = 'queued'
-	`, runID)
-	if err != nil {
+	var tag pgconn.CommandTag
+	if err := lanterndb.WithTenant(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+		var terr error
+		tag, terr = tx.Exec(ctx, `
+			UPDATE runs SET status = 'running', started_at = now()
+			WHERE id = $1 AND status = 'queued'
+		`, runID)
+		return terr
+	}); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
@@ -305,9 +314,11 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) error {
 	// Load run metadata scoped to the caller's tenant.
 	var agentVersionID, runStatus string
-	err := e.pool.QueryRow(ctx, `
-		SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
+	err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
+	})
 	if err != nil {
 		// No row means either the run doesn't exist or belongs to another tenant —
 		// return the same error in both cases (ErrRunNotFound, not a permission error).
@@ -319,9 +330,12 @@ func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Update to resumable so the scheduler picks it up, still scoped by tenant.
-	if _, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID); err != nil {
+	if err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+		_, terr := tx.Exec(ctx, `
+			UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID)
+		return terr
+	}); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 
@@ -361,14 +375,16 @@ func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalNam
 	// Run is not active or no waiter for this signal. Verify ownership via the
 	// DB before writing to the journal.
 	var exists bool
-	if err := e.pool.QueryRow(ctx, `
-		SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID).Scan(&exists); err != nil {
+	if err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID).Scan(&exists)
+	}); err != nil {
 		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 
 	// Store the signal in the journal so it's picked up when the run resumes.
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -423,10 +439,15 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 
 	// Update the database, scoped by tenant_id so a cross-tenant caller
 	// modifies nothing even if the in-memory check was bypassed.
-	tag, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'cancelled', finished_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'running', 'paused', 'resumable')
-	`, runID, callerTenantID)
+	var tag pgconn.CommandTag
+	err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+		var terr error
+		tag, terr = tx.Exec(ctx, `
+			UPDATE runs SET status = 'cancelled', finished_at = now()
+			WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'running', 'paused', 'resumable')
+		`, runID, callerTenantID)
+		return terr
+	})
 	if err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
@@ -435,7 +456,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Journal the cancellation.
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -501,7 +522,7 @@ func (e *Engine) GetQueryHandler(runID, queryName string) (QueryHandler, error) 
 // --- internal journal helpers ---
 
 func (e *Engine) journalRunStarted(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -546,7 +567,7 @@ func (e *Engine) journalRunStarted(ctx context.Context, state *RunState) error {
 }
 
 func (e *Engine) journalRunSucceeded(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -593,7 +614,7 @@ func (e *Engine) journalRunSucceeded(ctx context.Context, state *RunState) error
 }
 
 func (e *Engine) journalRunFailed(ctx context.Context, state *RunState, runErr error) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -651,7 +672,7 @@ func (e *Engine) journalRunFailed(ctx context.Context, state *RunState, runErr e
 }
 
 func (e *Engine) journalRunCancelled(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
