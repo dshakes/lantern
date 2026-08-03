@@ -251,7 +251,13 @@ func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunR
 	// did not. NotFound rather than PermissionDenied: saying "forbidden" would
 	// confirm another tenant's run exists.
 	if err := s.srv.Engine.VerifyRunOwnership(ctx, req.GetRunId(), tenantID); err != nil {
-		return nil, status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
+		// Distinguish the two, or VerifyRunOwnership's careful separation is
+		// thrown away one layer up: a pool timeout would be reported to the
+		// caller as "this run does not exist".
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return nil, status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
+		}
+		return nil, status.Errorf(codes.Internal, "verify run ownership: %v", err)
 	}
 
 	handler, err := s.srv.Engine.GetQueryHandler(req.GetRunId(), req.GetQueryName())

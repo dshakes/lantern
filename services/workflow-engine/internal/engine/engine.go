@@ -383,13 +383,11 @@ func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalNam
 
 	// Run is not active or no waiter for this signal. Verify ownership via the
 	// DB before writing to the journal.
-	var exists bool
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
-		`, runID, callerTenantID).Scan(&exists)
-	}); err != nil {
-		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	// Reuse the one implementation rather than repeating the query: this copy
+	// mapped EVERY database error to ErrRunNotFound, which is exactly the
+	// masking VerifyRunOwnership exists to avoid.
+	if err := e.VerifyRunOwnership(ctx, runID, callerTenantID); err != nil {
+		return err
 	}
 
 	// Store the signal in the journal so it's picked up when the run resumes.
