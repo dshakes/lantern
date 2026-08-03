@@ -101,7 +101,7 @@ func (e *Engine) runChild(
 	var depth int
 	err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var derr error
-		depth, derr = childRunDepth(ctx, tx, parentRunID)
+		depth, derr = childRunDepth(ctx, tx, parentRunID, tenantID)
 		return derr
 	})
 	if err != nil {
@@ -224,12 +224,12 @@ func childDepthAllowed(parentDepth int) bool {
 // childRunDepth counts how many ancestors runID already has.
 func childRunDepth(ctx context.Context, pool interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
-}, runID string) (int, error) {
+}, runID, tenantID string) (int, error) {
 	var depth int
 	err := pool.QueryRow(ctx, `
 		WITH RECURSIVE chain AS (
 			SELECT id, parent_run_id, 0 AS depth
-			FROM runs WHERE id = $1
+			FROM runs WHERE id = $1 AND tenant_id = $3
 			UNION ALL
 			SELECT r.id, r.parent_run_id, c.depth + 1
 			FROM runs r
@@ -237,7 +237,7 @@ func childRunDepth(ctx context.Context, pool interface {
 			WHERE c.depth < $2
 		)
 		SELECT COALESCE(MAX(depth), 0) FROM chain
-	`, runID, childChainScanLimit).Scan(&depth)
+	`, runID, childChainScanLimit, tenantID).Scan(&depth)
 	if err != nil {
 		return 0, err
 	}
@@ -273,16 +273,19 @@ func (e *Engine) findOrCreateChild(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Serialise concurrent executions of this step against each other.
-	if _, err := tx.Exec(ctx, `SELECT id FROM runs WHERE id = $1 FOR UPDATE`, parentRunID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		SELECT id FROM runs WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+	`, parentRunID, tenantID); err != nil {
 		return "", "", false, fmt.Errorf("lock parent run %s: %w", parentRunID, err)
 	}
 
 	err = tx.QueryRow(ctx, `
 		SELECT id::text, agent_version_id::text FROM runs
 		WHERE parent_run_id = $1 AND trigger_meta->>'parent_step_id' = $2
+		  AND tenant_id = $3
 		ORDER BY created_at ASC
 		LIMIT 1
-	`, parentRunID, parentStepID).Scan(&childRunID, &agentVersionID)
+	`, parentRunID, parentStepID, tenantID).Scan(&childRunID, &agentVersionID)
 	if err == nil {
 		if err := tx.Commit(ctx); err != nil {
 			return "", "", false, fmt.Errorf("commit child adoption: %w", err)
@@ -330,7 +333,7 @@ func (e *Engine) findOrCreateChild(
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, started_at, trigger_kind, trigger_meta, input, parent_run_id, session_id)
 		VALUES ($1, $2, $3, 'running', now(), 'child_run', $4, $5, $6,
-			(SELECT session_id FROM runs WHERE id = $6))
+			(SELECT session_id FROM runs WHERE id = $6 AND tenant_id = $1))
 		RETURNING id::text
 	`, tenantID, agentID, agentVersionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
 		return "", "", false, fmt.Errorf("create child run: %w", err)
@@ -376,7 +379,9 @@ func (e *Engine) findOrCreateChild(
 func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVersionID string) error {
 	var status string
 	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, childRunID).Scan(&status)
+		return tx.QueryRow(ctx, `
+			SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
+		`, childRunID, tenantID).Scan(&status)
 	}); err != nil {
 		return fmt.Errorf("read child status: %w", err)
 	}
@@ -392,8 +397,9 @@ func (e *Engine) childOutcome(ctx context.Context, tenantID, childRunID string) 
 	var output []byte
 	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT status, COALESCE(output, 'null'::jsonb) FROM runs WHERE id = $1
-		`, childRunID).Scan(&status, &output)
+			SELECT status, COALESCE(output, 'null'::jsonb) FROM runs
+			WHERE id = $1 AND tenant_id = $2
+		`, childRunID, tenantID).Scan(&status, &output)
 	}); err != nil {
 		return "", nil, fmt.Errorf("read child run outcome: %w", err)
 	}
