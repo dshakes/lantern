@@ -472,6 +472,14 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 		return fmt.Errorf("update run status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		// Same two-cases-one-message problem ExecuteRun had: with `AND
+		// tenant_id` on the UPDATE, zero rows means either "not cancellable" or
+		// "not yours". Reporting the latter as a state error confirms the run
+		// exists. Fixing this in ExecuteRun and not here was the instance, not
+		// the class.
+		if err := e.VerifyRunOwnership(ctx, runID, callerTenantID); err != nil {
+			return err
+		}
 		return fmt.Errorf("run %s not in a cancellable state", runID)
 	}
 
