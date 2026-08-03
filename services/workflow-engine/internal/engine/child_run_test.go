@@ -114,8 +114,8 @@ func TestExecuteChildRun_DispatchesToRunner(t *testing.T) {
 	var gotInput json.RawMessage
 
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
-	se.childRunner = func(_ context.Context, parentRunID, parentStepID, tenantID, agentName string, input json.RawMessage) (json.RawMessage, error) {
-		gotParentRun, gotStep, gotTenant, gotAgent, gotInput = parentRunID, parentStepID, tenantID, agentName, input
+	se.childRunner = func(_ context.Context, st *RunState, parentStepID, agentName string, input json.RawMessage) (json.RawMessage, error) {
+		gotParentRun, gotStep, gotTenant, gotAgent, gotInput = st.RunID, parentStepID, st.TenantID, agentName, input
 		return json.RawMessage(`{"child_run_id":"child-9","status":"succeeded"}`), nil
 	}
 
@@ -143,7 +143,7 @@ func TestExecuteChildRun_DispatchesToRunner(t *testing.T) {
 // reporting a step that quietly succeeded with no child.
 func TestExecuteChildRun_RunnerError(t *testing.T) {
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
-	se.childRunner = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+	se.childRunner = func(_ context.Context, _ *RunState, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
 		return nil, ErrChildRunDepthExceeded
 	}
 	state := NewRunState("run-1", "tenant-1", "v1")
@@ -159,7 +159,7 @@ func TestExecuteChildRun_RunnerError(t *testing.T) {
 func TestExecuteChildRun_RequiresAgentName(t *testing.T) {
 	called := false
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
-	se.childRunner = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+	se.childRunner = func(_ context.Context, _ *RunState, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
 		called = true
 		return nil, nil
 	}
@@ -186,4 +186,44 @@ func indexOf(h, n string) int {
 		}
 	}
 	return -1
+}
+
+// TestIsPausedRunStatus separates "waiting" from "finished".
+//
+// The first cut treated any non-succeeded status as a failure, so a child that
+// paused for human approval failed its parent — which would have made approval
+// inside a child run impossible, quietly.
+func TestIsPausedRunStatus(t *testing.T) {
+	for _, s := range []string{"paused", "resumable"} {
+		if !isPausedRunStatus(s) {
+			t.Errorf("isPausedRunStatus(%q) = false, want true", s)
+		}
+		if isTerminalRunStatus(s) {
+			t.Errorf("isTerminalRunStatus(%q) = true — paused is not finished", s)
+		}
+	}
+	for _, s := range []string{"succeeded", "failed", "running", "queued"} {
+		if isPausedRunStatus(s) {
+			t.Errorf("isPausedRunStatus(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestExecuteChildRun_PausedIsNotFailure checks the paused case surfaces the
+// typed ErrChildRunPaused, so callers can tell "waiting on a human" apart from
+// "the child broke".
+func TestExecuteChildRun_PausedIsNotFailure(t *testing.T) {
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
+	se.childRunner = func(_ context.Context, _ *RunState, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"paused"}`), ErrChildRunPaused
+	}
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	_, err := se.executeChildRun(context.Background(), state, "s", "k", json.RawMessage(`{"agent_name":"approver"}`))
+	if !errors.Is(err, ErrChildRunPaused) {
+		t.Fatalf("err = %v, want ErrChildRunPaused", err)
+	}
+	if errors.Is(err, ErrChildRunDepthExceeded) {
+		t.Error("a paused child must not be reported as a depth violation")
+	}
 }

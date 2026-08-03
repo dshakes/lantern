@@ -719,6 +719,18 @@ returning placeholder strings:
     the executor consult its replay cache is worth doing on its own; this step
     is safe either way.)
   - **Cancellation** propagates: the child is driven on the parent's ctx.
+  - **No split-brain.** The child is created `status='running'`, NOT `'queued'`.
+    The scheduler polls `status IN ('queued','resumable')`, so a queued child
+    would be claimed by a scheduler worker at the same moment the parent drives
+    it inline — two goroutines on one run, duplicating LLM/tool side effects.
+    Creating it already-running makes the poller unable to see it by
+    construction. Creation + adoption run in one transaction that locks the
+    parent row, so two executions of the same step cannot both insert.
+  - **A paused child is not a failed child.** If a child stops on `approval` or
+    `wait_signal` the step returns the typed `ErrChildRunPaused` rather than a
+    generic failure. Resuming a parent around a paused child needs the parent to
+    become resumable too — a design in its own right, so the limitation is named
+    instead of guessed at. Nested approvals do not work yet; they fail loudly.
   `ErrChildRunUnavailable` still exists and fires when no child runner is wired
   (nil, as with a nil model/runtime client) — the step fails rather than
   fabricating a result. (Regression-guarded: it once journaled a fake
