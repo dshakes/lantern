@@ -56,6 +56,10 @@ func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, worker
 
 	eng.streamer = NewEventStreamer(rdb, logger)
 	eng.executor = NewStepExecutor(pool, eng.streamer, logger, modelClient, runtimeClient)
+	// Child runs are driven by the engine itself (see child_run.go). Assigned
+	// after construction as a func value so the executor never imports the
+	// Engine back.
+	eng.executor.childRunner = eng.runChild
 	// Pass &eng.wg so dispatch goroutines are tracked by the same WaitGroup
 	// that Stop() waits on — guarantees all in-flight runs drain on shutdown.
 	eng.scheduler = NewScheduler(pool, logger, &eng.wg, eng.dispatchRun)

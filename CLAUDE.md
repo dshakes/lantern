@@ -698,10 +698,44 @@ returning placeholder strings:
   a typed tool registry), so `exec_tool` validates the request and returns
   `TOOL_STATUS_UNAVAILABLE` — never a fabricated success — until the in-VM
   runner lands.
-- **`child_run` steps** fail with the typed `ErrChildRunUnavailable` — the
-  engine has no control-plane run client yet, so it cannot dispatch a child
-  agent run. (Regression-guarded: this step used to journal a fake
-  `child_started`/`child_completed` pair and return a placeholder output.)
+- **`child_run` steps** invoke another agent and wait for it, in the engine
+  itself (`internal/engine/child_run.go`) — NOT via a control-plane client. The
+  engine is the only thing that mutates run state (invariant #2) and is already
+  the component that drives a run, so it creates the child row and drives it;
+  asking the control plane to create a run the engine owns would invert that
+  invariant. The step returns `{child_run_id, status, output}` and a failed
+  child fails the parent step. Three things worth knowing:
+  - **Depth** is computed from the `parent_run_id` chain (recursive CTE, bounded
+    scan), capped at `maxChildRunDepth = 5` to match the control-plane
+    interpreter's `maxSubagentDepth`. Deliberately NOT a context value: this
+    engine crashes and replays, and a context value resets to 0 on the way back
+    up — turning the cycle guard off exactly when a runaway workflow is retrying
+    hardest. The DB chain survives restarts.
+  - **Replay-safety** is by adoption, not by the step cache: `RunState`
+    reconstructs `StepResults` on replay but `GetStepResult` is never consulted,
+    so a replayed run re-executes its steps. A child records its
+    `parent_run_id` + `parent_step_id` in `trigger_meta`, and a re-executed
+    step adopts that child instead of dispatching a second agent run. (Making
+    the executor consult its replay cache is worth doing on its own; this step
+    is safe either way.)
+  - **Cancellation** propagates: the child is driven on the parent's ctx.
+  - **No split-brain.** The child is created `status='running'`, NOT `'queued'`.
+    The scheduler polls `status IN ('queued','resumable')`, so a queued child
+    would be claimed by a scheduler worker at the same moment the parent drives
+    it inline — two goroutines on one run, duplicating LLM/tool side effects.
+    Creating it already-running makes the poller unable to see it by
+    construction. Creation + adoption run in one transaction that locks the
+    parent row, so two executions of the same step cannot both insert.
+  - **A paused child fails the step, but says so precisely.** If a child stops
+    on `approval` or `wait_signal` the step fails with the typed
+    `ErrChildRunPaused` instead of a generic failure — the parent does NOT wait
+    for the approval. Resuming a parent around a paused child needs the parent to
+    become resumable too — a design in its own right, so the limitation is named
+    instead of guessed at. Nested approvals do not work yet; they fail loudly.
+  `ErrChildRunUnavailable` still exists and fires when no child runner is wired
+  (nil, as with a nil model/runtime client) — the step fails rather than
+  fabricating a result. (Regression-guarded: it once journaled a fake
+  `child_started`/`child_completed` pair and returned a placeholder output.)
 
 ### Human takeover (W11a)
 
