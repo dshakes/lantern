@@ -125,6 +125,44 @@ func main() {
 
 	// --- Engine ---
 	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers, modelClient, runtimeClient)
+
+	// --- RLS app pool (flag-gated, default no-op) ---
+	//
+	// Without this the engine runs every query on the privileged DATABASE_URL
+	// pool, and PostgreSQL superusers/owners BYPASS row-level security — so
+	// setting app.tenant_id would be theatre and SetAppPool would be dead code.
+	// Mirrors the control-plane's dual-pool construction.
+	//
+	// Default (either var unset) leaves the engine on the single pool: the GUC
+	// is still set, RLS is simply not enforced, and behaviour is unchanged.
+	//
+	// Operator cutover: CREATE ROLE lantern_app (done by the control-plane's
+	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
+	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
+	//
+	// The privileged pool stays the connection for everything that must span
+	// tenants: the scheduler's poll, run_locks bookkeeping, and migrations.
+	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
+		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+		if appPwd == "" {
+			logger.Warn("LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — " +
+				"tenant queries stay on the privileged pool and RLS is NOT enforced")
+		} else {
+			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
+			if cfgErr != nil {
+				logger.Fatal("failed to parse DATABASE_URL for the lantern_app pool", zap.Error(cfgErr))
+			}
+			appCfg.ConnConfig.User = "lantern_app"
+			appCfg.ConnConfig.Password = appPwd
+			appPool, poolErr := pgxpool.NewWithConfig(ctx, appCfg)
+			if poolErr != nil {
+				logger.Fatal("failed to create the lantern_app pool", zap.Error(poolErr))
+			}
+			defer appPool.Close()
+			eng.SetAppPool(appPool)
+			logger.Info("RLS enforcement on: tenant-scoped queries use the lantern_app pool")
+		}
+	}
 	eng.Start(ctx)
 
 	// --- Server struct ---
