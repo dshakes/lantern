@@ -312,6 +312,14 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 		return fmt.Errorf("update run status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		// Zero rows now means one of TWO things, and they need different
+		// answers: the run is not queued, or it is not this tenant's. Since the
+		// UPDATE gained `AND tenant_id`, reporting both as "not in queued
+		// state" tells a cross-tenant caller the run exists and is merely in the
+		// wrong status — misleading, and a small existence leak.
+		if err := e.VerifyRunOwnership(ctx, runID, tenantID); err != nil {
+			return err // ErrRunNotFound, or a real database failure, unmasked
+		}
 		return fmt.Errorf("run %s not in queued state", runID)
 	}
 
