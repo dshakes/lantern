@@ -70,6 +70,8 @@ type StepExecutor struct {
 	// nil => child_run steps fail with ErrChildRunUnavailable rather than
 	// fabricating a result, exactly like a nil modelClient/runtimeClient.
 	childRunner ChildRunner
+	// appPool: see Engine.appPool. nil => fall back to pool.
+	appPool *pgxpool.Pool
 }
 
 // NewStepExecutor creates a new StepExecutor. modelClient may be nil; LLM steps

@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
@@ -98,7 +99,7 @@ func (e *Engine) runChild(
 
 	// 1. Cycle guard, before any row is written.
 	var depth int
-	err := lanterndb.WithTenant(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var derr error
 		depth, derr = childRunDepth(ctx, tx, parentRunID)
 		return derr
@@ -374,7 +375,7 @@ func (e *Engine) findOrCreateChild(
 // point in both the fresh and the resumed case.
 func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVersionID string) error {
 	var status string
-	if err := lanterndb.WithTenant(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, childRunID).Scan(&status)
 	}); err != nil {
 		return fmt.Errorf("read child status: %w", err)
@@ -389,7 +390,7 @@ func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVers
 func (e *Engine) childOutcome(ctx context.Context, tenantID, childRunID string) (string, json.RawMessage, error) {
 	var status string
 	var output []byte
-	if err := lanterndb.WithTenant(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT status, COALESCE(output, 'null'::jsonb) FROM runs WHERE id = $1
 		`, childRunID).Scan(&status, &output)
@@ -455,7 +456,9 @@ func isTerminalRunStatus(status string) bool {
 // transactions is far easier to review, and far harder to get subtly wrong,
 // than hand-editing each one.
 func (e *Engine) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, error) {
-	tx, err := e.pool.Begin(ctx)
+	// rls-exempt: THIS is the primitive that applies the scope — it sets the
+	// GUC on the transaction it returns.
+	tx, err := e.tenantPool().Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +471,8 @@ func (e *Engine) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, er
 
 // beginTenantTx is the StepExecutor's equivalent; see the Engine method above.
 func (se *StepExecutor) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, error) {
-	tx, err := se.pool.Begin(ctx)
+	// rls-exempt: the scoping primitive itself; see the Engine method above.
+	tx, err := se.tenantPool().Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -477,4 +481,37 @@ func (se *StepExecutor) beginTenantTx(ctx context.Context, tenantID string) (pgx
 		return nil, err
 	}
 	return tx, nil
+}
+
+// tenantPool returns the pool that RLS policies actually apply to.
+//
+// This matters more than it looks. The engine opens ONE DATABASE_URL pool, and
+// if that pool connects as the privileged role then RLS is BYPASSED no matter
+// what app.tenant_id says — the GUC would be theatre. The control plane solves
+// this with a second, non-superuser pool (Server.TenantPool); the engine now
+// does the same.
+//
+// The two roles are not interchangeable, in either direction:
+//   - Tenant-scoped work must run on the restricted pool, or policies do not
+//     apply to it.
+//   - The scheduler's cross-tenant poll must NOT, because under enforcement a
+//     restricted connection with no GUC set matches no rows, and the engine
+//     would stop picking up work entirely.
+//
+// Unset (the default, and every dev setup) falls back to the main pool, which
+// is exactly today's behaviour: the GUC is set, RLS is not enforced, nothing
+// changes. Enforcement is opt-in per environment.
+func (e *Engine) tenantPool() *pgxpool.Pool {
+	if e.appPool != nil {
+		return e.appPool
+	}
+	return e.pool
+}
+
+// tenantPool mirrors Engine.tenantPool for the step executor.
+func (se *StepExecutor) tenantPool() *pgxpool.Pool {
+	if se.appPool != nil {
+		return se.appPool
+	}
+	return se.pool
 }

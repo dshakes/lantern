@@ -27,7 +27,12 @@ import (
 // catalog is the thing that keeps a security property from rotting.
 func TestRLSCatalog_NoUnscopedTenantQueries(t *testing.T) {
 	// Raw pool query calls: e.pool.Query(, se.pool.Exec(, s.pool.QueryRow(, ...
-	rawPoolCall := regexp.MustCompile(`\.pool\.(Query|QueryRow|Exec)\(`)
+	// Begin is included deliberately: a raw pool.Begin followed by
+	// tx.Exec("UPDATE runs ...") is unscoped just the same, and it is the shape
+	// the code had BEFORE this cutover — i.e. the most likely way to regress.
+	// Catching only Query/QueryRow/Exec would leave the gate open on its own
+	// primary failure mode.
+	rawPoolCall := regexp.MustCompile(`\.pool\.(Query|QueryRow|Exec|Begin)\(`)
 	// Tables under RLS that carry a tenant_id. journal_events and run_locks are
 	// in the platform's documented exempt set — no tenant_id to police.
 	tenantTables := regexp.MustCompile(`(?i)\b(FROM|INTO|UPDATE|JOIN)\s+(runs|agents|agent_versions)\b`)
@@ -53,7 +58,7 @@ func TestRLSCatalog_NoUnscopedTenantQueries(t *testing.T) {
 				continue
 			}
 			// The SQL usually follows the call on the next few lines.
-			end := min(i+8, len(lines))
+			end := min(i+14, len(lines))
 			stmt := strings.Join(lines[i:end], "\n")
 			if !tenantTables.MatchString(stmt) {
 				continue // run_locks / journal_events / non-tenant tables

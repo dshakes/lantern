@@ -686,6 +686,17 @@ A worker is not a request handler, and the split follows from that:
   documented exempt set) — carries an explicit `rls-exempt:` comment with the
   reason.
 
+**Enforcement needs a second pool, and that is the part that is easy to get
+wrong.** The engine opens one `DATABASE_URL` pool; if it connects as the
+privileged role, RLS is BYPASSED whatever `app.tenant_id` says — the GUC would
+be theatre. `Engine.SetAppPool` installs a non-superuser pool (mirroring the
+control-plane's `Server.AppPool`) that tenant-scoped work runs on. The two roles
+are not interchangeable in either direction: tenant work must use the restricted
+pool or policies do not apply, and the scheduler's cross-tenant poll must NOT,
+because a restricted connection with no GUC matches no rows and the engine would
+stop picking up work. Unset (the default, and every dev setup) falls back to the
+single pool — GUC set, RLS not enforced, behaviour unchanged.
+
 `TestRLSCatalog_NoUnscopedTenantQueries` is a permanent gate: a new raw-pool
 query touching `runs`/`agents`/`agent_versions` fails the build unless it is
 scoped or carries an `rls-exempt:` reason. Adding an exemption is fine —
