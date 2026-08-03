@@ -298,10 +298,15 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 	var tag pgconn.CommandTag
 	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var terr error
+		// AND tenant_id: RLS is DEFAULT-OFF, so relying on the policy alone
+		// would leave this with no tenant defense in every deployment that has
+		// not enabled enforcement — which is all of them today. The explicit
+		// predicate holds either way, and RLS becomes defence in depth rather
+		// than the only defence.
 		tag, terr = tx.Exec(ctx, `
 			UPDATE runs SET status = 'running', started_at = now()
-			WHERE id = $1 AND status = 'queued'
-		`, runID)
+			WHERE id = $1 AND tenant_id = $2 AND status = 'queued'
+		`, runID, tenantID)
 		return terr
 	}); err != nil {
 		return fmt.Errorf("update run status: %w", err)
@@ -743,11 +748,22 @@ func (e *Engine) SetAppPool(p *pgxpool.Pool) {
 // run exists, which is itself a leak.
 func (e *Engine) VerifyRunOwnership(ctx context.Context, runID, callerTenantID string) error {
 	var exists bool
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID).Scan(&exists)
-	}); err != nil || !exists {
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Genuinely absent, or another tenant's — same answer, no existence leak.
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	case err != nil:
+		// A pool timeout or a network blip is NOT "not found". Collapsing every
+		// database failure into NotFound tells the caller the run does not
+		// exist when the truth is that we could not look — it hides outages and
+		// sends people debugging the wrong thing.
+		return fmt.Errorf("verify run ownership %s: %w", runID, err)
+	case !exists:
 		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 	return nil
