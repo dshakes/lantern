@@ -55,7 +55,24 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS step_state_status_idx
 		ON step_state (run_id, status)`,
 
+	// ---------------------------------------------------------------
+	// Run locks — prevents two workers from executing the same run.
+	// Advisory locks are the primary mechanism; this table provides
+	// visibility and expiry-based recovery.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS run_locks (
+		run_id      UUID PRIMARY KEY,
+		worker_id   TEXT NOT NULL,
+		acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		expires_at  TIMESTAMPTZ NOT NULL
+	)`,
+
 	// Grant the RLS role access to the tables THIS service creates.
+	//
+	// LAST, deliberately: migrations run in slice order, so a grant placed
+	// beside step_state referenced run_locks before it existed and aborted the
+	// whole migration on a FRESH database. It passed locally only because that
+	// database already had every table — the classic dirty-DB false pass.
 	//
 	// The control-plane's baseline migration creates lantern_app and grants it
 	// on the tables it owns — but step_state, journal_events and run_locks are
@@ -77,16 +94,4 @@ var migrations = []string{
 		END IF;
 	END
 	$$;`,
-
-	// ---------------------------------------------------------------
-	// Run locks — prevents two workers from executing the same run.
-	// Advisory locks are the primary mechanism; this table provides
-	// visibility and expiry-based recovery.
-	// ---------------------------------------------------------------
-	`CREATE TABLE IF NOT EXISTS run_locks (
-		run_id      UUID PRIMARY KEY,
-		worker_id   TEXT NOT NULL,
-		acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-		expires_at  TIMESTAMPTZ NOT NULL
-	)`,
 }
