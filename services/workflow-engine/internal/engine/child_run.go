@@ -53,6 +53,13 @@ const childChainScanLimit = 100
 // from a dispatch failure.
 var ErrChildRunDepthExceeded = errors.New("child run depth limit exceeded — possible workflow cycle")
 
+// ErrChildRunPaused is returned when a child run stops on an approval or
+// wait_signal step. It has NOT failed; it is waiting. Resuming a parent around
+// a paused child requires the parent to become resumable as well, which is a
+// separate design — this error names the limitation rather than reporting a
+// pause as a failure.
+var ErrChildRunPaused = errors.New("child run is paused awaiting a signal or approval")
+
 // childRunResult is what a child_run step returns to the workflow.
 type childRunResult struct {
 	ChildRunID string          `json:"child_run_id"`
@@ -69,9 +76,12 @@ type childRunResult struct {
 // result, matching how llm_call and tool_call behave without their clients.
 func (e *Engine) runChild(
 	ctx context.Context,
-	parentRunID, parentStepID, tenantID, agentName string,
+	state *RunState,
+	parentStepID, agentName string,
 	input json.RawMessage,
 ) (json.RawMessage, error) {
+	parentRunID, tenantID := state.RunID, state.TenantID
+
 	// 1. Cycle guard, before any row is written.
 	depth, err := childRunDepth(ctx, e.pool, parentRunID)
 	if err != nil {
@@ -81,30 +91,14 @@ func (e *Engine) runChild(
 		return nil, fmt.Errorf("%w: depth %d at agent %q", ErrChildRunDepthExceeded, depth+1, agentName)
 	}
 
-	// 2. Adopt an existing child if this step already created one (replay).
-	childRunID, adopted, err := e.findExistingChild(ctx, parentRunID, parentStepID)
+	// 2. Create the child, or adopt the one this step already created.
+	childRunID, agentVersionID, adopted, err := e.findOrCreateChild(
+		ctx, parentRunID, parentStepID, tenantID, agentName, input, depth+1)
 	if err != nil {
 		return nil, err
 	}
-
-	var agentVersionID string
-	if adopted {
-		if err := e.pool.QueryRow(ctx, `
-			SELECT agent_version_id::text FROM runs WHERE id = $1
-		`, childRunID).Scan(&agentVersionID); err != nil {
-			return nil, fmt.Errorf("load adopted child %s: %w", childRunID, err)
-		}
-		e.logger.Info("adopting existing child run (replay)",
-			zap.String("parent_run_id", parentRunID),
-			zap.String("step_id", parentStepID),
-			zap.String("child_run_id", childRunID),
-		)
-	} else {
-		childRunID, agentVersionID, err = e.createChildRun(ctx, parentRunID, parentStepID, tenantID, agentName, input, depth+1)
-		if err != nil {
-			return nil, err
-		}
-		if err := e.journalChildEvent(ctx, parentRunID, parentStepID, journal.KindChildStarted, map[string]any{
+	if !adopted {
+		if err := e.journalChildEvent(ctx, state, parentStepID, journal.KindChildStarted, map[string]any{
 			"child_run_id": childRunID,
 			"agent_name":   agentName,
 			"depth":        depth + 1,
@@ -117,9 +111,9 @@ func (e *Engine) runChild(
 	//    cancels the child rather than orphaning it mid-flight.
 	runErr := e.driveChild(ctx, childRunID, tenantID, agentVersionID)
 
-	// 4. Read the child's terminal state back from the row the engine owns,
-	//    rather than trusting the in-memory result — a crash between these
-	//    points must still report what actually happened.
+	// 4. Read the child's state back from the row the engine owns rather than
+	//    trusting the in-memory result — a crash between these points must
+	//    still report what actually happened.
 	status, output, readErr := e.childOutcome(ctx, childRunID)
 	if readErr != nil {
 		return nil, readErr
@@ -131,15 +125,24 @@ func (e *Engine) runChild(
 		return nil, fmt.Errorf("marshal child run result: %w", err)
 	}
 
-	if err := e.journalChildEvent(ctx, parentRunID, parentStepID, journal.KindChildCompleted, map[string]any{
+	if err := e.journalChildEvent(ctx, state, parentStepID, journal.KindChildCompleted, map[string]any{
 		"child_run_id": childRunID,
 		"status":       status,
 	}); err != nil {
 		return nil, err
 	}
 
-	// A child that failed fails the parent step. runErr is preferred when set
-	// because it carries the reason; status alone only says "failed".
+	// A child that PAUSED has not failed — it is waiting on a signal or a human
+	// approval and will resume later. Reporting that as a generic step failure
+	// would be wrong twice over: it loses the distinction, and it makes any
+	// child that ever pauses look broken. Resuming a parent around a paused
+	// child needs the parent to become resumable too, which is a design in its
+	// own right, so say exactly that instead of guessing.
+	if isPausedRunStatus(status) {
+		return payload, fmt.Errorf("%w: child run %s (agent %q) is %s", ErrChildRunPaused, childRunID, agentName, status)
+	}
+	// runErr is preferred when set because it carries the reason; a status of
+	// "failed" alone only says that it did.
 	if runErr != nil {
 		return payload, fmt.Errorf("child run %s (agent %q) failed: %w", childRunID, agentName, runErr)
 	}
@@ -181,68 +184,98 @@ func childRunDepth(ctx context.Context, pool interface {
 	return depth, nil
 }
 
-// findExistingChild returns the child this (parent run, step) already created,
-// if any. This is what makes a replayed child_run step safe.
-func (e *Engine) findExistingChild(ctx context.Context, parentRunID, parentStepID string) (string, bool, error) {
-	var childRunID string
-	err := e.pool.QueryRow(ctx, `
-		SELECT id::text FROM runs
-		WHERE parent_run_id = $1 AND trigger_meta->>'parent_step_id' = $2
-		ORDER BY created_at ASC
-		LIMIT 1
-	`, parentRunID, parentStepID).Scan(&childRunID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("look up existing child run: %w", err)
-	}
-	return childRunID, true, nil
-}
-
-// createChildRun resolves the agent and inserts the child run row.
-func (e *Engine) createChildRun(
+// findOrCreateChild returns the child run for this (parent run, step),
+// creating it if this is the first execution.
+//
+// Both halves run in ONE transaction that first locks the PARENT run row.
+// Without that lock, two executions of the same step can both look, both find
+// nothing, and both insert — producing two child runs for one step and quietly
+// defeating the adoption that makes replay safe.
+//
+// The child is created as 'running', NOT 'queued'. The scheduler polls
+// `status IN ('queued','resumable')`, so a queued child would be claimed by a
+// scheduler worker at the same moment the parent drives it inline — two
+// goroutines executing one run, with duplicated LLM and tool side effects.
+// Creating it already-running means the poller cannot see it by construction,
+// which removes the race rather than narrowing it. Recovery is unchanged in
+// kind: a parent that crashes mid-child re-drives it on replay via the same
+// adoption path (an in-flight child is not terminal, so driveChild resumes it).
+func (e *Engine) findOrCreateChild(
 	ctx context.Context,
 	parentRunID, parentStepID, tenantID, agentName string,
 	input json.RawMessage,
 	depth int,
-) (string, string, error) {
-	var agentID, versionID string
-	err := e.pool.QueryRow(ctx, `
+) (childRunID, agentVersionID string, adopted bool, err error) {
+	tx, err := e.pool.Begin(ctx)
+	if err != nil {
+		return "", "", false, fmt.Errorf("begin child run creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialise concurrent executions of this step against each other.
+	if _, err := tx.Exec(ctx, `SELECT id FROM runs WHERE id = $1 FOR UPDATE`, parentRunID); err != nil {
+		return "", "", false, fmt.Errorf("lock parent run %s: %w", parentRunID, err)
+	}
+
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, agent_version_id::text FROM runs
+		WHERE parent_run_id = $1 AND trigger_meta->>'parent_step_id' = $2
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, parentRunID, parentStepID).Scan(&childRunID, &agentVersionID)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return "", "", false, fmt.Errorf("commit child adoption: %w", err)
+		}
+		e.logger.Info("adopting existing child run (replay)",
+			zap.String("parent_run_id", parentRunID),
+			zap.String("step_id", parentStepID),
+			zap.String("child_run_id", childRunID),
+		)
+		return childRunID, agentVersionID, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, fmt.Errorf("look up existing child run: %w", err)
+	}
+
+	var agentID string
+	err = tx.QueryRow(ctx, `
 		SELECT id::text, COALESCE(current_version_id::text, '')
 		FROM agents
 		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
-	`, tenantID, agentName).Scan(&agentID, &versionID)
+	`, tenantID, agentName).Scan(&agentID, &agentVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", fmt.Errorf("child run: agent %q not found for this tenant", agentName)
+		return "", "", false, fmt.Errorf("child run: agent %q not found for this tenant", agentName)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("resolve agent %q: %w", agentName, err)
+		return "", "", false, fmt.Errorf("resolve agent %q: %w", agentName, err)
 	}
-	if versionID == "" {
-		return "", "", fmt.Errorf("child run: agent %q has no promoted version", agentName)
+	if agentVersionID == "" {
+		return "", "", false, fmt.Errorf("child run: agent %q has no promoted version", agentName)
 	}
 
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
-	// parent_step_id is the idempotency anchor findExistingChild reads back.
+	// parent_step_id is the idempotency anchor the lookup above reads back.
 	meta, err := json.Marshal(map[string]any{
 		"parent_run_id":  parentRunID,
 		"parent_step_id": parentStepID,
 		"depth":          depth,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("marshal child trigger_meta: %w", err)
+		return "", "", false, fmt.Errorf("marshal child trigger_meta: %w", err)
 	}
 
-	var childRunID string
-	if err := e.pool.QueryRow(ctx, `
-		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, parent_run_id)
-		VALUES ($1, $2, $3, 'queued', 'child_run', $4, $5, $6)
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, started_at, trigger_kind, trigger_meta, input, parent_run_id)
+		VALUES ($1, $2, $3, 'running', now(), 'child_run', $4, $5, $6)
 		RETURNING id::text
-	`, tenantID, agentID, versionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
-		return "", "", fmt.Errorf("create child run: %w", err)
+	`, tenantID, agentID, agentVersionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
+		return "", "", false, fmt.Errorf("create child run: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", false, fmt.Errorf("commit child run creation: %w", err)
 	}
 
 	e.logger.Info("created child run",
@@ -252,11 +285,13 @@ func (e *Engine) createChildRun(
 		zap.String("agent_name", agentName),
 		zap.Int("depth", depth),
 	)
-	return childRunID, versionID, nil
+	return childRunID, agentVersionID, false, nil
 }
 
 // driveChild executes the child run to completion. An already-terminal child
-// (adopted after a replay) is not re-run.
+// (adopted after a replay) is not re-run. The child is created 'running', so
+// dispatchRun — not ExecuteRun, which requires a queued row — is the entry
+// point in both the fresh and the resumed case.
 func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVersionID string) error {
 	var status string
 	if err := e.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, childRunID).Scan(&status); err != nil {
@@ -265,10 +300,6 @@ func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVers
 	if isTerminalRunStatus(status) {
 		return nil
 	}
-	if status == "queued" {
-		return e.ExecuteRun(ctx, childRunID, tenantID, agentVersionID)
-	}
-	// Mid-flight when we adopted it (a crash during the child's own execution).
 	return e.dispatchRun(ctx, childRunID, tenantID, agentVersionID)
 }
 
@@ -284,9 +315,12 @@ func (e *Engine) childOutcome(ctx context.Context, childRunID string) (string, j
 	return status, json.RawMessage(output), nil
 }
 
-// journalChildEvent records a child lifecycle event on the PARENT's journal, so
-// the parent's event stream shows the child boundary.
-func (e *Engine) journalChildEvent(ctx context.Context, parentRunID, stepID, kind string, fields map[string]any) error {
+// journalChildEvent records a child lifecycle event on the PARENT's journal.
+// It appends to the parent's in-memory RunState as well as the database —
+// writing only to the database leaves the running parent's view of its own
+// history missing the child boundary until the next replay.
+func (e *Engine) journalChildEvent(ctx context.Context, state *RunState, stepID, kind string, fields map[string]any) error {
+	parentRunID := state.RunID
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", kind, err)
@@ -297,19 +331,26 @@ func (e *Engine) journalChildEvent(ctx context.Context, parentRunID, stepID, kin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := journal.Append(ctx, tx, &journal.JournalEntry{
+	entry := &journal.JournalEntry{
 		RunID:   parentRunID,
 		Kind:    kind,
 		StepID:  stepID,
 		Attempt: 1,
 		Payload: payload,
-	}); err != nil {
+	}
+	if err := journal.Append(ctx, tx, entry); err != nil {
 		return fmt.Errorf("journal %s: %w", kind, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit %s: %w", kind, err)
 	}
+	state.AppendJournal(*entry)
 	return nil
+}
+
+// isPausedRunStatus reports whether a run is waiting rather than finished.
+func isPausedRunStatus(status string) bool {
+	return status == "paused" || status == "resumable"
 }
 
 // isTerminalRunStatus reports whether a run will not progress further.

@@ -35,9 +35,9 @@ var ErrChildRunUnavailable = errors.New("child run dispatch not wired (no child 
 
 // ChildRunner starts (or adopts, on replay) a child run for agentName under
 // tenantID and drives it to completion, returning the encoded result. The
-// parent run + step identify the child so a re-executed step adopts the
-// child it already created instead of starting a second one.
-type ChildRunner func(ctx context.Context, parentRunID, parentStepID, tenantID, agentName string, input json.RawMessage) (json.RawMessage, error)
+// parent run + step (taken from state) identify the child, so a re-executed
+// step adopts the child it already created instead of starting a second one.
+type ChildRunner func(ctx context.Context, state *RunState, parentStepID, agentName string, input json.RawMessage) (json.RawMessage, error)
 
 // StepPayload is the decoded payload from a step request. The Kind field
 // determines what the step does (llm_call, tool_call, sleep, signal, etc.)
@@ -698,7 +698,7 @@ func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, st
 		return nil, fmt.Errorf("child_run for agent %q: %w", req.AgentName, ErrChildRunUnavailable)
 	}
 
-	return se.childRunner(ctx, state.RunID, stepID, state.TenantID, req.AgentName, req.Input)
+	return se.childRunner(ctx, state, stepID, req.AgentName, req.Input)
 }
 
 // executeApproval pauses the run until a human approves or denies the request.
