@@ -327,6 +327,24 @@ func (e *Engine) findOrCreateChild(
 	`, tenantID, agentID, agentVersionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
 		return "", "", false, fmt.Errorf("create child run: %w", err)
 	}
+	// Record a run_locks row for the child in the same transaction.
+	//
+	// Exclusion here comes from the STATUS — the scheduler polls
+	// queued/resumable and cannot select a 'running' child — but every other
+	// executing run has a lock row, and without one the child is invisible to
+	// lock-based tooling and to CleanExpiredLocks. Best-effort by design: the
+	// row is bookkeeping, not the thing preventing a second worker.
+	if e.scheduler != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO run_locks (run_id, worker_id, expires_at)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (run_id) DO UPDATE SET
+				worker_id = $2, acquired_at = now(), expires_at = $3
+		`, childRunID, e.scheduler.workerID, time.Now().Add(lockDuration)); err != nil {
+			return "", "", false, fmt.Errorf("record child run lock: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return "", "", false, fmt.Errorf("commit child run creation: %w", err)
 	}
