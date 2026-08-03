@@ -84,15 +84,19 @@ func (q *fakeQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.R
 // depth the guard then acts on.
 func TestChildRunDepth(t *testing.T) {
 	q := &fakeQuerier{row: fakeRow{depth: 3}}
-	got, err := childRunDepth(context.Background(), q, "run-x")
+	got, err := childRunDepth(context.Background(), q, "run-x", "tenant-1")
 	if err != nil {
 		t.Fatalf("childRunDepth: %v", err)
 	}
 	if got != 3 {
 		t.Errorf("depth = %d, want 3", got)
 	}
-	if len(q.gotArgs) != 2 || q.gotArgs[0] != "run-x" || q.gotArgs[1] != childChainScanLimit {
-		t.Errorf("args = %v, want [run-x %d]", q.gotArgs, childChainScanLimit)
+	if len(q.gotArgs) != 3 || q.gotArgs[0] != "run-x" || q.gotArgs[1] != childChainScanLimit || q.gotArgs[2] != "tenant-1" {
+		t.Errorf("args = %v, want [run-x %d tenant-1]", q.gotArgs, childChainScanLimit)
+	}
+	// The walk must be tenant-filtered, not left to a default-off policy.
+	if !contains(q.gotSQL, "tenant_id = $3") {
+		t.Error("ancestor walk has no explicit tenant predicate")
 	}
 	// A malformed parent chain must not become an unbounded recursion.
 	if !contains(q.gotSQL, "c.depth <") {
@@ -100,7 +104,7 @@ func TestChildRunDepth(t *testing.T) {
 	}
 
 	q.row = fakeRow{err: errors.New("boom")}
-	if _, err := childRunDepth(context.Background(), q, "run-x"); err == nil {
+	if _, err := childRunDepth(context.Background(), q, "run-x", "tenant-1"); err == nil {
 		t.Error("expected the query error to propagate, not a silent depth 0")
 	}
 }

@@ -66,4 +66,32 @@ var migrations = []string{
 		acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 		expires_at  TIMESTAMPTZ NOT NULL
 	)`,
+
+	// Grant the RLS role access to the tables THIS service creates.
+	//
+	// LAST, deliberately: migrations run in slice order, so a grant placed
+	// beside step_state referenced run_locks before it existed and aborted the
+	// whole migration on a FRESH database. It passed locally only because that
+	// database already had every table — the classic dirty-DB false pass.
+	//
+	// The control-plane's baseline migration creates lantern_app and grants it
+	// on the tables it owns — but step_state, journal_events and run_locks are
+	// created here, so nothing ever granted them. Under LANTERN_RLS_ENFORCE=1
+	// tenant-scoped transactions run as lantern_app and write all three in the
+	// SAME transaction as the run update, so without this the engine fails on
+	// ordinary work with permission errors the moment enforcement is switched
+	// on. The service that creates a table is the one that should grant it.
+	//
+	// Guarded on the role existing: dev and test databases have no lantern_app,
+	// and a bare GRANT to a missing role aborts the migration.
+	`DO $$
+	BEGIN
+		IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app') THEN
+			GRANT USAGE ON SCHEMA public TO lantern_app;
+			GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE step_state TO lantern_app;
+			GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE journal_events TO lantern_app;
+			GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE run_locks TO lantern_app;
+		END IF;
+	END
+	$$;`,
 }

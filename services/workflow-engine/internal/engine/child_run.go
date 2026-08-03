@@ -34,7 +34,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
 
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
@@ -95,7 +98,12 @@ func (e *Engine) runChild(
 	parentRunID, tenantID := state.RunID, state.TenantID
 
 	// 1. Cycle guard, before any row is written.
-	depth, err := childRunDepth(ctx, e.pool, parentRunID)
+	var depth int
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+		var derr error
+		depth, derr = childRunDepth(ctx, tx, parentRunID, tenantID)
+		return derr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve child run depth: %w", err)
 	}
@@ -136,7 +144,7 @@ func (e *Engine) runChild(
 	// 4. Read the child's state back from the row the engine owns rather than
 	//    trusting the in-memory result — a crash between these points must
 	//    still report what actually happened.
-	status, output, readErr := e.childOutcome(ctx, childRunID)
+	status, output, readErr := e.childOutcome(ctx, tenantID, childRunID)
 	if readErr != nil {
 		return nil, readErr
 	}
@@ -216,20 +224,24 @@ func childDepthAllowed(parentDepth int) bool {
 // childRunDepth counts how many ancestors runID already has.
 func childRunDepth(ctx context.Context, pool interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
-}, runID string) (int, error) {
+}, runID, tenantID string) (int, error) {
 	var depth int
 	err := pool.QueryRow(ctx, `
 		WITH RECURSIVE chain AS (
 			SELECT id, parent_run_id, 0 AS depth
-			FROM runs WHERE id = $1
+			FROM runs WHERE id = $1 AND tenant_id = $3
 			UNION ALL
 			SELECT r.id, r.parent_run_id, c.depth + 1
 			FROM runs r
 			JOIN chain c ON r.id = c.parent_run_id
-			WHERE c.depth < $2
+			-- The RECURSIVE term needs the tenant filter too. Scoping only the
+			-- anchor row left the walk free to climb into another tenant's
+			-- ancestors, which both inflates the depth this run is charged and
+			-- reads rows it should not. Instance-not-class, inside one query.
+			WHERE c.depth < $2 AND r.tenant_id = $3
 		)
 		SELECT COALESCE(MAX(depth), 0) FROM chain
-	`, runID, childChainScanLimit).Scan(&depth)
+	`, runID, childChainScanLimit, tenantID).Scan(&depth)
 	if err != nil {
 		return 0, err
 	}
@@ -258,23 +270,26 @@ func (e *Engine) findOrCreateChild(
 	input json.RawMessage,
 	depth int,
 ) (childRunID, agentVersionID string, adopted bool, err error) {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, tenantID)
 	if err != nil {
 		return "", "", false, fmt.Errorf("begin child run creation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Serialise concurrent executions of this step against each other.
-	if _, err := tx.Exec(ctx, `SELECT id FROM runs WHERE id = $1 FOR UPDATE`, parentRunID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		SELECT id FROM runs WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+	`, parentRunID, tenantID); err != nil {
 		return "", "", false, fmt.Errorf("lock parent run %s: %w", parentRunID, err)
 	}
 
 	err = tx.QueryRow(ctx, `
 		SELECT id::text, agent_version_id::text FROM runs
 		WHERE parent_run_id = $1 AND trigger_meta->>'parent_step_id' = $2
+		  AND tenant_id = $3
 		ORDER BY created_at ASC
 		LIMIT 1
-	`, parentRunID, parentStepID).Scan(&childRunID, &agentVersionID)
+	`, parentRunID, parentStepID, tenantID).Scan(&childRunID, &agentVersionID)
 	if err == nil {
 		if err := tx.Commit(ctx); err != nil {
 			return "", "", false, fmt.Errorf("commit child adoption: %w", err)
@@ -322,7 +337,7 @@ func (e *Engine) findOrCreateChild(
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, started_at, trigger_kind, trigger_meta, input, parent_run_id, session_id)
 		VALUES ($1, $2, $3, 'running', now(), 'child_run', $4, $5, $6,
-			(SELECT session_id FROM runs WHERE id = $6))
+			(SELECT session_id FROM runs WHERE id = $6 AND tenant_id = $1))
 		RETURNING id::text
 	`, tenantID, agentID, agentVersionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
 		return "", "", false, fmt.Errorf("create child run: %w", err)
@@ -336,7 +351,9 @@ func (e *Engine) findOrCreateChild(
 	// row is bookkeeping, not the thing preventing a second worker.
 	if e.scheduler != nil {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO run_locks (run_id, worker_id, expires_at)
+			-- rls-exempt: run_locks has no tenant_id and is in the platform's
+		-- documented RLS-exempt set; it is worker bookkeeping, not tenant data.
+		INSERT INTO run_locks (run_id, worker_id, expires_at)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (run_id) DO UPDATE SET
 				worker_id = $2, acquired_at = now(), expires_at = $3
@@ -365,7 +382,11 @@ func (e *Engine) findOrCreateChild(
 // point in both the fresh and the resumed case.
 func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVersionID string) error {
 	var status string
-	if err := e.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, childRunID).Scan(&status); err != nil {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
+		`, childRunID, tenantID).Scan(&status)
+	}); err != nil {
 		return fmt.Errorf("read child status: %w", err)
 	}
 	if isTerminalRunStatus(status) {
@@ -375,12 +396,15 @@ func (e *Engine) driveChild(ctx context.Context, childRunID, tenantID, agentVers
 }
 
 // childOutcome reads the child's terminal status and output.
-func (e *Engine) childOutcome(ctx context.Context, childRunID string) (string, json.RawMessage, error) {
+func (e *Engine) childOutcome(ctx context.Context, tenantID, childRunID string) (string, json.RawMessage, error) {
 	var status string
 	var output []byte
-	if err := e.pool.QueryRow(ctx, `
-		SELECT status, COALESCE(output, 'null'::jsonb) FROM runs WHERE id = $1
-	`, childRunID).Scan(&status, &output); err != nil {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT status, COALESCE(output, 'null'::jsonb) FROM runs
+			WHERE id = $1 AND tenant_id = $2
+		`, childRunID, tenantID).Scan(&status, &output)
+	}); err != nil {
 		return "", nil, fmt.Errorf("read child run outcome: %w", err)
 	}
 	return status, json.RawMessage(output), nil
@@ -396,7 +420,7 @@ func (e *Engine) journalChildEvent(ctx context.Context, state *RunState, stepID,
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", kind, err)
 	}
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin %s: %w", kind, err)
 	}
@@ -432,4 +456,72 @@ func isTerminalRunStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// beginTenantTx begins a transaction with `app.tenant_id` already set, so RLS
+// policies admit this tenant's rows.
+//
+// Deliberately the same shape as pool.Begin so every call site is a one-line
+// swap and keeps its existing error handling — a mechanical change across ~18
+// transactions is far easier to review, and far harder to get subtly wrong,
+// than hand-editing each one.
+func (e *Engine) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, error) {
+	// rls-exempt: THIS is the primitive that applies the scope — it sets the
+	// GUC on the transaction it returns.
+	tx, err := e.tenantPool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := lanterndb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// beginTenantTx is the StepExecutor's equivalent; see the Engine method above.
+func (se *StepExecutor) beginTenantTx(ctx context.Context, tenantID string) (pgx.Tx, error) {
+	// rls-exempt: the scoping primitive itself; see the Engine method above.
+	tx, err := se.tenantPool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := lanterndb.SetTenantOnTx(ctx, tx, tenantID); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// tenantPool returns the pool that RLS policies actually apply to.
+//
+// This matters more than it looks. The engine opens ONE DATABASE_URL pool, and
+// if that pool connects as the privileged role then RLS is BYPASSED no matter
+// what app.tenant_id says — the GUC would be theatre. The control plane solves
+// this with a second, non-superuser pool (Server.TenantPool); the engine now
+// does the same.
+//
+// The two roles are not interchangeable, in either direction:
+//   - Tenant-scoped work must run on the restricted pool, or policies do not
+//     apply to it.
+//   - The scheduler's cross-tenant poll must NOT, because under enforcement a
+//     restricted connection with no GUC set matches no rows, and the engine
+//     would stop picking up work entirely.
+//
+// Unset (the default, and every dev setup) falls back to the main pool, which
+// is exactly today's behaviour: the GUC is set, RLS is not enforced, nothing
+// changes. Enforcement is opt-in per environment.
+func (e *Engine) tenantPool() *pgxpool.Pool {
+	if e.appPool != nil {
+		return e.appPool
+	}
+	return e.pool
+}
+
+// tenantPool mirrors Engine.tenantPool for the step executor.
+func (se *StepExecutor) tenantPool() *pgxpool.Pool {
+	if se.appPool != nil {
+		return se.appPool
+	}
+	return se.pool
 }

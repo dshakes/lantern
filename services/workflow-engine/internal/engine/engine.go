@@ -8,11 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
 
@@ -37,6 +40,10 @@ type Engine struct {
 	streamer  *EventStreamer
 	executor  *StepExecutor
 	wg        sync.WaitGroup
+	// appPool, when set, is a NON-SUPERUSER pool that RLS policies actually
+	// apply to (mirrors the control-plane's Server.AppPool). nil => fall back
+	// to pool, i.e. today's behaviour with RLS not enforced.
+	appPool *pgxpool.Pool
 }
 
 // NewEngine creates a new Engine instance. modelClient is the model-router
@@ -236,7 +243,9 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 
 	// Load the run's input from the database.
 	var inputJSON []byte
-	err := e.pool.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), state.TenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
+	})
 	if err != nil {
 		return fmt.Errorf("load run input: %w", err)
 	}
@@ -286,14 +295,31 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 // 'running' and dispatches it.
 func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID string) error {
 	// Update run status to running.
-	tag, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'running', started_at = now()
-		WHERE id = $1 AND status = 'queued'
-	`, runID)
-	if err != nil {
+	var tag pgconn.CommandTag
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+		var terr error
+		// AND tenant_id: RLS is DEFAULT-OFF, so relying on the policy alone
+		// would leave this with no tenant defense in every deployment that has
+		// not enabled enforcement — which is all of them today. The explicit
+		// predicate holds either way, and RLS becomes defence in depth rather
+		// than the only defence.
+		tag, terr = tx.Exec(ctx, `
+			UPDATE runs SET status = 'running', started_at = now()
+			WHERE id = $1 AND tenant_id = $2 AND status = 'queued'
+		`, runID, tenantID)
+		return terr
+	}); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		// Zero rows now means one of TWO things, and they need different
+		// answers: the run is not queued, or it is not this tenant's. Since the
+		// UPDATE gained `AND tenant_id`, reporting both as "not in queued
+		// state" tells a cross-tenant caller the run exists and is merely in the
+		// wrong status — misleading, and a small existence leak.
+		if err := e.VerifyRunOwnership(ctx, runID, tenantID); err != nil {
+			return err // ErrRunNotFound, or a real database failure, unmasked
+		}
 		return fmt.Errorf("run %s not in queued state", runID)
 	}
 
@@ -305,9 +331,11 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) error {
 	// Load run metadata scoped to the caller's tenant.
 	var agentVersionID, runStatus string
-	err := e.pool.QueryRow(ctx, `
-		SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
+	})
 	if err != nil {
 		// No row means either the run doesn't exist or belongs to another tenant —
 		// return the same error in both cases (ErrRunNotFound, not a permission error).
@@ -319,9 +347,12 @@ func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Update to resumable so the scheduler picks it up, still scoped by tenant.
-	if _, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID); err != nil {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+		_, terr := tx.Exec(ctx, `
+			UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID)
+		return terr
+	}); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 
@@ -360,15 +391,20 @@ func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalNam
 
 	// Run is not active or no waiter for this signal. Verify ownership via the
 	// DB before writing to the journal.
-	var exists bool
-	if err := e.pool.QueryRow(ctx, `
-		SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
-	`, runID, callerTenantID).Scan(&exists); err != nil {
-		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	// Reuse the one implementation rather than repeating the query: this copy
+	// mapped EVERY database error to ErrRunNotFound, which is exactly the
+	// masking VerifyRunOwnership exists to avoid.
+	if err := e.VerifyRunOwnership(ctx, runID, callerTenantID); err != nil {
+		return err
 	}
 
 	// Store the signal in the journal so it's picked up when the run resumes.
-	tx, err := e.pool.Begin(ctx)
+	// callerTenantID, NOT state.TenantID: `state` is nil whenever the run is
+	// not active in memory — which is the ONLY way execution reaches here — so
+	// dereferencing it panicked the whole engine on a signal to a paused run.
+	// Ownership was just verified against the database above, so the caller's
+	// tenant is the correct and safe scope.
+	tx, err := e.beginTenantTx(ctx, callerTenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -423,19 +459,36 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 
 	// Update the database, scoped by tenant_id so a cross-tenant caller
 	// modifies nothing even if the in-memory check was bypassed.
-	tag, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'cancelled', finished_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'running', 'paused', 'resumable')
-	`, runID, callerTenantID)
+	var tag pgconn.CommandTag
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+		var terr error
+		tag, terr = tx.Exec(ctx, `
+			UPDATE runs SET status = 'cancelled', finished_at = now()
+			WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'running', 'paused', 'resumable')
+		`, runID, callerTenantID)
+		return terr
+	})
 	if err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		// Same two-cases-one-message problem ExecuteRun had: with `AND
+		// tenant_id` on the UPDATE, zero rows means either "not cancellable" or
+		// "not yours". Reporting the latter as a state error confirms the run
+		// exists. Fixing this in ExecuteRun and not here was the instance, not
+		// the class.
+		if err := e.VerifyRunOwnership(ctx, runID, callerTenantID); err != nil {
+			return err
+		}
 		return fmt.Errorf("run %s not in a cancellable state", runID)
 	}
 
 	// Journal the cancellation.
-	tx, err := e.pool.Begin(ctx)
+	// callerTenantID, NOT state.TenantID: `state` is nil when the run is not
+	// active in memory (cancelling a queued or paused run), and this line is
+	// reached in exactly that case. Same defect as SignalRun above — the
+	// reviewer caught one; this is the other.
+	tx, err := e.beginTenantTx(ctx, callerTenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -501,7 +554,7 @@ func (e *Engine) GetQueryHandler(runID, queryName string) (QueryHandler, error) 
 // --- internal journal helpers ---
 
 func (e *Engine) journalRunStarted(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -546,7 +599,7 @@ func (e *Engine) journalRunStarted(ctx context.Context, state *RunState) error {
 }
 
 func (e *Engine) journalRunSucceeded(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -593,7 +646,7 @@ func (e *Engine) journalRunSucceeded(ctx context.Context, state *RunState) error
 }
 
 func (e *Engine) journalRunFailed(ctx context.Context, state *RunState, runErr error) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -651,7 +704,7 @@ func (e *Engine) journalRunFailed(ctx context.Context, state *RunState, runErr e
 }
 
 func (e *Engine) journalRunCancelled(ctx context.Context, state *RunState) error {
-	tx, err := e.pool.Begin(ctx)
+	tx, err := e.beginTenantTx(ctx, state.TenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -688,5 +741,44 @@ func (e *Engine) journalRunCancelled(ctx context.Context, state *RunState) error
 
 	e.streamer.PublishEnd(ctx, state.RunID, entry.Seq+1, "cancelled")
 
+	return nil
+}
+
+// SetAppPool installs the RLS-capable (non-superuser) pool used for
+// tenant-scoped work. Call before Start. Unset leaves the engine on a single
+// pool, which is the pre-existing behaviour.
+func (e *Engine) SetAppPool(p *pgxpool.Pool) {
+	e.appPool = p
+	if e.executor != nil {
+		e.executor.appPool = p
+	}
+}
+
+// VerifyRunOwnership returns ErrRunNotFound unless runID belongs to
+// callerTenantID.
+//
+// Returning "not found" rather than "forbidden" is deliberate and matches
+// SignalRun/CancelRun: a permission error would confirm that another tenant's
+// run exists, which is itself a leak.
+func (e *Engine) VerifyRunOwnership(ctx context.Context, runID, callerTenantID string) error {
+	var exists bool
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID).Scan(&exists)
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Genuinely absent, or another tenant's — same answer, no existence leak.
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	case err != nil:
+		// A pool timeout or a network blip is NOT "not found". Collapsing every
+		// database failure into NotFound tells the caller the run does not
+		// exist when the truth is that we could not look — it hides outages and
+		// sends people debugging the wrong thing.
+		return fmt.Errorf("verify run ownership %s: %w", runID, err)
+	case !exists:
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	}
 	return nil
 }
