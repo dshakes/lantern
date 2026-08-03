@@ -233,7 +233,7 @@ func (s *WorkflowService) CancelRun(ctx context.Context, req *lanternv1.CancelRu
 
 // QueryRun executes a synchronous query against a running workflow.
 func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunRequest) (*lanternv1.QueryRunResponse, error) {
-	_, err := middleware.MustTenantID(ctx)
+	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +243,15 @@ func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunR
 	}
 	if req.GetQueryName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "query_name is required")
+	}
+
+	// The caller's tenant was previously extracted and DISCARDED (`_`), so any
+	// authenticated caller could query any run in any tenant by id — the
+	// sibling RPCs (Cancel/Signal/Resume) all verify ownership and this one
+	// did not. NotFound rather than PermissionDenied: saying "forbidden" would
+	// confirm another tenant's run exists.
+	if err := s.srv.Engine.VerifyRunOwnership(ctx, req.GetRunId(), tenantID); err != nil {
+		return nil, status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
 	}
 
 	handler, err := s.srv.Engine.GetQueryHandler(req.GetRunId(), req.GetQueryName())
