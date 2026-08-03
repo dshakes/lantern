@@ -173,6 +173,15 @@ func main() {
 				logger.Fatal("failed to create the lantern_app pool", zap.Error(poolErr))
 			}
 			defer appPool.Close()
+			// Ping now: pgxpool.New is LAZY, so a wrong password or missing
+			// GRANTs would not surface here — the service would start clean and
+			// then fail every tenant-scoped query at runtime. Having made the
+			// MISSING password fatal, letting a WRONG one through silently
+			// would be the same mistake with an extra step.
+			if pingErr := appPool.Ping(ctx); pingErr != nil {
+				logger.Fatal("cannot connect as lantern_app — refusing to start with RLS "+
+					"enforcement requested but unusable", zap.Error(pingErr))
+			}
 			eng.SetAppPool(appPool)
 			logger.Info("RLS enforcement on: tenant-scoped queries use the lantern_app pool")
 		}
