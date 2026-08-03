@@ -31,7 +31,13 @@ var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (s
 // ErrChildRunUnavailable is returned by a child_run step: dispatching a child
 // agent run via the control plane is not implemented yet. The step fails
 // honestly rather than fabricating a child run's output.
-var ErrChildRunUnavailable = errors.New("child run dispatch not implemented (no control-plane run client)")
+var ErrChildRunUnavailable = errors.New("child run dispatch not wired (no child runner configured)")
+
+// ChildRunner starts (or adopts, on replay) a child run for agentName under
+// tenantID and drives it to completion, returning the encoded result. The
+// parent run + step identify the child so a re-executed step adopts the
+// child it already created instead of starting a second one.
+type ChildRunner func(ctx context.Context, parentRunID, parentStepID, tenantID, agentName string, input json.RawMessage) (json.RawMessage, error)
 
 // StepPayload is the decoded payload from a step request. The Kind field
 // determines what the step does (llm_call, tool_call, sleep, signal, etc.)
@@ -59,6 +65,11 @@ type StepExecutor struct {
 	logger        *zap.Logger
 	modelClient   lanternv1.ModelServiceClient
 	runtimeClient lanternv1.RuntimeManagerClient
+	// childRunner starts a child run and waits for it. Set by the Engine after
+	// construction (a func value, so the executor does not import the Engine).
+	// nil => child_run steps fail with ErrChildRunUnavailable rather than
+	// fabricating a result, exactly like a nil modelClient/runtimeClient.
+	childRunner ChildRunner
 }
 
 // NewStepExecutor creates a new StepExecutor. modelClient may be nil; LLM steps
@@ -656,9 +667,12 @@ func (se *StepExecutor) executeWaitSignal(ctx context.Context, state *RunState, 
 	}
 }
 
-// executeChildRun will start a child run via the control plane and wait for
-// it to complete, tracked via child_started/child_completed journal events.
-// Until that client exists it fails with ErrChildRunUnavailable.
+// executeChildRun starts a child run for another agent and waits for it,
+// tracked via child_started/child_completed journal events on this run. The
+// work happens in Engine.runChild (child_run.go) — the engine owns run state
+// (invariant #2), so it creates and drives the child itself rather than asking
+// the control plane to. Depth is capped and creation is replay-safe; see that
+// file for why both are done the way they are.
 func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, stepID, idempotencyKey string, data json.RawMessage) (json.RawMessage, error) {
 	se.logger.Info("executing child_run step",
 		zap.String("run_id", state.RunID),
@@ -674,10 +688,17 @@ func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, st
 		return nil, fmt.Errorf("invalid child_run payload: %w", err)
 	}
 
-	// Dispatch via the control plane is not wired yet. The step fails with the
-	// typed error (mirroring llm_call/tool_call without their clients) rather
-	// than journaling a fabricated child_started/child_completed pair.
-	return nil, fmt.Errorf("child_run for agent %q: %w", req.AgentName, ErrChildRunUnavailable)
+	if req.AgentName == "" {
+		return nil, fmt.Errorf("child_run: agent_name is required")
+	}
+	// Unwired (no Engine behind it): fail with the typed error rather than
+	// journaling a fabricated child_started/child_completed pair, mirroring
+	// llm_call/tool_call without their clients.
+	if se.childRunner == nil {
+		return nil, fmt.Errorf("child_run for agent %q: %w", req.AgentName, ErrChildRunUnavailable)
+	}
+
+	return se.childRunner(ctx, state.RunID, stepID, state.TenantID, req.AgentName, req.Input)
 }
 
 // executeApproval pauses the run until a human approves or denies the request.
