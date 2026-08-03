@@ -59,6 +59,17 @@ func (s *WorkflowService) ExecuteRun(req *lanternv1.ExecuteRunRequest, stream la
 
 	// Start streaming events for this run.
 	ctx := stream.Context()
+	// Ownership BEFORE subscribing. Subscribing first means a cross-tenant
+	// caller is attached to another tenant's event stream for the whole window
+	// before the check inside ExecuteRun rejects it — and events published in
+	// that window are delivered. Rejecting early costs nothing and closes it.
+	if err := s.srv.Engine.VerifyRunOwnership(ctx, req.GetRunId(), tenantID); err != nil {
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
+		}
+		return status.Errorf(codes.Internal, "verify run ownership: %v", err)
+	}
+
 	eventCh, err := s.srv.Engine.Streamer().Subscribe(ctx, req.GetRunId(), 0)
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to subscribe to events: %v", err)
@@ -127,6 +138,18 @@ func (s *WorkflowService) ResumeRun(req *lanternv1.ResumeRunRequest, stream lant
 	)
 
 	ctx := stream.Context()
+
+	// Ownership BEFORE subscribing, same as ExecuteRun: subscribing first
+	// attaches a cross-tenant caller to another tenant's event stream for the
+	// window before the engine rejects, and events published in that window are
+	// delivered. Found by sweeping every RPC after fixing ExecuteRun, rather
+	// than by waiting to be told about the second one.
+	if err := s.srv.Engine.VerifyRunOwnership(ctx, req.GetRunId(), tenantID); err != nil {
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
+		}
+		return status.Errorf(codes.Internal, "verify run ownership: %v", err)
+	}
 
 	// Subscribe to events before resuming so we don't miss anything.
 	eventCh, err := s.srv.Engine.Streamer().Subscribe(ctx, req.GetRunId(), 0)
@@ -233,7 +256,7 @@ func (s *WorkflowService) CancelRun(ctx context.Context, req *lanternv1.CancelRu
 
 // QueryRun executes a synchronous query against a running workflow.
 func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunRequest) (*lanternv1.QueryRunResponse, error) {
-	_, err := middleware.MustTenantID(ctx)
+	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +266,21 @@ func (s *WorkflowService) QueryRun(ctx context.Context, req *lanternv1.QueryRunR
 	}
 	if req.GetQueryName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "query_name is required")
+	}
+
+	// The caller's tenant was previously extracted and DISCARDED (`_`), so any
+	// authenticated caller could query any run in any tenant by id — the
+	// sibling RPCs (Cancel/Signal/Resume) all verify ownership and this one
+	// did not. NotFound rather than PermissionDenied: saying "forbidden" would
+	// confirm another tenant's run exists.
+	if err := s.srv.Engine.VerifyRunOwnership(ctx, req.GetRunId(), tenantID); err != nil {
+		// Distinguish the two, or VerifyRunOwnership's careful separation is
+		// thrown away one layer up: a pool timeout would be reported to the
+		// caller as "this run does not exist".
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return nil, status.Errorf(codes.NotFound, "run %s not found", req.GetRunId())
+		}
+		return nil, status.Errorf(codes.Internal, "verify run ownership: %v", err)
 	}
 
 	handler, err := s.srv.Engine.GetQueryHandler(req.GetRunId(), req.GetQueryName())

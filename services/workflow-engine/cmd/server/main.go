@@ -125,6 +125,67 @@ func main() {
 
 	// --- Engine ---
 	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers, modelClient, runtimeClient)
+
+	// --- RLS app pool (flag-gated, default no-op) ---
+	//
+	// Without this the engine runs every query on the privileged DATABASE_URL
+	// pool, and PostgreSQL superusers/owners BYPASS row-level security — so
+	// setting app.tenant_id would be theatre and SetAppPool would be dead code.
+	// Mirrors the control-plane's dual-pool construction.
+	//
+	// Default (either var unset) leaves the engine on the single pool: the GUC
+	// is still set, RLS is simply not enforced, and behaviour is unchanged.
+	//
+	// Operator cutover: CREATE ROLE lantern_app (done by the control-plane's
+	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
+	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
+	//
+	// GRANTS MATTER HERE, and this is the step that will bite. A tenant-scoped
+	// transaction in this service touches more than runs/agents: journal_events,
+	// run_locks and step_state are written inside the SAME transaction. If
+	// lantern_app has no grants on those, enforcement does not merely restrict
+	// rows — the engine starts failing with permission errors on ordinary work.
+	// Verify the role can read AND write every one of:
+	//   runs, agents, journal_events, run_locks, step_state
+	// before turning this on in an environment you care about.
+	//
+	// The privileged pool stays the connection for everything that must span
+	// tenants: the scheduler's poll, run_locks bookkeeping, and migrations.
+	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
+		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+		if appPwd == "" {
+			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
+			// isolation is on; continuing on the privileged pool would leave it
+			// off while looking enabled, which is the worst of both. Matches
+			// the repo's precedent for security controls (the gRPC service
+			// token refuses to start rather than run unauthenticated).
+			logger.Fatal("LANTERN_RLS_ENFORCE=1 requires LANTERN_APP_DB_PASSWORD — " +
+				"refusing to start rather than run with RLS silently bypassed")
+		} else {
+			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
+			if cfgErr != nil {
+				logger.Fatal("failed to parse DATABASE_URL for the lantern_app pool", zap.Error(cfgErr))
+			}
+			appCfg.ConnConfig.User = "lantern_app"
+			appCfg.ConnConfig.Password = appPwd
+			appPool, poolErr := pgxpool.NewWithConfig(ctx, appCfg)
+			if poolErr != nil {
+				logger.Fatal("failed to create the lantern_app pool", zap.Error(poolErr))
+			}
+			defer appPool.Close()
+			// Ping now: pgxpool.New is LAZY, so a wrong password or missing
+			// GRANTs would not surface here — the service would start clean and
+			// then fail every tenant-scoped query at runtime. Having made the
+			// MISSING password fatal, letting a WRONG one through silently
+			// would be the same mistake with an extra step.
+			if pingErr := appPool.Ping(ctx); pingErr != nil {
+				logger.Fatal("cannot connect as lantern_app — refusing to start with RLS "+
+					"enforcement requested but unusable", zap.Error(pingErr))
+			}
+			eng.SetAppPool(appPool)
+			logger.Info("RLS enforcement on: tenant-scoped queries use the lantern_app pool")
+		}
+	}
 	eng.Start(ctx)
 
 	// --- Server struct ---
