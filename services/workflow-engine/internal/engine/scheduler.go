@@ -79,6 +79,11 @@ func (s *Scheduler) Start(ctx context.Context) {
 // query complexity with marginal benefit at current scale; revisit if tenant
 // starvation is observed under sustained multi-tenant load.
 func (s *Scheduler) poll(ctx context.Context) {
+	// rls-exempt: cross-tenant BY DESIGN. A worker discovers work for every
+	// tenant on the platform; there is no caller tenant to scope to, and
+	// scoping here would mean polling once per tenant. The tenant becomes
+	// known when a run is claimed, and everything downstream of that runs
+	// under db.WithTenant / beginTenantTx.
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, agent_version_id
 		FROM runs
@@ -153,6 +158,8 @@ func (s *Scheduler) tryAcquireAndDispatch(ctx context.Context, runID, tenantID, 
 
 	// Record the lock in the run_locks table for visibility and expiry tracking.
 	if _, err := conn.Exec(ctx, `
+		-- rls-exempt: run_locks has no tenant_id and is in the platform's
+		-- documented RLS-exempt set; it is worker bookkeeping, not tenant data.
 		INSERT INTO run_locks (run_id, worker_id, expires_at)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (run_id) DO UPDATE SET
@@ -200,6 +207,8 @@ func (s *Scheduler) tryAcquireAndDispatch(ctx context.Context, runID, tenantID, 
 // RenewLock extends the lock expiry for a run that is still actively executing.
 // Should be called periodically by long-running runs.
 func (s *Scheduler) RenewLock(ctx context.Context, runID string) error {
+	// rls-exempt: run_locks has no tenant_id — worker bookkeeping, and in the
+	// platform's documented RLS-exempt set.
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE run_locks SET expires_at = $1
 		WHERE run_id = $2 AND worker_id = $3
@@ -216,6 +225,8 @@ func (s *Scheduler) RenewLock(ctx context.Context, runID string) error {
 // CleanExpiredLocks removes lock rows that have expired. This is called
 // periodically to recover from worker crashes.
 func (s *Scheduler) CleanExpiredLocks(ctx context.Context) error {
+	// rls-exempt: run_locks has no tenant_id, and expiry cleanup is a
+	// cross-tenant sweep with no caller tenant to scope to.
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM run_locks WHERE expires_at < now()
 	`)

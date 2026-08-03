@@ -666,6 +666,32 @@ Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
 → turn on `self-consistency` and tune `SAMPLES`/threshold → then production.
 
+#### Workflow-engine RLS (invariant #7)
+
+The engine writes run state for **every** tenant and, until this landed, set
+`app.tenant_id` **nowhere** — so under `LANTERN_RLS_ENFORCE=1` its queries sat
+outside the policies the rest of the platform relies on. That is worse than a
+leak: an unset GUC matches *nothing*, so enforcement would have made the engine
+silently stop working (updates affecting 0 rows, reads returning nothing).
+
+A worker is not a request handler, and the split follows from that:
+
+- **Tenant known** (anything reading/writing a specific run's state) goes
+  through `internal/db.WithTenant` or `beginTenantTx` — the latter has the same
+  signature as `pool.Begin`, so all ~18 transactions were a one-line swap that
+  kept their existing error handling.
+- **Cross-tenant by necessity** — the scheduler's poll (a worker discovers work
+  for all tenants; there is no caller tenant, and scoping would mean polling per
+  tenant) and `run_locks` bookkeeping (no `tenant_id`; in the platform's
+  documented exempt set) — carries an explicit `rls-exempt:` comment with the
+  reason.
+
+`TestRLSCatalog_NoUnscopedTenantQueries` is a permanent gate: a new raw-pool
+query touching `runs`/`agents`/`agent_versions` fails the build unless it is
+scoped or carries an `rls-exempt:` reason. Adding an exemption is fine —
+writing down why is the point. (Mutation-checked: planting an unscoped query
+fails it.)
+
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 
 The dormant durable engine's leaf executors
