@@ -734,3 +734,21 @@ func (e *Engine) SetAppPool(p *pgxpool.Pool) {
 		e.executor.appPool = p
 	}
 }
+
+// VerifyRunOwnership returns ErrRunNotFound unless runID belongs to
+// callerTenantID.
+//
+// Returning "not found" rather than "forbidden" is deliberate and matches
+// SignalRun/CancelRun: a permission error would confirm that another tenant's
+// run exists, which is itself a leak.
+func (e *Engine) VerifyRunOwnership(ctx context.Context, runID, callerTenantID string) error {
+	var exists bool
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, callerTenantID).Scan(&exists)
+	}); err != nil || !exists {
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	}
+	return nil
+}

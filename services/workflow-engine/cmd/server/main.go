@@ -145,8 +145,13 @@ func main() {
 	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
 		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
 		if appPwd == "" {
-			logger.Warn("LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — " +
-				"tenant queries stay on the privileged pool and RLS is NOT enforced")
+			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
+			// isolation is on; continuing on the privileged pool would leave it
+			// off while looking enabled, which is the worst of both. Matches
+			// the repo's precedent for security controls (the gRPC service
+			// token refuses to start rather than run unauthenticated).
+			logger.Fatal("LANTERN_RLS_ENFORCE=1 requires LANTERN_APP_DB_PASSWORD — " +
+				"refusing to start rather than run with RLS silently bypassed")
 		} else {
 			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
 			if cfgErr != nil {
