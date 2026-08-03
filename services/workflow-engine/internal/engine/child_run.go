@@ -234,7 +234,11 @@ func childRunDepth(ctx context.Context, pool interface {
 			SELECT r.id, r.parent_run_id, c.depth + 1
 			FROM runs r
 			JOIN chain c ON r.id = c.parent_run_id
-			WHERE c.depth < $2
+			-- The RECURSIVE term needs the tenant filter too. Scoping only the
+			-- anchor row left the walk free to climb into another tenant's
+			-- ancestors, which both inflates the depth this run is charged and
+			-- reads rows it should not. Instance-not-class, inside one query.
+			WHERE c.depth < $2 AND r.tenant_id = $3
 		)
 		SELECT COALESCE(MAX(depth), 0) FROM chain
 	`, runID, childChainScanLimit, tenantID).Scan(&depth)
