@@ -384,7 +384,12 @@ func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalNam
 	}
 
 	// Store the signal in the journal so it's picked up when the run resumes.
-	tx, err := e.beginTenantTx(ctx, state.TenantID)
+	// callerTenantID, NOT state.TenantID: `state` is nil whenever the run is
+	// not active in memory — which is the ONLY way execution reaches here — so
+	// dereferencing it panicked the whole engine on a signal to a paused run.
+	// Ownership was just verified against the database above, so the caller's
+	// tenant is the correct and safe scope.
+	tx, err := e.beginTenantTx(ctx, callerTenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -456,7 +461,11 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Journal the cancellation.
-	tx, err := e.beginTenantTx(ctx, state.TenantID)
+	// callerTenantID, NOT state.TenantID: `state` is nil when the run is not
+	// active in memory (cancelling a queued or paused run), and this line is
+	// reached in exactly that case. Same defect as SignalRun above — the
+	// reviewer caught one; this is the other.
+	tx, err := e.beginTenantTx(ctx, callerTenantID)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
