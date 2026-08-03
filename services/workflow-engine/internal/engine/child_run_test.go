@@ -209,10 +209,10 @@ func TestIsPausedRunStatus(t *testing.T) {
 	}
 }
 
-// TestExecuteChildRun_PausedIsNotFailure checks the paused case surfaces the
-// typed ErrChildRunPaused, so callers can tell "waiting on a human" apart from
-// "the child broke".
-func TestExecuteChildRun_PausedIsNotFailure(t *testing.T) {
+// TestExecuteChildRun_PausedIsTypedFailure: a paused child still fails the
+// step — what the typed error buys is telling "waiting on a human" apart from
+// "the child broke". Named for what it does, not what it might imply.
+func TestExecuteChildRun_PausedIsTypedFailure(t *testing.T) {
 	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
 	se.childRunner = func(_ context.Context, _ *RunState, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{"status":"paused"}`), ErrChildRunPaused

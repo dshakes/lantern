@@ -726,9 +726,10 @@ returning placeholder strings:
     Creating it already-running makes the poller unable to see it by
     construction. Creation + adoption run in one transaction that locks the
     parent row, so two executions of the same step cannot both insert.
-  - **A paused child is not a failed child.** If a child stops on `approval` or
-    `wait_signal` the step returns the typed `ErrChildRunPaused` rather than a
-    generic failure. Resuming a parent around a paused child needs the parent to
+  - **A paused child fails the step, but says so precisely.** If a child stops
+    on `approval` or `wait_signal` the step fails with the typed
+    `ErrChildRunPaused` instead of a generic failure — the parent does NOT wait
+    for the approval. Resuming a parent around a paused child needs the parent to
     become resumable too — a design in its own right, so the limitation is named
     instead of guessed at. Nested approvals do not work yet; they fail loudly.
   `ErrChildRunUnavailable` still exists and fires when no child runner is wired

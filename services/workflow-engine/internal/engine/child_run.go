@@ -30,6 +30,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -48,16 +50,26 @@ const maxChildRunDepth = 5
 // into an infinite recursion.
 const childChainScanLimit = 100
 
+// childLockRenewInterval is how often the parent's lock is renewed while it
+// waits on a child. Comfortably shorter than the scheduler's lock duration so a
+// single missed tick cannot strand the parent.
+const childLockRenewInterval = 30 * time.Second
+
 // ErrChildRunDepthExceeded is returned when a child_run step would nest deeper
 // than maxChildRunDepth. Typed so callers (and tests) can distinguish a cycle
 // from a dispatch failure.
 var ErrChildRunDepthExceeded = errors.New("child run depth limit exceeded — possible workflow cycle")
 
 // ErrChildRunPaused is returned when a child run stops on an approval or
-// wait_signal step. It has NOT failed; it is waiting. Resuming a parent around
-// a paused child requires the parent to become resumable as well, which is a
-// separate design — this error names the limitation rather than reporting a
-// pause as a failure.
+// wait_signal step.
+//
+// Be precise about what this does and does not do: the parent step still
+// FAILS. What changes is that the failure is typed and says the child is
+// waiting rather than broken, so an operator (or a caller matching on it) can
+// tell a pending approval apart from a crash. Actually suspending the parent
+// until the child resumes requires the parent to become resumable too, which
+// is an engine-level design — this names the limitation instead of implying
+// nested approvals work.
 var ErrChildRunPaused = errors.New("child run is paused awaiting a signal or approval")
 
 // childRunResult is what a child_run step returns to the workflow.
@@ -109,7 +121,17 @@ func (e *Engine) runChild(
 
 	// 3. Drive the child. ctx is the parent's, so cancelling the parent
 	//    cancels the child rather than orphaning it mid-flight.
+	//
+	// Renew the PARENT's lock while it waits. dispatchRun only renews between
+	// steps, so a parent sitting inside this one step renews nothing: a child
+	// outliving the lock duration would let CleanExpiredLocks drop the parent's
+	// lock and the scheduler re-claim and re-execute the whole parent run. A
+	// child run is an entire nested workflow, so that is minutes, not an edge
+	// case. (Any long-blocking step has this shape; fixing it engine-wide means
+	// renewing concurrently for every step, which is its own change.)
+	stopRenew := e.keepParentLockAlive(ctx, parentRunID)
 	runErr := e.driveChild(ctx, childRunID, tenantID, agentVersionID)
+	stopRenew()
 
 	// 4. Read the child's state back from the row the engine owns rather than
 	//    trusting the in-memory result — a crash between these points must
@@ -150,6 +172,36 @@ func (e *Engine) runChild(
 		return payload, fmt.Errorf("child run %s (agent %q) ended in status %q", childRunID, agentName, status)
 	}
 	return payload, nil
+}
+
+// keepParentLockAlive renews the parent's run lock until the returned stop is
+// called. Returns a no-op when there is no scheduler (unit tests).
+func (e *Engine) keepParentLockAlive(ctx context.Context, parentRunID string) func() {
+	if e.scheduler == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(childLockRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := e.scheduler.RenewLock(ctx, parentRunID); err != nil {
+					e.logger.Warn("failed to renew parent lock during child run (continuing)",
+						zap.String("parent_run_id", parentRunID),
+						zap.Error(err),
+					)
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // childDepthAllowed reports whether a parent at parentDepth may spawn a child.
@@ -268,8 +320,9 @@ func (e *Engine) findOrCreateChild(
 	}
 
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, started_at, trigger_kind, trigger_meta, input, parent_run_id)
-		VALUES ($1, $2, $3, 'running', now(), 'child_run', $4, $5, $6)
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, started_at, trigger_kind, trigger_meta, input, parent_run_id, session_id)
+		VALUES ($1, $2, $3, 'running', now(), 'child_run', $4, $5, $6,
+			(SELECT session_id FROM runs WHERE id = $6))
 		RETURNING id::text
 	`, tenantID, agentID, agentVersionID, meta, input, parentRunID).Scan(&childRunID); err != nil {
 		return "", "", false, fmt.Errorf("create child run: %w", err)
