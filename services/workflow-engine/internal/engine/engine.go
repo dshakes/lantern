@@ -40,6 +40,10 @@ type Engine struct {
 	streamer  *EventStreamer
 	executor  *StepExecutor
 	wg        sync.WaitGroup
+	// appPool, when set, is a NON-SUPERUSER pool that RLS policies actually
+	// apply to (mirrors the control-plane's Server.AppPool). nil => fall back
+	// to pool, i.e. today's behaviour with RLS not enforced.
+	appPool *pgxpool.Pool
 }
 
 // NewEngine creates a new Engine instance. modelClient is the model-router
@@ -239,7 +243,7 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 
 	// Load the run's input from the database.
 	var inputJSON []byte
-	err := lanterndb.WithTenant(ctx, e.pool, state.TenantID, func(tx pgx.Tx) error {
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), state.TenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
 	})
 	if err != nil {
@@ -292,7 +296,7 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID string) error {
 	// Update run status to running.
 	var tag pgconn.CommandTag
-	if err := lanterndb.WithTenant(ctx, e.pool, tenantID, func(tx pgx.Tx) error {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var terr error
 		tag, terr = tx.Exec(ctx, `
 			UPDATE runs SET status = 'running', started_at = now()
@@ -314,7 +318,7 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) error {
 	// Load run metadata scoped to the caller's tenant.
 	var agentVersionID, runStatus string
-	err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
@@ -330,7 +334,7 @@ func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Update to resumable so the scheduler picks it up, still scoped by tenant.
-	if err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		_, terr := tx.Exec(ctx, `
 			UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID)
@@ -375,7 +379,7 @@ func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalNam
 	// Run is not active or no waiter for this signal. Verify ownership via the
 	// DB before writing to the journal.
 	var exists bool
-	if err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID).Scan(&exists)
@@ -445,7 +449,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 	// Update the database, scoped by tenant_id so a cross-tenant caller
 	// modifies nothing even if the in-memory check was bypassed.
 	var tag pgconn.CommandTag
-	err := lanterndb.WithTenant(ctx, e.pool, callerTenantID, func(tx pgx.Tx) error {
+	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		var terr error
 		tag, terr = tx.Exec(ctx, `
 			UPDATE runs SET status = 'cancelled', finished_at = now()
@@ -719,4 +723,14 @@ func (e *Engine) journalRunCancelled(ctx context.Context, state *RunState) error
 	e.streamer.PublishEnd(ctx, state.RunID, entry.Seq+1, "cancelled")
 
 	return nil
+}
+
+// SetAppPool installs the RLS-capable (non-superuser) pool used for
+// tenant-scoped work. Call before Start. Unset leaves the engine on a single
+// pool, which is the pre-existing behaviour.
+func (e *Engine) SetAppPool(p *pgxpool.Pool) {
+	e.appPool = p
+	if e.executor != nil {
+		e.executor.appPool = p
+	}
 }
