@@ -1,0 +1,189 @@
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
+)
+
+// TestChildDepthAllowed pins the cycle guard at its boundary.
+//
+// This cap is the only thing between a workflow that invokes itself and
+// unbounded recursion, and an off-by-one here is invisible until something is
+// already 6 runs deep in production.
+func TestChildDepthAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		parentDepth int
+		want        bool
+	}{
+		{0, true},                    // top-level run spawning its first child
+		{maxChildRunDepth - 1, true}, // last child that may still be created
+		{maxChildRunDepth, false},    // one past the cap
+		{maxChildRunDepth + 3, false},
+	} {
+		if got := childDepthAllowed(tc.parentDepth); got != tc.want {
+			t.Errorf("childDepthAllowed(%d) = %v, want %v", tc.parentDepth, got, tc.want)
+		}
+	}
+}
+
+// TestIsTerminalRunStatus guards the branch that decides whether an adopted
+// child is re-driven. Treating a finished run as unfinished would re-execute
+// an agent that already ran.
+func TestIsTerminalRunStatus(t *testing.T) {
+	terminal := []string{"succeeded", "failed", "cancelled", "canceled"}
+	for _, s := range terminal {
+		if !isTerminalRunStatus(s) {
+			t.Errorf("isTerminalRunStatus(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"queued", "running", "paused", "resumable", ""} {
+		if isTerminalRunStatus(s) {
+			t.Errorf("isTerminalRunStatus(%q) = true, want false", s)
+		}
+	}
+}
+
+// fakeRow returns a fixed depth (or error) for childRunDepth.
+type fakeRow struct {
+	depth int
+	err   error
+}
+
+func (r fakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) > 0 {
+		if p, ok := dest[0].(*int); ok {
+			*p = r.depth
+		}
+	}
+	return nil
+}
+
+type fakeQuerier struct {
+	row      fakeRow
+	gotSQL   string
+	gotArgs  []any
+	numCalls int
+}
+
+func (q *fakeQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	q.gotSQL = sql
+	q.gotArgs = args
+	q.numCalls++
+	return q.row
+}
+
+// TestChildRunDepth checks the ancestor walk is bounded and reads back the
+// depth the guard then acts on.
+func TestChildRunDepth(t *testing.T) {
+	q := &fakeQuerier{row: fakeRow{depth: 3}}
+	got, err := childRunDepth(context.Background(), q, "run-x")
+	if err != nil {
+		t.Fatalf("childRunDepth: %v", err)
+	}
+	if got != 3 {
+		t.Errorf("depth = %d, want 3", got)
+	}
+	if len(q.gotArgs) != 2 || q.gotArgs[0] != "run-x" || q.gotArgs[1] != childChainScanLimit {
+		t.Errorf("args = %v, want [run-x %d]", q.gotArgs, childChainScanLimit)
+	}
+	// A malformed parent chain must not become an unbounded recursion.
+	if !contains(q.gotSQL, "c.depth <") {
+		t.Error("recursive walk is not bounded by a depth predicate")
+	}
+
+	q.row = fakeRow{err: errors.New("boom")}
+	if _, err := childRunDepth(context.Background(), q, "run-x"); err == nil {
+		t.Error("expected the query error to propagate, not a silent depth 0")
+	}
+}
+
+// TestExecuteChildRun_DispatchesToRunner verifies the step forwards exactly the
+// identifiers the child needs — in particular the PARENT run + step, which are
+// what make a replayed step adopt its existing child instead of starting a
+// second agent run.
+func TestExecuteChildRun_DispatchesToRunner(t *testing.T) {
+	var gotParentRun, gotStep, gotTenant, gotAgent string
+	var gotInput json.RawMessage
+
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
+	se.childRunner = func(_ context.Context, parentRunID, parentStepID, tenantID, agentName string, input json.RawMessage) (json.RawMessage, error) {
+		gotParentRun, gotStep, gotTenant, gotAgent, gotInput = parentRunID, parentStepID, tenantID, agentName, input
+		return json.RawMessage(`{"child_run_id":"child-9","status":"succeeded"}`), nil
+	}
+
+	state := NewRunState("run-1", "tenant-1", "v1")
+	out, err := se.executeChildRun(
+		context.Background(), state, "step-7", "run-1:step-7:1",
+		json.RawMessage(`{"agent_name":"researcher","input":{"q":"hi"}}`),
+	)
+	if err != nil {
+		t.Fatalf("executeChildRun: %v", err)
+	}
+	if gotParentRun != "run-1" || gotStep != "step-7" || gotTenant != "tenant-1" || gotAgent != "researcher" {
+		t.Errorf("forwarded (%q,%q,%q,%q), want (run-1,step-7,tenant-1,researcher)",
+			gotParentRun, gotStep, gotTenant, gotAgent)
+	}
+	if string(gotInput) != `{"q":"hi"}` {
+		t.Errorf("input = %s, want {\"q\":\"hi\"}", gotInput)
+	}
+	if !contains(string(out), "child-9") {
+		t.Errorf("output = %s, want the runner's result", out)
+	}
+}
+
+// TestExecuteChildRun_RunnerError surfaces a child failure rather than
+// reporting a step that quietly succeeded with no child.
+func TestExecuteChildRun_RunnerError(t *testing.T) {
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
+	se.childRunner = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+		return nil, ErrChildRunDepthExceeded
+	}
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	_, err := se.executeChildRun(context.Background(), state, "s", "k", json.RawMessage(`{"agent_name":"loop"}`))
+	if !errors.Is(err, ErrChildRunDepthExceeded) {
+		t.Fatalf("err = %v, want ErrChildRunDepthExceeded", err)
+	}
+}
+
+// TestExecuteChildRun_RequiresAgentName rejects a payload that names no agent,
+// before any run row is created.
+func TestExecuteChildRun_RequiresAgentName(t *testing.T) {
+	called := false
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
+	se.childRunner = func(_ context.Context, _, _, _, _ string, _ json.RawMessage) (json.RawMessage, error) {
+		called = true
+		return nil, nil
+	}
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	if _, err := se.executeChildRun(context.Background(), state, "s", "k", json.RawMessage(`{"input":{}}`)); err == nil {
+		t.Fatal("expected an error when agent_name is missing")
+	}
+	if called {
+		t.Error("child runner was invoked despite a missing agent_name")
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return len(haystack) >= len(needle) && (haystack == needle ||
+		len(needle) == 0 ||
+		indexOf(haystack, needle) >= 0)
+}
+
+func indexOf(h, n string) int {
+	for i := 0; i+len(n) <= len(h); i++ {
+		if h[i:i+len(n)] == n {
+			return i
+		}
+	}
+	return -1
+}
