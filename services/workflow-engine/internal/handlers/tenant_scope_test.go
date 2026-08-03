@@ -48,3 +48,60 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// TestStreamingRPCsVerifyBeforeSubscribing closes the class, not the instance.
+//
+// ExecuteRun and ResumeRun both subscribed to a run's event stream BEFORE any
+// ownership check. A cross-tenant caller was therefore attached to another
+// tenant's stream for the whole window until the engine rejected it, and events
+// published in that window were delivered.
+//
+// ExecuteRun was reported; ResumeRun was found only by sweeping afterwards.
+// That is the third time in this change that fixing the reported instance left
+// an identical sibling in place, so the rule is asserted here instead: in an
+// RPC that subscribes to a run's stream, the ownership check must come first.
+func TestStreamingRPCsVerifyBeforeSubscribing(t *testing.T) {
+	src, err := os.ReadFile("workflow.go")
+	if err != nil {
+		t.Fatalf("read workflow.go: %v", err)
+	}
+	lines := strings.Split(string(src), "\n")
+
+	fnStart := regexp.MustCompile(`^func \(s \*WorkflowService\) ([A-Za-z]+)\(`)
+	var current string
+	var start int
+	var bad []string
+
+	flush := func(body []string, name string, off int) {
+		if name == "" {
+			return
+		}
+		subIdx, verIdx := -1, -1
+		for i, l := range body {
+			if subIdx < 0 && strings.Contains(l, "Streamer().Subscribe(") {
+				subIdx = i
+			}
+			if verIdx < 0 && strings.Contains(l, "VerifyRunOwnership(") {
+				verIdx = i
+			}
+		}
+		if subIdx >= 0 && (verIdx < 0 || verIdx > subIdx) {
+			bad = append(bad, name+" (workflow.go:"+itoa(off+subIdx+1)+") subscribes before verifying ownership")
+		}
+	}
+
+	for i, l := range lines {
+		if m := fnStart.FindStringSubmatch(l); m != nil {
+			flush(lines[start:i], current, start)
+			current, start = m[1], i
+		}
+	}
+	flush(lines[start:], current, start)
+
+	if len(bad) > 0 {
+		t.Errorf("streaming RPCs attach to a run's event stream before checking it belongs "+
+			"to the caller:\n  %s\n\nVerify ownership first — events published between "+
+			"subscribe and rejection are delivered to the wrong tenant.",
+			strings.Join(bad, "\n  "))
+	}
+}
