@@ -231,3 +231,52 @@ func TestExecuteChildRun_PausedIsTypedFailure(t *testing.T) {
 		t.Error("a paused child must not be reported as a depth violation")
 	}
 }
+
+// TestExecuteAttempt_ReplaySkipsExecution proves the executor HONOURS the
+// replay cache — not merely that the cache stores things.
+//
+// The existing TestStepReplay exercises SetStepResult/HasStepResult in
+// isolation: it shows the map works. It does not show that executeAttempt
+// consults it, and that gap let me claim (wrongly, and repeatedly) that the
+// durable engine re-executes completed steps on replay. A test asserting the
+// map round-trips cannot catch a missing call site.
+//
+// This one is decisive because the executor has NO model client: if the replay
+// check were skipped, the llm_call would fail with ErrModelRouterUnavailable.
+// Returning the cached output instead can only happen if execution was skipped.
+// It also touches no database — the replay check returns before step_started is
+// journaled, which is itself part of the contract.
+func TestExecuteAttempt_ReplaySkipsExecution(t *testing.T) {
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil) // nil model client
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	cached := &StepResult{
+		StepID:  "step-1",
+		Attempt: 1,
+		Output:  json.RawMessage(`{"answer":42}`),
+	}
+	state.SetStepResult(stepCacheKey("step-1", 1), cached)
+
+	got, err := se.executeAttempt(context.Background(), state, "step-1", 1, &StepPayload{
+		Kind: "llm_call",
+		Data: json.RawMessage(`{"capability":"reasoning-large","prompt":"hi"}`),
+	})
+	if err != nil {
+		t.Fatalf("replayed step returned an error (it re-executed): %v", err)
+	}
+	if errors.Is(err, ErrModelRouterUnavailable) {
+		t.Fatal("step was re-executed on replay instead of served from cache")
+	}
+	if string(got.Output) != `{"answer":42}` {
+		t.Errorf("output = %s, want the cached result", got.Output)
+	}
+
+	// A DIFFERENT attempt must NOT hit attempt 1's entry, or a retry would
+	// replay the failure it is retrying. Asserted on the key rather than by
+	// executing: a cache MISS proceeds to journal step_started, which needs a
+	// database — and with a nil pool that panics, which is how the assertion
+	// above is known to be decisive rather than vacuous.
+	if _, ok := state.HasStepResult(stepCacheKey("step-1", 2)); ok {
+		t.Error("attempt 2 hits attempt 1's cache entry; retries would never re-run")
+	}
+}
