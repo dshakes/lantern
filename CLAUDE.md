@@ -754,13 +754,18 @@ returning placeholder strings:
     engine crashes and replays, and a context value resets to 0 on the way back
     up — turning the cycle guard off exactly when a runaway workflow is retrying
     hardest. The DB chain survives restarts.
-  - **Replay-safety** is by adoption, not by the step cache: `RunState`
-    reconstructs `StepResults` on replay but `GetStepResult` is never consulted,
-    so a replayed run re-executes its steps. A child records its
-    `parent_run_id` + `parent_step_id` in `trigger_meta`, and a re-executed
-    step adopts that child instead of dispatching a second agent run. (Making
-    the executor consult its replay cache is worth doing on its own; this step
-    is safe either way.)
+  - **Replay-safety** comes from the step cache AND adoption; they cover
+    different windows. `executeAttempt` has an explicit replay check
+    (`HasStepResult`, keyed `stepID:attempt`) and returns the cached result
+    without re-executing — so a COMPLETED child_run step is never re-dispatched.
+    Adoption covers the window the cache cannot: a crash AFTER the child run row
+    is created but BEFORE `step_completed` is journaled leaves nothing in the
+    cache, so the step legitimately re-runs — and without adoption it would
+    create a SECOND child. The child records its `parent_run_id` +
+    `parent_step_id` in `trigger_meta`, and the re-run adopts it instead.
+    (An earlier version of this note claimed the executor never consults its
+    replay cache. That was wrong — it does, at `step_executor.go`'s
+    `--- REPLAY CHECK ---`. `TestExecuteAttempt_ReplaySkipsExecution` pins it.)
   - **Cancellation** propagates: the child is driven on the parent's ctx.
   - **No split-brain.** The child is created `status='running'`, NOT `'queued'`.
     The scheduler polls `status IN ('queued','resumable')`, so a queued child
