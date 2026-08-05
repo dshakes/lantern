@@ -152,6 +152,11 @@ secrets:
   jwtSecret: ""
   openaiApiKey: ""
   anthropicApiKey: ""
+  # Required when LANTERN_ENV is prod-like — see docs/runbooks/rls-cutover.md.
+  credentialKey: ""
+  receiptSecret: ""
+  grpcServiceToken: ""
+  appDbPassword: ""
   postgresPassword: "lantern"
   minioPassword: "lanternsecret"
 

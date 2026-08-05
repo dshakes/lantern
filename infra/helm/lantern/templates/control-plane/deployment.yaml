@@ -55,6 +55,25 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern.fullname" . }}-config
                   key: LOG_LEVEL
+            # Required in prod-like envs (LANTERN_ENV=prod/production/staging):
+            # the startup guards refuse to boot without these rather than run
+            # insecurely. Injected unconditionally, empty by default, so dev and
+            # kind deployments are unchanged.
+            - name: LANTERN_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: credential-key
+            - name: LANTERN_RECEIPT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: receipt-secret
+            - name: LANTERN_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: grpc-service-token
             # --- RLS enforcement (invariant #7) ---
             # These are injected UNCONDITIONALLY and default to empty, so a
             # values file that sets them actually takes effect. They were absent
