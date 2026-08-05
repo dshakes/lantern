@@ -44,6 +44,25 @@ jobs:
             ~/.cargo/git
           key: qa-deps-${{ runner.os }}-${{ hashFiles('**/go.sum', '**/package-lock.json', '**/pnpm-lock.yaml', '**/Cargo.lock', '**/requirements*.txt', '**/uv.lock', '**/poetry.lock') }}
           restore-keys: qa-deps-${{ runner.os }}-
+      # Rust toolchain, installed EXPLICITLY (template: add stack deps before tests).
+      #
+      # Without this step `cargo test` triggers a LAZY rustup install: rust-toolchain.toml
+      # pins 1.94 with components [rustfmt, clippy], so the first cargo invocation
+      # inside the test run downloads a toolchain mid-suite. That races the runner's
+      # preinstalled Rust and intermittently dies with
+      #   failed to install component: 'clippy-preview-...', detected conflict: 'bin/cargo-clippy'
+      # which fails `make test-rust` and therefore the whole gate, on a diff that may not
+      # contain a line of Rust. Go, JS and Python already get deterministic setup steps
+      # here; Rust was the one stack left to install itself under load.
+      #
+      # Pinned to match sdlc-lint.yml and runtime-exec-e2e.yml. rust-toolchain.toml stays
+      # the source of truth for local dev; if it moves off 1.94, these pins move with it.
+      - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94"
+          components: clippy, rustfmt
+
       # lantern needs protoc for prost-build (template: add stack deps before tests)
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
