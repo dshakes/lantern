@@ -1,0 +1,155 @@
+# values-staging.yaml -- Staging overrides.
+#
+# Usage:
+#   helm upgrade --install lantern infra/helm/lantern \
+#     -f infra/helm/lantern/values.yaml \
+#     -f infra/helm/lantern/values-staging.yaml \
+#     --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD"
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Row-Level Security shipped for the control-plane and the workflow engine, and
+# then sat switched off everywhere, because there was nowhere to switch it on:
+# the chart had values.yaml and values-dev.yaml and nothing in between. Merged
+# and unenabled is not the same as done, so staging is defined here as the place
+# enforcement is proven before it goes anywhere that matters.
+#
+# READ docs/runbooks/rls-cutover.md BEFORE APPLYING. The database work (role,
+# password, grants) has to happen first — with LANTERN_RLS_ENFORCE=1 and no
+# usable lantern_app credential, both services refuse to start. That is
+# deliberate (a service that believes it is enforcing and is not is worse than
+# one that is plainly down), but it does mean a wrong order takes the
+# environment down rather than degrading it.
+
+global:
+  image:
+    registry: ""
+    repository: lantern
+    tag: staging
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+# -- Row-Level Security: ON here, and only here --
+#
+# LANTERN_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
+# `lantern_app` role, which the policies actually apply to. Without the second
+# variable the pool is never built and the services fail closed at startup, so
+# the two must always travel together.
+#
+# appDbPassword is NOT stored here. Pass it at deploy time (--set, or an
+# external secret) — the runbook covers both.
+
+gateway:
+  replicas: 2
+  image:
+    name: lantern-gateway
+  service:
+    type: ClusterIP
+    port: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+    CONTROL_PLANE_ADDR: "lantern-control-plane:50051"
+    MODEL_ROUTER_ADDR: "lantern-model-router:50053"
+    LOG_LEVEL: "info"
+
+controlPlane:
+  replicas: 2
+  image:
+    name: lantern-control-plane
+  service:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LISTEN_ADDR: ":50051"
+    LOG_LEVEL: "info"
+    LANTERN_ENV: "staging"
+    # --- RLS ---
+    LANTERN_RLS_ENFORCE: "1"
+    # LANTERN_APP_DB_PASSWORD comes from the secret, not from values.
+
+workflowEngine:
+  replicas: 2
+  image:
+    name: lantern-workflow-engine
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LOG_LEVEL: "info"
+    LANTERN_ENV: "staging"
+    # --- RLS ---
+    # The engine needs BOTH, same as the control-plane. It pings the pool at
+    # startup, so a wrong password fails here rather than on the first
+    # tenant-scoped query hours later.
+    LANTERN_RLS_ENFORCE: "1"
+
+modelRouter:
+  replicas: 2
+  image:
+    name: lantern-model-router
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    LOG_LEVEL: "info"
+
+runtimeManager:
+  replicas: 1
+  image:
+    name: lantern-runtime-manager
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LOG_LEVEL: "info"
+    LANTERN_ENV: "staging"
+
+dashboard:
+  replicas: 2
+  image:
+    name: lantern-dashboard
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+secrets:
+  # Supplied at deploy time — never committed. See the runbook.
+  #   --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD"
+  # This is the credential for the lantern_app role that RLS policies apply to;
+  # it is NOT the superuser postgres password and must not be set to it (a
+  # superuser bypasses RLS, which would leave enforcement silently off).
+  appDbPassword: ""
