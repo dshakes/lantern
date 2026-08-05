@@ -55,6 +55,21 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern.fullname" . }}-config
                   key: LOG_LEVEL
+            # --- RLS enforcement (invariant #7) ---
+            # These are injected UNCONDITIONALLY and default to empty, so a
+            # values file that sets them actually takes effect. They were absent
+            # here while values-staging.yaml declared them, which meant the flag
+            # was silently dropped: the deployment came up healthy with RLS
+            # completely off — a fail-open on the tenant-isolation control.
+            - name: LANTERN_ENV
+              value: {{ .Values.controlPlane.env.LANTERN_ENV | default "" | quote }}
+            - name: LANTERN_RLS_ENFORCE
+              value: {{ .Values.controlPlane.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+            - name: LANTERN_APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: app-db-password
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
