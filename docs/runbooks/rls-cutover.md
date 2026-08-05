@@ -93,7 +93,36 @@ SELECT count(*) FROM pg_policies WHERE policyname = 'tenant_isolation';
 
 Expect 45 (as of this writing). A lower number means migrations are behind.
 
-### 5. Deploy with enforcement on
+### 5. Supply the secrets `LANTERN_ENV=staging` demands
+
+This trips people, and it is not about RLS. `values-staging.yaml` sets
+`LANTERN_ENV: "staging"`, which is prod-like — and that **arms the
+control-plane's fail-closed startup guards**. It will refuse to boot without:
+
+| secret | Helm value |
+| --- | --- |
+| `JWT_SECRET` (and not the dev default) | `secrets.jwtSecret` |
+| `LANTERN_CREDENTIAL_KEY` | `secrets.credentialKey` |
+| `LANTERN_RECEIPT_SECRET` | `secrets.receiptSecret` |
+| `LANTERN_GRPC_SERVICE_TOKEN` | `secrets.grpcServiceToken` |
+| `LANTERN_APP_DB_PASSWORD` | `secrets.appDbPassword` |
+
+Missing any one of them is a `Fatal` at startup, not a warning — deliberate, but
+it means a deploy that supplies only the RLS password fails on something that
+looks unrelated. Set them together:
+
+```bash
+helm upgrade --install lantern infra/helm/lantern \
+  -f infra/helm/lantern/values.yaml \
+  -f infra/helm/lantern/values-staging.yaml \
+  --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD" \
+  --set secrets.credentialKey="$LANTERN_CREDENTIAL_KEY" \
+  --set secrets.receiptSecret="$LANTERN_RECEIPT_SECRET" \
+  --set secrets.grpcServiceToken="$LANTERN_GRPC_SERVICE_TOKEN" \
+  --set secrets.jwtSecret="$JWT_SECRET"
+```
+
+### 6. Deploy with enforcement on
 
 `values-staging.yaml` sets `LANTERN_RLS_ENFORCE: "1"` for the control-plane and
 the workflow engine. Both need the password too; they fail closed without it.
