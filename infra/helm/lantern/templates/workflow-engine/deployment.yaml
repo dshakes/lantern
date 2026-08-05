@@ -41,6 +41,40 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern.fullname" . }}-config
                   key: LOG_LEVEL
+            # Required in prod-like envs (LANTERN_ENV=prod/production/staging):
+            # the startup guards refuse to boot without these rather than run
+            # insecurely. Injected unconditionally, empty by default, so dev and
+            # kind deployments are unchanged.
+            - name: LANTERN_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: credential-key
+            - name: LANTERN_RECEIPT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: receipt-secret
+            - name: LANTERN_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: grpc-service-token
+            # --- RLS enforcement (invariant #7) ---
+            # These are injected UNCONDITIONALLY and default to empty, so a
+            # values file that sets them actually takes effect. They were absent
+            # here while values-staging.yaml declared them, which meant the flag
+            # was silently dropped: the deployment came up healthy with RLS
+            # completely off — a fail-open on the tenant-isolation control.
+            - name: LANTERN_ENV
+              value: {{ .Values.workflowEngine.env.LANTERN_ENV | default "" | quote }}
+            - name: LANTERN_RLS_ENFORCE
+              value: {{ .Values.workflowEngine.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+            - name: LANTERN_APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: app-db-password
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
