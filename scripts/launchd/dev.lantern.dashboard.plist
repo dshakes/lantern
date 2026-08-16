@@ -31,6 +31,17 @@ Logs: ~/Library/Logs/Lantern/dashboard.{out,err}.log
   <key>ThrottleInterval</key>
   <integer>15</integer>
 
+  <!-- Next.js content-hashes its chunk filenames per build, and the wrapper
+       deliberately skips rebuilding when a bundle already exists. So a server
+       left running across a rebuild serves HTML referencing chunks it never
+       built: every /_next/static/chunks/*.js 400s and the page dies with
+       "Application error: a client-side exception has occurred". Restarting on
+       BUILD_ID change is what makes a rebuild take effect. -->
+  <key>WatchPaths</key>
+  <array>
+    <string>__REPO_ROOT__/apps/web/.next/BUILD_ID</string>
+  </array>
+
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/Lantern/dashboard.out.log</string>
   <key>StandardErrorPath</key>
