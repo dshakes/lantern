@@ -11166,7 +11166,14 @@ export class WhatsAppSession {
   /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
   private async runNewsProactiveTick(): Promise<void> {
     try {
-      if (this.killSwitch || !this.socket) return;
+      // Must match what sendSelf actually requires (!socket || !connected).
+      // Guarding on `socket` alone was the 23-day outage: on `connection ===
+      // "close"` the socket OBJECT survives while `connected` flips false, so
+      // the tick cleared this guard every 12 minutes and then threw "not
+      // connected" inside sendSelf — 3,238 failures, taking the daily digest
+      // and news alerts with it. The timer intentionally keeps running so the
+      // feed resumes on its own once the socket is back.
+      if (this.killSwitch || !this.socket || !this.connected) return;
       if (this.proactivePaused()) return;
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
@@ -12071,6 +12078,16 @@ export class WhatsAppSession {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    // newsTimer was the one interval disconnect() forgot, and it fires
+    // sendSelf. Left running across a disconnect it retried every 12 minutes
+    // against a dead socket: 3,238 of 3,246 sendSelf calls failed with "not
+    // connected" over 23 days, taking the daily digest and news alerts with
+    // them. Every sibling timer here was already cleared; this one just got
+    // missed. connect() re-arms it, so clearing is safe.
+    if (this.newsTimer) {
+      clearInterval(this.newsTimer);
+      this.newsTimer = null;
     }
     if (this.gcTimer) {
       clearInterval(this.gcTimer);
