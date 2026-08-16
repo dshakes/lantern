@@ -6474,6 +6474,12 @@ export class IMessageSession {
   // chat_identifier == own handle) and remember.
   private selfChatRowIds: Set<number> = new Set();
 
+  // Per-chat timestamp of the last "I'm still working on it" fallback. The
+  // fallback fires whenever the agent returns nothing, and with no throttle it
+  // went out 11× in production — 8 of them inside 55 seconds. Repeating
+  // "give me another minute" eight times says nothing the first one didn't.
+  private lastAgentStallNoticeAt: Map<string, number> = new Map();
+
   // Per-chat timestamp of the last doc query. Lets us recognize
   // short follow-ups ("send it", "yes", "the first one") as
   // continuations within a 5-minute window.
@@ -10283,7 +10289,16 @@ export class IMessageSession {
     if (!draft) {
       // Graceful fallback — never "couldn't reach the agent — try
       // again". The bot OWNS the retry; the user should not have to.
-      void this.send(jid, "hmm, that one took longer than I'd like. give me another minute and ask again");
+      // Say it once per 5 minutes per chat. Beyond that the owner already
+      // knows the agent is struggling, and repeating it is the noise they
+      // reported — better to stay quiet than to apologise on a loop.
+      const lastStall = this.lastAgentStallNoticeAt.get(jid) ?? 0;
+      if (Date.now() - lastStall > 5 * 60_000) {
+        this.lastAgentStallNoticeAt.set(jid, Date.now());
+        void this.send(jid, "hmm, that one took longer than I'd like. give me another minute and ask again");
+      } else {
+        this.logger.info({ jid }, "agent stall notice suppressed — already sent within 5m");
+      }
       return;
     }
 

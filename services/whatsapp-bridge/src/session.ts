@@ -1225,6 +1225,11 @@ export class WhatsAppSession {
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000;
 
+  // Timestamp of the last "still working on it" fallback to self-chat. Scalar
+  // rather than a per-chat map because this path only ever writes to the
+  // owner's own thread. See the throttle at the agent-null fallback.
+  private lastAgentStallNoticeAt = 0;
+
   // Typed owner-facts (spouse/anniversary/kids/naming-rules) extracted from a
   // self-chat teach, HELD pending the owner's "yes" before they're written as
   // authoritative "never contradict" ground truth. Without this a mis-extracted
@@ -6400,7 +6405,15 @@ export class WhatsAppSession {
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
     if (!draft) {
-      await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
+      // Throttled like the iMessage twin: the fallback fires on every
+      // agent-null, and unthrottled it apologises on a loop (11× observed,
+      // 8 inside 55s). Once per 5 minutes carries the same information.
+      if (Date.now() - this.lastAgentStallNoticeAt > 5 * 60_000) {
+        this.lastAgentStallNoticeAt = Date.now();
+        await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
+      } else {
+        this.logger.info("agent stall notice suppressed — already sent within 5m");
+      }
       return;
     }
 
