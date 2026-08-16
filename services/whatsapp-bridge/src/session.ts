@@ -3596,6 +3596,22 @@ export class WhatsAppSession {
     const decision = proactiveDecision(event, prefs);
 
     if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
+
+    // Same gap as the iMessage bridge: auto-act was guarded by hasActed but
+    // the ping/digest routes below were not, so a re-delivered inbound re-sent
+    // the same owner DM unbounded. Reuse the key already computed for auto-act
+    // so all routes share one guard.
+    if (auto.idempotencyKey) {
+      const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+      if (hasActed(auto.idempotencyKey)) {
+        this.logger.info(
+          { kind: event.kind, idempotencyKey: auto.idempotencyKey, route: decision.route },
+          "life-event emit skipped — already surfaced (idempotent)",
+        );
+        return true;
+      }
+      markActed(auto.idempotencyKey);
+    }
     if (!ownJid) {
       this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
       return true;

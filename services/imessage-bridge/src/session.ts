@@ -4443,6 +4443,26 @@ export class IMessageSession {
 
     if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
 
+    // Dedup EVERY owner-facing emission, not just auto-act. autoActLifeEvent
+    // has always had a hasActed guard, but the ping/digest routes below did
+    // not — so a re-delivered or re-classified inbound fired the same DM again
+    // with nothing to stop it. Observed in production: one fraud alert sent
+    // 22×, another 27×, and one reply 15× inside 32 seconds (several in the
+    // same second). That is the "spammy/repetitive" report. The key is already
+    // computed above for auto-act; reuse it so all three routes share one
+    // guard rather than each growing its own.
+    if (auto.idempotencyKey) {
+      const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+      if (hasActed(auto.idempotencyKey)) {
+        this.logger.info(
+          { kind: event.kind, idempotencyKey: auto.idempotencyKey, route: decision.route },
+          "life-event emit skipped — already surfaced (idempotent)",
+        );
+        return true;
+      }
+      markActed(auto.idempotencyKey);
+    }
+
     if (!owner) {
       // No self-chat target — surface to the dashboard feed so it isn't invisible.
       this.broadcast({ type: "activity", data: { kind: "system", summary: decision.ownerMessage, timestamp: Date.now() } });
