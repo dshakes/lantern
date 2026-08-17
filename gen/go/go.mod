@@ -2,7 +2,7 @@ module github.com/dshakes/lantern/gen/go
 
 go 1.25.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	google.golang.org/grpc v1.82.1

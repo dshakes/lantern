@@ -2,7 +2,7 @@ module github.com/dshakes/lantern/services/runtime-scheduler
 
 go 1.25.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/dshakes/lantern/gen/go v0.0.0
