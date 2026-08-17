@@ -13,7 +13,12 @@ CLAUDE="/Users/shakes/.nvm/versions/node/v22.18.0/bin/claude"
 NODE_BIN="/Users/shakes/.nvm/versions/node/v22.18.0/bin"
 STATE_DIR="$HOME/.lantern/introspect"
 MODEL="${LANTERN_INTROSPECT_MODEL:-sonnet}"
-MAX_SECONDS="${LANTERN_INTROSPECT_MAX_SECONDS:-1500}"   # 25 min hard cap
+# 45 min hard cap. Was 25, which two consecutive real runs on 2026-08-17 blew
+# through: each spent its whole budget on genuine log analysis (97 shell calls)
+# and was SIGTERMed mid-audit. Raised, but the cap is NOT the real fix — the
+# prompt now writes its report early (section 0) so a capped run still leaves
+# evidence. Runs 4x/day, so 45 min is still a small slice of the day.
+MAX_SECONDS="${LANTERN_INTROSPECT_MAX_SECONDS:-2700}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNLOG="$STATE_DIR/run-$TS.log"
 

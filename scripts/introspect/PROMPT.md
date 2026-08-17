@@ -12,6 +12,19 @@ silently don't work in real use.** The worst failure class is the bot claiming
 an action happened when it didn't (e.g. "✅ sent" with no file actually
 delivered). Hunt that class first.
 
+## 0. Write the report EARLY, then keep updating it
+
+You run under a hard wall-clock cap and get SIGTERMed when it expires — no
+chance to flush anything at the end. Two real runs on 2026-08-17 spent 22
+minutes doing genuine log analysis (97 shell commands), hit the cap, and left
+**zero** evidence behind, because the report was the last step.
+
+So: **create `~/.lantern/introspect/REPORT-<UTC-date-time>.md` within your
+first few tool calls**, with just a header and "IN PROGRESS". Append findings
+as you go. A truncated report of real findings is worth far more than a
+perfect report that never gets written — and its absence is what the liveness
+guard alarms on.
+
 ## 1. Gather what the bot actually did (last ~12h)
 
 Read real behavior — never speculate:
