@@ -48,6 +48,12 @@ BEFORE="$(git rev-parse HEAD)"
 # DRY-RUN valve: set LANTERN_INTROSPECT_DRYRUN=1 to review the cadence's judgment
 # (report only, NO merges) before trusting its auto-merges. Default off (owner
 # chose auto-merge-low-risk).
+# NOTE: expanded below as ${DRYRUN_SYS[@]+"${DRYRUN_SYS[@]}"}, NOT the plain
+# "${DRYRUN_SYS[@]}". macOS ships bash 3.2, where expanding an EMPTY array
+# under `set -u` is an unbound-variable error (bash only fixed this in 4.4).
+# The plain form killed every run at that line for 120 consecutive runs — the
+# loop looked alive in launchctl and logged "introspection done", but the audit
+# never actually executed. Do not "simplify" this back.
 DRYRUN_SYS=()
 if [ "${LANTERN_INTROSPECT_DRYRUN:-0}" = "1" ]; then
   DRYRUN_SYS=(--append-system-prompt "DRY RUN: do NOT edit, commit, or push anything. Only write the report file with what you WOULD have fixed.")
@@ -61,7 +67,7 @@ fi
   --model "$MODEL" \
   --dangerously-skip-permissions \
   --strict-mcp-config \
-  "${DRYRUN_SYS[@]}" \
+  ${DRYRUN_SYS[@]+"${DRYRUN_SYS[@]}"} \
   >>"$RUNLOG" 2>&1 &
 CPID=$!
 ( sleep "$MAX_SECONDS"; kill -TERM "$CPID" 2>/dev/null; sleep 10; kill -KILL "$CPID" 2>/dev/null ) &
@@ -73,9 +79,17 @@ AFTER="$(git rev-parse HEAD)"
 if [ "$BEFORE" != "$AFTER" ]; then
   log "introspection MERGED: $BEFORE -> $AFTER (rc=$RC)"
   notify "merged a fix to master ($(git log -1 --format=%s | cut -c1-60))"
-else
-  log "introspection done, no merge (rc=$RC)"
+elif [ "$RC" -eq 0 ]; then
+  log "introspection done, no merge (rc=0) — audit ran, found nothing to fix"
   notify "review done — no changes"
+else
+  # A non-zero rc means the audit FAILED, which is not the same as "found
+  # nothing" — and conflating them is how this loop stayed dead for 120
+  # consecutive runs while logging "introspection done" and notifying
+  # "no changes". A silent harness is worse than no harness: it reports
+  # health it never measured. Make failure look like failure.
+  log "introspection FAILED (rc=$RC) — audit did not complete; see $RUNLOG"
+  notify "introspect FAILED (rc=$RC) — audit did not run"
 fi
 # Keep only the last 60 run logs.
 ls -1t "$STATE_DIR"/run-*.log 2>/dev/null | tail -n +61 | xargs rm -f 2>/dev/null || true
