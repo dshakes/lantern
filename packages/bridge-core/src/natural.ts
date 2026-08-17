@@ -1948,6 +1948,33 @@ export function detectBotTells(
     }
   }
 
+  // TEMPLATE-LEAKAGE net. A JS template literal interpolating a missing field
+  // renders the placeholder as text, and we shipped exactly that to the owner
+  // 11 times over 36 days: "🔑 your code is undefined — (i won't share this
+  // with anyone)." The source bug is fixed, but the guard belongs HERE too:
+  // this is the last pass before every send, so it covers every current and
+  // future template rather than the one that happened to burn us.
+  //
+  // Deliberately narrow. `[object Object]` and an unrendered `${...}` are
+  // never human text, so those match anywhere. But "undefined"/"NaN" DO appear
+  // in real sentences ("that behavior is undefined in the spec"), and dropping
+  // a genuine reply is worse than the bug this prevents — so those two only
+  // count where a value was obviously meant to be: right after a copula or
+  // preposition ("your code is undefined", "arrives NaN"), or as the entire
+  // message. An earlier, looser version of this check suppressed legitimate
+  // prose; the negative cases in template-leakage.test.ts pin that down.
+  // The signal that separates the two is not the preceding word but what
+  // FOLLOWS: a leaked placeholder is where a value should have been, so the
+  // clause ends there ("your code is undefined." / "arrives NaN"). Real prose
+  // keeps going ("undefined in the spec", "undefined behavior"). So: require
+  // the token to sit at a clause end, after a copula/preposition, or be the
+  // whole message.
+  const PLACEHOLDER_WORD =
+    /(?:\b(?:is|are|was|were|to|at|on|for|of|arrives?|shows?)\s+(?:undefined|NaN)\s*(?:[.,!?;:)—-]|$))|^(?:undefined|NaN)$/i;
+  if (/\[object \w+\]|\$\{[^}]*\}/.test(text) || PLACEHOLDER_WORD.test(text.trim())) {
+    return { ok: false, reason: "template placeholder leaked into draft (undefined/NaN/${})" };
+  }
+
   // FABRICATED-NAME net (BUG A) — deterministic last-resort guard. If the
   // draft uses a clear vocative first-name ("happy anniversary Shiva",
   // "thanks Shiva") that is NOT present in the inbound text, the resolved
