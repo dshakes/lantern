@@ -25,10 +25,21 @@ Logs: ~/Library/Logs/Lantern/infra.{out,err}.log
   <key>WorkingDirectory</key>
   <string>__REPO_ROOT__</string>
 
-  <!-- RunAtLoad fires once per login. KeepAlive is OFF — docker-compose
-       is a one-shot 'bring up' command, not a long-running daemon. -->
+  <!-- RunAtLoad fires once per login. The wrapper exits 1 when Docker never
+       becomes ready, so KeepAlive-on-failure is the retry: without it a single
+       cold-boot race left infra down for 13 days while every service sat in a
+       connection-refused loop. Compose itself is still one-shot — a successful
+       run exits 0 and is NOT restarted. Containers carry restart:unless-stopped
+       so Docker, not launchd, keeps them alive after that. -->
   <key>RunAtLoad</key>
   <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
 
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/Lantern/infra.out.log</string>

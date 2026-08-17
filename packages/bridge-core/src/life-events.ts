@@ -716,6 +716,11 @@ function buildOwnerMessage(event: LifeEvent, actions: ProactiveAction[]): string
       return `⚠️ ${who} flagged a declined/suspicious charge — might be fraud.${phone ? ` want the number (${phone})?` : " want the number?"}`;
     }
     case "otp": {
+      // A missing code interpolated as the literal string "undefined" and
+      // shipped "🔑 your code is undefined" 11 times over 36 days. An OTP
+      // ping with no code carries no information, so say what we do know
+      // rather than inventing a value we never extracted.
+      if (!f.code) return `🔑 a login code arrived${f.merchant ? ` from ${f.merchant}` : ""} — check the original message.`;
       return `🔑 your code is ${f.code} — (i won't share this with anyone).`;
     }
     case "appointment": {

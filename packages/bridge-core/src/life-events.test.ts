@@ -64,6 +64,20 @@ describe("life-events — undated travel/appointment must NOT nudge (placeholder
     const e = ev({ kind: "otp", urgency: "now", fields: { code: "123456" }, rawText: "Your verification code is 123456" });
     assert.notEqual(proactiveDecision(e, {}, NOW).route, "suppress", "otp must still surface");
   });
+
+  // REGRESSION: a codeless OTP interpolated `undefined` into the owner DM and
+  // shipped "🔑 your code is undefined" 11 times over 36 days in production.
+  test("otp with no code never renders the literal string undefined", () => {
+    const e = ev({ kind: "otp", urgency: "now", fields: {}, rawText: "Your verification code is expiring" });
+    const msg = proactiveDecision(e, {}, NOW).ownerMessage;
+    assert.ok(!/undefined/.test(msg), `ownerMessage leaked "undefined": ${msg}`);
+    assert.ok(msg.length > 0, "codeless otp must still say something");
+  });
+
+  test("otp WITH a code still reports it", () => {
+    const e = ev({ kind: "otp", urgency: "now", fields: { code: "611586" }, rawText: "code 611586" });
+    assert.match(proactiveDecision(e, {}, NOW).ownerMessage, /611586/);
+  });
 });
 
 describe("life-events — recency gate: only surface RECENT + actionable (stale-Gmail-nudge bug)", () => {

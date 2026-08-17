@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.lantern.dashboard-reload</string>
+
+  <!-- Restart the dashboard whenever a new build lands.
+
+       Why a separate job: launchd's WatchPaths only LAUNCHES a job that is
+       not running. The dashboard sets KeepAlive=true, so it is always
+       running and WatchPaths on it is a no-op (verified: BUILD_ID changed,
+       PID did not). This job is NOT KeepAlive, so a BUILD_ID change starts
+       it, it kickstarts the dashboard, and it exits.
+
+       The bug it prevents: Next.js content-hashes chunk filenames per build
+       and the dashboard wrapper deliberately skips rebuilding when a bundle
+       exists. A server left running across a rebuild therefore answers HTML
+       referencing chunks it never built — every /_next/static/chunks/*.js
+       404s or 400s and the page dies with "Application error: a client-side
+       exception has occurred". It also serves the OLD NEXT_PUBLIC_API_URL,
+       which is inlined at build time, so a phone hitting it gets a login
+       pointed at the wrong host and reports "invalid credentials". Both were
+       hit in production before this existed. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/launchctl</string>
+    <string>kickstart</string>
+    <string>-k</string>
+    <string>gui/__UID__/dev.lantern.dashboard</string>
+  </array>
+
+  <key>WatchPaths</key>
+  <array>
+    <string>__REPO_ROOT__/apps/web/.next/BUILD_ID</string>
+  </array>
+
+  <!-- Do NOT RunAtLoad: that would kick the dashboard on every login for no
+       reason. Only a BUILD_ID change should trigger it. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- A build writes BUILD_ID once, but coalesce any burst into one restart. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/Lantern/dashboard-reload.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/Lantern/dashboard-reload.err.log</string>
+</dict>
+</plist>
