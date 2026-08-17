@@ -26,6 +26,24 @@ log() { echo "[$(date -u +%H:%M:%SZ)] $*" | tee -a "$RUNLOG"; }
 
 cd "$REPO" || { log "repo missing"; exit 0; }
 
+# LIVENESS GUARD. Every run is supposed to write a REPORT-*.md. Between
+# 2026-07-09 and 2026-08-17 this loop fired 156 times, wrote exactly ONE
+# report, and nobody noticed — it kept logging "introspection done" while
+# dying at its own command line. A self-audit that silently stops auditing is
+# the worst failure mode here, because its silence is indistinguishable from
+# "found nothing wrong". Shout when the newest report goes stale.
+NEWEST_REPORT="$(ls -1t "$STATE_DIR"/REPORT-*.md 2>/dev/null | head -1)"
+if [ -n "$NEWEST_REPORT" ]; then
+  REPORT_AGE_DAYS=$(( ( $(date +%s) - $(stat -f %m "$NEWEST_REPORT") ) / 86400 ))
+  if [ "$REPORT_AGE_DAYS" -ge 3 ]; then
+    log "WARNING: newest audit report is ${REPORT_AGE_DAYS}d old — the loop may be running but not auditing"
+    notify "introspect STALE — no report in ${REPORT_AGE_DAYS}d"
+  fi
+else
+  log "WARNING: no audit report has EVER been written"
+  notify "introspect STALE — no report ever written"
+fi
+
 # GUARD: never run over uncommitted work — the cadence commits to master, so a
 # dirty tree could sweep in the owner's in-progress edits.
 if [ -n "$(git status --porcelain)" ]; then
