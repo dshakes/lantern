@@ -1225,6 +1225,11 @@ export class WhatsAppSession {
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000;
 
+  // Timestamp of the last "still working on it" fallback to self-chat. Scalar
+  // rather than a per-chat map because this path only ever writes to the
+  // owner's own thread. See the throttle at the agent-null fallback.
+  private lastAgentStallNoticeAt = 0;
+
   // Typed owner-facts (spouse/anniversary/kids/naming-rules) extracted from a
   // self-chat teach, HELD pending the owner's "yes" before they're written as
   // authoritative "never contradict" ground truth. Without this a mis-extracted
@@ -3596,7 +3601,26 @@ export class WhatsAppSession {
     const decision = proactiveDecision(event, prefs);
 
     if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
+
+    // Same gap as the iMessage bridge: auto-act was guarded by hasActed but
+    // the ping/digest routes below were not, so a re-delivered inbound re-sent
+    // the same owner DM unbounded. Reuse the key already computed for auto-act
+    // so all routes share one guard.
+    if (auto.idempotencyKey) {
+      const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+      if (hasActed(auto.idempotencyKey)) {
+        this.logger.info(
+          { kind: event.kind, idempotencyKey: auto.idempotencyKey, route: decision.route },
+          "life-event emit skipped — already surfaced (idempotent)",
+        );
+        return true;
+      }
+      markActed(auto.idempotencyKey);
+    }
     if (!ownJid) {
+      // Nothing reached the owner — release the claim so this can retry once
+      // a self JID resolves, instead of being suppressed forever.
+      await this.releaseLifeEventClaim(auto.idempotencyKey, "no own JID");
       this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
       return true;
     }
@@ -3618,7 +3642,12 @@ export class WhatsAppSession {
     }
 
     // ping — DM the owner now + arm the one-tap offer for the top action.
-    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    // Release the claim if the DM did not land — a transient send failure must
+    // not suppress the event permanently. Especially relevant here: sendSelf
+    // throws whenever the socket is down, which is exactly the failure mode
+    // that took the digest out for 23 days.
+    const delivered = await this.confirmToSelf(decision.ownerMessage).then(() => true).catch(() => false);
+    if (!delivered) await this.releaseLifeEventClaim(auto.idempotencyKey, "owner DM send failed");
     this.lastLifeEventKind = event.kind;
     const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
     if (top && top.offerAction) {
@@ -3782,6 +3811,21 @@ export class WhatsAppSession {
   }
 
   // Auto-act couldn't run cleanly — surface a suggest ping instead of dropping.
+  // Release a life-event idempotency claim taken before an emission that then
+  // failed to deliver. Without it a claim-then-fail suppresses the event
+  // forever: the retry sees hasActed() and stays silent. Mirror of the
+  // iMessage helper; only called where nothing reached the owner.
+  private async releaseLifeEventClaim(key: string | undefined, why: string): Promise<void> {
+    if (!key) return;
+    try {
+      const { unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      unmarkActed(key);
+      this.logger.warn({ idempotencyKey: key, why }, "life-event claim released — not delivered, will retry");
+    } catch (err) {
+      this.logger.warn({ err, idempotencyKey: key }, "failed to release life-event claim");
+    }
+  }
+
   private async autoActFallbackToSuggest(
     ownJid: string,
     event: import("@lantern/bridge-core/life-events").LifeEvent,
@@ -6384,7 +6428,15 @@ export class WhatsAppSession {
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
     if (!draft) {
-      await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
+      // Throttled like the iMessage twin: the fallback fires on every
+      // agent-null, and unthrottled it apologises on a loop (11× observed,
+      // 8 inside 55s). Once per 5 minutes carries the same information.
+      if (Date.now() - this.lastAgentStallNoticeAt > 5 * 60_000) {
+        this.lastAgentStallNoticeAt = Date.now();
+        await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
+      } else {
+        this.logger.info("agent stall notice suppressed — already sent within 5m");
+      }
       return;
     }
 
@@ -11137,7 +11189,14 @@ export class WhatsAppSession {
   /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
   private async runNewsProactiveTick(): Promise<void> {
     try {
-      if (this.killSwitch || !this.socket) return;
+      // Must match what sendSelf actually requires (!socket || !connected).
+      // Guarding on `socket` alone was the 23-day outage: on `connection ===
+      // "close"` the socket OBJECT survives while `connected` flips false, so
+      // the tick cleared this guard every 12 minutes and then threw "not
+      // connected" inside sendSelf — 3,238 failures, taking the daily digest
+      // and news alerts with it. The timer intentionally keeps running so the
+      // feed resumes on its own once the socket is back.
+      if (this.killSwitch || !this.socket || !this.connected) return;
       if (this.proactivePaused()) return;
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
@@ -12042,6 +12101,16 @@ export class WhatsAppSession {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    // newsTimer was the one interval disconnect() forgot, and it fires
+    // sendSelf. Left running across a disconnect it retried every 12 minutes
+    // against a dead socket: 3,238 of 3,246 sendSelf calls failed with "not
+    // connected" over 23 days, taking the daily digest and news alerts with
+    // them. Every sibling timer here was already cleared; this one just got
+    // missed. connect() re-arms it, so clearing is safe.
+    if (this.newsTimer) {
+      clearInterval(this.newsTimer);
+      this.newsTimer = null;
     }
     if (this.gcTimer) {
       clearInterval(this.gcTimer);

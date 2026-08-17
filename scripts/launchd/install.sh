@@ -25,7 +25,8 @@ LOG_DIR="$HOME/Library/Logs/Lantern"
 # Order matters — infra brings up docker, api waits for postgres,
 # dashboard waits for api. LaunchAgents run in parallel but each
 # wrapper waits for its upstream dependency before launching.
-ALL_SERVICES=( "infra" "api" "dashboard" "whatsapp-bridge" "imessage-bridge" \
+ALL_SERVICES=( "infra" "api" "dashboard" "dashboard-reload" \
+               "whatsapp-bridge" "imessage-bridge" \
                "model-router" "runtime-manager" "runtime-scheduler" \
                "workflow-engine" "gateway" "surface-gateway" )
 
@@ -108,6 +109,7 @@ for s in "${ALL_SERVICES[@]}"; do
     -e "s|__NODE__|$NODE_BIN|g" \
     -e "s|__REPO_ROOT__|$REPO_ROOT|g" \
     -e "s|__HOME__|$HOME|g" \
+    -e "s|__UID__|$(id -u)|g" \
     "$SRC" > "$TMP"
   mv "$TMP" "$DST"
 

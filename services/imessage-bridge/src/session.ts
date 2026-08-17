@@ -1383,6 +1383,21 @@ export class IMessageSession {
   // This must NOT be called for NORMAL non-responses — "not the owner",
   // "not addressed in a group", "low-confidence draft held", "trivial
   // chatter ack". Those are by-design silence, not drops.
+  // Release a life-event idempotency claim taken before an emission that then
+  // failed to deliver. Without this, a claim-then-fail permanently suppresses
+  // the event: the retry would see hasActed() and stay silent forever. Only
+  // ever called on paths where nothing reached the owner.
+  private async releaseLifeEventClaim(key: string | undefined, why: string): Promise<void> {
+    if (!key) return;
+    try {
+      const { unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      unmarkActed(key);
+      this.logger.warn({ idempotencyKey: key, why }, "life-event claim released — not delivered, will retry");
+    } catch (err) {
+      this.logger.warn({ err, idempotencyKey: key }, "failed to release life-event claim");
+    }
+  }
+
   private notifyOwnerOfDrop(message: string, dedupeKey: string): void {
     try {
       const now = Date.now();
@@ -4443,8 +4458,37 @@ export class IMessageSession {
 
     if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
 
+    // Dedup EVERY owner-facing emission, not just auto-act. autoActLifeEvent
+    // has always had a hasActed guard, but the ping/digest routes below did
+    // not — so a re-delivered or re-classified inbound fired the same DM again
+    // with nothing to stop it. Observed in production: one fraud alert sent
+    // 22×, another 27×, and one reply 15× inside 32 seconds (several in the
+    // same second). That is the "spammy/repetitive" report. The key is already
+    // computed above for auto-act; reuse it so all three routes share one
+    // guard rather than each growing its own.
+    // Claim the key BEFORE emitting so two concurrent classifications of the
+    // same inbound can't both pass the check and both send — that race is the
+    // storm. But a claim that is never delivered must be RELEASED: marking
+    // up-front and then failing the send would suppress the alert forever, and
+    // a fraud notice silently dropped is worse than one sent twice. Every
+    // non-delivering path below calls releaseLifeEventClaim().
+    if (auto.idempotencyKey) {
+      const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+      if (hasActed(auto.idempotencyKey)) {
+        this.logger.info(
+          { kind: event.kind, idempotencyKey: auto.idempotencyKey, route: decision.route },
+          "life-event emit skipped — already surfaced (idempotent)",
+        );
+        return true;
+      }
+      markActed(auto.idempotencyKey);
+    }
+
     if (!owner) {
       // No self-chat target — surface to the dashboard feed so it isn't invisible.
+      // The owner DM never happened, so release the claim: once a self-chat
+      // target resolves, this event should still be able to reach them.
+      await this.releaseLifeEventClaim(auto.idempotencyKey, "no owner self-chat target");
       this.broadcast({ type: "activity", data: { kind: "system", summary: decision.ownerMessage, timestamp: Date.now() } });
       return true;
     }
@@ -4468,7 +4512,10 @@ export class IMessageSession {
     }
 
     // ping — DM the owner now + arm the one-tap offer for the top action.
-    await this.send(owner, decision.ownerMessage).catch(() => {});
+    // Release the claim if the DM did not land, so a transient send error
+    // cannot suppress this event forever.
+    const delivered = await this.send(owner, decision.ownerMessage).then(() => true).catch(() => false);
+    if (!delivered) await this.releaseLifeEventClaim(auto.idempotencyKey, "owner DM send failed");
     this.lastLifeEventKind = event.kind;
     const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
     if (top && top.offerAction) {
@@ -6453,6 +6500,12 @@ export class IMessageSession {
   // we check if that chat has only the user as participant (or is
   // chat_identifier == own handle) and remember.
   private selfChatRowIds: Set<number> = new Set();
+
+  // Per-chat timestamp of the last "I'm still working on it" fallback. The
+  // fallback fires whenever the agent returns nothing, and with no throttle it
+  // went out 11× in production — 8 of them inside 55 seconds. Repeating
+  // "give me another minute" eight times says nothing the first one didn't.
+  private lastAgentStallNoticeAt: Map<string, number> = new Map();
 
   // Per-chat timestamp of the last doc query. Lets us recognize
   // short follow-ups ("send it", "yes", "the first one") as
@@ -10263,7 +10316,16 @@ export class IMessageSession {
     if (!draft) {
       // Graceful fallback — never "couldn't reach the agent — try
       // again". The bot OWNS the retry; the user should not have to.
-      void this.send(jid, "hmm, that one took longer than I'd like. give me another minute and ask again");
+      // Say it once per 5 minutes per chat. Beyond that the owner already
+      // knows the agent is struggling, and repeating it is the noise they
+      // reported — better to stay quiet than to apologise on a loop.
+      const lastStall = this.lastAgentStallNoticeAt.get(jid) ?? 0;
+      if (Date.now() - lastStall > 5 * 60_000) {
+        this.lastAgentStallNoticeAt.set(jid, Date.now());
+        void this.send(jid, "hmm, that one took longer than I'd like. give me another minute and ask again");
+      } else {
+        this.logger.info({ jid }, "agent stall notice suppressed — already sent within 5m");
+      }
       return;
     }
 

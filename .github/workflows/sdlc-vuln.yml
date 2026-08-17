@@ -33,7 +33,7 @@ jobs:
     name: vuln              # stable check name — referenced by branch-protection required checks
     runs-on: ubuntu-latest
     env:
-      GOTOOLCHAIN: go1.26.5   # pin to the toolchain that fixes GO-2026-5856 (crypto/tls ECH leak) and all stdlib CVEs through go1.26.5
+      GOTOOLCHAIN: go1.26.6   # pin to the toolchain that fixes GO-2026-6088/6089/6090/6091 and all stdlib CVEs through go1.26.6
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

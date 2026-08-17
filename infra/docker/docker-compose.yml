@@ -10,6 +10,9 @@ x-common-env: &common-env
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    # ponytail: Docker's own restart policy is the durable fix — containers
+    # come back whenever the daemon does, with no launchd job in the loop.
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -26,6 +29,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -36,6 +40,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     ports:
       - "9000:9000"
       - "9001:9001"
