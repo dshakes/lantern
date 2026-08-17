@@ -3618,6 +3618,9 @@ export class WhatsAppSession {
       markActed(auto.idempotencyKey);
     }
     if (!ownJid) {
+      // Nothing reached the owner — release the claim so this can retry once
+      // a self JID resolves, instead of being suppressed forever.
+      await this.releaseLifeEventClaim(auto.idempotencyKey, "no own JID");
       this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
       return true;
     }
@@ -3639,7 +3642,12 @@ export class WhatsAppSession {
     }
 
     // ping — DM the owner now + arm the one-tap offer for the top action.
-    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    // Release the claim if the DM did not land — a transient send failure must
+    // not suppress the event permanently. Especially relevant here: sendSelf
+    // throws whenever the socket is down, which is exactly the failure mode
+    // that took the digest out for 23 days.
+    const delivered = await this.confirmToSelf(decision.ownerMessage).then(() => true).catch(() => false);
+    if (!delivered) await this.releaseLifeEventClaim(auto.idempotencyKey, "owner DM send failed");
     this.lastLifeEventKind = event.kind;
     const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
     if (top && top.offerAction) {
@@ -3803,6 +3811,21 @@ export class WhatsAppSession {
   }
 
   // Auto-act couldn't run cleanly — surface a suggest ping instead of dropping.
+  // Release a life-event idempotency claim taken before an emission that then
+  // failed to deliver. Without it a claim-then-fail suppresses the event
+  // forever: the retry sees hasActed() and stays silent. Mirror of the
+  // iMessage helper; only called where nothing reached the owner.
+  private async releaseLifeEventClaim(key: string | undefined, why: string): Promise<void> {
+    if (!key) return;
+    try {
+      const { unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      unmarkActed(key);
+      this.logger.warn({ idempotencyKey: key, why }, "life-event claim released — not delivered, will retry");
+    } catch (err) {
+      this.logger.warn({ err, idempotencyKey: key }, "failed to release life-event claim");
+    }
+  }
+
   private async autoActFallbackToSuggest(
     ownJid: string,
     event: import("@lantern/bridge-core/life-events").LifeEvent,

@@ -1383,6 +1383,21 @@ export class IMessageSession {
   // This must NOT be called for NORMAL non-responses — "not the owner",
   // "not addressed in a group", "low-confidence draft held", "trivial
   // chatter ack". Those are by-design silence, not drops.
+  // Release a life-event idempotency claim taken before an emission that then
+  // failed to deliver. Without this, a claim-then-fail permanently suppresses
+  // the event: the retry would see hasActed() and stay silent forever. Only
+  // ever called on paths where nothing reached the owner.
+  private async releaseLifeEventClaim(key: string | undefined, why: string): Promise<void> {
+    if (!key) return;
+    try {
+      const { unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      unmarkActed(key);
+      this.logger.warn({ idempotencyKey: key, why }, "life-event claim released — not delivered, will retry");
+    } catch (err) {
+      this.logger.warn({ err, idempotencyKey: key }, "failed to release life-event claim");
+    }
+  }
+
   private notifyOwnerOfDrop(message: string, dedupeKey: string): void {
     try {
       const now = Date.now();
@@ -4451,6 +4466,12 @@ export class IMessageSession {
     // same second). That is the "spammy/repetitive" report. The key is already
     // computed above for auto-act; reuse it so all three routes share one
     // guard rather than each growing its own.
+    // Claim the key BEFORE emitting so two concurrent classifications of the
+    // same inbound can't both pass the check and both send — that race is the
+    // storm. But a claim that is never delivered must be RELEASED: marking
+    // up-front and then failing the send would suppress the alert forever, and
+    // a fraud notice silently dropped is worse than one sent twice. Every
+    // non-delivering path below calls releaseLifeEventClaim().
     if (auto.idempotencyKey) {
       const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
       if (hasActed(auto.idempotencyKey)) {
@@ -4465,6 +4486,9 @@ export class IMessageSession {
 
     if (!owner) {
       // No self-chat target — surface to the dashboard feed so it isn't invisible.
+      // The owner DM never happened, so release the claim: once a self-chat
+      // target resolves, this event should still be able to reach them.
+      await this.releaseLifeEventClaim(auto.idempotencyKey, "no owner self-chat target");
       this.broadcast({ type: "activity", data: { kind: "system", summary: decision.ownerMessage, timestamp: Date.now() } });
       return true;
     }
@@ -4488,7 +4512,10 @@ export class IMessageSession {
     }
 
     // ping — DM the owner now + arm the one-tap offer for the top action.
-    await this.send(owner, decision.ownerMessage).catch(() => {});
+    // Release the claim if the DM did not land, so a transient send error
+    // cannot suppress this event forever.
+    const delivered = await this.send(owner, decision.ownerMessage).then(() => true).catch(() => false);
+    if (!delivered) await this.releaseLifeEventClaim(auto.idempotencyKey, "owner DM send failed");
     this.lastLifeEventKind = event.kind;
     const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
     if (top && top.offerAction) {
