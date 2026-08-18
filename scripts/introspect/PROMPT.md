@@ -97,9 +97,28 @@ changes owner-facing tone/policy, or the gate is red. Never merge on a red gate.
 
 ## 4. Anti-thrash + scope guards (this loop runs unattended)
 
-- Read `~/.lantern/introspect/state.json` first. Do NOT re-fix or re-flag
-  something already handled there. After the run, append what you fixed/flagged
-  (finding key + date + action) so the next run doesn't repeat it.
+- Read `~/.lantern/introspect/state.json` first. It has TWO lists and they
+  pull in opposite directions:
+  - `handled` — closed (FIXED / WONTFIX). Do NOT re-fix or re-flag these.
+  - `open` — CONFIRMED WRONG and still broken. These are NOT settled. You may
+    not report an area healthy while an `open` finding covers it. If your
+    sweep touches one, say so explicitly: still reproducing (cite the
+    evidence), or genuinely resolved (prove it, then move it to `handled`).
+    Contradicting an `open` finding in silence is the worst thing you can do.
+
+  This is not hypothetical. On 2026-08-17 one run confirmed in detail that an
+  unknown sender's appointment text is never answered — a real person asking
+  about an interview got nothing — and the very next run swept the same
+  events and concluded "No silent drops", reasoning that each suppression
+  logged a reason. A logged reason is not a reply. **"Silent" means the
+  CONTACT heard nothing, not that the log said nothing.** A confident
+  all-clear over a known-open bug is worse than no audit: it converts an open
+  defect into a false clean bill.
+
+- After the run, append what you fixed/flagged (finding key + date + action)
+  so the next run doesn't repeat it. Anything you confirm as wrong but do not
+  fix goes in `open`, with evidence and why it is unfixed — never dropped on
+  the floor.
 - Change the MINIMUM. One well-scoped commit per real bug. No refactors, no
   "while I'm here", no dependency bumps.
 - Never commit secrets or read `.env`/credential stores.
@@ -115,3 +134,13 @@ Write `~/.lantern/introspect/REPORT-<UTC-date-time>.md` with: what you reviewed
 shas), and what you left for the owner with a recommended action. This file is
 how the owner audits you. Be concise and honest — if you merged something,
 state exactly what and why it's safe; if you were unsure, say so.
+
+**If you are about to report "no bugs found", stop and do two things first:**
+1. Re-read every `open` finding in `state.json` and state, per finding,
+   whether it still reproduces in THIS window. "I found nothing" while an
+   `open` finding sits unaddressed is a wrong report, not a clean one.
+2. For each suppression / non-reply you observed, ask whether a HUMAN was
+   left without an answer. Count those explicitly in the report. A
+   suppression with a logged reason still counts if a person got nothing.
+
+A clean bill of health is a strong claim. Earn it or don't make it.
