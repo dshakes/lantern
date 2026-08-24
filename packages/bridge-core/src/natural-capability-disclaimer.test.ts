@@ -197,3 +197,28 @@ test("countTrailingUnanswered counts the trailing run of 'them:' lines", () => {
   // Unprefixed lines are ignored.
   assert.equal(countTrailingUnanswered("random note\nthem: hi\nthem: yo"), 2);
 });
+
+// Shipped bug, 2026-08-24: a contact received a raw "[[NO_REPLY]]".
+// The sentinel was only checked on the CONTACT reply path, so a message that
+// reached the OWNER agentic path emitted the token verbatim. Both bridges now
+// also drop it at the send boundary, which every path funnels through.
+// This pins the recognizer against the exact shapes a model actually emits.
+test("abstain sentinel is recognized in the shapes that shipped to a contact", () => {
+  // What was literally sent to a contact.
+  assert.equal(isNoReplySentinel("[[NO_REPLY]]"), true);
+  // Padding a model adds around it — each must still abstain, not send.
+  for (const shape of [
+    "[[NO_REPLY]]\n",
+    " [[NO_REPLY]] ",
+    "[[NO_REPLY]].",
+    "`[[NO_REPLY]]`",
+    "```\n[[NO_REPLY]]\n```",
+    "[[no_reply]]",
+  ]) {
+    assert.equal(isNoReplySentinel(shape), true, `should abstain: ${JSON.stringify(shape)}`);
+  }
+  // A real message that merely mentions it is a MESSAGE — never swallow it.
+  assert.equal(isNoReplySentinel("not replying to that [[NO_REPLY]] just kidding lol"), false);
+  assert.equal(isNoReplySentinel("hey"), false);
+  assert.equal(isNoReplySentinel(""), false);
+});
