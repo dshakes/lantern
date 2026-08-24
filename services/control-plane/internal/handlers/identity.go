@@ -78,6 +78,25 @@ func embedConcurrency() int {
 	return 4
 }
 
+// candidatePool is how deep each retrieval arm ranks before fusion.
+//
+// Fusing two lists that are each only `limit` long is close to pointless: a row
+// ranked just past the cutoff in BOTH arms — the strongest possible hybrid
+// signal — would be invisible to the fusion. Over-fetching per arm is what lets
+// agreement surface. 5x with a floor of 50 keeps the pool meaningful for the
+// small limits the bridge uses (12) and bounded for large ones; both arms are
+// index-ordered and capped, so the cost is a wider LIMIT, not a scan.
+func candidatePool(limit int) int {
+	pool := limit * 5
+	if pool < 50 {
+		pool = 50
+	}
+	if pool > 500 {
+		pool = 500
+	}
+	return pool
+}
+
 // embedAsync computes + stores the embedding for an event off the request
 // path, capped by embedSem. Best-effort: a failed embed leaves the row
 // searchable by recency/keyword and is retried later by backfillEmbeddings.
@@ -597,21 +616,93 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 	usedVector := false
 	if keyword != "" && h.llm != nil {
 		if vec, embErr := h.llm.EmbedText(ctx, claims.TenantID, keyword); embErr == nil {
+			// HYBRID retrieval, fused with Reciprocal Rank Fusion.
+			//
+			// Vector similarity alone is weak on exactly what personal chat is
+			// made of: names, dates, order numbers, flight numbers — a
+			// paraphrase-tolerant embedding is paraphrase-tolerant about
+			// "UA2116" too. Lexical alone misses "decorations" -> "balloon
+			// decor". Previously these were either/or: keyword ran ONLY as a
+			// fallback when embedding failed, so a query that needed both got
+			// whichever one happened to win, never the union.
+			//
+			// RRF fuses by RANK, not score, which is the point: cosine
+			// distance (0..2) and ts_rank (unbounded) are not comparable, and
+			// normalizing them requires a corpus-wide calibration we do not
+			// have. score = sum over lists of 1/(k + rank). k=60 is the
+			// standard constant from the original RRF paper; it damps the
+			// influence of any single list's top hit so one confident-but-wrong
+			// ranker cannot dominate the fused order.
+			//
+			// A row found by BOTH lists outranks a row found by either alone —
+			// which is the behaviour we actually want for "what did we decide
+			// about the decorations": semantically close AND lexically present.
+			// websearch_to_tsquery parses user text safely (no injection, no
+			// syntax errors on stray punctuation) and returns no rows rather
+			// than erroring on a junk query, so the vector arm still stands.
+			const rrfK = 60
 			if windowDays > 0 {
 				querySQL = `
-					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
-					FROM memory_events
-					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
-					  AND occurred_at >= now() - ($5 || ' days')::interval
-					ORDER BY embedding <=> $3::vector LIMIT $4`
-				queryArgs = []any{claims.TenantID, personID, vectorLiteral(vec), limit, strconv.Itoa(windowDays)}
+					WITH vec AS (
+						SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) AS rnk
+						FROM memory_events
+						WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
+						  AND occurred_at >= now() - ($5 || ' days')::interval
+						LIMIT $6
+					), kw AS (
+						SELECT id, ROW_NUMBER() OVER (
+							ORDER BY ts_rank(to_tsvector('english', content),
+							                 websearch_to_tsquery('english', $7)) DESC
+						) AS rnk
+						FROM memory_events
+						WHERE tenant_id = $1 AND person_id = $2
+						  AND occurred_at >= now() - ($5 || ' days')::interval
+						  AND to_tsvector('english', content) @@ websearch_to_tsquery('english', $7)
+						LIMIT $6
+					), fused AS (
+						SELECT id, SUM(w) AS score FROM (
+							SELECT id, 1.0 / ($8 + rnk) AS w FROM vec
+							UNION ALL
+							SELECT id, 1.0 / ($8 + rnk) AS w FROM kw
+						) u GROUP BY id
+					)
+					SELECT m.channel, m.kind, COALESCE(m.direction, ''), m.content, m.occurred_at
+					FROM fused f JOIN memory_events m ON m.id = f.id
+					ORDER BY f.score DESC, m.occurred_at DESC LIMIT $4`
+				queryArgs = []any{
+					claims.TenantID, personID, vectorLiteral(vec), limit,
+					strconv.Itoa(windowDays), candidatePool(limit), keyword, rrfK,
+				}
 			} else {
 				querySQL = `
-					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
-					FROM memory_events
-					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
-					ORDER BY embedding <=> $3::vector LIMIT $4`
-				queryArgs = []any{claims.TenantID, personID, vectorLiteral(vec), limit}
+					WITH vec AS (
+						SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) AS rnk
+						FROM memory_events
+						WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
+						LIMIT $5
+					), kw AS (
+						SELECT id, ROW_NUMBER() OVER (
+							ORDER BY ts_rank(to_tsvector('english', content),
+							                 websearch_to_tsquery('english', $6)) DESC
+						) AS rnk
+						FROM memory_events
+						WHERE tenant_id = $1 AND person_id = $2
+						  AND to_tsvector('english', content) @@ websearch_to_tsquery('english', $6)
+						LIMIT $5
+					), fused AS (
+						SELECT id, SUM(w) AS score FROM (
+							SELECT id, 1.0 / ($7 + rnk) AS w FROM vec
+							UNION ALL
+							SELECT id, 1.0 / ($7 + rnk) AS w FROM kw
+						) u GROUP BY id
+					)
+					SELECT m.channel, m.kind, COALESCE(m.direction, ''), m.content, m.occurred_at
+					FROM fused f JOIN memory_events m ON m.id = f.id
+					ORDER BY f.score DESC, m.occurred_at DESC LIMIT $4`
+				queryArgs = []any{
+					claims.TenantID, personID, vectorLiteral(vec), limit,
+					candidatePool(limit), keyword, rrfK,
+				}
 			}
 			usedVector = true
 		} else {

@@ -26,7 +26,7 @@ import { addReminder as addRecurringReminder } from "@lantern/bridge-core/recurr
 import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge-core/shared-list";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
-import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore } from "@lantern/bridge-core/live-watch";
+import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore, watchContextBlock, contactWatchBlock } from "@lantern/bridge-core/live-watch";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
@@ -3425,6 +3425,20 @@ export class WhatsAppSession {
     const sendOpts = opts.quoted ? { quoted: opts.quoted } : undefined;
     const sent = await this.socket.sendMessage(jid, { text }, sendOpts);
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // OUTBOUND AUDIT (twin of the iMessage bridge). A successful send was
+    // never logged with its text, so reply QUALITY was structurally
+    // unmeasurable — a whole week of traffic left only ~33 verbatim samples.
+    // Logged after the socket accepts it, tagging bot-self machinery rather
+    // than dropping it. Preview-capped like every other textPreview here.
+    this.logger.info(
+      {
+        to: jid,
+        textPreview: text.slice(0, 160),
+        len: text.length,
+        botSelf: isBotSelfMessage(text),
+      },
+      "outbound sent",
+    );
     // Return the sent message id so callers can retry-track the reply
     // (👎 / 🔁 on a contact-facing reply needs the GUID → reply-meta).
     return sent?.key?.id ?? undefined;
@@ -6319,6 +6333,7 @@ export class WhatsAppSession {
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
+    const watchBlock = this.watchStore ? watchContextBlock(this.watchStore.all()) : "";
     // Intelligent person-context grounding (parity with iMessage).
     const knownPeopleBlock = this.ownerKnownPeopleBlock();
     const systemHint = [
@@ -6396,6 +6411,10 @@ export class WhatsAppSession {
       `STATUS: when ${ownerName} tells you where they are or that they're away/busy/back (ANY phrasing or language — "I am at the pool till 7:30pm est", "in a meeting for 2h", "driving", "I'm back", Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve "till 7:30pm" to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that ${ownerName} is at <place> and will get back, and offers to take a message. Confirm to ${ownerName} in your reply ("📍 got it — you're at the pool till 7:30; I'll let people know.").`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
       `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
+      // Live watches are the bot's OWN commitments; its "📡 watching:"
+      // announcement is filtered out of history by isBotSelfMessage, so
+      // without this the assistant denies work it is actively doing.
+      watchBlock ? "\n" + watchBlock : "",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
       threadPeekBlock ? "\n" + threadPeekBlock : "",
@@ -8694,6 +8713,12 @@ export class WhatsAppSession {
       !!opts.isGroup,
       {
         ownerSamples,
+        // Commitments this bot already made IN THIS THREAD; its own "I'll
+        // follow up" announcement is stripped from history as bot-self text.
+        // Scoped to this jid — another contact's watch never surfaces here.
+        selfContextBlock: this.watchStore
+          ? contactWatchBlock(this.watchStore.all(), from)
+          : "",
         disclosed: this.disclosedJids.has(from),
         stylePrompt,
         ownerProfile,
