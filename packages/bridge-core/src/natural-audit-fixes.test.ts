@@ -82,3 +82,29 @@ test("detectBotTells does not touch location claims on the owner channel", () =>
 test("location fabrication net ignores non-location text", () => {
   assert.equal(detectBotTells("sounds good, talk later", "ok", { audience: "contact" }).ok, true);
 });
+
+// AI_TELL_WORDS matched as a raw SUBSTRING, so ordinary human drafts were
+// suppressed: "as personal as it gets" tripped "as per", "kindlyn said she'd
+// come" tripped "kindly". A suppressed draft falls through to the canned
+// greeting table or to silence — so a substring collision costs a real reply.
+test("AI tell-words match on word boundaries, not substrings", () => {
+  for (const human of [
+    "as personal as it gets honestly",
+    "kindlyn said she'd come",
+    "she's a great navigator on road trips",
+  ]) {
+    assert.equal(detectBotTells(human, "hey").ok, true, `suppressed human text: ${human}`);
+  }
+
+  // The guard must still do its job on the real thing, including inflections.
+  for (const tell of [
+    "kindly let me know your availability",
+    "let me delve into that for you",
+    "rest assured it will be handled",
+    "as per our discussion earlier",
+    "i will facilitate the process",
+    "he delved into it already",
+  ]) {
+    assert.equal(detectBotTells(tell, "hey").ok, false, `leaked AI tell: ${tell}`);
+  }
+});

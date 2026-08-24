@@ -299,7 +299,7 @@ import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
-import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore } from "@lantern/bridge-core/live-watch";
+import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore, watchContextBlock, contactWatchBlock } from "@lantern/bridge-core/live-watch";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
@@ -5606,6 +5606,23 @@ export class IMessageSession {
         this.scheduleDeliveryWatch(to, text);
       }
     }
+    // OUTBOUND AUDIT. A successful send was never logged with its text, so a
+    // whole week of traffic left only ~33 verbatim replies (from the two
+    // reply-meta sidecars) — reply QUALITY was structurally unmeasurable.
+    // Logged here, after delivery is confirmed, so the record reflects what
+    // the contact actually received. Bot-self acks/digests are tagged rather
+    // than dropped so "how much of what we send is real reply vs machinery"
+    // is answerable. Preview-capped like every other textPreview in this file
+    // (PII stays bounded; the full text is never logged).
+    this.logger.info(
+      {
+        to,
+        textPreview: text.slice(0, 160),
+        len: text.length,
+        botSelf: isBotSelfMessage(text),
+      },
+      "outbound sent",
+    );
     // Record so the polling loop skips this row when chat.db echoes
     // it back as is_from_me=1.
     this.recordBridgeSend(text);
@@ -7438,8 +7455,15 @@ export class IMessageSession {
         ? assembleRelevantRecall(text, { episodes: allEpisodes, topics: related }) ?? undefined
         : undefined;
 
+    // Commitments this bot already made IN THIS THREAD (its own "I'll follow
+    // up" announcement is stripped from history as bot-self text). Scoped to
+    // this handle — another contact's watch never surfaces here.
+    const selfContextBlock = this.watchStore
+      ? contactWatchBlock(this.watchStore.all(), row.handle)
+      : "";
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
+      selfContextBlock,
       disclosed: false,
       stylePrompt,
       ownerProfile,
@@ -10151,6 +10175,7 @@ export class IMessageSession {
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
+    const watchBlock = this.watchStore ? watchContextBlock(this.watchStore.all()) : "";
     // Intelligent person-context: ground EVERY owner query on a real model of
     // the owner's people (profile + actual activity), so name resolution is
     // reasoned, not string-matched.
@@ -10243,6 +10268,10 @@ export class IMessageSession {
       "  • Only after you've actually tried multiple angles do you say 'no clean hit on X — here's the closest I found' and stop. Never end with a 'want me to search more?' question.",
       "  • The ONE exception: a state-modifying follow-up ('saved to calendar?', 'want a reminder?') — that's allowed because it changes state.",
       "For ROSTER questions ('who came on X', 'who's in X'): the group rosters above are the truth. If members show as raw phone numbers (no name), their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group; mention the unresolved ones as '+ N more (numbers only — names not in contacts yet)'. Do NOT ask the user if they want you to search further; if you can call search_whatsapp_history / search_imessage_history for the trip date range, JUST DO IT in this same turn.",
+      // Live watches are the bot's OWN commitments; its "📡 watching:"
+      // announcement is filtered out of history by isBotSelfMessage, so
+      // without this the assistant denies work it is actively doing.
+      watchBlock ? "\n" + watchBlock : "",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
       threadPeekBlock ? "\n" + threadPeekBlock : "",
