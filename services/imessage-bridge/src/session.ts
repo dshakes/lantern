@@ -122,6 +122,34 @@ export function isBotSelfOrEcho(
 // a genuine short owner message from being swallowed; false-positive here is
 // safe (owner re-sends), a false-negative is the catastrophe. `recentSends`
 // must be oldest→newest so the TTL break is correct. Pure; exported for tests.
+/**
+ * Is this chat.db row the owner's own chat?
+ *
+ * Extracted as a pure function because it is a TRUST BOUNDARY — true routes a
+ * message into the owner pipeline (personal documents, agentic actions), so it
+ * must be testable without booting a session.
+ *
+ * The bug this encodes: `cachedRowIds` is a `Set<number>`, but chat.db yields
+ * rows with a null chat id before the chat join resolves. `Set` stores `null`
+ * happily, so ONE owner message with a null rowid poisoned the cache and every
+ * later null-rowid message — from ANY contact — returned true. Ten non-owner
+ * handles were misclassified this way. With no row id, the handle comparison is
+ * the ONLY admissible evidence.
+ */
+export function isOwnerChatRow(
+  chatRowid: number | null | undefined,
+  handle: string,
+  ownerHandle: string,
+  cachedRowIds: ReadonlySet<number>,
+): boolean {
+  const norm = (s: string) => (s || "").toLowerCase().replace(/[^a-z0-9@.]/g, "");
+  const owner = norm(ownerHandle);
+  const matchesOwner = !!owner && norm(handle) === owner;
+  if (!chatRowid) return matchesOwner;
+  if (cachedRowIds.has(chatRowid)) return true;
+  return matchesOwner;
+}
+
 export function matchesRecentSend(
   incoming: string,
   recentSends: ReadonlyArray<{ text: string; ts: number }>,
@@ -5542,6 +5570,17 @@ export class IMessageSession {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };
     }
+    // SENTINEL BACKSTOP. [[NO_REPLY]] is an internal abstain token, never a
+    // message. It was checked on the contact reply path only, so when a
+    // message reached the OWNER agentic path instead the token went out
+    // verbatim to a real contact. Guarding the individual call sites is
+    // whack-a-mole — every current and future send path funnels through
+    // here, so the check belongs here. Dropping is always right: the token
+    // MEANS "say nothing".
+    if (text && isNoReplySentinel(text)) {
+      this.logger.warn({ to }, "abstain sentinel reached send() — dropped (bug upstream: caller should have returned)");
+      return { ok: true };
+    }
     // FINAL PASS — verifiable-claims rewriter. Catches "I sent him an
     // email" / "I added it to your calendar" / "I told him" when no
     // such action was performed and rewrites to honest intent. Skip
@@ -6536,28 +6575,25 @@ export class IMessageSession {
   // from a DIFFERENT DEVICE (your phone) even though it's the same
   // account.
   private isSelfChat(chatRowid: number, handle: string): boolean {
-    if (this.selfChatRowIds.has(chatRowid)) return true;
-    // Self-chat detection requires KNOWING the owner's own handle —
-    // there's no safe heuristic. The prior version used
-    // (participantCount === 1 && chatIdentifier === handle) which is
-    // true for EVERY 1-on-1 DM, not just self-DM — so every friend's
-    // chat was misclassified as the owner's self-chat. Result: the
-    // bot greeted friends with "hey ada!" and processed their
-    // messages through the owner-channel pipeline.
-    //
-    // Now: ONLY trust LANTERN_IMESSAGE_OWNER_HANDLE. When unset,
-    // self-chat is treated as unknown and the bot falls back to the
-    // contact auto-reply path (which is the correct default for a
-    // friend's DM). Owners who want the owner-channel features MUST
-    // set the env var.
-    const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
-    if (!ownerEnv) return false;
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9@.]/g, "");
-    if (norm(handle) === norm(ownerEnv)) {
-      this.selfChatRowIds.add(chatRowid);
-      return true;
+    // A null/0 chatRowid must NEVER consult or populate the cache. chat.db
+    // hands us rows with no chat id (they arrive before the chat join
+    // resolves), and `Set<number>` happily stores `null` — so one owner
+    // message with a null rowid poisoned the cache and EVERY later null-rowid
+    // message, from ANY contact, came back true. Measured: 10 non-owner
+    // handles were classified as the owner, and one of them was answered
+    // through the owner pipeline with a raw "[[NO_REPLY]]". This is a trust
+    // boundary (owner path = personal docs + agentic actions), so identity
+    // here is decided ONLY by the handle comparison below.
+    if (!isOwnerChatRow(chatRowid, handle, process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "", this.selfChatRowIds)) {
+      return false;
     }
-    return false;
+    // Identity confirmed by handle (the ONLY admissible signal — the prior
+    // heuristic, participantCount===1 && chatIdentifier===handle, is true for
+    // EVERY 1-on-1 DM and misclassified every friend as the owner). Unset env
+    // → never owner, so a stranger's DM correctly takes the contact path.
+    // Cache only a real row id; see isOwnerChatRow for why null must not be.
+    if (chatRowid) this.selfChatRowIds.add(chatRowid);
+    return true;
   }
 
   // Owner-chat check used as the security gate for personal-docs
@@ -10342,6 +10378,14 @@ export class IMessageSession {
     }
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done");
+    // The persona prompt offers [[NO_REPLY]] as the abstain token, and this
+    // path can receive it like any other — treat it as "nothing to say" here
+    // rather than letting the send() backstop catch it, so no downstream
+    // marker extraction or action execution runs on a non-message.
+    if (draft && isNoReplySentinel(draft)) {
+      this.logger.info({ jid }, "owner query: model abstained ([[NO_REPLY]]) — staying silent");
+      return;
+    }
     if (!draft) {
       // Graceful fallback — never "couldn't reach the agent — try
       // again". The bot OWNS the retry; the user should not have to.

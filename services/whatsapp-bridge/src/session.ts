@@ -3394,6 +3394,16 @@ export class WhatsAppSession {
     if (!this.socket || !this.connected) {
       throw new Error("Not connected");
     }
+    // SENTINEL BACKSTOP (twin of the iMessage bridge). [[NO_REPLY]] is an
+    // internal abstain token, never a message. It was checked on the contact
+    // reply path only, so a draft arriving from any other path could ship the
+    // token verbatim to a contact (observed on iMessage 2026-08-24). Every
+    // send funnels through here, so the check belongs here rather than at each
+    // call site. Dropping is always right: the token MEANS "say nothing".
+    if (text && isNoReplySentinel(text)) {
+      this.logger.warn({ to }, "abstain sentinel reached sendMessage() — dropped (bug upstream: caller should have returned)");
+      return undefined;
+    }
     // FINAL PASS — verifiable-claims rewriter. Catches false-action
     // claims ("I sent him", "I added it") with no matching tool
     // invocation and rewrites to honest intent. Skip bridge-self
