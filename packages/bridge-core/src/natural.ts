@@ -380,6 +380,12 @@ export interface PersonaOptions {
   // crossing tenant boundaries. The block tells the LLM not to
   // volunteer cross-thread details unless asked.
   relatedBlock?: string;
+  /** What the bot is ALREADY doing for THIS contact — active live watches it
+   *  started off this thread. Without it the bot promises a follow-up, works
+   *  on it in the background, and then answers this contact as if none of it
+   *  ever happened. Contact-scoped by construction: only watches whose jid is
+   *  this thread's are ever passed in. */
+  selfContextBlock?: string;
   // Proactive recall block (from recall.ts → assembleRelevantRecall).
   // The single most-relevant memory — an episode, a cross-thread topic,
   // an open commitment — selected by token-overlap with the current
@@ -955,6 +961,16 @@ export function agentPersonaPrompt(
   if (related) {
     lines.push(``);
     lines.push(related);
+  }
+
+  // What the bot is already doing FOR THIS CONTACT. It announces "I'll follow
+  // up when it resolves", then its own announcement is filtered out of history
+  // as bot-self text — so without this the next message in the same thread is
+  // answered with no idea the commitment exists.
+  const selfContext = opts.selfContextBlock?.trim();
+  if (selfContext) {
+    lines.push(``);
+    lines.push(selfContext);
   }
 
   // Proactive recall — the single most-relevant memory for this inbound.
@@ -1636,6 +1652,19 @@ const AI_TELL_WORDS = [
   "i hope this finds",
 ];
 
+// Word-boundary matcher for AI_TELL_WORDS. Cached because detectBotTells runs
+// on every draft and the list is scanned in full each time.
+const aiTellReCache = new Map<string, RegExp>();
+function aiTellRe(word: string): RegExp {
+  let re = aiTellReCache.get(word);
+  if (!re) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(`\\b${escaped}(?:'?s|d|ed|ing)?\\b`, "i");
+    aiTellReCache.set(word, re);
+  }
+  return re;
+}
+
 // Coherence guard (A4): an inbound that reports ARRIVAL / COMPLETION
 // ("reached", "landed", "got home", "done", "safe") is closing a loop, not
 // opening a plan. If the draft answers it with a FUTURE COMMITMENT ("see
@@ -2034,7 +2063,13 @@ export function detectBotTells(
   }
   const lowered = text.toLowerCase();
   for (const w of AI_TELL_WORDS) {
-    if (lowered.includes(w))
+    // Word-boundary, NOT substring: `includes("as per")` suppressed "as
+    // personal as it gets" and `includes("kindly")` suppressed "kindlyn said
+    // she'd come" — real human drafts killed, and a suppressed draft falls
+    // through to the canned greeting table or silence. Escape the needle (it
+    // may contain `-`) and allow an apostrophe-suffix so "delve"/"delved" and
+    // possessives still catch.
+    if (aiTellRe(w).test(lowered))
       return { ok: false, reason: `AI tell-word "${w}"` };
   }
 

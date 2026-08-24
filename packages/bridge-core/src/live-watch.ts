@@ -270,3 +270,62 @@ function numberOr(v: unknown, d: number): number {
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
+
+/**
+ * Render the owner's ACTIVE watches as a prompt block.
+ *
+ * Without this the assistant is blind to its own commitments: it announces
+ * "📡 watching: <flight>" to self-chat, that announcement is then filtered
+ * back out of history by `isBotSelfMessage`, and the next "track that flight"
+ * is answered with "I don't see a flight in our conversation" — denying work
+ * it is actively doing. The store is the source of truth, so read it directly
+ * rather than hoping the transcript carries it.
+ */
+export function watchContextBlock(
+  watches: readonly LiveWatch[],
+  now: number = Date.now(),
+): string {
+  const active = watches.filter((w) => w.status === "active" && w.expiresTs > now);
+  if (!active.length) return "";
+  const lines = active.map((w) => {
+    const who = w.contactName ? ` (for ${w.contactName})` : "";
+    // lastSummary is the only field that says what the last check actually
+    // found; without it the model re-announces the topic as if check 1 of N.
+    const last = w.lastSummary ? ` — last check: ${w.lastSummary}` : "";
+    return `- ${w.topic}${who}: watching until ${w.doneCondition}. ${w.checks} check(s) so far${last}`;
+  });
+  return [
+    "## Things you are ALREADY tracking (live watches you started)",
+    ...lines,
+    "These are YOUR active commitments. If the owner refers to \"that flight\", \"the above\", \"it\", or asks you to track/check something you already watch, THIS is what they mean — answer from it. NEVER say you don't see it or ask which one when exactly one matches.",
+  ].join("\n");
+}
+
+/**
+ * Contact-scoped twin of `watchContextBlock`, for the CONTACT reply prompt.
+ *
+ * Only this thread's watches are rendered — a watch started off another
+ * contact's message is that contact's business and must never surface here.
+ * The wording is deliberately different from the owner block: to the contact
+ * the bot IS the owner, so it must read as "I said I'd check on this", never
+ * as an assistant reporting on a task.
+ */
+export function contactWatchBlock(
+  watches: readonly LiveWatch[],
+  jid: string,
+  now: number = Date.now(),
+): string {
+  const mine = watches.filter(
+    (w) => w.jid === jid && w.status === "active" && w.expiresTs > now,
+  );
+  if (!mine.length) return "";
+  const lines = mine.map((w) => {
+    const last = w.lastSummary ? ` Last time you checked: ${w.lastSummary}` : "";
+    return `- ${w.topic} — you said you'd follow up once ${w.doneCondition}.${last}`;
+  });
+  return [
+    "## You already offered to keep an eye on this (for THIS person)",
+    ...lines,
+    "You committed to this in this thread. If they ask about it, answer from the above — never act surprised, never ask which thing they mean, and never re-offer to start tracking something you are already tracking. If you have nothing new yet, say so plainly.",
+  ].join("\n");
+}

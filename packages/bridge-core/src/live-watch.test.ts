@@ -15,6 +15,8 @@ import {
   extractJson,
   WatchStore,
   type LiveWatch,
+  watchContextBlock,
+  contactWatchBlock,
 } from "./live-watch.ts";
 
 const NOW = 1_783_120_000_000;
@@ -160,4 +162,54 @@ test("WatchStore persists, dedupes per-jid, expires, prunes", () => {
   s2.add(w);
   s2.update({ ...w, status: "done" });
   assert.equal(s2.hasActive("j1", NOW), false);
+});
+
+// Regression: the owner asked "track above flight" 70 minutes after the bot
+// announced it was watching that exact flight, and got "I don't see a flight
+// in our conversation". The announcement is bot-self text, so history filters
+// it out — the store must reach the prompt directly.
+test("watchContextBlock surfaces active watches (and only those)", () => {
+  const base = {
+    jid: "1@lid", topic: "United DFW→IAD Aug 23, seat 38F",
+    searchQuery: "q", doneCondition: "the flight has landed at IAD",
+    createdTs: NOW, nextCheckTs: NOW, intervalMs: 60_000,
+    expiresTs: NOW + 3_600_000, checks: 3, contactName: "Sowmyadhar G",
+    lastSummary: "no date-specific status found yet",
+  };
+
+  const block = watchContextBlock([{ ...base, id: "a", status: "active" }], NOW);
+  assert.match(block, /United DFW→IAD/);
+  assert.match(block, /Sowmyadhar G/);
+  assert.match(block, /3 check\(s\)/);
+  assert.match(block, /no date-specific status/);   // last check must carry over
+  assert.match(block, /NEVER say you don't see it/);
+
+  // Resolved, failed, and expired watches are not live commitments.
+  assert.equal(watchContextBlock([{ ...base, id: "b", status: "done" }], NOW), "");
+  assert.equal(
+    watchContextBlock([{ ...base, id: "c", status: "active" }], NOW + 7_200_000),
+    "",
+  );
+  assert.equal(watchContextBlock([], NOW), "");
+});
+
+// The contact-facing twin. Isolation is the load-bearing property: a watch
+// started off ANOTHER contact's message must never appear in this thread.
+test("contactWatchBlock is scoped to one thread", () => {
+  const mk = (id: string, jid: string, topic: string) => ({
+    id, jid, topic, searchQuery: "q", doneCondition: "it lands",
+    createdTs: NOW, nextCheckTs: NOW, intervalMs: 60_000,
+    expiresTs: NOW + 3_600_000, checks: 1, status: "active" as const,
+  });
+  const all = [mk("a", "sowmya@lid", "UA flight to IAD"), mk("b", "raju@lid", "raju's package")];
+
+  const mine = contactWatchBlock(all, "sowmya@lid", NOW);
+  assert.match(mine, /UA flight to IAD/);
+  assert.doesNotMatch(mine, /package/);            // no cross-contact leak
+  assert.match(mine, /never act surprised/);
+
+  assert.match(contactWatchBlock(all, "raju@lid", NOW), /package/);
+  assert.equal(contactWatchBlock(all, "nobody@lid", NOW), "");
+  // Expired commitments are not live promises.
+  assert.equal(contactWatchBlock(all, "sowmya@lid", NOW + 7_200_000), "");
 });
