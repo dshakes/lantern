@@ -12,6 +12,12 @@ export interface BotState {
   /** Global kill switch. When true, no contact gets an auto-reply. */
   muted: boolean;
   /**
+   * Epoch ms at which a TIMED mute expires; 0/absent means indefinite.
+   * Persisted so a restart can't strand a temporary mute forever — the
+   * auto-unmute is an in-memory timer and does not survive a process exit.
+   */
+  mutedUntil?: number;
+  /**
    * Per-contact pauses. Keyed by JID, value is the epoch-ms at which the
    * pause expires. The bridge filters out already-expired entries before
    * publishing, so clients can treat every entry here as "still paused".

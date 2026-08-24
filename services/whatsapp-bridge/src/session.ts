@@ -4327,6 +4327,7 @@ export class WhatsAppSession {
     }
     return {
       muted: this.muted,
+      mutedUntil: this.mutedUntil,
       paused,
       monitoredGroups: [...this.monitoredGroups],
     };
@@ -4357,6 +4358,19 @@ export class WhatsAppSession {
           pushoverEnabled?: boolean;
         };
         this.muted = !!raw.muted;
+        this.mutedUntil = typeof (raw as { mutedUntil?: number }).mutedUntil === "number"
+          ? (raw as { mutedUntil?: number }).mutedUntil as number : 0;
+        if (this.muted && this.mutedUntil > 0) {
+          if (this.mutedUntil <= Date.now()) {
+            // Expired while the process was down — honor the owner's deadline
+            // instead of resuming a mute they never asked to extend.
+            this.muted = false;
+            this.mutedUntil = 0;
+            this.logger.info({}, "timed mute expired while offline — auto-reply back on");
+          } else {
+            this.rearmAutoUnmute(this.mutedUntil - Date.now());
+          }
+        }
         // Toggles default to safe values: docs ON, killswitch OFF.
         if (typeof raw.personalDocsEnabled === "boolean") this.personalDocsEnabled = raw.personalDocsEnabled;
         if (typeof raw.killSwitch === "boolean") this.killSwitch = raw.killSwitch;
@@ -4435,6 +4449,7 @@ export class WhatsAppSession {
       for (const [jid, msgs] of this.ownerSentHistory) ownerSentHistory[jid] = msgs;
       const payload = {
         muted: this.muted,
+        mutedUntil: this.mutedUntil,
         pausedUntil,
         monitoredGroups: [...this.monitoredGroups],
         enabledContacts: [...this.enabledContacts],
@@ -5158,6 +5173,31 @@ export class WhatsAppSession {
   // Auto-resume timer for time-bounded mutes (e.g. "pause for 2 hours").
   // Replaced on every new time-bounded mute so the most recent wins.
   private autoUnmuteTimer: ReturnType<typeof setTimeout> | null = null;
+  // Deadline for a TIMED mute (epoch ms; 0 = indefinite). Persisted because
+  // the unmute was an in-memory setTimeout: a restart killed the timer while
+  // `muted` stayed true on disk, silently turning "mute for 2h" into forever.
+  private mutedUntil = 0;
+
+  /** (Re)arm the auto-unmute timer. ms<=0 clears it (indefinite mute). */
+  private rearmAutoUnmute(ms: number): void {
+    if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+    if (ms <= 0) return;
+    this.autoUnmuteTimer = setTimeout(() => {
+      this.autoUnmuteTimer = null;
+      this.applyUnmute();
+      void this.confirmToSelf("✅ auto-resumed — i'm back online.");
+      this.logActivity("bot_on", "Auto-resumed after timed mute", { scope: "self" });
+    }, ms);
+  }
+
+  /** Single place that turns auto-reply back on, so no path clears `muted`
+   *  while leaving a stale deadline or a live timer behind. */
+  private applyUnmute(): void {
+    this.mutedUntil = 0;
+    if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+    this.setMuted(false);
+    this.saveState();
+  }
 
   // Daily digest tracking — counts since the last digest fired.
   // Counters reset inside the scheduler's collectData callback.
@@ -5300,20 +5340,14 @@ export class WhatsAppSession {
       },
       mute: async (durationMs?: number) => {
         this.setMuted(true);
-        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
-        if (durationMs && durationMs > 0) {
-          this.autoUnmuteTimer = setTimeout(() => {
-            this.setMuted(false);
-            this.autoUnmuteTimer = null;
-            void this.confirmToSelf("✅ auto-resumed — i'm back online.");
-            this.logActivity("bot_on", "Auto-resumed after timed mute", { scope: "self" });
-          }, durationMs);
-        }
+        // Record the DEADLINE, not just the timer.
+        this.mutedUntil = durationMs && durationMs > 0 ? Date.now() + durationMs : 0;
+        this.saveState();
+        this.rearmAutoUnmute(durationMs && durationMs > 0 ? durationMs : 0);
         this.logActivity("bot_off", "Auto-reply turned off via NL command", { scope: "self" });
       },
       unmute: async () => {
-        this.setMuted(false);
-        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+        this.applyUnmute();
         this.logActivity("bot_on", "Auto-reply turned on via NL command", { scope: "self" });
       },
       statusBody: () => {
