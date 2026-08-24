@@ -276,7 +276,22 @@ export class PersonalClient {
     opts: { windowDays?: number } = {},
   ): Promise<string> {
     const windowDays = opts.windowDays ?? PersonalClient.DEFAULT_WINDOW_DAYS;
-    const ctx = await this.unifiedContext(channel, handle, inboundText, { windowDays });
+    // RELEVANCE and RECENCY are different questions and must not share a
+    // window. Previously one windowed request served both, so semantic recall
+    // could only ever match inside the last `windowDays` — measured on this
+    // deployment that hid 1,622 of 1,850 chat events (88%) from retrieval, no
+    // matter how relevant. A contact asking about something from last month
+    // got "what's that?" while the answer sat embedded and unreachable.
+    //
+    // So: the query pass runs UNWINDOWED (relevance decides, not age), and the
+    // recency slice keeps its window (that block literally says "last N days"
+    // and would be a lie otherwise). Two cheap reads instead of one crippled
+    // one; both already share the same per-person cache path.
+    const [relevantCtx, recentCtx] = await Promise.all([
+      inboundText ? this.unifiedContext(channel, handle, inboundText) : Promise.resolve(null),
+      this.unifiedContext(channel, handle, undefined, { windowDays }),
+    ]);
+    const ctx = relevantCtx ?? recentCtx;
     if (!ctx) return this.factsBlock(handle);
 
     let block = "";
@@ -290,8 +305,12 @@ export class PersonalClient {
     // channels. Prefer the control-plane's `recent` field; if it isn't
     // exposed yet, derive it from `events` by filtering on occurredAt so the
     // behavior is identical regardless of which side computes the window.
+    // Recency comes from the WINDOWED read; the relevance read is unwindowed
+    // by design and its hits may be months old, which would make the "last N
+    // days" header false.
+    const recentBase = recentCtx ?? ctx;
     const cutoff = Date.now() - windowDays * 86_400_000;
-    const recentSrc = (ctx.recent ?? ctx.events ?? []).filter((e) => {
+    const recentSrc = (recentBase.recent ?? recentBase.events ?? []).filter((e) => {
       const t = Date.parse(e.occurredAt || "");
       return Number.isNaN(t) ? true : t >= cutoff;
     });
@@ -303,6 +322,31 @@ export class PersonalClient {
           const ch = e.channel && e.channel !== channel ? ` on ${e.channel}` : "";
           return `- [${fmtDate(e.occurredAt)}] ${who}${ch}: ${(e.content || "").slice(0, 140)}`;
         }).join("\n");
+    }
+
+    // MOST RELEVANT — hybrid (vector + lexical, RRF-fused) hits for THIS
+    // inbound, at any age. Deliberately separate from the recency block and
+    // labelled with its date, because "we talked about this in June" is a
+    // different claim from "we talked about this yesterday" and the model must
+    // not blur them. Rows already inside the recency window are dropped so the
+    // same line never appears twice.
+    if (relevantCtx) {
+      const shownRecently = new Set(recent.map((e) => (e.content || "").slice(0, 140)));
+      const relevant = (relevantCtx.events ?? [])
+        .filter((e) => {
+          const t = Date.parse(e.occurredAt || "");
+          return !Number.isNaN(t) && t < cutoff;
+        })
+        .filter((e) => !shownRecently.has((e.content || "").slice(0, 140)))
+        .slice(0, 4);
+      if (relevant.length > 0) {
+        block += `\n\nOlder, but relevant to what they just said (don't assume it's current — check if it still stands):\n` +
+          relevant.map((e) => {
+            const who = e.direction === "out" ? "you" : "them";
+            const ch = e.channel && e.channel !== channel ? ` on ${e.channel}` : "";
+            return `- [${fmtDate(e.occurredAt)}] ${who}${ch}: ${(e.content || "").slice(0, 140)}`;
+          }).join("\n");
+      }
     }
 
     // Recent timeline from OTHER channels — the current thread is already
