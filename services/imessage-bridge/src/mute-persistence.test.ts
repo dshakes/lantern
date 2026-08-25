@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { resolvePersistedMute } from "./session.js";
 
 // Regression: a TIMED mute survived restarts as a PERMANENT one.
@@ -41,5 +42,44 @@ describe("resolvePersistedMute — a temporary mute must not become permanent", 
 
   it("treats a deadline exactly at now as expired (bot resumes)", () => {
     expect(resolvePersistedMute(true, NOW, NOW).muted).toBe(false);
+  });
+});
+
+// Guard against the class of bug the reviewer caught on PR #226: a code path
+// that flips `muted` directly, bypassing the deadline/timer bookkeeping. Every
+// mute/unmute must funnel through the helpers, or a stale mutedUntil (or a live
+// timer) outlives its command and the "temporary mute" bug returns by another
+// door. This greps the sources because the invariant is about call sites, not
+// about any single function's return value.
+describe("no code path bypasses the mute bookkeeping", () => {
+  const read = (p: string) =>
+    readFileSync(new URL(p, import.meta.url), "utf8")
+      .split("\n")
+      // Ignore the helper definitions themselves and comments.
+      .filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//"));
+
+  it("whatsapp: setMuted is only called from the mute helpers", () => {
+    const lines = read("./../../whatsapp-bridge/src/session.ts");
+    const offenders = lines.filter(
+      (l) => /this\.setMuted\(/.test(l) && !/mutedUntil|rearmAutoUnmute|applyUnmute/.test(l),
+    );
+    // The two legitimate sites: inside applyUnmute, and the NL-command mute
+    // (which sets mutedUntil on the following line).
+    expect(offenders.length).toBeLessThanOrEqual(2);
+  });
+
+  it("imessage: every muted assignment adjusts mutedUntil nearby", () => {
+    const lines = read("./session.ts");
+    // The invariant spans lines: `this.muted = X` must sit within a few lines
+    // of the deadline bookkeeping. A NEW call site that just flips the flag —
+    // the bug the reviewer caught on the WhatsApp side — has no such neighbour
+    // and fails here.
+    const offenders: string[] = [];
+    lines.forEach((l, i) => {
+      if (!/this\.muted = (true|false)/.test(l)) return;
+      const near = lines.slice(Math.max(0, i - 3), i + 4).join("\n");
+      if (!/mutedUntil|rearmAutoUnmute/.test(near)) offenders.push(l.trim());
+    });
+    expect(offenders).toEqual([]);
   });
 });

@@ -5000,7 +5000,9 @@ export class WhatsAppSession {
     }
 
     if (trimmed === "/bot off") {
-      if (self) this.setMuted(true);
+      // Indefinite by intent: clear any prior deadline AND its timer, or a
+      // leftover auto-unmute would silently turn "/bot off" back on.
+      if (self) { this.mutedUntil = 0; this.rearmAutoUnmute(0); this.setMuted(true); this.saveState(); }
       else this.pauseContact(jid, INDEFINITE_MS);
       // Emoji reaction first — gives instant tactile feedback that the
       // bridge HEARD the command, before the reply (which the user might
@@ -5024,7 +5026,10 @@ export class WhatsAppSession {
 
     if (trimmed === "/bot on") {
       if (self) {
-        this.setMuted(false);
+        // applyUnmute, not setMuted: clearing `muted` while leaving a stale
+        // mutedUntil / live timer behind is the exact asymmetry that made a
+        // timed mute outlive its deadline.
+        this.applyUnmute();
       } else {
         this.resumeContact(jid);
       }
