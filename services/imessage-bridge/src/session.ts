@@ -286,6 +286,24 @@ type BatchRow = { rowid: number; isFromMe: boolean; handle?: string };
 // for `dedupeKey` should fire now, and MUTATES `state` to record the fire
 // time. GCs entries older than `windowMs` along the way. At most one
 // notice per distinct key per window.
+/**
+ * Escalation bucket for the "auto-reply is muted" nudge.
+ *
+ * A time-window dedup is the wrong tool for a persistent state: the mute lasted
+ * WEEKS, so the 5-minute window fired once and then suppressed every later
+ * notice while 300+ real messages were dropped. Bucketing by COUNT means the
+ * owner is re-told as the damage grows (1st, 5th, 25th, 100th, 500th…), and
+ * each bucket still fires only once, so it never becomes spam.
+ */
+export function mutedNoticeBucket(count: number): string {
+  if (count <= 1) return "1";
+  for (const t of [5, 25, 100, 500, 2000]) {
+    if (count <= t) return String(t);
+  }
+  // Beyond the last threshold, one notice per 2000 dropped messages.
+  return String(Math.floor(count / 2000) * 2000);
+}
+
 export function shouldFireDropNotice(
   state: Map<string, number>,
   dedupeKey: string,
@@ -1421,6 +1439,15 @@ export class IMessageSession {
   // distinct dedupeKey per window so a flapping LLM / a poison row in a
   // tight loop can't flood the owner's self-chat.
   private static readonly DROP_NOTIFY_DEDUP_MS = 5 * 60_000;
+  // How many contact messages have been dropped by the global mute since this
+  // process started. Drives the escalating notice (see mutedNoticeBucket) and
+  // is logged on every drop so a silent outage leaves evidence.
+  private mutedDropCount = 0;
+
+  // Per-chat count of group messages ignored because the chat is not
+  // monitored. Purely observability: makes "which groups is the bot silent
+  // in?" answerable without diffing inbound against reply counts.
+  private unmonitoredGroupDrops: Map<number, number> = new Map();
   private recentDropNotices: Map<string, number> = new Map();
 
   // Per-contact dedup for the URGENCY heads-up (a contact pleading
@@ -1591,6 +1618,47 @@ export class IMessageSession {
     }
   }
 
+  /**
+   * Periodic liveness report for the states that silently eat traffic.
+   *
+   * The failure this exists for: auto-reply was muted for WEEKS. Nothing was
+   * broken, nothing errored, no alert fired — messages simply stopped being
+   * answered, and it took a human noticing an embarrassing reply to surface
+   * it. A drop that is invisible is indistinguishable from "nobody messaged
+   * me", which is exactly why it lasted.
+   *
+   * So: whenever the bridge is in a state that suppresses replies, say so on
+   * every tick, unconditionally. Cheap, log-only (no owner spam — the muted
+   * gate already nudges on its own escalating schedule), and it converts a
+   * silent outage into a greppable heartbeat.
+   */
+  private reportSilentDrops(): void {
+    try {
+      if (this.killSwitch) {
+        this.logger.warn({}, "LIVENESS: kill switch ENGAGED — no contact gets a reply");
+      } else if (this.muted) {
+        this.logger.warn(
+          { mutedDropsSinceStart: this.mutedDropCount },
+          "LIVENESS: auto-reply is MUTED — contacts are being dropped (unmute to resume)",
+        );
+      }
+      const pausedNow = [...this.pausedUntil.values()].filter((t) => t > Date.now()).length;
+      const ignoredGroups = this.unmonitoredGroupDrops.size;
+      if (pausedNow > 0 || ignoredGroups > 0) {
+        this.logger.info(
+          {
+            pausedContacts: pausedNow,
+            unmonitoredGroupChats: ignoredGroups,
+            unmonitoredGroupDrops: [...this.unmonitoredGroupDrops.values()].reduce((a, b) => a + b, 0),
+          },
+          "LIVENESS: reply suppression active (paused contacts / unmonitored group chats)",
+        );
+      }
+    } catch {
+      /* observability must never break the tick */
+    }
+  }
+
   // 2) ANTICIPATION NUDGES. Gather signals, compute nudges, DM the owner
   // each NEW one (deduped on disk, quiet-hours-respecting, capped).
   private startAnticipationNudges(): void {
@@ -1602,6 +1670,7 @@ export class IMessageSession {
     this.firedNudgesPath = join(this.stateDir, "fired-nudges.json");
     this.loadFiredNudges();
     const t = setInterval(() => {
+      this.reportSilentDrops();
       void this.runAnticipationTick();
     }, IMessageSession.NUDGE_INTERVAL_MS);
     t.unref?.();
@@ -3587,15 +3656,23 @@ export class IMessageSession {
     this.broadcast({ type: "activity", data: { kind: "monitor_on", summary: `monitoring chat ${rowid}`, timestamp: Date.now() } });
   }
 
-  // --- contact allow-list (1:1 non-owner auto-reply opt-in) -------------
+  // --- contact allow-list (VESTIGIAL — does NOT gate replies) -----------
   //
-  // Default behavior is DENY: friends, family, and strangers don't get
-  // any bot reply. Owner explicitly opts a handle in here; the bridge
-  // sends as normal once enabled. Removing a handle stops replies but
-  // does NOT delete chat history.
+  // WARNING, and the reason this comment is long: it used to say "default
+  // behavior is DENY: friends, family and strangers don't get any bot reply."
+  // That has been FALSE since the hard allow-list gate was removed (see the
+  // note at the top of the reply path — it "was an over-correction that
+  // silenced every contact"). `isContactEnabled` was left behind, called from
+  // nowhere, while the comment kept advertising a gate that no longer exists.
   //
-  // Owner channel (self-chat / dedicated bot DM) is exempt — those
-  // always work because that's the owner talking to themselves.
+  // The cost was real: debugging "why is nobody getting replies" started with
+  // `enabledContacts: 0` and this comment, which together read as a definitive
+  // answer. It was a dead end. 1:1 replies are gated by mute, per-contact
+  // pause, and downstream confidence/draft-queue policy — NOT by this set.
+  //
+  // Kept because the owner-facing "allow/deny" commands still write to it and
+  // dropping the list would break their persisted state. If a real allow-list
+  // is ever wanted again, wire it into the reply path deliberately.
   enableContact(handle: string): void {
     const h = this.normalizeHandle(handle);
     if (!h) return;
@@ -3612,10 +3689,6 @@ export class IMessageSession {
   }
   listEnabledContacts(): string[] {
     return [...this.enabledContacts];
-  }
-  private isContactEnabled(handle: string): boolean {
-    if (!handle) return false;
-    return this.enabledContacts.has(this.normalizeHandle(handle));
   }
   // Parse "allow <handle>" / "deny <handle>" / "allowed" / "list allowed".
   // Returns null when the message isn't one of these commands.
@@ -7067,13 +7140,24 @@ export class IMessageSession {
     // unknown contacts get held as a draft; nobody gets spam. Owner can
     // still globally mute or pause per-contact.
     if (this.muted) {
+      // ALWAYS log, never deduped. The owner-facing notice below is deduped on
+      // the key "muted" with a 5-minute window, which is right for a transient
+      // drop and wrong for a state that lasts weeks: one notice fired, then
+      // 300+ messages were dropped in total silence with NOTHING in the log to
+      // show for it. The log line is the audit trail; the notice is the nudge.
+      // They have different jobs and must not share a suppression rule.
+      this.mutedDropCount++;
+      this.logger.warn(
+        { handle: row.handle, textPreview: text.slice(0, 60), mutedDropsSinceStart: this.mutedDropCount },
+        "contact reply suppressed — auto-reply is MUTED (owner must unmute)",
+      );
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `bot muted — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
-      // Operational drop (fix #3): a real inbound went unanswered because
-      // the owner globally muted auto-reply. One deduped heads-up so the
-      // owner remembers the bot is off and a message is waiting.
+      // Re-nudge on an ESCALATING schedule rather than once per 5 minutes
+      // forever: a mute that is silently eating traffic should get louder, not
+      // quieter. The key folds in the count bucket so each bucket fires once.
       this.notifyOwnerOfDrop(
-        `${this.contactLabel(row.handle)} messaged but auto-reply is muted — reply yourself or unmute.`,
-        "muted",
+        `${this.contactLabel(row.handle)} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or unmute.`,
+        `muted:${mutedNoticeBucket(this.mutedDropCount)}`,
       );
       return;
     }
@@ -7111,7 +7195,21 @@ export class IMessageSession {
       // certain" rule keeps the reply appropriate.
       const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
       if (!wishToOwner) {
-        if (!this.monitoredChats.has(row.chatRowid)) return;
+        if (!this.monitoredChats.has(row.chatRowid)) {
+          // Bare `return` here was the one drop in this function with NO trace
+          // at all — 119 group messages vanished in two days and the only way
+          // to discover it was to diff inbound counts against reply counts.
+          // Not addressed to the owner, so no owner nudge (that WOULD be
+          // spam), but the audit trail is not optional. Counting per chat lets
+          // "which groups am I ignoring?" be answered from the log.
+          const n = (this.unmonitoredGroupDrops.get(row.chatRowid) ?? 0) + 1;
+          this.unmonitoredGroupDrops.set(row.chatRowid, n);
+          this.logger.info(
+            { chatRowid: row.chatRowid, handle: row.handle, droppedFromThisChat: n },
+            "group msg ignored — chat not in monitoredChats (add it to enable replies)",
+          );
+          return;
+        }
         if (!this.isAddressedToOwner(text)) {
           this.broadcast({
             type: "activity",
