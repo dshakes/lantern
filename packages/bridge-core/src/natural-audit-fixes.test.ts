@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { agentPersonaPrompt, detectBotTells, type StyleProfile } from "./natural.ts";
+import { agentPersonaPrompt, detectBotTells, groupRepliesEnabled, type StyleProfile } from "./natural.ts";
 import { computeHold } from "./pacing.ts";
 
 const STYLE: StyleProfile = {
@@ -106,5 +106,26 @@ test("AI tell-words match on word boundaries, not substrings", () => {
     "he delved into it already",
   ]) {
     assert.equal(detectBotTells(tell, "hey").ok, false, `leaked AI tell: ${tell}`);
+  }
+});
+
+// The owner asked for NO bot replies in any group thread, on either channel
+// (2026-08-24). Implemented as one switch rather than by clearing the
+// per-group monitoring lists, because those are persisted state that drifts
+// (4 WhatsApp groups + 1 iMessage chat were already monitored) AND because the
+// celebratory-wish path deliberately replies in UNMONITORED groups — so
+// clearing the lists would not have stopped group replies at all.
+test("group replies are OFF unless explicitly enabled", () => {
+  // Default: absent / empty / falsy values must all mean OFF.
+  for (const env of [{}, { LANTERN_GROUP_REPLIES: "" }, { LANTERN_GROUP_REPLIES: "0" },
+                     { LANTERN_GROUP_REPLIES: "off" }, { LANTERN_GROUP_REPLIES: "false" },
+                     { LANTERN_GROUP_REPLIES: "no" }]) {
+    assert.equal(groupRepliesEnabled(env as NodeJS.ProcessEnv), false,
+      `should be OFF for ${JSON.stringify(env)}`);
+  }
+  // Only an explicit opt-in turns it back on.
+  for (const v of ["1", "true", "on", "ON", " true "]) {
+    assert.equal(groupRepliesEnabled({ LANTERN_GROUP_REPLIES: v } as NodeJS.ProcessEnv), true,
+      `should be ON for ${JSON.stringify(v)}`);
   }
 });
