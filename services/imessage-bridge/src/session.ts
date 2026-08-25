@@ -136,6 +136,30 @@ export function isBotSelfOrEcho(
  * handles were misclassified this way. With no row id, the handle comparison is
  * the ONLY admissible evidence.
  */
+/**
+ * Resolve a persisted mute on startup.
+ *
+ * The bug: a timed mute ("mute for 2h") wrote `muted:true` to disk but kept the
+ * unmute as an in-memory `setTimeout`. A restart killed the timer and left the
+ * flag set, so a two-hour mute became permanent — silently, since nothing logs
+ * "still muted". Observed live: 274 inbound messages over two days with zero
+ * auto-replies.
+ *
+ * Returns the state to restore plus the remaining delay to re-arm.
+ */
+export function resolvePersistedMute(
+  muted: boolean,
+  mutedUntil: number | undefined,
+  now: number,
+): { muted: boolean; mutedUntil: number; rearmMs: number } {
+  if (!muted) return { muted: false, mutedUntil: 0, rearmMs: 0 };
+  // No deadline = indefinite mute; only an explicit unmute clears it.
+  if (!mutedUntil || mutedUntil <= 0) return { muted: true, mutedUntil: 0, rearmMs: 0 };
+  // Deadline passed while the process was down: honor what the owner asked for.
+  if (mutedUntil <= now) return { muted: false, mutedUntil: 0, rearmMs: 0 };
+  return { muted: true, mutedUntil, rearmMs: mutedUntil - now };
+}
+
 export function isOwnerChatRow(
   chatRowid: number | null | undefined,
   handle: string,
@@ -431,6 +455,11 @@ export type IMessageConnectionState =
 
 interface PersistedState {
   muted?: boolean;
+  // Epoch ms at which a TIMED mute expires. Persisted because the unmute was
+  // an in-memory setTimeout: a restart killed the timer while `muted` stayed
+  // true on disk, silently turning "mute for 2h" into "mute forever". Absent
+  // (or 0) means an indefinite mute, which only an explicit unmute clears.
+  mutedUntil?: number;
   paused?: Record<string, number>; // handle -> until_ms
   monitoredChats?: number[]; // chat ROWIDs to act in
   // 1:1 contacts the owner has explicitly opted in for auto-reply.
@@ -3534,8 +3563,10 @@ export class IMessageSession {
 
   // --- actions -----------------------------------------------------------
 
-  mute(): void { this.muted = true; this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_off", summary: "Auto-reply paused", timestamp: Date.now() } }); }
-  unmute(): void { this.muted = false; this.pausedUntil.clear(); this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_on", summary: "Auto-reply on", timestamp: Date.now() } }); }
+  // Indefinite mute (HTTP/dashboard). A timed mute comes from the chat command
+  // path, which sets a persisted deadline; this one has none by design.
+  mute(): void { this.muted = true; this.mutedUntil = 0; this.rearmAutoUnmute(0); this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_off", summary: "Auto-reply paused", timestamp: Date.now() } }); }
+  unmute(): void { this.pausedUntil.clear(); this.applyUnmute("Auto-reply on"); }
   pauseContact(handle: string): void {
     this.pausedUntil.set(handle, Date.now() + PAUSE_DURATION_MS);
     this.persist();
@@ -8391,6 +8422,34 @@ export class IMessageSession {
   // The timer fires the unmute on schedule. Replaced on every new
   // time-bounded mute so the most recent one wins.
   private autoUnmuteTimer: ReturnType<typeof setTimeout> | null = null;
+  // Deadline for a timed mute (epoch ms; 0 = indefinite). Mirrored to disk so
+  // it survives a restart — the timer alone does not.
+  private mutedUntil = 0;
+  // Where to confirm an auto-resume, when the mute came from a chat command.
+  private autoUnmuteReplyTo: string | null = null;
+
+  /** (Re)arm the auto-unmute timer. ms<=0 clears it (indefinite mute). */
+  private rearmAutoUnmute(ms: number): void {
+    if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+    if (ms <= 0) return;
+    this.autoUnmuteTimer = setTimeout(() => {
+      this.autoUnmuteTimer = null;
+      const to = this.autoUnmuteReplyTo;
+      this.applyUnmute("auto-resumed after timer");
+      if (to) void this.send(to, "✅ auto-resumed — i'm back online.");
+    }, ms);
+  }
+
+  /** Single place that turns auto-reply back on, so no path can clear `muted`
+   *  while leaving a stale deadline or a live timer behind. */
+  private applyUnmute(summary: string): void {
+    this.muted = false;
+    this.mutedUntil = 0;
+    this.autoUnmuteReplyTo = null;
+    if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+    this.persist();
+    this.broadcast({ type: "activity", data: { kind: "bot_on", summary, timestamp: Date.now() } });
+  }
 
   // Owner typed a command. The text was already parsed by
   // parseNLCommand (slash OR natural language); we just dispatch via
@@ -8438,24 +8497,16 @@ export class IMessageSession {
       chatJid: jid,
       mute: async (durationMs?: number) => {
         this.muted = true;
+        // Record the DEADLINE, not just the timer — a restart kills the timer
+        // and a timed mute would otherwise persist forever.
+        this.mutedUntil = durationMs && durationMs > 0 ? Date.now() + durationMs : 0;
         this.persist();
-        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
-        if (durationMs && durationMs > 0) {
-          this.autoUnmuteTimer = setTimeout(() => {
-            this.muted = false;
-            this.persist();
-            this.autoUnmuteTimer = null;
-            this.broadcast({ type: "activity", data: { kind: "bot_on", summary: "auto-resumed after timer", timestamp: Date.now() } });
-            if (replyTo) void this.send(replyTo, "✅ auto-resumed — i'm back online.");
-          }, durationMs);
-        }
+        this.autoUnmuteReplyTo = replyTo ?? null;
+        this.rearmAutoUnmute(durationMs && durationMs > 0 ? durationMs : 0);
         this.broadcast({ type: "activity", data: { kind: "bot_off", summary: "bot off via command", timestamp: Date.now() } });
       },
       unmute: async () => {
-        this.muted = false;
-        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
-        this.persist();
-        this.broadcast({ type: "activity", data: { kind: "bot_on", summary: "bot on via command", timestamp: Date.now() } });
+        this.applyUnmute("bot on via command");
       },
       statusBody: () => {
         const diag = this.diagnostics();
@@ -10929,6 +10980,7 @@ export class IMessageSession {
     try {
       const data: PersistedState = {
         muted: this.muted,
+        mutedUntil: this.mutedUntil,
         paused: Object.fromEntries(this.pausedUntil),
         monitoredChats: [...this.monitoredChats],
         enabledContacts: [...this.enabledContacts],
@@ -10952,7 +11004,16 @@ export class IMessageSession {
     if (!existsSync(this.stateFile)) return;
     try {
       const data = JSON.parse(readFileSync(this.stateFile, "utf8")) as PersistedState;
-      this.muted = !!data.muted;
+      {
+        const wasMuted = !!data.muted;
+        const r = resolvePersistedMute(wasMuted, data.mutedUntil, Date.now());
+        this.muted = r.muted;
+        this.mutedUntil = r.mutedUntil;
+        if (wasMuted && !r.muted) {
+          this.logger.info({}, "timed mute expired while offline — auto-reply back on");
+        }
+        if (r.rearmMs > 0) this.rearmAutoUnmute(r.rearmMs);
+      }
       for (const [k, v] of Object.entries(data.paused ?? {})) {
         if (typeof v === "number" && v > Date.now()) this.pausedUntil.set(k, v);
       }
