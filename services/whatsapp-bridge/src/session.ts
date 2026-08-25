@@ -43,6 +43,7 @@ import {
   naturalize,
   shouldRespond,
   fixThirdPersonEcho,
+  groupRepliesEnabled,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -2018,6 +2019,14 @@ export class WhatsAppSession {
     const { jid, text, isGroup, targetsOwner } = args;
     if (this.isOwnerChat(jid)) return false; // owner channel is handled elsewhere
     if (!isGroup) return true; // DMs: no allow-list (downstream gates handle trust)
+    // GROUP REPLIES OFF (owner's instruction, 2026-08-24). A hard gate rather
+    // than un-monitoring each group, because monitoring is persisted state that
+    // drifts: four groups were already monitored here, and the celebratory-wish
+    // branch below replies in UNmonitored groups too — so clearing the list
+    // would not actually have stopped group replies. One switch, checked before
+    // every group path, is the only version that is true by construction.
+    // Set LANTERN_GROUP_REPLIES=1 to re-enable.
+    if (!groupRepliesEnabled()) return false;
     const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
     if (wishToOwner) return true; // a wish naming the owner bypasses monitoring
     return this.isMonitoredGroup(jid) && targetsOwner;
@@ -3208,6 +3217,14 @@ export class WhatsAppSession {
           const wishToOwner =
             isGroup && isCelebratoryWish(text) && this.isAddressedToOwner(text);
 
+          // GROUP REPLIES OFF (owner's instruction, 2026-08-24). Second gate:
+          // shouldAutoReplyToInbound is the canonical predicate, but THIS loop
+          // has its own earlier skip that the wish bypass could slip past.
+          // Both are gated so no group path stays open.
+          if (isGroup && !groupRepliesEnabled()) {
+            this.logger.info({ from }, "group msg ignored — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
+            continue;
+          }
           // Groups are opt-in: silently skip anything not on the monitor list.
           if (isGroup && !this.isMonitoredGroup(from) && !wishToOwner) continue;
 

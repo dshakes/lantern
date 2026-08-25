@@ -47,6 +47,7 @@ import {
   naturalize,
   shouldRespond,
   fixThirdPersonEcho,
+  groupRepliesEnabled,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -7193,6 +7194,19 @@ export class IMessageSession {
       // still requires an explicitly-monitored chat. The persona's
       // "celebratory wish → one short casual thanks, no name unless
       // certain" rule keeps the reply appropriate.
+      // GROUP REPLIES OFF (owner's instruction, 2026-08-24). Checked BEFORE
+      // the wish bypass, because that bypass deliberately replies in
+      // UNmonitored groups — so clearing monitoredChats alone would not have
+      // stopped group replies. One switch, ahead of every group path.
+      if (!groupRepliesEnabled()) {
+        const n = (this.unmonitoredGroupDrops.get(row.chatRowid) ?? 0) + 1;
+        this.unmonitoredGroupDrops.set(row.chatRowid, n);
+        this.logger.info(
+          { chatRowid: row.chatRowid, droppedFromThisChat: n },
+          "group msg ignored — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)",
+        );
+        return;
+      }
       const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
       if (!wishToOwner) {
         if (!this.monitoredChats.has(row.chatRowid)) {

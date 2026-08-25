@@ -2492,3 +2492,22 @@ export function naturalize(
     typingMs: typingDurationMs(text),
   }));
 }
+
+/**
+ * Are group-chat auto-replies enabled? Default OFF.
+ *
+ * The owner asked for no bot replies in ANY group thread (2026-08-24), on
+ * either channel. Implemented as one switch rather than by un-monitoring each
+ * group, because per-group monitoring is persisted state that drifts — four
+ * WhatsApp groups and one iMessage chat were already monitored — and because
+ * the celebratory-wish path deliberately replies in UNmonitored groups, so
+ * clearing the lists would not have stopped group replies at all.
+ *
+ * Checked before every group reply path in both bridges. Set
+ * LANTERN_GROUP_REPLIES=1 (or true/on) to re-enable; the per-group monitoring
+ * lists are left intact so turning it back on restores the previous behaviour.
+ */
+export function groupRepliesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.LANTERN_GROUP_REPLIES ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on";
+}
