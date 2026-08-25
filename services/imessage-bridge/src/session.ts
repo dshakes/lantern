@@ -7811,13 +7811,45 @@ export class IMessageSession {
     // actions only — a contact's message can never drive a connector write.
     // Everything else stays noTools (the default).
     const logisticsRead = !isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text));
-    let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
+    // The stretch between "inbound" and "reply confidence" was UNLIT: a real
+    // contact message ("Hi", 21:53) produced one log line and then nothing,
+    // for minutes, with the bridge otherwise healthy. Nothing distinguished
+    // "the LLM is still thinking" from "this reply died silently" — which is
+    // the same class of blindness as the muted gate, and it cost a debugging
+    // session to hit again. Bracket the call so the log always says which.
+    const llmStartedAt = Date.now();
+    this.logger.info(
+      { handle: row.handle, tier: replyTier, logisticsRead, textPreview: text.slice(0, 60) },
+      "contact reply: calling agent",
+    );
+    let draft: string | null = null;
+    try {
+      draft = await this.agent.respondTo(row.handle, userText, systemHint, {
       turnHint: replyTier,
       readOnlyTools: logisticsRead,
       // Always let contact replies ground on the live web (built-in
       // web_search only — no connector catalog unless logisticsRead).
       webSearch: true,
-    });
+      });
+      this.logger.info(
+        { handle: row.handle, ms: Date.now() - llmStartedAt, gotDraft: !!draft, len: draft?.length ?? 0 },
+        "contact reply: agent returned",
+      );
+    } catch (err) {
+      // respondTo threw rather than returning null. Previously this
+      // propagated to handleInbound's catch-all, which logs "handleInbound
+      // threw" WITHOUT the handle — so a per-contact failure was
+      // indistinguishable from any other error in a 1,400-line function.
+      this.logger.error(
+        { err, handle: row.handle, ms: Date.now() - llmStartedAt },
+        "contact reply: agent THREW — contact gets no reply",
+      );
+      this.notifyOwnerOfDrop(
+        `couldn't reply to ${this.contactLabel(row.handle)} (the assistant errored) — they're waiting on you.`,
+        `llm-threw:${row.handle}`,
+      );
+      return;
+    }
     // DOC REQUEST — the contact asked the owner for a file. Strip the LLM's
     // [DOCREQ:...] marker (contact only gets the intent text), then surface the
     // ask to the owner for a confirm-then-send. LLM-detected — no keyword match.

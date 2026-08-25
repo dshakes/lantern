@@ -161,11 +161,31 @@ export class AgentClient {
       try {
         postRes = await withRetry(
           async () => {
-            const r = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(postBody),
-            });
+            // BOUNDED. This POST had no timeout and authedFetch sets none, so
+            // a request that never settles hangs the turn FOREVER — and
+            // because runQueuedTurn chains per-jid promises through
+            // `inflight`, every later message from that contact queues behind
+            // it and is never answered. Observed: a contact's "Hi" sat
+            // unanswered for 31+ minutes with the bridge otherwise healthy,
+            // and not even the 180s SSE timeout fired, because the hang was
+            // here rather than on the stream.
+            //
+            // Same budget as the SSE wait: the POST returning is what the SSE
+            // is waiting for, so a longer one would be pointless and a shorter
+            // one would cut off legitimately slow turns.
+            const postCtrl = new AbortController();
+            const postTimer = setTimeout(() => postCtrl.abort(), timeoutMs ?? SSE_TIMEOUT_MS);
+            let r: Response;
+            try {
+              r = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(postBody),
+                signal: postCtrl.signal,
+              });
+            } finally {
+              clearTimeout(postTimer);
+            }
             // Throw a sentinel so withRetry sees 429/503 as retryable.
             if (r.status === 429 || r.status === 503) {
               const errBody = await r.text().catch(() => "");

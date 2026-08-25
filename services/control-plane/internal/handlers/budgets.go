@@ -334,9 +334,19 @@ func CheckToolBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 // Call this AFTER a run completes.
 func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, tokensIn, tokensOut int64, costUsd float64, toolCalls map[string]int) error {
 	today := usageDate(time.Now())
-	toolCallsJSON, _ := json.Marshal(toolCalls)
-	if len(toolCallsJSON) == 0 {
-		toolCallsJSON = []byte("{}")
+	// json.Marshal of a NIL map yields the 4-byte literal `null`, not `{}` —
+	// so the len()==0 guard never fired, and every caller that passes nil
+	// toolCalls (the session path does) sent `null::jsonb` into the upsert.
+	// There `null || '{}'` produces an ARRAY, and jsonb_object_keys rejects a
+	// non-object: "cannot call jsonb_object_keys on an array (SQLSTATE 22023)".
+	// The whole upsert failed, so runs/tokens/cost were NEVER recorded —
+	// 11,074 failures in this deployment's log, i.e. budget enforcement and
+	// cost attribution have been silently reading near-empty rollups.
+	toolCallsJSON := []byte("{}")
+	if len(toolCalls) > 0 {
+		if b, err := json.Marshal(toolCalls); err == nil && len(b) > 0 && string(b) != "null" {
+			toolCallsJSON = b
+		}
 	}
 	_, err := pool.Exec(ctx, `
 		INSERT INTO agent_usage_daily
