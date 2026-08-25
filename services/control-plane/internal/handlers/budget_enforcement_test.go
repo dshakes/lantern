@@ -657,3 +657,62 @@ func TestMarketplaceInvoke_PublishedAgent_Visible(t *testing.T) {
 		t.Error("sellerTenant must be non-empty for a published agent")
 	}
 }
+
+// Regression: RecordUsage silently failed for EVERY caller that passed a nil
+// toolCalls map — which is the session reply path, i.e. the hot path.
+//
+// json.Marshal(nil map) returns the 4-byte literal `null`, not `{}`, so the
+// len()==0 guard never fired. In the upsert `null::jsonb || '{}'::jsonb`
+// evaluates to an ARRAY, and jsonb_object_keys rejects a non-object:
+//
+//	cannot call jsonb_object_keys on an array (SQLSTATE 22023)
+//
+// The whole upsert failed, so runs/tokens/cost were never recorded. 11,074
+// occurrences in one deployment's log — budget enforcement and cost
+// attribution were reading near-empty rollups the entire time.
+//
+// TestRecordUsage_AccruesRun missed it because it passes map[string]int{},
+// which marshals to `{}`. The nil case is the one the hot path uses.
+func TestRecordUsage_NilToolCalls_StillRecords(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tenantID := devTenantID
+	agentName := "record-usage-nil-tools-" + t.Name()
+
+	_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agentName)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agentName)
+	})
+
+	// nil — exactly what the session path passes.
+	if err := RecordUsage(ctx, pool, tenantID, agentName, 100, 200, 0.0050, nil); err != nil {
+		t.Fatalf("RecordUsage with nil toolCalls: %v", err)
+	}
+
+	var runs int
+	var tokensIn, tokensOut int64
+	if err := pool.QueryRow(ctx, `
+		SELECT runs_count, tokens_in, tokens_out FROM agent_usage_daily
+		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = CURRENT_DATE
+	`, tenantID, agentName).Scan(&runs, &tokensIn, &tokensOut); err != nil {
+		t.Fatalf("query usage row (nil toolCalls never recorded it): %v", err)
+	}
+	if runs != 1 || tokensIn != 100 || tokensOut != 200 {
+		t.Errorf("got runs=%d in=%d out=%d, want 1/100/200", runs, tokensIn, tokensOut)
+	}
+
+	// The ON CONFLICT branch is where the SQL actually blew up, so a second
+	// nil call must exercise it and still accumulate.
+	if err := RecordUsage(ctx, pool, tenantID, agentName, 50, 100, 0.0025, nil); err != nil {
+		t.Fatalf("RecordUsage second nil call (ON CONFLICT path): %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT runs_count, tokens_in FROM agent_usage_daily
+		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = CURRENT_DATE
+	`, tenantID, agentName).Scan(&runs, &tokensIn); err != nil {
+		t.Fatalf("query after second call: %v", err)
+	}
+	if runs != 2 || tokensIn != 150 {
+		t.Errorf("got runs=%d in=%d, want 2/150", runs, tokensIn)
+	}
+}
