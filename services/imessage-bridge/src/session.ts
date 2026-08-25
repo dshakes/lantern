@@ -5726,6 +5726,16 @@ export class IMessageSession {
         const sms = await this.sender.sendSMS(to, text);
         if (sms.ok) {
           this.logger.info({ to, lastService: st?.service, lastError: st?.error }, "pre-routed via SMS service (Text Message Forwarding) — iMessage not working for this contact");
+          // Audit the send HERE too: this branch returns before the outbound
+          // audit at the end of send(), so an RCS/SMS-only contact's replies
+          // were invisible to it. Caught by the first real end-to-end test —
+          // the reply landed, and the log that exists to measure reply quality
+          // had no record of it. Same shape as the main site so the two are
+          // greppable together.
+          this.logger.info(
+            { to, textPreview: text.slice(0, 160), len: text.length, botSelf: isBotSelfMessage(text), via: "sms-preroute" },
+            "outbound sent",
+          );
           this.recordBridgeSend(text);
           this.enqueueOutboundEcho(to, text);
           this.broadcast({ type: "agent_reply", data: { to, text, timestamp: Date.now() } });

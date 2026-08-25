@@ -75,3 +75,25 @@ describe("no reply-suppressing path returns without a trace", () => {
     expect(src).toMatch(/this\.reportSilentDrops\(\);/);
   });
 });
+
+describe("every send path reaches the outbound audit log", () => {
+  const src = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
+
+  it("the SMS pre-route branch audits before it returns", () => {
+    // Found by the first real end-to-end test: an RCS-only contact got a real
+    // reply via Text Message Forwarding, but the branch returns early — before
+    // the audit at the end of send() — so the log built to measure reply
+    // quality had no record of the one reply that proved the path works.
+    const branch = src.slice(src.indexOf("pre-routed via SMS service"));
+    const upToReturn = branch.slice(0, branch.indexOf("return { ok: true }"));
+    expect(upToReturn).toMatch(/"outbound sent"/);
+  });
+
+  it("send() has an audit line for each early return", () => {
+    const fn = src.slice(src.indexOf("pre-routed via SMS service") - 4000);
+    const body = fn.slice(0, fn.indexOf("private recordBridgeSend"));
+    const audits = (body.match(/"outbound sent"/g) || []).length;
+    // One for the SMS pre-route branch, one for the normal path.
+    expect(audits).toBeGreaterThanOrEqual(2);
+  });
+});
