@@ -3486,6 +3486,16 @@ export class WhatsAppSession {
     }
     const sent = await this.socket.sendMessage(own, { text });
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // Audit here too: sendSelf talks to the socket DIRECTLY rather than going
+    // through sendMessage, so owner-facing traffic (briefs, digests, drafts,
+    // drop notices) was absent from the audit log. Same omission as the
+    // iMessage SMS pre-route branch — a send path that bypasses the one place
+    // the audit lives. botSelf is nearly always true here, which is exactly
+    // what makes the "real reply vs machinery" ratio meaningful.
+    this.logger.info(
+      { to: own, textPreview: text.slice(0, 160), len: text.length, botSelf: isBotSelfMessage(text), via: "sendSelf" },
+      "outbound sent",
+    );
     // ponytail: owner briefs are serial, so a single last-key field is enough
     // for handleCenterCommand to remember/edit the Brief it just sent.
     this.lastSelfSentKey = sent?.key ?? undefined;
@@ -7198,6 +7208,13 @@ export class WhatsAppSession {
     if (!own || !this.socket) return;
     try {
       const sent = await this.socket.sendMessage(own, { text });
+      // Audit: confirmToSelf is the owner's MAIN reply channel on WhatsApp and
+      // it talks to the socket directly, like sendSelf. Without this the audit
+      // log sees almost no owner-side WhatsApp traffic at all.
+      this.logger.info(
+        { to: own, textPreview: text.slice(0, 160), len: text.length, botSelf: isBotSelfMessage(text), via: "confirmToSelf" },
+        "outbound sent",
+      );
       if (sent?.key?.id) {
         this.bridgeSentIds.set(sent.key.id, Date.now());
         // Best-effort retry-tracking: confirmToSelf is called from many
