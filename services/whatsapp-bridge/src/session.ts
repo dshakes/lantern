@@ -7208,6 +7208,13 @@ export class WhatsAppSession {
     if (!own || !this.socket) return;
     try {
       const sent = await this.socket.sendMessage(own, { text });
+      // Audit: confirmToSelf is the owner's MAIN reply channel on WhatsApp and
+      // it talks to the socket directly, like sendSelf. Without this the audit
+      // log sees almost no owner-side WhatsApp traffic at all.
+      this.logger.info(
+        { to: own, textPreview: text.slice(0, 160), len: text.length, botSelf: isBotSelfMessage(text), via: "confirmToSelf" },
+        "outbound sent",
+      );
       if (sent?.key?.id) {
         this.bridgeSentIds.set(sent.key.id, Date.now());
         // Best-effort retry-tracking: confirmToSelf is called from many
