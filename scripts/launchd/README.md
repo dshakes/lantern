@@ -123,13 +123,43 @@ With the wrapper in between, signals land on the wrong process: `launchctl
 kickstart -k` and a plain `kill` both leave the real server orphaned and still
 holding its port, so the next start dies with "address already in use".
 
-The binary is rebuilt whenever a `.go` file is newer than it, which preserves
-the one property `go run` gave us for free — pulling source is enough to pick
-up changes on the next restart.
+The binary is rebuilt whenever a `.go`, `go.mod`, or `go.sum` file is newer
+than it, which preserves the one property `go run` gave us for free — pulling
+source (or a dependency bump) is enough to pick up changes on the next
+restart.
 
 Shared launch helpers (`wait_port`, `run_go`, `run_rust`) live in
 `scripts/launchd/lib.sh`, sourced by both `run-microservice.sh` and
 `run-api-wrapper.sh`.
+
+## Deploy: `make deploy-local`
+
+A merge is not a deploy. `launchctl kickstart -k` restarts a process, but for
+a Rust service that means re-exec'ing the same `target/release` binary — `run_rust`
+only builds when the file is *missing*. In one fortnight three services ran
+weeks-old code after their fixes were merged: the control-plane on a July
+build (a metering bug that failed 11,074 times), both bridges on an August
+build, and two Rust binaries still carrying a patched DoS.
+
+```bash
+make deploy-local          # rebuild/restart only what changed since the running process
+FORCE=1 make deploy-local  # restart everything
+```
+
+What it does, per service class:
+
+| Class | Deploy means | Decided by |
+|---|---|---|
+| Rust (gateway, model-router, runtime-manager, surface-gateway) | `cargo build --release` **then** restart | sources newer than binary → build; binary newer than process → restart |
+| Go (api, runtime-scheduler, workflow-engine) | restart (`run_go` rebuilds on start) | sources newer than the running process |
+| Bridges (tsx from `src/`) | restart | `services/<bridge>/src` or `packages/bridge-core/src` newer than the process |
+
+Then it **proves** it: every restarted service must have a process whose start
+time is after the run began, or the script exits non-zero with `DEPLOY
+INCOMPLETE`. It refuses to run off `master`, with uncommitted changes, or when
+master cannot fast-forward to `origin/master` — it ships committed master and
+nothing else. "REBUILT" is printed only when cargo actually wrote a new binary;
+a lockfile whose git mtime moved with nothing to compile prints `no-op`.
 
 ## macOS permissions (iMessage bridge)
 
