@@ -92,6 +92,12 @@ const LEX: Record<DetectedLanguage, string[]> = {
     "ra", "ro", "vora", "ay", "ayya", "amma",
     // Numbers/units commonly mixed in
     "ipudu", "ipuduu", "innaalla", "innallu", "appudo", "edaina",
+    // Owner's attested Telangana short forms (see repo CLAUDE.md: "the owner
+    // uses short forms vasta, cheptha, matladtham"). These were MISSING, so
+    // the owner's own dialect scored as English.
+    "vasta", "vastanu", "vastha", "cheptha", "chepta", "cheptanu", "matladtham",
+    "matladutham", "unnav", "unnava", "unnaru", "unnanu", "vachina", "vachindi",
+    "velli", "vellali", "vellanu", "chesta", "chestanu", "chusta", "chustanu",
   ],
   hindi: [
     "kya", "hai", "ho", "mein", "main", "hum", "tum", "aap", "yaar",
@@ -202,13 +208,15 @@ export function detectLanguageHints(text: string): LanguageHint {
   const tokens = t.toLowerCase().split(/[\s,.!?;:()'"—–\-]+/).filter(Boolean);
   let bestLang: DetectedLanguage = "english";
   let bestHits = 0;
+  let bestHitLen = 0;
   for (const [lang, set] of LEX_SET) {
     if (lang === "english") continue;
     let hits = 0;
+    let longest = 0;
     for (const tok of tokens) {
-      if (set.has(tok)) hits++;
+      if (set.has(tok)) { hits++; if (tok.length > longest) longest = tok.length; }
     }
-    if (hits > bestHits) { bestHits = hits; bestLang = lang; }
+    if (hits > bestHits) { bestHits = hits; bestLang = lang; bestHitLen = longest; }
   }
 
   // 3. Combine signals.
@@ -235,7 +243,16 @@ export function detectLanguageHints(text: string): LanguageHint {
     primary = scriptHit;
     // Strong: 1 native char is enough, more increases confidence.
     confidence = Math.min(1, 0.7 + scriptChars * 0.05);
-  } else if (bestHits >= 1) {
+  } else if (bestHits >= 2 || (bestHits === 1 && bestHitLen >= 3)) {
+    // A SINGLE romanized hit only counts when the hitting token is long
+    // enough to be unambiguous. The lexicons carry 2-letter function words
+    // ("va", "ma", "ce", "tu", "mi") that collide with English and with US
+    // state codes — "Brambleton, VA" scored FRENCH at 0.95 and "see you in
+    // MA next week" scored Bengali, which then engaged a foreign-language
+    // reply mode on the owner's own English store announcement. A 3+ char
+    // single hit ("ela", "vasta", "bonjour") is still honoured, so short
+    // one-word Telugu/Hindi messages keep working. 3, not 4: "ela unnav" is
+    // a real greeting whose only lexicon hit is the 3-letter "ela".
     primary = bestLang;
     // Romanized: weight by token ratio.
     const ratio = bestHits / Math.max(1, tokens.length);
