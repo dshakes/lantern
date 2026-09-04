@@ -1442,8 +1442,14 @@ applies; the marker is never emitted for unconfirmed proposals.
 LOW-confidence replies (money amounts, future-date commitments, medical
 topics, cold contacts, prior 👎 history) are held and DM'd to the owner's
 self-chat as "draft to X: …, reply 'send' to approve" before sending.
-Disable with `LANTERN_DRAFT_CONFIRM=0` (falls back to the prior 5s hold
-then auto-send). VIPs always go through the dashboard draft queue regardless.
+**Default OFF on both bridges — opt in explicitly.** iMessage: `LANTERN_DRAFT_CONFIRM=on`.
+WhatsApp: `LANTERN_DRAFT_HIGH_STAKES=on` (a different variable — check both). When off,
+a LOW-confidence reply is held briefly and then auto-sent, with a heads-up to the owner;
+a money/legal escalation still pages the owner but the reply still goes out. It was made
+opt-in on purpose: on-by-default silently drafted ordinary short / cold-contact family
+messages instead of replying, which read as "the bot isn't responding". The targeted
+`forceDraftCaution` (foreign-language) and PII/injection refusals hold regardless.
+VIPs always go through the dashboard draft queue regardless.
 
 ### Claim verifier
 
@@ -1501,7 +1507,7 @@ Privacy posture (HARD rules):
 | `LANTERN_QUIET_QUEUE_MAX`             | Max messages buffered in the overnight queue per bridge (default 200).                                                                                                                           |
 | `LANTERN_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
 | `LANTERN_LIVE_WATCH`                  | Set to `0`/`off` to disable live watches (default on) — LLM-detected follow-ups on live public situations a contact mentioned (flight in the air, game, outage): re-checked via `web_search` every 15–120 min, resolved with one short follow-up text ("just saw he landed"). One active watch per contact, ≤8 total, ≤12h, killswitch/mute/quiet-hours aware. State: `<stateDir>/live-watches.jsonl` (0600). |
-| `LANTERN_DRAFT_CONFIRM`               | Set to `0` or `off` to disable draft-and-confirm for LOW-confidence replies (reverts to 5s hold → auto-send). Default on.                                                                        |
+| `LANTERN_DRAFT_CONFIRM` / `LANTERN_DRAFT_HIGH_STAKES` | **Default OFF.** Set to `on` to hold LOW-confidence replies for owner approval — `LANTERN_DRAFT_CONFIRM` on iMessage, `LANTERN_DRAFT_HIGH_STAKES` on WhatsApp. Off → brief hold then auto-send + owner heads-up. Made opt-in because on-by-default drafted benign family messages ("bot isn't responding"). |
 | `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `0` to DISABLE the LLM fuzzy-clustering pass in the 👎 flywheel (the novel-preference learner). Default ON; fail-safe (deterministic pass always runs). Both bridges wire the `llmCall`. |
 | `LANTERN_VOICE_REASONING`             | (Optional) `1`/`true`/`on` → replace the static `inferStyle` heuristic with an LLM-reasoned owner-voice profile (register/code-switching/emoji-meaning/warmth), derived from the owner's own recent messages, cached + refreshed slowly. Default OFF (heuristic runs, byte-identical). Fail-safe → heuristic on any error; dedicated `owner::voice-profile` session key. |
 | `LANTERN_INTENT_ROUTER`               | (Optional) `1`/`true`/`on` → run an LLM intent-reasoning classifier upstream of the owner-message regex gate stack (disclosure-deny-led; also recap). Default OFF (the regex gates run, byte-identical). Additive: on ANY uncertainty/error/timeout it falls back to the regex gates (the floor); owner-only; throwaway `owner::intent::<ts>` session key; only routes to EXISTING handlers. |
