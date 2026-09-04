@@ -131,6 +131,35 @@ Shared launch helpers (`wait_port`, `run_go`, `run_rust`) live in
 `scripts/launchd/lib.sh`, sourced by both `run-microservice.sh` and
 `run-api-wrapper.sh`.
 
+## Deploy: `make deploy-local`
+
+A merge is not a deploy. `launchctl kickstart -k` restarts a process, but for
+a Rust service that means re-exec'ing the same `target/release` binary — `run_rust`
+only builds when the file is *missing*. In one fortnight three services ran
+weeks-old code after their fixes were merged: the control-plane on a July
+build (a metering bug that failed 11,074 times), both bridges on an August
+build, and two Rust binaries still carrying a patched DoS.
+
+```bash
+make deploy-local          # rebuild/restart only what changed since the running process
+FORCE=1 make deploy-local  # restart everything
+```
+
+What it does, per service class:
+
+| Class | Deploy means | Decided by |
+|---|---|---|
+| Rust (gateway, model-router, runtime-manager, surface-gateway) | `cargo build --release` **then** restart | sources newer than binary → build; binary newer than process → restart |
+| Go (api, runtime-scheduler, workflow-engine) | restart (`run_go` rebuilds on start) | sources newer than the running process |
+| Bridges (tsx from `src/`) | restart | `services/<bridge>/src` or `packages/bridge-core/src` newer than the process |
+
+Then it **proves** it: every restarted service must have a process whose start
+time is after the run began, or the script exits non-zero with `DEPLOY
+INCOMPLETE`. It refuses to run off `master`, with uncommitted changes, or when
+master cannot fast-forward to `origin/master` — it ships committed master and
+nothing else. "REBUILT" is printed only when cargo actually wrote a new binary;
+a lockfile whose git mtime moved with nothing to compile prints `no-op`.
+
 ## macOS permissions (iMessage bridge)
 
 LaunchAgent-spawned processes get their own permission identity — the
