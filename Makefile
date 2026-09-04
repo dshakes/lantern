@@ -1,4 +1,4 @@
-.PHONY: help dev build test check-launchd-env test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test check-launchd-env deploy-local test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -114,6 +114,9 @@ landing-dev: ## Start the landing page in dev mode
 
 docs-dev: ## Start the docs site in dev mode
 	cd apps/docs && npm run dev
+
+deploy-local: ## Make the running LaunchAgents match origin/master and PROVE it (FORCE=1 restarts all)
+	@bash scripts/launchd/deploy-local.sh
 
 dashboard-dev: ## Start the dashboard in dev mode
 	@bash scripts/kill-port.sh 3001
