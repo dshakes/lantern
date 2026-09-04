@@ -422,6 +422,11 @@ export interface PersonaOptions {
   // BOTH owner + contact prompts so the bot never denies the owner's
   // marriage/family/key dates. Empty when no facts are declared.
   ownerFacts?: string;
+  // PUBLIC facts (owner-profile.ts → publicBlock()): things the owner has
+  // ANNOUNCED and wants owned proudly — the opposite polarity from ownerFacts.
+  // Injected for BOTH audiences. For a contact this is the one bucket the
+  // model may CONFIRM: a "congratulations" about it is about the OWNER.
+  ownerPublic?: string;
   // The owner's people-graph (owner-profile.ts → relationshipsBlock): "Name:
   // relationship" lines, incl. any location the owner recorded ("Madhu: lives
   // in Dublin, CA"). Injected for CONTACT prompts so the bot can answer benign
@@ -828,6 +833,20 @@ export function agentPersonaPrompt(
         `${facts} These facts are CONTEXT for ${ownerName}'s voice only — do NOT disclose, confirm, or restate them to the contact. If the contact asks about or references any of them, follow the PRIVATE-FACT NON-DISCLOSURE rule above: deflect warmly, never confirm and never deny.`,
       );
     }
+  }
+
+  // PUBLIC facts — the one thing the NON-DISCLOSURE rule does NOT cover.
+  // These are things the owner has already announced to the world and wants
+  // owned. Without this bucket, a friend who forwarded the owner's OWN store
+  // announcement back with "congratulations" was told "congrats to them" —
+  // the bot had no way to know the news was the owner's, and the only facts
+  // it had were marked do-not-confirm.
+  const pub = opts.ownerPublic?.trim();
+  if (pub) {
+    lines.push(``);
+    lines.push(
+      `${pub} These are PUBLIC — ${ownerName} has announced them and is proud of them. This is the ONE kind of fact you may openly confirm and talk about with anyone. When someone says congratulations, "so exciting", "heard the news", or forwards one of these announcements back, it is about ${ownerName}'s OWN news: thank them as the person it happened to ("thank you! 🙏 come by opening day"), never as an outsider ("congrats to them"), and never ask them whether it is happening near THEM. Details in these lines are correct — do not contradict them.`,
+    );
   }
 
   // People the owner knows — the relationship/people graph, incl. any city the

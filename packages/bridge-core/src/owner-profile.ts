@@ -90,6 +90,20 @@ export interface OwnerProfile {
    *  into a contact persona, relationship block, or facts block. Empty
    *  string when no such section exists. */
   privateVault: string;
+  /** PUBLIC facts — things the owner has ANNOUNCED and wants the bot to own
+   *  proudly to anyone. Body of a "## Public" (also "## Announced" /
+   *  "## What I'm up to" / "## Shareable") section, one bullet per fact.
+   *
+   *  This is the mirror image of `facts`: `facts` are private-by-default
+   *  (contacts get "never confirm, never deny"), and there was NO bucket for
+   *  the opposite case. So when the owner publicly announced opening a store
+   *  and a friend forwarded the announcement back with "congratulations", the
+   *  bot — with no fact saying the store was the owner's — replied "congrats
+   *  to them" and then asked the friend if a store was opening near HIM.
+   *  The single most important fact in the owner's life was unrepresentable.
+   *
+   *  Kept OUT of prose (typed injection via publicBlock(), like Facts). */
+  publicFacts: string[];
 }
 
 const RELOAD_TTL_MS = 30_000;
@@ -244,6 +258,15 @@ export class OwnerProfileStore {
    *  such section exists. */
   privateVaultBlock(): string {
     return this.get()?.privateVault ?? "";
+  }
+
+  /** PUBLIC facts the owner has announced, rendered for the persona prompt.
+   *  Safe for EVERY audience by definition — this is the bucket for things
+   *  the owner WANTS said. Returns "" when no "## Public" section exists. */
+  publicBlock(): string {
+    const facts = this.get()?.publicFacts ?? [];
+    if (facts.length === 0) return "";
+    return `Public news the owner has announced (OK to confirm to anyone): ${facts.join("; ")}.`;
   }
 
   /** Formatted "Name → relationship" lines for prompt injection. Used
@@ -490,6 +513,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const nativityLines: string[] = [];
   const myWorldLines: string[] = [];
   const privateVaultLines: string[] = [];
+  const publicFactLines: string[] = [];
 
   // Markdown section heading: "## Title". We only treat level-2+ ("##",
   // "###", ...) as section boundaries. A single "#" is reserved for the
@@ -507,6 +531,7 @@ export function parseProfile(raw: string): OwnerProfile {
   let inMyWorld = false;
   let inFacts = false;
   let inPrivateVault = false;
+  let inPublic = false;
   // Everything before the first "## " section (the "# Owner profile"
   // title + the "Do NOT put secrets here" instructional preamble) is
   // guidance for the human, NOT content about the owner. Skip it so it
@@ -535,7 +560,11 @@ export function parseProfile(raw: string): OwnerProfile {
       // also withheld from prose so a contact-facing prompt never even
       // hints a vault exists.
       inPrivateVault = /^(private|vault|security)\b/i.test(section);
-      if (!inRelationships && !inFacts && !inPrivateVault) proseLines.push(line);
+      // "## Public" / "## Announced" / "## What I'm up to" / "## Shareable" —
+      // facts the owner has made public and wants owned proudly. Typed
+      // injection (publicBlock()), so kept out of prose like Facts.
+      inPublic = /^(public|announced|shareable|what\s+i'?m\s+up\s+to|news)\b/i.test(section);
+      if (!inRelationships && !inFacts && !inPrivateVault && !inPublic) proseLines.push(line);
       continue;
     }
     if (!seenFirstSection) continue; // pre-section preamble — drop
@@ -543,6 +572,13 @@ export function parseProfile(raw: string): OwnerProfile {
       // Capture the raw body for the owner-only consumer. NEVER append
       // to proseLines — that is the one inviolable rule of this section.
       privateVaultLines.push(line);
+      continue;
+    }
+    if (inPublic) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("<!--")) {
+        publicFactLines.push(trimmed.replace(/^[-*]\s*/, ""));
+      }
       continue;
     }
     if (inNativity) {
@@ -722,6 +758,7 @@ export function parseProfile(raw: string): OwnerProfile {
       parseTimezone(myWorldLines.join(" ")) ||
       parseTimezone(nativityLines.join(" ")),
     privateVault: privateVaultLines.join("\n").trim(),
+    publicFacts: publicFactLines,
   };
 }
 
