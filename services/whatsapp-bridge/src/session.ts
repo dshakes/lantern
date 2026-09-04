@@ -44,6 +44,7 @@ import {
   shouldRespond,
   fixThirdPersonEcho,
   groupRepliesEnabled,
+  mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -3342,8 +3343,22 @@ export class WhatsAppSession {
             targetsOwner: this.isOwnerTargeted(msg),
           });
           if (this.muted) {
-            this.logger.info({ from }, "agent skipped — globally muted");
-            if (wouldAutoReply) this.notifyOwnerOfDrop({ jid: from, reason: "bot is muted", text, senderName });
+            if (wouldAutoReply) {
+              this.mutedDropCount++;
+              this.logger.warn(
+                { from, mutedDropsSinceStart: this.mutedDropCount },
+                "contact reply suppressed — auto-reply is MUTED (owner must unmute)",
+              );
+              const bucket = mutedNoticeBucket(this.mutedDropCount);
+              if (!this.firedMutedBuckets.has(bucket)) {
+                this.firedMutedBuckets.add(bucket);
+                void this.confirmToSelf(
+                  `⚠️ ${senderName || from.split("@")[0]} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or say "bot on".`,
+                ).catch(() => {});
+              }
+            } else {
+              this.logger.info({ from }, "agent skipped — globally muted (not addressed to owner)");
+            }
             continue;
           }
           if (this.isPaused(from)) {
@@ -5209,6 +5224,12 @@ export class WhatsAppSession {
   // the unmute was an in-memory setTimeout: a restart killed the timer while
   // `muted` stayed true on disk, silently turning "mute for 2h" into forever.
   private mutedUntil = 0;
+  // Muted-drop accounting (twin of the iMessage bridge). The old path notified
+  // the owner per (contact, reason) on a 10-minute window — with 46 contacts
+  // messaging during a mute that is a notice every few minutes, forever. Count
+  // + fired-bucket ladder instead: ~6 escalating notices per mute episode.
+  private mutedDropCount = 0;
+  private firedMutedBuckets: Set<string> = new Set();
 
   /** (Re)arm the auto-unmute timer. ms<=0 clears it (indefinite mute). */
   private rearmAutoUnmute(ms: number): void {
@@ -5226,6 +5247,8 @@ export class WhatsAppSession {
    *  while leaving a stale deadline or a live timer behind. */
   private applyUnmute(): void {
     this.mutedUntil = 0;
+    this.mutedDropCount = 0;
+    this.firedMutedBuckets.clear();
     if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
     this.setMuted(false);
     this.saveState();

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { mutedNoticeBucket, shouldFireDropNotice } from "./session.js";
+import { shouldFireDropNotice } from "./session.js";
+import { mutedNoticeBucket } from "@lantern/bridge-core/natural";
 
 // The failure these guard: auto-reply was globally muted for WEEKS. 300+ real
 // contact messages were dropped and the ONLY owner-facing signal was a single
@@ -54,6 +55,8 @@ describe("no reply-suppressing path returns without a trace", () => {
     const body = gate.slice(0, gate.indexOf("const until = this.pausedUntil"));
     expect(body).toMatch(/this\.logger\.warn/);
     expect(body).toMatch(/mutedDropCount/);
+    // and the notice is behind the fired-bucket set, not the time dedup alone
+    expect(body).toMatch(/firedMutedBuckets\.has\(bucket\)/);
   });
 
   it("an unmonitored group chat is logged, not dropped bare", () => {
@@ -95,5 +98,47 @@ describe("every send path reaches the outbound audit log", () => {
     const audits = (body.match(/"outbound sent"/g) || []).length;
     // One for the SMS pre-route branch, one for the normal path.
     expect(audits).toBeGreaterThanOrEqual(2);
+  });
+});
+
+
+// The ladder as first shipped was NOT a ladder. notifyOwnerOfDrop's dedup
+// prunes keys older than 5 minutes, so the bucket key "muted:100" re-fired on
+// every quiet gap: 484 drops over ten days → 204 owner notices. A bucket must
+// fire once per mute episode regardless of how the drops are spaced.
+describe("muted notice ladder — fires per bucket, not per quiet gap", () => {
+  it("484 realistically-spaced drops produce at most ~6 notices", () => {
+    // Model the bridge's gate: a fired-bucket Set in front of the dedup.
+    const fired = new Set<string>();
+    const dedup = new Map<string, number>();
+    let now = 1_800_000_000_000;
+    let notices = 0;
+    for (let i = 1; i <= 484; i++) {
+      now += (i % 3 === 0 ? 31 : 2) * 60_000; // most gaps > the 5-min window
+      const b = mutedNoticeBucket(i);
+      if (fired.has(b)) continue;
+      fired.add(b);
+      if (shouldFireDropNotice(dedup, `muted:${b}`, now, 5 * 60_000)) notices++;
+    }
+    expect(notices).toBeLessThanOrEqual(6);
+    expect(notices).toBeGreaterThanOrEqual(4); // still escalates
+  });
+
+  it("the OLD gate (dedup only) re-fires on quiet gaps — pins why the set exists", () => {
+    const dedup = new Map<string, number>();
+    let now = 1_800_000_000_000;
+    let notices = 0;
+    for (let i = 1; i <= 484; i++) {
+      now += (i % 3 === 0 ? 31 : 2) * 60_000;
+      if (shouldFireDropNotice(dedup, `muted:${mutedNoticeBucket(i)}`, now, 5 * 60_000)) notices++;
+    }
+    expect(notices).toBeGreaterThan(50); // the spam the set prevents
+  });
+
+  it("unmute resets the episode so a later mute re-notifies from bucket 1", () => {
+    const src = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
+    const unmute = src.slice(src.indexOf("private applyUnmute("), src.indexOf("private applyUnmute(") + 600);
+    expect(unmute).toMatch(/firedMutedBuckets\.clear\(\)/);
+    expect(unmute).toMatch(/mutedDropCount = 0/);
   });
 });
