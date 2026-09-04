@@ -48,6 +48,7 @@ import {
   shouldRespond,
   fixThirdPersonEcho,
   groupRepliesEnabled,
+  mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -287,24 +288,6 @@ type BatchRow = { rowid: number; isFromMe: boolean; handle?: string };
 // for `dedupeKey` should fire now, and MUTATES `state` to record the fire
 // time. GCs entries older than `windowMs` along the way. At most one
 // notice per distinct key per window.
-/**
- * Escalation bucket for the "auto-reply is muted" nudge.
- *
- * A time-window dedup is the wrong tool for a persistent state: the mute lasted
- * WEEKS, so the 5-minute window fired once and then suppressed every later
- * notice while 300+ real messages were dropped. Bucketing by COUNT means the
- * owner is re-told as the damage grows (1st, 5th, 25th, 100th, 500th…), and
- * each bucket still fires only once, so it never becomes spam.
- */
-export function mutedNoticeBucket(count: number): string {
-  if (count <= 1) return "1";
-  for (const t of [5, 25, 100, 500, 2000]) {
-    if (count <= t) return String(t);
-  }
-  // Beyond the last threshold, one notice per 2000 dropped messages.
-  return String(Math.floor(count / 2000) * 2000);
-}
-
 export function shouldFireDropNotice(
   state: Map<string, number>,
   dedupeKey: string,
@@ -1444,6 +1427,12 @@ export class IMessageSession {
   // process started. Drives the escalating notice (see mutedNoticeBucket) and
   // is logged on every drop so a silent outage leaves evidence.
   private mutedDropCount = 0;
+  // Buckets of the muted-notice ladder that have ALREADY fired this mute
+  // episode. The time-window dedup in notifyOwnerOfDrop prunes keys after 5
+  // minutes, so a count-bucket key re-fired on every quiet gap — 484 drops
+  // over 10 days produced 204 owner notices. A bucket fires once; the set is
+  // cleared on unmute so a NEW episode re-notifies.
+  private firedMutedBuckets: Set<string> = new Set();
 
   // Per-chat count of group messages ignored because the chat is not
   // monitored. Purely observability: makes "which groups is the bot silent
@@ -7166,10 +7155,14 @@ export class IMessageSession {
       // Re-nudge on an ESCALATING schedule rather than once per 5 minutes
       // forever: a mute that is silently eating traffic should get louder, not
       // quieter. The key folds in the count bucket so each bucket fires once.
-      this.notifyOwnerOfDrop(
-        `${this.contactLabel(row.handle)} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or unmute.`,
-        `muted:${mutedNoticeBucket(this.mutedDropCount)}`,
-      );
+      const bucket = mutedNoticeBucket(this.mutedDropCount);
+      if (!this.firedMutedBuckets.has(bucket)) {
+        this.firedMutedBuckets.add(bucket);
+        this.notifyOwnerOfDrop(
+          `${this.contactLabel(row.handle)} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or unmute.`,
+          `muted:${bucket}`,
+        );
+      }
       return;
     }
     const until = this.pausedUntil.get(row.handle);
@@ -8600,6 +8593,9 @@ export class IMessageSession {
   private applyUnmute(summary: string): void {
     this.muted = false;
     this.mutedUntil = 0;
+    // A new mute episode should re-notify from the first bucket.
+    this.mutedDropCount = 0;
+    this.firedMutedBuckets.clear();
     this.autoUnmuteReplyTo = null;
     if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
     this.persist();

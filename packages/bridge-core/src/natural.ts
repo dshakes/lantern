@@ -2530,3 +2530,19 @@ export function groupRepliesEnabled(env: NodeJS.ProcessEnv = process.env): boole
   const v = (env.LANTERN_GROUP_REPLIES ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "on";
 }
+
+/**
+ * Escalation bucket for the "auto-reply is muted" owner notice.
+ *
+ * Bucketing by COUNT, not time: a mute is a persistent state, and a time
+ * window either spams (re-fires every quiet gap — 484 drops produced 204
+ * notices) or goes silent (one notice, then weeks of nothing). Each bucket
+ * fires ONCE per mute episode (the bridge tracks fired buckets and clears
+ * them on unmute), so the owner is re-told as the damage grows — 1st, 5th,
+ * 25th, 100th, 500th — and never more than ~6 times per episode.
+ */
+export function mutedNoticeBucket(count: number): string {
+  if (count <= 1) return "1";
+  for (const t of [5, 25, 100, 500, 2000]) if (count <= t) return String(t);
+  return String(Math.floor(count / 2000) * 2000);
+}
