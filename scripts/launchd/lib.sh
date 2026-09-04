@@ -55,7 +55,7 @@ run_go() {
   local svc="$1" pkg="$2" name="${3:-$(basename "$2")}"
   cd "$REPO_ROOT/services/$svc"
   local bin="bin/$name"
-  if [[ ! -x "$bin" ]] || [[ -n "$(find . -name '*.go' -newer "$bin" -print -quit 2>/dev/null)" ]]; then
+  if [[ ! -x "$bin" ]] || [[ -n "$(find . \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -newer "$bin" -print -quit 2>/dev/null)" ]]; then
     echo "[$(date +%T)] building $svc -> $bin"
     go build -o "$bin" "$pkg"
   fi

@@ -123,9 +123,10 @@ With the wrapper in between, signals land on the wrong process: `launchctl
 kickstart -k` and a plain `kill` both leave the real server orphaned and still
 holding its port, so the next start dies with "address already in use".
 
-The binary is rebuilt whenever a `.go` file is newer than it, which preserves
-the one property `go run` gave us for free — pulling source is enough to pick
-up changes on the next restart.
+The binary is rebuilt whenever a `.go`, `go.mod`, or `go.sum` file is newer
+than it, which preserves the one property `go run` gave us for free — pulling
+source (or a dependency bump) is enough to pick up changes on the next
+restart.
 
 Shared launch helpers (`wait_port`, `run_go`, `run_rust`) live in
 `scripts/launchd/lib.sh`, sourced by both `run-microservice.sh` and
