@@ -50,6 +50,7 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
+import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -160,6 +161,29 @@ export function resolvePersistedMute(
   // Deadline passed while the process was down: honor what the owner asked for.
   if (mutedUntil <= now) return { muted: false, mutedUntil: 0, rearmMs: 0 };
   return { muted: true, mutedUntil, rearmMs: mutedUntil - now };
+}
+
+/**
+ * What to do with a LOW-tier reply after trying to hand it to the owner.
+ *
+ * Pure so it can be tested as BEHAVIOUR, not as a regex over the source. The
+ * bug this encodes (caught by two CI cross-audits on the commitment-gate PR):
+ * when the owner self-chat hand-off FAILS (`held === false` — no owner channel,
+ * or the send threw), the caller suppressed only for the injection caution and
+ * otherwise fell through to hold-then-SEND. A commitment hold — "I'll send you
+ * 70k" — would have gone to the contact anyway, with no owner warning, in the
+ * exact failure mode where the owner cannot intervene. A gate that fails open
+ * when notification fails is not a gate.
+ */
+export function resolveHeldReply(args: {
+  held: boolean;            // owner hand-off succeeded
+  forceDraftCaution: boolean;
+  commitHold: boolean;      // the commitment gate said HOLD
+}): "handed-to-owner" | "suppress" | "fallthrough-send" {
+  if (args.held) return "handed-to-owner";
+  // Either safety hold must fail CLOSED: silence over an unreviewed send.
+  if (args.forceDraftCaution || args.commitHold) return "suppress";
+  return "fallthrough-send";
 }
 
 export function isOwnerChatRow(
@@ -3432,6 +3456,10 @@ export class IMessageSession {
     targetLabel: string,
     inbound: string,
     draft: string,
+    // Optional lead line for the owner page. The commitment gate passes a
+    // "⚠️ HELD — … PROMISES MONEY" lead so a money hold is unmistakable; the
+    // default "✍️ draft to X" shape is what 53 routine pings looked like.
+    lead?: string,
   ): Promise<boolean> {
     const owner = this.ownerSelfChatTarget();
     if (!owner || !target || !draft) return false;
@@ -3444,8 +3472,9 @@ export class IMessageSession {
         issuedAt: Date.now(),
       });
       const preview = draft.replace(/\s+/g, " ").trim().slice(0, 300);
-      const body =
-        `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`;
+      const body = lead
+        ? `${lead}\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`
+        : `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`;
       const res = await this.send(owner, body);
       if (!res.ok) {
         this.pendingSelfChatDrafts.delete(owner);
@@ -8121,29 +8150,64 @@ export class IMessageSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // COMMITMENT GATE (twin of the WhatsApp bridge) — hold, don't send, when
+    // the reply commits the owner (money, a call, a visit) or the contact is
+    // asking for money. Reasoned in any language + a deterministic
+    // multilingual backstop, so an LLM outage cannot fail open. Forces LOW
+    // AND the draft path even when LANTERN_DRAFT_CONFIRM is off.
+    let commitVerdict: CommitmentVerdict | null = null;
+    if (!isGroup) {
+      commitVerdict = await judgeCommitment({
+        inbound: text,
+        draft,
+        contactName: this.contactNames.get(row.handle),
+        recentTranscript: (this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n"),
+        llmCall: async (p: string) => (await this.agent.respondTo(`${row.handle}::commitgate`, p, undefined, { withTools: false })) ?? "",
+      });
+      if (commitVerdict.hold) {
+        tier.tier = "LOW";
+        tier.reasons.push(`-commitment:${commitVerdict.reason}`);
+        this.logger.warn(
+          { handle: row.handle, reason: commitVerdict.reason, quote: commitVerdict.quote, source: commitVerdict.source, draftPreview: draft.slice(0, 80) },
+          "COMMITMENT GATE — reply HELD for owner, not sent",
+        );
+      }
+    }
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
     // DRAFT-AND-CONFIRM for Tier-C (LOW-confidence / sensitive) replies —
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution) && !isGroup) {
+    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
       const held = await this.draftToOwnerForApproval(
         row.handle,
         this.contactLabel(row.handle),
         text,
         draft,
+        commitVerdict?.hold
+          ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft, verdict: commitVerdict })
+          : undefined,
       );
-      if (held) {
+      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold });
+      if (outcome === "handed-to-owner") {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
         return;
       }
-      // For a security caution we must NOT fall through to hold-then-send
-      // — suppress the auto-reply entirely if we couldn't hold the draft.
-      if (forceDraftCaution) {
+      if (outcome === "suppress") {
+        // A safety hold whose owner hand-off failed must NOT fall through to
+        // hold-then-send. For a commitment hold that would mean sending
+        // "I'll send you 70k" to the contact precisely when the owner could
+        // not be warned. Silence, logged, with a best-effort drop notice.
         this.logger.warn(
-          { jid: row.handle },
-          "non-English injection fallback — draft hold failed, suppressing auto-reply",
+          { jid: row.handle, reason: commitVerdict?.hold ? `commitment:${commitVerdict.reason}` : "non-english-injection" },
+          "safety hold — owner hand-off FAILED, suppressing auto-reply (never fall through to send)",
         );
+        if (commitVerdict?.hold) {
+          this.notifyOwnerOfDrop(
+            `couldn't reach you to approve a reply to ${this.contactLabel(row.handle)} that involves MONEY/a promise — I did NOT send it. They're waiting on you.`,
+            `commit-hold-failed:${row.handle}`,
+          );
+        }
         return;
       }
       // Otherwise fall through to the legacy hold-then-send.
