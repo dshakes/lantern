@@ -1451,6 +1451,29 @@ messages instead of replying, which read as "the bot isn't responding". The targ
 `forceDraftCaution` (foreign-language) and PII/injection refusals hold regardless.
 VIPs always go through the dashboard draft queue regardless.
 
+### Commitment gate (money / promises) — HOLD, never send
+
+`packages/bridge-core/src/commitment-gate.ts`, wired into BOTH bridges' contact
+reply paths before the tier is logged. A contact reply is **held for the owner,
+not sent**, when it commits the owner to money or a concrete action, or when the
+contact is asking for money — in any language (English, romanized Telugu,
+Hindi). Two layers, held if EITHER says so: a purpose-keyed LLM judgment
+(`${jid}::commitgate`) for paraphrase, and a deterministic multilingual backstop
+that runs ALWAYS so an LLM outage cannot fail open. The backstop reads the
+recent thread, not just the current pair — money is agreed once and then
+promised bare ("ippude pampista"). A hold forces tier LOW **and** the draft path
+even when draft-confirm is off, and pages the owner with a distinct
+`⚠️ HELD — <contact> is asking you for MONEY / the draft PROMISES MONEY` message,
+never the routine 🟡 audit ping.
+
+Why: 2026-09-03→06 the bot, in the owner's voice, promised a distressed relative
+money ~60 times ("70k pampista", "dabbulu sarjesta", "ippude pampista") and a
+call it never made. Every reply scored MEDIUM/HIGH; the only money signal was
+`$`+digits; the persona's "never commit the owner" rule was English prose with
+no enforcement; the owner received 53 routine audit pings. Replaying all 64
+replies through the backstop alone holds 56. **A prompt rule is advice; this is
+a gate.**
+
 ### Claim verifier
 
 `verifyClaims()` (`verifiable-claims.ts`) is a pre-send pass that rewrites
