@@ -496,10 +496,15 @@ export function degradedVoiceAck(opts: {
   if (opts.isOwner) {
     return "🎙️ couldn't quite make out that voice note — mind typing it or re-recording?";
   }
+  // No promises in an ack. "will get back to you" / "malli call chesta"
+  // (I'll call you back) are commitments the bridge cannot keep, sent
+  // BEFORE the commitment gate ever runs. An ack acknowledges; it does not
+  // pledge. (The Telugu line also mixed native script into a romanized
+  // sentence — a bot-tell — fixed to "vachindi".)
   if (opts.contactWritesTelugu) {
-    return "voice note vచ్చింది 🙏 vini malli call chesta";
+    return "voice note vachindi 🙏";
   }
-  return "got your voice note 🙏 will listen properly and get back to you";
+  return "got your voice note 🙏";
 }
 
 /** Heuristic: does a transcript look garbled / mis-decoded?

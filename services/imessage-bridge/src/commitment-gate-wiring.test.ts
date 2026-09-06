@@ -56,3 +56,20 @@ describe("resolveHeldReply — a safety hold never falls through to send", () =>
     expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: false })).toBe("fallthrough-send");
   });
 });
+
+describe("group sends are blocked at the boundary, not just in the pipeline", () => {
+  it("whatsapp: sendMessage() blocks @g.us before any send", () => {
+    const start = wa.indexOf("async sendMessage(");
+    const block = wa.indexOf("isBlockedGroupSend(to)", start);
+    const send = wa.indexOf("this.socket.sendMessage(jid, { text }, sendOpts)", start);
+    expect(start).toBeGreaterThan(0);
+    expect(block).toBeGreaterThan(start);
+    expect(send).toBeGreaterThan(block);
+  });
+  it("whatsapp: the voice-note ack itself skips groups", () => {
+    expect(wa).toMatch(/annotation\.kind === "voice" && !\(msg\.key\.remoteJid \|\| ""\)\.endsWith\("@g\.us"\)/);
+  });
+  it("imessage: the voice-note ack skips group rows", () => {
+    expect(im).toMatch(/annotation\.kind === "voice" && row\.handle && !isGroup/);
+  });
+});
