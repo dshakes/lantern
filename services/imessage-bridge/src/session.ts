@@ -163,6 +163,29 @@ export function resolvePersistedMute(
   return { muted: true, mutedUntil, rearmMs: mutedUntil - now };
 }
 
+/**
+ * What to do with a LOW-tier reply after trying to hand it to the owner.
+ *
+ * Pure so it can be tested as BEHAVIOUR, not as a regex over the source. The
+ * bug this encodes (caught by two CI cross-audits on the commitment-gate PR):
+ * when the owner self-chat hand-off FAILS (`held === false` — no owner channel,
+ * or the send threw), the caller suppressed only for the injection caution and
+ * otherwise fell through to hold-then-SEND. A commitment hold — "I'll send you
+ * 70k" — would have gone to the contact anyway, with no owner warning, in the
+ * exact failure mode where the owner cannot intervene. A gate that fails open
+ * when notification fails is not a gate.
+ */
+export function resolveHeldReply(args: {
+  held: boolean;            // owner hand-off succeeded
+  forceDraftCaution: boolean;
+  commitHold: boolean;      // the commitment gate said HOLD
+}): "handed-to-owner" | "suppress" | "fallthrough-send" {
+  if (args.held) return "handed-to-owner";
+  // Either safety hold must fail CLOSED: silence over an unreviewed send.
+  if (args.forceDraftCaution || args.commitHold) return "suppress";
+  return "fallthrough-send";
+}
+
 export function isOwnerChatRow(
   chatRowid: number | null | undefined,
   handle: string,
@@ -8165,17 +8188,26 @@ export class IMessageSession {
           ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft, verdict: commitVerdict })
           : undefined,
       );
-      if (held) {
+      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold });
+      if (outcome === "handed-to-owner") {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
         return;
       }
-      // For a security caution we must NOT fall through to hold-then-send
-      // — suppress the auto-reply entirely if we couldn't hold the draft.
-      if (forceDraftCaution) {
+      if (outcome === "suppress") {
+        // A safety hold whose owner hand-off failed must NOT fall through to
+        // hold-then-send. For a commitment hold that would mean sending
+        // "I'll send you 70k" to the contact precisely when the owner could
+        // not be warned. Silence, logged, with a best-effort drop notice.
         this.logger.warn(
-          { jid: row.handle },
-          "non-English injection fallback — draft hold failed, suppressing auto-reply",
+          { jid: row.handle, reason: commitVerdict?.hold ? `commitment:${commitVerdict.reason}` : "non-english-injection" },
+          "safety hold — owner hand-off FAILED, suppressing auto-reply (never fall through to send)",
         );
+        if (commitVerdict?.hold) {
+          this.notifyOwnerOfDrop(
+            `couldn't reach you to approve a reply to ${this.contactLabel(row.handle)} that involves MONEY/a promise — I did NOT send it. They're waiting on you.`,
+            `commit-hold-failed:${row.handle}`,
+          );
+        }
         return;
       }
       // Otherwise fall through to the legacy hold-then-send.

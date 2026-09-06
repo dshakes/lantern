@@ -35,3 +35,24 @@ for (const [name, src, holdLine] of [
     });
   });
 }
+
+import { resolveHeldReply } from "./session.js";
+
+// Behavioural, per the cross-audit: when the owner hand-off FAILS, a
+// commitment hold must fail CLOSED. Before this, only the injection caution
+// suppressed; a money promise fell through to hold-then-send with no owner
+// warning — the one failure mode where the owner cannot intervene.
+describe("resolveHeldReply — a safety hold never falls through to send", () => {
+  it("hands off to the owner when the hand-off worked", () => {
+    expect(resolveHeldReply({ held: true, forceDraftCaution: false, commitHold: true })).toBe("handed-to-owner");
+  });
+  it("commitment hold + failed hand-off → suppress (the audited bug)", () => {
+    expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: true })).toBe("suppress");
+  });
+  it("injection caution + failed hand-off → suppress (already true, must stay true)", () => {
+    expect(resolveHeldReply({ held: false, forceDraftCaution: true, commitHold: false })).toBe("suppress");
+  });
+  it("ordinary LOW with no safety hold may still fall through to hold-then-send", () => {
+    expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: false })).toBe("fallthrough-send");
+  });
+});
