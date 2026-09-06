@@ -4,7 +4,8 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { agentPersonaPrompt, detectBotTells, groupRepliesEnabled, type StyleProfile } from "./natural.ts";
+import { agentPersonaPrompt, detectBotTells, groupRepliesEnabled, isBlockedGroupSend, type StyleProfile } from "./natural.ts";
+import { degradedVoiceAck } from "./language.ts";
 import { computeHold } from "./pacing.ts";
 
 const STYLE: StyleProfile = {
@@ -127,5 +128,26 @@ test("group replies are OFF unless explicitly enabled", () => {
   for (const v of ["1", "true", "on", "ON", " true "]) {
     assert.equal(groupRepliesEnabled({ LANTERN_GROUP_REPLIES: v } as NodeJS.ProcessEnv), true,
       `should be ON for ${JSON.stringify(v)}`);
+  }
+});
+
+// A fourth group path: the voice-note ack fires during media annotation,
+// before the reply pipeline, and posted in a WhatsApp group one second ahead
+// of the gate's own "group msg ignored" line for the same message. The fix is
+// a SEND-BOUNDARY block — complete by construction — plus an ack that no
+// longer promises anything.
+test("isBlockedGroupSend blocks @g.us at the boundary when groups are off", () => {
+  assert.equal(isBlockedGroupSend("14085008008-1441049465@g.us", {} as NodeJS.ProcessEnv), true);
+  assert.equal(isBlockedGroupSend("15126088977@s.whatsapp.net", {} as NodeJS.ProcessEnv), false);
+  assert.equal(isBlockedGroupSend("241141156987027@lid", {} as NodeJS.ProcessEnv), false);
+  // Explicit opt-in re-enables group sends.
+  assert.equal(isBlockedGroupSend("14085008008-1441049465@g.us", { LANTERN_GROUP_REPLIES: "1" } as NodeJS.ProcessEnv), false);
+});
+
+test("the voice-note ack promises nothing", () => {
+  for (const opts of [{ isOwner: false }, { isOwner: false, contactWritesTelugu: true }]) {
+    const ack = degradedVoiceAck(opts);
+    assert.doesNotMatch(ack, /get back|call chesta|malli|listen properly|will /i, `ack promises: ${ack}`);
+    assert.doesNotMatch(ack, /[ఀ-౿]/, "no native script inside a romanized line");
   }
 });
