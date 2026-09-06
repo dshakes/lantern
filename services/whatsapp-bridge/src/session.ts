@@ -44,6 +44,7 @@ import {
   shouldRespond,
   fixThirdPersonEcho,
   groupRepliesEnabled,
+  isBlockedGroupSend,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
@@ -3045,7 +3046,7 @@ export class WhatsAppSession {
             // suppressed → dead silence to the contact. Instead degrade to a
             // brief, warm human ack (+ a 🙏 reaction) so they still hear back.
             // No transcript text is read/logged here (PII).
-            if (annotation.degraded && annotation.kind === "voice") {
+            if (annotation.degraded && annotation.kind === "voice" && !(msg.key.remoteJid || "").endsWith("@g.us")) {
               this.logger.info({ jid: from }, "voice note un-transcribable — sending human ack");
               await this.sendReaction(from, msg.key, "🙏").catch(() => {});
               const ownerChat = this.isOwnerChat(from);
@@ -3435,6 +3436,15 @@ export class WhatsAppSession {
     // call site. Dropping is always right: the token MEANS "say nothing".
     if (text && isNoReplySentinel(text)) {
       this.logger.warn({ to }, "abstain sentinel reached sendMessage() — dropped (bug upstream: caller should have returned)");
+      return undefined;
+    }
+    // GROUP SEND BOUNDARY. Group replies are gated in the reply pipeline, but
+    // the pipeline is not the only sender: the voice-note ack fires during
+    // media annotation and posted in a group one second before the gate's own
+    // "group msg ignored" line for the same message. Every send funnels
+    // through here, so this is the one place a group block is complete.
+    if (isBlockedGroupSend(to)) {
+      this.logger.warn({ to, textPreview: text.slice(0, 80) }, "group send BLOCKED at boundary — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
       return undefined;
     }
     // FINAL PASS — verifiable-claims rewriter. Catches false-action

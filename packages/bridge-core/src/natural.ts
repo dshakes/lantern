@@ -2547,3 +2547,19 @@ export function mutedNoticeBucket(count: number): string {
   for (const t of [5, 25, 100, 500, 2000]) if (count <= t) return String(t);
   return String(Math.floor(count / 2000) * 2000);
 }
+
+/**
+ * Should this outbound be BLOCKED because it targets a group while group
+ * replies are off? Checked at the send boundary, not at each reply site.
+ *
+ * The group gate (groupRepliesEnabled) was wired into the reply pipeline in
+ * three places — and a fourth path still posted in a group: the "got your
+ * voice note" ack fires during media annotation, BEFORE the pipeline, and
+ * went out one second ahead of the gate's own "group msg ignored" line for
+ * the same message. A per-site gate is a list you have to keep complete; a
+ * send-boundary gate is complete by construction. Owner self-chat is never a
+ * group, so owner traffic is unaffected.
+ */
+export function isBlockedGroupSend(jid: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return /@g\.us$/i.test((jid || "").trim()) && !groupRepliesEnabled(env);
+}

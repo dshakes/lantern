@@ -6796,7 +6796,7 @@ export class IMessageSession {
       // "your transcription is garbled", which then gets suppressed → dead
       // silence. Degrade to a brief warm human ack so they still hear back.
       // No transcript text is read/logged here (PII). Parity with WA bridge.
-      if (annotation?.degraded && annotation.kind === "voice" && row.handle) {
+      if (annotation?.degraded && annotation.kind === "voice" && row.handle && !isGroup) {
         this.logger.info({ handle: row.handle }, "voice note un-transcribable — sending human ack");
         const ownerChat = this.isOwnerChatRow(row);
         const ack = degradedVoiceAck({
