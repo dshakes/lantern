@@ -50,6 +50,13 @@ export interface ConfidenceVerdict {
 const RISK_PATTERNS: Array<{ re: RegExp; weight: number; label: string }> = [
   // Concrete dollar amounts — money commitments are high-stakes.
   { re: /\$\s?\d{2,}/, weight: 2, label: "dollar-amount" },
+  // Money in the languages the owner's contacts actually write in. "$" was
+  // the ONLY money signal: "70k pampista" (I'll send 70k), "dabbulu sarjesta"
+  // (I'll arrange the money) scored ZERO and went out ~60 times as MEDIUM.
+  // The commitment gate (commitment-gate.ts) is the real guard; this is
+  // defense in depth so the tier itself also reads as risky.
+  { re: /\b\d{1,3}(?:,\d{3})*\s*(?:k|lakhs?|lakh|rs|thousand|crores?)\b|[₹]\s?\d+/i, weight: 2, label: "money-amount" },
+  { re: /\b(?:dabb\w*|paisa|paise|rupay\w*|rupees?|udhaar|loan|upi|phonepe|gpay|paytm)\b/i, weight: 2, label: "money-word" },
   // Future date/time commitments — wrong time → real-world consequence.
   { re: /\b(?:tomorrow|tonight|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(?:mon|tue|wed|thu|fri|sat|sun)|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/i, weight: 2, label: "future-commitment" },
   // Medical / legal / financial vocabulary.

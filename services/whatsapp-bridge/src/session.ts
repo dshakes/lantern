@@ -46,6 +46,7 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
+import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -9294,6 +9295,32 @@ export class WhatsAppSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // COMMITMENT GATE — hold, don't send, when the reply commits the owner
+    // (money, a call, a visit) or the contact is asking for money. Reasoned
+    // (any language) with a deterministic multilingual backstop, so an LLM
+    // outage cannot fail open. This is the guard the incident of 09-03→06
+    // lacked: ~60 "70k pampista"-class promises went out as MEDIUM/HIGH.
+    // Forces LOW AND forces the draft path even when DRAFT_HIGH_STAKES is off.
+    let commitVerdict: CommitmentVerdict | null = null;
+    if (!opts.isGroup) {
+      commitVerdict = await judgeCommitment({
+        inbound: text,
+        draft,
+        contactName: opts.senderName ?? this.contactNames.get(from) ?? undefined,
+        // Money is agreed once and then promised bare ("ippude pampista"); the
+        // thread, not the current pair, carries the context.
+        recentTranscript,
+        llmCall: async (p: string) => (await this.agent.respondTo(`${from}::commitgate`, p, undefined, { withTools: false })) ?? "",
+      });
+      if (commitVerdict.hold) {
+        tier.tier = "LOW";
+        tier.reasons.push(`-commitment:${commitVerdict.reason}`);
+        this.logger.warn(
+          { from, reason: commitVerdict.reason, quote: commitVerdict.quote, source: commitVerdict.source, draftPreview: draft.slice(0, 80) },
+          "COMMITMENT GATE — reply HELD for owner, not sent",
+        );
+      }
+    }
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
     if (tier.tier === "LOW" && !opts.isGroup) {
       // DRAFT-AND-CONFIRM (high-stakes default, parity with iMessage). A
@@ -9305,7 +9332,7 @@ export class WhatsAppSession {
       // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
-      if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution) {
+      if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
         const queued = await this.personal.queueDraft(
           from,
           opts.senderName ?? this.contactNames.get(from) ?? undefined,
@@ -9315,7 +9342,14 @@ export class WhatsAppSession {
         );
         try {
           await this.sendSelf(
-            `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
+            commitVerdict?.hold
+              ? commitmentHoldPage({
+                  contactLabel: opts.senderName ?? this.contactNames.get(from) ?? from.split("@")[0],
+                  inbound: text,
+                  draft,
+                  verdict: commitVerdict,
+                })
+              : `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
           );
         } catch {}
         // B5 — arm an inline draft-edit window for the owner thread. If the

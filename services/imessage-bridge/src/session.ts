@@ -50,6 +50,7 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
+import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -3432,6 +3433,10 @@ export class IMessageSession {
     targetLabel: string,
     inbound: string,
     draft: string,
+    // Optional lead line for the owner page. The commitment gate passes a
+    // "⚠️ HELD — … PROMISES MONEY" lead so a money hold is unmistakable; the
+    // default "✍️ draft to X" shape is what 53 routine pings looked like.
+    lead?: string,
   ): Promise<boolean> {
     const owner = this.ownerSelfChatTarget();
     if (!owner || !target || !draft) return false;
@@ -3444,8 +3449,9 @@ export class IMessageSession {
         issuedAt: Date.now(),
       });
       const preview = draft.replace(/\s+/g, " ").trim().slice(0, 300);
-      const body =
-        `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`;
+      const body = lead
+        ? `${lead}\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`
+        : `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`;
       const res = await this.send(owner, body);
       if (!res.ok) {
         this.pendingSelfChatDrafts.delete(owner);
@@ -8121,17 +8127,43 @@ export class IMessageSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // COMMITMENT GATE (twin of the WhatsApp bridge) — hold, don't send, when
+    // the reply commits the owner (money, a call, a visit) or the contact is
+    // asking for money. Reasoned in any language + a deterministic
+    // multilingual backstop, so an LLM outage cannot fail open. Forces LOW
+    // AND the draft path even when LANTERN_DRAFT_CONFIRM is off.
+    let commitVerdict: CommitmentVerdict | null = null;
+    if (!isGroup) {
+      commitVerdict = await judgeCommitment({
+        inbound: text,
+        draft,
+        contactName: this.contactNames.get(row.handle),
+        recentTranscript: (this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n"),
+        llmCall: async (p: string) => (await this.agent.respondTo(`${row.handle}::commitgate`, p, undefined, { withTools: false })) ?? "",
+      });
+      if (commitVerdict.hold) {
+        tier.tier = "LOW";
+        tier.reasons.push(`-commitment:${commitVerdict.reason}`);
+        this.logger.warn(
+          { handle: row.handle, reason: commitVerdict.reason, quote: commitVerdict.quote, source: commitVerdict.source, draftPreview: draft.slice(0, 80) },
+          "COMMITMENT GATE — reply HELD for owner, not sent",
+        );
+      }
+    }
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
     // DRAFT-AND-CONFIRM for Tier-C (LOW-confidence / sensitive) replies —
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution) && !isGroup) {
+    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
       const held = await this.draftToOwnerForApproval(
         row.handle,
         this.contactLabel(row.handle),
         text,
         draft,
+        commitVerdict?.hold
+          ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft, verdict: commitVerdict })
+          : undefined,
       );
       if (held) {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
