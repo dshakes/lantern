@@ -47,7 +47,7 @@ import {
   isBlockedGroupSend,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, extractContactRequests, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -5896,7 +5896,7 @@ export class WhatsAppSession {
     return { ok: true, via: "link" };
   }
 
-  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
+  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string; unique?: boolean } | null> {
     const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
     const result = await universalResolve(input, {
       ownerPhone: process.env.LANTERN_OWNER_PHONE,
@@ -5910,6 +5910,7 @@ export class WhatsAppSession {
       phone: result.resolved.phone,
       name: result.resolved.name,
       relationship: result.resolved.relationship,
+      unique: result.resolved.unique,
     };
   }
 
@@ -9351,11 +9352,27 @@ export class WhatsAppSession {
         let heldDraft = draft;
         let resolvedNote: string | undefined;
         if (commitVerdict?.hold) {
-          const asked = extractContactRequests(`${recentTranscript}\n${text}`);
-          const resolved: Array<{ name: string; phone: string }> = [];
+          const asked = [...new Set(extractContactRequests(`${recentTranscript}\n${text}`))];
+          const resolved: ResolvedShare[] = [];
+          // resolveCallTarget mutates lastResolveSuggestions (the owner's
+          // "did you mean" state); don't let this lookup clobber it.
+          const savedSuggestions = this.lastResolveSuggestions;
           for (const a of asked) {
             const r = await this.resolveCallTarget(a).catch(() => null);
-            if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone });
+            if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
+          }
+          this.lastResolveSuggestions = savedSuggestions;
+          // OWNER POLICY (2026-09-06): "if it's contact sharing and you're
+          // confident, send it." Confidence is the deterministic predicate in
+          // bridge-core — known requester, every name resolved to exactly one
+          // KNOWN person, no alternates, not a group. Then the numbers go out
+          // directly and the owner gets an FYI; otherwise the hold below.
+          if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+            const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
+            await this.sendMessage(from, numbers);
+            this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");
+            void this.confirmToSelf(`📇 shared ${resolved.map((r) => `${r.name}'s`).join(" + ")} number${resolved.length > 1 ? "s" : ""} with ${opts.senderName ?? this.contactNames.get(from) ?? from.split("@")[0]} — they asked, everyone's known to you, no ambiguity.`).catch(() => {});
+            return;
           }
           if (resolved.length > 0) {
             heldDraft = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
