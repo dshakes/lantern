@@ -9549,7 +9549,10 @@ export class WhatsAppSession {
             void this.confirmToSelf(`📇 shared ${resolved.map((r) => `${r.name}'s`).join(" + ")} number${resolved.length > 1 ? "s" : ""} with ${opts.senderName ?? this.contactNames.get(from) ?? from.split("@")[0]} — they asked, everyone's known to you, no ambiguity.`).catch(() => {});
             return;
           }
-          if (resolved.length > 0) {
+          // Stage numbers for a one-word "send" only when the resolver PROVED the
+          // match (exact name, one phone): a fuzzy hit must never be one tap away.
+          const staged = resolved.filter((r) => !r.ambiguous);
+          if (staged.length > 0 && staged.length === resolved.length) {
             heldDraft = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
             resolvedNote = `asked for ${resolved.map((r) => `${r.name}'s`).join(" and ")} number${resolved.length > 1 ? "s" : ""} — I found ${resolved.length > 1 ? "them" : "it"}`;
             this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — number request resolved into the held draft (owner 'send' delivers the real numbers)");

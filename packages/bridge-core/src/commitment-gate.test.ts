@@ -219,3 +219,10 @@ test("uniqueness is proven on the query: a substring of a name never auto-shares
   const exact = await resolveContact("madhu", { bridgeContactCache: cache, profileRelationships: rels });
   assert.equal(exact.resolved?.unique, true);
 });
+
+test("kinship words are never treated as names to resolve (live 2026-09-07: 'akka' → Manjakka)", () => {
+  assert.deepEqual(extractContactRequests("akka number pampu"), []);
+  assert.deepEqual(extractContactRequests("bava number send, mama contact kuda"), []);
+  assert.deepEqual(extractContactRequests("didi ka number do"), []);
+  assert.deepEqual(extractContactRequests("harika number send"), ["harika"], "a real name still extracts");
+});
