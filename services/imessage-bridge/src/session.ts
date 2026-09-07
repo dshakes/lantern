@@ -51,6 +51,7 @@ import {
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { fitVoiceModel, scoreVoice, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -634,6 +635,18 @@ export class IMessageSession {
   // a thin/new contact hears the owner's real voice from hundreds of
   // authentic samples. Seeded once at boot; bot-self lines filtered out.
   private ownerVoiceGlobal: string[] = [];
+  // Authorship floor (ADR 0024 W4), refit whenever the corpus size changes.
+  private voiceModel: VoiceModel | null = null;
+  private voiceModelN = -1;
+  private getVoiceModel(): VoiceModel | null {
+    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
+    if (this.ownerVoiceGlobal.length !== this.voiceModelN) {
+      this.voiceModelN = this.ownerVoiceGlobal.length;
+      this.voiceModel = fitVoiceModel(this.ownerVoiceGlobal);
+      this.logger.info({ samples: this.voiceModelN, fitted: !!this.voiceModel, floor: this.voiceModel?.floor }, "voice floor (re)fit from owner corpus");
+    }
+    return this.voiceModel;
+  }
   private contactNames: Map<string, string> = new Map(); // handle -> display name
 
   // ── Self-chat circuit breaker (self-echo loop guard) ──────────────────────
@@ -7957,10 +7970,16 @@ export class IMessageSession {
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
       recentReplies: isGroup ? [] : (this.recentBotReplies.get(row.handle) ?? []).slice(-3),
+      voiceModel: isOwnerChan || isGroup ? null : this.getVoiceModel(),
       // When the owner's real location was injected (inner circle), a location
       // claim in the draft is grounded — don't suppress it as a fabrication.
       truthfulLocationKnown,
     };
+    {
+      // W4 measurement: every contact draft's distance from the owner's voice.
+      const vv = scoreVoice(botTellCtx.voiceModel, draft);
+      if (vv) this.logger.info({ jid: row.handle, delta: +vv.delta.toFixed(3), floor: +vv.floor.toFixed(3), ok: vv.ok }, "voice score");
+    }
     let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
       // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;

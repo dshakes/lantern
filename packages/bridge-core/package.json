@@ -80,6 +80,7 @@
     "./proactive-loops": "./src/proactive-loops.ts",
     "./live-watch": "./src/live-watch.ts",
     "./commitment-gate": "./src/commitment-gate.ts",
+    "./voice-score": "./src/voice-score.ts",
     "./digest-compose": "./src/digest-compose.ts",
     "./doc-ingest": "./src/doc-ingest.ts",
     "./recall": "./src/recall.ts",

@@ -95,3 +95,13 @@ describe("contact sharing goes through the deterministic policy on both bridges"
     });
   }
 });
+
+describe("voice floor (ADR 0024 W4) is wired on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: contact drafts are scored against the owner corpus, never the owner channel or a group`, () => {
+      expect(src).toMatch(/voiceModel: isOwnerChan \|\| (opts\.)?isGroup \? null : this\.getVoiceModel\(\)/);
+      expect(src).toMatch(/"voice score"/);
+      expect(src).toMatch(/LANTERN_VOICE_FLOOR/);
+    });
+  }
+});

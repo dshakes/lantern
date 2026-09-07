@@ -48,6 +48,7 @@ import {
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { fitVoiceModel, scoreVoice, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -1562,6 +1563,18 @@ export class WhatsAppSession {
   // samples. Dated by each entry's `ts` so recency ranking works. Capped
   // at OWNER_VOICE_GLOBAL_CAP; bot-self lines filtered out.
   private ownerVoiceGlobal: OwnerVoiceSample[] = [];
+  // Authorship floor (ADR 0024 W4), refit whenever the corpus size changes.
+  private voiceModel: VoiceModel | null = null;
+  private voiceModelN = -1;
+  private getVoiceModel(): VoiceModel | null {
+    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
+    if (this.ownerVoiceGlobal.length !== this.voiceModelN) {
+      this.voiceModelN = this.ownerVoiceGlobal.length;
+      this.voiceModel = fitVoiceModel(this.ownerVoiceGlobal.map((s) => s.text));
+      this.logger.info({ samples: this.voiceModelN, fitted: !!this.voiceModel, floor: this.voiceModel?.floor }, "voice floor (re)fit from owner corpus");
+    }
+    return this.voiceModel;
+  }
   private static readonly OWNER_VOICE_GLOBAL_CAP = 600;
   // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
   // Fed to the persona prompt as an anti-repetition signal so the bot
@@ -9122,7 +9135,15 @@ export class WhatsAppSession {
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
       truthfulLocationKnown,
       recentReplies: opts.isGroup ? [] : (this.recentBotReplies.get(from) ?? []).slice(-3),
+      voiceModel: isOwnerChan || opts.isGroup ? null : this.getVoiceModel(),
     };
+    {
+      // W4 measurement: every contact draft's distance from the owner's voice,
+      // logged whether or not it trips the floor — the number the ADR said
+      // was missing for quality to be falsifiable.
+      const vv = scoreVoice(botTellCtx.voiceModel, draft);
+      if (vv) this.logger.info({ from, delta: +vv.delta.toFixed(3), floor: +vv.floor.toFixed(3), ok: vv.ok }, "voice score");
+    }
     let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
       // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;
