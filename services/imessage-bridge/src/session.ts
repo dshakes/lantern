@@ -3740,7 +3740,9 @@ export class IMessageSession {
   mute(): void { this.muted = true; this.mutedUntil = 0; this.rearmAutoUnmute(0); this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_off", summary: "Auto-reply paused", timestamp: Date.now() } }); }
   unmute(): void { this.pausedUntil.clear(); this.applyUnmute("Auto-reply on"); }
   pauseContact(handle: string): void {
-    this.pausedUntil.set(handle, Date.now() + PAUSE_DURATION_MS);
+    // Extend-only (twin of the WhatsApp bridge): a takeover pause must not
+    // shorten a longer pause the owner set on purpose.
+    this.pausedUntil.set(handle, Math.max(this.pausedUntil.get(handle) ?? 0, Date.now() + PAUSE_DURATION_MS));
     this.persist();
     this.broadcast({ type: "activity", data: { kind: "contact_paused", summary: `paused ${handle}`, jid: handle, timestamp: Date.now() } });
   }
@@ -6747,7 +6749,7 @@ export class IMessageSession {
       // back into a thread the owner said they'd handle (real field bug).
       if (row.handle && !isGroup) {
         const { ms: pauseMs, handoff } = ownerTakeoverPauseMs(text, PAUSE_DURATION_MS, HANDOFF_PAUSE_MS);
-        this.pausedUntil.set(row.handle, Date.now() + pauseMs);
+        this.pausedUntil.set(row.handle, Math.max(this.pausedUntil.get(row.handle) ?? 0, Date.now() + pauseMs));
         this.persist();
         const dur = pauseMs >= 60 * 60_000 ? `${Math.round(pauseMs / 60 / 60_000)}h` : `${Math.round(pauseMs / 60_000)}m`;
         this.broadcast({

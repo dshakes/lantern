@@ -4146,10 +4146,15 @@ export class WhatsAppSession {
     const prev = this.pausedUntil.get(jid);
     const resolvedName =
       pushName || prev?.pushName || this.contactNames.get(jid);
+    // A pause only ever EXTENDS. The owner-takeover pause (short default TTL)
+    // fires every time the owner types in a thread; it used to overwrite a
+    // year-long pause the owner had set on purpose, and the bot re-engaged a
+    // paused relative 20 minutes after the owner answered him. Lifting a
+    // pause is a separate, explicit act (unpauseContact).
     this.pausedUntil.set(jid, {
-      until: Date.now() + ttlMs,
+      until: Math.max(prev?.until ?? 0, Date.now() + ttlMs),
       pushName: resolvedName,
-      warned: false,
+      warned: prev && prev.until > Date.now() + ttlMs ? prev.warned : false,
     });
     this.saveState();
   }
