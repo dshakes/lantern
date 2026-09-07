@@ -2633,3 +2633,17 @@ export function mutedNoticeBucket(count: number): string {
 export function isBlockedGroupSend(jid: string, env: NodeJS.ProcessEnv = process.env): boolean {
   return /@g\.us$/i.test((jid || "").trim()) && !groupRepliesEnabled(env);
 }
+
+/** Corrective hint for the LAST regeneration before the static greeting
+ *  table (ADR 0024 W2.1): both rejection reasons, a hard shape constraint,
+ *  and a few of the owner's real messages as the target — so the model's
+ *  third try is grounded, not just scolded. Pure. */
+export function strictRegenHint(args: { ownerName: string; reasons: string[]; exemplars: string[] }): string {
+  const ex = args.exemplars.slice(0, 3).map((e) => `> ${e}`).join("\n");
+  return [
+    `(Two drafts were REJECTED — ${args.reasons.filter(Boolean).join("; then ")}.`,
+    `Reply in ONE short line exactly the way ${args.ownerName} texts: no offer, no question back, no exclamation marks, no capability talk, no narration.`,
+    ex ? `${args.ownerName} really writes like this:\n${ex}` : "",
+    `If nothing a real person would send fits, output [[NO_REPLY]].)`,
+  ].filter(Boolean).join("\n");
+}
