@@ -9121,6 +9121,7 @@ export class WhatsAppSession {
       relationship,
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
       truthfulLocationKnown,
+      recentReplies: opts.isGroup ? [] : (this.recentBotReplies.get(from) ?? []).slice(-3),
     };
     let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {

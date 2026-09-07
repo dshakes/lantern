@@ -1826,6 +1826,39 @@ export interface BotTellContext {
    * "on my way", "5 min away") is a FABRICATION and is suppressed.
    */
   truthfulLocationKnown?: boolean;
+  /** The last few replies the bot sent THIS contact (ADR 0024 W3.1). A draft
+   *  whose skeleton near-duplicates one of them is suppressed as
+   *  `repeat-skeleton` — the single most-cited bot-tell in the audit was the
+   *  same shaped reply, three times in a row, to one person. */
+  recentReplies?: string[];
+}
+
+/** Content skeleton of a reply: lowercase word tokens with emoji, punctuation
+ *  and digits stripped — what a reader perceives as "the same message again". */
+export function replySkeleton(s: string): string[] {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/gu, " ")
+    .replace(/[^\p{L}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/** The prior reply this draft repeats, or null. Jaccard on the token sets
+ *  ≥ 0.75 with at least 3 tokens; 1–2-token acks ("ok 👍", "sare") are
+ *  exempt — repeating those IS how the owner texts. */
+export function findRepeatSkeleton(draft: string, recent: string[] | undefined): string | null {
+  const a = new Set(replySkeleton(draft));
+  if (a.size < 3) return null;
+  for (const prev of recent ?? []) {
+    const b = new Set(replySkeleton(prev));
+    if (b.size < 3) continue;
+    let inter = 0;
+    for (const t of a) if (b.has(t)) inter++;
+    const union = a.size + b.size - inter;
+    if (union > 0 && inter / union >= 0.75) return prev;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1984,6 +2017,14 @@ export function detectBotTells(
 ): BotTellVerdict {
   const text = (draft || "").trim();
   if (!text) return { ok: false, reason: "empty draft (stay silent)" };
+
+  // REPEAT-SKELETON (W3.1): the same shaped reply to the same person again.
+  // The reason quotes the prior reply so the regeneration has it as a
+  // negative example, not just a label.
+  const repeated = findRepeatSkeleton(text, ctx?.recentReplies);
+  if (repeated) {
+    return { ok: false, reason: `repeat-skeleton: near-duplicate of what you already sent them ("${repeated.slice(0, 80)}") — say it differently, add something new, or say less` };
+  }
 
   // STRUCTURED-OUTPUT net — the single most embarrassing failure: the model
   // emitted raw JSON / a tool-call / an internal extraction object and it got

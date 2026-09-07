@@ -142,8 +142,8 @@ function containsRenewable(text: string): boolean {
   return /\b(passport|license|visa|insurance|policy|membership|card|certificate|registration|permit|subscription|renewal|expir|valid until|valid through|due)\b/i.test(text);
 }
 
-// Append a natural agentic follow-up offer when the LLM forgot one.
-// Idempotent: if the text already ends with a question, no change.
+// Append a follow-up offer when the LLM omitted one. NOT called on the send
+// path any more (W3.2) — kept only for detectOfferInReply's mirrored shapes.
 export function ensureFollowUp(text: string, primaryDate?: DetectedDate): string {
   const trimmed = text.trim();
   if (!trimmed) return text;
@@ -167,11 +167,13 @@ export function ensureFollowUp(text: string, primaryDate?: DetectedDate): string
   return text;
 }
 
-// Single entry point for bridges: friendly dates + guaranteed
-// follow-up when applicable. Returns the rewritten reply.
+// Single entry point for bridges: friendly dates. The follow-up offer is the
+// MODEL's call now (ADR 0024 W3.2): the persona asks for one when it adds
+// value, and detectOfferInReply still arms whatever it offers. The
+// unconditional "want me to save this as a note?" append was the audit's
+// most-cited bot-tell — a human doesn't close every message with an offer.
 export function humanizeReply(text: string): string {
-  const { text: dated, primaryDate } = humanizeDates(text);
-  return ensureFollowUp(dated, primaryDate);
+  return humanizeDates(text).text;
 }
 
 // Pending offer that the bridge can execute deterministically when
@@ -385,10 +387,9 @@ export function looksLikeUndo(text: string): boolean {
 // Combined entry point: returns the polished reply AND the offer
 // (if any) so the caller can cache it for next-turn confirmation.
 export function humanizeWithOffer(text: string, rawSource?: string): { reply: string; offer: PendingOffer | null } {
-  const { text: dated, primaryDate } = humanizeDates(text);
-  const reply = ensureFollowUp(dated, primaryDate);
-  // Detect the offer from the FINAL reply (post-follow-up append). `rawSource`,
-  // when the bridge has the underlying doc text, is the id ground truth.
+  const { text: reply, primaryDate } = humanizeDates(text);
+  // Detect the offer the MODEL made (no append). `rawSource`, when the bridge
+  // has the underlying doc text, is the id ground truth.
   const offer = detectOfferInReply(reply, primaryDate, rawSource);
   return { reply, offer };
 }
