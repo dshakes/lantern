@@ -1526,6 +1526,21 @@ export class IMessageSession {
   // The owner's self-chat send target (env handle in dedicated-bot mode,
   // last-seen self-chat handle otherwise). "" when we have neither —
   // callers must no-op so we never DM a non-owner.
+  private mutedBoundaryBlocks = 0;
+
+  /** True when this send target is the OWNER's own chat — the only
+   *  destination reachable while muted. Compares normalized handles against
+   *  the configured owner handle and the resolved self-chat target. */
+  private isOwnerTarget(to: string): boolean {
+    const norm = (s: string) => (s || "").toLowerCase().replace(/[^a-z0-9@.]/g, "");
+    const t = norm(to);
+    if (!t) return false;
+    const env = norm(process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "");
+    if (env && t === env) return true;
+    const self = norm(this.ownerSelfChatTarget());
+    return !!self && t === self;
+  }
+
   private ownerSelfChatTarget(): string {
     return (this.ownHandleGuess() || this.lastSelfHandle || "").trim();
   }
@@ -5795,6 +5810,17 @@ export class IMessageSession {
       this.logger.warn({ to }, "abstain sentinel reached send() — dropped (bug upstream: caller should have returned)");
       return { ok: true };
     }
+    // MUTE SEND BOUNDARY (twin of the WhatsApp bridge). Routing muted replies
+    // to the owner's draft queue is the intent, but a branch condition is not
+    // an invariant: the draft block is !isGroup-gated, and the contact-share
+    // shortcut and greeting fallback each send on their own. While muted,
+    // NOTHING reaches a contact or a group — only the owner. Reviewers on #250
+    // found the group fall-through; this is the one place the guarantee holds.
+    if (this.muted && !this.isOwnerTarget(to)) {
+      this.mutedBoundaryBlocks++;
+      this.logger.warn({ to, textPreview: text.slice(0, 80) }, "MUTED — send BLOCKED at boundary (only the owner is reachable while muted)");
+      return { ok: false, reason: "muted" };
+    }
     // FINAL PASS — verifiable-claims rewriter. Catches "I sent him an
     // email" / "I added it to your calendar" / "I told him" when no
     // such action was performed and rewrites to honest intent. Skip
@@ -8344,7 +8370,7 @@ export class IMessageSession {
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && (mutedHold || IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
+    if (tier.tier === "LOW" && (mutedHold || IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && (!isGroup || mutedHold)) {
       // DO IT, DON'T PROMISE (twin of the WhatsApp bridge). A number request
       // resolves into the held draft; and under the owner's policy — "if it's
       // contact sharing and you're confident, send it" — the deterministic
@@ -8362,7 +8388,7 @@ export class IMessageSession {
           if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
         }
         this.lastResolveSuggestions = savedSuggestions;
-        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
+        if (!mutedHold && isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
           const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
           await this.send(row.handle, numbers);
           this.logger.info({ handle: row.handle, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");

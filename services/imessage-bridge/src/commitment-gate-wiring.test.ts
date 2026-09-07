@@ -212,5 +212,22 @@ describe("mute drafts for the owner instead of dropping (owner, 2026-09-07)", ()
     it(`${name}: the kill switch, not mute, is the do-nothing switch`, () => {
       expect(src).toMatch(/killSwitch/);
     });
+    // Reviewers on #250: routing muted replies to the draft queue is intent,
+    // not an invariant — the draft block is !isGroup-gated and several paths
+    // send on their own. The guarantee has to live at the send boundary.
+    it(`${name}: while muted, the SEND BOUNDARY lets nothing reach anyone but the owner`, () => {
+      expect(src).toMatch(/MUTED — send BLOCKED at boundary/);
+      expect(src).toMatch(/this\.muted && !this\.(isOwnerChat|isOwnerTarget)\(to\)/);
+      // it sits in the shared send function, alongside the other boundary guards
+      const boundary = src.indexOf("MUTED — send BLOCKED at boundary");
+      const sentinel = src.indexOf("abstain sentinel reached");
+      expect(boundary).toBeGreaterThan(sentinel);
+    });
+    it(`${name}: a muted GROUP reply is drafted for the owner, never sent`, () => {
+      expect(src).toMatch(/(\(!isGroup \|\| mutedHold\)|\(!opts\.isGroup \|\| opts\.mutedHold\))/);
+    });
+    it(`${name}: the confident contact-share shortcut cannot fire while muted`, () => {
+      expect(src).toMatch(/!(opts\.)?mutedHold && isConfidentContactShare\(/);
+    });
   }
 });

@@ -1148,8 +1148,12 @@ lines still read and age out — no migration). **Full reference + owner self-ch
   contact reply to the owner as a DRAFT (tier forced LOW, `-muted-draft-for-owner`),
   so the approval queue fills instead of the channel going silent. It fails
   closed — if the owner hand-off fails, the reply is suppressed, never sent
-  (`resolveHeldReply`). The **killswitch** remains the "do nothing at all"
-  switch. Before this, mute returned before the draft path, so 18 contacts were
+  (`resolveHeldReply`). The guarantee is enforced at the **send boundary**, not
+  by the draft branch: while muted, `send()`/`sendMessage()` block every
+  destination that is not the owner, so the group path, the contact-share
+  shortcut, the greeting fallback and live-watch follow-ups are all covered.
+  Muted GROUP replies are drafted for the owner too. The **killswitch** remains
+  the "do nothing at all" switch. Before this, mute returned before the draft path, so 18 contacts were
   dropped in one morning while the owner waited on an approval queue that could
   not populate by construction.
 - **Killswitch.** Owner can engage a master switch via `kill switch on`
