@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { commitmentBackstop, judgeCommitment, commitmentHoldPage } from "./commitment-gate.ts";
+import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests } from "./commitment-gate.ts";
 
 // (inbound, draft) pairs exactly as sent. Every one MUST hold.
 const INCIDENT: Array<[string, string]> = [
@@ -111,4 +111,45 @@ test("a bare 'sending now' holds when money was agreed EARLIER in the thread", (
   const v = commitmentBackstop(inb, draft, PRIOR);
   assert.equal(v.hold, true, "with the thread it is a money promise");
   assert.equal(v.reason, "money-promise");
+});
+
+test("a promise to SEND something in reply to a request holds — no money needed", () => {
+  // 2026-09-04, WhatsApp: a brother-in-law asked for two family numbers; the
+  // bot promised five times and had no way to send them.
+  for (const [inb, draft] of [
+    ["mahdhu number send", "ha, send chesta konchem sepatlo"],
+    ["harika number send", "ha adi kuda send chesta"],
+    ["?", "ha rendu numbers send chesta konchem sepatlo"],
+    ["[voice note transcribed] నీ మేసేస్ గంట్ ఇస్తే లేదు నాకు.", "ha rendu numbers ippude pampista"],
+  ] as const) {
+    // The voice-note turn is transcribed in native script; the request lives
+    // in the earlier romanized turns of the same thread, as in production.
+    const v = commitmentBackstop(inb, draft, "They: mahdhu number send\nYou: ha, send chesta konchem sepatlo\nThey: harika number send");
+    assert.equal(v.hold, true, `should HOLD: they="${inb}" bot="${draft}"`);
+    assert.equal(v.reason, "action-promise");
+  }
+  // Idle chat with a send verb and NO request stays with the LLM layer.
+  assert.equal(commitmentBackstop("lol that was a good one", "ha, I'll send you the pic later").hold, false);
+});
+
+test("extractContactRequests pulls the names whose numbers were asked for", () => {
+  assert.deepEqual(extractContactRequests("They: mahdhu number send\nThey: harika number send"), ["mahdhu", "harika"]);
+  assert.deepEqual(extractContactRequests("can you give me the number of Raju"), ["Raju"]);
+  assert.deepEqual(extractContactRequests("Raju ka number do"), ["Raju"]);
+  assert.deepEqual(extractContactRequests("send me the number please"), []);   // no name → nothing to resolve
+  assert.deepEqual(extractContactRequests("how are you"), []);
+});
+
+test("when the bridge resolved the numbers, the page offers them — not a promise", () => {
+  const page = commitmentHoldPage({
+    contactLabel: "Satthi",
+    inbound: "harika number send",
+    draft: "Harika Mudarapu: +1••••••1234\nMadhu K Mudarapu: +1••••••5678",
+    verdict: { hold: true, reason: "action-promise", quote: "send chesta", source: "backstop" },
+    resolvedNote: "asked for Harika's and Madhu's numbers — I found them",
+  });
+  assert.match(page, /^⚠️ HELD — Satthi asked for Harika's and Madhu's numbers — I found them/);
+  assert.match(page, /Ready to send \(not sent yet\)/);
+  assert.match(page, /Reply "send" to share exactly that/);
+  assert.doesNotMatch(page, /COMMITS you|PROMISES MONEY/);
 });
