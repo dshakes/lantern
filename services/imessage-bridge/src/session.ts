@@ -8353,7 +8353,10 @@ export class IMessageSession {
           if (owner) void this.send(owner, `📇 shared ${resolved.map((r) => `${r.name}'s`).join(" + ")} number${resolved.length > 1 ? "s" : ""} with ${this.contactLabel(row.handle)} — they asked, everyone's known to you, no ambiguity.`).catch(() => {});
           return;
         }
-        if (resolved.length > 0) {
+        // Stage numbers for a one-word "send" only when the resolver PROVED the
+        // match (exact name, one phone): a fuzzy hit must never be one tap away.
+        const staged = resolved.filter((r) => !r.ambiguous);
+        if (staged.length > 0 && staged.length === resolved.length) {
           heldDraft = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
           resolvedNote = `asked for ${resolved.map((r) => `${r.name}'s`).join(" and ")} number${resolved.length > 1 ? "s" : ""} — I found ${resolved.length > 1 ? "them" : "it"}`;
         }

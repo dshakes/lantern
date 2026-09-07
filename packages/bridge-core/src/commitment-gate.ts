@@ -219,12 +219,18 @@ export function commitmentHoldPage(opts: {
  * numbers, and the owner's one-tap "send" delivers them — do it, or don't
  * promise. Spelling is the contact's ("mahdhu"); the resolver is fuzzy.
  */
+// Kinship / role words are NOT names. "akka number pampu" asks for "my elder
+// sister's number" — whose, the bridge cannot know — and the resolver's
+// substring match turned "akka" into "Manjakka" and staged a real person's
+// number in the owner's hold page (2026-09-07, live). Telugu, Hindi, English.
+const KINSHIP_WORDS = /^(?:akka|anna|amma|nanna|bava|bavagaru|vadina|mama|mamayya|mavayya|atta|attha|chelli|tammudu|thammudu|pinni|babai|peddamma|peddananna|tata|thatha|ammamma|nanamma|alludu|kodalu|bhai|bhaiya|didi|bhabhi|jiju|chacha|chachi|mausi|maami|dada|dadi|nana|nani|beta|beti|mom|mum|dad|papa|mummy|daddy|sister|brother|uncle|aunty|aunt|cousin|wife|husband|son|daughter|boss|manager|doctor|driver|maid|cook)$/i;
+
 export function extractContactRequests(contactSide: string): string[] {
   const t = (contactSide || "").replace(/\s+/g, " ");
   const out: string[] = [];
   const push = (n?: string) => {
     const v = (n || "").replace(/[^a-z\u0c00-\u0c7f' -]/gi, "").trim();
-    if (v.length >= 3 && !/^(?:the|his|her|their|my|your|that|this|send|please|number|contact|phone)$/i.test(v) && !out.some((o) => o.toLowerCase() === v.toLowerCase())) out.push(v);
+    if (v.length >= 3 && !/^(?:the|his|her|their|my|your|that|this|send|please|number|contact|phone)$/i.test(v) && !KINSHIP_WORDS.test(v) && !out.some((o) => o.toLowerCase() === v.toLowerCase())) out.push(v);
   };
   // "<name> number", "<name> ka number", "<name> contact"
   for (const m of t.matchAll(/\b([A-Za-z][A-Za-z']{2,})\s+(?:ka\s+|gari\s+|yokka\s+)?(?:number|nambar|contact|phone\s*no)\b/gi)) push(m[1]);
