@@ -3434,24 +3434,27 @@ export class WhatsAppSession {
             isGroup,
             targetsOwner: this.isOwnerTargeted(msg),
           });
+          // MUTE = "don't SEND", not "don't THINK" (owner, 2026-09-07; twin of
+          // the iMessage bridge). A muted channel drafts for the owner instead
+          // of dropping in silence; the KILL SWITCH remains "do nothing at all".
+          const mutedHold = this.muted;
           if (this.muted) {
-            if (wouldAutoReply) {
-              this.mutedDropCount++;
-              this.logger.warn(
-                { from, mutedDropsSinceStart: this.mutedDropCount },
-                "contact reply suppressed — auto-reply is MUTED (owner must unmute)",
-              );
-              const bucket = mutedNoticeBucket(this.mutedDropCount);
-              if (!this.firedMutedBuckets.has(bucket)) {
-                this.firedMutedBuckets.add(bucket);
-                void this.confirmToSelf(
-                  `⚠️ ${senderName || from.split("@")[0]} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or say "bot on".`,
-                ).catch(() => {});
-              }
-            } else {
+            if (!wouldAutoReply) {
               this.logger.info({ from }, "agent skipped — globally muted (not addressed to owner)");
+              continue;
             }
-            continue;
+            this.mutedDropCount++;
+            this.logger.warn(
+              { from, mutedHoldsSinceStart: this.mutedDropCount },
+              "MUTED — reply will be drafted for the owner, not sent",
+            );
+            const bucket = mutedNoticeBucket(this.mutedDropCount);
+            if (!this.firedMutedBuckets.has(bucket)) {
+              this.firedMutedBuckets.add(bucket);
+              void this.confirmToSelf(
+                `⚠️ ${senderName || from.split("@")[0]} messaged while auto-reply is muted — ${this.mutedDropCount} reply(ies) drafted for you instead of sent. Approve with "send", or say "bot on" to resume.`,
+              ).catch(() => {});
+            }
           }
           if (this.isPaused(from)) {
             this.logger.info({ from }, "agent skipped — contact paused");
@@ -3484,6 +3487,7 @@ export class WhatsAppSession {
           this.handleAgentReply(from, text, {
             isGroup,
             senderName,
+            mutedHold,
             msgKey: msg.key,
             // Full proto message → so we can quote-reply in groups
             // (real-human behavior in noisy threads).
@@ -3533,6 +3537,18 @@ export class WhatsAppSession {
     // media annotation and posted in a group one second before the gate's own
     // "group msg ignored" line for the same message. Every send funnels
     // through here, so this is the one place a group block is complete.
+    // MUTE SEND BOUNDARY. Routing every muted reply to the owner's draft queue
+    // is the intent, but a branch condition is not an invariant: the draft
+    // block is !isGroup-gated, and the contact-share shortcut, greeting
+    // fallback and live-watch follow-ups each send on their own. While muted,
+    // NOTHING reaches a contact or a group — only the owner. Every send
+    // funnels through here, so this is the one place the guarantee is
+    // complete (reviewers on #250 found the group fall-through).
+    if (this.muted && !this.isOwnerChat(to)) {
+      this.mutedBoundaryBlocks++;
+      this.logger.warn({ to, textPreview: text.slice(0, 80) }, "MUTED — send BLOCKED at boundary (only the owner is reachable while muted)");
+      return undefined;
+    }
     if (isBlockedGroupSend(to)) {
       this.blockedGroupSends++;
       this.logger.warn({ to, textPreview: text.slice(0, 80) }, "group send BLOCKED at boundary — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
@@ -5345,6 +5361,7 @@ export class WhatsAppSession {
   // + fired-bucket ladder instead: ~6 escalating notices per mute episode.
   private mutedDropCount = 0;
   private blockedGroupSends = 0;
+  private mutedBoundaryBlocks = 0;
 
   // LIVENESS (ADR 0024 W5, twin of the iMessage bridge): a periodic line that
   // makes "nobody is getting replies" visible in the logs instead of looking
@@ -5359,7 +5376,7 @@ export class WhatsAppSession {
       const now = Date.now();
       const pausedNow = [...this.pausedUntil.values()].filter((p) => p.until > now).length;
       if (pausedNow > 0 || this.blockedGroupSends > 0) {
-        this.logger.info({ pausedContacts: pausedNow, blockedGroupSendsSinceStart: this.blockedGroupSends }, "LIVENESS: reply suppression active (paused contacts / blocked group sends)");
+        this.logger.info({ pausedContacts: pausedNow, blockedGroupSendsSinceStart: this.blockedGroupSends, mutedBoundaryBlocks: this.mutedBoundaryBlocks }, "LIVENESS: reply suppression active (paused contacts / blocked group sends)");
       }
     } catch {
       /* observability must never break the tick */
@@ -8468,6 +8485,8 @@ export class WhatsAppSession {
     opts: {
       isGroup?: boolean;
       senderName?: string;
+      /** The channel is MUTED: draft this reply for the owner, never send it. */
+      mutedHold?: boolean;
       msgKey?: {
         id?: string | null;
         remoteJid?: string | null;
@@ -9483,6 +9502,11 @@ export class WhatsAppSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // Muted: every reply is drafted for the owner regardless of tier.
+    if (opts.mutedHold && tier.tier !== "LOW") {
+      tier.tier = "LOW";
+      tier.reasons.push("-muted-draft-for-owner");
+    }
     if (tier.tier !== "HIGH" && !opts.isGroup && !isOwnerChan) {
       draft = await this.refineToOwnerVoice(from, draft, text, botTellCtx);
     }
@@ -9513,7 +9537,7 @@ export class WhatsAppSession {
       }
     }
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
-    if (tier.tier === "LOW" && !opts.isGroup) {
+    if (tier.tier === "LOW" && (!opts.isGroup || opts.mutedHold)) {
       // DRAFT-AND-CONFIRM (high-stakes default, parity with iMessage). A
       // LOW-confidence-tier reply to a contact is the riskiest auto-send: the
       // model is least sure it sounds like the owner. By default we DRAFT it
@@ -9523,7 +9547,7 @@ export class WhatsAppSession {
       // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
-      if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
+      if (opts.mutedHold || WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
         // DO IT, DON'T PROMISE. If the contact asked for someone's NUMBER and
         // the bridge can resolve it, the held draft carries the REAL numbers,
         // so the owner's one-tap "send" delivers them. 2026-09-04: "send
@@ -9547,7 +9571,7 @@ export class WhatsAppSession {
           // bridge-core — known requester, every name resolved to exactly one
           // KNOWN person, no alternates, not a group. Then the numbers go out
           // directly and the owner gets an FYI; otherwise the hold below.
-          if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
+          if (!opts.mutedHold && isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
             const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
             await this.sendMessage(from, numbers);
             this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");
