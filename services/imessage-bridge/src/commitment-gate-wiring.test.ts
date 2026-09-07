@@ -130,3 +130,17 @@ describe("W1.3 + W5 parity", () => {
     });
   }
 });
+
+describe("W2.1: a strict, exemplar-grounded third attempt precedes the static greeting table", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: third attempt is guarded and continues into the normal gates`, () => {
+      expect(src).toMatch(/strictRegenHint\(\{ ownerName, reasons: \[tellCheck\.reason/);
+      expect(src).toMatch(/thirdCheck = third \? detectBotTells\(third, text, botTellCtx\)/);
+      expect(src).toMatch(/else if \(third && thirdCheck\.ok\) \{/);
+      const accept = src.indexOf("strict third regeneration accepted");
+      const greeting = src.indexOf("sendGreetingFallback(", accept);
+      expect(accept).toBeGreaterThan(0);
+      expect(greeting).toBeGreaterThan(accept);
+    });
+  }
+});

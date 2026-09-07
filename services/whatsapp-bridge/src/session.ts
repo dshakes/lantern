@@ -50,6 +50,7 @@ import {
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
+import { strictRegenHint } from "@lantern/bridge-core/natural";
 import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -9244,13 +9245,36 @@ export class WhatsAppSession {
         return;
       }
       const retryCheck = retry ? detectBotTells(retry, text, botTellCtx) : { ok: false, reason: "empty regeneration" };
+      // W2.1 (ADR 0024): before the static greeting table, ONE strict,
+      // exemplar-grounded third attempt with both rejection reasons. It goes
+      // through the same guard and, if accepted, continues into every later
+      // gate like any other draft — never a bypass.
+      let third: string | null = null;
+      let thirdCheck: { ok: boolean; reason?: string } = { ok: false, reason: "not attempted" };
+      if (!(retry && retryCheck.ok) && !opts.isGroup) {
+        try {
+          const exemplars = ownerVoiceExemplars(this.ownerVoiceGlobal, { max: 3, relevantTo: text });
+          third = await this.agent.respondTo(from, userText, systemHint + "\n\n" + strictRegenHint({ ownerName, reasons: [tellCheck.reason ?? "", retryCheck.reason ?? ""], exemplars }), { turnHint: replyTier, timeoutMs: 20_000 });
+        } catch (err) {
+          this.logger.warn({ err, from }, "strict third regeneration threw");
+        }
+        if (third && isNoReplySentinel(third)) {
+          this.logger.info({ from }, "strict third regeneration abstained ([[NO_REPLY]]) — staying silent");
+          return;
+        }
+        thirdCheck = third ? detectBotTells(third, text, botTellCtx) : { ok: false, reason: "empty third regeneration" };
+      }
       if (retry && retryCheck.ok) {
         draft = retry;
         tellCheck = retryCheck;
+      } else if (third && thirdCheck.ok) {
+        this.logger.info({ from, draftPreview: third.slice(0, 120) }, "strict third regeneration accepted — continuing into the normal gates");
+        draft = third;
+        tellCheck = thirdCheck;
       } else {
-        // SECOND draft also failed — fall back to silence/greeting and keep
-        // the owner heads-up so a suppressed-twice reply isn't invisible.
-        this.logger.warn({ from, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "NO reply — draft suppressed by bot-tell filter twice; falling back to greeting/owner heads-up");
+        // THIRD draft also failed — fall back to silence/greeting and keep
+        // the owner heads-up so a suppressed reply isn't invisible.
+        this.logger.warn({ from, reason: thirdCheck.reason ?? retryCheck.reason, draftPreview: (third ?? retry ?? draft).slice(0, 120) }, "NO reply — draft suppressed by bot-tell filter three times; falling back to greeting/owner heads-up");
         this.broadcast({
           type: "activity",
           data: {
