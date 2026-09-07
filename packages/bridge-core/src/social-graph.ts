@@ -215,3 +215,31 @@ export function formatRelatedBlock(related: TaggedMessage[]): string {
   }
   return lines.join("\n");
 }
+
+/** Map control-plane semantic-search hits onto the TaggedMessage shape the
+ *  related-context block renders, and merge with local topic-graph hits
+ *  (semantic first, de-duplicated by text). Pure. */
+export function mergeRelated(
+  semantic: ReadonlyArray<{ personName: string; channel: string; direction: string; content: string; occurredAt: string }>,
+  local: ReadonlyArray<TaggedMessage>,
+  limit = 5,
+): TaggedMessage[] {
+  const out: TaggedMessage[] = [];
+  const seen = new Set<string>();
+  const key = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 80);
+  for (const h of semantic) {
+    const text = (h.content || "").trim();
+    if (!text || seen.has(key(text))) continue;
+    seen.add(key(text));
+    const ts = Date.parse(h.occurredAt);
+    out.push({ jid: `${h.channel}:${h.personName || "someone"}`, contactName: h.personName || "someone", fromMe: h.direction === "out", ts: Number.isFinite(ts) ? ts : Date.now(), text, topics: [] });
+    if (out.length >= limit) return out;
+  }
+  for (const m of local) {
+    if (seen.has(key(m.text))) continue;
+    seen.add(key(m.text));
+    out.push(m);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
