@@ -143,11 +143,21 @@ export function contactActionsBlock(
   actions: ReadonlyArray<WorkingAction>,
   contactName: string | undefined,
   nowMs = Date.now(),
+  opts: { sharedFirstName?: boolean } = {},
 ): string {
-  const first = (contactName ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+  const full = (contactName ?? "").trim();
+  const first = full.split(/\s+/)[0]?.toLowerCase();
   if (!first || first.length < 2) return "";
-  const re = new RegExp(`(^|[^\\p{L}])${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}])`, "iu");
-  const mine = actions.filter((a) => a.ts >= nowMs - WINDOW_MS && a.kind !== "presence" && re.test(a.summary)).slice(-6);
+  // When another known contact shares this first name, only the FULL display
+  // name identifies them — "Ravi" alone could be the other Ravi's action.
+  const needle = opts.sharedFirstName ? full.toLowerCase() : first;
+  if (opts.sharedFirstName && needle === first) return "";
+  const re = new RegExp(`(^|[^\\p{L}])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?![\\p{L}])`, "iu");
+  // Newest first regardless of the log's order, then the 6 most recent.
+  const mine = actions
+    .filter((a) => a.ts >= nowMs - WINDOW_MS && a.kind !== "presence" && re.test(a.summary))
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 6);
   if (!mine.length) return "";
   const ago = (ts: number): string => {
     const m = Math.max(0, Math.round((nowMs - ts) / 60000));

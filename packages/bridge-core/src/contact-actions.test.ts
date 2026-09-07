@@ -26,3 +26,20 @@ test("no name, a too-short name, or nothing about them → empty", () => {
   assert.equal(contactActionsBlock(LOG, "Sowmyadhar", now), "");
   assert.equal(contactActionsBlock(LOG, "adh", now), "", "substring of a name is not the name");
 });
+
+test("newest actions win regardless of log order, and a shared first name requires the full name (review on #243)", () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({ ts: now - (9 - i) * 60_000, kind: "note_saved" as const, summary: `saved note ${i} for Madhu` }));
+  const b = contactActionsBlock(many, "Madhu", now);
+  assert.match(b, /note 8 for Madhu/, "the newest is kept");
+  assert.doesNotMatch(b, /note 0 for Madhu/, "the oldest is dropped");
+  const oldestFirst = [...many].reverse();
+  assert.match(contactActionsBlock(oldestFirst, "Madhu", now), /note 8 for Madhu/, "order-independent");
+  const two = [
+    { ts: now - 60_000, kind: "calendar_added" as const, summary: "added lunch with Ravi Reddy" },
+    { ts: now - 30_000, kind: "note_saved" as const, summary: "saved Ravi Kumar's address" },
+  ];
+  const kumar = contactActionsBlock(two, "Ravi Kumar", now, { sharedFirstName: true });
+  assert.match(kumar, /Ravi Kumar's address/);
+  assert.doesNotMatch(kumar, /Ravi Reddy/, "the other Ravi's action never leaks");
+  assert.equal(contactActionsBlock(two, "Ravi", now, { sharedFirstName: true }), "", "no full name to disambiguate → nothing");
+});

@@ -1568,6 +1568,15 @@ export class WhatsAppSession {
   // Authorship floor (ADR 0024 W4), refit whenever the corpus size changes.
   private voiceModel: VoiceModel | null = null;
   private voiceModelN = -1;
+  /** True when another cached contact has the same first name — then only a
+   *  full-name match may attribute an action to this person. */
+  private firstNameIsShared(name?: string): boolean {
+    const first = (name ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+    if (!first) return false;
+    let n = 0;
+    for (const v of this.contactNames.values()) if ((v ?? "").trim().split(/\s+/)[0]?.toLowerCase() === first && ++n > 1) return true;
+    return false;
+  }
   private getVoiceModel(): VoiceModel | null {
     if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
     if (this.ownerVoiceGlobal.length !== this.voiceModelN) {
@@ -8917,7 +8926,7 @@ export class WhatsAppSession {
         // + the assistant's own recent actions ABOUT this contact (W1.3).
         selfContextBlock: [
           this.watchStore ? contactWatchBlock(this.watchStore.all(), from) : "",
-          opts.isGroup ? "" : contactActionsBlock(recentActions(), opts.senderName ?? this.contactNames.get(from)),
+          opts.isGroup ? "" : contactActionsBlock(recentActions(), opts.senderName ?? this.contactNames.get(from), Date.now(), { sharedFirstName: this.firstNameIsShared(opts.senderName ?? this.contactNames.get(from)) }),
         ].filter(Boolean).join("\n\n"),
         disclosed: this.disclosedJids.has(from),
         stylePrompt,
