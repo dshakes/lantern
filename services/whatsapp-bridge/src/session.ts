@@ -48,7 +48,9 @@ import {
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
-import { fitVoiceModel, scoreVoice, type VoiceModel } from "@lantern/bridge-core/voice-score";
+import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
+import type { BotTellContext } from "@lantern/bridge-core/natural";
+import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -120,7 +122,7 @@ import {
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
-import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
+import { verifyClaims, performedClaimActions } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
@@ -1575,6 +1577,33 @@ export class WhatsAppSession {
     }
     return this.voiceModel;
   }
+
+  // PERFINE critique-refine (ADR 0024 W3.4): for a MEDIUM/LOW draft, one
+  // purpose-keyed call edits it against the 5 most similar messages the owner
+  // really sent. Accepted only when measurably not further from the owner's
+  // voice AND clean on the bot-tell guard; otherwise the draft stands.
+  private async refineToOwnerVoice(jid: string, draft: string, inbound: string, botTellCtx: BotTellContext): Promise<string> {
+    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_REFINE ?? "")) return draft;
+    try {
+      const exemplars = ownerVoiceExemplars(this.ownerVoiceGlobal, { max: 5, relevantTo: draft });
+      if (exemplars.length < 3) return draft;
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const raw = await this.agent.respondTo(`${jid}::refine`, buildRefinePrompt({ ownerName, draft, inbound, exemplars }), undefined, { withTools: false });
+      const refined = parseRefine(raw, draft);
+      if (!refined || refined === draft) return draft;
+      const model = botTellCtx.voiceModel ?? null;
+      const before = model ? voiceDelta(model, draft) : null;
+      const after = model ? voiceDelta(model, refined) : null;
+      const closer = before === null || after === null || after <= before;
+      const clean = detectBotTells(refined, inbound, botTellCtx).ok;
+      this.logger.info({ jid, before, after, accepted: closer && clean, clean }, "voice refine");
+      return closer && clean ? refined : draft;
+    } catch (err) {
+      this.logger.debug({ err, jid }, "voice refine failed — keeping draft");
+      return draft;
+    }
+  }
+
   private static readonly OWNER_VOICE_GLOBAL_CAP = 600;
   // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
   // Fed to the persona prompt as an anti-repetition signal so the bot
@@ -3465,7 +3494,10 @@ export class WhatsAppSession {
     // invocation and rewrites to honest intent. Skip bridge-self
     // prefixes (acks/nudges) so they don't get mangled.
     if (text && !isBotSelfMessage(text)) {
-      const verdict = verifyClaims(text);
+      // Gate the rewrite on the action log (ADR 0024 W2.2): a claim the
+      // bridge PROVABLY performed in the last 10 min stands as written.
+      const nowMs = Date.now();
+      const verdict = verifyClaims(text, { performedActions: performedClaimActions(recentActions({ nowMs }), nowMs) });
       if (verdict.rewrites.length > 0) {
         this.logger.info(
           { to, rewrites: verdict.rewrites },
@@ -9331,6 +9363,9 @@ export class WhatsAppSession {
     if (forceDraftCaution && tier.tier !== "LOW") {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
+    }
+    if (tier.tier !== "HIGH" && !opts.isGroup && !isOwnerChan) {
+      draft = await this.refineToOwnerVoice(from, draft, text, botTellCtx);
     }
     // COMMITMENT GATE — hold, don't send, when the reply commits the owner
     // (money, a call, a visit) or the contact is asking for money. Reasoned

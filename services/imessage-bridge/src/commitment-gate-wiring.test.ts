@@ -105,3 +105,15 @@ describe("voice floor (ADR 0024 W4) is wired on both bridges", () => {
     });
   }
 });
+
+describe("critique-refine (ADR 0024 W3.4) is wired on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: MEDIUM/LOW contact drafts are refined against the owner's own messages, purpose-keyed, accepted only when not further from the voice and clean`, () => {
+      expect(src).toMatch(/if \(tier\.tier !== "HIGH" && !(opts\.)?isGroup && !isOwnerChan\) \{\s*draft = await this\.refineToOwnerVoice\(/);
+      expect(src).toMatch(/::refine`/);
+      expect(src).toMatch(/after <= before/);
+      expect(src).toMatch(/detectBotTells\(refined, inbound, botTellCtx\)\.ok/);
+      expect(src).toMatch(/LANTERN_VOICE_REFINE/);
+    });
+  }
+});

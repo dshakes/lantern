@@ -262,3 +262,28 @@ function truncate(s: string, n: number): string {
   const flat = (s || "").replace(/\s+/g, " ").trim();
   return flat.length > n ? flat.slice(0, n) + "…" : flat;
 }
+
+/** Claim keys the bridge can PROVE it performed, from the working-memory
+ *  action log (ADR 0024 W2.2). A claim is honoured only when a matching
+ *  action was recorded within `windowMs` (default 10 min) — "added it to
+ *  your calendar" is true right after a calendar_added, not because one
+ *  happened this morning. Kinds with no record (doc sends, notifying a
+ *  third party) map to nothing, so those claims keep being rewritten to
+ *  intent rather than failing open. Pure. */
+export function performedClaimActions(
+  actions: ReadonlyArray<{ kind: string; ts: number }>,
+  nowMs: number,
+  windowMs = 10 * 60_000,
+): Set<string> {
+  const out = new Set<string>();
+  for (const a of actions) {
+    if (a.ts < nowMs - windowMs || a.ts > nowMs + 60_000) continue;
+    switch (a.kind) {
+      case "calendar_added": out.add("calendar-or-note-add"); out.add("set-reminder"); out.add("schedule"); break;
+      case "note_saved": out.add("calendar-or-note-add"); break;
+      case "call_placed": out.add("call"); break;
+      default: break;
+    }
+  }
+  return out;
+}

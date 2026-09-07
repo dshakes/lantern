@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verifyClaims } from "./verifiable-claims.ts";
+import { verifyClaims, performedClaimActions } from "./verifiable-claims.ts";
 
 test("verifyClaims: media-share claims rewritten to intent (bridge can't attach mid-thread)", () => {
   assert.match(verifyClaims("sending you the invoice now").text, /i'll get the invoice.* over to you/i);
@@ -48,4 +48,16 @@ test("verifyClaims: calls + reminders ALWAYS rewritten (no mid-thread path, even
   assert.match(verifyClaims("I called him", { performedActions: new Set(["call"]) }).text, /i'll call him/i);
   assert.match(verifyClaims("I set a reminder to renew your passport").text, /i'll set a reminder to renew your passport/i);
   assert.match(verifyClaims("I've set a reminder for tomorrow").text, /i'll set a reminder for tomorrow/i);
+});
+
+test("W2.2: a claim the bridge provably performed in the last 10 min stands; older or unrecorded claims are rewritten", () => {
+  const now = 1_800_000_000_000;
+  const fresh = performedClaimActions([{ kind: "calendar_added", ts: now - 30_000 }], now);
+  assert.ok(fresh.has("calendar-or-note-add") && fresh.has("set-reminder"));
+  assert.equal(verifyClaims("I added it to your calendar", { performedActions: fresh }).rewrites.length, 0, "true claim untouched");
+  const stale = performedClaimActions([{ kind: "calendar_added", ts: now - 3 * 3_600_000 }], now);
+  assert.equal(stale.size, 0, "an action three hours ago does not make 'just added' true");
+  assert.ok(verifyClaims("I added it to your calendar", { performedActions: stale }).rewrites.length > 0);
+  assert.equal(performedClaimActions([{ kind: "custom", ts: now }], now).size, 0, "untyped kinds prove nothing");
+  assert.ok(performedClaimActions([{ kind: "call_placed", ts: now }], now).has("call"));
 });
