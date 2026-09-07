@@ -236,6 +236,31 @@ export class PersonalClient {
   // Record a timeline event (inbound/outbound message, call, email, etc.)
   // against the person behind (channel, handle). Fire-and-forget; a memory
   // write must NEVER block or break a reply.
+  /** Cross-thread recall on the control-plane semantic index (ADR 0024
+   *  W2.3): "what did OTHER people say about this?" — hybrid RRF over the
+   *  tenant's memory_events, excluding this contact's own person. Replaces
+   *  the local capitalization-regex topic key as the primary retrieval;
+   *  the local social graph stays as the offline fallback. Never throws. */
+  async searchMemory(
+    query: string,
+    opts: { excludeChannel: string; excludeHandle: string; limit?: number; windowDays?: number },
+  ): Promise<Array<{ personName: string; channel: string; direction: string; content: string; occurredAt: string }>> {
+    const q = (query || "").trim();
+    if (q.length < 8) return [];
+    try {
+      const qs =
+        `q=${encodeURIComponent(q.slice(0, 400))}&limit=${opts.limit ?? 4}&windowDays=${opts.windowDays ?? 7}` +
+        `&excludeChannel=${encodeURIComponent(opts.excludeChannel)}&excludeHandle=${encodeURIComponent(opts.excludeHandle)}`;
+      const res = await authedFetch(`/v1/memory/search?${qs}`);
+      if (!res.ok) return [];
+      const body = (await res.json()) as { results?: Array<{ personName: string; channel: string; direction: string; content: string; occurredAt: string }> };
+      return Array.isArray(body.results) ? body.results : [];
+    } catch (err) {
+      this.logger.debug({ err }, "memory search failed (falling back to local topic graph)");
+      return [];
+    }
+  }
+
   async ingestEvent(
     channel: string,
     handle: string,

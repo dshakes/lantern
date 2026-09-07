@@ -51,6 +51,7 @@ import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfiden
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { strictRegenHint } from "@lantern/bridge-core/natural";
+import { InferredRelationshipStore, relationshipInferPrompt, parseRelationshipInference, shouldInferRelationship, inferredRelationshipLabel, inferredRelationshipFyi, INFER_MIN_CONFIDENCE, type InferredRelationship } from "@lantern/bridge-core/relationship-infer";
 import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -140,7 +141,7 @@ import {
 } from "@lantern/bridge-core/time-travel";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
-import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
+import { SocialGraph, extractTopics, formatRelatedBlock, mergeRelated } from "@lantern/bridge-core/social-graph";
 import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import { resolveEmotionalRegister } from "@lantern/bridge-core/emotional-register";
@@ -1577,6 +1578,36 @@ export class WhatsAppSession {
     let n = 0;
     for (const v of this.contactNames.values()) if ((v ?? "").trim().split(/\s+/)[0]?.toLowerCase() === first && ++n > 1) return true;
     return false;
+  private inferredRelationships?: InferredRelationshipStore;
+  private inferredFyiSent: Set<string> = new Set();
+  // W1.4: reasoned relationship inference for contacts with no declared label.
+  private async inferRelationship(handle: string, contactName?: string): Promise<InferredRelationship | undefined> {
+    try {
+      this.inferredRelationships ??= new InferredRelationshipStore(join(this.stateDir, "inferred-relationships.json"));
+      const cached = this.inferredRelationships.get(handle);
+      const transcript = this.buildRecentTranscript(handle, false);
+      const lines = transcript.split("\n").filter(Boolean).length;
+      const inboundCount = (this.inboundHistory.get(handle) ?? []).length;
+      if (!shouldInferRelationship(cached, lines, inboundCount)) return cached;
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const knownLabels = [...new Set([...(this.ownerProfileStore.get()?.relationships.values() ?? [])])];
+      const raw = await this.agent.respondTo(`${handle}::relationship`, relationshipInferPrompt({ ownerName, contactName, transcript, knownLabels }), undefined, { withTools: false, timeoutMs: 12_000 });
+      const parsed = parseRelationshipInference(raw);
+      const next: InferredRelationship = parsed
+        ? { ...parsed, ts: Date.now(), inboundCount }
+        : { label: cached?.label ?? "unknown", confidence: cached?.confidence ?? 0, evidence: cached?.evidence ?? "", ts: Date.now(), inboundCount };
+      this.inferredRelationships.set(handle, next);
+      this.logger.info({ handle, label: next.label, confidence: next.confidence }, "relationship inferred from thread (unconfirmed)");
+      if (parsed && parsed.confidence >= INFER_MIN_CONFIDENCE && contactName && !this.inferredFyiSent.has(handle)) {
+        this.inferredFyiSent.add(handle);
+        const FYI = inferredRelationshipFyi(contactName, next);
+        void this.confirmToSelf(FYI).catch(() => {})
+      }
+      return next;
+    } catch (err) {
+      this.logger.debug({ err, handle }, "relationship inference failed (ignored)");
+      return undefined;
+    }
   }
   private getVoiceModel(): VoiceModel | null {
     if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
@@ -8749,6 +8780,10 @@ export class WhatsAppSession {
     const relationship = opts.isGroup
       ? undefined
       : this.ownerProfileStore.relationshipFor(from, effectiveName);
+    // W1.4 (ADR 0024): no declared relationship → a reasoned, cached, UNCONFIRMED
+    // inference from the real thread, for the persona only. Security gates keep
+    // using `relationship` (owner-declared) — an inference never widens one.
+    const inferredRelationship = !relationship && !opts.isGroup ? await this.inferRelationship(from, effectiveName) : undefined;
     // Recent thread context. WhatsApp has no chat.db, so we interleave the
     // bridge's captured inbound (them) + owner-sent (you) tails into a
     // rough recent transcript. Grounds the reply in what's being discussed
@@ -8849,7 +8884,11 @@ export class WhatsAppSession {
       allEpisodes.length === 0 &&
       dislikeEntries.length === 0 &&
       (!recentTranscript || recentTranscript.trim().length < 20);
-    const relatedBlock = formatRelatedBlock(related);
+    // W2.3 (ADR 0024): cross-thread recall keys on the control-plane semantic
+    // index (hybrid RRF), not on exact topic-string equality; the local topic
+    // graph is the offline fallback and fills after the semantic hits.
+    const semanticRelated = !opts.isGroup ? await this.personal.searchMemory(text, { excludeChannel: "whatsapp", excludeHandle: from, limit: 4, windowDays: 7 }) : [];
+    const relatedBlock = formatRelatedBlock(mergeRelated(semanticRelated, related, 5));
     if (!opts.isGroup && inboundTopics.length > 0) {
       void this.socialGraph.record({
         jid: from,
@@ -8944,7 +8983,7 @@ export class WhatsAppSession {
         ownerNow: isOwnerChan || isInnerCircle(relationship) ? this.ownerProfileStore.nowBlock() : "",
         knownPeople: this.ownerProfileStore.relationshipsBlock(),
         addressRule,
-        relationship,
+        relationship: relationship ?? inferredRelationshipLabel(inferredRelationship),
         recentTranscript,
         recentBotReplies: this.recentBotReplies.get(from) ?? [],
         languageModality,

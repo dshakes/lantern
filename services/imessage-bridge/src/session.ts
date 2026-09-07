@@ -54,6 +54,7 @@ import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfiden
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { strictRegenHint } from "@lantern/bridge-core/natural";
+import { InferredRelationshipStore, relationshipInferPrompt, parseRelationshipInference, shouldInferRelationship, inferredRelationshipLabel, inferredRelationshipFyi, INFER_MIN_CONFIDENCE, type InferredRelationship } from "@lantern/bridge-core/relationship-infer";
 import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -382,7 +383,7 @@ import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore, watchContextBlock, contactWatchBlock } from "@lantern/bridge-core/live-watch";
-import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
+import { SocialGraph, extractTopics, formatRelatedBlock, mergeRelated } from "@lantern/bridge-core/social-graph";
 import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import {
@@ -649,6 +650,36 @@ export class IMessageSession {
     let n = 0;
     for (const v of this.contactNames.values()) if ((v ?? "").trim().split(/\s+/)[0]?.toLowerCase() === first && ++n > 1) return true;
     return false;
+  private inferredRelationships?: InferredRelationshipStore;
+  private inferredFyiSent: Set<string> = new Set();
+  // W1.4: reasoned relationship inference for contacts with no declared label.
+  private async inferRelationship(handle: string, contactName?: string): Promise<InferredRelationship | undefined> {
+    try {
+      this.inferredRelationships ??= new InferredRelationshipStore(join(this.stateDir, "inferred-relationships.json"));
+      const cached = this.inferredRelationships.get(handle);
+      const transcript = (this.inboundHistory.get(handle) ?? []).slice(-12).map((t) => `They: ${t}`).join("\n");
+      const lines = transcript.split("\n").filter(Boolean).length;
+      const inboundCount = (this.inboundHistory.get(handle) ?? []).length;
+      if (!shouldInferRelationship(cached, lines, inboundCount)) return cached;
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const knownLabels = [...new Set([...(this.ownerProfileStore.get()?.relationships.values() ?? [])])];
+      const raw = await this.agent.respondTo(`${handle}::relationship`, relationshipInferPrompt({ ownerName, contactName, transcript, knownLabels }), undefined, { withTools: false, timeoutMs: 12_000 });
+      const parsed = parseRelationshipInference(raw);
+      const next: InferredRelationship = parsed
+        ? { ...parsed, ts: Date.now(), inboundCount }
+        : { label: cached?.label ?? "unknown", confidence: cached?.confidence ?? 0, evidence: cached?.evidence ?? "", ts: Date.now(), inboundCount };
+      this.inferredRelationships.set(handle, next);
+      this.logger.info({ handle, label: next.label, confidence: next.confidence }, "relationship inferred from thread (unconfirmed)");
+      if (parsed && parsed.confidence >= INFER_MIN_CONFIDENCE && contactName && !this.inferredFyiSent.has(handle)) {
+        this.inferredFyiSent.add(handle);
+        const FYI = inferredRelationshipFyi(contactName, next);
+        { const o = this.ownerSelfChatTarget(); if (o) void this.send(o, FYI).catch(() => {}); }
+      }
+      return next;
+    } catch (err) {
+      this.logger.debug({ err, handle }, "relationship inference failed (ignored)");
+      return undefined;
+    }
   }
   private getVoiceModel(): VoiceModel | null {
     if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
@@ -7559,6 +7590,10 @@ export class IMessageSession {
     const relationship = isGroup
       ? undefined
       : this.ownerProfileStore.relationshipFor(row.handle, contactName);
+    // W1.4 (ADR 0024): no declared relationship → a reasoned, cached, UNCONFIRMED
+    // inference from the real thread, for the persona only. Security gates keep
+    // using `relationship` (owner-declared) — an inference never widens one.
+    const inferredRelationship = !relationship && !isGroup ? await this.inferRelationship(row.handle, contactName) : undefined;
     // Recent thread transcript (real back-and-forth from chat.db) so the
     // reply is grounded in what's actually being discussed.
     const recentTranscript = this.buildRecentTranscript(row.chatRowid);
@@ -7681,7 +7716,11 @@ export class IMessageSession {
       allEpisodes.length === 0 &&
       dislikeEntries.length === 0 &&
       (!recentTranscript || recentTranscript.trim().length < 20);
-    const relatedBlock = formatRelatedBlock(related);
+    // W2.3 (ADR 0024): cross-thread recall keys on the control-plane semantic
+    // index (hybrid RRF), not on exact topic-string equality; the local topic
+    // graph is the offline fallback and fills after the semantic hits.
+    const semanticRelated = !isGroup ? await this.personal.searchMemory(text, { excludeChannel: "imessage", excludeHandle: row.handle, limit: 4, windowDays: 7 }) : [];
+    const relatedBlock = formatRelatedBlock(mergeRelated(semanticRelated, related, 5));
     // Index THIS inbound into the social graph so future replies to
     // other contacts can find it. Fire-and-forget.
     if (!isGroup && inboundTopics.length > 0) {
@@ -7750,7 +7789,7 @@ export class IMessageSession {
       disclosed: false,
       stylePrompt,
       ownerProfile,
-      relationship,
+      relationship: relationship ?? inferredRelationshipLabel(inferredRelationship),
       recentTranscript,
       languageModality,
       // Tone modulation — a distressed/frustrated/excited inbound shifts the

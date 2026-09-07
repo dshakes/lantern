@@ -53,6 +53,7 @@ const BOT_SELF_PREFIXES: string[] = [
   "👍 skipped",           // confirm-before-book: owner declined a held booking
   "👍 won't surface",     // attention engine: owner skipped a waiting thread
   "🛠",                    // skill forge: proposals, lists, acks, skill output
+  "🧭 ",                   // relationship inference FYI: "🧭 I think Ravi is your cousin …"
   "🗂",                    // action-plan: multi-action plan preview, acks, results
   "✅ skill live",         // skill forge: activation ack
   "couldn't add it",      // confirm-before-book: createCalendarEvent failed
