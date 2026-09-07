@@ -485,6 +485,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/people", identityHandler.ListPeople)
 	httpMux.HandleFunc("POST /v1/memory/events", identityHandler.IngestEvent)
 	httpMux.HandleFunc("GET /v1/memory/context", identityHandler.GetContext)
+	httpMux.HandleFunc("GET /v1/memory/search", identityHandler.SearchMemory)
 
 	// Proactive Jarvis — daily brief from the unified timeline.
 	httpMux.HandleFunc("GET /v1/jarvis/brief", jarvisHandler.Brief)

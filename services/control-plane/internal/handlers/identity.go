@@ -1112,3 +1112,118 @@ func (h *IdentityHandler) StampRelationship(w http.ResponseWriter, r *http.Reque
 		"relationship": body.Relationship,
 	})
 }
+
+// SearchMemory is cross-thread recall for the bridges (ADR 0024 W2.3):
+// GET /v1/memory/search?q=&limit=&windowDays=&excludeChannel=&excludeHandle=
+// The same hybrid RRF as GetContext, over EVERY person in the tenant except
+// the one the reply is for, so "what did others say about this?" keys on
+// meaning (embedding + full-text, rank-fused) instead of a capitalized-word
+// regex that only matched when two people typed the identical noun.
+// Tenant-scoped via WithTenant; the excluded person is resolved from the
+// handle so the contact's own thread never comes back as "other threads".
+func (h *IdentityHandler) SearchMemory(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	q := r.URL.Query()
+	keyword := strings.TrimSpace(q.Get("q"))
+	if keyword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q required"})
+		return
+	}
+	limit, windowDays := parseSearchWindow(q.Get("limit"), q.Get("windowDays"))
+	excludeID := ""
+	if ch, hd := strings.TrimSpace(q.Get("excludeChannel")), strings.TrimSpace(q.Get("excludeHandle")); ch != "" && hd != "" {
+		if pid, _, rErr := h.resolvePerson(ctx, claims.TenantID, ch, hd, ""); rErr == nil {
+			excludeID = pid
+		}
+	}
+
+	const rrfK = 60
+	var querySQL string
+	var queryArgs []any
+	if h.llm != nil {
+		if vec, embErr := h.llm.EmbedText(ctx, claims.TenantID, keyword); embErr == nil {
+			querySQL = `
+				WITH vec AS (
+					SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) AS rnk
+					FROM memory_events
+					WHERE tenant_id = $1 AND ($2 = '' OR person_id::text <> $2) AND embedding IS NOT NULL
+					  AND occurred_at >= now() - ($5 || ' days')::interval
+					LIMIT $6
+				), kw AS (
+					SELECT id, ROW_NUMBER() OVER (
+						ORDER BY ts_rank(to_tsvector('english', content), websearch_to_tsquery('english', $7)) DESC
+					) AS rnk
+					FROM memory_events
+					WHERE tenant_id = $1 AND ($2 = '' OR person_id::text <> $2)
+					  AND occurred_at >= now() - ($5 || ' days')::interval
+					  AND to_tsvector('english', content) @@ websearch_to_tsquery('english', $7)
+					LIMIT $6
+				), fused AS (
+					SELECT id, SUM(w) AS score FROM (
+						SELECT id, 1.0 / ($8 + rnk) AS w FROM vec
+						UNION ALL
+						SELECT id, 1.0 / ($8 + rnk) AS w FROM kw
+					) u GROUP BY id
+				)
+				SELECT COALESCE(p.display_name, ''), m.channel, COALESCE(m.direction, ''), m.content, m.occurred_at
+				FROM fused f JOIN memory_events m ON m.id = f.id
+				LEFT JOIN people p ON p.id = m.person_id
+				ORDER BY f.score DESC, m.occurred_at DESC LIMIT $4`
+			queryArgs = []any{claims.TenantID, excludeID, vectorLiteral(vec), limit, strconv.Itoa(windowDays), candidatePool(limit), keyword, rrfK}
+		} else {
+			h.logger().Debug("search: embed query failed, using keyword", zap.Error(embErr))
+		}
+	}
+	if querySQL == "" {
+		querySQL = `
+			SELECT COALESCE(p.display_name, ''), m.channel, COALESCE(m.direction, ''), m.content, m.occurred_at
+			FROM memory_events m LEFT JOIN people p ON p.id = m.person_id
+			WHERE m.tenant_id = $1 AND ($2 = '' OR m.person_id::text <> $2)
+			  AND m.occurred_at >= now() - ($5 || ' days')::interval
+			  AND to_tsvector('english', m.content) @@ websearch_to_tsquery('english', $3)
+			ORDER BY ts_rank(to_tsvector('english', m.content), websearch_to_tsquery('english', $3)) DESC, m.occurred_at DESC
+			LIMIT $4`
+		queryArgs = []any{claims.TenantID, excludeID, keyword, limit, strconv.Itoa(windowDays)}
+	}
+
+	results := []map[string]any{}
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, querySQL, queryArgs...)
+		if qErr != nil {
+			h.logger().Debug("search: query failed", zap.Error(qErr))
+			return nil
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name, channel, direction, content string
+			var occurredAt time.Time
+			if sErr := rows.Scan(&name, &channel, &direction, &content, &occurredAt); sErr != nil {
+				continue
+			}
+			results = append(results, map[string]any{
+				"personName": name, "channel": channel, "direction": direction,
+				"content": content, "occurredAt": occurredAt.UTC().Format(time.RFC3339),
+			})
+		}
+		return nil
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// parseSearchWindow clamps the search page + window: limit 1..50 (default 6),
+// windowDays 1..3650 (default 7). Pure, so the clamps are unit-tested.
+func parseSearchWindow(limitRaw, windowRaw string) (int, int) {
+	limit, windowDays := 6, 7
+	if n, err := strconv.Atoi(strings.TrimSpace(limitRaw)); err == nil && n > 0 && n <= 50 {
+		limit = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(windowRaw)); err == nil && n > 0 && n <= 3650 {
+		windowDays = n
+	}
+	return limit, windowDays
+}

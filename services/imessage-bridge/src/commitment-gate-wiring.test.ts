@@ -159,3 +159,18 @@ describe("W2.5: a weak romanized language guess is confirmed before a reply mode
     expect(im).toMatch(/const langHint = await confirmLanguageHint\(text, detectLanguageHints\(text\), \(prompt\) =>\s*this\.agent\.respondTo\(`\$\{row\.handle\}::lang`, prompt, undefined, \{ withTools: false, timeoutMs: 8_000 \}\)\)/);
   });
 });
+
+describe("W2.3 + W1.4 on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: cross-thread recall keys on the semantic index first, local topic graph fills`, () => {
+      expect(src).toMatch(/this\.personal\.searchMemory\(text, \{ excludeChannel: "(whatsapp|imessage)", excludeHandle: [a-z.]+, limit: 4, windowDays: 7 \}\)/);
+      expect(src).toMatch(/formatRelatedBlock\(mergeRelated\(semanticRelated, related, 5\)\)/);
+    });
+    it(`${name}: an inferred relationship reaches the persona only, never a security gate`, () => {
+      expect(src).toMatch(/relationship: relationship \?\? inferredRelationshipLabel\(inferredRelationship\)/);
+      expect(src).toMatch(/isInnerCircle\(relationship\)/);
+      expect(src).not.toMatch(/isInnerCircle\(inferred/);
+      expect(src).toMatch(/::relationship`/);
+    });
+  }
+});

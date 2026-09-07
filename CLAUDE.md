@@ -1257,7 +1257,11 @@ and rewrites the rest to intent (W2.2). Context inputs added: `## Now`
 (dated present-tense self-model, inner-circle contacts only), the assistant's
 own recent actions about that contact (`contactActionsBlock`), and a reasoned
 emotional register when the English lexeme table is silent on Telugu/Hindi
-(`resolveEmotionalRegister`). Every contact draft logs `voice score
+(`resolveEmotionalRegister`), and for a contact with no declared relationship a
+reasoned, cached, UNCONFIRMED label inferred from the real thread
+(`relationship-infer.ts`, `<handle>::relationship`; persona only — it never
+widens inner-circle/location/`## Now`/contact-sharing gates; the owner gets one
+`🧭` FYI to confirm with a one-line teaching). Every contact draft logs `voice score
 {delta, floor, ok}`; a periodic `LIVENESS` line on both bridges reports
 mute/kill/pause suppression. All pure decision functions live in
 `packages/bridge-core/src/{commitment-gate,voice-score,voice-refine,
@@ -1653,6 +1657,7 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 | `POST` | `/v1/people/relationship`                  | Stamp a relationship label onto a resolved person.                                         |
 | `POST` | `/v1/memory/events`                        | Ingest a timeline event for a person (resolved from channel+handle).                       |
 | `GET`  | `/v1/memory/context`                       | Unified cross-channel context for a person. `?windowDays=N` slices to the last N days.    |
+| `GET`  | `/v1/memory/search`                        | Cross-thread recall (ADR 0024 W2.3): `?q=&limit=&windowDays=&excludeChannel=&excludeHandle=` — the same hybrid RRF as context over every person in the tenant except the excluded one; returns `{results:[{personName, channel, direction, content, occurredAt}]}`. The bridges' "related context from OTHER threads" keys on this; the local topic graph is the offline fallback. |
 | `GET`  | `/session/:tenantId/has-creds` (WA bridge) | Dashboard probe — when true, show "Reconnect" instead of "Pair with QR"                    |
 | `POST` | `/session/:tenantId/reset` (WA bridge)     | Wipe creds (destructive — forces fresh QR pair)                                            |
 
