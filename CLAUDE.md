@@ -1239,6 +1239,31 @@ chronological order; `LANTERN_QUIET_QUEUE_MAX` caps its size (default 200).
 Quiet hours default: 01:00–06:00 owner-local time, overridable via
 `LANTERN_QUIET_START` / `LANTERN_QUIET_END` (24h integers).
 
+### Reply pipeline gates (ADR 0024 — "sounds like me, never a bot")
+
+Every contact reply on both bridges now passes, in order: **draft** →
+`detectBotTells` (stock phrases, JSON leaks, whereabouts, **repeat-skeleton**
+= ≥0.75 Jaccard vs the last 3 replies to that contact, **voice-drift** = a
+stylometric delta above the owner's own p95 floor) → one corrective
+regeneration → one **strict exemplar-grounded third attempt** (W2.1; the
+five-string greeting table is the fallback only after that) → confidence
+tier → **critique-refine** for MEDIUM/LOW against the owner's 5 most similar
+real messages, accepted only if not further from the voice and guard-clean
+(W3.4) → **commitment gate** (money/action promises held for the owner;
+confident contact shares sent) → send, where the **verifiable-claims** rewriter
+honours only actions the bridge provably recorded for THAT contact in the
+last 10 min (`doc_sent`, `owner_notified`, `calendar_added`, `note_saved`)
+and rewrites the rest to intent (W2.2). Context inputs added: `## Now`
+(dated present-tense self-model, inner-circle contacts only), the assistant's
+own recent actions about that contact (`contactActionsBlock`), and a reasoned
+emotional register when the English lexeme table is silent on Telugu/Hindi
+(`resolveEmotionalRegister`). Every contact draft logs `voice score
+{delta, floor, ok}`; a periodic `LIVENESS` line on both bridges reports
+mute/kill/pause suppression. All pure decision functions live in
+`packages/bridge-core/src/{commitment-gate,voice-score,voice-refine,
+natural,verifiable-claims,working-memory,emotional-register}.ts` with tests;
+env switches: `LANTERN_VOICE_FLOOR`, `LANTERN_VOICE_REFINE`.
+
 ### Authentic-voice + bot-tell guards
 
 `detectBotTells()` in `natural.ts` is the last pass before every send. It
