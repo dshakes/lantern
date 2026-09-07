@@ -153,3 +153,9 @@ describe("W2.4: reasoned emotional register on both bridges", () => {
     });
   }
 });
+
+describe("W2.5: a weak romanized language guess is confirmed before a reply mode engages (iMessage contact path)", () => {
+  it("wraps detectLanguageHints in confirmLanguageHint with a purpose-keyed, time-boxed call", () => {
+    expect(im).toMatch(/const langHint = await confirmLanguageHint\(text, detectLanguageHints\(text\), \(prompt\) =>\s*this\.agent\.respondTo\(`\$\{row\.handle\}::lang`, prompt, undefined, \{ withTools: false, timeoutMs: 8_000 \}\)\)/);
+  });
+});

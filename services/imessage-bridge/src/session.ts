@@ -87,7 +87,7 @@ import {
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
-import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
+import { detectLanguageHints, confirmLanguageHint, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/screen-context";
@@ -7565,7 +7565,11 @@ export class IMessageSession {
     // Detect inbound language so the reply matches the same script +
     // dialect. Owner nativity biases regional flavor (e.g. "Hometown,
     // Telangana" → Telangana Telugu rather than coastal Andhra Telugu).
-    const langHint = detectLanguageHints(text);
+    // W2.5 (ADR 0024): the wordlist is the first pass; in its weak romanized
+    // band (0.4–0.7, where "Brambleton, VA" once read as French) the model
+    // confirms before a foreign-language reply mode engages. Fail-safe.
+    const langHint = await confirmLanguageHint(text, detectLanguageHints(text), (prompt) =>
+      this.agent.respondTo(`${row.handle}::lang`, prompt, undefined, { withTools: false, timeoutMs: 8_000 }));
     // Emotional register — read the contact's affect (distress / frustration /
     // excitement) so the persona modulates tone. Pure + deterministic (lexicon
     // + punctuation), no LLM on the hot path. Contact-facing 1:1 only; groups

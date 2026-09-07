@@ -561,3 +561,61 @@ export function looksGarbledTranscript(
   // (≥ 3 chars) → garbled mis-decode.
   return dominantChars >= 3;
 }
+
+// ---------------------------------------------------------------------------
+// Confirmed language mode (ADR 0024 W2.5). The wordlist scorer is the cheap
+// first pass; when it fires on ROMANIZED text below 0.7 (the band where
+// "Brambleton, VA" once read as French) the model confirms before a
+// foreign-language reply mode engages. Native script is never questioned.
+// Deterministic gate, strict JSON, fail-safe to the wordlist's verdict.
+// ---------------------------------------------------------------------------
+
+export function shouldConfirmLanguage(hint: LanguageHint): boolean {
+  return hint.primary !== "english" && !hint.hasNativeScript && hint.confidence >= 0.4 && hint.confidence < 0.7;
+}
+
+export function languageConfirmPrompt(text: string, guess: DetectedLanguage): string {
+  return [
+    `A wordlist thinks this text message is written in ${guess} (romanized). Decide what language the WRITER is actually using.`,
+    'Return STRICT JSON only: {"language":"english"|"telugu"|"hindi"|"tamil"|"kannada"|"malayalam"|"marathi"|"bengali"|"gujarati"|"punjabi"|"spanish"|"french"|"german"|"unknown","confidence":0..1}',
+    "Place names, brand names, and people's names are NOT a language signal. Code-mixed messages take the language of the non-English words.",
+    "",
+    `Message: "${(text || "").slice(0, 400)}"`,
+    "",
+    "JSON:",
+  ].join("\n");
+}
+
+const LANGS = new Set<DetectedLanguage>(["english","telugu","hindi","tamil","kannada","malayalam","marathi","bengali","gujarati","punjabi","spanish","french","german","unknown"]);
+
+export function parseLanguageConfirmation(raw: string | null | undefined): { language: DetectedLanguage; confidence: number } | null {
+  const m = (raw ?? "").match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[0]) as { language?: unknown; confidence?: unknown };
+    const language = typeof j.language === "string" && LANGS.has(j.language as DetectedLanguage) ? (j.language as DetectedLanguage) : null;
+    if (!language) return null;
+    const confidence = typeof j.confidence === "number" && Number.isFinite(j.confidence) ? Math.max(0, Math.min(1, j.confidence)) : 0;
+    return { language, confidence };
+  } catch {
+    return null;
+  }
+}
+
+/** Wordlist first; the model only in the weak romanized band. A confident
+ *  model answer replaces the guess (english → no language mode). Never throws. */
+export async function confirmLanguageHint(
+  text: string,
+  hint: LanguageHint,
+  llmCall?: (prompt: string) => Promise<string | null>,
+): Promise<LanguageHint> {
+  if (!llmCall || !shouldConfirmLanguage(hint)) return hint;
+  try {
+    const c = parseLanguageConfirmation(await llmCall(languageConfirmPrompt(text, hint.primary)));
+    if (!c || c.confidence < 0.6) return hint;
+    if (c.language === "english") return { ...hint, primary: "english", hasRomanized: false, mixed: false, confidence: 0 };
+    return { ...hint, primary: c.language, confidence: Math.max(hint.confidence, c.confidence) };
+  } catch {
+    return hint;
+  }
+}
