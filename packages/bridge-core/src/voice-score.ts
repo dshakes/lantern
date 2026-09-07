@@ -92,7 +92,9 @@ export function fitVoiceModel(samples: string[], percentile = 0.95): VoiceModel 
   for (const f of feats) for (let i = 0; i < dim; i++) centroid[i] += f[i] / feats.length;
   const scale = new Array(dim).fill(0);
   for (const f of feats) for (let i = 0; i < dim; i++) scale[i] += (f[i] - centroid[i]) ** 2 / feats.length;
-  for (let i = 0; i < dim; i++) scale[i] = Math.sqrt(scale[i]) + 1e-3;
+  // A floor on the spread, not an epsilon: on ~50 short messages many features
+  // have zero variance, and 1e-3 would turn one stray comma into a z of 100.
+  for (let i = 0; i < dim; i++) scale[i] = Math.max(Math.sqrt(scale[i]), 0.05);
   const model: VoiceModel = { centroid, scale, floor: 0, samples: use.length };
   const deltas = use.map((s) => voiceDelta(model, s)).sort((a, b) => a - b);
   model.floor = deltas[Math.min(deltas.length - 1, Math.floor(deltas.length * percentile))];
@@ -104,7 +106,8 @@ export interface VoiceVerdict { ok: boolean; delta: number; floor: number; hint?
 const HINTS: Partial<Record<(typeof FEATURE_NAMES)[number], [string, string]>> = {
   log_chars: ["shorter — they write less", "a bit longer — they write more than this"],
   log_words: ["fewer words", "more words"],
-  lower_start: ["they usually start lowercase", "they usually start with a capital"],
+  // index 0 fires when the DRAFT has more of the feature than the owner.
+  lower_start: ["they usually start with a capital", "they usually start lowercase"],
   upper_ratio: ["fewer capitals", "more capitals"],
   emoji_per_word: ["fewer emoji", "an emoji or two, the way they do"],
   exclaim_per_word: ["drop the exclamation marks", "they use exclamation marks more"],

@@ -51,3 +51,12 @@ test("the bot-tell guard uses the floor: off-voice draft suppressed with a hint,
   // No model → not scored (the stock "Certainly!" still trips the older phrase net, which is fine — just not as voice-drift).
   assert.doesNotMatch(detectBotTells("Certainly! I completely understand your concern and will look into this matter right away.", "hey", { voiceModel: null }).reason ?? "", /voice-drift/);
 });
+
+test("hints point the right way, and one feature the corpus never used cannot sink a draft", () => {
+  const model = fitVoiceModel(CORPUS)!;
+  // The corpus never starts with a capital; a capitalised draft must be told the owner starts lowercase.
+  const v = scoreVoice(model, "Ha Will Check And Let You Know Tomorrow Morning Definitely, Promise.");
+  if (v && !v.ok) assert.doesNotMatch(v.hint ?? "", /usually start with a capital/);
+  // One comma + one contraction in an otherwise owner-like draft stays under the floor.
+  assert.equal(scoreVoice(model, "ha, i'll check and let you know")?.ok, true);
+});
