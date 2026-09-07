@@ -402,3 +402,70 @@ export function emotionalRegisterAddendum(register: EmotionalRegister): string {
       return "";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Reasoned register (ADR 0024 W2.4). The lexeme table above is English; a
+// relative writing "tension ga undi, dabbulu levu" scored NEUTRAL and got a
+// breezy reply. When the table is silent AND the inbound is not English, one
+// purpose-keyed judgment asks the model. Deterministic gate, tolerant parse,
+// fail-safe to neutral; the table stays the first pass and the fallback.
+// ---------------------------------------------------------------------------
+
+const NON_LATIN_SCRIPT_RE = /[\u0900-\u097F\u0C00-\u0C7F\u0B80-\u0BFF\u0C80-\u0CFF\u0D00-\u0D7F]/; // Devanagari, Telugu, Tamil, Kannada, Malayalam
+const ROMANIZED_HINTS = /\b(undi|unnav|unnaru|ledu|levu|kavali|cheppu|chesthunna|ayyindi|ayipoyindi|tension|badha|bhayam|kastam|yela|ela|enti|emaindi|nahi|nahin|hai|hain|kya|kyun|bahut|mujhe|tumhe|pareshan|dukh)\b/i;
+
+/** Should the model be asked? Only when the table found nothing and the text
+ *  reads as non-English (native script or romanized Telugu/Hindi cues). */
+export function shouldJudgeRegister(text: string, tableVerdict: EmotionalRegisterVerdict): boolean {
+  if (tableVerdict.register !== "neutral") return false;
+  const t = (text || "").trim();
+  if (t.length < 6) return false;
+  return NON_LATIN_SCRIPT_RE.test(t) || ROMANIZED_HINTS.test(t);
+}
+
+export function registerJudgePrompt(inbound: string): string {
+  return [
+    "Read this text message (any language, often romanized Telugu or Hindi) and judge the sender's emotional state.",
+    "Return STRICT JSON only: {\"register\":\"distress\"|\"frustration\"|\"excitement\"|\"neutral\",\"confidence\":0..1}",
+    "distress = sad/scared/hurting/asking for help or money in a bad situation; frustration = annoyed/something still broken; excitement = celebrating/great news; neutral = none of these.",
+    "Be conservative: when unsure, neutral with low confidence.",
+    "",
+    `Message: "${(inbound || "").slice(0, 400)}"`,
+    "",
+    "JSON:",
+  ].join("\n");
+}
+
+const REGISTERS = new Set<EmotionalRegister>(["distress", "frustration", "excitement", "neutral"]);
+
+export function parseRegisterJudgment(raw: string | null | undefined): EmotionalRegisterVerdict | null {
+  const t = (raw ?? "").trim();
+  const m = t.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[0]) as { register?: unknown; confidence?: unknown };
+    const register = typeof j.register === "string" && REGISTERS.has(j.register as EmotionalRegister) ? (j.register as EmotionalRegister) : null;
+    if (!register) return null;
+    const c = typeof j.confidence === "number" && Number.isFinite(j.confidence) ? Math.max(0, Math.min(1, j.confidence)) : 0;
+    return { register, confidence: register === "neutral" ? 0 : c, signals: ["llm-judgment"] };
+  } catch {
+    return null;
+  }
+}
+
+/** Table first; the model only when the table is silent on non-English text.
+ *  Never throws; any failure returns the table's verdict. */
+export async function resolveEmotionalRegister(
+  text: string,
+  llmCall?: (prompt: string) => Promise<string | null>,
+): Promise<EmotionalRegisterVerdict> {
+  const table = detectEmotionalRegister(text);
+  if (!llmCall || !shouldJudgeRegister(text, table)) return table;
+  try {
+    const judged = parseRegisterJudgment(await llmCall(registerJudgePrompt(text)));
+    if (judged && judged.register !== "neutral" && judged.confidence >= 0.6) return judged;
+  } catch {
+    /* fail-safe */
+  }
+  return table;
+}
