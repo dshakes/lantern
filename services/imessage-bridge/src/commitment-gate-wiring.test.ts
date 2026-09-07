@@ -182,3 +182,12 @@ describe("only resolver-proven matches are staged in the hold page", () => {
     });
   }
 });
+
+describe("a pause only ever extends (live 2026-09-07: a takeover pause clobbered a year-long one)", () => {
+  it("whatsapp: pauseContact takes the max of the existing and the new expiry", () => {
+    expect(wa).toMatch(/until: Math\.max\(prev\?\.until \?\? 0, Date\.now\(\) \+ ttlMs\)/);
+  });
+  it("imessage: both pause sites take the max", () => {
+    expect(im.match(/pausedUntil\.set\([a-z.]+, Math\.max\(this\.pausedUntil\.get\([a-z.]+\) \?\? 0, Date\.now\(\) \+ [A-Za-z_]+\)\)/g)?.length).toBe(2);
+  });
+});
