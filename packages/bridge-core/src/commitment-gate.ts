@@ -58,6 +58,9 @@ const AMOUNT =
 // First-person give/send/arrange verbs — English + romanized Telugu + Hindi.
 const GIVE_VERB =
   /\b(?:(?:i(?:'ll| will| can| am going to)?\s+)?(?:send|sending|give|giving|pay|paying|transfer|wire|arrange|arranging|sort\s+(?:it\s+)?out)|pamp\w*|pampist\w*|pampinch\w*|ist(?:a|ha|anu|hanu)|iyy\w*|ivv\w*|sarjest\w*|sardhest\w*|sarichest\w*|chest(?:a|ha|anu|hanu)\b|chust(?:a|ha|anu|hanu)\b|ves(?:i|a|ta|tha)\w*|vey\w*|pett\w*|pedat\w*|bhej\w*|bhijwa\w*|de\s*d\w*|dunga|dedunga|kar\s*dunga)\b/i;
+// The contact is ASKING for something to be sent/given/shared.
+const REQUEST =
+  /\b(?:send|share|give|forward|pampu|pampinch\w*|ivvu|ivvandi|pettu|bhej(?:o|do)?|chahiye|kavali|number|nambar|contact|address|link|photo|pic|copy)\b|\?/i;
 // Promises of a concrete action on the owner's behalf.
 const ACTION_PROMISE =
   /\b(?:i(?:'ll| will)\s+(?:call|ring|phone|come|visit|drop\s+by|be\s+there|bring|book)|call\s+chest\w*|call\s+chesta|vast\w*\s+(?:nenu|ippudu)|phone\s+chest\w*|milta\s+hu|aa\s*(?:jaunga|raha))\b/i;
@@ -93,6 +96,16 @@ export function commitmentBackstop(inbound: string, draft: string, recentTranscr
   }
   if (ACTION_PROMISE.test(out)) {
     return { hold: true, reason: "action-promise", quote: out.match(ACTION_PROMISE)?.[0], source: "backstop" };
+  }
+  // A first-person SEND/GIVE promise in reply to a REQUEST, with no money in
+  // sight, is still a promise the bridge may have no way to keep. 2026-09-04:
+  // "mahdhu number send" → "ha, send chesta konchem sepatlo", then "ha rendu
+  // numbers ippude pampista" — five times, nothing sent, no capability to
+  // send. Held only when the inbound actually asks for something, so "I'll
+  // send you the photo later" in idle chat still passes to the LLM layer.
+  const contactSide = `${(recentTranscript || "").slice(-1500)}\n${inb}`;
+  if (inb && REQUEST.test(contactSide) && GIVE_VERB.test(out)) {
+    return { hold: true, reason: "action-promise", quote: out.match(GIVE_VERB)?.[0], source: "backstop" };
   }
   return { hold: false, reason: "none", source: "none" };
 }
@@ -165,7 +178,21 @@ export function commitmentHoldPage(opts: {
   inbound: string;
   draft: string;
   verdict: CommitmentVerdict;
+  /** When the bridge resolved what was asked for (e.g. numbers) INTO the
+   *  draft, say so — the owner's "send" then delivers the real thing. */
+  resolvedNote?: string;
 }): string {
+  if (opts.resolvedNote) {
+    return [
+      `⚠️ HELD — ${opts.contactLabel} ${opts.resolvedNote}. I have NOT replied.`,
+      ``,
+      `They: ${opts.inbound.slice(0, 240)}`,
+      ``,
+      `Ready to send (not sent yet):\n${opts.draft.slice(0, 300)}`,
+      ``,
+      `Reply "send" to share exactly that, "no" to drop, or type your own version.`,
+    ].join("\n");
+  }
   const what =
     opts.verdict.reason === "money-request" ? "is asking you for MONEY"
     : opts.verdict.reason === "money-promise" ? "— the draft PROMISES MONEY on your behalf"
@@ -180,4 +207,28 @@ export function commitmentHoldPage(opts: {
     ``,
     `Reply yourself, or type what to send and I'll send THAT. I will not send the draft unless you say "send".`,
   ].join("\n");
+}
+
+/**
+ * Names whose NUMBER/CONTACT the contact is asking for, from the contact's
+ * side of the thread. Pure. "mahdhu number send", "harika number send",
+ * "number of Raju", "Raju ka number do" → ["mahdhu", "harika", "Raju"].
+ *
+ * Why: "send chesta" for a number was a promise with no capability behind
+ * it. If the bridge can RESOLVE the names, the held draft can carry the real
+ * numbers, and the owner's one-tap "send" delivers them — do it, or don't
+ * promise. Spelling is the contact's ("mahdhu"); the resolver is fuzzy.
+ */
+export function extractContactRequests(contactSide: string): string[] {
+  const t = (contactSide || "").replace(/\s+/g, " ");
+  const out: string[] = [];
+  const push = (n?: string) => {
+    const v = (n || "").replace(/[^a-z\u0c00-\u0c7f' -]/gi, "").trim();
+    if (v.length >= 3 && !/^(?:the|his|her|their|my|your|that|this|send|please|number|contact|phone)$/i.test(v) && !out.some((o) => o.toLowerCase() === v.toLowerCase())) out.push(v);
+  };
+  // "<name> number", "<name> ka number", "<name> contact"
+  for (const m of t.matchAll(/\b([A-Za-z][A-Za-z']{2,})\s+(?:ka\s+|gari\s+|yokka\s+)?(?:number|nambar|contact|phone\s*no)\b/gi)) push(m[1]);
+  // "number of <name>", "contact for <name>"
+  for (const m of t.matchAll(/\b(?:number|contact|phone\s*no)\s+(?:of|for)\s+([A-Za-z][A-Za-z']{2,})\b/gi)) push(m[1]);
+  return out.slice(0, 4);
 }

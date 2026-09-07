@@ -47,7 +47,7 @@ import {
   isBlockedGroupSend,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -9343,11 +9343,33 @@ export class WhatsAppSession {
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
       if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
+        // DO IT, DON'T PROMISE. If the contact asked for someone's NUMBER and
+        // the bridge can resolve it, the held draft carries the REAL numbers,
+        // so the owner's one-tap "send" delivers them. 2026-09-04: "send
+        // chesta" five times for two family numbers; nothing was sent, and
+        // nothing could have been — there was no capability behind the words.
+        let heldDraft = draft;
+        let resolvedNote: string | undefined;
+        if (commitVerdict?.hold) {
+          const asked = extractContactRequests(`${recentTranscript}\n${text}`);
+          const resolved: Array<{ name: string; phone: string }> = [];
+          for (const a of asked) {
+            const r = await this.resolveCallTarget(a).catch(() => null);
+            if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone });
+          }
+          if (resolved.length > 0) {
+            heldDraft = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
+            resolvedNote = `asked for ${resolved.map((r) => `${r.name}'s`).join(" and ")} number${resolved.length > 1 ? "s" : ""} — I found ${resolved.length > 1 ? "them" : "it"}`;
+            this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — number request resolved into the held draft (owner 'send' delivers the real numbers)");
+          } else if (asked.length > 0) {
+            this.logger.warn({ from, asked }, "COMMITMENT GATE — number request could not be resolved; holding the bot's draft instead");
+          }
+        }
         const queued = await this.personal.queueDraft(
           from,
           opts.senderName ?? this.contactNames.get(from) ?? undefined,
           text,
-          draft,
+          heldDraft,
           { channel: "whatsapp" },
         );
         try {
@@ -9356,8 +9378,9 @@ export class WhatsAppSession {
               ? commitmentHoldPage({
                   contactLabel: opts.senderName ?? this.contactNames.get(from) ?? from.split("@")[0],
                   inbound: text,
-                  draft,
+                  draft: heldDraft,
                   verdict: commitVerdict,
+                  resolvedNote,
                 })
               : `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
           );
@@ -9374,7 +9397,7 @@ export class WhatsAppSession {
             targetJid: from,
             displayName: opts.senderName ?? this.contactNames.get(from) ?? undefined,
             draftId: queued?.id,
-            draftText: draft,
+            draftText: heldDraft,
             inboundText: text,
             issuedAt: Date.now(),
           });
