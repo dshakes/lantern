@@ -1474,6 +1474,14 @@ no enforcement; the owner received 53 routine audit pings. Replaying all 64
 replies through the backstop alone holds 56. **A prompt rule is advice; this is
 a gate.**
 
+**Contact sharing — send when confident (owner policy 2026-09-06).** When the
+held draft was a number request, both bridges resolve the names and consult
+`isConfidentContactShare` (`commitment-gate.ts`, pure, tested): requester has a
+relationship on file, every asked name resolved to exactly ONE person with no
+alternates, every resolved person is in the owner's `## Relationships`, not a
+group. All true → the numbers are sent directly and the owner gets a `📇 shared …`
+FYI; any false → the numbers are staged in the hold page for a one-word `send`.
+
 ### Claim verifier
 
 `verifyClaims()` (`verifiable-claims.ts`) is a pre-send pass that rewrites

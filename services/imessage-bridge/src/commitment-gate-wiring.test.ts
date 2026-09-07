@@ -73,3 +73,25 @@ describe("group sends are blocked at the boundary, not just in the pipeline", ()
     expect(im).toMatch(/annotation\.kind === "voice" && row\.handle && !isGroup/);
   });
 });
+
+describe("contact sharing goes through the deterministic policy on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: a share is sent only after isConfidentContactShare says so`, () => {
+      const call = src.indexOf("isConfidentContactShare({");
+      expect(call).toBeGreaterThan(0);
+      // The direct send of the numbers sits inside that decision's block.
+      const sendAfter = src.indexOf(name === "imessage" ? "await this.send(row.handle, numbers)" : "await this.sendMessage(from, numbers)", call);
+      expect(sendAfter).toBeGreaterThan(call);
+      expect(sendAfter - call).toBeLessThan(900);
+    });
+    it(`${name}: the share exit is fed the hold reason and the resolver's own uniqueness proof`, () => {
+      expect(src).toMatch(/holdReason: commitVerdict\.reason/);
+      expect(src).toMatch(/requesterInnerCircle: isInnerCircle\(relationship\)/);
+      expect(src).toMatch(/ambiguous: !r\.unique/);
+      expect(src).not.toMatch(/ambiguous: \(this\.lastResolveSuggestions/);
+    });
+    it(`${name}: the owner is told after an auto-share`, () => {
+      expect(src).toMatch(/📇 shared \$\{resolved/);
+    });
+  }
+});
