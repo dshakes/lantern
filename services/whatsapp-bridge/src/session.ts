@@ -143,7 +143,7 @@ import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesBy
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
-import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
+import { resolveEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import {
   detectLifeThreat,
   detectPromptInjection,
@@ -8901,10 +8901,14 @@ export class WhatsAppSession {
     // frustrated / excited contact gets a register-matched reply. 1:1 only —
     // group register is mixed and not a reliable signal. Gate on a confidence
     // floor so weak/mixed signals stay neutral (the detector is conservative).
+    // W2.4 (ADR 0024): the English lexeme table first; when it is silent on
+    // non-English text, one purpose-keyed judgment (`<jid>::register`) so
+    // Telugu/Hindi distress stops reading as neutral. Fail-safe to the table.
     const emotionalRegister =
       !opts.isGroup
-        ? (() => {
-            const v = detectEmotionalRegister(text);
+        ? await (async () => {
+            const v = await resolveEmotionalRegister(text, (prompt) => this.agent.respondTo(`${from}::register`, prompt, undefined, { withTools: false, timeoutMs: 10_000 }));
+            if (v.register !== "neutral") this.logger.info({ from, register: v.register, confidence: v.confidence, signals: v.signals }, "emotional-register engaged");
             return v.register !== "neutral" && v.confidence >= 0.4 ? v.register : undefined;
           })()
         : undefined;

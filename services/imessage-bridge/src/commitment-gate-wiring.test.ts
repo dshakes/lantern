@@ -144,3 +144,12 @@ describe("W2.1: a strict, exemplar-grounded third attempt precedes the static gr
     });
   }
 });
+
+describe("W2.4: reasoned emotional register on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: uses resolveEmotionalRegister with a purpose-keyed, time-boxed call`, () => {
+      expect(src).toMatch(/resolveEmotionalRegister\(text, \(prompt\) => this\.agent\.respondTo\(`\$\{[a-z.]+\}::register`, prompt, undefined, \{ withTools: false, timeoutMs: 10_000 \}\)\)/);
+      expect(src).not.toMatch(/\bdetectEmotionalRegister\(text\)/);
+    });
+  }
+});
