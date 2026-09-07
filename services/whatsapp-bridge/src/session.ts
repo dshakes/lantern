@@ -8842,6 +8842,7 @@ export class WhatsAppSession {
         ownerProfile,
         ownerFacts: this.ownerProfileStore.factsBlock(),
         ownerPublic: this.ownerProfileStore.publicBlock(),
+        ownerNow: this.ownerProfileStore.nowBlock(),
         knownPeople: this.ownerProfileStore.relationshipsBlock(),
         addressRule,
         relationship,

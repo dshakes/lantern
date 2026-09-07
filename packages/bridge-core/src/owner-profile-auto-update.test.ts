@@ -202,3 +202,27 @@ test("generic auto-learn still works for non-typed facts", async () => {
   assert.ok(text.includes("## Auto-learned"), "generic should still use auto-learn");
   assert.ok(text.includes("Raju lives in Poolville, MD"));
 });
+
+test("now: a visitor 'till the 1st' routes into ## Now with an expiry the parser drops later", async () => {
+  const path = tmpProfile("# Owner profile\n## Facts\n- married: yes\n");
+  const llm = async (prompt: string) => {
+    assert.match(prompt, /Today is 2026-08-24/);
+    return JSON.stringify({ facts: [{ category: "now", line: "Sowmyadhar staying with us until the 1st", now: { text: "Sowmyadhar (brother-in-law) is staying with us", until: "2026-09-01" } }] });
+  };
+  const r = await maybeAutoUpdateOwnerProfile("my brother-in-law Sowmyadhar is staying with us till the 1st", { profilePath: path, llmCall: llm, today: new Date("2026-08-24T12:00:00Z") });
+  assert.equal(r.appended.length, 1);
+  const raw = readFileSync(path, "utf8");
+  assert.match(raw, /## Now\n- Sowmyadhar \(brother-in-law\) is staying with us \| until: 2026-09-01/);
+  const prof = parseProfile(raw);
+  assert.deepEqual(prof.now, [{ text: "Sowmyadhar (brother-in-law) is staying with us", until: "2026-09-01" }]);
+  // Re-teaching with a new date updates the line instead of duplicating it.
+  const llm2 = async () => JSON.stringify({ facts: [{ category: "now", line: "x", now: { text: "Sowmyadhar (brother-in-law) is staying with us", until: "2026-09-03" } }] });
+  await maybeAutoUpdateOwnerProfile("he's staying till the 3rd now", { profilePath: path, llmCall: llm2, today: new Date("2026-08-24T12:00:00Z") });
+  const raw2 = readFileSync(path, "utf8");
+  assert.equal((raw2.match(/Sowmyadhar/g) ?? []).length, 1);
+  assert.match(raw2, /until: 2026-09-03/);
+  // A malformed `until` is dropped, never written.
+  const llm3 = async () => JSON.stringify({ facts: [{ category: "now", line: "y", now: { text: "learning gelato", until: "next week" } }] });
+  await maybeAutoUpdateOwnerProfile("learning gelato this week", { profilePath: path, llmCall: llm3 });
+  assert.match(readFileSync(path, "utf8"), /- learning gelato\n/);
+});

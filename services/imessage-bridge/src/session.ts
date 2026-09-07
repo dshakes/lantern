@@ -7719,6 +7719,7 @@ export class IMessageSession {
       // known fact ("happy anniversary" gets a truthful reply).
       ownerFacts: this.ownerProfileStore.factsBlock(),
       ownerPublic: this.ownerProfileStore.publicBlock(),
+      ownerNow: this.ownerProfileStore.nowBlock(),
       knownPeople: this.ownerProfileStore.relationshipsBlock(),
       // Per-contact addressing rule — what to call them, what never to.
       addressRule: isGroup
