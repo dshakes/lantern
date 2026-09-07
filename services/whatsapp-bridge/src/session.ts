@@ -132,7 +132,7 @@ import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { intentRouterEnabled, classifyIntent, forcedHandler } from "@lantern/bridge-core/intent-router";
 import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
-import { recordAction, recentActions } from "@lantern/bridge-core/working-memory";
+import { recordAction, recentActions, contactActionsBlock } from "@lantern/bridge-core/working-memory";
 import {
   looksLikeRecapRequest, parseRecapWindow, buildRecapPrompt, finalizeRecap,
   type RecapItem,
@@ -1934,6 +1934,12 @@ export class WhatsAppSession {
     // the process open.
     const flywheelKick = setTimeout(() => void this.runFlywheelTick(), 30_000);
     flywheelKick.unref?.();
+    // Liveness line every 45 min regardless of nudges (W5) — plus one at ~5 min
+    // so a bridge that boots muted says so before anyone wonders.
+    const liveness = setInterval(() => this.reportSilentDrops(), 45 * 60_000);
+    liveness.unref?.();
+    const livenessKick = setTimeout(() => this.reportSilentDrops(), 5 * 60_000);
+    livenessKick.unref?.();
     // Anticipation nudges: gather signals + DM new nudges every 45 min.
     if (WhatsAppSession.NUDGES_ENABLED) {
       this.nudgesTimer = setInterval(() => void this.runNudgeTick(), WhatsAppSession.NUDGE_INTERVAL_MS);
@@ -3486,6 +3492,7 @@ export class WhatsAppSession {
     // "group msg ignored" line for the same message. Every send funnels
     // through here, so this is the one place a group block is complete.
     if (isBlockedGroupSend(to)) {
+      this.blockedGroupSends++;
       this.logger.warn({ to, textPreview: text.slice(0, 80) }, "group send BLOCKED at boundary — group replies disabled (LANTERN_GROUP_REPLIES=1 to enable)");
       return undefined;
     }
@@ -5290,6 +5297,27 @@ export class WhatsAppSession {
   // messaging during a mute that is a notice every few minutes, forever. Count
   // + fired-bucket ladder instead: ~6 escalating notices per mute episode.
   private mutedDropCount = 0;
+  private blockedGroupSends = 0;
+
+  // LIVENESS (ADR 0024 W5, twin of the iMessage bridge): a periodic line that
+  // makes "nobody is getting replies" visible in the logs instead of looking
+  // like a quiet day — a weeks-long silent mute was found only by the owner.
+  private reportSilentDrops(): void {
+    try {
+      if (this.killSwitch) {
+        this.logger.warn({}, "LIVENESS: kill switch ENGAGED — no contact gets a reply");
+      } else if (this.muted) {
+        this.logger.warn({ mutedDropsSinceStart: this.mutedDropCount }, "LIVENESS: auto-reply is MUTED — contacts are being dropped (unmute to resume)");
+      }
+      const now = Date.now();
+      const pausedNow = [...this.pausedUntil.values()].filter((p) => p.until > now).length;
+      if (pausedNow > 0 || this.blockedGroupSends > 0) {
+        this.logger.info({ pausedContacts: pausedNow, blockedGroupSendsSinceStart: this.blockedGroupSends }, "LIVENESS: reply suppression active (paused contacts / blocked group sends)");
+      }
+    } catch {
+      /* observability must never break the tick */
+    }
+  }
   private firedMutedBuckets: Set<string> = new Set();
 
   /** (Re)arm the auto-unmute timer. ms<=0 clears it (indefinite mute). */
@@ -8886,9 +8914,11 @@ export class WhatsAppSession {
         // Commitments this bot already made IN THIS THREAD; its own "I'll
         // follow up" announcement is stripped from history as bot-self text.
         // Scoped to this jid — another contact's watch never surfaces here.
-        selfContextBlock: this.watchStore
-          ? contactWatchBlock(this.watchStore.all(), from)
-          : "",
+        // + the assistant's own recent actions ABOUT this contact (W1.3).
+        selfContextBlock: [
+          this.watchStore ? contactWatchBlock(this.watchStore.all(), from) : "",
+          opts.isGroup ? "" : contactActionsBlock(recentActions(), opts.senderName ?? this.contactNames.get(from)),
+        ].filter(Boolean).join("\n\n"),
         disclosed: this.disclosedJids.has(from),
         stylePrompt,
         ownerProfile,
