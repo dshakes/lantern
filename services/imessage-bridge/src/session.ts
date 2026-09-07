@@ -416,7 +416,7 @@ import {
   type DormantContactSignal,
 } from "@lantern/bridge-core/anticipation";
 import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } from "@lantern/bridge-core/dislike-consolidator";
-import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
+import { resolveEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { parseBriefReply, formatBriefAck } from "@lantern/bridge-core/brief-reply";
@@ -7570,7 +7570,11 @@ export class IMessageSession {
     // excitement) so the persona modulates tone. Pure + deterministic (lexicon
     // + punctuation), no LLM on the hot path. Contact-facing 1:1 only; groups
     // stay neutral. Logged for offline tuning.
-    const emotionalRegister = !isGroup ? detectEmotionalRegister(text) : undefined;
+    // W2.4 (ADR 0024): table first; a purpose-keyed judgment only when the
+    // table is silent on non-English text. Fail-safe to the table.
+    const emotionalRegister = !isGroup
+      ? await resolveEmotionalRegister(text, (prompt) => this.agent.respondTo(`${row.handle}::register`, prompt, undefined, { withTools: false, timeoutMs: 10_000 }))
+      : undefined;
     if (emotionalRegister && emotionalRegister.register !== "neutral") {
       this.logger.info(
         { handle: row.handle, register: emotionalRegister.register, confidence: emotionalRegister.confidence, signals: emotionalRegister.signals },
