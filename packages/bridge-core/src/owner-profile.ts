@@ -104,6 +104,27 @@ export interface OwnerProfile {
    *
    *  Kept OUT of prose (typed injection via publicBlock(), like Facts). */
   publicFacts: string[];
+  /** PRESENT-TENSE self-model (ADR 0024, W1): what the owner is doing RIGHT
+   *  NOW — a visitor in town, a trip, opening-week prep. Body of a "## Now"
+   *  (also "## This week" / "## Currently" / "## These days") section, one
+   *  bullet each, with an optional expiry: `- text | until: YYYY-MM-DD` or
+   *  `- text (until YYYY-MM-DD)`. Expired items are parsed but never
+   *  injected, so a brother-in-law who left on the 1st is not "here" on the
+   *  6th. The gap this fills: every existing bucket was timeless (Facts,
+   *  Public, Relationships) and the bot had no notion of "this week". */
+  now: NowItem[];
+}
+
+export interface NowItem { text: string; until?: string }
+
+/** Parse one "## Now" bullet: `text | until: 2026-09-10` / `text (until 2026-09-10)`
+ *  / `text till 2026-09-10`. Exported for the teaching writer's round-trip test. */
+export function parseNowLine(line: string): NowItem | null {
+  const t = line.trim().replace(/^[-*]\s*/, "");
+  if (!t || t.startsWith("#") || t.startsWith("<!--")) return null;
+  const m = t.match(/^(.*?)\s*(?:\|\s*until:\s*|\(\s*until\s+|\b(?:until|till)\s+)(\d{4}-\d{2}-\d{2})\)?\s*$/i);
+  if (m) return { text: m[1].trim(), until: m[2] };
+  return { text: t };
 }
 
 const RELOAD_TTL_MS = 30_000;
@@ -267,6 +288,19 @@ export class OwnerProfileStore {
     const facts = this.get()?.publicFacts ?? [];
     if (facts.length === 0) return "";
     return `Public news the owner has announced (OK to confirm to anyone): ${facts.join("; ")}.`;
+  }
+
+  /** What the owner is doing RIGHT NOW, expired items dropped. Rendered for
+   *  both audiences: the owner's self-chat (so "what's on this week" is
+   *  answerable) and contacts (so "how's it going / where are you" gets a
+   *  present-tense answer instead of a timeless one). `today` is injectable
+   *  for tests; the date compare is on the ISO string, owner-local day. */
+  nowBlock(today: Date = new Date()): string {
+    const items = this.get()?.now ?? [];
+    const iso = localISODate(today, this.timezone() || undefined);
+    const live = items.filter((i) => !i.until || i.until >= iso);
+    if (live.length === 0) return "";
+    return `What the owner is doing RIGHT NOW (this week; present tense): ${live.map((i) => i.until ? `${i.text} (through ${humanizeDate(i.until)})` : i.text).join("; ")}.`;
   }
 
   /** Formatted "Name → relationship" lines for prompt injection. Used
@@ -514,6 +548,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const myWorldLines: string[] = [];
   const privateVaultLines: string[] = [];
   const publicFactLines: string[] = [];
+  const nowItems: NowItem[] = [];
 
   // Markdown section heading: "## Title". We only treat level-2+ ("##",
   // "###", ...) as section boundaries. A single "#" is reserved for the
@@ -532,6 +567,7 @@ export function parseProfile(raw: string): OwnerProfile {
   let inFacts = false;
   let inPrivateVault = false;
   let inPublic = false;
+  let inNow = false;
   // Everything before the first "## " section (the "# Owner profile"
   // title + the "Do NOT put secrets here" instructional preamble) is
   // guidance for the human, NOT content about the owner. Skip it so it
@@ -564,7 +600,10 @@ export function parseProfile(raw: string): OwnerProfile {
       // facts the owner has made public and wants owned proudly. Typed
       // injection (publicBlock()), so kept out of prose like Facts.
       inPublic = /^(public|announced|shareable|what\s+i'?m\s+up\s+to|news)\b/i.test(section);
-      if (!inRelationships && !inFacts && !inPrivateVault && !inPublic) proseLines.push(line);
+      // "## Now" / "## This week" / "## Currently" — the dated present-tense
+      // self-model. Typed injection (nowBlock()), expired lines dropped.
+      inNow = /^(now|this\s+week|right\s+now|currently|these\s+days)\b/i.test(section);
+      if (!inRelationships && !inFacts && !inPrivateVault && !inPublic && !inNow) proseLines.push(line);
       continue;
     }
     if (!seenFirstSection) continue; // pre-section preamble — drop
@@ -572,6 +611,11 @@ export function parseProfile(raw: string): OwnerProfile {
       // Capture the raw body for the owner-only consumer. NEVER append
       // to proseLines — that is the one inviolable rule of this section.
       privateVaultLines.push(line);
+      continue;
+    }
+    if (inNow) {
+      const item = parseNowLine(line);
+      if (item) nowItems.push(item);
       continue;
     }
     if (inPublic) {
@@ -759,6 +803,7 @@ export function parseProfile(raw: string): OwnerProfile {
       parseTimezone(nativityLines.join(" ")),
     privateVault: privateVaultLines.join("\n").trim(),
     publicFacts: publicFactLines,
+    now: nowItems,
   };
 }
 
@@ -797,3 +842,18 @@ I'm <name> — <role / what you do>. <one or two lines on current focus>.
 - <Name>: <relationship> | also: <+1555..., second@email> (extra numbers/emails for the SAME person)
 - <Name or phone or email>: <relationship>
 `;
+
+/** YYYY-MM-DD for `d` in `tz` (falls back to the process zone). */
+export function localISODate(d: Date, tz?: string): string {
+  try {
+    // formatToParts, not a locale's rendered string: the separator a locale
+    // emits is ICU-dependent, and a "/" would sort every "-" date as expired.
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    const y = get("year"), m = get("month"), day = get("day");
+    if (/^\d{4}$/.test(y) && /^\d{2}$/.test(m) && /^\d{2}$/.test(day)) return `${y}-${m}-${day}`;
+    return d.toISOString().slice(0, 10);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
