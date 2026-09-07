@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests } from "./commitment-gate.ts";
+import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare } from "./commitment-gate.ts";
 
 // (inbound, draft) pairs exactly as sent. Every one MUST hold.
 const INCIDENT: Array<[string, string]> = [
@@ -152,4 +152,17 @@ test("when the bridge resolved the numbers, the page offers them — not a promi
   assert.match(page, /Ready to send \(not sent yet\)/);
   assert.match(page, /Reply "send" to share exactly that/);
   assert.doesNotMatch(page, /COMMITS you|PROMISES MONEY/);
+});
+
+test("contact sharing auto-sends ONLY when every confidence condition holds", () => {
+  const ok = [{ name: "Madhu", phone: "+15551", relationship: "elder brother", ambiguous: false },
+              { name: "Harika", phone: "+15552", relationship: "sister", ambiguous: false }];
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: ok, askedCount: 2 }), true);
+  // any one condition failing → hold for the owner
+  assert.equal(isConfidentContactShare({ requesterKnown: false, isGroup: false, resolved: ok, askedCount: 2 }), false, "stranger asking");
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: true, resolved: ok, askedCount: 2 }), false, "group");
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [ok[0]], askedCount: 2 }), false, "one name unresolved");
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [{ ...ok[0], ambiguous: true }, ok[1]], askedCount: 2 }), false, "ambiguous match");
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [{ ...ok[0], relationship: undefined }, ok[1]], askedCount: 2 }), false, "not a known person");
+  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [], askedCount: 0 }), false, "nothing asked");
 });

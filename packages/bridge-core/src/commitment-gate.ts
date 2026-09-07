@@ -232,3 +232,26 @@ export function extractContactRequests(contactSide: string): string[] {
   for (const m of t.matchAll(/\b(?:number|contact|phone\s*no)\s+(?:of|for)\s+([A-Za-z][A-Za-z']{2,})\b/gi)) push(m[1]);
   return out.slice(0, 4);
 }
+
+/**
+ * Owner policy (2026-09-06): "if it's contact sharing and you're confident,
+ * send it." Confidence is DETERMINISTIC, not a vibe — every condition must
+ * hold, or the reply is held for the owner's tap as before:
+ *   - the requester is someone the owner knows (a relationship on file)
+ *   - every requested name resolved to exactly ONE person, no alternates
+ *   - every resolved person is in the owner's relationships (family / known),
+ *     never an arbitrary AddressBook entry
+ *   - not a group, and something was actually asked for
+ * Pure, so the policy is tested as behaviour and identical on both bridges.
+ */
+export interface ResolvedShare { name: string; phone: string; relationship?: string; ambiguous: boolean }
+export function isConfidentContactShare(args: {
+  requesterKnown: boolean;
+  isGroup: boolean;
+  resolved: ResolvedShare[];
+  askedCount: number;
+}): boolean {
+  if (args.isGroup || !args.requesterKnown) return false;
+  if (args.askedCount === 0 || args.resolved.length !== args.askedCount) return false;
+  return args.resolved.every((r) => !!r.phone && !!r.relationship && !r.ambiguous);
+}

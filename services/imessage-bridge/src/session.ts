@@ -50,7 +50,7 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, type CommitmentVerdict } from "@lantern/bridge-core/commitment-gate";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -8179,13 +8179,39 @@ export class IMessageSession {
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
     if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
+      // DO IT, DON'T PROMISE (twin of the WhatsApp bridge). A number request
+      // resolves into the held draft; and under the owner's policy — "if it's
+      // contact sharing and you're confident, send it" — the deterministic
+      // predicate in bridge-core decides whether it goes out directly.
+      let heldDraft = draft;
+      let resolvedNote: string | undefined;
+      if (commitVerdict?.hold) {
+        const asked = extractContactRequests(`${(this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n")}\n${text}`);
+        const resolved: ResolvedShare[] = [];
+        for (const a of asked) {
+          const r = await this.resolveCallTarget(a).catch(() => null);
+          if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: (this.lastResolveSuggestions?.length ?? 0) > 0 });
+        }
+        if (isConfidentContactShare({ requesterKnown: !!relationship, isGroup, resolved, askedCount: asked.length })) {
+          const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
+          await this.send(row.handle, numbers);
+          this.logger.info({ handle: row.handle, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");
+          const owner = this.ownerSelfChatTarget();
+          if (owner) void this.send(owner, `📇 shared ${resolved.map((r) => `${r.name}'s`).join(" + ")} number${resolved.length > 1 ? "s" : ""} with ${this.contactLabel(row.handle)} — they asked, everyone's known to you, no ambiguity.`).catch(() => {});
+          return;
+        }
+        if (resolved.length > 0) {
+          heldDraft = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
+          resolvedNote = `asked for ${resolved.map((r) => `${r.name}'s`).join(" and ")} number${resolved.length > 1 ? "s" : ""} — I found ${resolved.length > 1 ? "them" : "it"}`;
+        }
+      }
       const held = await this.draftToOwnerForApproval(
         row.handle,
         this.contactLabel(row.handle),
         text,
-        draft,
+        heldDraft,
         commitVerdict?.hold
-          ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft, verdict: commitVerdict })
+          ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft: heldDraft, verdict: commitVerdict, resolvedNote })
           : undefined,
       );
       const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold });
