@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verifyClaims } from "./verifiable-claims.ts";
+import { verifyClaims, performedClaimActions } from "./verifiable-claims.ts";
 
 test("verifyClaims: media-share claims rewritten to intent (bridge can't attach mid-thread)", () => {
   assert.match(verifyClaims("sending you the invoice now").text, /i'll get the invoice.* over to you/i);
@@ -48,4 +48,31 @@ test("verifyClaims: calls + reminders ALWAYS rewritten (no mid-thread path, even
   assert.match(verifyClaims("I called him", { performedActions: new Set(["call"]) }).text, /i'll call him/i);
   assert.match(verifyClaims("I set a reminder to renew your passport").text, /i'll set a reminder to renew your passport/i);
   assert.match(verifyClaims("I've set a reminder for tomorrow").text, /i'll set a reminder for tomorrow/i);
+});
+
+test("W2.2: a claim the bridge provably performed in the last 10 min stands; older or unrecorded claims are rewritten", () => {
+  const now = 1_800_000_000_000;
+  const fresh = performedClaimActions([{ kind: "calendar_added", ts: now - 30_000, summary: "added dinner with Madhu" }], now, { contactName: "Madhu" });
+  assert.ok(fresh.has("calendar-or-note-add") && fresh.has("set-reminder"));
+  assert.equal(verifyClaims("I added it to your calendar", { performedActions: fresh }).rewrites.length, 0, "true claim untouched");
+  const stale = performedClaimActions([{ kind: "calendar_added", ts: now - 3 * 3_600_000, summary: "added dinner with Madhu" }], now, { contactName: "Madhu" });
+  assert.equal(stale.size, 0, "an action three hours ago does not make 'just added' true");
+  assert.ok(verifyClaims("I added it to your calendar", { performedActions: stale }).rewrites.length > 0);
+  assert.equal(performedClaimActions([{ kind: "custom", ts: now, summary: "Madhu" }], now, { contactName: "Madhu" }).size, 0, "untyped kinds prove nothing");
+  assert.ok(performedClaimActions([{ kind: "call_placed", ts: now, summary: "called Madhu" }], now, { contactName: "Madhu" }).has("call"));
+  assert.equal(performedClaimActions([{ kind: "calendar_added", ts: now, summary: "added dinner with Madhu" }], now).size, 0, "no contact name → fail closed (review on #244)");
+});
+
+test("W2.2: doc sends and owner relays are honoured only for THAT contact, and 'I let him know' needs a record", () => {
+  const now = 1_800_000_000_000;
+  const log = [
+    { kind: "doc_sent", ts: now - 20_000, summary: "sent passport.pdf to Ravi" },
+    { kind: "owner_notified", ts: now - 10_000, summary: "told the owner that Madhu asked for the lease" },
+  ];
+  const forRavi = performedClaimActions(log, now, { contactName: "Ravi Kumar" });
+  assert.ok(forRavi.has("send-doc") && !forRavi.has("notify-third-party"));
+  const forMadhu = performedClaimActions(log, now, { contactName: "Madhu" });
+  assert.ok(forMadhu.has("notify-third-party") && !forMadhu.has("send-doc"), "Ravi's document never justifies a claim to Madhu");
+  assert.equal(verifyClaims("I let him know", { performedActions: forMadhu }).rewrites.length, 0, "a recorded relay makes it true");
+  assert.ok(verifyClaims("I let him know", { performedActions: forRavi }).rewrites.length > 0, "no record → rewritten as before");
 });

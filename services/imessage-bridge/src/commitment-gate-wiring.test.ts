@@ -85,7 +85,7 @@ describe("contact sharing goes through the deterministic policy on both bridges"
       expect(sendAfter - call).toBeLessThan(900);
     });
     it(`${name}: the share exit is fed the hold reason and the resolver's own uniqueness proof`, () => {
-      expect(src).toMatch(/holdReason: commitVerdict\.reason/);
+      expect(src).toMatch(/holdReason: commitVerdict\.reason, boundToNumber: promiseIsAboutNumber\(text, draft\)/);
       expect(src).toMatch(/requesterInnerCircle: isInnerCircle\(relationship\)/);
       expect(src).toMatch(/ambiguous: !r\.unique/);
       expect(src).not.toMatch(/ambiguous: \(this\.lastResolveSuggestions/);
@@ -102,6 +102,18 @@ describe("voice floor (ADR 0024 W4) is wired on both bridges", () => {
       expect(src).toMatch(/voiceModel: isOwnerChan \|\| (opts\.)?isGroup \? null : this\.getVoiceModel\(\)/);
       expect(src).toMatch(/"voice score"/);
       expect(src).toMatch(/LANTERN_VOICE_FLOOR/);
+    });
+  }
+});
+
+describe("critique-refine (ADR 0024 W3.4) is wired on both bridges", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: MEDIUM/LOW contact drafts are refined against the owner's own messages, purpose-keyed, accepted only when not further from the voice and clean`, () => {
+      expect(src).toMatch(/if \(tier\.tier !== "HIGH" && !(opts\.)?isGroup && !isOwnerChan\) \{\s*draft = await this\.refineToOwnerVoice\(/);
+      expect(src).toMatch(/::refine`/);
+      expect(src).toMatch(/after <= before/);
+      expect(src).toMatch(/detectBotTells\(refined, inbound, botTellCtx\)\.ok/);
+      expect(src).toMatch(/LANTERN_VOICE_REFINE/);
     });
   }
 });

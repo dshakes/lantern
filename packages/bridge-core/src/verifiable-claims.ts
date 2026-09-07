@@ -233,10 +233,12 @@ export function verifyClaims(text: string, opts: VerifyOptions = {}): VerifyResu
     // Honor genuine completions. Always-rewrite patterns (notify-third-party,
     // calls, reminders) have no truthful mid-thread path, so we rewrite them
     // regardless of `performedActions` — unless the caller opts out.
+    // A PROVEN action stands, notify included (an owner_notified record for
+    // this contact makes "I let him know" true); alwaysRewrite keeps
+    // precedence. Otherwise notify claims are rewritten by default.
+    if (!pat.alwaysRewrite && performed.has(pat.action)) continue;
     if (pat.alwaysRewrite || pat.action === "notify-third-party") {
       if (!rewriteNotify) continue;
-    } else if (performed.has(pat.action)) {
-      continue;
     }
 
     // Loop on the regex (a long reply may have multiple claims).
@@ -261,4 +263,40 @@ export function verifyClaims(text: string, opts: VerifyOptions = {}): VerifyResu
 function truncate(s: string, n: number): string {
   const flat = (s || "").replace(/\s+/g, " ").trim();
   return flat.length > n ? flat.slice(0, n) + "…" : flat;
+}
+
+/** Claim keys the bridge can PROVE it performed, from the working-memory
+ *  action log (ADR 0024 W2.2). A claim is honoured only when a matching
+ *  action was recorded within `windowMs` (default 10 min) — "added it to
+ *  your calendar" is true right after a calendar_added, not because one
+ *  happened this morning. Kinds with no record (doc sends, notifying a
+ *  third party) map to nothing, so those claims keep being rewritten to
+ *  intent rather than failing open. Pure. */
+export function performedClaimActions(
+  actions: ReadonlyArray<{ kind: string; ts: number; summary?: string }>,
+  nowMs: number,
+  opts: { windowMs?: number; contactName?: string } = {},
+): Set<string> {
+  const windowMs = opts.windowMs ?? 10 * 60_000;
+  // CONTACT-SCOPED: only actions whose summary names this recipient count
+  // (word-bounded first name). FAIL CLOSED without a resolvable name — an
+  // action recorded for someone else must never make a claim to an
+  // unnamed recipient true.
+  const first = (opts.contactName ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+  const out = new Set<string>();
+  if (!first || first.length < 2) return out;
+  const nameRe = new RegExp(`(^|[^\\p{L}])${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}])`, "iu");
+  for (const a of actions) {
+    if (a.ts < nowMs - windowMs || a.ts > nowMs + 60_000) continue;
+    if (!nameRe.test(a.summary ?? "")) continue;
+    switch (a.kind) {
+      case "calendar_added": out.add("calendar-or-note-add"); out.add("set-reminder"); out.add("schedule"); break;
+      case "note_saved": out.add("calendar-or-note-add"); break;
+      case "call_placed": out.add("call"); break;
+      case "doc_sent": out.add("send-doc"); out.add("attach-media"); out.add("send-message"); break;
+      case "owner_notified": out.add("notify-third-party"); break;
+      default: break;
+    }
+  }
+  return out;
 }
