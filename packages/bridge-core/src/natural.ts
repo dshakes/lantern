@@ -863,7 +863,7 @@ export function agentPersonaPrompt(
     lines.push(
       isOwnerAudience
         ? `${now} Use this as your working picture of the week when the owner asks what's on, who's around, or refers to "his flight" / "the opening" without naming it.`
-        : `${now} Speak from this in the present tense when someone asks how things are, what you're up to, or where you are — it is current and true. Mention an item only when it fits the conversation; never recite the list, and never add details that aren't in it.`,
+        : `${now} This person is inner circle, so speaking from it in the present tense is fine when they ask how things are or what's on — it is current and true. Mention an item only when it fits the conversation; never recite the list, never add details that aren't in it, and the location rules above still apply.`,
     );
   }
 
