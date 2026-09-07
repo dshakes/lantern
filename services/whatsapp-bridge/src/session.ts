@@ -1588,7 +1588,7 @@ export class WhatsAppSession {
       const exemplars = ownerVoiceExemplars(this.ownerVoiceGlobal, { max: 5, relevantTo: draft });
       if (exemplars.length < 3) return draft;
       const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
-      const raw = await this.agent.respondTo(`${jid}::refine`, buildRefinePrompt({ ownerName, draft, inbound, exemplars }), undefined, { withTools: false });
+      const raw = await this.agent.respondTo(`${jid}::refine`, buildRefinePrompt({ ownerName, draft, inbound, exemplars }), undefined, { withTools: false, timeoutMs: 15_000 });
       const refined = parseRefine(raw, draft);
       if (!refined || refined === draft) return draft;
       const model = botTellCtx.voiceModel ?? null;
