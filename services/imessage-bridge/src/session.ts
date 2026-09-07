@@ -7952,6 +7952,7 @@ export class IMessageSession {
         ? undefined
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+      recentReplies: isGroup ? [] : (this.recentBotReplies.get(row.handle) ?? []).slice(-3),
       // When the owner's real location was injected (inner circle), a location
       // claim in the draft is grounded — don't suppress it as a fabrication.
       truthfulLocationKnown,
