@@ -3434,24 +3434,27 @@ export class WhatsAppSession {
             isGroup,
             targetsOwner: this.isOwnerTargeted(msg),
           });
+          // MUTE = "don't SEND", not "don't THINK" (owner, 2026-09-07; twin of
+          // the iMessage bridge). A muted channel drafts for the owner instead
+          // of dropping in silence; the KILL SWITCH remains "do nothing at all".
+          const mutedHold = this.muted;
           if (this.muted) {
-            if (wouldAutoReply) {
-              this.mutedDropCount++;
-              this.logger.warn(
-                { from, mutedDropsSinceStart: this.mutedDropCount },
-                "contact reply suppressed — auto-reply is MUTED (owner must unmute)",
-              );
-              const bucket = mutedNoticeBucket(this.mutedDropCount);
-              if (!this.firedMutedBuckets.has(bucket)) {
-                this.firedMutedBuckets.add(bucket);
-                void this.confirmToSelf(
-                  `⚠️ ${senderName || from.split("@")[0]} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or say "bot on".`,
-                ).catch(() => {});
-              }
-            } else {
+            if (!wouldAutoReply) {
               this.logger.info({ from }, "agent skipped — globally muted (not addressed to owner)");
+              continue;
             }
-            continue;
+            this.mutedDropCount++;
+            this.logger.warn(
+              { from, mutedHoldsSinceStart: this.mutedDropCount },
+              "MUTED — reply will be drafted for the owner, not sent",
+            );
+            const bucket = mutedNoticeBucket(this.mutedDropCount);
+            if (!this.firedMutedBuckets.has(bucket)) {
+              this.firedMutedBuckets.add(bucket);
+              void this.confirmToSelf(
+                `⚠️ ${senderName || from.split("@")[0]} messaged while auto-reply is muted — ${this.mutedDropCount} reply(ies) drafted for you instead of sent. Approve with "send", or say "bot on" to resume.`,
+              ).catch(() => {});
+            }
           }
           if (this.isPaused(from)) {
             this.logger.info({ from }, "agent skipped — contact paused");
@@ -3484,6 +3487,7 @@ export class WhatsAppSession {
           this.handleAgentReply(from, text, {
             isGroup,
             senderName,
+            mutedHold,
             msgKey: msg.key,
             // Full proto message → so we can quote-reply in groups
             // (real-human behavior in noisy threads).
@@ -8468,6 +8472,8 @@ export class WhatsAppSession {
     opts: {
       isGroup?: boolean;
       senderName?: string;
+      /** The channel is MUTED: draft this reply for the owner, never send it. */
+      mutedHold?: boolean;
       msgKey?: {
         id?: string | null;
         remoteJid?: string | null;
@@ -9483,6 +9489,11 @@ export class WhatsAppSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // Muted: every reply is drafted for the owner regardless of tier.
+    if (opts.mutedHold && tier.tier !== "LOW") {
+      tier.tier = "LOW";
+      tier.reasons.push("-muted-draft-for-owner");
+    }
     if (tier.tier !== "HIGH" && !opts.isGroup && !isOwnerChan) {
       draft = await this.refineToOwnerVoice(from, draft, text, botTellCtx);
     }
@@ -9523,7 +9534,7 @@ export class WhatsAppSession {
       // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
-      if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
+      if (opts.mutedHold || WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
         // DO IT, DON'T PROMISE. If the contact asked for someone's NUMBER and
         // the bridge can resolve it, the held draft carries the REAL numbers,
         // so the owner's one-tap "send" delivers them. 2026-09-04: "send

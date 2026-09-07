@@ -29,6 +29,13 @@ jobs:
           fetch-depth: 0
       - name: Classify the change
         id: classify
+        # A missing structured_output is not a failure worth blocking a PR on:
+        # haiku occasionally finishes without emitting it (the action then exits
+        # 1 with "--json-schema was provided but Claude did not return
+        # structured_output"), and the label step below ALREADY defaults to
+        # "core" when the output is empty. Without this, a routing nicety
+        # turned real PRs red.
+        continue-on-error: true
         uses: anthropics/claude-code-action@af0559ee4f514d1ef21826982bed13f7edc3c35e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

@@ -184,10 +184,13 @@ export function resolveHeldReply(args: {
   held: boolean;            // owner hand-off succeeded
   forceDraftCaution: boolean;
   commitHold: boolean;      // the commitment gate said HOLD
+  mutedHold?: boolean;      // the channel is muted — never auto-send
 }): "handed-to-owner" | "suppress" | "fallthrough-send" {
   if (args.held) return "handed-to-owner";
-  // Either safety hold must fail CLOSED: silence over an unreviewed send.
-  if (args.forceDraftCaution || args.commitHold) return "suppress";
+  // Every hold must fail CLOSED: silence over an unreviewed send. A muted
+  // channel especially — falling through would auto-send on the one channel
+  // the owner explicitly silenced.
+  if (args.forceDraftCaution || args.commitHold || args.mutedHold) return "suppress";
   return "fallthrough-send";
 }
 
@@ -7264,7 +7267,15 @@ export class IMessageSession {
     // contacts (relationship/samples/facts) auto-reply authentically;
     // unknown contacts get held as a draft; nobody gets spam. Owner can
     // still globally mute or pause per-contact.
+    // MUTE = "don't SEND", not "don't THINK" (owner, 2026-09-07). Muted used to
+    // return here, so a muted channel produced neither a reply nor a draft: 18
+    // contacts were dropped in one morning and the approval queue the owner was
+    // waiting on stayed empty by construction. Now the pipeline runs and the
+    // reply is handed to the owner as a draft. The KILL SWITCH (checked well
+    // above) remains the "do nothing at all" switch.
+    let mutedHold = false;
     if (this.muted) {
+      mutedHold = true;
       // ALWAYS log, never deduped. The owner-facing notice below is deduped on
       // the key "muted" with a 5-minute window, which is right for a transient
       // drop and wrong for a state that lasts weeks: one notice fired, then
@@ -7273,8 +7284,8 @@ export class IMessageSession {
       // They have different jobs and must not share a suppression rule.
       this.mutedDropCount++;
       this.logger.warn(
-        { handle: row.handle, textPreview: text.slice(0, 60), mutedDropsSinceStart: this.mutedDropCount },
-        "contact reply suppressed — auto-reply is MUTED (owner must unmute)",
+        { handle: row.handle, textPreview: text.slice(0, 60), mutedHoldsSinceStart: this.mutedDropCount },
+        "MUTED — reply will be drafted for the owner, not sent",
       );
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `bot muted — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
       // Re-nudge on an ESCALATING schedule rather than once per 5 minutes
@@ -7284,11 +7295,10 @@ export class IMessageSession {
       if (!this.firedMutedBuckets.has(bucket)) {
         this.firedMutedBuckets.add(bucket);
         this.notifyOwnerOfDrop(
-          `${this.contactLabel(row.handle)} messaged but auto-reply is muted — ${this.mutedDropCount} message(s) dropped so far. Reply yourself or unmute.`,
+          `${this.contactLabel(row.handle)} messaged while auto-reply is muted — ${this.mutedDropCount} reply(ies) drafted for you instead of sent. Approve one with "send", or unmute with "bot on".`,
           `muted:${bucket}`,
         );
       }
-      return;
     }
     const until = this.pausedUntil.get(row.handle);
     if (until && until > Date.now()) {
@@ -8298,6 +8308,11 @@ export class IMessageSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    // Muted: every reply is drafted for the owner regardless of tier.
+    if (mutedHold && tier.tier !== "LOW") {
+      tier.tier = "LOW";
+      tier.reasons.push("-muted-draft-for-owner");
+    }
     if (tier.tier !== "HIGH" && !isGroup && !isOwnerChan) {
       draft = await this.refineToOwnerVoice(row.handle, draft, text, botTellCtx);
     }
@@ -8329,7 +8344,7 @@ export class IMessageSession {
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
+    if (tier.tier === "LOW" && (mutedHold || IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && !isGroup) {
       // DO IT, DON'T PROMISE (twin of the WhatsApp bridge). A number request
       // resolves into the held draft; and under the owner's policy — "if it's
       // contact sharing and you're confident, send it" — the deterministic
@@ -8372,7 +8387,7 @@ export class IMessageSession {
           ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft: heldDraft, verdict: commitVerdict, resolvedNote })
           : undefined,
       );
-      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold });
+      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold, mutedHold });
       if (outcome === "handed-to-owner") {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
         return;

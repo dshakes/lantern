@@ -10,8 +10,8 @@ const im = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
 const wa = readFileSync(new URL("../../whatsapp-bridge/src/session.ts", import.meta.url), "utf8");
 
 for (const [name, src, holdLine] of [
-  ["imessage", im, /tier\.tier === "LOW" && \(IMessageSession\.DRAFT_CONFIRM_DEFAULT \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
-  ["whatsapp", wa, /if \(WhatsAppSession\.DRAFT_HIGH_STAKES \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
+  ["imessage", im, /tier\.tier === "LOW" && \(mutedHold \|\| IMessageSession\.DRAFT_CONFIRM_DEFAULT \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
+  ["whatsapp", wa, /if \(opts\.mutedHold \|\| WhatsAppSession\.DRAFT_HIGH_STAKES \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
 ] as const) {
   describe(`${name}: commitment gate stays wired`, () => {
     it("calls judgeCommitment on the contact reply path", () => {
@@ -190,4 +190,27 @@ describe("a pause only ever extends (live 2026-09-07: a takeover pause clobbered
   it("imessage: both pause sites take the max", () => {
     expect(im.match(/pausedUntil\.set\([a-z.]+, Math\.max\(this\.pausedUntil\.get\([a-z.]+\) \?\? 0, Date\.now\(\) \+ [A-Za-z_]+\)\)/g)?.length).toBe(2);
   });
+});
+
+describe("mute drafts for the owner instead of dropping (owner, 2026-09-07)", () => {
+  it("a muted hold never falls through to send when the owner hand-off fails", () => {
+    expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: false, mutedHold: true })).toBe("suppress");
+    expect(resolveHeldReply({ held: true, forceDraftCaution: false, commitHold: false, mutedHold: true })).toBe("handed-to-owner");
+    // Unmuted, no other hold → the ordinary hold-then-send path is unchanged.
+    expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: false, mutedHold: false })).toBe("fallthrough-send");
+    expect(resolveHeldReply({ held: false, forceDraftCaution: false, commitHold: false })).toBe("fallthrough-send");
+  });
+
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: muted forces the draft tier and the draft branch, and never returns early`, () => {
+      // The reply pipeline runs while muted — the old `return`/`continue` is gone.
+      expect(src).toMatch(/tier\.reasons\.push\("-muted-draft-for-owner"\)/);
+      expect(src).toMatch(/(mutedHold \|\| IMessageSession\.DRAFT_CONFIRM_DEFAULT|opts\.mutedHold \|\| WhatsAppSession\.DRAFT_HIGH_STAKES)/);
+      expect(src).toMatch(/MUTED — reply will be drafted for the owner, not sent/);
+      expect(src).not.toMatch(/contact reply suppressed — auto-reply is MUTED/);
+    });
+    it(`${name}: the kill switch, not mute, is the do-nothing switch`, () => {
+      expect(src).toMatch(/killSwitch/);
+    });
+  }
 });
