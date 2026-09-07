@@ -117,3 +117,16 @@ describe("critique-refine (ADR 0024 W3.4) is wired on both bridges", () => {
     });
   }
 });
+
+describe("W1.3 + W5 parity", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: the contact reply sees the assistant's own actions about that contact, never in a group`, () => {
+      expect(src).toMatch(/(opts\.)?isGroup \? "" : contactActionsBlock\(recentActions\(\), /);
+    });
+    it(`${name}: a periodic LIVENESS line reports mute / kill switch / paused suppression`, () => {
+      expect(src).toMatch(/private reportSilentDrops\(\)/);
+      expect(src).toMatch(/LIVENESS: auto-reply is MUTED/);
+      expect(src).toMatch(/setInterval\([\s\S]{0,80}?reportSilentDrops/);
+    });
+  }
+});
