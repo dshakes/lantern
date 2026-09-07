@@ -257,9 +257,21 @@ export function isConfidentContactShare(args: {
    *  into a share; a money hold in a thread that ALSO once asked for a
    *  number must never take the auto-send exit past the owner page. */
   holdReason: CommitmentVerdict["reason"];
+  /** The promise being held is ABOUT a number: the draft itself mentions a
+   *  number/contact, or the current inbound asks for one. Without this, a
+   *  stale "Raju number send" in history plus an unrelated "I'll call you in
+   *  10 min" would discard the draft and send Raju's number instead. */
+  boundToNumber: boolean;
 }): boolean {
-  if (args.holdReason !== "action-promise") return false;
+  if (args.holdReason !== "action-promise" || !args.boundToNumber) return false;
   if (args.isGroup || !args.requesterInnerCircle) return false;
   if (args.askedCount === 0 || args.resolved.length !== args.askedCount) return false;
   return args.resolved.every((r) => !!r.phone && !!r.relationship && !r.ambiguous);
+}
+
+/** Is this turn's promise about sharing a number? Deterministic: the draft
+ *  names a number/contact (romanized spellings included; "no." has no
+ *  trailing \b since a period is not a word char), or the inbound asks. */
+export function promiseIsAboutNumber(inbound: string, draft: string): boolean {
+  return /\b(numbers?|nambars?|numbar|namber|nambr|contact|phone|phn|mob|mobile)\b|\bno\.(?!\p{L})/iu.test(draft) || extractContactRequests(inbound).length > 0;
 }

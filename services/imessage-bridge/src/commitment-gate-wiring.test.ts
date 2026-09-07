@@ -85,7 +85,7 @@ describe("contact sharing goes through the deterministic policy on both bridges"
       expect(sendAfter - call).toBeLessThan(900);
     });
     it(`${name}: the share exit is fed the hold reason and the resolver's own uniqueness proof`, () => {
-      expect(src).toMatch(/holdReason: commitVerdict\.reason/);
+      expect(src).toMatch(/holdReason: commitVerdict\.reason, boundToNumber: promiseIsAboutNumber\(text, draft\)/);
       expect(src).toMatch(/requesterInnerCircle: isInnerCircle\(relationship\)/);
       expect(src).toMatch(/ambiguous: !r\.unique/);
       expect(src).not.toMatch(/ambiguous: \(this\.lastResolveSuggestions/);

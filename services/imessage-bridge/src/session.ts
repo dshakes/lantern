@@ -50,7 +50,7 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
@@ -5374,6 +5374,7 @@ export class IMessageSession {
       const last = this.docRelayDedup.get(dedupKey);
       if (last && Date.now() - last < 30 * 60_000) return;
       this.docRelayDedup.set(dedupKey, Date.now());
+      recordAction({ kind: "owner_notified", summary: `told the owner that ${contactLabel} asked for ${request}` });
     }
 
     let hit: { path: string; name: string } | undefined;
@@ -5633,6 +5634,7 @@ export class IMessageSession {
         // sendFile's exit code can't see an async "Not Delivered" — watch for it
         // and re-deliver via link if the file silently fails (Finding: GA incident).
         if (phone) this.scheduleFileDeliveryWatch(target, filePath, request);
+        recordAction({ kind: "doc_sent", summary: `sent ${filePath.split("/").pop() ?? "a document"} to ${this.contactNames.get(target) ?? target}` });
         return { ok: true, via: "imessage" };
       }
       if (!phone) return { ok: false, reason: im.reason }; // no link route for a non-phone handle
@@ -5755,7 +5757,12 @@ export class IMessageSession {
       // Gate the rewrite on the action log (ADR 0024 W2.2): a claim the
       // bridge PROVABLY performed in the last 10 min stands as written.
       const nowMs = Date.now();
-      const verdict = verifyClaims(text, { performedActions: performedClaimActions(recentActions({ nowMs }), nowMs) });
+      const verdict = verifyClaims(text, {
+        // Contact-scoped: only actions whose summary names THIS contact count,
+        // so "I let him know" is honoured on an owner_notified record for them
+        // and rewritten otherwise.
+        performedActions: performedClaimActions(recentActions({ nowMs }), nowMs, { contactName: this.contactNames.get(to) }),
+      });
       if (verdict.rewrites.length > 0) {
         this.logger.info(
           { to, rewrites: verdict.rewrites },
@@ -8255,7 +8262,7 @@ export class IMessageSession {
           if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
         }
         this.lastResolveSuggestions = savedSuggestions;
-        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
           const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
           await this.send(row.handle, numbers);
           this.logger.info({ handle: row.handle, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");

@@ -47,7 +47,7 @@ import {
   isBlockedGroupSend,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
@@ -3497,7 +3497,12 @@ export class WhatsAppSession {
       // Gate the rewrite on the action log (ADR 0024 W2.2): a claim the
       // bridge PROVABLY performed in the last 10 min stands as written.
       const nowMs = Date.now();
-      const verdict = verifyClaims(text, { performedActions: performedClaimActions(recentActions({ nowMs }), nowMs) });
+      const verdict = verifyClaims(text, {
+        // Contact-scoped: only actions whose summary names THIS contact count,
+        // so "I let him know" is honoured on an owner_notified record for them
+        // and rewritten otherwise.
+        performedActions: performedClaimActions(recentActions({ nowMs }), nowMs, { contactName: this.contactNames.get(to) }),
+      });
       if (verdict.rewrites.length > 0) {
         this.logger.info(
           { to, rewrites: verdict.rewrites },
@@ -5654,6 +5659,7 @@ export class WhatsAppSession {
       const last = this.docRelayDedup.get(dedupKey);
       if (last && Date.now() - last < 30 * 60_000) return; // already surfaced this ask recently
       this.docRelayDedup.set(dedupKey, Date.now());
+      recordAction({ kind: "owner_notified", summary: `told the owner that ${contactLabel} asked for ${request}` });
     }
 
     let hit: { path: string; name: string } | undefined;
@@ -5918,6 +5924,7 @@ export class WhatsAppSession {
     }
     try {
       await this.sendDocument(targetJid, filePath);
+      recordAction({ kind: "doc_sent", summary: `sent ${filePath.split("/").pop() ?? "a document"} to ${this.contactNames.get(targetJid) ?? targetJid.split("@")[0]}` });
       return { ok: true, via: "whatsapp" };
     } catch (err) {
       this.logger.warn({ err, to: targetJid }, "WA sendDocument failed — falling back to secure link");
@@ -9428,7 +9435,7 @@ export class WhatsAppSession {
           // bridge-core — known requester, every name resolved to exactly one
           // KNOWN person, no alternates, not a group. Then the numbers go out
           // directly and the owner gets an FYI; otherwise the hold below.
-          if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+          if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
             const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
             await this.sendMessage(from, numbers);
             this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");

@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare } from "./commitment-gate.ts";
+import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber } from "./commitment-gate.ts";
 import { resolveContact, countCachePeople } from "./contact-resolver.ts";
 
 // (inbound, draft) pairs exactly as sent. Every one MUST hold.
@@ -158,7 +158,7 @@ test("when the bridge resolved the numbers, the page offers them — not a promi
 test("contact sharing auto-sends ONLY when every confidence condition holds", () => {
   const ok = [{ name: "Madhu", phone: "+15551", relationship: "elder brother", ambiguous: false },
               { name: "Harika", phone: "+15552", relationship: "sister", ambiguous: false }];
-  const base = { requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 2, holdReason: "action-promise" as const };
+  const base = { requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 2, holdReason: "action-promise" as const, boundToNumber: true };
   assert.equal(isConfidentContactShare(base), true);
   // any one condition failing → hold for the owner
   assert.equal(isConfidentContactShare({ ...base, requesterInnerCircle: false }), false, "not inner circle (a vendor, a manager, a friend)");
@@ -175,7 +175,7 @@ test("a MONEY hold in a thread that once asked for a number never takes the shar
   // resolve Raju and auto-send past the owner page.
   const ok = [{ name: "Raju", phone: "+15551", relationship: "cousin", ambiguous: false }];
   for (const holdReason of ["money-request", "money-promise", "none"] as const) {
-    assert.equal(isConfidentContactShare({ requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 1, holdReason }), false, holdReason);
+    assert.equal(isConfidentContactShare({ requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 1, holdReason, boundToNumber: true }), false, holdReason);
   }
 });
 
@@ -194,4 +194,28 @@ test("the resolver proves uniqueness; two cached Madhus are never 'unambiguous'"
   // Same phone under two handles (phone + email) is one person.
   const dup = new Map([["+15125550001", "Madhu K Mudarapu"], ["madhu@example.com", "Madhu K Mudarapu"]]);
   assert.equal(countCachePeople("madhu", dup), 1);
+});
+
+test("an unrelated promise never turns a stale number ask into a share (review on #242)", () => {
+  assert.equal(promiseIsAboutNumber("ok call me", "ha, I'll call you in 10 min"), false);
+  assert.equal(promiseIsAboutNumber("?", "ha rendu numbers send chesta konchem sepatlo"), true, "the Satthi replay: draft names the numbers");
+  assert.equal(promiseIsAboutNumber("harika number send", "sare, send chesta"), true, "the ask is in this turn");
+  const ok = [{ name: "Raju", phone: "+15551", relationship: "cousin", ambiguous: false }];
+  assert.equal(isConfidentContactShare({ requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 1, holdReason: "action-promise", boundToNumber: false }), false);
+});
+
+test("promiseIsAboutNumber: 'no.' before a space, and romanized spellings (review on #244)", () => {
+  assert.equal(promiseIsAboutNumber("?", "his no. is coming, send chesta"), true);
+  assert.equal(promiseIsAboutNumber("?", "numbar send chesta"), true);
+  assert.equal(promiseIsAboutNumber("?", "mobile pampista"), true);
+  assert.equal(promiseIsAboutNumber("?", "nope, not now"), false, "'no' inside 'nope' is not 'no.'");
+});
+
+test("uniqueness is proven on the query: a substring of a name never auto-shares", async () => {
+  const cache = new Map([["+15125550001", "Madhu K Mudarapu"]]);
+  const rels = new Map([["Madhu", "elder brother"]]);
+  const sub = await resolveContact("adh", { bridgeContactCache: cache, profileRelationships: rels });
+  if (sub.resolved) assert.equal(sub.resolved.unique, false);
+  const exact = await resolveContact("madhu", { bridgeContactCache: cache, profileRelationships: rels });
+  assert.equal(exact.resolved?.unique, true);
 });

@@ -128,7 +128,15 @@ export async function resolveContact(
     const profMatch = matchFromProfile(lower, opts.profileRelationships, opts.bridgeContactCache);
     if (profMatch) {
       return {
-        resolved: { ...profMatch, unique: countCachePeople((profMatch.name ?? lower).split(/\s+/)[0], opts.bridgeContactCache) === 1 },
+        // Unique only when the QUERY is that person's exact first or full name
+        // (a substring like "adh" can never auto-share Madhu's number) AND one
+        // dialable phone carries the name in the cache.
+        resolved: {
+          ...profMatch,
+          unique:
+            (lower === (profMatch.name ?? "").toLowerCase() || lower === (profMatch.name ?? "").toLowerCase().split(/\s+/)[0]) &&
+            countCachePeople(lower, opts.bridgeContactCache) === 1,
+        },
         suggestions: [],
       };
     }
