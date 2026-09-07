@@ -250,7 +250,12 @@ export function isConfidentContactShare(args: {
   isGroup: boolean;
   resolved: ResolvedShare[];
   askedCount: number;
+  /** Why the gate held. Only an `action-promise` ("I'll send it") may turn
+   *  into a share; a money hold in a thread that ALSO once asked for a
+   *  number must never take the auto-send exit past the owner page. */
+  holdReason: CommitmentVerdict["reason"];
 }): boolean {
+  if (args.holdReason !== "action-promise") return false;
   if (args.isGroup || !args.requesterKnown) return false;
   if (args.askedCount === 0 || args.resolved.length !== args.askedCount) return false;
   return args.resolved.every((r) => !!r.phone && !!r.relationship && !r.ambiguous);

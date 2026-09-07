@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { commitmentBackstop, judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare } from "./commitment-gate.ts";
+import { resolveContact, countCachePeople } from "./contact-resolver.ts";
 
 // (inbound, draft) pairs exactly as sent. Every one MUST hold.
 const INCIDENT: Array<[string, string]> = [
@@ -157,12 +158,40 @@ test("when the bridge resolved the numbers, the page offers them — not a promi
 test("contact sharing auto-sends ONLY when every confidence condition holds", () => {
   const ok = [{ name: "Madhu", phone: "+15551", relationship: "elder brother", ambiguous: false },
               { name: "Harika", phone: "+15552", relationship: "sister", ambiguous: false }];
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: ok, askedCount: 2 }), true);
+  const base = { requesterKnown: true, isGroup: false, resolved: ok, askedCount: 2, holdReason: "action-promise" as const };
+  assert.equal(isConfidentContactShare(base), true);
   // any one condition failing → hold for the owner
-  assert.equal(isConfidentContactShare({ requesterKnown: false, isGroup: false, resolved: ok, askedCount: 2 }), false, "stranger asking");
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: true, resolved: ok, askedCount: 2 }), false, "group");
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [ok[0]], askedCount: 2 }), false, "one name unresolved");
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [{ ...ok[0], ambiguous: true }, ok[1]], askedCount: 2 }), false, "ambiguous match");
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [{ ...ok[0], relationship: undefined }, ok[1]], askedCount: 2 }), false, "not a known person");
-  assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: [], askedCount: 0 }), false, "nothing asked");
+  assert.equal(isConfidentContactShare({ ...base, requesterKnown: false }), false, "stranger asking");
+  assert.equal(isConfidentContactShare({ ...base, isGroup: true }), false, "group");
+  assert.equal(isConfidentContactShare({ ...base, resolved: [ok[0]] }), false, "one name unresolved");
+  assert.equal(isConfidentContactShare({ ...base, resolved: [{ ...ok[0], ambiguous: true }, ok[1]] }), false, "ambiguous match");
+  assert.equal(isConfidentContactShare({ ...base, resolved: [{ ...ok[0], relationship: undefined }, ok[1]] }), false, "not a known person");
+  assert.equal(isConfidentContactShare({ ...base, resolved: [], askedCount: 0 }), false, "nothing asked");
+});
+
+test("a MONEY hold in a thread that once asked for a number never takes the share exit", () => {
+  // Codex review on #238: extractContactRequests scans recent context, so
+  // "Raju number send" three turns ago + "send me 20k" now would otherwise
+  // resolve Raju and auto-send past the owner page.
+  const ok = [{ name: "Raju", phone: "+15551", relationship: "cousin", ambiguous: false }];
+  for (const holdReason of ["money-request", "money-promise", "none"] as const) {
+    assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: ok, askedCount: 1, holdReason }), false, holdReason);
+  }
+});
+
+test("the resolver proves uniqueness; two cached Madhus are never 'unambiguous'", async () => {
+  const one = new Map([["+15125550001", "Madhu K Mudarapu"], ["+15125550002", "Harika"]]);
+  const two = new Map([...one, ["+15125550003", "Madhu Reddy"]]);
+  const rels = new Map([["Madhu", "elder brother"]]);
+  assert.equal(countCachePeople("madhu", one), 1);
+  assert.equal(countCachePeople("madhu", two), 2);
+  const r1 = await resolveContact("Madhu", { bridgeContactCache: one, profileRelationships: rels });
+  assert.equal(r1.resolved?.unique, true);
+  assert.equal(r1.resolved?.relationship, "elder brother");
+  const r2 = await resolveContact("Madhu", { bridgeContactCache: two, profileRelationships: rels });
+  assert.ok(r2.resolved, "still resolves (first match) for the owner's own use");
+  assert.equal(r2.resolved?.unique, false, "but cannot be auto-shared");
+  // Same phone under two handles (phone + email) is one person.
+  const dup = new Map([["+15125550001", "Madhu K Mudarapu"], ["madhu@example.com", "Madhu K Mudarapu"]]);
+  assert.equal(countCachePeople("madhu", dup), 1);
 });

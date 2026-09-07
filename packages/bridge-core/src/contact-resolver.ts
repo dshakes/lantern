@@ -28,6 +28,29 @@ export interface ResolvedContact {
   name?: string;
   relationship?: string;
   source: "self-token" | "phone-input" | "bridge-cache" | "profile" | "macos-contacts";
+  /** True only when the resolver PROVED exactly one known person matches:
+   *  one distinct dialable phone among the bridge's cached contacts with
+   *  that name. AddressBook hits are `LIMIT 1` first-match and can never
+   *  prove it, so they are never unique. The contact-share policy refuses
+   *  to auto-send anything that is not unique. */
+  unique?: boolean;
+}
+
+/** Distinct dialable phones among cached contacts whose full name or first
+ *  name equals `token` (case-insensitive). 2+ → two different people share
+ *  the name and no first-match may be called unambiguous. */
+export function countCachePeople(token: string, cache: Map<string, string> | undefined): number {
+  if (!cache) return 0;
+  const t = token.toLowerCase().trim();
+  const phones = new Set<string>();
+  for (const [handle, name] of cache) {
+    if (!name) continue;
+    const n = name.toLowerCase();
+    if (n !== t && n.split(/\s+/)[0] !== t) continue;
+    const p = handleToPhone(handle);
+    if (p) phones.add(p);
+  }
+  return phones.size;
 }
 
 export interface ResolveOptions {
@@ -92,6 +115,7 @@ export async function resolveContact(
           name: cacheHit.exact.name,
           relationship: opts.profileRelationships?.get(cacheHit.exact.name),
           source: "bridge-cache",
+          unique: countCachePeople(lower, opts.bridgeContactCache) === 1,
         },
         suggestions: [],
       };
@@ -104,7 +128,7 @@ export async function resolveContact(
     const profMatch = matchFromProfile(lower, opts.profileRelationships, opts.bridgeContactCache);
     if (profMatch) {
       return {
-        resolved: profMatch,
+        resolved: { ...profMatch, unique: countCachePeople((profMatch.name ?? lower).split(/\s+/)[0], opts.bridgeContactCache) === 1 },
         suggestions: [],
       };
     }

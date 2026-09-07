@@ -5896,7 +5896,7 @@ export class WhatsAppSession {
     return { ok: true, via: "link" };
   }
 
-  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
+  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string; unique?: boolean } | null> {
     const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
     const result = await universalResolve(input, {
       ownerPhone: process.env.LANTERN_OWNER_PHONE,
@@ -5910,6 +5910,7 @@ export class WhatsAppSession {
       phone: result.resolved.phone,
       name: result.resolved.name,
       relationship: result.resolved.relationship,
+      unique: result.resolved.unique,
     };
   }
 
@@ -9353,16 +9354,20 @@ export class WhatsAppSession {
         if (commitVerdict?.hold) {
           const asked = extractContactRequests(`${recentTranscript}\n${text}`);
           const resolved: ResolvedShare[] = [];
+          // resolveCallTarget mutates lastResolveSuggestions (the owner's
+          // "did you mean" state); don't let this lookup clobber it.
+          const savedSuggestions = this.lastResolveSuggestions;
           for (const a of asked) {
             const r = await this.resolveCallTarget(a).catch(() => null);
-            if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: (this.lastResolveSuggestions?.length ?? 0) > 0 });
+            if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
           }
+          this.lastResolveSuggestions = savedSuggestions;
           // OWNER POLICY (2026-09-06): "if it's contact sharing and you're
           // confident, send it." Confidence is the deterministic predicate in
           // bridge-core — known requester, every name resolved to exactly one
           // KNOWN person, no alternates, not a group. Then the numbers go out
           // directly and the owner gets an FYI; otherwise the hold below.
-          if (isConfidentContactShare({ requesterKnown: !!relationship, isGroup: !!opts.isGroup, resolved, askedCount: asked.length })) {
+          if (isConfidentContactShare({ requesterKnown: !!relationship, isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
             const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
             await this.sendMessage(from, numbers);
             this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");
