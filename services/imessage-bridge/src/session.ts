@@ -8186,7 +8186,7 @@ export class IMessageSession {
       let heldDraft = draft;
       let resolvedNote: string | undefined;
       if (commitVerdict?.hold) {
-        const asked = extractContactRequests(`${(this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n")}\n${text}`);
+        const asked = [...new Set(extractContactRequests(`${(this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n")}\n${text}`))];
         const resolved: ResolvedShare[] = [];
         // resolveCallTarget mutates lastResolveSuggestions (the owner's
         // "did you mean" state); don't let this lookup clobber it.

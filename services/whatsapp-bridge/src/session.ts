@@ -9352,7 +9352,7 @@ export class WhatsAppSession {
         let heldDraft = draft;
         let resolvedNote: string | undefined;
         if (commitVerdict?.hold) {
-          const asked = extractContactRequests(`${recentTranscript}\n${text}`);
+          const asked = [...new Set(extractContactRequests(`${recentTranscript}\n${text}`))];
           const resolved: ResolvedShare[] = [];
           // resolveCallTarget mutates lastResolveSuggestions (the owner's
           // "did you mean" state); don't let this lookup clobber it.
