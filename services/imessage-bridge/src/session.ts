@@ -650,6 +650,7 @@ export class IMessageSession {
     let n = 0;
     for (const v of this.contactNames.values()) if ((v ?? "").trim().split(/\s+/)[0]?.toLowerCase() === first && ++n > 1) return true;
     return false;
+  }
   private inferredRelationships?: InferredRelationshipStore;
   private inferredFyiSent: Set<string> = new Set();
   // W1.4: reasoned relationship inference for contacts with no declared label.
