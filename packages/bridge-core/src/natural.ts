@@ -25,6 +25,7 @@
 // text and the draft the LLM produced. The LLM still does the heavy
 // lifting via the system prompt in `agentPersonaPrompt`.
 
+import { scoreVoice, type VoiceModel } from "./voice-score.js";
 import {
   emotionalRegisterAddendum,
   type EmotionalRegister,
@@ -1831,6 +1832,11 @@ export interface BotTellContext {
    *  `repeat-skeleton` — the single most-cited bot-tell in the audit was the
    *  same shaped reply, three times in a row, to one person. */
   recentReplies?: string[];
+  /** Authorship floor (ADR 0024 W4): a model fit on the owner's own sent
+   *  messages. A draft further from the owner than 95% of their own text is
+   *  suppressed as `voice-drift` with a feature-level hint. Null/omitted →
+   *  not scored (too few samples, group, owner channel, or disabled). */
+  voiceModel?: VoiceModel | null;
 }
 
 /** Content skeleton of a reply: lowercase word tokens with emoji, punctuation
@@ -2024,6 +2030,12 @@ export function detectBotTells(
   const repeated = findRepeatSkeleton(text, ctx?.recentReplies);
   if (repeated) {
     return { ok: false, reason: `repeat-skeleton: near-duplicate of what you already sent them ("${repeated.slice(0, 80)}") — say it differently, add something new, or say less` };
+  }
+
+  // VOICE-DRIFT (W4): measured against the owner's own text, not judged.
+  const voice = scoreVoice(ctx?.voiceModel ?? null, text);
+  if (voice && !voice.ok) {
+    return { ok: false, reason: `voice-drift: reads unlike the owner (distance ${voice.delta.toFixed(2)}, their own floor ${voice.floor.toFixed(2)}) — ${voice.hint}` };
   }
 
   // STRUCTURED-OUTPUT net — the single most embarrassing failure: the model
