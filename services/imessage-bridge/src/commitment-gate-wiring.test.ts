@@ -174,3 +174,11 @@ describe("W2.3 + W1.4 on both bridges", () => {
     });
   }
 });
+
+describe("only resolver-proven matches are staged in the hold page", () => {
+  for (const [name, src] of [["imessage", im], ["whatsapp", wa]] as const) {
+    it(`${name}: a fuzzy/ambiguous hit is never one 'send' away`, () => {
+      expect(src).toMatch(/const staged = resolved\.filter\(\(r\) => !r\.ambiguous\);\s*if \(staged\.length > 0 && staged\.length === resolved\.length\) \{/);
+    });
+  }
+});
