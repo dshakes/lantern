@@ -20,6 +20,8 @@ export type ActionKind =
   | "calendar_added"  // booked a calendar event
   | "call_placed"     // placed an outbound call
   | "message_sent"    // sent a reply to a contact on the owner's behalf
+  | "doc_sent"        // delivered one of the owner's documents to a contact
+  | "owner_notified"  // relayed a contact's ask to the owner (so "I let him know" is true)
   | "presence"        // a notable presence/location transition
   | "custom";
 
@@ -108,7 +110,7 @@ export function isSelfContextQuery(text: string): boolean {
 
 const KIND_ICON: Record<ActionKind, string> = {
   status_set: "📍", list_made: "🛒", note_saved: "🗒", calendar_added: "📅",
-  call_placed: "📞", message_sent: "✉️", presence: "📡", custom: "•",
+  call_placed: "📞", message_sent: "✉️", doc_sent: "📎", owner_notified: "📣", presence: "📡", custom: "•",
 };
 
 /** The prompt block injected into the owner self-chat context. The directive is

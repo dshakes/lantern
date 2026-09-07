@@ -50,8 +50,10 @@ import {
   groupRepliesEnabled,
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
-import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
-import { fitVoiceModel, scoreVoice, type VoiceModel } from "@lantern/bridge-core/voice-score";
+import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
+import type { BotTellContext } from "@lantern/bridge-core/natural";
+import { buildRefinePrompt, parseRefine } from "@lantern/bridge-core/voice-refine";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
@@ -374,7 +376,7 @@ import {
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
-import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
+import { verifyClaims, performedClaimActions } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
@@ -647,6 +649,33 @@ export class IMessageSession {
     }
     return this.voiceModel;
   }
+
+  // PERFINE critique-refine (ADR 0024 W3.4): for a MEDIUM/LOW draft, one
+  // purpose-keyed call edits it against the 5 most similar messages the owner
+  // really sent. Accepted only when measurably not further from the owner's
+  // voice AND clean on the bot-tell guard; otherwise the draft stands.
+  private async refineToOwnerVoice(jid: string, draft: string, inbound: string, botTellCtx: BotTellContext): Promise<string> {
+    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_REFINE ?? "")) return draft;
+    try {
+      const exemplars = ownerVoiceExemplars(this.ownerVoiceGlobal.map((text) => ({ text })), { max: 5, relevantTo: draft });
+      if (exemplars.length < 3) return draft;
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const raw = await this.agent.respondTo(`${jid}::refine`, buildRefinePrompt({ ownerName, draft, inbound, exemplars }), undefined, { withTools: false, timeoutMs: 15_000 });
+      const refined = parseRefine(raw, draft);
+      if (!refined || refined === draft) return draft;
+      const model = botTellCtx.voiceModel ?? null;
+      const before = model ? voiceDelta(model, draft) : null;
+      const after = model ? voiceDelta(model, refined) : null;
+      const closer = before === null || after === null || after <= before;
+      const clean = detectBotTells(refined, inbound, botTellCtx).ok;
+      this.logger.info({ jid, before, after, accepted: closer && clean, clean }, "voice refine");
+      return closer && clean ? refined : draft;
+    } catch (err) {
+      this.logger.debug({ err, jid }, "voice refine failed — keeping draft");
+      return draft;
+    }
+  }
+
   private contactNames: Map<string, string> = new Map(); // handle -> display name
 
   // ── Self-chat circuit breaker (self-echo loop guard) ──────────────────────
@@ -5345,6 +5374,7 @@ export class IMessageSession {
       const last = this.docRelayDedup.get(dedupKey);
       if (last && Date.now() - last < 30 * 60_000) return;
       this.docRelayDedup.set(dedupKey, Date.now());
+      recordAction({ kind: "owner_notified", summary: `told the owner that ${contactLabel} asked for ${request}` });
     }
 
     let hit: { path: string; name: string } | undefined;
@@ -5604,6 +5634,7 @@ export class IMessageSession {
         // sendFile's exit code can't see an async "Not Delivered" — watch for it
         // and re-deliver via link if the file silently fails (Finding: GA incident).
         if (phone) this.scheduleFileDeliveryWatch(target, filePath, request);
+        recordAction({ kind: "doc_sent", summary: `sent ${filePath.split("/").pop() ?? "a document"} to ${this.contactNames.get(target) ?? target}` });
         return { ok: true, via: "imessage" };
       }
       if (!phone) return { ok: false, reason: im.reason }; // no link route for a non-phone handle
@@ -5723,7 +5754,15 @@ export class IMessageSession {
     // for bridge-self status messages (acks, "thinking…") via the
     // bot-self prefix check so we don't molest those.
     if (text && !isBotSelfMessage(text)) {
-      const verdict = verifyClaims(text);
+      // Gate the rewrite on the action log (ADR 0024 W2.2): a claim the
+      // bridge PROVABLY performed in the last 10 min stands as written.
+      const nowMs = Date.now();
+      const verdict = verifyClaims(text, {
+        // Contact-scoped: only actions whose summary names THIS contact count,
+        // so "I let him know" is honoured on an owner_notified record for them
+        // and rewritten otherwise.
+        performedActions: performedClaimActions(recentActions({ nowMs }), nowMs, { contactName: this.contactNames.get(to) }),
+      });
       if (verdict.rewrites.length > 0) {
         this.logger.info(
           { to, rewrites: verdict.rewrites },
@@ -8174,6 +8213,9 @@ export class IMessageSession {
       tier.tier = "LOW";
       tier.reasons.push("-non-english-injection-fallback");
     }
+    if (tier.tier !== "HIGH" && !isGroup && !isOwnerChan) {
+      draft = await this.refineToOwnerVoice(row.handle, draft, text, botTellCtx);
+    }
     // COMMITMENT GATE (twin of the WhatsApp bridge) — hold, don't send, when
     // the reply commits the owner (money, a call, a visit) or the contact is
     // asking for money. Reasoned in any language + a deterministic
@@ -8220,7 +8262,7 @@ export class IMessageSession {
           if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
         }
         this.lastResolveSuggestions = savedSuggestions;
-        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason, boundToNumber: promiseIsAboutNumber(text, draft) })) {
           const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
           await this.send(row.handle, numbers);
           this.logger.info({ handle: row.handle, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");
