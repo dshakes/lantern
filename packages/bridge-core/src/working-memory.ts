@@ -132,3 +132,40 @@ export function workingMemoryBlock(opts: WMOpts = {}): string {
   for (const a of acts) lines.push(`- ${KIND_ICON[a.kind] ?? "•"} ${a.summary} (${ago(a.ts)})`);
   return lines.join("\n");
 }
+
+/** CONTACT-path slice of the action log (ADR 0024 W1.3). The owner-only
+ *  block above never reached a contact reply, so the assistant was amnesiac
+ *  about its own actions in the very thread it took them for ("did you add
+ *  it?" → "I'll add it"). This surfaces ONLY actions whose summary names
+ *  this contact (first name, case-insensitive), last 6h, so nothing about
+ *  another person leaks. Pure; empty string when nothing qualifies. */
+export function contactActionsBlock(
+  actions: ReadonlyArray<WorkingAction>,
+  contactName: string | undefined,
+  nowMs = Date.now(),
+  opts: { sharedFirstName?: boolean } = {},
+): string {
+  const full = (contactName ?? "").trim();
+  const first = full.split(/\s+/)[0]?.toLowerCase();
+  if (!first || first.length < 2) return "";
+  // When another known contact shares this first name, only the FULL display
+  // name identifies them — "Ravi" alone could be the other Ravi's action.
+  const needle = opts.sharedFirstName ? full.toLowerCase() : first;
+  if (opts.sharedFirstName && needle === first) return "";
+  const re = new RegExp(`(^|[^\\p{L}])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?![\\p{L}])`, "iu");
+  // Newest first regardless of the log's order, then the 6 most recent.
+  const mine = actions
+    .filter((a) => a.ts >= nowMs - WINDOW_MS && a.kind !== "presence" && re.test(a.summary))
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 6);
+  if (!mine.length) return "";
+  const ago = (ts: number): string => {
+    const m = Math.max(0, Math.round((nowMs - ts) / 60000));
+    return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+  };
+  return [
+    "## What you already did for this person (real, timestamped)",
+    "These actions HAPPENED. If they ask whether it's done, say so plainly in the past tense; never re-promise something on this list, and never claim anything that is not on it.",
+    ...mine.map((a) => `- ${KIND_ICON[a.kind] ?? "•"} ${a.summary} (${ago(a.ts)})`),
+  ].join("\n");
+}

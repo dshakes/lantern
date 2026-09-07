@@ -63,7 +63,7 @@ import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-cor
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
-import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
+import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery, contactActionsBlock } from "@lantern/bridge-core/working-memory";
 import {
   looksLikeRecapRequest, parseRecapWindow, buildRecapPrompt, finalizeRecap,
   type RecapItem,
@@ -640,6 +640,15 @@ export class IMessageSession {
   // Authorship floor (ADR 0024 W4), refit whenever the corpus size changes.
   private voiceModel: VoiceModel | null = null;
   private voiceModelN = -1;
+  /** True when another cached contact has the same first name — then only a
+   *  full-name match may attribute an action to this person. */
+  private firstNameIsShared(name?: string): boolean {
+    const first = (name ?? "").trim().split(/\s+/)[0]?.toLowerCase();
+    if (!first) return false;
+    let n = 0;
+    for (const v of this.contactNames.values()) if ((v ?? "").trim().split(/\s+/)[0]?.toLowerCase() === first && ++n > 1) return true;
+    return false;
+  }
   private getVoiceModel(): VoiceModel | null {
     if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
     if (this.ownerVoiceGlobal.length !== this.voiceModelN) {
@@ -7721,9 +7730,11 @@ export class IMessageSession {
     // Commitments this bot already made IN THIS THREAD (its own "I'll follow
     // up" announcement is stripped from history as bot-self text). Scoped to
     // this handle — another contact's watch never surfaces here.
-    const selfContextBlock = this.watchStore
-      ? contactWatchBlock(this.watchStore.all(), row.handle)
-      : "";
+    // + the assistant's own recent actions ABOUT this contact (W1.3).
+    const selfContextBlock = [
+      this.watchStore ? contactWatchBlock(this.watchStore.all(), row.handle) : "",
+      isGroup ? "" : contactActionsBlock(recentActions(), this.contactNames.get(row.handle), Date.now(), { sharedFirstName: this.firstNameIsShared(this.contactNames.get(row.handle)) }),
+    ].filter(Boolean).join("\n\n");
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       selfContextBlock,
