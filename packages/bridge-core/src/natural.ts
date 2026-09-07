@@ -427,6 +427,9 @@ export interface PersonaOptions {
   // Injected for BOTH audiences. For a contact this is the one bucket the
   // model may CONFIRM: a "congratulations" about it is about the OWNER.
   ownerPublic?: string;
+  // PRESENT-TENSE self-model (owner-profile.ts → nowBlock()): what the owner
+  // is doing THIS WEEK, expired items already dropped. Both audiences.
+  ownerNow?: string;
   // The owner's people-graph (owner-profile.ts → relationshipsBlock): "Name:
   // relationship" lines, incl. any location the owner recorded ("Madhu: lives
   // in Dublin, CA"). Injected for CONTACT prompts so the bot can answer benign
@@ -847,6 +850,20 @@ export function agentPersonaPrompt(
     lines.push(``);
     lines.push(
       `${pub} These are PUBLIC — ${ownerName} has announced them and is proud of them. This is the ONE kind of fact you may openly confirm and talk about with anyone. When someone says congratulations, "so exciting", "heard the news", or forwards one of these announcements back, it is about ${ownerName}'s OWN news: thank them as the person it happened to ("thank you! 🙏 come by opening day"), never as an outsider ("congrats to them"), and never ask them whether it is happening near THEM. Details in these lines are correct — do not contradict them.`,
+    );
+  }
+
+  // What the owner is doing RIGHT NOW. Every other bucket is timeless; this is
+  // the one that lets "how's it going / where are you / what's on this week"
+  // get a present-tense answer, and lets the owner's own self-chat plan
+  // around it ("track his flight" knows whose flight).
+  const now = opts.ownerNow?.trim();
+  if (now) {
+    lines.push(``);
+    lines.push(
+      isOwnerAudience
+        ? `${now} Use this as your working picture of the week when the owner asks what's on, who's around, or refers to "his flight" / "the opening" without naming it.`
+        : `${now} This person is inner circle, so speaking from it in the present tense is fine when they ask how things are or what's on — it is current and true. Mention an item only when it fits the conversation; never recite the list, never add details that aren't in it, and the location rules above still apply.`,
     );
   }
 

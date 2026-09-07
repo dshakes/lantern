@@ -95,6 +95,40 @@ function upsertFact(existing: string, key: string, value: string): string | null
   return lines.join("\n");
 }
 
+const NOW_HEADER = "## Now";
+// The parser accepts these aliases for the section (owner-profile.ts); the
+// writer must find the owner's existing one rather than add a second.
+const NOW_HEADER_RE = /^#{2,6}\s+(now|this\s+week|right\s+now|currently|these\s+days)\b/i;
+const NOW_SUFFIX_RE = /\s*(?:\|\s*until:.*|\(\s*until\s+.*\)|\b(?:until|till)\s+\d{4}-\d{2}-\d{2})\s*$/i;
+
+/** Upsert a `- text | until: YYYY-MM-DD` line into ## Now (created if
+ *  absent). Same text (case-insensitive) → the line is replaced, so
+ *  re-teaching with a new date updates instead of duping. Null when nothing
+ *  changed. The parser side is owner-profile.ts `parseNowLine`. */
+function upsertNowLine(existing: string, text: string, until?: string): string | null {
+  const lines = existing.split(/\r?\n/);
+  const newLine = `- ${text}${until ? ` | until: ${until}` : ""}`;
+  const textLc = text.trim().toLowerCase();
+  const existingHeader = lines.find((l) => NOW_HEADER_RE.test(l.trim()));
+  const body = sectionBody(lines, existingHeader?.trim() ?? NOW_HEADER);
+  if (!body) {
+    const trimmed = existing.replace(/\s*$/, "");
+    return `${trimmed}\n\n${NOW_HEADER}\n${newLine}\n`;
+  }
+  for (let i = body.headerIdx + 1; i < body.end; i++) {
+    const t = lines[i].trim().replace(/^[-*]\s*/, "").replace(NOW_SUFFIX_RE, "").toLowerCase();
+    if (t && t === textLc) {
+      if (lines[i].trim() === newLine) return null;
+      lines[i] = newLine;
+      return lines.join("\n");
+    }
+  }
+  let insertAt = body.end;
+  while (insertAt > body.headerIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
+  lines.splice(insertAt, 0, newLine);
+  return lines.join("\n");
+}
+
 /** Merge a per-contact naming rule into that contact's ## Relationships
  *  line using the extended "| address as: X | never: a, b" grammar.
  *  Matches the contact by the head name (case-insensitive). Returns the
@@ -278,7 +312,7 @@ export interface AutoFact {
   // Loose category — debug only, not persisted EXCEPT for the typed
   // routes below ("owner-fact" → ## Facts, "address-form"/"relationship"
   // with a target contact → ## Relationships line).
-  category: "location" | "address-form" | "schedule" | "role" | "relationship" | "preference" | "owner-fact" | "other";
+  category: "location" | "address-form" | "schedule" | "role" | "relationship" | "preference" | "owner-fact" | "now" | "other";
   // For owner-fact: the typed Facts directive to write (e.g.
   //   { key: "married", value: "yes" }
   //   { key: "spouse", value: "Sam" }
@@ -288,6 +322,9 @@ export interface AutoFact {
   // For per-contact address rules: the contact to attach the rule to and
   // the directive(s). Routed into that contact's ## Relationships line.
   contactRule?: { contact: string; addressAs?: string; never?: string[] };
+  // For "now": a TEMPORARY present-tense situation, routed into ## Now with
+  // an optional expiry so it stops being injected on its own (ADR 0024 W1).
+  now?: { text: string; until?: string };
 }
 
 export interface AutoUpdateResult {
@@ -304,7 +341,7 @@ export interface AutoUpdateResult {
 // Cheap regex pre-filter: if the owner's message has none of these
 // signal words, skip the LLM call entirely. Catches the obvious
 // teaching patterns without leaving room for false negatives.
-const TEACHING_SIGNALS = /\b(lives?|moved|relocate|address|stays?|currently|now|works?\s+at|joined|left|prefers?|calls?\s+(her|him|them)|address(?:es)?\s+(her|him|them)|don'?t\s+call|never\s+call|nickname|goes?\s+by|hours?|schedule|free|busy|remember|note|by\s+the\s+way|fyi|btw|married|spouse|wife|husband|anniversary|kids?|children|birthday)\b/i;
+const TEACHING_SIGNALS = /\b(lives?|moved|relocate|address|stay(?:s|ing)?|visiting|in\s+town|travell?ing|this\s+week|till|until|prepping|preparing|currently|now|works?\s+at|joined|left|prefers?|calls?\s+(her|him|them)|address(?:es)?\s+(her|him|them)|don'?t\s+call|never\s+call|nickname|goes?\s+by|hours?|schedule|free|busy|remember|note|by\s+the\s+way|fyi|btw|married|spouse|wife|husband|anniversary|kids?|children|birthday)\b/i;
 
 // EXPLICIT teach-prefix patterns. When the owner starts their message
 // with one of these, we ALWAYS run the extractor — bypass the
@@ -324,9 +361,9 @@ const EXTRACT_PROMPT_PREAMBLE = [
   "Return a JSON object: {\"facts\": [{\"category\": \"...\", \"line\": \"...\"}]}",
   "",
   "Categories: location, address-form, schedule, role, relationship,",
-  "preference, owner-fact, other.",
+  "preference, owner-fact, now, other.",
   "",
-  "TWO categories carry EXTRA typed fields:",
+  "THREE categories carry EXTRA typed fields:",
   "",
   "A) owner-fact — a SELF/biographical fact about the owner themselves",
   "   (their marriage, spouse, kids, a personal key date like an",
@@ -343,6 +380,15 @@ const EXTRACT_PROMPT_PREAMBLE = [
   "   `contactRule` object: {\"contact\":..., \"addressAs\":?, \"never\":[...]}.",
   "   - \"don't call Sujith bava\" → {\"category\":\"address-form\",\"line\":\"never call Sujith bava\",\"contactRule\":{\"contact\":\"Sujith\",\"never\":[\"bava\"]}}",
   "   - \"address Sujith by his name\" → {\"category\":\"address-form\",\"line\":\"address Sujith by name\",\"contactRule\":{\"contact\":\"Sujith\",\"addressAs\":\"Sujith\"}}",
+  "",
+  "C) now — a TEMPORARY, PRESENT-TENSE situation in the owner's life this",
+  "   week or so: a visitor staying with them, a trip, an event they are",
+  "   preparing for, a stretch of being unwell/busy. Add a `now` object:",
+  "   {\"text\":..., \"until\":\"YYYY-MM-DD\"?}. `until` is the day it STOPS being",
+  "   true, resolved from the 'Today is' line below (\"till the 1st\" = the next",
+  "   1st). Omit `until` when open-ended. Durable facts are NOT `now`.",
+  "   - \"my brother-in-law Sowmyadhar is staying with us till the 1st\" → {\"category\":\"now\",\"line\":\"Sowmyadhar staying with us until the 1st\",\"now\":{\"text\":\"Sowmyadhar (brother-in-law) is staying with us\",\"until\":\"2026-09-01\"}}",
+  "   - \"prepping for the store opening all week, opening is the 10th\" → {\"category\":\"now\",\"line\":\"store opening prep, opening day the 10th\",\"now\":{\"text\":\"prepping for the store opening on the 10th\",\"until\":\"2026-09-10\"}}",
   "",
   "RULES:",
   "1. Each `line` is ONE terse fact, max 80 chars, factual sentence form.",
@@ -367,6 +413,8 @@ export interface AutoUpdateOptions {
   // LLM caller — returns the raw JSON string. The bridge wires this
   // to its existing completions client.
   llmCall: (prompt: string) => Promise<string>;
+  // Injectable "today" for resolving relative dates in `now` items (tests).
+  today?: Date;
   // Optional: the OwnerProfileStore's invalidate() so the freshly-written
   // facts / contact rules go live without waiting for the reload TTL.
   // Called once after a successful write.
@@ -415,7 +463,7 @@ export async function maybeAutoUpdateOwnerProfile(
   // LLM extraction.
   let raw: string;
   try {
-    raw = await opts.llmCall(`${EXTRACT_PROMPT_PREAMBLE}\n${messageForLLM}\n\nJSON:`);
+    raw = await opts.llmCall(`${EXTRACT_PROMPT_PREAMBLE}\n${messageForLLM}\n\nToday is ${(opts.today ?? new Date()).toISOString().slice(0, 10)}.\n\nJSON:`);
   } catch (err) {
     log?.warn({ err }, "extraction LLM call failed");
     return { appended: [], skipped: [] };
@@ -473,6 +521,10 @@ export async function maybeAutoUpdateOwnerProfile(
         }
       }
     }
+    if (f.now && typeof f.now.text === "string" && f.now.text.trim()) {
+      const until = typeof f.now.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.now.until.trim()) ? f.now.until.trim() : undefined;
+      entry.now = { text: f.now.text.trim().slice(0, 120), ...(until ? { until } : {}) };
+    }
     normalized.push(entry);
   }
   if (normalized.length === 0) {
@@ -498,7 +550,7 @@ export async function maybeAutoUpdateOwnerProfile(
   const typed: AutoFact[] = [];
   const generic: AutoFact[] = [];
   for (const fact of normalized) {
-    if (fact.fact || fact.contactRule) typed.push(fact);
+    if (fact.fact || fact.contactRule || fact.now) typed.push(fact);
     else generic.push(fact);
   }
 
@@ -597,6 +649,8 @@ export function applyTypedFactsToProfile(
         addressAs: fact.contactRule.addressAs,
         never: fact.contactRule.never,
       });
+    } else if (fact.now) {
+      next = upsertNowLine(updated, fact.now.text, fact.now.until);
     }
     if (next === null) {
       skipped.push(fact);
@@ -652,6 +706,7 @@ export async function applyConfirmedOwnerFacts(
 export function formatFactConfirmPrompt(facts: AutoFact[]): string {
   const items = facts.map((f) => {
     if (f.fact) return `'${f.fact.key}: ${f.fact.value}'`;
+    if (f.now) return `'now: ${f.now.text}${f.now.until ? ` (until ${f.now.until})` : ""}'`;
     if (f.contactRule) {
       const c = f.contactRule;
       if (c.addressAs) return `'address ${c.contact} as ${c.addressAs}'`;

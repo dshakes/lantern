@@ -8842,6 +8842,10 @@ export class WhatsAppSession {
         ownerProfile,
         ownerFacts: this.ownerProfileStore.factsBlock(),
         ownerPublic: this.ownerProfileStore.publicBlock(),
+        // Present-tense self-model: the owner always; contacts only when INNER
+        // CIRCLE — the same gate as location, since "## Now" carries trips,
+        // visitors and illness (review on #239).
+        ownerNow: isOwnerChan || isInnerCircle(relationship) ? this.ownerProfileStore.nowBlock() : "",
         knownPeople: this.ownerProfileStore.relationshipsBlock(),
         addressRule,
         relationship,
