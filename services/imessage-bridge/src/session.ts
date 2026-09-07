@@ -8196,7 +8196,7 @@ export class IMessageSession {
           if (r?.phone) resolved.push({ name: r.name ?? a, phone: r.phone, relationship: r.relationship, ambiguous: !r.unique });
         }
         this.lastResolveSuggestions = savedSuggestions;
-        if (isConfidentContactShare({ requesterKnown: !!relationship, isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+        if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
           const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
           await this.send(row.handle, numbers);
           this.logger.info({ handle: row.handle, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");

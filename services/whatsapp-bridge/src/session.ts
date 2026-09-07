@@ -9367,7 +9367,7 @@ export class WhatsAppSession {
           // bridge-core — known requester, every name resolved to exactly one
           // KNOWN person, no alternates, not a group. Then the numbers go out
           // directly and the owner gets an FYI; otherwise the hold below.
-          if (isConfidentContactShare({ requesterKnown: !!relationship, isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
+          if (isConfidentContactShare({ requesterInnerCircle: isInnerCircle(relationship), isGroup: !!opts.isGroup, resolved, askedCount: asked.length, holdReason: commitVerdict.reason })) {
             const numbers = resolved.map((r) => `${r.name}: ${r.phone}`).join("\n");
             await this.sendMessage(from, numbers);
             this.logger.info({ from, asked, resolved: resolved.map((r) => r.name) }, "COMMITMENT GATE — contact share AUTO-SENT (confident: known requester, unambiguous known people)");

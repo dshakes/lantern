@@ -158,10 +158,10 @@ test("when the bridge resolved the numbers, the page offers them — not a promi
 test("contact sharing auto-sends ONLY when every confidence condition holds", () => {
   const ok = [{ name: "Madhu", phone: "+15551", relationship: "elder brother", ambiguous: false },
               { name: "Harika", phone: "+15552", relationship: "sister", ambiguous: false }];
-  const base = { requesterKnown: true, isGroup: false, resolved: ok, askedCount: 2, holdReason: "action-promise" as const };
+  const base = { requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 2, holdReason: "action-promise" as const };
   assert.equal(isConfidentContactShare(base), true);
   // any one condition failing → hold for the owner
-  assert.equal(isConfidentContactShare({ ...base, requesterKnown: false }), false, "stranger asking");
+  assert.equal(isConfidentContactShare({ ...base, requesterInnerCircle: false }), false, "not inner circle (a vendor, a manager, a friend)");
   assert.equal(isConfidentContactShare({ ...base, isGroup: true }), false, "group");
   assert.equal(isConfidentContactShare({ ...base, resolved: [ok[0]] }), false, "one name unresolved");
   assert.equal(isConfidentContactShare({ ...base, resolved: [{ ...ok[0], ambiguous: true }, ok[1]] }), false, "ambiguous match");
@@ -175,7 +175,7 @@ test("a MONEY hold in a thread that once asked for a number never takes the shar
   // resolve Raju and auto-send past the owner page.
   const ok = [{ name: "Raju", phone: "+15551", relationship: "cousin", ambiguous: false }];
   for (const holdReason of ["money-request", "money-promise", "none"] as const) {
-    assert.equal(isConfidentContactShare({ requesterKnown: true, isGroup: false, resolved: ok, askedCount: 1, holdReason }), false, holdReason);
+    assert.equal(isConfidentContactShare({ requesterInnerCircle: true, isGroup: false, resolved: ok, askedCount: 1, holdReason }), false, holdReason);
   }
 });
 

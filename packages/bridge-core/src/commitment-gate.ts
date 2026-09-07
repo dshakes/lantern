@@ -246,7 +246,10 @@ export function extractContactRequests(contactSide: string): string[] {
  */
 export interface ResolvedShare { name: string; phone: string; relationship?: string; ambiguous: boolean }
 export function isConfidentContactShare(args: {
-  requesterKnown: boolean;
+  /** The requester is INNER CIRCLE (family / spouse / closest — the same
+   *  `isInnerCircle` gate that governs location disclosure), not merely a
+   *  contact with any label: a vendor, a manager, a dentist all have labels. */
+  requesterInnerCircle: boolean;
   isGroup: boolean;
   resolved: ResolvedShare[];
   askedCount: number;
@@ -256,7 +259,7 @@ export function isConfidentContactShare(args: {
   holdReason: CommitmentVerdict["reason"];
 }): boolean {
   if (args.holdReason !== "action-promise") return false;
-  if (args.isGroup || !args.requesterKnown) return false;
+  if (args.isGroup || !args.requesterInnerCircle) return false;
   if (args.askedCount === 0 || args.resolved.length !== args.askedCount) return false;
   return args.resolved.every((r) => !!r.phone && !!r.relationship && !r.ambiguous);
 }
