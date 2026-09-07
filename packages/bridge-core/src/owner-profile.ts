@@ -846,7 +846,13 @@ I'm <name> — <role / what you do>. <one or two lines on current focus>.
 /** YYYY-MM-DD for `d` in `tz` (falls back to the process zone). */
 export function localISODate(d: Date, tz?: string): string {
   try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    // formatToParts, not a locale's rendered string: the separator a locale
+    // emits is ICU-dependent, and a "/" would sort every "-" date as expired.
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    const y = get("year"), m = get("month"), day = get("day");
+    if (/^\d{4}$/.test(y) && /^\d{2}$/.test(m) && /^\d{2}$/.test(day)) return `${y}-${m}-${day}`;
+    return d.toISOString().slice(0, 10);
   } catch {
     return d.toISOString().slice(0, 10);
   }

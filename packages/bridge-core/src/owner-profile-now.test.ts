@@ -2,7 +2,7 @@
 //   cd packages/bridge-core && npx tsx --test src/owner-profile-now.test.ts
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { parseProfile, parseNowLine, OwnerProfileStore } from "./owner-profile.ts";
+import { parseProfile, parseNowLine, OwnerProfileStore, localISODate } from "./owner-profile.ts";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,4 +56,10 @@ test("persona: contacts get present-tense guidance, the owner gets a working pic
   assert.match(contact, /present tense/);
   const self = agentPersonaPrompt("Shekhar", style, false, { ownerNow: now, audience: "owner" });
   assert.match(self, /working picture of the week/);
+});
+
+test("localISODate is YYYY-MM-DD in any zone, never a locale's separator", () => {
+  assert.equal(localISODate(new Date("2026-09-06T03:00:00Z"), "America/New_York"), "2026-09-05");
+  assert.equal(localISODate(new Date("2026-09-06T03:00:00Z"), "Asia/Kolkata"), "2026-09-06");
+  assert.match(localISODate(new Date(), "bogus/zone"), /^\d{4}-\d{2}-\d{2}$/);
 });

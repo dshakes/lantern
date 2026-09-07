@@ -96,6 +96,10 @@ function upsertFact(existing: string, key: string, value: string): string | null
 }
 
 const NOW_HEADER = "## Now";
+// The parser accepts these aliases for the section (owner-profile.ts); the
+// writer must find the owner's existing one rather than add a second.
+const NOW_HEADER_RE = /^#{2,6}\s+(now|this\s+week|right\s+now|currently|these\s+days)\b/i;
+const NOW_SUFFIX_RE = /\s*(?:\|\s*until:.*|\(\s*until\s+.*\)|\b(?:until|till)\s+\d{4}-\d{2}-\d{2})\s*$/i;
 
 /** Upsert a `- text | until: YYYY-MM-DD` line into ## Now (created if
  *  absent). Same text (case-insensitive) → the line is replaced, so
@@ -105,13 +109,14 @@ function upsertNowLine(existing: string, text: string, until?: string): string |
   const lines = existing.split(/\r?\n/);
   const newLine = `- ${text}${until ? ` | until: ${until}` : ""}`;
   const textLc = text.trim().toLowerCase();
-  const body = sectionBody(lines, NOW_HEADER);
+  const existingHeader = lines.find((l) => NOW_HEADER_RE.test(l.trim()));
+  const body = sectionBody(lines, existingHeader?.trim() ?? NOW_HEADER);
   if (!body) {
     const trimmed = existing.replace(/\s*$/, "");
     return `${trimmed}\n\n${NOW_HEADER}\n${newLine}\n`;
   }
   for (let i = body.headerIdx + 1; i < body.end; i++) {
-    const t = lines[i].trim().replace(/^[-*]\s*/, "").replace(/\s*(?:\|\s*until:.*|\(until.*\))\s*$/i, "").toLowerCase();
+    const t = lines[i].trim().replace(/^[-*]\s*/, "").replace(NOW_SUFFIX_RE, "").toLowerCase();
     if (t && t === textLc) {
       if (lines[i].trim() === newLine) return null;
       lines[i] = newLine;

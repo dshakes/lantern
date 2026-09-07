@@ -226,3 +226,13 @@ test("now: a visitor 'till the 1st' routes into ## Now with an expiry the parser
   await maybeAutoUpdateOwnerProfile("learning gelato this week", { profilePath: path, llmCall: llm3 });
   assert.match(readFileSync(path, "utf8"), /- learning gelato\n/);
 });
+
+test("now: the writer finds the owner's aliased section and matches bare 'till' lines (review on #239)", async () => {
+  const path = tmpProfile("# Owner profile\n## This week\n- learning gelato till 2026-09-10\n");
+  const llm = async () => JSON.stringify({ facts: [{ category: "now", line: "x", now: { text: "learning gelato", until: "2026-09-12" } }] });
+  await maybeAutoUpdateOwnerProfile("still learning gelato, till the 12th now", { profilePath: path, llmCall: llm, today: new Date("2026-09-06T12:00:00Z") });
+  const raw = readFileSync(path, "utf8");
+  assert.equal((raw.match(/## /g) ?? []).length, 1, "no second Now section");
+  assert.equal((raw.match(/gelato/g) ?? []).length, 1, "updated in place, not duplicated");
+  assert.match(raw, /until: 2026-09-12/);
+});
