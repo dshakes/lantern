@@ -218,8 +218,8 @@ export class MediaHandler {
         body: JSON.stringify({
           imageDataUrl: `data:image/jpeg;base64,${b64}`,
           prompt: caption
-            ? `Describe this image sent over WhatsApp in 1-2 short, plain lowercase sentences so a friend knows what's in it. They captioned it: "${caption}". Don't guess intent — just describe. If it contains text, include it.`
-            : "Describe this image sent over WhatsApp in 1-2 short, plain lowercase sentences so a friend knows what's in it. Don't guess intent — just describe. If it contains text, include it.",
+            ? `Describe this image sent over WhatsApp in 1-2 short, plain lowercase sentences so a friend knows what's in it. They captioned it: "${caption}". Don't guess intent — just describe. If it contains text, include it. If it is an invitation, card, poster or notice, say what KIND of event it is (wedding, birthday, housewarming, memorial or death ceremony, religious, business) and whether the tone is celebratory or somber — a card with a person's photo, dates and ceremony wording is usually a memorial; say 'memorial' when those cues fit.`
+            : "Describe this image sent over WhatsApp in 1-2 short, plain lowercase sentences so a friend knows what's in it. Don't guess intent — just describe. If it contains text, include it. If it is an invitation, card, poster or notice, say what KIND of event it is (wedding, birthday, housewarming, memorial or death ceremony, religious, business) and whether the tone is celebratory or somber — a card with a person's photo, dates and ceremony wording is usually a memorial; say 'memorial' when those cues fit.",
         }),
       });
       if (!res.ok) {

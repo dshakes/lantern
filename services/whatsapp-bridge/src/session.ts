@@ -48,6 +48,7 @@ import {
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { judgeGrounding, groundingHoldPage, type GroundingVerdict } from "@lantern/bridge-core/grounding-gate";
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { strictRegenHint } from "@lantern/bridge-core/natural";
@@ -359,7 +360,11 @@ export function contactReplyWantsCalendar(text: string): boolean {
   return (
     looksLikeAppointmentQuery(text) ||
     needsCalendar(text) ||
-    /\b(when\s+(?:are|will|r)\s+you|coming|come\s+(?:to|over|down|up|by)|visit(?:ing)?|in\s+town|free|available|plans?|schedule|trip|travel(?:ing|ling)?)\b/i.test(text)
+    /\b(when\s+(?:are|will|r)\s+you|coming|come\s+(?:to|over|down|up|by)|visit(?:ing)?|in\s+town|free|available|plans?|schedule|trip|travel(?:ing|ling)?)\b/i.test(text) ||
+    // "Showtime today??" on the owner's opening day pulled no calendar (2026-09-18):
+    // a contact anchoring on today / tomorrow / an opening is asking about the
+    // owner's calendar, whether or not an availability verb is present.
+    /\b(today|tonight|tomorrow|this\s+(?:week|weekend)|showtime|opening|launch|big\s+day|still\s+on|what\s+time)\b/i.test(text)
   );
 }
 
@@ -9536,6 +9541,30 @@ export class WhatsAppSession {
         );
       }
     }
+    // GROUNDING GATE — hold, don't send, when the reply ASSERTS something about
+    // the owner's own life the bridge cannot verify (a date, "done", a status),
+    // CORRECTS the contact about the owner's plans, or answers a loss in a
+    // party register. 2026-09-18: "not today, sep 10 is the big day" / "it was
+    // 10th" on the real opening day; 2026-09-17: "exciting party" to a memorial
+    // card. Reasoned + deterministic backstop; forces LOW and the draft path.
+    let groundVerdict: GroundingVerdict | null = null;
+    if (!opts.isGroup && !commitVerdict?.hold) {
+      groundVerdict = await judgeGrounding({
+        inbound: text,
+        draft,
+        contactName: opts.senderName ?? this.contactNames.get(from) ?? undefined,
+        recentTranscript,
+        llmCall: async (p: string) => (await this.agent.respondTo(`${from}::groundgate`, p, undefined, { withTools: false })) ?? "",
+      });
+      if (groundVerdict.hold) {
+        tier.tier = "LOW";
+        tier.reasons.push(`-grounding:${groundVerdict.reason}`);
+        this.logger.warn(
+          { from, reason: groundVerdict.reason, quote: groundVerdict.quote, source: groundVerdict.source, draftPreview: draft.slice(0, 80) },
+          "GROUNDING GATE — reply HELD for owner, not sent",
+        );
+      }
+    }
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
     if (tier.tier === "LOW" && (!opts.isGroup || opts.mutedHold)) {
       // DRAFT-AND-CONFIRM (high-stakes default, parity with iMessage). A
@@ -9547,7 +9576,7 @@ export class WhatsAppSession {
       // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
       // hold-then-send behavior. A non-English injection caution ALWAYS
       // drafts (or suppresses) regardless of the high-stakes toggle.
-      if (opts.mutedHold || WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold) {
+      if (opts.mutedHold || WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution || commitVerdict?.hold || groundVerdict?.hold) {
         // DO IT, DON'T PROMISE. If the contact asked for someone's NUMBER and
         // the bridge can resolve it, the held draft carries the REAL numbers,
         // so the owner's one-tap "send" delivers them. 2026-09-04: "send
@@ -9606,7 +9635,14 @@ export class WhatsAppSession {
                   verdict: commitVerdict,
                   resolvedNote,
                 })
-              : `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
+              : groundVerdict?.hold
+                ? groundingHoldPage({
+                    contactLabel: opts.senderName ?? this.contactNames.get(from) ?? from.split("@")[0],
+                    inbound: text,
+                    draft: heldDraft,
+                    verdict: groundVerdict,
+                  })
+                : `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
           );
         } catch {}
         // B5 — arm an inline draft-edit window for the owner thread. If the

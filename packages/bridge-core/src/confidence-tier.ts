@@ -45,6 +45,8 @@ export interface ConfidenceVerdict {
   reasons: string[];
 }
 
+const GRIEF_RE = /\b(?:died|death|demise|passed\s+(?:away|on)|funeral|memorial|condolenc\w*|rest\s+in\s+peace|r\.?i\.?p\.?|obituary|last\s+rites|cremat\w*|prayer\s+meet\w*|shraddh\w*|dasadina|pedda\s+karma|chinna\s+karma|tervi|antim\s+sanskar|hospice|cancer|terminal|surgery|icu|accident)\b/i;
+
 // Patterns that DOWNGRADE confidence (push toward LOW). Each match
 // adds to the risk score. Ordered most → least concerning.
 const RISK_PATTERNS: Array<{ re: RegExp; weight: number; label: string }> = [
@@ -69,7 +71,13 @@ const RISK_PATTERNS: Array<{ re: RegExp; weight: number; label: string }> = [
   // Long reply (humans usually don't paragraph in text threads).
   { re: /.{200,}/s, weight: 1, label: "long-reply" },
   // Death / illness / grief — never auto-send without owner eyes.
-  { re: /\b(?:died|death|passed\s+away|funeral|hospice|cancer|terminal|surgery)\b/i, weight: 3, label: "grief-topic" },
+  { re: GRIEF_RE, weight: 3, label: "grief-topic" },
+];
+// Grief on the CONTACT's side. `inboundText` was declared and never read, so a
+// memorial card answered with "exciting party" scored pure-ack → HIGH. The
+// reply's own words are the wrong place to look for a loss.
+const INBOUND_RISK_PATTERNS: Array<{ re: RegExp; weight: number; label: string }> = [
+  { re: GRIEF_RE, weight: 3, label: "grief-inbound" },
 ];
 
 // Patterns that UPGRADE confidence (push toward HIGH). Small simple
@@ -86,6 +94,12 @@ export function classifyConfidence(ctx: ConfidenceContext): ConfidenceVerdict {
 
   for (const p of RISK_PATTERNS) {
     if (p.re.test(ctx.replyText)) {
+      risk += p.weight;
+      reasons.push(`-${p.weight} ${p.label}`);
+    }
+  }
+  for (const p of INBOUND_RISK_PATTERNS) {
+    if (p.re.test(ctx.inboundText || "")) {
       risk += p.weight;
       reasons.push(`-${p.weight} ${p.label}`);
     }

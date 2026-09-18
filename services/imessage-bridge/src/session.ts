@@ -51,6 +51,7 @@ import {
   mutedNoticeBucket,
 } from "@lantern/bridge-core/natural";
 import { judgeCommitment, commitmentHoldPage, extractContactRequests, isConfidentContactShare, promiseIsAboutNumber, type CommitmentVerdict, type ResolvedShare } from "@lantern/bridge-core/commitment-gate";
+import { judgeGrounding, groundingHoldPage, type GroundingVerdict } from "@lantern/bridge-core/grounding-gate";
 import { fitVoiceModel, scoreVoice, voiceDelta, type VoiceModel } from "@lantern/bridge-core/voice-score";
 import type { BotTellContext } from "@lantern/bridge-core/natural";
 import { strictRegenHint } from "@lantern/bridge-core/natural";
@@ -372,7 +373,9 @@ import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLike
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
-import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
+import { OwnerProfileStore, localISODate } from "@lantern/bridge-core/owner-profile";
+import { buildWorldModelPrompt, parseWorldModel, applyWorldModel, formatWorldModelFyi, waHistoryEvidence, imessageEvidence, mergeEvidence } from "@lantern/bridge-core/world-model";
+import { listRecentMail } from "./mail-reader.js";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
@@ -2225,6 +2228,9 @@ export class IMessageSession {
       this.maybeRunEventScout(target, now);
       // SKILL FORGE rides the same tick: due owner-taught skills fire here.
       this.maybeRunSkills(target, now);
+      // WORLD MODEL rides the same tick: every few hours, derive the owner's
+      // present-tense Now/Public lines from mail + calendar (no owner typing).
+      this.maybeRefreshWorldModel(target, now);
 
       const input = await this.gatherProactiveSignals(now);
       const nudges = computeProactiveNudges({ now, ...input });
@@ -2934,6 +2940,97 @@ export class IMessageSession {
       partial: Boolean(st.lastScanPartial),
       upcoming,
     };
+  }
+
+  // ── World model (present-tense self-model from the owner's own evidence) ──
+  // Why: on the store's real opening day (2026-09-18) the bot corrected a
+  // friend from a `## Public` line that still said the 10th. Mail, calendar and
+  // an iMessage thread all knew the 18th; the profile only knew what the owner
+  // had typed. Cadence: LANTERN_WORLD_MODEL_HOURS (default 6); LANTERN_WORLD_MODEL=0
+  // disables. Pure logic in bridge-core/world-model.ts; this is only I/O.
+  private worldModelInFlight = false;
+  private worldModelLastRunAt = 0;
+
+  private maybeRefreshWorldModel(target: string, now: number): void {
+    if ((process.env.LANTERN_WORLD_MODEL || "1") === "0") return;
+    const hours = Math.max(1, Number(process.env.LANTERN_WORLD_MODEL_HOURS) || 6);
+    if (this.worldModelLastRunAt === 0) {
+      try {
+        const st = JSON.parse(readFileSync(join(this.stateDir, "world-model.json"), "utf8")) as { lastRunAt?: number };
+        this.worldModelLastRunAt = st.lastRunAt || 1; // 1: loaded, never ran
+      } catch { this.worldModelLastRunAt = 1; }
+    }
+    if (now - this.worldModelLastRunAt < hours * 3_600_000) return;
+    void this.refreshWorldModel(target);
+  }
+
+  private async refreshWorldModel(target: string): Promise<void> {
+    if (this.worldModelInFlight) return;
+    this.worldModelInFlight = true;
+    try {
+      const todayISO = localISODate(new Date(), process.env.LANTERN_OWNER_TIMEZONE || undefined);
+      const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+      const mail = listRecentMail(since, 80, this.logger);
+      const mailLines = mail.ok ? mail.hits.map((h) => `${h.date} · ${h.from} · ${h.subject}`) : [];
+      let calendarBlock = "";
+      try {
+        const ev = await this.macActions.readUpcomingEvents({ days: 30, max: 40 });
+        calendarBlock = formatAppleCalendarBlock(ev, { max: 40 }) || "";
+      } catch { /* calendar is optional evidence */ }
+      // Self-chat + contact threads on BOTH channels. The owner's own notes
+      // are the highest authority ("opening moved to the 18th"); a friend
+      // asking "still on for the 18th?" is evidence too. The bot's own
+      // replies are excluded by construction — they may be the stale claim.
+      const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9@.]/g, "");
+      const imRows = this.db.recentMessagesSince({ sinceDays: 7, limit: 1500 }).map((r) => ({
+        ...r,
+        isOwnerChat: (!!ownerEnv && norm(r.handle) === norm(ownerEnv)) || this.isSelfChat(r.chatRowid, r.handle),
+      }));
+      const imEv = imessageEvidence(imRows, { nameFor: (h) => this.contactNames.get(h) || h });
+      let waEv = { selfChat: [] as string[], threads: [] as string[] };
+      try {
+        const waFile = process.env.LANTERN_WA_HISTORY_FILE || join(process.cwd(), "..", "whatsapp-bridge", "auth_sessions", this.tenantId, "wa-history.jsonl");
+        if (existsSync(waFile)) {
+          waEv = waHistoryEvidence(readFileSync(waFile, "utf8"), { sinceMs: Date.now() - 7 * 86_400_000, ownerJid: process.env.LANTERN_WA_OWNER_JID });
+        }
+      } catch { /* WhatsApp history is optional evidence */ }
+      const chat = mergeEvidence(imEv, waEv);
+      if (mailLines.length === 0 && !calendarBlock.trim() && chat.selfChat.length === 0 && chat.threads.length === 0) {
+        this.logger.debug("world model: no evidence available, skipping");
+        return;
+      }
+      const profile = this.ownerProfileStore.get();
+      const inputs = {
+        todayISO,
+        ownerName: process.env.LANTERN_OWNER_NAME?.trim() || "the owner",
+        mailLines,
+        calendarBlock,
+        selfChatLines: chat.selfChat,
+        threadLines: chat.threads,
+        currentNow: (profile?.now ?? []).map((n) => (n.until ? `${n.text} | until: ${n.until}` : n.text)),
+        currentPublic: profile?.publicFacts ?? [],
+      };
+      const raw = (await this.agent.respondTo("owner::worldmodel", buildWorldModelPrompt(inputs), undefined, { withTools: false })) ?? "";
+      const model = parseWorldModel(raw, todayISO, [mailLines.join("\n"), calendarBlock, chat.selfChat.join("\n"), chat.threads.join("\n")].join("\n"));
+      const path = this.ownerProfileStore.getPath();
+      const md = readFileSync(path, "utf8");
+      const applied = applyWorldModel(md, model, todayISO);
+      if (applied.changes.length > 0) {
+        writeFileSync(path, applied.md, { mode: 0o600 });
+        this.ownerProfileStore.invalidate();
+        this.logger.info({ changes: applied.changes.length }, "world model: profile refreshed");
+        await this.send(target, formatWorldModelFyi(applied.changes)).catch(() => {});
+      } else {
+        this.logger.info({ now: model.now.length, public: model.public.length }, "world model: refreshed, nothing new");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "world model refresh failed (non-fatal)");
+    } finally {
+      this.worldModelInFlight = false;
+      this.worldModelLastRunAt = Date.now();
+      try { writeFileSync(join(this.stateDir, "world-model.json"), JSON.stringify({ lastRunAt: this.worldModelLastRunAt }), { mode: 0o600 }); } catch {}
+    }
   }
 
   private maybeRunEventScout(target: string, now: number): void {
@@ -7931,7 +8028,11 @@ export class IMessageSession {
     // (needsCalendar || looksLikeAppointmentQuery). Casual messages skip it
     // entirely. The prior version read it for EVERY 1:1 inbound regardless of
     // content, which dominated reply latency for plain chatter.
-    if (!isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text))) {
+    // Parity with the WhatsApp bridge's contactReplyWantsCalendar: a contact
+    // anchoring on today / tomorrow / an opening ("Showtime today??" on the
+    // owner's opening day, 2026-09-18) is asking about the owner's calendar
+    // even without an availability verb.
+    if (!isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text) || /\b(today|tonight|tomorrow|this\s+(?:week|weekend)|showtime|opening|launch|big\s+day|still\s+on|what\s+time)\b/i.test(text))) {
       try {
         const ev = await this.macActions.readUpcomingEvents({ days: 45, max: 15 });
         const calBlock = formatAppleCalendarBlock(ev, { max: 15 });
@@ -8365,12 +8466,35 @@ export class IMessageSession {
         );
       }
     }
+    // GROUNDING GATE (twin of the WhatsApp bridge) — hold when the reply
+    // asserts a date / status / outcome about the owner's own life the bridge
+    // cannot verify, corrects the contact about the owner's plans, or answers
+    // a loss in a party register. Forces LOW and the draft path.
+    let groundVerdict: GroundingVerdict | null = null;
+    if (!isGroup && !commitVerdict?.hold) {
+      groundVerdict = await judgeGrounding({
+        inbound: text,
+        draft,
+        contactName: this.contactNames.get(row.handle),
+        recentTranscript: (this.inboundHistory.get(row.handle) ?? []).slice(-8).join("\n"),
+        llmCall: async (p: string) => (await this.agent.respondTo(`${row.handle}::groundgate`, p, undefined, { withTools: false })) ?? "",
+      });
+      if (groundVerdict.hold) {
+        tier.tier = "LOW";
+        tier.reasons.push(`-grounding:${groundVerdict.reason}`);
+        this.logger.warn(
+          { handle: row.handle, reason: groundVerdict.reason, quote: groundVerdict.quote, source: groundVerdict.source, draftPreview: draft.slice(0, 80) },
+          "GROUNDING GATE — reply HELD for owner, not sent",
+        );
+      }
+    }
+    const safetyHold = !!commitVerdict?.hold || !!groundVerdict?.hold;
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
     // DRAFT-AND-CONFIRM for Tier-C (LOW-confidence / sensitive) replies —
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && (mutedHold || IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || commitVerdict?.hold) && (!isGroup || mutedHold)) {
+    if (tier.tier === "LOW" && (mutedHold || IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution || safetyHold) && (!isGroup || mutedHold)) {
       // DO IT, DON'T PROMISE (twin of the WhatsApp bridge). A number request
       // resolves into the held draft; and under the owner's policy — "if it's
       // contact sharing and you're confident, send it" — the deterministic
@@ -8411,9 +8535,13 @@ export class IMessageSession {
         heldDraft,
         commitVerdict?.hold
           ? commitmentHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft: heldDraft, verdict: commitVerdict, resolvedNote })
-          : undefined,
+          : groundVerdict?.hold
+            ? groundingHoldPage({ contactLabel: this.contactLabel(row.handle), inbound: text, draft: heldDraft, verdict: groundVerdict })
+            : undefined,
       );
-      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: !!commitVerdict?.hold, mutedHold });
+      // Both gates are safety holds: a failed owner hand-off must suppress,
+      // never fall through to send (resolveHeldReply's commitHold semantics).
+      const outcome = resolveHeldReply({ held, forceDraftCaution, commitHold: safetyHold, mutedHold });
       if (outcome === "handed-to-owner") {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
         return;
@@ -8424,13 +8552,18 @@ export class IMessageSession {
         // "I'll send you 70k" to the contact precisely when the owner could
         // not be warned. Silence, logged, with a best-effort drop notice.
         this.logger.warn(
-          { jid: row.handle, reason: commitVerdict?.hold ? `commitment:${commitVerdict.reason}` : "non-english-injection" },
+          { jid: row.handle, reason: commitVerdict?.hold ? `commitment:${commitVerdict.reason}` : groundVerdict?.hold ? `grounding:${groundVerdict.reason}` : "non-english-injection" },
           "safety hold — owner hand-off FAILED, suppressing auto-reply (never fall through to send)",
         );
         if (commitVerdict?.hold) {
           this.notifyOwnerOfDrop(
             `couldn't reach you to approve a reply to ${this.contactLabel(row.handle)} that involves MONEY/a promise — I did NOT send it. They're waiting on you.`,
             `commit-hold-failed:${row.handle}`,
+          );
+        } else if (groundVerdict?.hold) {
+          this.notifyOwnerOfDrop(
+            `couldn't reach you about a reply to ${this.contactLabel(row.handle)} that claims something only you can confirm — I did NOT send it. They're waiting on you.`,
+            `ground-hold-failed:${row.handle}`,
           );
         }
         return;

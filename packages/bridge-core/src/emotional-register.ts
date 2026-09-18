@@ -59,6 +59,30 @@ const DISTRESS_LEXEMES: Lexeme[] = [
   { term: "died", weight: 3 },
   { term: "death", weight: 2.5 },
   { term: "funeral", weight: 2.5 },
+  // Memorial rites and condolence — the 2026-09-17 memorial-card caption
+  // ("invitation for a ceremony … photo of the person") scored 0 here and
+  // was answered as an exciting party. English + the Telugu/Hindi rite words
+  // a card or a relative actually uses.
+  { term: "memorial", weight: 3 },
+  { term: "condolence", weight: 3 },
+  { term: "condolences", weight: 3 },
+  { term: "rest in peace", weight: 3 },
+  { term: "rip", weight: 2 },
+  { term: "obituary", weight: 3 },
+  { term: "last rites", weight: 3 },
+  { term: "cremation", weight: 3 },
+  { term: "prayer meeting", weight: 2.5 },
+  { term: "shraddha", weight: 3 },
+  { term: "dasadina", weight: 3 },
+  { term: "pedda karma", weight: 3 },
+  { term: "chinna karma", weight: 3 },
+  { term: "tervi", weight: 3 },
+  { term: "chautha", weight: 3 },
+  { term: "antim sanskar", weight: 3 },
+  { term: "no more", weight: 2 },
+  { term: "in loving memory", weight: 3 },
+  { term: "mourning", weight: 2.5 },
+  { term: "demise", weight: 3 },
   { term: "hospital", weight: 2.5 },
   { term: "emergency", weight: 2.5 },
   { term: "icu", weight: 2.5 },
@@ -420,12 +444,16 @@ export function shouldJudgeRegister(text: string, tableVerdict: EmotionalRegiste
   if (tableVerdict.register !== "neutral") return false;
   const t = (text || "").trim();
   if (t.length < 6) return false;
+  // An image caption is a description, not the sender's words: the table's
+  // lexemes rarely appear ("invitation for a ceremony … photo of the person"
+  // is a memorial card) — the model reads the scene, the table cannot.
+  if (/^\[image\b/i.test(t)) return true;
   return NON_LATIN_SCRIPT_RE.test(t) || ROMANIZED_HINTS.test(t);
 }
 
 export function registerJudgePrompt(inbound: string): string {
   return [
-    "Read this text message (any language, often romanized Telugu or Hindi) and judge the sender's emotional state.",
+    "Read this text message (any language, often romanized Telugu or Hindi) and judge the sender's emotional state. It may be a bracketed description of an image the sender shared: read it as the scene — an invitation or card carrying a person's photo, dates and ceremony wording is usually a memorial / death ceremony, not a celebration.",
     "Return STRICT JSON only: {\"register\":\"distress\"|\"frustration\"|\"excitement\"|\"neutral\",\"confidence\":0..1}",
     "distress = sad/scared/hurting/asking for help or money in a bad situation; frustration = annoyed/something still broken; excitement = celebrating/great news; neutral = none of these.",
     "Be conservative: when unsure, neutral with low confidence.",

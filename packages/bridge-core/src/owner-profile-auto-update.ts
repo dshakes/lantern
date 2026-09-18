@@ -105,7 +105,7 @@ const NOW_SUFFIX_RE = /\s*(?:\|\s*until:.*|\(\s*until\s+.*\)|\b(?:until|till)\s+
  *  absent). Same text (case-insensitive) → the line is replaced, so
  *  re-teaching with a new date updates instead of duping. Null when nothing
  *  changed. The parser side is owner-profile.ts `parseNowLine`. */
-function upsertNowLine(existing: string, text: string, until?: string): string | null {
+export function upsertNowLine(existing: string, text: string, until?: string): string | null {
   const lines = existing.split(/\r?\n/);
   const newLine = `- ${text}${until ? ` | until: ${until}` : ""}`;
   const textLc = text.trim().toLowerCase();
