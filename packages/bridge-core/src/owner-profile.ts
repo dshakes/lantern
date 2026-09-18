@@ -284,10 +284,22 @@ export class OwnerProfileStore {
   /** PUBLIC facts the owner has announced, rendered for the persona prompt.
    *  Safe for EVERY audience by definition — this is the bucket for things
    *  the owner WANTS said. Returns "" when no "## Public" section exists. */
-  publicBlock(): string {
+  publicBlock(today: Date = new Date()): string {
     const facts = this.get()?.publicFacts ?? [];
     if (facts.length === 0) return "";
-    return `Public news the owner has announced (OK to confirm to anyone): ${facts.join("; ")}.`;
+    // A Public line carrying a date that has PASSED is a note, not a plan.
+    // 2026-09-18: "grand opening September 10" (eight days stale) was rendered
+    // with a do-not-contradict directive on the real opening day, and the bot
+    // corrected a contact twice. Mark it so the model treats the date as
+    // history and defers to the contact on timing.
+    const iso = localISODate(today, this.timezone() || undefined);
+    const rendered = facts.map((f) => {
+      const d = firstDateISO(f, today.getFullYear());
+      return d && d < iso
+        ? `${f} [NOTE: that date (${humanizeDate(d)}) has already passed and this line may be stale — do NOT state or correct dates from it; if the contact mentions a different date or that it moved, they are probably right]`
+        : f;
+    });
+    return `Public news the owner has announced (OK to confirm to anyone): ${rendered.join("; ")}.`;
   }
 
   /** What the owner is doing RIGHT NOW, expired items dropped. Rendered for
@@ -844,6 +856,24 @@ I'm <name> — <role / what you do>. <one or two lines on current focus>.
 `;
 
 /** YYYY-MM-DD for `d` in `tz` (falls back to the process zone). */
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+/** First explicit calendar date in free text as YYYY-MM-DD, or null. Accepts
+ *  "September 10, 2026", "Sep 10", "10 Sept 2026", "2026-09-10". A missing
+ *  year is the given one. Exported for tests. */
+export function firstDateISO(text: string, defaultYear: number): string | null {
+  const t = text || "";
+  const iso = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const mdy = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/i);
+  const dmy = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:,?\s+(\d{4}))?\b/i);
+  const m = mdy ? { mon: mdy[1], day: mdy[2], year: mdy[3] } : dmy ? { mon: dmy[2], day: dmy[1], year: dmy[3] } : null;
+  if (!m) return null;
+  const mi = MONTHS.indexOf(m.mon.toLowerCase().slice(0, 3));
+  const day = Number(m.day);
+  if (mi < 0 || day < 1 || day > 31) return null;
+  return `${m.year ?? defaultYear}-${String(mi + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 export function localISODate(d: Date, tz?: string): string {
   try {
     // formatToParts, not a locale's rendered string: the separator a locale

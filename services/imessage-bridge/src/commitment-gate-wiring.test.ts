@@ -10,8 +10,10 @@ const im = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
 const wa = readFileSync(new URL("../../whatsapp-bridge/src/session.ts", import.meta.url), "utf8");
 
 for (const [name, src, holdLine] of [
-  ["imessage", im, /tier\.tier === "LOW" && \(mutedHold \|\| IMessageSession\.DRAFT_CONFIRM_DEFAULT \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
-  ["whatsapp", wa, /if \(opts\.mutedHold \|\| WhatsAppSession\.DRAFT_HIGH_STAKES \|\| forceDraftCaution \|\| commitVerdict\?\.hold\)/],
+  // `safetyHold` = commitVerdict?.hold || groundVerdict?.hold — the grounding gate
+  // shares the commitment gate's forced-draft path; its definition is asserted below.
+  ["imessage", im, /tier\.tier === "LOW" && \(mutedHold \|\| IMessageSession\.DRAFT_CONFIRM_DEFAULT \|\| forceDraftCaution \|\| safetyHold\)/],
+  ["whatsapp", wa, /if \(opts\.mutedHold \|\| WhatsAppSession\.DRAFT_HIGH_STAKES \|\| forceDraftCaution \|\| commitVerdict\?\.hold \|\| groundVerdict\?\.hold\)/],
 ] as const) {
   describe(`${name}: commitment gate stays wired`, () => {
     it("calls judgeCommitment on the contact reply path", () => {
@@ -26,6 +28,7 @@ for (const [name, src, holdLine] of [
     });
     it("the hold path honors the verdict even when draft-confirm is OFF", () => {
       expect(src).toMatch(holdLine);
+      if (name === "imessage") expect(src).toMatch(/const safetyHold = !!commitVerdict\?\.hold \|\| !!groundVerdict\?\.hold;/);
     });
     it("passes thread context — money is agreed once, then promised bare", () => {
       expect(src).toMatch(/recentTranscript/);

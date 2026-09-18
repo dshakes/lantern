@@ -104,3 +104,17 @@ test("real romanized one-word and multi-word messages still detect", () => {
   assert.equal(detectLanguageHints("tu es ma soeur").primary, "french");
   assert.equal(detectLanguageHints("bonjour").primary, "french");
 });
+
+// 2026-09-18: a Public line eight days stale ("grand opening September 10")
+// was rendered as authoritative on the real opening day. A past date must be
+// flagged so the model defers to the contact on timing.
+test("publicBlock flags a Public fact whose date has already passed", async () => {
+  const { firstDateISO } = await import("./owner-profile.js");
+  assert.equal(firstDateISO("grand opening September 10, 2026. Store 1 of 4", 2026), "2026-09-10");
+  assert.equal(firstDateISO("opening Sep 18", 2026), "2026-09-18");
+  assert.equal(firstDateISO("10 Sept 2026 launch", 2026), "2026-09-10");
+  assert.equal(firstDateISO("no dates here", 2026), null);
+  const s = storeFor(["## Public", "- grand opening September 10, 2026"].join("\n"));
+  assert.match(s.publicBlock(new Date("2026-09-18T12:00:00Z")), /has already passed/);
+  assert.doesNotMatch(s.publicBlock(new Date("2026-09-01T12:00:00Z")), /has already passed/);
+});
