@@ -374,7 +374,7 @@ import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore, localISODate } from "@lantern/bridge-core/owner-profile";
-import { buildWorldModelPrompt, parseWorldModel, applyWorldModel, formatWorldModelFyi } from "@lantern/bridge-core/world-model";
+import { buildWorldModelPrompt, parseWorldModel, applyWorldModel, formatWorldModelFyi, waHistoryEvidence, imessageEvidence, mergeEvidence } from "@lantern/bridge-core/world-model";
 import { listRecentMail } from "./mail-reader.js";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
@@ -2977,7 +2977,26 @@ export class IMessageSession {
         const ev = await this.macActions.readUpcomingEvents({ days: 30, max: 40 });
         calendarBlock = formatAppleCalendarBlock(ev, { max: 40 }) || "";
       } catch { /* calendar is optional evidence */ }
-      if (mailLines.length === 0 && !calendarBlock.trim()) {
+      // Self-chat + contact threads on BOTH channels. The owner's own notes
+      // are the highest authority ("opening moved to the 18th"); a friend
+      // asking "still on for the 18th?" is evidence too. The bot's own
+      // replies are excluded by construction — they may be the stale claim.
+      const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9@.]/g, "");
+      const imRows = this.db.recentMessagesSince({ sinceDays: 7, limit: 1500 }).map((r) => ({
+        ...r,
+        isOwnerChat: (!!ownerEnv && norm(r.handle) === norm(ownerEnv)) || this.isSelfChat(r.chatRowid, r.handle),
+      }));
+      const imEv = imessageEvidence(imRows, { nameFor: (h) => this.contactNames.get(h) || h });
+      let waEv = { selfChat: [] as string[], threads: [] as string[] };
+      try {
+        const waFile = process.env.LANTERN_WA_HISTORY_FILE || join(process.cwd(), "..", "whatsapp-bridge", "auth_sessions", this.tenantId, "wa-history.jsonl");
+        if (existsSync(waFile)) {
+          waEv = waHistoryEvidence(readFileSync(waFile, "utf8"), { sinceMs: Date.now() - 7 * 86_400_000, ownerJid: process.env.LANTERN_WA_OWNER_JID });
+        }
+      } catch { /* WhatsApp history is optional evidence */ }
+      const chat = mergeEvidence(imEv, waEv);
+      if (mailLines.length === 0 && !calendarBlock.trim() && chat.selfChat.length === 0 && chat.threads.length === 0) {
         this.logger.debug("world model: no evidence available, skipping");
         return;
       }
@@ -2987,11 +3006,13 @@ export class IMessageSession {
         ownerName: process.env.LANTERN_OWNER_NAME?.trim() || "the owner",
         mailLines,
         calendarBlock,
+        selfChatLines: chat.selfChat,
+        threadLines: chat.threads,
         currentNow: (profile?.now ?? []).map((n) => (n.until ? `${n.text} | until: ${n.until}` : n.text)),
         currentPublic: profile?.publicFacts ?? [],
       };
       const raw = (await this.agent.respondTo("owner::worldmodel", buildWorldModelPrompt(inputs), undefined, { withTools: false })) ?? "";
-      const model = parseWorldModel(raw, todayISO, `${mailLines.join("\n")}\n${calendarBlock}`);
+      const model = parseWorldModel(raw, todayISO, [mailLines.join("\n"), calendarBlock, chat.selfChat.join("\n"), chat.threads.join("\n")].join("\n"));
       const path = this.ownerProfileStore.getPath();
       const md = readFileSync(path, "utf8");
       const applied = applyWorldModel(md, model, todayISO);

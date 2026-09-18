@@ -1563,7 +1563,15 @@ parse / profile apply / owner FYI) + `refreshWorldModel` in the iMessage bridge,
 riding the anticipation tick every `LANTERN_WORLD_MODEL_HOURS` (default 6;
 `LANTERN_WORLD_MODEL=0` disables). Inputs: the last 7 days of Apple Mail
 envelope-index subjects (`listRecentMail`, read-only, never logged), the next
-30 days of the device calendar, and the current `## Now` / `## Public` lines.
+30 days of the device calendar, the owner's OWN self-chat notes on BOTH
+channels (highest authority — "opening moved to the 18th" overrides mail),
+INBOUND contact messages on both channels (a friend's "still on for the
+18th?" is evidence; the bot's own replies are excluded by construction — they
+may be the stale claim), and the current `## Now` / `## Public` lines.
+iMessage rows come from `chat.db` (`recentMessagesSince`); WhatsApp from the
+WA bridge's `wa-history.jsonl` (`LANTERN_WA_HISTORY_FILE` override; self-chat
+slice needs `LANTERN_WA_OWNER_JID`). Pure readers: `imessageEvidence`,
+`waHistoryEvidence`, `mergeEvidence`.
 One purpose-keyed call (`owner::worldmodel`) returns strict JSON; every item
 must cite a `source` that appears VERBATIM in the inputs (a subject or an
 event title) and carry an `until:` date in [today, +120d], or it is dropped.
