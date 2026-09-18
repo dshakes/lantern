@@ -104,3 +104,27 @@ test("real romanized one-word and multi-word messages still detect", () => {
   assert.equal(detectLanguageHints("tu es ma soeur").primary, "french");
   assert.equal(detectLanguageHints("bonjour").primary, "french");
 });
+
+// 2026-09-18: a Public line eight days stale ("grand opening September 10")
+// was rendered as authoritative on the real opening day. A past date must be
+// flagged so the model defers to the contact on timing.
+test("publicBlock flags a Public fact whose date has already passed", async () => {
+  const { firstDateISO } = await import("./owner-profile.js");
+  assert.equal(firstDateISO("grand opening September 10, 2026. Store 1 of 4", 2026), "2026-09-10");
+  assert.equal(firstDateISO("opening Sep 18", 2026), "2026-09-18");
+  assert.equal(firstDateISO("10 Sept 2026 launch", 2026), "2026-09-10");
+  assert.equal(firstDateISO("no dates here", 2026), null);
+  const s = storeFor(["## Public", "- grand opening September 10, 2026"].join("\n"));
+  assert.match(s.publicBlock(new Date("2026-09-18T12:00:00Z")), /has already passed/);
+  assert.doesNotMatch(s.publicBlock(new Date("2026-09-01T12:00:00Z")), /has already passed/);
+});
+
+// The world-model writer dates its Public lines; an expired one must vanish
+// rather than be flagged, and a live one renders with its horizon.
+test("publicBlock honors `| until:` on Public lines", () => {
+  const s = storeFor(["## Public (managed)", "- grand opening Sept 18 | until: 2026-09-18", "- pop-up at the fair | until: 2026-09-12"].join("\n"));
+  const out = s.publicBlock(new Date("2026-09-17T12:00:00Z"));
+  assert.match(out, /grand opening Sept 18 \(through/);
+  assert.doesNotMatch(out, /pop-up/);
+  assert.equal(s.publicBlock(new Date("2026-09-30T12:00:00Z")), "");
+});

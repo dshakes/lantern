@@ -27,6 +27,7 @@ import {
   buildMailQuery,
   parseEmlx,
   rowToHit,
+  buildRecentMailQuery,
   type MailHit,
   type MailSearchParams,
 } from "@lantern/bridge-core/mail-index";
@@ -74,6 +75,27 @@ export function searchMailIndex(params: MailSearchParams, log: Logger): MailSear
     // Fail closed: no FDA / schema drift / lock — single debug log,
     // structured error back to the LLM.
     log.debug({ err: (err as Error).message }, "mail index search failed (fails closed)");
+    return { ok: false, error: `mail index unavailable: ${(err as Error).message}` };
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+/** Newest mail since `since` (YYYY-MM-DD), no keyword filter. Same
+ *  fail-closed, read-only posture as searchMailIndex. Feeds the owner
+ *  world-model refresh; subjects are never logged. */
+export function listRecentMail(since: string, limit: number, log: Logger): MailSearchOutcome {
+  if (!mailIndexEnabled()) return { ok: false, error: "local mail index disabled (LANTERN_MAIL_INDEX=0)" };
+  const indexPath = envelopeIndexPath();
+  if (!indexPath) return { ok: false, error: "no Apple Mail envelope index on this Mac" };
+  let db: InstanceType<typeof Database> | null = null;
+  try {
+    db = new Database(indexPath, { readonly: true, fileMustExist: true });
+    const { sql, args } = buildRecentMailQuery({ since, limit });
+    const rows = db.prepare(sql).all(...args) as { rowid: number; ts: number; comment: string; address: string; subject: string }[];
+    return { ok: true, hits: rows.map(rowToHit) };
+  } catch (err) {
+    log.debug({ err: (err as Error).message }, "recent mail listing failed (fails closed)");
     return { ok: false, error: `mail index unavailable: ${(err as Error).message}` };
   } finally {
     try { db?.close(); } catch {}

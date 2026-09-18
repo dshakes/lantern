@@ -693,6 +693,35 @@ export class ChatDB {
       .map((r) => ({ handle: r.handle, msgs: r.msgs, lastTs: appleNsToUnixMs(r.lastd) }));
   }
 
+  // Recent 1:1 messages (both directions) since `sinceDays`, newest first —
+  // evidence for the owner world-model refresh. Groups excluded; reactions
+  // excluded; attributedBody decoded like the poller. Text is PII: callers
+  // must never log it.
+  recentMessagesSince(opts: { sinceDays: number; limit: number }): Array<{ ts: number; handle: string; isFromMe: boolean; text: string; chatRowid: number }> {
+    if (!this.db) return [];
+    const cutoffUnixSec = Math.floor(Date.now() / 1000) - Math.max(1, opts.sinceDays) * 86400;
+    const limit = Math.min(Math.max(opts.limit, 1), 2000);
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(m.text,'') AS text, m.attributedBody AS attributed_body, m.date AS date,
+                m.is_from_me AS is_from_me, COALESCE(h.id,'') AS handle, COALESCE(c.ROWID,0) AS chat_rowid
+         FROM message m
+         LEFT JOIN handle h ON m.handle_id = h.ROWID
+         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         LEFT JOIN chat c ON c.ROWID = cmj.chat_id
+         WHERE COALESCE(c.display_name,'') = ''
+           AND COALESCE(c.style, 45) <> 43
+           AND COALESCE(m.associated_message_type,0) = 0
+           AND m.date/1000000000 + 978307200 > ?
+         ORDER BY m.date DESC
+         LIMIT ?`,
+      )
+      .all(cutoffUnixSec, limit) as Array<{ text: string; attributed_body: Buffer | null; date: number; is_from_me: number; handle: string; chat_rowid: number }>;
+    return rows
+      .map((r) => ({ ts: appleNsToUnixMs(r.date), handle: r.handle, isFromMe: !!r.is_from_me, text: (r.text.trim() || decodeAttributedBody(r.attributed_body) || "").trim(), chatRowid: r.chat_rowid }))
+      .filter((r) => r.text.length > 0);
+  }
+
   // List all iMessage groups (multi-participant chats) with their
   // names and participant counts. Used by the LLM tool
   // `list_imessage_groups` so the bot can find a trip/family/etc

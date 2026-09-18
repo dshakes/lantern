@@ -1524,6 +1524,69 @@ alternates, every resolved person is in the owner's `## Relationships`, not a
 group. All true → the numbers are sent directly and the owner gets a `📇 shared …`
 FYI; any false → the numbers are staged in the hold page for a one-word `send`.
 
+### Grounding gate ("if you don't know, don't reply") — HOLD, never send
+
+`packages/bridge-core/src/grounding-gate.ts`, wired in BOTH bridges right after
+the commitment gate. A contact reply is **held for the owner, not sent**, when
+it (1) states a specific date/time for something in the owner's life in answer
+to a timing question, (2) corrects or contradicts the contact about the owner's
+own plans, (3) asserts an outcome only the owner could confirm ("all done and
+rolling"), or (4) answers a death / memorial / illness / bad-news message (or
+image caption) in a celebratory or jokey register. Two layers, held if EITHER:
+a purpose-keyed LLM judge (`${jid}::groundgate`) and a deterministic backstop
+(explicit calendar dates, date contradiction, memorial lexicon vs. party
+lexicon) that runs ALWAYS so an outage cannot fail open. A hold forces tier LOW
+**and** the draft path even when draft-confirm is off, and pages the owner with
+`⚠️ HELD — <contact> … the draft claims "…" I can't verify` — the owner's one
+typed line becomes the reply. Log line: `GROUNDING GATE — reply HELD`.
+
+Why (2026-09-18, live): on the owner's store opening day a contact asked
+"Showtime today??" and the bot replied "not today, sep 10 is the big day",
+then corrected him again ("it was 10th") and invented the outcome ("all done
+and rolling now") — from a `## Public` profile line eight days stale that
+carried a "do not contradict" directive, with no calendar or mail read (the
+calendar gate needed an availability verb). 2026-09-17: a memorial-ceremony
+card was answered as an "exciting party" — the vision caption had no tone, the
+register table had no memorial lexeme. Companion fixes: `publicBlock(today)`
+flags a Public fact whose date has passed (`firstDateISO`), the Public
+directive now defers to the contact on changed dates, the contact calendar
+gate also fires on today/tomorrow/opening/showtime anchors, the vision prompt
+names the event kind + tone, the register table knows memorial rites and the
+model judges `[image …]` captions, and `classifyConfidence` finally reads
+`inboundText` for grief (`grief-inbound`). The introspect rubric
+(`scripts/introspect/PROMPT.md`) now audits both classes.
+
+### World model (present-tense self-model refreshed from mail + calendar)
+
+`packages/bridge-core/src/world-model.ts` (pure: prompt / anti-hallucination
+parse / profile apply / owner FYI) + `refreshWorldModel` in the iMessage bridge,
+riding the anticipation tick every `LANTERN_WORLD_MODEL_HOURS` (default 6;
+`LANTERN_WORLD_MODEL=0` disables). Inputs: the last 7 days of Apple Mail
+envelope-index subjects (`listRecentMail`, read-only, never logged), the next
+30 days of the device calendar, the owner's OWN self-chat notes on BOTH
+channels (highest authority — "opening moved to the 18th" overrides mail),
+INBOUND contact messages on both channels (a friend's "still on for the
+18th?" is evidence; the bot's own replies are excluded by construction — they
+may be the stale claim), and the current `## Now` / `## Public` lines.
+iMessage rows come from `chat.db` (`recentMessagesSince`); WhatsApp from the
+WA bridge's `wa-history.jsonl` (`LANTERN_WA_HISTORY_FILE` override; self-chat
+slice needs `LANTERN_WA_OWNER_JID`). Pure readers: `imessageEvidence`,
+`waHistoryEvidence`, `mergeEvidence`.
+One purpose-keyed call (`owner::worldmodel`) returns strict JSON; every item
+must cite a `source` that appears VERBATIM in the inputs (a subject or an
+event title) and carry an `until:` date in [today, +120d], or it is dropped.
+Writes: `## Now` lines are upserted (existing `upsertNowLine` grammar);
+`## Public (managed)` is rebuilt wholesale — the bot owns that section and
+never touches the owner's hand-written `## Public`. `publicBlock(today)` now
+honors `| until:` on Public lines (expired → gone). Every change is FYI'd to
+self-chat as `🧭 updated what I know …` so a wrong derivation is one line
+from a correction. Fail-safe end to end; state `<stateDir>/world-model.json`.
+
+Why: on the store's real opening day the profile still said the 10th because
+every fact the bot knew about the owner's life had to be TYPED — Mail had the
+sales reports and vendor confirmations, the calendar had the day, and nothing
+revised the line. Now the owner's own evidence keeps the self-model current.
+
 ### Claim verifier
 
 `verifyClaims()` (`verifiable-claims.ts`) is a pre-send pass that rewrites

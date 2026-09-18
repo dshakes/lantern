@@ -850,7 +850,7 @@ export function agentPersonaPrompt(
   if (pub) {
     lines.push(``);
     lines.push(
-      `${pub} These are PUBLIC — ${ownerName} has announced them and is proud of them. This is the ONE kind of fact you may openly confirm and talk about with anyone. When someone says congratulations, "so exciting", "heard the news", or forwards one of these announcements back, it is about ${ownerName}'s OWN news: thank them as the person it happened to ("thank you! 🙏 come by opening day"), never as an outsider ("congrats to them"), and never ask them whether it is happening near THEM. Details in these lines are correct — do not contradict them.`,
+      `${pub} These are PUBLIC — ${ownerName} has announced them and is proud of them. This is the ONE kind of fact you may openly confirm and talk about with anyone. When someone says congratulations, "so exciting", "heard the news", or forwards one of these announcements back, it is about ${ownerName}'s OWN news: thank them as the person it happened to ("thank you! 🙏 come by opening day"), never as an outsider ("congrats to them"), and never ask them whether it is happening near THEM. Details in these lines were correct when written. If someone tells you a date or plan has CHANGED, or asks whether something is today / done / still on, do NOT correct them from these lines — you may not have the latest; say you'll confirm and let ${ownerName} answer.`,
     );
   }
 

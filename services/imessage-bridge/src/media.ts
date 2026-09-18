@@ -204,7 +204,7 @@ export class MediaHandler {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: `data:${useType};base64,${b64}`,
-          prompt: "Describe this image sent in a personal chat in 1-2 short plain lowercase sentences. No preamble, no guesses about intent. If it contains text, include it.",
+          prompt: "Describe this image sent in a personal chat in 1-2 short plain lowercase sentences. No preamble, no guesses about intent. If it contains text, include it. If it is an invitation, card, poster or notice, say what KIND of event it is (wedding, birthday, housewarming, memorial or death ceremony, religious, business) and whether the tone is celebratory or somber — a card with a person's photo, dates and ceremony wording is usually a memorial; say 'memorial' when those cues fit.",
         }),
       });
       if (!res.ok) {
