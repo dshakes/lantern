@@ -81,6 +81,7 @@
     "./live-watch": "./src/live-watch.ts",
     "./commitment-gate": "./src/commitment-gate.ts",
     "./grounding-gate": "./src/grounding-gate.ts",
+    "./world-model": "./src/world-model.ts",
     "./voice-score": "./src/voice-score.ts",
     "./voice-refine": "./src/voice-refine.ts",
     "./relationship-infer": "./src/relationship-infer.ts",

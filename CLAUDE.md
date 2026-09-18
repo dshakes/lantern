@@ -1556,6 +1556,29 @@ model judges `[image …]` captions, and `classifyConfidence` finally reads
 `inboundText` for grief (`grief-inbound`). The introspect rubric
 (`scripts/introspect/PROMPT.md`) now audits both classes.
 
+### World model (present-tense self-model refreshed from mail + calendar)
+
+`packages/bridge-core/src/world-model.ts` (pure: prompt / anti-hallucination
+parse / profile apply / owner FYI) + `refreshWorldModel` in the iMessage bridge,
+riding the anticipation tick every `LANTERN_WORLD_MODEL_HOURS` (default 6;
+`LANTERN_WORLD_MODEL=0` disables). Inputs: the last 7 days of Apple Mail
+envelope-index subjects (`listRecentMail`, read-only, never logged), the next
+30 days of the device calendar, and the current `## Now` / `## Public` lines.
+One purpose-keyed call (`owner::worldmodel`) returns strict JSON; every item
+must cite a `source` that appears VERBATIM in the inputs (a subject or an
+event title) and carry an `until:` date in [today, +120d], or it is dropped.
+Writes: `## Now` lines are upserted (existing `upsertNowLine` grammar);
+`## Public (managed)` is rebuilt wholesale — the bot owns that section and
+never touches the owner's hand-written `## Public`. `publicBlock(today)` now
+honors `| until:` on Public lines (expired → gone). Every change is FYI'd to
+self-chat as `🧭 updated what I know …` so a wrong derivation is one line
+from a correction. Fail-safe end to end; state `<stateDir>/world-model.json`.
+
+Why: on the store's real opening day the profile still said the 10th because
+every fact the bot knew about the owner's life had to be TYPED — Mail had the
+sales reports and vendor confirmations, the calendar had the day, and nothing
+revised the line. Now the owner's own evidence keeps the self-model current.
+
 ### Claim verifier
 
 `verifyClaims()` (`verifiable-claims.ts`) is a pre-send pass that rewrites

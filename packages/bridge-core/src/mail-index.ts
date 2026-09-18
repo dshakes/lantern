@@ -223,3 +223,19 @@ function clampBody(text: string): string {
   const collapsed = text.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   return collapsed.length > EMAIL_BODY_CAP ? collapsed.slice(0, EMAIL_BODY_CAP) + "…" : collapsed;
 }
+
+/** Newest messages since a date, no keyword filter — the world-model refresh
+ *  reads "what landed this week" and lets the model decide what matters. */
+export function buildRecentMailQuery(p: { since: string; limit?: number }): { sql: string; args: (string | number)[] } {
+  const t = Date.parse(p.since);
+  if (Number.isNaN(t)) throw new Error("bad since date");
+  const limit = Math.min(Math.max(1, Math.floor(p.limit || MAIL_SEARCH_DEFAULT_LIMIT)), MAIL_SEARCH_MAX_LIMIT);
+  const sql =
+    "SELECT m.ROWID AS rowid, m.date_received AS ts, COALESCE(a.comment, '') AS comment, COALESCE(a.address, '') AS address, COALESCE(s.subject, '') AS subject " +
+    "FROM messages m " +
+    "JOIN subjects s ON m.subject = s.ROWID " +
+    "LEFT JOIN addresses a ON m.sender = a.ROWID " +
+    "WHERE m.deleted = 0 AND m.date_received >= ? " +
+    "ORDER BY m.date_received DESC LIMIT ?";
+  return { sql, args: [Math.floor(t / 1000), limit] };
+}

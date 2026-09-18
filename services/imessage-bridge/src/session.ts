@@ -373,7 +373,9 @@ import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLike
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
-import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
+import { OwnerProfileStore, localISODate } from "@lantern/bridge-core/owner-profile";
+import { buildWorldModelPrompt, parseWorldModel, applyWorldModel, formatWorldModelFyi } from "@lantern/bridge-core/world-model";
+import { listRecentMail } from "./mail-reader.js";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
@@ -2226,6 +2228,9 @@ export class IMessageSession {
       this.maybeRunEventScout(target, now);
       // SKILL FORGE rides the same tick: due owner-taught skills fire here.
       this.maybeRunSkills(target, now);
+      // WORLD MODEL rides the same tick: every few hours, derive the owner's
+      // present-tense Now/Public lines from mail + calendar (no owner typing).
+      this.maybeRefreshWorldModel(target, now);
 
       const input = await this.gatherProactiveSignals(now);
       const nudges = computeProactiveNudges({ now, ...input });
@@ -2935,6 +2940,76 @@ export class IMessageSession {
       partial: Boolean(st.lastScanPartial),
       upcoming,
     };
+  }
+
+  // ── World model (present-tense self-model from the owner's own evidence) ──
+  // Why: on the store's real opening day (2026-09-18) the bot corrected a
+  // friend from a `## Public` line that still said the 10th. Mail, calendar and
+  // an iMessage thread all knew the 18th; the profile only knew what the owner
+  // had typed. Cadence: LANTERN_WORLD_MODEL_HOURS (default 6); LANTERN_WORLD_MODEL=0
+  // disables. Pure logic in bridge-core/world-model.ts; this is only I/O.
+  private worldModelInFlight = false;
+  private worldModelLastRunAt = 0;
+
+  private maybeRefreshWorldModel(target: string, now: number): void {
+    if ((process.env.LANTERN_WORLD_MODEL || "1") === "0") return;
+    const hours = Math.max(1, Number(process.env.LANTERN_WORLD_MODEL_HOURS) || 6);
+    if (this.worldModelLastRunAt === 0) {
+      try {
+        const st = JSON.parse(readFileSync(join(this.stateDir, "world-model.json"), "utf8")) as { lastRunAt?: number };
+        this.worldModelLastRunAt = st.lastRunAt || 1; // 1: loaded, never ran
+      } catch { this.worldModelLastRunAt = 1; }
+    }
+    if (now - this.worldModelLastRunAt < hours * 3_600_000) return;
+    void this.refreshWorldModel(target);
+  }
+
+  private async refreshWorldModel(target: string): Promise<void> {
+    if (this.worldModelInFlight) return;
+    this.worldModelInFlight = true;
+    try {
+      const todayISO = localISODate(new Date(), process.env.LANTERN_OWNER_TIMEZONE || undefined);
+      const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+      const mail = listRecentMail(since, 80, this.logger);
+      const mailLines = mail.ok ? mail.hits.map((h) => `${h.date} · ${h.from} · ${h.subject}`) : [];
+      let calendarBlock = "";
+      try {
+        const ev = await this.macActions.readUpcomingEvents({ days: 30, max: 40 });
+        calendarBlock = formatAppleCalendarBlock(ev, { max: 40 }) || "";
+      } catch { /* calendar is optional evidence */ }
+      if (mailLines.length === 0 && !calendarBlock.trim()) {
+        this.logger.debug("world model: no evidence available, skipping");
+        return;
+      }
+      const profile = this.ownerProfileStore.get();
+      const inputs = {
+        todayISO,
+        ownerName: process.env.LANTERN_OWNER_NAME?.trim() || "the owner",
+        mailLines,
+        calendarBlock,
+        currentNow: (profile?.now ?? []).map((n) => (n.until ? `${n.text} | until: ${n.until}` : n.text)),
+        currentPublic: profile?.publicFacts ?? [],
+      };
+      const raw = (await this.agent.respondTo("owner::worldmodel", buildWorldModelPrompt(inputs), undefined, { withTools: false })) ?? "";
+      const model = parseWorldModel(raw, todayISO, `${mailLines.join("\n")}\n${calendarBlock}`);
+      const path = this.ownerProfileStore.getPath();
+      const md = readFileSync(path, "utf8");
+      const applied = applyWorldModel(md, model, todayISO);
+      if (applied.changes.length > 0) {
+        writeFileSync(path, applied.md, { mode: 0o600 });
+        this.ownerProfileStore.invalidate();
+        this.logger.info({ changes: applied.changes.length }, "world model: profile refreshed");
+        await this.send(target, formatWorldModelFyi(applied.changes)).catch(() => {});
+      } else {
+        this.logger.info({ now: model.now.length, public: model.public.length }, "world model: refreshed, nothing new");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "world model refresh failed (non-fatal)");
+    } finally {
+      this.worldModelInFlight = false;
+      this.worldModelLastRunAt = Date.now();
+      try { writeFileSync(join(this.stateDir, "world-model.json"), JSON.stringify({ lastRunAt: this.worldModelLastRunAt }), { mode: 0o600 }); } catch {}
+    }
   }
 
   private maybeRunEventScout(target: string, now: number): void {

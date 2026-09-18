@@ -118,3 +118,13 @@ test("publicBlock flags a Public fact whose date has already passed", async () =
   assert.match(s.publicBlock(new Date("2026-09-18T12:00:00Z")), /has already passed/);
   assert.doesNotMatch(s.publicBlock(new Date("2026-09-01T12:00:00Z")), /has already passed/);
 });
+
+// The world-model writer dates its Public lines; an expired one must vanish
+// rather than be flagged, and a live one renders with its horizon.
+test("publicBlock honors `| until:` on Public lines", () => {
+  const s = storeFor(["## Public (managed)", "- grand opening Sept 18 | until: 2026-09-18", "- pop-up at the fair | until: 2026-09-12"].join("\n"));
+  const out = s.publicBlock(new Date("2026-09-17T12:00:00Z"));
+  assert.match(out, /grand opening Sept 18 \(through/);
+  assert.doesNotMatch(out, /pop-up/);
+  assert.equal(s.publicBlock(new Date("2026-09-30T12:00:00Z")), "");
+});

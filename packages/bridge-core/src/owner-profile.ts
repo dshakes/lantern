@@ -293,7 +293,18 @@ export class OwnerProfileStore {
     // corrected a contact twice. Mark it so the model treats the date as
     // history and defers to the contact on timing.
     const iso = localISODate(today, this.timezone() || undefined);
-    const rendered = facts.map((f) => {
+    // A `| until: YYYY-MM-DD` clause (the world-model writer's grammar, same
+    // as `## Now`) expires the line instead of flagging it: the bot-owned
+    // `## Public (managed)` section is dated by construction.
+    const live: string[] = [];
+    for (const f of facts) {
+      const item = parseNowLine(f);
+      if (!item) continue;
+      if (item.until) { if (item.until >= iso) live.push(`${item.text} (through ${humanizeDate(item.until)})`); continue; }
+      live.push(f);
+    }
+    if (live.length === 0) return "";
+    const rendered = live.map((f) => {
       const d = firstDateISO(f, today.getFullYear());
       return d && d < iso
         ? `${f} [NOTE: that date (${humanizeDate(d)}) has already passed and this line may be stale — do NOT state or correct dates from it; if the contact mentions a different date or that it moved, they are probably right]`
