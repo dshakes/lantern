@@ -2216,11 +2216,23 @@ export class IMessageSession {
       const target = this.ownerSelfChatTarget();
       if (!target) return; // no owner channel → nothing to DM
 
+      const now = Date.now();
+
+      // WORLD MODEL runs even when the channel is MUTED, and is therefore
+      // ABOVE the pause gate. Mute means "don't SEND to contacts" (#250), not
+      // "stop thinking": this reads the owner's own mail/calendar/notes and
+      // updates the OWNER's profile — it never messages a contact. Live proof
+      // this matters: the bridge was muted on 2026-09-18, so the refresh that
+      // would have corrected the stale opening date never ran at all, which is
+      // the very incident the world model was built for. Quiet hours and an
+      // explicit "quiet Nh" still defer it (the FYI would wake the owner); the
+      // next tick after the window picks it up.
+      const quiet = isQuietHours(new Date(), defaultQuietHours()) || now < this.proactiveMuteUntil;
+      if (!quiet) this.maybeRefreshWorldModel(target, now);
+
       // Quiet hours: defer nudges (don't wake the owner). The next tick
       // picks them up once the window reopens; dedupe keys keep them fresh.
       if (this.proactivePaused()) return;
-
-      const now = Date.now();
 
       // EVENT SCOUT rides this tick (same killswitch/quiet-hours guards):
       // weekly web_search scan → numbered list to self-chat. Fire-and-forget
@@ -2228,9 +2240,6 @@ export class IMessageSession {
       this.maybeRunEventScout(target, now);
       // SKILL FORGE rides the same tick: due owner-taught skills fire here.
       this.maybeRunSkills(target, now);
-      // WORLD MODEL rides the same tick: every few hours, derive the owner's
-      // present-tense Now/Public lines from mail + calendar (no owner typing).
-      this.maybeRefreshWorldModel(target, now);
 
       const input = await this.gatherProactiveSignals(now);
       const nudges = computeProactiveNudges({ now, ...input });
