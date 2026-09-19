@@ -7373,7 +7373,12 @@ export class IMessageSession {
     // PROACTIVE INGESTER (unknown senders): appointment confirmations →
     // surface to the owner + offer to add to the calendar; marketing/spam →
     // suppress (no auto-reply). Behind LANTERN_APPT_INGEST (default on).
-    const ingest = await this.maybeIngestUnknownInbound(row.handle, text).catch(() => "pass" as const);
+    // DM-only, matching every sibling proactive-scan block above and the
+    // WhatsApp equivalent (isGroupJid guard) — a group participant's message
+    // is never an "unknown sender" appointment confirmation to swallow.
+    const ingest = !isGroup
+      ? await this.maybeIngestUnknownInbound(row.handle, text).catch(() => "pass" as const)
+      : ("pass" as const);
     if (ingest === "handled") {
       // No silent drops: an unknown-inbound message owned by the life-event /
       // appointment ingester means the CONTACT got no auto-reply. Leave a trace
