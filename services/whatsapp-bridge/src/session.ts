@@ -5897,7 +5897,7 @@ export class WhatsAppSession {
 
     if (candidates.length === 1) {
       [editKey, pending] = candidates[0];
-      const d = classifyPendingReply(text, pending, confirmOnly);
+      const d = classifyPendingReply(text, pending, confirmOnly, now - pending.issuedAt);
       if (d === "none") return false;
       decision = d;
     } else {
