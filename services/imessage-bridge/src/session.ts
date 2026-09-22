@@ -5693,7 +5693,7 @@ export class IMessageSession {
 
     if (candidates.length === 1) {
       [editKey, pendingEdit] = candidates[0];
-      const d = classifyPendingReply(text, pendingEdit, confirmOnly);
+      const d = classifyPendingReply(text, pendingEdit, confirmOnly, now - pendingEdit.issuedAt);
       if (d === "none") return false;
       decision = d;
     } else {
