@@ -858,7 +858,7 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 		AgentVersionID: agentVersionID,
 		RunID:          runID,
 		// Deterministic: a recovery re-drive of the same run dedups at the scheduler.
-		IdempotencyKey: "run:" + runID,
+		IdempotencyKey: runScheduleKey(runID, manifest),
 	}
 	if lims, ok := manifest["limits"].(map[string]any); ok {
 		spec.Limits = lims
@@ -2610,3 +2610,17 @@ func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *Lant
 // unused imports — we keep the reference explicit here so the file
 // stays self-contained as we wire in the gRPC client).
 var _ = func(p *pgxpool.Pool) {}
+
+// runScheduleKey derives the scheduler idempotency key for a run's VM
+// (invariant #8: run + attempt). A retry of the same attempt dedups to the
+// same VM; a recovery re-drive (manifest["attempt"] > 1) gets a fresh one.
+func runScheduleKey(runID string, manifest map[string]any) string {
+	attempt := 1
+	switch v := manifest["attempt"].(type) {
+	case int:
+		attempt = v
+	case float64:
+		attempt = int(v)
+	}
+	return fmt.Sprintf("run:%s:%d", runID, attempt)
+}

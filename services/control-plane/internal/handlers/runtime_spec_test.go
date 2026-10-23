@@ -123,8 +123,8 @@ func TestScheduleRunInMicroVM_KeyAndIsolation(t *testing.T) {
 		t.Fatalf("ScheduleRunInMicroVM: %v", err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM runtime_vms WHERE tenant_id=$1`, tenantID) })
-	if got := sched.spec["idempotency_key"]; got != "run:"+runID {
-		t.Errorf("idempotency_key = %v, want run:%s", got, runID)
+	if got := sched.spec["idempotency_key"]; got != "run:"+runID+":1" {
+		t.Errorf("idempotency_key = %v, want run:%s:1", got, runID)
 	}
 	if iso := agentSpecFromMap(sched.spec).Isolation; iso == lanternv1.IsolationClass_ISOLATION_UNSPECIFIED {
 		t.Error("run path isolation decoded to UNSPECIFIED")
@@ -254,3 +254,13 @@ func TestExecVM_SSEStreamsChunksAndKeepsJSONDefault(t *testing.T) {
 }
 
 func durationProto(d time.Duration) *durationpb.Duration { return durationpb.New(d) }
+
+func TestRunScheduleKey_AttemptAware(t *testing.T) {
+	if got := runScheduleKey("r", map[string]any{}); got != "run:r:1" {
+		t.Errorf("first attempt key = %q", got)
+	}
+	// manifest round-tripped through JSON carries float64.
+	if got := runScheduleKey("r", map[string]any{"attempt": float64(2)}); got != "run:r:2" {
+		t.Errorf("re-drive key = %q, want run:r:2 (must not reuse the crashed VM)", got)
+	}
+}
