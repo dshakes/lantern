@@ -25,19 +25,28 @@ struct WarmHandle {
     size_key: String,
 }
 
-/// Key for indexing warm handles: (isolation_class, hex-encoded bundle_digest).
+/// Key for indexing warm handles: (isolation_class, hex-encoded bundle_digest,
+/// tenant_id). The tenant is part of the key because a warm handle is booted
+/// with one spawn's tenant env + cert — handing it to another tenant would be
+/// a cross-tenant leak (invariant #7).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct PoolKey {
     isolation_class: IsolationClass,
     bundle_digest: String,
+    tenant_id: String,
 }
 
 impl PoolKey {
-    fn new(isolation_class: IsolationClass, bundle_digest: &[u8]) -> Self {
+    fn new(isolation_class: IsolationClass, bundle_digest: &[u8], tenant_id: &str) -> Self {
         Self {
             isolation_class,
             bundle_digest: hex::encode(bundle_digest),
+            tenant_id: tenant_id.to_string(),
         }
+    }
+
+    fn for_req(req: &ScheduleRequest) -> Self {
+        Self::new(req.isolation_class, &req.bundle_digest, &req.tenant_id)
     }
 }
 
@@ -130,7 +139,7 @@ impl WarmPool {
     /// Try to acquire a warm handle matching the request.
     /// Returns `None` if no warm handle is available (caller should cold-start).
     pub fn acquire(&self, req: &ScheduleRequest) -> Option<Handle> {
-        let key = PoolKey::new(req.isolation_class, &req.bundle_digest);
+        let key = PoolKey::for_req(req);
 
         let mut entry = self.pool.get_mut(&key)?;
         let handles = entry.value_mut();
@@ -181,7 +190,7 @@ impl WarmPool {
     /// Takes the originating request so the warm entry records the image and
     /// size the scheduler will later try to match against.
     pub fn release(&self, req: &ScheduleRequest, handle: Handle) {
-        let key = PoolKey::new(req.isolation_class, &req.bundle_digest);
+        let key = PoolKey::for_req(req);
         let warm = WarmHandle {
             handle: handle.clone(),
             created_at: Instant::now(),
@@ -208,8 +217,16 @@ impl WarmPool {
         }
     }
 
-    /// Acquire a warm handle or fall back to a cold start via the backend.
-    pub async fn acquire_or_cold_start(&self, req: &ScheduleRequest) -> Result<Handle> {
+    /// Acquire a warm handle or fall back to a cold start via `backend`.
+    ///
+    /// `backend` MUST be the post-isolation-gate backend chosen for this
+    /// request (`choose_backend`), never the pool's stored one — otherwise the
+    /// cold-start path would bypass the isolation gate (ADR-0009).
+    pub async fn acquire_or_cold_start(
+        &self,
+        backend: &dyn RuntimeBackend,
+        req: &ScheduleRequest,
+    ) -> Result<Handle> {
         if let Some(handle) = self.acquire(req) {
             return Ok(handle);
         }
@@ -218,7 +235,7 @@ impl WarmPool {
             run_id = %req.run_id,
             "no warm handle available, cold starting"
         );
-        self.backend.schedule(req).await
+        backend.schedule(req).await
     }
 
     /// Background task: reap warm handles that have exceeded their idle TTL.
@@ -251,7 +268,7 @@ impl WarmPool {
     /// Pre-warm a number of instances for a given isolation class and bundle.
     pub async fn prewarm(&self, req: &ScheduleRequest, count: usize) -> Result<usize> {
         let _lock = self.prewarm_lock.lock().await;
-        let key = PoolKey::new(req.isolation_class, &req.bundle_digest);
+        let key = PoolKey::for_req(req);
 
         let current = self.pool.get(&key).map(|e| e.value().len()).unwrap_or(0);
 
@@ -388,6 +405,8 @@ mod tests {
             network_policy: crate::proto::NetworkPolicyClass::default(),
             egress_rules: vec![],
             confidential: false,
+            agent_version_id: String::new(),
+            restore_snapshot_id: String::new(),
         }
     }
 
@@ -585,7 +604,7 @@ mod tests {
             },
         );
 
-        let h = pool.acquire_or_cold_start(&req).await.unwrap();
+        let h = pool.acquire_or_cold_start(&*backend, &req).await.unwrap();
         assert_eq!(h.id, "warm-h");
         // Backend should NOT have been called.
         assert_eq!(
@@ -601,7 +620,7 @@ mod tests {
         let pool = WarmPool::new(dyn_backend, PoolConfig::default());
         let req = make_req("r1", b"dg", IsolationClass::Standard);
 
-        let h = pool.acquire_or_cold_start(&req).await.unwrap();
+        let h = pool.acquire_or_cold_start(&*backend, &req).await.unwrap();
         assert_eq!(h.id, "stub-r1");
         assert_eq!(
             backend.call_count.load(std::sync::atomic::Ordering::SeqCst),
@@ -609,17 +628,60 @@ mod tests {
         );
     }
 
+    /// The cold-start path uses the backend passed in (the post-gate one),
+    /// not the backend the pool was constructed with.
+    #[tokio::test]
+    async fn cold_start_uses_passed_backend_not_pool_backend() {
+        let pool_backend = StubBackend::new();
+        let gated = StubBackend::new();
+        let pool = WarmPool::new(
+            Arc::clone(&pool_backend) as Arc<dyn RuntimeBackend>,
+            PoolConfig::default(),
+        );
+        let req = make_req("r1", b"dg", IsolationClass::Standard);
+        pool.acquire_or_cold_start(&*gated, &req).await.unwrap();
+        assert_eq!(
+            gated.call_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            pool_backend
+                .call_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    /// A warm handle released for one tenant is never handed to another.
+    #[test]
+    fn warm_handles_are_tenant_scoped() {
+        let pool = WarmPool::new(StubBackend::new(), PoolConfig::default());
+        let a = make_req("r1", b"dg", IsolationClass::Standard);
+        let mut b = a.clone();
+        b.tenant_id = "other-tenant".to_string();
+        pool.release(
+            &a,
+            Handle {
+                id: "a-warm".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 1.0,
+            },
+        );
+        assert!(pool.acquire(&b).is_none());
+        assert_eq!(pool.acquire(&a).unwrap().id, "a-warm");
+    }
+
     // ---- hex encoding (internal) ----
 
     #[test]
     fn pool_key_hex_encodes_digest() {
-        let key = PoolKey::new(IsolationClass::Standard, &[0xde, 0xad, 0xbe, 0xef]);
+        let key = PoolKey::new(IsolationClass::Standard, &[0xde, 0xad, 0xbe, 0xef], "t");
         assert_eq!(key.bundle_digest, "deadbeef");
     }
 
     #[test]
     fn pool_key_empty_digest() {
-        let key = PoolKey::new(IsolationClass::Standard, &[]);
+        let key = PoolKey::new(IsolationClass::Standard, &[], "t");
         assert_eq!(key.bundle_digest, "");
     }
 }

@@ -1460,6 +1460,8 @@ mod tests {
             network_policy: network,
             egress_rules: egress,
             confidential: false,
+            agent_version_id: String::new(),
+            restore_snapshot_id: String::new(),
         }
     }
 
@@ -2130,6 +2132,8 @@ mod tests {
             network_policy: NetworkPolicyClass::None,
             egress_rules: vec![],
             confidential: false,
+            agent_version_id: String::new(),
+            restore_snapshot_id: String::new(),
         }
     }
 

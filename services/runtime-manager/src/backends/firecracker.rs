@@ -46,8 +46,67 @@ use uuid::Uuid;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
 use crate::proto::{
-    IsolationClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
+    EgressRule, IsolationClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest,
+    SnapshotRequest,
 };
+
+// ---------------------------------------------------------------------------
+// Spawn contract (ADR 0025)
+//
+// The kernel cmdline is whitespace-split and cannot carry the workload
+// command, egress rules or arbitrary env values intact. The manager instead
+// writes `spawn.json` at the root of the read-only cert image; the harness
+// reads it at boot. The cmdline args are kept for older harness builds.
+// ---------------------------------------------------------------------------
+
+/// Schema version of `spawn.json`; the harness rejects versions it doesn't know.
+pub const SPAWN_CONTRACT_VERSION: u32 = 1;
+/// File name of the contract at the cert-image root.
+pub const SPAWN_CONTRACT_FILE: &str = "spawn.json";
+/// Harness env var for the workload uid (secrets-socket peer auth). The
+/// manager owns this value; a caller-supplied one is dropped.
+pub const ENV_WORKLOAD_UID: &str = "LANTERN_WORKLOAD_UID";
+const DEFAULT_WORKLOAD_UID: u32 = 1000;
+
+/// The manager → harness spawn contract (`spawn.json`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnContract {
+    pub version: u32,
+    /// `AgentSpec.command ++ AgentSpec.args`; empty = harness default.
+    pub workload_cmd: Vec<String>,
+    /// Workload env (BTreeMap → deterministic file contents).
+    pub env: std::collections::BTreeMap<String, String>,
+    pub egress_rules: Vec<EgressRule>,
+    pub workload_uid: u32,
+    pub workload_gid: u32,
+}
+
+impl SpawnContract {
+    /// Build from the spawn request; uid/gid from `LANTERN_WORKLOAD_UID_DEFAULT`
+    /// (default 1000) / `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid).
+    pub fn from_schedule(req: &ScheduleRequest) -> Self {
+        let env_u32 = |k: &str| std::env::var(k).ok().and_then(|v| v.trim().parse().ok());
+        let uid = env_u32("LANTERN_WORKLOAD_UID_DEFAULT").unwrap_or(DEFAULT_WORKLOAD_UID);
+        let gid = env_u32("LANTERN_WORKLOAD_GID_DEFAULT").unwrap_or(uid);
+        Self::with_ids(req, uid, gid)
+    }
+
+    fn with_ids(req: &ScheduleRequest, workload_uid: u32, workload_gid: u32) -> Self {
+        Self {
+            version: SPAWN_CONTRACT_VERSION,
+            workload_cmd: req.command.iter().chain(&req.args).cloned().collect(),
+            env: req
+                .env
+                .iter()
+                .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            egress_rules: req.egress_rules.clone(),
+            workload_uid,
+            workload_gid,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Firecracker REST API request bodies
@@ -198,6 +257,8 @@ pub struct VmConfig {
     pub certs_image_path: String,
     /// Point-to-point addressing for this VM's TAP link.
     pub network: VmNetwork,
+    /// Written as `spawn.json` at the cert-image root (ADR 0025).
+    pub spawn_contract: SpawnContract,
 }
 
 /// Defaults injected when the ScheduleRequest does not set a limit.
@@ -249,6 +310,7 @@ impl VmConfig {
 
         // Point-to-point /30 for this VM; the guest learns it via ip= below.
         let network = VmNetwork::allocate();
+        let spawn_contract = SpawnContract::from_schedule(req);
 
         let boot_args = build_boot_args(
             vm_id,
@@ -258,6 +320,7 @@ impl VmConfig {
             &manager_ca_path,
             &network,
             req,
+            spawn_contract.workload_uid,
         );
 
         VmConfig {
@@ -277,6 +340,7 @@ impl VmConfig {
             manager_ca_path,
             certs_image_path: format!("/run/lantern/certs/{vm_id}/certs.img"),
             network,
+            spawn_contract,
         }
     }
 
@@ -512,6 +576,9 @@ fn manager_addr_for_guest(net: &VmNetwork) -> String {
     format!("{}:{}", net.host_ip, port)
 }
 
+// Flat positional args mirror the cmdline fields 1:1; a params struct for a
+// single pure builder would add indirection without clarity.
+#[allow(clippy::too_many_arguments)]
 pub fn build_boot_args(
     vm_id: &str,
     run_id: &str,
@@ -520,13 +587,18 @@ pub fn build_boot_args(
     manager_ca_path: &str,
     net: &VmNetwork,
     req: &ScheduleRequest,
+    workload_uid: u32,
 ) -> String {
     // Encode extra env vars from the ScheduleRequest as k=v pairs on the
     // command line under the `lantern.env.` prefix so the init process can
     // export them into the harness environment.
+    // Legacy channel (ADR 0025): `spawn.json` carries env byte-exact; this
+    // lossy copy is kept for harness builds that predate the file. The
+    // manager-owned LANTERN_WORKLOAD_UID is appended below, never caller-set.
     let extra_env: String = req
         .env
         .iter()
+        .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID)
         .map(|(k, v)| {
             // Sanitise: strip spaces and quotes to avoid breaking the
             // command line.  Real production would use a structured config
@@ -570,7 +642,8 @@ pub fn build_boot_args(
          lantern.tls_cert={tls_cert_path} \
          lantern.tls_key={tls_key_path} \
          lantern.manager_ca={manager_ca_path} \
-         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env}"
+         lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env} \
+         lantern.env.{ENV_WORKLOAD_UID}={workload_uid}"
     )
 }
 
@@ -625,7 +698,8 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
     // Pack the loose PEM files into the read-only ext4 image the guest mounts as
     // the `certs` drive. Without this the `PUT /drives/certs` API call fails with
     // "No such file or directory" and the VM never boots.
-    build_cert_image(&cfg.certs_image_path, &paths)
+    let contract = serde_json::to_vec(&cfg.spawn_contract).context("serialize spawn contract")?;
+    build_cert_image(&cfg.certs_image_path, &paths, &contract)
         .with_context(|| format!("build certs.img for vm '{}'", cfg.vm_id))?;
 
     tracing::info!(
@@ -663,7 +737,11 @@ fn build_mke2fs_argv(image_path: &str, src_dir: &str, size_kb: u32) -> Vec<Strin
 /// LINUX-ONLY: shells out to `mke2fs` (e2fsprogs) with `-d`, which builds and
 /// populates an ext4 image from a directory without root or a loop mount. The
 /// Firecracker path is already Linux+KVM gated, so the dependency is safe here.
-fn build_cert_image(image_path: &str, paths: &crate::tls::VmCertPaths) -> Result<()> {
+fn build_cert_image(
+    image_path: &str,
+    paths: &crate::tls::VmCertPaths,
+    spawn_contract_json: &[u8],
+) -> Result<()> {
     use std::path::Path;
 
     let parent = Path::new(image_path)
@@ -682,6 +760,10 @@ fn build_cert_image(image_path: &str, paths: &crate::tls::VmCertPaths) -> Result
         std::fs::copy(src, staging.join(name))
             .with_context(|| format!("stage {name} into certs.img source dir"))?;
     }
+    // The spawn contract (ADR 0025) at the image root. 0600: it carries the
+    // workload env; only the harness (PID 1, root) needs to read it.
+    write_owner_only(&staging.join(SPAWN_CONTRACT_FILE), spawn_contract_json)
+        .context("stage spawn.json into certs.img source dir")?;
 
     let argv = build_mke2fs_argv(image_path, &staging.to_string_lossy(), 1024);
     let output = std::process::Command::new("mke2fs")
@@ -695,6 +777,21 @@ fn build_cert_image(image_path: &str, paths: &crate::tls::VmCertPaths) -> Result
         ));
     }
     Ok(())
+}
+
+/// Write `bytes` to `path` with mode 0600 (owner-only) on Unix.
+fn write_owner_only(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
+        .and_then(|mut f| f.write_all(bytes))
+        .with_context(|| format!("write {path:?}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -2875,12 +2972,15 @@ impl RuntimeBackend for FirecrackerBackend {
                 vmstate_path,
                 mem_path,
             } => (vmstate_path, mem_path),
-            // store:// restore is wired through the jailed path; the bare path
-            // only ever receives fc:// / absolute host snapshots.
+            // store:// (AgentSpec.restore_snapshot_id, ADR 0025): resolve the
+            // artifacts exactly as the jailed path does; the bare firecracker
+            // opens host paths directly, so no staging is needed.
             SnapshotSource::Store { snapshot_id } => {
-                return Err(anyhow::anyhow!(
-                    "store:// snapshot restore requires the jailer path (snapshot_id={snapshot_id})"
-                ));
+                let s3 = snapshot_s3_from_env();
+                let (vmstate, mem) =
+                    resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
+                        .await?;
+                (vmstate.display().to_string(), mem.display().to_string())
             }
         };
 
@@ -3091,6 +3191,8 @@ mod tests {
             network_policy: crate::proto::NetworkPolicyClass::default(),
             egress_rules: vec![],
             confidential: false,
+            agent_version_id: String::new(),
+            restore_snapshot_id: String::new(),
         }
     }
 
@@ -3729,7 +3831,7 @@ mod tests {
         // without a manager address it dialled its own loopback.
         let req = minimal_schedule_req();
         let net = VmNetwork::from_index(0);
-        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &net, &req);
+        let args = build_boot_args("vm-1", "run-1", "/c", "/k", "/ca", &net, &req, 1000);
         assert!(
             args.contains("ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off"),
             "{args}"
@@ -3752,6 +3854,7 @@ mod tests {
             "/certs/manager-ca.crt",
             &VmNetwork::from_index(0),
             &req,
+            1000,
         );
         assert!(args.contains("console=ttyS0"));
         assert!(args.contains("lantern.vm_id=vm-123"));
@@ -3774,11 +3877,133 @@ mod tests {
             "/ca",
             &VmNetwork::from_index(0),
             &req,
+            1000,
         );
         assert!(
             args.contains("lantern.env.LANTERN_TENANT_ID=t-999"),
             "env var must appear in boot args: {args}"
         );
+    }
+
+    // ---- ADR 0025: spawn contract (spawn.json) ----
+
+    fn contract_req() -> ScheduleRequest {
+        let mut req = minimal_schedule_req();
+        req.command = vec!["python".into(), "-c".into()];
+        req.args = vec![r#"print("a b", 'c')"#.into()];
+        req.env.insert(
+            "WEIRD".into(),
+            r#"spaces and "quotes" 'single' {"json":[1,2]} = ok"#.into(),
+        );
+        req.env.insert(ENV_WORKLOAD_UID.into(), "0".into()); // caller forgery
+        req.egress_rules = vec![EgressRule {
+            pattern: "*.openai.com".into(),
+            http_methods: vec!["POST".into()],
+            rate_bps: 1024,
+        }];
+        req
+    }
+
+    /// The contract survives serialization byte-exact (spaces, quotes, JSON),
+    /// carries cmd = command ++ args, and drops a caller-set workload uid.
+    #[test]
+    fn spawn_contract_round_trips_intact() {
+        let req = contract_req();
+        let c = SpawnContract::with_ids(&req, 1000, 1001);
+        assert_eq!(c.version, SPAWN_CONTRACT_VERSION);
+        assert_eq!(c.workload_cmd, vec!["python", "-c", r#"print("a b", 'c')"#]);
+        assert!(
+            !c.env.contains_key(ENV_WORKLOAD_UID),
+            "caller uid must be dropped"
+        );
+        assert_eq!((c.workload_uid, c.workload_gid), (1000, 1001));
+
+        let json = serde_json::to_string(&c).unwrap();
+        let back: SpawnContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c);
+        assert_eq!(back.env["WEIRD"], req.env["WEIRD"]);
+
+        // Wire field names are the agreed schema.
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for k in [
+            "version",
+            "workload_cmd",
+            "env",
+            "egress_rules",
+            "workload_uid",
+            "workload_gid",
+        ] {
+            assert!(v.get(k).is_some(), "missing {k}: {json}");
+        }
+        assert_eq!(v["egress_rules"][0]["pattern"], "*.openai.com");
+        assert_eq!(v["egress_rules"][0]["http_methods"][0], "POST");
+        assert_eq!(v["egress_rules"][0]["rate_bps"], 1024);
+    }
+
+    /// VmConfig carries the contract for provisioning.
+    #[test]
+    fn vm_config_carries_spawn_contract() {
+        let req = contract_req();
+        let cfg = VmConfig::from_schedule_with_id(
+            &req,
+            "/k",
+            "/r",
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        );
+        assert_eq!(cfg.spawn_contract.workload_cmd.len(), 3);
+        assert_eq!(cfg.spawn_contract.egress_rules, req.egress_rules);
+    }
+
+    /// The legacy cmdline now carries the manager's workload uid and never the
+    /// caller's.
+    #[test]
+    fn boot_args_carry_manager_workload_uid_not_callers() {
+        let req = contract_req();
+        let args = build_boot_args(
+            "vm-1",
+            "run-1",
+            "/c",
+            "/k",
+            "/ca",
+            &VmNetwork::from_index(0),
+            &req,
+            4242,
+        );
+        assert!(
+            args.contains("lantern.env.LANTERN_WORKLOAD_UID=4242"),
+            "{args}"
+        );
+        assert!(!args.contains("LANTERN_WORKLOAD_UID=0"), "{args}");
+    }
+
+    /// build_cert_image stages spawn.json at the image root, mode 0600, before
+    /// invoking mke2fs (which may be absent on dev hosts — the staging is what
+    /// is under test here; the image build is covered by the microvm CI).
+    #[test]
+    fn cert_image_stages_spawn_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |n: &str| {
+            let p = dir.path().join(n);
+            std::fs::write(&p, n).unwrap();
+            p
+        };
+        let paths = crate::tls::VmCertPaths {
+            cert_path: mk("c"),
+            key_path: mk("k"),
+            ca_path: mk("ca"),
+        };
+        let contract = serde_json::to_vec(&SpawnContract::with_ids(&contract_req(), 1, 1)).unwrap();
+        let image = dir.path().join("certs.img");
+        let _ = build_cert_image(&image.to_string_lossy(), &paths, &contract);
+
+        let staged = dir.path().join("img-src").join(SPAWN_CONTRACT_FILE);
+        assert_eq!(std::fs::read(&staged).unwrap(), contract);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&staged).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 
     #[test]
@@ -3794,6 +4019,7 @@ mod tests {
             "/ca",
             &VmNetwork::from_index(0),
             &req,
+            1000,
         );
         // Spaces replaced with underscores so the kernel cmdline isn't split.
         assert!(

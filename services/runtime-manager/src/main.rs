@@ -4,6 +4,7 @@
 // + warm-pool. Keep them buildable rather than gut them prematurely.
 #![allow(dead_code)]
 
+mod authz;
 mod backend;
 mod backends;
 mod config;
@@ -173,7 +174,10 @@ async fn main() -> anyhow::Result<()> {
     let harness_service = grpc_service.harness_service(mtls_enabled);
 
     let listen_addr = config.listen_addr;
-    let manager_svc = RuntimeManagerServer::new(grpc_service);
+    // Per-call authz (ADR 0025): VM certs are refused and the shared service
+    // token is required. Errors (refuse to start) in prod when the token is unset.
+    let manager_auth = authz::ManagerAuth::from_env()?;
+    let manager_svc = RuntimeManagerServer::with_interceptor(grpc_service, manager_auth);
     let harness_svc = RuntimeHarnessServer::new(harness_service);
 
     // Self-register with the scheduler on a background task. No-op when
