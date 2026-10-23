@@ -10,15 +10,35 @@ import {
   Cpu,
   Activity,
   StopCircle,
+  Pause,
+  Play,
+  GitFork,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { Button } from "@/components/button";
-import { ConfirmModal } from "@/components/modal";
+import Link from "next/link";
+import { ConfirmModal, Modal, ModalField } from "@/components/modal";
 import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
-import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
+import { HttpError, runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
+
+// Response shapes mirror POST /v1/runtime/vms/{id}/{pause,resume,fork}.
+interface ForkResult {
+  sourceVmId: string;
+  snapshotId: string;
+  forks: Array<{ vmId: string; state: string; error?: string }>;
+}
+
+/** Friendly copy for the contract's 402 (quota) / 409 (wrong state). */
+function lifecycleError(verb: string, err: unknown): string {
+  if (err instanceof HttpError) {
+    if (err.status === 402) return `${verb} blocked: runtime quota exceeded`;
+    if (err.status === 409) return `${verb} not possible in the VM's current state`;
+  }
+  return `${verb} failed: ` + (err instanceof Error ? err.message : String(err));
+}
 
 // Shapes mirror the control-plane JSON (camelCase tags on vmRow + the
 // events array — NOT snake_case, and the key is `events` not `audit`).
@@ -34,6 +54,8 @@ interface VmDetail {
     createdAt: string;
     terminatedAt?: string | null;
     lastHeartbeatAt?: string | null;
+    snapshotId?: string | null;
+    parentVmId?: string | null;
   };
   events: Array<{ id: number; action: string; attrs: Record<string, unknown>; at: string }>;
 }
@@ -47,6 +69,9 @@ export default function RuntimeVmPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [terminating, setTerminating] = useState(false);
   const [confirmTerminate, setConfirmTerminate] = useState(false);
+  const [busy, setBusy] = useState<"pause" | "resume" | "fork" | null>(null);
+  const [forkOpen, setForkOpen] = useState(false);
+  const [forkCount, setForkCount] = useState("1");
   const logBoxRef = useRef<HTMLDivElement>(null);
 
   // Initial + polling load of details + audit. Dedup errors so a 401 / 500
@@ -124,6 +149,66 @@ export default function RuntimeVmPage() {
     }
   }, [vmId, toast]);
 
+  const reload = useCallback(async () => {
+    if (!vmId) return;
+    try {
+      setDetail(await runtimeApi.get<VmDetail>(`/v1/runtime/vms/${vmId}`));
+    } catch {
+      /* the 5s poll will retry */
+    }
+  }, [vmId]);
+
+  const pause = useCallback(async () => {
+    if (!vmId) return;
+    setBusy("pause");
+    try {
+      await runtimeApi.post(`/v1/runtime/vms/${vmId}/pause`);
+      toast.success("VM paused");
+      await reload();
+    } catch (err) {
+      if (!(err instanceof UnauthorizedError)) toast.error(lifecycleError("Pause", err));
+    } finally {
+      setBusy(null);
+    }
+  }, [vmId, toast, reload]);
+
+  const resume = useCallback(async () => {
+    if (!vmId) return;
+    setBusy("resume");
+    try {
+      await runtimeApi.post(`/v1/runtime/vms/${vmId}/resume`);
+      toast.success("VM resumed");
+      await reload();
+    } catch (err) {
+      if (!(err instanceof UnauthorizedError)) toast.error(lifecycleError("Resume", err));
+    } finally {
+      setBusy(null);
+    }
+  }, [vmId, toast, reload]);
+
+  const forkCountNum = Number(forkCount);
+  const forkCountValid = Number.isInteger(forkCountNum) && forkCountNum >= 1 && forkCountNum <= 10;
+
+  const fork = useCallback(async () => {
+    if (!vmId || !forkCountValid) return;
+    setBusy("fork");
+    try {
+      const r = await runtimeApi.post<ForkResult>(`/v1/runtime/vms/${vmId}/fork`, { count: forkCountNum });
+      const failed = r.forks.filter((f) => f.error);
+      if (failed.length === 0) {
+        toast.success(`Forked ${r.forks.length} VM${r.forks.length === 1 ? "" : "s"}`);
+      } else {
+        toast.warning(`Forked ${r.forks.length - failed.length} of ${r.forks.length}; first error: ${failed[0].error}`);
+      }
+      setForkOpen(false);
+      await reload();
+    } catch (err) {
+      if (!(err instanceof UnauthorizedError)) toast.error(lifecycleError("Fork", err));
+    } finally {
+      setBusy(null);
+    }
+  }, [vmId, forkCountValid, forkCountNum, toast, reload]);
+
   if (!detail) return <PageSkeleton />;
 
   const v = detail.vm;
@@ -145,9 +230,26 @@ export default function RuntimeVmPage() {
         }
         action={
           active ? (
-            <Button variant="danger" size="sm" loading={terminating} onClick={() => setConfirmTerminate(true)} icon={<StopCircle className="h-3.5 w-3.5" />}>
-              Terminate
-            </Button>
+            <div className="flex items-center gap-2">
+              {v.state === "running" && (
+                <Button variant="secondary" size="sm" loading={busy === "pause"} onClick={pause} icon={<Pause className="h-3.5 w-3.5" />}>
+                  Pause
+                </Button>
+              )}
+              {v.state === "paused" && (
+                <Button variant="secondary" size="sm" loading={busy === "resume"} onClick={resume} icon={<Play className="h-3.5 w-3.5" />}>
+                  Resume
+                </Button>
+              )}
+              {(v.state === "running" || v.state === "paused") && (
+                <Button variant="secondary" size="sm" onClick={() => setForkOpen(true)} icon={<GitFork className="h-3.5 w-3.5" />}>
+                  Fork
+                </Button>
+              )}
+              <Button variant="danger" size="sm" loading={terminating} onClick={() => setConfirmTerminate(true)} icon={<StopCircle className="h-3.5 w-3.5" />}>
+                Terminate
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -162,6 +264,36 @@ export default function RuntimeVmPage() {
         onCancel={() => setConfirmTerminate(false)}
         onConfirm={terminate}
       />
+
+      <Modal
+        open={forkOpen}
+        onClose={() => setForkOpen(false)}
+        title={`Fork ${vmId}`}
+        description="Snapshot this VM and start copies from the snapshot."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setForkOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" loading={busy === "fork"} disabled={!forkCountValid} onClick={fork}>
+              Fork
+            </Button>
+          </>
+        }
+      >
+        <ModalField label="Number of forks" hint="1 to 10.">
+          <input
+            type="number"
+            min={1}
+            max={10}
+            step={1}
+            value={forkCount}
+            onChange={(e) => setForkCount(e.target.value)}
+            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 text-sm text-zinc-100 focus:border-lantern-500 focus:outline-none"
+          />
+        </ModalField>
+      </Modal>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Logs — wide column */}
@@ -220,6 +352,29 @@ export default function RuntimeVmPage() {
               </ul>
             )}
           </Section>
+
+          {(v.snapshotId || v.parentVmId) && (
+            <Section title="Lineage" icon={<GitFork className="h-3.5 w-3.5" />}>
+              <dl className="space-y-1 px-1 py-1 text-[12px] text-zinc-400">
+                {v.snapshotId && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-zinc-500">Snapshot</dt>
+                    <dd className="break-all font-mono text-zinc-300">{v.snapshotId}</dd>
+                  </div>
+                )}
+                {v.parentVmId && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-zinc-500">Parent VM</dt>
+                    <dd className="break-all font-mono">
+                      <Link href={`/runtime/${encodeURIComponent(v.parentVmId)}`} className="text-lantern-500 hover:underline">
+                        {v.parentVmId}
+                      </Link>
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </Section>
+          )}
 
           <Section title="Isolation" icon={<Shield className="h-3.5 w-3.5" />}>
             <div className="px-1 py-1 text-[12px] text-zinc-400">{v.isolationClass}</div>
