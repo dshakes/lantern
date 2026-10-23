@@ -17,6 +17,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -211,6 +212,84 @@ func (h *BudgetHandler) ListBudgets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// UpsertTenantBudget handles PUT /v1/budgets/tenant. Body: {maxCostUsdPerDay, hardFail}.
+func (h *BudgetHandler) UpsertTenantBudget(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body budgetDTO
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.MaxCostUsdPerDay == nil || *body.MaxCostUsdPerDay <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "maxCostUsdPerDay must be > 0"})
+		return
+	}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO agent_budgets (tenant_id, agent_name, max_cost_usd_per_day, hard_fail)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+			  max_cost_usd_per_day = EXCLUDED.max_cost_usd_per_day,
+			  hard_fail            = EXCLUDED.hard_fail,
+			  updated_at           = now()
+		`, tenantID, TenantBudgetAgent, body.MaxCostUsdPerDay, body.HardFail)
+		return e
+	})
+	if err != nil {
+		h.logger().Error("upsert tenant budget failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save tenant budget"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// GetTenantBudget handles GET /v1/budgets/tenant.
+func (h *BudgetHandler) GetTenantBudget(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	dto := budgetDTO{AgentName: TenantBudgetAgent}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT max_cost_usd_per_day, hard_fail, updated_at
+			FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
+		`, tenantID, TenantBudgetAgent).Scan(&dto.MaxCostUsdPerDay, &dto.HardFail, &dto.UpdatedAt)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no tenant budget configured"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+// DeleteTenantBudget handles DELETE /v1/budgets/tenant.
+func (h *BudgetHandler) DeleteTenantBudget(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`, tenantID, TenantBudgetAgent)
+		return e
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
 // ---------- Enforcement ----------
 
 // BudgetCheckResult is the return value of CheckBudget.
@@ -228,7 +307,48 @@ type BudgetCheckResult struct {
 //
 // If no budget is configured, Allowed=true, HardFail=false.
 // If configured and violating, Allowed=false and Reason explains.
+//
+// The tenant-wide cap (agent_budgets row with agent_name = TenantBudgetAgent)
+// is checked first, against spend summed across every agent.
 func CheckBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64) BudgetCheckResult {
+	if tc := CheckTenantBudget(ctx, pool, tenantID, estCostUsd); !tc.Allowed {
+		return tc
+	}
+	return checkAgentBudget(ctx, pool, tenantID, agentName, estCostUsd)
+}
+
+// TenantBudgetAgent is the reserved agent_budgets.agent_name holding the
+// tenant-wide daily spend cap. Reusing agent_budgets (UNIQUE tenant_id,
+// agent_name) avoids a new table, migration and RLS catalog entry; "*" cannot
+// collide with a real agent name.
+const TenantBudgetAgent = "*"
+
+// CheckTenantBudget enforces the tenant-wide max_cost_usd_per_day against
+// SUM(agent_usage_daily.cost_usd) over all agents (incl. "__agentless__").
+// No row / no cap / query error -> allowed (unlimited, unchanged behavior).
+func CheckTenantBudget(ctx context.Context, pool *pgxpool.Pool, tenantID string, estCostUsd float64) BudgetCheckResult {
+	var maxCost *float64
+	var hardFail bool
+	if err := pool.QueryRow(ctx, `
+		SELECT max_cost_usd_per_day::float8, hard_fail
+		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
+	`, tenantID, TenantBudgetAgent).Scan(&maxCost, &hardFail); err != nil || maxCost == nil || *maxCost <= 0 {
+		return BudgetCheckResult{Allowed: true}
+	}
+	var spent float64
+	_ = pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(cost_usd),0)::float8 FROM agent_usage_daily
+		WHERE tenant_id = $1 AND usage_date = $2
+	`, tenantID, usageDate(time.Now())).Scan(&spent)
+	res := BudgetCheckResult{Allowed: true, HardFail: hardFail, SpentToday: spent}
+	if spent+estCostUsd > *maxCost {
+		res.Allowed = false
+		res.Reason = fmt.Sprintf("tenant-wide daily spend would reach $%.4f exceeding tenant limit $%.4f", spent+estCostUsd, *maxCost)
+	}
+	return res
+}
+
+func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64) BudgetCheckResult {
 	var b loadedBudget
 	var toolLimitsJSON []byte
 	var maxCostPerDayRaw, maxCostPerRunRaw *float64

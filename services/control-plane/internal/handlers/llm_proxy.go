@@ -1543,6 +1543,21 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Agentless calls have no per-agent budget but still count against the
+	// tenant-wide cap. Checked before any provider call. (Agent-scoped calls
+	// get the same check inside CheckBudget below.)
+	if req.AgentName == "" {
+		if tc := CheckTenantBudget(ctx, h.srv.Pool, tenantID, 0); !tc.Allowed && tc.HardFail {
+			h.logger().Warn("completions: agentless call blocked by tenant budget",
+				zap.String("tenant_id", tenantID), zap.String("reason", tc.Reason))
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{
+				"error":  "budget limit exceeded",
+				"reason": tc.Reason,
+			})
+			return
+		}
+	}
+
 	provider, model := h.resolveModelForTenant(ctx, tenantID, req.Model)
 
 	// For NON-streaming, NON-agent-scoped completions ('Generate with AI'
