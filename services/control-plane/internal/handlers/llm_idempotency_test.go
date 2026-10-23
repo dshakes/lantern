@@ -29,15 +29,23 @@ func TestLLMIdempotencyKey_StableForSameBaseAndProvider(t *testing.T) {
 		t.Errorf("same (base, provider) must produce a stable key: %q != %q", first, retry)
 	}
 
-	// The key must NOT depend on the message payload when a run base is set —
-	// a turn that appends tool results must still dedup as the same logical call.
+	// A DIFFERENT body under the same base (next turn / step / sample) is a
+	// genuinely new request and must not reuse the first one's key.
 	moreTurns := []map[string]any{
 		{"role": "user", "content": "hi"},
 		{"role": "assistant", "content": "tool call"},
 		{"role": "tool", "content": "result"},
 	}
-	if got := llmIdempotencyKey(ctx, "openai", "gpt-x", moreTurns); got != first {
-		t.Errorf("key must be stable across turns of one logical call: %q != %q", got, first)
+	if got := llmIdempotencyKey(ctx, "openai", "gpt-x", moreTurns); got == first {
+		t.Errorf("distinct bodies under one base must yield distinct keys, both %q", got)
+	}
+	if got := llmIdempotencyKey(ctx, "openai", "gpt-y", msgs); got == first {
+		t.Errorf("distinct models under one base must yield distinct keys, both %q", got)
+	}
+	// An identical body still dedups (same key, fresh slice).
+	same := []map[string]any{{"role": "user", "content": "hi"}}
+	if got := llmIdempotencyKey(ctx, "openai", "gpt-x", same); got != first {
+		t.Errorf("identical body must yield the same key: %q != %q", got, first)
 	}
 }
 
