@@ -96,6 +96,55 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
     cmd
 }
 
+/// `LANTERN_*` keys a workload child may see: identity/locator values the
+/// workload SDK reads, none of them secret.
+const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 11] = [
+    "LANTERN_VM_ID",
+    "LANTERN_RUN_ID",
+    "LANTERN_ENV",
+    "LANTERN_SECRETS_SOCKET",
+    "LANTERN_OTLP_SOCKET",
+    "LANTERN_WORKSPACE",
+    "LANTERN_TRACE_PARENT",
+    "LANTERN_WORKLOAD_UID",
+    "LANTERN_WORKLOAD_GID",
+    "LANTERN_WORKLOAD_CMD",
+    "LANTERN_WORKLOAD_ARGV",
+];
+
+/// Whether an env var of the harness may be passed to a workload child.
+///
+/// Every variable the harness itself reads lives in the `LANTERN_*`
+/// namespace — exec token, agent-instance token, TLS key/cert/CA paths,
+/// declared secret URIs, manager address. All of it is withheld except the
+/// allowlist above. Everything else (PATH, HOME, the spec's own env from
+/// spawn.json / `lantern.env.*` / a container runtime) is the workload's and
+/// passes through.
+///
+/// ponytail: namespace rule, so a user env key that itself starts with
+/// `LANTERN_` is withheld too. Track declared keys explicitly if a spec ever
+/// needs one.
+fn workload_may_see(key: &str) -> bool {
+    !key.starts_with("LANTERN_") || WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&key)
+}
+
+/// Filter an environment down to what a workload child may inherit.
+fn workload_env_from(
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    vars.filter(|(k, _)| k.to_str().is_some_and(workload_may_see))
+        .collect()
+}
+
+/// Prepare `cmd` to run as the workload: an explicitly-built environment
+/// (`env_clear` + the filtered harness env, so no harness secret is
+/// inherited) and the unprivileged uid/gid. Callers add their own vars
+/// (proxy, TERM) AFTER this.
+pub fn as_workload(cmd: &mut Command) -> &mut Command {
+    cmd.env_clear().envs(workload_env_from(std::env::vars_os()));
+    apply_workload_identity(cmd, workload_identity())
+}
+
 /// The proxy address the workload should be pointed at — the same bind the
 /// egress proxy listens on (`LANTERN_EGRESS_BIND`, default `127.0.0.1:3128`).
 fn egress_proxy_addr() -> String {
@@ -195,7 +244,7 @@ impl Supervisor {
                 .stderr(Stdio::piped())
                 .stdin(Stdio::null())
                 .kill_on_drop(true);
-            apply_workload_identity(&mut cmd, workload_identity());
+            as_workload(&mut cmd);
 
             // P2-B7 (2): point the workload's HTTP clients at the egress
             // allowlist proxy. Only when egress rules are declared — otherwise
@@ -384,6 +433,51 @@ mod tests {
         );
         let out = cmd.output().await.expect("same-uid spawn");
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), me.to_string());
+    }
+
+    #[test]
+    fn workload_env_withholds_harness_namespace() {
+        for k in [
+            "LANTERN_HARNESS_EXEC_TOKEN",
+            "LANTERN_AGENT_INSTANCE_TOKEN",
+            "LANTERN_VM_TLS_KEY",
+            "LANTERN_VM_TLS_CERT",
+            "LANTERN_MANAGER_TLS_CA",
+            "LANTERN_DECLARED_SECRETS",
+            "LANTERN_MANAGER_ADDR",
+        ] {
+            assert!(!workload_may_see(k), "{k} must not reach the workload");
+        }
+        for k in [
+            "PATH",
+            "HOME",
+            "OPENAI_BASE_URL",
+            "LANTERN_SECRETS_SOCKET",
+            "LANTERN_VM_ID",
+        ] {
+            assert!(workload_may_see(k), "{k} must reach the workload");
+        }
+    }
+
+    /// End to end through a real child: the token is not in its environment.
+    #[tokio::test]
+    async fn child_does_not_inherit_exec_token() {
+        let vars = [
+            ("LANTERN_HARNESS_EXEC_TOKEN", "tok-secret"),
+            ("LANTERN_VM_TLS_KEY", "/run/lantern/harness/tls.key"),
+            ("PATH", "/usr/bin:/bin"),
+            ("MY_APP_VAR", "kept"),
+        ]
+        .map(|(k, v)| (k.into(), v.into()));
+        let mut cmd = Command::new("/usr/bin/env");
+        cmd.env_clear().envs(workload_env_from(vars.into_iter()));
+        let out = cmd.output().await.expect("spawn env");
+        let env = String::from_utf8_lossy(&out.stdout);
+        assert!(!env.contains("LANTERN_HARNESS_EXEC_TOKEN"), "{env}");
+        assert!(!env.contains("tok-secret"), "{env}");
+        assert!(!env.contains("tls.key"), "{env}");
+        assert!(env.contains("MY_APP_VAR=kept"), "{env}");
+        assert!(env.contains("PATH=/usr/bin:/bin"), "{env}");
     }
 
     #[test]

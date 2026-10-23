@@ -289,7 +289,7 @@ async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    crate::supervisor::apply_workload_identity(&mut cmd, crate::supervisor::workload_identity());
+    crate::supervisor::as_workload(&mut cmd);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -443,16 +443,18 @@ fn workspace_root() -> PathBuf {
 /// Resolve `requested` (absolute, or relative to `root`) to a canonical path
 /// that is `root` or beneath it. Canonicalization resolves every `..` and
 /// symlink, so an escape by either is caught by the component-wise prefix
-/// check.
+/// check. Returns `(canonical_root, canonical_path)`.
 ///
 /// With `must_exist = false` (writes) the final component may not exist yet:
 /// the PARENT is canonicalized and checked, and the leaf must be a plain name.
 ///
-/// ponytail: check-then-open, done as root. The leaf is opened O_NOFOLLOW, but
-/// a workload racing to swap a PARENT dir for a symlink between this check and
-/// the open is not prevented. Upgrade: openat2(RESOLVE_BENEATH) on the root fd,
-/// or per-thread setfsuid to the workload uid around the fs op.
-fn resolve_in_workspace(root: &Path, requested: &str, must_exist: bool) -> Result<PathBuf, String> {
+/// This check alone is check-then-open: a workload could swap a parent dir for
+/// a symlink after it. `open_confined` closes that window on Linux.
+fn resolve_in_workspace(
+    root: &Path,
+    requested: &str,
+    must_exist: bool,
+) -> Result<(PathBuf, PathBuf), String> {
     if requested.is_empty() {
         return Err("path is required".into());
     }
@@ -477,17 +479,115 @@ fn resolve_in_workspace(root: &Path, requested: &str, must_exist: bool) -> Resul
         parent.join(name)
     };
     if resolved.starts_with(&root) {
-        Ok(resolved)
+        Ok((root, resolved))
     } else {
         Err(format!("{requested}: outside the workspace root"))
     }
 }
 
-/// Open flags shared by read and write: never follow a final-component
-/// symlink, never block on a FIFO the workload planted.
-fn fs_open_flags() -> i32 {
-    libc::O_NOFOLLOW | libc::O_NONBLOCK
+/// Plain `open(2)` of an already-validated path. `O_NOFOLLOW` covers the leaf;
+/// parents are trusted from the preceding canonicalization.
+fn open_path(path: &Path, flags: i32, mode: u32) -> std::io::Result<std::fs::File> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: valid NUL-terminated path; the returned fd is owned below.
+    let fd = unsafe { libc::open(c.as_ptr(), flags | libc::O_CLOEXEC, mode as libc::c_uint) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor nobody else owns.
+    Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
+
+/// Open `path` (canonical, inside canonical `root`) so the KERNEL re-checks
+/// containment at open time: openat2 relative to a root fd with
+/// RESOLVE_BENEATH (no escape above the root) + RESOLVE_NO_SYMLINKS. The path
+/// is canonical, so it legitimately contains no symlink — any symlink seen now
+/// was planted after the check, and the open fails (ELOOP) instead of
+/// following it out of the workspace. Kernels without openat2 (< 5.6, ENOSYS)
+/// fall back to `open_path`.
+#[cfg(target_os = "linux")]
+fn open_confined(
+    root: &Path,
+    path: &Path,
+    flags: i32,
+    mode: u32,
+) -> std::io::Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let rel = path
+        .strip_prefix(root)
+        .map_err(|_| std::io::Error::other("path outside the workspace root"))?;
+    let rel = if rel.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        rel
+    };
+    let root_c = std::ffi::CString::new(root.as_os_str().as_bytes())?;
+    let rel_c = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
+    // SAFETY: valid NUL-terminated path; fd ownership taken immediately.
+    let root_fd = unsafe {
+        libc::open(
+            root_c.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if root_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fresh descriptor, owned here.
+    let root_fd = unsafe { OwnedFd::from_raw_fd(root_fd) };
+
+    // SAFETY: open_how is plain integers (and #[non_exhaustive], so it cannot
+    // be built with a literal); all-zero is a valid value.
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (flags | libc::O_CLOEXEC) as u64;
+    // The kernel rejects a non-zero mode without O_CREAT.
+    how.mode = if flags & libc::O_CREAT != 0 {
+        mode as u64
+    } else {
+        0
+    };
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS | libc::RESOLVE_NO_MAGICLINKS;
+    // SAFETY: arguments match openat2(2): dirfd, path, &open_how, its size.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root_fd.as_raw_fd(),
+            rel_c.as_ptr(),
+            &how as *const libc::open_how,
+            std::mem::size_of::<libc::open_how>(),
+        )
+    };
+    if fd >= 0 {
+        // SAFETY: fresh descriptor returned by the kernel, owned here.
+        return Ok(std::fs::File::from(unsafe {
+            OwnedFd::from_raw_fd(fd as i32)
+        }));
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ENOSYS) {
+        // ponytail: pre-5.6 kernel keeps the check-then-open window.
+        return open_path(path, flags, mode);
+    }
+    Err(err)
+}
+
+/// Non-Linux (dev hosts): no openat2; the validated path is opened directly.
+#[cfg(not(target_os = "linux"))]
+fn open_confined(
+    _root: &Path,
+    path: &Path,
+    flags: i32,
+    mode: u32,
+) -> std::io::Result<std::fs::File> {
+    open_path(path, flags, mode)
+}
+
+/// Flags shared by read and write: never follow a final-component symlink,
+/// never block on a FIFO the workload planted.
+const FS_OPEN_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_NONBLOCK;
 
 /// Reject anything that is not a single-link regular file. A hard link in the
 /// workspace to e.g. /etc/shadow would otherwise pass the path check (hard
@@ -517,18 +617,14 @@ fn fs_tool(tool: &str, args: &serde_json::Value, root: &Path) -> ToolResult {
 
 fn read_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolResult, String> {
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
     let max = args
         .get("max_bytes")
         .and_then(|v| v.as_u64())
         .map_or(TOOL_OUTPUT_MAX_BYTES, |m| {
             (m as usize).min(TOOL_OUTPUT_MAX_BYTES)
         });
-    let target = resolve_in_workspace(root, path, true)?;
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(fs_open_flags())
-        .open(&target)
+    let (root, target) = resolve_in_workspace(root, path, true)?;
+    let f = open_confined(&root, &target, libc::O_RDONLY | FS_OPEN_FLAGS, 0)
         .map_err(|e| format!("{path}: {e}"))?;
     check_regular_file(&f, path)?;
     let mut buf = Vec::new();
@@ -561,7 +657,7 @@ fn parse_mode(v: Option<&serde_json::Value>) -> Result<u32, String> {
 
 fn write_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolResult, String> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::PermissionsExt;
     let content = args
         .get("content")
         .and_then(|v| v.as_str())
@@ -570,15 +666,15 @@ fn write_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolR
         return Err(format!("content exceeds {TOOL_OUTPUT_MAX_BYTES} bytes"));
     }
     let mode = parse_mode(args.get("mode"))?;
-    let target = resolve_in_workspace(root, path, false)?;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false) // truncate only after the file is vetted
-        .mode(mode)
-        .custom_flags(fs_open_flags())
-        .open(&target)
-        .map_err(|e| format!("{path}: {e}"))?;
+    let (root, target) = resolve_in_workspace(root, path, false)?;
+    // No O_TRUNC: truncate only after the file is vetted.
+    let mut f = open_confined(
+        &root,
+        &target,
+        libc::O_WRONLY | libc::O_CREAT | FS_OPEN_FLAGS,
+        mode,
+    )
+    .map_err(|e| format!("{path}: {e}"))?;
     check_regular_file(&f, path)?;
     f.set_len(0).map_err(|e| format!("{path}: {e}"))?;
     f.write_all(content.as_bytes())
@@ -596,8 +692,26 @@ fn write_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolR
 }
 
 fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
-    let target = resolve_in_workspace(root, path, true)?;
-    let rd = std::fs::read_dir(&target).map_err(|e| format!("{path}: {e}"))?;
+    let (root, target) = resolve_in_workspace(root, path, true)?;
+    // Open confined, then list THAT directory through its fd, so a swap after
+    // the check cannot redirect the listing.
+    let dir = open_confined(
+        &root,
+        &target,
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        0,
+    )
+    .map_err(|e| format!("{path}: {e}"))?;
+    let rd = {
+        #[cfg(target_os = "linux")]
+        let listed = {
+            use std::os::fd::AsRawFd;
+            std::path::PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()))
+        };
+        #[cfg(not(target_os = "linux"))]
+        let listed = target.clone();
+        std::fs::read_dir(&listed).map_err(|e| format!("{path}: {e}"))?
+    };
     let mut entries = Vec::new();
     let mut truncated = false;
     for entry in rd {
@@ -620,6 +734,7 @@ fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
             "size": size,
         }));
     }
+    drop(dir);
     Ok(ToolResult::ok(serde_json::json!({
         "entries": entries,
         "truncated": truncated,
@@ -887,6 +1002,31 @@ mod tests {
         std::os::unix::fs::symlink(ws.join("sub/hello.txt"), ws.join("alias")).unwrap();
         let r = fs_tool("read_file", &serde_json::json!({"path": "alias"}), &ws);
         assert!(r.ok, "{:?}", r.error);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The parent-dir TOCTOU: the path is validated, THEN a parent is swapped
+    /// for a symlink out of the root. openat2 must refuse the open.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_confined_refuses_a_parent_swapped_after_the_check() {
+        let (base, ws) = sandbox("toctou");
+        std::fs::write(base.join("outside/hello.txt"), "outside").unwrap();
+        let (root, target) = resolve_in_workspace(&ws, "sub/hello.txt", true).unwrap();
+        std::fs::rename(ws.join("sub"), ws.join("sub_old")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), ws.join("sub")).unwrap();
+
+        // Precondition: the plain open really would land outside the root.
+        let mut escaped = String::new();
+        std::io::Read::read_to_string(
+            &mut open_path(&target, libc::O_RDONLY | FS_OPEN_FLAGS, 0).unwrap(),
+            &mut escaped,
+        )
+        .unwrap();
+        assert_eq!(escaped, "outside");
+
+        let r = open_confined(&root, &target, libc::O_RDONLY | FS_OPEN_FLAGS, 0);
+        assert!(r.is_err(), "swapped parent must not be followed");
         let _ = std::fs::remove_dir_all(&base);
     }
 
