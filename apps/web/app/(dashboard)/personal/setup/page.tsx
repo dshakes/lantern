@@ -31,12 +31,6 @@ export default function SetupPage() {
     reset,
   } = bridge;
 
-  // iMessage has no QR/pairing — your Mac is already signed in. Show
-  // a dedicated panel.
-  if (channel === "imessage") {
-    return <IMessageSetupView state={state} reason={reason} />;
-  }
-
   const [confirmReset, setConfirmReset] = useState(false);
 
   // Re-render the QR countdown every 250ms so the user sees the timer.
@@ -54,6 +48,12 @@ export default function SetupPage() {
   }, [qrIssuedAt, qrExpiresInMs, now]);
 
   const isLive = state === "connected" || state === "reconnecting";
+
+  // iMessage has no QR/pairing — your Mac is already signed in. Show
+  // a dedicated panel.
+  if (channel === "imessage") {
+    return <IMessageSetupView state={state} reason={reason} />;
+  }
 
   return (
     <div className="space-y-6">
