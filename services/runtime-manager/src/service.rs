@@ -279,6 +279,7 @@ impl RuntimeManagerGrpc {
         let sock = std::net::SocketAddr::new(guest_ip, harness_exec_port());
         Ok(ExecRoute::Harness {
             endpoint: format!("http://{sock}"),
+            token: info.exec_token,
         })
     }
 }
@@ -288,8 +289,12 @@ impl RuntimeManagerGrpc {
 enum ExecRoute {
     /// Run through the backend's host-side exec channel (docker/kata/k8s/...).
     Backend { handle_id: String },
-    /// Forward the stream to the in-guest harness exec server (firecracker).
-    Harness { endpoint: String },
+    /// Forward the stream to the in-guest harness exec server (firecracker),
+    /// authenticating with this incarnation's exec token.
+    Harness {
+        endpoint: String,
+        token: Option<String>,
+    },
 }
 
 impl RuntimeManagerGrpc {
@@ -310,6 +315,7 @@ impl RuntimeManagerGrpc {
         first: pb::ExecRequest,
         caller_stream: Option<tonic::Streaming<pb::ExecRequest>>,
         endpoint: String,
+        token: Option<String>,
     ) -> Pin<Box<dyn tokio_stream::Stream<Item = Result<pb::ExecResponse, Status>> + Send + 'static>>
     {
         tracing::info!(
@@ -358,7 +364,11 @@ impl RuntimeManagerGrpc {
                     }
                 };
 
-            let mut inbound = match client.exec(ReceiverStream::new(req_rx)).await {
+            let request = with_exec_token(
+                tonic::Request::new(ReceiverStream::new(req_rx)),
+                token.as_deref(),
+            );
+            let mut inbound = match client.exec(request).await {
                 Ok(resp) => resp.into_inner(),
                 Err(status) => {
                     let _ = tx.send(Err(status)).await;
@@ -447,6 +457,7 @@ impl RuntimeManagerGrpc {
         // namespace-escape the spawn gate above was designed to close.
         let tenant_id = req.tenant_id.clone();
         let cert_sha256 = backend.identity_pin(&handle.id);
+        let exec_token = backend.exec_token(&handle.id);
 
         // Register the handle. `declared_secret_uris` is sourced from the
         // manager's own spawn record (via `req.secrets`) — never from
@@ -468,6 +479,7 @@ impl RuntimeManagerGrpc {
             // Pin THIS incarnation's cert so a superseded one (e.g. frozen in
             // the snapshot a restore came from) cannot act as the VM.
             cert_sha256,
+            exec_token,
         });
 
         tracing::info!(
@@ -673,6 +685,18 @@ impl RuntimeManagerGrpc {
             );
             return Err(not_found());
         }
+        // Bare Firecracker: the snapshot pins the source VM's vsock UDS and
+        // cert-image paths, so restoring next to a live source collides on
+        // them. Refuse instead (a resume follows a Stop, so its source is gone).
+        if backend.restore_needs_stopped_source() && self.registry.get(&meta.vm_id).is_some() {
+            return Err(Status::failed_precondition(format!(
+                "fork of a running VM requires the jailer: source vm {} of snapshot {id} is \
+                 still running on this node and a bare (non-jailed) restore would collide on \
+                 its vsock socket and cert image; stop the source or enable \
+                 FIRECRACKER_JAILER_PATH",
+                meta.vm_id
+            )));
+        }
 
         let restore = proto::RestoreRequest {
             snapshot_uri: format!("store://{}", meta.id),
@@ -740,6 +764,7 @@ impl RuntimeManagerGrpc {
             declared_secret_uris,
             agent_version_id: String::new(),
             cert_sha256: self.backend.identity_pin(&handle.id),
+            exec_token: self.backend.exec_token(&handle.id),
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -852,12 +877,26 @@ const MAX_TOOL_OUTPUT_BYTES: usize = 1 << 20;
 /// Upper bound on a caller-requested tool timeout.
 const MAX_TOOL_TIMEOUT_SECS: u64 = 900;
 
+/// Attach the incarnation's exec token as `authorization: Bearer` — the
+/// in-guest exec server rejects every call without it (prod). Never logged.
+fn with_exec_token<T>(mut req: tonic::Request<T>, token: Option<&str>) -> tonic::Request<T> {
+    if let Some(v) = token
+        .filter(|t| !t.is_empty())
+        .and_then(|t| tonic::metadata::MetadataValue::try_from(format!("Bearer {t}")).ok())
+    {
+        req.metadata_mut().insert("authorization", v);
+    }
+    req
+}
+
 /// Grace past the tool's own timeout so the harness's typed timeout error
 /// normally wins over the manager's.
 const TOOL_DEADLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Run one tool call through the harness, bounded by `deadline` (dial, RPC
 /// and output collection all count) and by [`MAX_TOOL_OUTPUT_BYTES`].
+// Flat args mirror the envelope + dial fields 1:1 (same call as the inner fn).
+#[allow(clippy::too_many_arguments)]
 async fn run_tool_via_harness(
     vm_id: &str,
     endpoint: String,
@@ -866,12 +905,14 @@ async fn run_tool_via_harness(
     idempotency_key: &str,
     timeout_sec: u64,
     deadline: std::time::Duration,
+    token: Option<&str>,
 ) -> pb::ExecToolResponse {
     tokio::time::timeout(
         deadline,
         run_tool_via_harness_inner(
             vm_id,
             endpoint,
+            token,
             tool_name,
             args_json,
             idempotency_key,
@@ -892,6 +933,7 @@ async fn run_tool_via_harness(
 async fn run_tool_via_harness_inner(
     vm_id: &str,
     endpoint: String,
+    token: Option<&str>,
     tool_name: &str,
     args_json: serde_json::Value,
     idempotency_key: &str,
@@ -940,7 +982,8 @@ async fn run_tool_via_harness_inner(
         .await;
     drop(req_tx);
 
-    let mut stream = match client.exec(ReceiverStream::new(req_rx)).await {
+    let request = with_exec_token(tonic::Request::new(ReceiverStream::new(req_rx)), token);
+    let mut stream = match client.exec(request).await {
         Ok(r) => r.into_inner(),
         Err(s) => {
             return pb::ExecToolResponse {
@@ -1465,7 +1508,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         let route = self.route_exec(&first.vm_id)?;
 
         let handle_id = match route {
-            ExecRoute::Harness { endpoint } => {
+            ExecRoute::Harness { endpoint, token } => {
                 // Interactive execs relay the caller's stdin frames into the
                 // guest; one-shot execs half-close after the first frame and
                 // drain the caller's stream (unchanged behavior).
@@ -1479,6 +1522,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                     first,
                     caller_stream,
                     endpoint,
+                    token,
                 )));
             }
             ExecRoute::Backend { handle_id } => handle_id,
@@ -1701,6 +1745,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             &req.idempotency_key,
             timeout_sec,
             std::time::Duration::from_secs(timeout_sec) + TOOL_DEADLINE_GRACE,
+            info.exec_token.as_deref(),
         )
         .await;
 
@@ -2876,6 +2921,7 @@ mod tests {
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
             agent_version_id: String::new(),
             cert_sha256: None,
+            exec_token: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3050,6 +3096,7 @@ mod tests {
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
             agent_version_id: String::new(),
             cert_sha256: None,
+            exec_token: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3106,6 +3153,7 @@ mod tests {
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
             cert_sha256: None,
+            exec_token: None,
         });
         // Rekey so the wire vm_id resolves to the backend handle_id.
         svc.registry.rekey(handle_id, vm_id);
@@ -3306,6 +3354,7 @@ mod tests {
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
             cert_sha256: None,
+            exec_token: None,
         });
         svc.registry.rekey(handle_id, vm_id);
         svc
@@ -3344,10 +3393,17 @@ mod tests {
                 .expect("test ip"),
         );
 
+        // Give the incarnation an exec token; the route must carry it.
+        let mut info = svc.registry.deregister("vm-fc2").expect("registered");
+        info.exec_token = Some("tok-incarnation-1".to_string());
+        svc.registry.register(info);
+        assert!(svc.registry.rekey("handle-fc2", "vm-fc2"));
+
         match svc.route_exec("vm-fc2").expect("route must resolve") {
-            ExecRoute::Harness { endpoint } => {
+            ExecRoute::Harness { endpoint, token } => {
                 let expected = format!("http://192.168.127.5:{}", harness_exec_port());
                 assert_eq!(endpoint, expected, "endpoint must dial the guest IP");
+                assert_eq!(token.as_deref(), Some("tok-incarnation-1"));
             }
             other => panic!("expected harness route, got {other:?}"),
         }
@@ -4424,8 +4480,24 @@ mod tests {
             "k",
             1,
             deadline,
+            Some("tok"),
         )
         .await
+    }
+
+    #[test]
+    fn exec_token_is_sent_as_bearer_only_when_present() {
+        let req = with_exec_token(tonic::Request::new(()), Some("t-1"));
+        assert_eq!(
+            req.metadata()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer t-1")
+        );
+        for none in [None, Some("")] {
+            let req = with_exec_token(tonic::Request::new(()), none);
+            assert!(req.metadata().get("authorization").is_none());
+        }
     }
 
     #[tokio::test]
@@ -4464,6 +4536,8 @@ mod tests {
     struct IdentityStub {
         scheduled: std::sync::Mutex<Vec<proto::ScheduleRequest>>,
         restored: std::sync::Mutex<Vec<proto::RestoreRequest>>,
+        /// Bare (non-jailed) Firecracker semantics.
+        bare: bool,
     }
 
     #[async_trait::async_trait]
@@ -4515,6 +4589,99 @@ mod tests {
         fn identity_pin(&self, handle_id: &str) -> Option<String> {
             Some(format!("pin-{handle_id}"))
         }
+        fn exec_token(&self, handle_id: &str) -> Option<String> {
+            Some(format!("tok-{handle_id}"))
+        }
+        fn restore_needs_stopped_source(&self) -> bool {
+            self.bare
+        }
+    }
+
+    async fn identity_manager(
+        bare: bool,
+    ) -> (
+        RuntimeManagerGrpc,
+        Arc<IdentityStub>,
+        String,
+        tempfile::TempDir,
+    ) {
+        let tmp = tempfile::tempdir().unwrap();
+        // The snapshot's source vm is "vm-src" (see store_with_snapshot).
+        let (store, snap) = store_with_snapshot(tmp.path(), "t-owner").await;
+        let stub = Arc::new(IdentityStub {
+            bare,
+            ..Default::default()
+        });
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store);
+        (svc, stub, snap, tmp)
+    }
+
+    fn fork_spawn(snap: &str, wire: &str) -> pb::SpawnRequest {
+        let mut req = restore_spawn("t-owner", snap);
+        req.handle = make_spawn_request_with_handle("t-owner", "r", wire).handle;
+        req
+    }
+
+    #[tokio::test]
+    async fn bare_fork_of_a_running_source_fails_closed() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, stub, snap, _tmp) = identity_manager(true).await;
+        // The source VM is still running on this node.
+        svc.spawn(Request::new(make_spawn_request_with_handle(
+            "t-owner", "r", "vm-src",
+        )))
+        .await
+        .expect("source spawn");
+
+        let fork = "vm-cccccccc-0000-4000-8000-000000000003";
+        let err = svc
+            .spawn(Request::new(fork_spawn(&snap, fork)))
+            .await
+            .expect_err("must refuse instead of colliding");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message()
+                .contains("fork of a running VM requires the jailer"),
+            "{err:?}"
+        );
+        assert!(
+            stub.restored.lock().unwrap().is_empty(),
+            "backend never touched"
+        );
+        assert!(svc.registry.get(fork).is_none());
+
+        // Once the source is stopped (pause = Snapshot + Stop), the same
+        // restore — e.g. a resume — goes through.
+        svc.registry.deregister("vm-src");
+        svc.spawn(Request::new(fork_spawn(&snap, fork)))
+            .await
+            .expect("source stopped → restore allowed");
+    }
+
+    #[tokio::test]
+    async fn jailed_fork_of_a_running_source_is_allowed() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, stub, snap, _tmp) = identity_manager(false).await;
+        svc.spawn(Request::new(make_spawn_request_with_handle(
+            "t-owner", "r", "vm-src",
+        )))
+        .await
+        .expect("source spawn");
+        let fork = "vm-dddddddd-0000-4000-8000-000000000004";
+        svc.spawn(Request::new(fork_spawn(&snap, fork)))
+            .await
+            .expect("jailed restore has its own paths");
+        assert_eq!(stub.restored.lock().unwrap()[0].vm_id, fork);
+        assert_eq!(
+            svc.registry.get(fork).unwrap().exec_token.as_deref(),
+            Some(&*format!("tok-{fork}")),
+            "the restored incarnation gets its own exec token"
+        );
     }
 
     #[tokio::test]
@@ -4540,6 +4707,7 @@ mod tests {
             .expect("registered under the wire id");
         assert_eq!(info.handle_id, wire);
         assert_eq!(info.cert_sha256.as_deref(), Some(&*format!("pin-{wire}")));
+        assert_eq!(info.exec_token.as_deref(), Some(&*format!("tok-{wire}")));
         assert_eq!(svc.registry.len(), 1, "no second (rekeyed) alias");
     }
 

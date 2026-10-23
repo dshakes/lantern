@@ -94,6 +94,13 @@ pub struct SpawnContract {
     /// the source VM's `ip=` config in memory; it re-addresses eth0 from this.
     #[serde(default)]
     pub network: Option<ContractNetwork>,
+    /// Bearer token the in-guest exec server accepts for THIS incarnation
+    /// (published to the harness as `LANTERN_HARNESS_EXEC_TOKEN`, withheld
+    /// from the workload). Minted fresh per spawn and per restore, so a
+    /// superseded incarnation's token stops working when the guest
+    /// re-identifies. Lives only on the 0600 cert image.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub exec_token: String,
 }
 
 /// One declared secret in `spawn.json` (matches the harness `SecretRef`).
@@ -145,6 +152,7 @@ impl SpawnContract {
                 })
                 .collect(),
             network: None,
+            exec_token: String::new(),
         }
     }
 }
@@ -441,6 +449,7 @@ impl VmConfig {
         let network = VmNetwork::allocate();
         let mut spawn_contract = SpawnContract::from_schedule(req);
         spawn_contract.vm_id = vm_id.to_string();
+        spawn_contract.exec_token = mint_exec_token();
         spawn_contract.network = Some(ContractNetwork {
             guest_ip: network.guest_ip.clone(),
             host_ip: network.host_ip.clone(),
@@ -2499,10 +2508,24 @@ pub struct FirecrackerBackend {
     /// SIGKILL as a reliable fallback after `SendCtrlAltDel`.  Empty on hosts
     /// where the backend is unavailable (no VM is ever spawned there).
     processes: ProcessTable<tokio::process::Child>,
-    /// vm_id -> SHA-256 of the cert issued for its CURRENT incarnation; the
-    /// service pins it in the registry (`RuntimeBackend::identity_pin`).
+    /// vm_id -> the CURRENT incarnation's cert pin + exec token; the service
+    /// records both in the registry (`identity_pin` / `exec_token`).
     // ponytail: std Mutex, held for one map op — never across an await.
-    identity_pins: Arc<Mutex<HashMap<String, String>>>,
+    incarnations: Arc<Mutex<HashMap<String, Incarnation>>>,
+}
+
+/// Per-incarnation credentials minted at spawn/restore. Not `Debug`: the exec
+/// token is a credential (invariant #10).
+#[derive(Clone)]
+struct Incarnation {
+    cert_sha256: String,
+    exec_token: String,
+}
+
+/// A fresh exec-server bearer token: 244 bits from the OS CSPRNG.
+// ponytail: two v4 UUIDs = getrandom without a new rand dependency.
+fn mint_exec_token() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
 impl FirecrackerBackend {
@@ -2545,19 +2568,27 @@ impl FirecrackerBackend {
             binary_path,
             jailer,
             processes: ProcessTable::new(),
-            identity_pins: Arc::default(),
+            incarnations: Arc::default(),
         }
     }
 
-    fn set_identity_pin(&self, vm_id: &str, pin: Option<String>) {
-        let mut pins = self
-            .identity_pins
+    fn set_incarnation(&self, vm_id: &str, inc: Option<Incarnation>) {
+        let mut map = self
+            .incarnations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match pin {
-            Some(p) => pins.insert(vm_id.to_string(), p),
-            None => pins.remove(vm_id),
+        match inc {
+            Some(i) => map.insert(vm_id.to_string(), i),
+            None => map.remove(vm_id),
         };
+    }
+
+    fn incarnation(&self, vm_id: &str) -> Option<Incarnation> {
+        self.incarnations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(vm_id)
+            .cloned()
     }
 
     /// Issue this VM's cert + pack its cert image (blocking I/O off the
@@ -2568,7 +2599,13 @@ impl FirecrackerBackend {
             .await
             .context("cert provisioning task join")?
             .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
-        self.set_identity_pin(&cfg.vm_id, Some(pin));
+        self.set_incarnation(
+            &cfg.vm_id,
+            Some(Incarnation {
+                cert_sha256: pin,
+                exec_token: cfg.spawn_contract.exec_token.clone(),
+            }),
+        );
         Ok(())
     }
 
@@ -2853,7 +2890,7 @@ impl FirecrackerBackend {
                 tracing::warn!(vm_id = %vm_id, error = %te, "restore failed and TAP cleanup ALSO failed");
             }
             self.processes.kill(&vm_id).ok();
-            self.set_identity_pin(&vm_id, None);
+            self.set_incarnation(&vm_id, None);
             return Err(e);
         }
 
@@ -2962,7 +2999,7 @@ impl RuntimeBackend for FirecrackerBackend {
 
         if let Err(e) = self.boot_vm(&cfg).await {
             // No VM, no identity: never leave a pin for a cert nothing presents.
-            self.set_identity_pin(&vm_id, None);
+            self.set_incarnation(&vm_id, None);
             return Err(e.context(format!(
                 "failed to boot Firecracker microVM {vm_id} for run {}",
                 req.run_id
@@ -3045,7 +3082,7 @@ impl RuntimeBackend for FirecrackerBackend {
 
         // LINUX-ONLY: TAP cleanup.
         // The incarnation is over: its cert must never authenticate again.
-        self.set_identity_pin(handle_id, None);
+        self.set_incarnation(handle_id, None);
         let tap_dev = tap_name(handle_id);
         teardown_tap_device(&tap_dev).await?;
 
@@ -3219,11 +3256,17 @@ impl RuntimeBackend for FirecrackerBackend {
     }
 
     fn identity_pin(&self, handle_id: &str) -> Option<String> {
-        self.identity_pins
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(handle_id)
-            .cloned()
+        self.incarnation(handle_id).map(|i| i.cert_sha256)
+    }
+
+    fn exec_token(&self, handle_id: &str) -> Option<String> {
+        self.incarnation(handle_id).map(|i| i.exec_token)
+    }
+
+    /// Bare restores reuse the snapshot's host paths (vsock UDS, cert image)
+    /// verbatim; only a jail gives each restored VM its own.
+    fn restore_needs_stopped_source(&self) -> bool {
+        self.jailer.is_none()
     }
 
     fn name(&self) -> &'static str {
@@ -5332,15 +5375,45 @@ mod tests {
     }
 
     #[test]
-    fn identity_pins_are_per_incarnation() {
+    fn incarnations_are_per_spawn() {
         let backend = FirecrackerBackend::new();
+        let inc = |pin: &str, tok: &str| Incarnation {
+            cert_sha256: pin.into(),
+            exec_token: tok.into(),
+        };
         assert_eq!(backend.identity_pin(WIRE), None);
-        backend.set_identity_pin(WIRE, Some("aa".into()));
+        assert_eq!(backend.exec_token(WIRE), None);
+        backend.set_incarnation(WIRE, Some(inc("aa", "t1")));
         assert_eq!(backend.identity_pin(WIRE).as_deref(), Some("aa"));
-        // A re-spawn (resume) of the same id replaces the pin.
-        backend.set_identity_pin(WIRE, Some("bb".into()));
-        assert_eq!(backend.identity_pin(WIRE).as_deref(), Some("bb"));
-        backend.set_identity_pin(WIRE, None);
+        assert_eq!(backend.exec_token(WIRE).as_deref(), Some("t1"));
+        // A re-spawn (resume) of the same id replaces both.
+        backend.set_incarnation(WIRE, Some(inc("bb", "t2")));
+        assert_eq!(backend.exec_token(WIRE).as_deref(), Some("t2"));
+        backend.set_incarnation(WIRE, None);
         assert_eq!(backend.identity_pin(WIRE), None);
+        assert_eq!(backend.exec_token(WIRE), None);
+    }
+
+    #[test]
+    fn every_config_mints_a_fresh_exec_token() {
+        let a = VmConfig::from_schedule_with_id(&minimal_schedule_req(), "/k", "/r", WIRE);
+        let b = VmConfig::from_schedule_with_id(&minimal_schedule_req(), "/k", "/r", WIRE);
+        // Same vm_id (a resume) still gets a new token: the old incarnation's
+        // token must not survive into the new one.
+        assert_ne!(a.spawn_contract.exec_token, b.spawn_contract.exec_token);
+        assert_eq!(a.spawn_contract.exec_token.len(), 64);
+        let json = serde_json::to_value(&a.spawn_contract).unwrap();
+        assert_eq!(json["exec_token"], a.spawn_contract.exec_token);
+        // Never on the kernel cmdline (readable via /proc/cmdline).
+        assert!(!a.boot_args.contains(&a.spawn_contract.exec_token));
+    }
+
+    #[test]
+    fn only_bare_mode_needs_a_stopped_source() {
+        let mut backend = FirecrackerBackend::new();
+        backend.jailer = None;
+        assert!(backend.restore_needs_stopped_source());
+        backend.jailer = Some(jailer_with_defaults());
+        assert!(!backend.restore_needs_stopped_source());
     }
 }

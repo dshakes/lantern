@@ -264,6 +264,7 @@ mod tests {
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
             cert_sha256: None,
+            exec_token: None,
         }
     }
 
