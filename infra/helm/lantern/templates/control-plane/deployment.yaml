@@ -126,6 +126,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: minio-password
+            {{- with .Values.controlPlane.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.controlPlane.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -144,3 +151,7 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+      {{- with .Values.controlPlane.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

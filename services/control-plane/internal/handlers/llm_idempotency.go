@@ -87,6 +87,24 @@ func llmIdempotencyKey(ctx context.Context, provider, model string, messages []m
 	return llmPayloadIdempotencyKey(provider, model, messages)
 }
 
+// llmBodyIdempotencyKey is llmIdempotencyKey over the exact request body sent
+// to the provider. Tool loops rebuild the body every turn (assistant + tool
+// results appended), so hashing the caller's ORIGINAL messages would give every
+// turn one key and the provider would replay turn 1 instead of executing the
+// later ones. Hashing the bytes on the wire keys each turn by what it is: a
+// retry of the same turn (same bytes) dedups; a new turn does not.
+func llmBodyIdempotencyKey(ctx context.Context, provider string, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	parts := []string{provider, string(body)}
+	if base := llmIdempotencyBase(ctx); base != "" {
+		parts = append([]string{base}, parts...)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
 // llmPayloadIdempotencyKey is the run-less fallback: a stable hash over the
 // request's identifying fields. json.Marshal of a []map[string]any with string
 // keys is deterministic (Go sorts map keys), so identical messages produce an

@@ -71,6 +71,26 @@ controlPlane:
     # --- RLS ---
     LANTERN_RLS_ENFORCE: "1"
     # LANTERN_APP_DB_PASSWORD comes from the secret, not from values.
+  # REQUIRED for a prod-class LANTERN_ENV (production) — the control-plane refuses
+  # to start without these (runStartupGuards / grpcTLSCreds). Besides the
+  # `secrets:` values listed at the top, supply per environment:
+  #   LANTERN_SCHEDULER_GRPC_ADDR        runtime-scheduler gRPC addr (stub is fatal)
+  #   LANTERN_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
+  #   LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
+  # e.g.
+  # extraEnv:
+  #   - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "runtime-scheduler:50055"}
+  #   - {name: LANTERN_CONTROL_PLANE_TLS_CERT, value: /etc/lantern/tls/tls.crt}
+  #   - {name: LANTERN_CONTROL_PLANE_TLS_KEY, value: /etc/lantern/tls/tls.key}
+  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_CA, value: /etc/lantern/manager-tls/ca.crt}
+  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_CERT, value: /etc/lantern/manager-tls/tls.crt}
+  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_KEY, value: /etc/lantern/manager-tls/tls.key}
+  # extraVolumeMounts:
+  #   - {name: cp-tls, mountPath: /etc/lantern/tls, readOnly: true}
+  #   - {name: manager-tls, mountPath: /etc/lantern/manager-tls, readOnly: true}
+  # extraVolumes:
+  #   - {name: cp-tls, secret: {secretName: lantern-control-plane-tls}}
+  #   - {name: manager-tls, secret: {secretName: lantern-manager-client-tls}}
 
 workflowEngine:
   replicas: 2

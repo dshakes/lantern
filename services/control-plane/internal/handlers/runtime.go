@@ -659,6 +659,44 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 	return a
 }
 
+// applySpecMap fills the fields of spec that the typed decode left empty from a
+// raw spec map — a REST body or an agent manifest — accepting both the
+// camelCase REST spelling and the snake_case agent.yaml/manifest spelling.
+// Entry-level keys inside limits/egress_rules/secrets are normalized later by
+// agentSpecFromMap, which reads both casings. Both schedule paths (HTTP and
+// run-executor) go through here so neither silently drops sandbox policy.
+func applySpecMap(spec *agentSpecDTO, m map[string]any) {
+	if spec.ImageDigest == "" {
+		spec.ImageDigest, _ = firstOf(m, "imageDigest", "image_digest").(string)
+	}
+	if spec.Isolation == "" {
+		spec.Isolation, _ = firstOf(m, "isolation", "isolation_class", "isolationClass").(string)
+	}
+	if spec.RestoreSnapshotID == "" {
+		spec.RestoreSnapshotID, _ = firstOf(m, "restoreSnapshotId", "restore_snapshot_id").(string)
+	}
+	if !spec.Confidential {
+		spec.Confidential, _ = m["confidential"].(bool)
+	}
+	if spec.Limits == nil {
+		spec.Limits, _ = m["limits"].(map[string]any)
+	}
+	if spec.EgressRules == nil {
+		spec.EgressRules = mapSlice(firstOf(m, "egressRules", "egress_rules"))
+	}
+	if spec.Secrets == nil {
+		spec.Secrets = mapSlice(m["secrets"])
+	}
+	if env, ok := m["env"].(map[string]any); ok && spec.Env == nil {
+		spec.Env = make(map[string]string, len(env))
+		for k, v := range env {
+			if sv, ok := v.(string); ok {
+				spec.Env[k] = sv
+			}
+		}
+	}
+}
+
 func firstOf(m map[string]any, keys ...string) any {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
@@ -820,16 +858,20 @@ type MicroVMDispatcher interface {
 // Quota enforcement is the caller's responsibility: call checkRuntimeQuota before
 // scheduleAgentSpec and abort appropriately if denied.
 func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, principalID string, spec agentSpecDTO) (vmID, node, az, instanceID string, created time.Time, err error) {
-	// Mint per-VM identity. Fail closed: an agent that cannot be identified must not be scheduled.
-	var instanceToken string
-	instanceID, instanceToken, err = h.identity.Issue(ctx, tenantID, spec.RunID, spec.AgentVersionID)
-	if err != nil {
-		return "", "", "", "", time.Time{}, fmt.Errorf("mint agent identity: %w", err)
-	}
-
 	idemKey := spec.IdempotencyKey
 	if idemKey == "" {
 		idemKey = uuid.NewString()
+	}
+
+	// Mint per-VM identity. Fail closed: an agent that cannot be identified must not be scheduled.
+	// The instance id is derived from the idempotency key: when a retry is
+	// deduped by the scheduler it returns the VM that booted with the FIRST
+	// attempt's token, so the row we insert must name that same instance id.
+	var instanceToken string
+	instanceID, instanceToken, err = h.identity.IssueForID(ctx,
+		agentidentity.InstanceIDForKey(tenantID, idemKey), tenantID, spec.RunID, spec.AgentVersionID)
+	if err != nil {
+		return "", "", "", "", time.Time{}, fmt.Errorf("mint agent identity: %w", err)
 	}
 
 	// Build the spec map. tenant_id always comes from context; never from the caller.
@@ -948,27 +990,9 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 		// Deterministic: a recovery re-drive of the same run dedups at the scheduler.
 		IdempotencyKey: runScheduleKey(runID, manifest),
 	}
-	if lims, ok := manifest["limits"].(map[string]any); ok {
-		spec.Limits = lims
-	}
-	// Agent manifest `confidential: true` flows to the CC gate (ADR 0023).
-	if conf, ok := manifest["confidential"].(bool); ok {
-		spec.Confidential = conf
-	}
-	// env and restoreSnapshotId from the manifest support crash-resume:
-	// the recovery path injects LANTERN_RESUME=1 via manifest["env"] and
-	// provides a snapshot id via manifest["restoreSnapshotId"] (ADR 0022).
-	if envRaw, ok := manifest["env"].(map[string]any); ok {
-		spec.Env = make(map[string]string, len(envRaw))
-		for k, v := range envRaw {
-			if sv, ok := v.(string); ok {
-				spec.Env[k] = sv
-			}
-		}
-	}
-	if snap, ok := manifest["restoreSnapshotId"].(string); ok {
-		spec.RestoreSnapshotID = snap
-	}
+	// limits / egress_rules / secrets / confidential (ADR 0023) / env +
+	// restoreSnapshotId (crash-resume, ADR 0022) — either casing.
+	applySpecMap(&spec, manifest)
 
 	// Look up the run's session_id — when present, route through the session VM
 	// affinity path so all turns of the same session reuse one VM.
@@ -1672,20 +1696,12 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	if h := r.Header.Get("Idempotency-Key"); h != "" {
 		spec.IdempotencyKey = h
 	}
-	// Snake_case alias fallback: populate empty fields from snake_case keys
-	// emitted by `lantern run` / agent.yaml YAML sources.
-	if spec.ImageDigest == "" {
-		var raw map[string]any
-		_ = json.Unmarshal(rawBody, &raw)
-		if s, ok := raw["image_digest"].(string); ok {
-			spec.ImageDigest = s
-		}
-		if spec.Isolation == "" {
-			if s, ok := raw["isolation_class"].(string); ok {
-				spec.Isolation = s
-			}
-		}
-	}
+	// Alias fallback: fill fields the camelCase struct decode missed from the
+	// snake_case keys `lantern run` forwards from agent.yaml (image_digest,
+	// isolation_class, egress_rules, secret_uri, ...).
+	var raw map[string]any
+	_ = json.Unmarshal(rawBody, &raw)
+	applySpecMap(&spec, raw)
 	if spec.ImageDigest == "" {
 		span.SetStatus(codes.Error, "imageDigest required")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "imageDigest is required"})
@@ -1855,7 +1871,8 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-		       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at
+		       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at,
+		       snapshot_id, parent_vm_id
 		FROM runtime_vms
 		WHERE tenant_id = $1
 	`
@@ -1878,7 +1895,7 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 			var specJSON []byte
 			if err := rows.Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
 				&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &v.StateReason, &specJSON,
-				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); err != nil {
+				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt, &v.SnapshotID, &v.ParentVMID); err != nil {
 				continue
 			}
 			if len(specJSON) == 0 {

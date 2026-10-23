@@ -6,7 +6,10 @@ package handlers
 // the run-less payload-hash fallback.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 )
@@ -168,5 +171,69 @@ func TestWithLLMIdempotencyBase_EmptyIsNoop(t *testing.T) {
 	msgs := []map[string]any{{"role": "user", "content": "x"}}
 	if llmIdempotencyKey(ctx, "openai", "m", msgs) != llmPayloadIdempotencyKey("openai", "m", msgs) {
 		t.Error("with no base, key must equal the payload-hash fallback")
+	}
+}
+
+// Tool-loop turns rebuild the request body; each turn must get its own key
+// while a retry of the same turn's bytes keeps it.
+func TestLLMBodyIdempotencyKey_PerTurn(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"run base": WithLLMIdempotencyBase(context.Background(), llmIdempotencyBaseFor("run-1", llmStepID, 1)),
+		"no base":  context.Background(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			turn1 := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+			turn2 := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"call"},{"role":"tool","content":"r"}]}`)
+			k1 := llmBodyIdempotencyKey(ctx, "openai", turn1)
+			if k1 == "" {
+				t.Fatal("empty key")
+			}
+			if k2 := llmBodyIdempotencyKey(ctx, "openai", turn2); k2 == k1 {
+				t.Error("two tool-loop turns with different bodies share a key")
+			}
+			if retry := llmBodyIdempotencyKey(ctx, "openai", append([]byte(nil), turn1...)); retry != k1 {
+				t.Error("retry of the same turn must reuse its key")
+			}
+			if llmBodyIdempotencyKey(ctx, "anthropic", turn1) == k1 {
+				t.Error("failover provider must get a distinct key")
+			}
+		})
+	}
+	a := llmBodyIdempotencyKey(WithLLMIdempotencyBase(context.Background(), "run-A:llm:1"), "openai", []byte("{}"))
+	b := llmBodyIdempotencyKey(WithLLMIdempotencyBase(context.Background(), "run-B:llm:1"), "openai", []byte("{}"))
+	if a == b {
+		t.Error("distinct runs must not share a key for identical bodies")
+	}
+}
+
+// End to end through the OpenAI tool loop: turn 2 carries the tool result, so
+// it must not reuse turn 1's Idempotency-Key (the provider would replay turn 1).
+func TestCallLLMWithTools_IdempotencyKeyPerTurn(t *testing.T) {
+	var keys []string
+	reply := func(msg map[string]any) func(*http.Request) (*http.Response, error) {
+		return func(r *http.Request) (*http.Response, error) {
+			keys = append(keys, r.Header.Get("Idempotency-Key"))
+			b, _ := json.Marshal(map[string]any{
+				"choices": []any{map[string]any{"message": msg}},
+				"usage":   map[string]any{"prompt_tokens": 1, "completion_tokens": 1},
+			})
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b)), Header: http.Header{}}, nil
+		}
+	}
+	stub := &stubRoundTripper{responses: []func(*http.Request) (*http.Response, error){
+		reply(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+			"id": "c1", "type": "function", "function": map[string]any{"name": "lookup", "arguments": "{}"}}}}),
+		reply(map[string]any{"role": "assistant", "content": "done"}),
+	}}
+	h := newTestProxyWithStub(t, stub)
+	ctx := WithLLMIdempotencyBase(context.Background(), llmIdempotencyBaseFor("run-1", llmStepID, 1))
+	txt, _, _, _, err := h.callLLMWithTools(ctx, "openai", "m", "k",
+		[]map[string]any{{"role": "user", "content": "hi"}}, nil,
+		func(context.Context, string, map[string]any) (any, error) { return "r", nil }, nil, 4)
+	if err != nil || txt != "done" {
+		t.Fatalf("tool loop: %q %v", txt, err)
+	}
+	if len(keys) != 2 || keys[0] == "" || keys[0] == keys[1] {
+		t.Fatalf("per-turn Idempotency-Keys = %q, want two distinct non-empty keys", keys)
 	}
 }
