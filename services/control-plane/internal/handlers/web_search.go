@@ -101,37 +101,52 @@ func executeWebSearchTool(ctx context.Context, pool *pgxpool.Pool, tenantID stri
 	return nil, fmt.Errorf("web_search unavailable: no anthropic key (%v) and no openai key (%v)", anthErr, oaiErr)
 }
 
-// toolUsage accumulates tokens spent by tool executors (web_search makes its
-// own LLM call) so the tool loop can add them to the turn's totals and the
-// caller's RecordUsage sees the real spend. Carried on ctx to avoid changing
-// the dispatch signature shared by every tool-loop caller.
+// toolUsage accumulates spend by tool executors (web_search makes its own LLM
+// call, possibly on a different provider/model than the outer loop) so callers
+// can add it to the turn's totals and RecordUsage sees the real spend. Carried
+// on ctx to avoid changing the dispatch signature shared by every tool-loop
+// caller. Cost is priced per call at the tool's own provider/model.
 type toolUsage struct {
 	mu                  sync.Mutex
 	tokensIn, tokensOut int64
+	costUsd             float64
 }
 
 type toolUsageKey struct{}
 
-// withToolUsage installs a fresh accumulator on ctx.
+// withToolUsage installs an accumulator on ctx, or returns the one already
+// there so nested installs share a single tally.
 func withToolUsage(ctx context.Context) (context.Context, *toolUsage) {
+	if u, _ := ctx.Value(toolUsageKey{}).(*toolUsage); u != nil {
+		return ctx, u
+	}
 	u := &toolUsage{}
 	return context.WithValue(ctx, toolUsageKey{}, u), u
 }
 
 // addToolUsage records tool-side spend on the ctx accumulator; no-op without one.
-func addToolUsage(ctx context.Context, in, out int64) {
+func addToolUsage(ctx context.Context, provider, model string, in, out int64) {
 	if u, _ := ctx.Value(toolUsageKey{}).(*toolUsage); u != nil {
 		u.mu.Lock()
 		u.tokensIn += in
 		u.tokensOut += out
+		u.costUsd += estimateCost(provider, model, int(in), int(out))
 		u.mu.Unlock()
 	}
 }
 
-func (u *toolUsage) totals() (in, out int64) {
+func (u *toolUsage) totals() (in, out int64, costUsd float64) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.tokensIn, u.tokensOut
+	return u.tokensIn, u.tokensOut, u.costUsd
+}
+
+// addTo folds tool spend into an outer call's totals: tokens add, the outer
+// tokens are priced at the outer provider/model, and tool spend keeps the cost
+// computed at its own model.
+func (u *toolUsage) addTo(provider, model string, tokensIn, tokensOut int64) (int64, int64, float64) {
+	in, out, cost := u.totals()
+	return tokensIn + in, tokensOut + out, estimateCost(provider, model, int(tokensIn), int(tokensOut)) + cost
 }
 
 func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, error) {
@@ -183,7 +198,7 @@ func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, err
 		return nil, fmt.Errorf("web_search: %s", antResp.Error.Message)
 	}
 
-	addToolUsage(ctx, antResp.Usage.InputTokens, antResp.Usage.OutputTokens)
+	addToolUsage(ctx, "anthropic", webSearchModel(), antResp.Usage.InputTokens, antResp.Usage.OutputTokens)
 
 	// Concatenate text blocks; server_tool_use / web_search_tool_result
 	// blocks are Anthropic-internal plumbing we don't need to relay.
@@ -252,7 +267,7 @@ func webSearchViaOpenAI(ctx context.Context, apiKey, prompt string) (any, error)
 	if oaiResp.Error != nil {
 		return nil, fmt.Errorf("web_search: %s", oaiResp.Error.Message)
 	}
-	addToolUsage(ctx, oaiResp.Usage.PromptTokens, oaiResp.Usage.CompletionTokens)
+	addToolUsage(ctx, "openai", webSearchOpenAIModel(), oaiResp.Usage.PromptTokens, oaiResp.Usage.CompletionTokens)
 	if len(oaiResp.Choices) == 0 {
 		return nil, fmt.Errorf("web_search: empty result")
 	}
