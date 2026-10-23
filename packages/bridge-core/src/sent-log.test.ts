@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -32,4 +32,12 @@ test("no draft meta (or expired) -> entry still written without tier; WA jid has
 
 test("write failure never throws", async () => {
   await appendSentLog("/nonexistent-dir/x/y", { channel: "imessage", to: "a", text: "b" }, randomBytes(32));
+});
+
+test("appendSentLog never rejects when the state key is unusable (fire-and-forget callers)", async () => {
+  // A state dir that is a FILE: key creation throws inside loadOrCreateStateKey.
+  const dir = mkdtempSync(join(tmpdir(), "sentlog-badkey-"));
+  const notADir = join(dir, "file");
+  writeFileSync(notADir, "x");
+  await assert.doesNotReject(appendSentLog(notADir, { channel: "imessage", to: "+15550001", text: "hi" }));
 });
