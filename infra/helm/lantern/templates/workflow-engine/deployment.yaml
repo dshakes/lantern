@@ -67,7 +67,7 @@ spec:
             # was silently dropped: the deployment came up healthy with RLS
             # completely off — a fail-open on the tenant-isolation control.
             - name: LANTERN_ENV
-              value: {{ .Values.workflowEngine.env.LANTERN_ENV | default "" | quote }}
+              value: {{ .Values.workflowEngine.env.LANTERN_ENV | default "production" | quote }}
             - name: LANTERN_RLS_ENFORCE
               value: {{ .Values.workflowEngine.env.LANTERN_RLS_ENFORCE | default "" | quote }}
             - name: LANTERN_APP_DB_PASSWORD

@@ -66,6 +66,9 @@ func llmIdempotencyBase(ctx context.Context) string {
 //     the request payload — hex(sha256(provider | model | messages)). Two
 //     byte-identical requests collapse to one key; distinct requests don't.
 //
+// NOTE: sampling params (temperature etc.) are not part of the hash; the signature
+// carries only model+messages.
+//
 // Returns "" only when there is neither a base nor a payload to hash, in which
 // case the caller omits the header.
 func llmIdempotencyKey(ctx context.Context, provider, model string, messages []map[string]any) string {

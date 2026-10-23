@@ -1943,7 +1943,7 @@ var errWorkflowBudgetExceeded = errors.New("budget limit exceeded")
 
 // meteredLLMCall wraps one workflow LLM call with the same budget discipline as
 // the single-call executor: CheckBudget before (hard-fail blocks, no spend),
-// RecordUsage after with the call's real tokens/cost. Usage is recorded even
+// RecordUsageSpend after with the call's real tokens/cost (runs_count untouched). Usage is recorded even
 // when the call errors after spending. Covers ai-steps and the self-consistency
 // confidence votes, which share Deps.CallLLM.
 func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName string,
@@ -1953,7 +1953,7 @@ func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger,
 	}
 	text, tin, tout, cost, err := call()
 	if tin > 0 || tout > 0 || cost > 0 {
-		if recErr := RecordUsage(ctx, pool, tenantID, agentName, tin, tout, cost, nil); recErr != nil {
+		if recErr := RecordUsageSpend(ctx, pool, tenantID, agentName, tin, tout, cost); recErr != nil {
 			logger.Warn("workflow llm: RecordUsage failed", zap.String("agent", agentName), zap.Error(recErr))
 		}
 	}
