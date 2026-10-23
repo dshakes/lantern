@@ -408,9 +408,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, []map[string]any{
-			{"role": "user", "content": prompt},
-		}))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
@@ -475,9 +473,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, []map[string]any{
-			{"role": "user", "content": prompt},
-		}))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
@@ -803,10 +799,7 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Accept", "text/event-stream")
 		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, []map[string]any{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		}))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -878,10 +871,7 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 		req.Header.Set("anthropic-version", "2023-06-01")
 		req.Header.Set("Accept", "text/event-stream")
 		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, []map[string]any{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		}))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -996,7 +986,7 @@ func (h *LlmProxyHandler) callLLMStreamingMessages(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Accept", "text/event-stream")
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, messages))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -1077,7 +1067,7 @@ func (h *LlmProxyHandler) callLLMStreamingMessages(
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 		req.Header.Set("Accept", "text/event-stream")
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, messages))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -1841,7 +1831,7 @@ func (h *LlmProxyHandler) proxyOpenAI(w http.ResponseWriter, ctx context.Context
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	// Invariant #8: ad-hoc completion has no run, so the dedup token is a
 	// deterministic hash of the request payload — identical requests collapse.
-	setLLMIdempotencyHeader(httpReq, llmIdempotencyKey(ctx, "openai", model, stringMessagesToAny(messages)))
+	setLLMIdempotencyHeader(httpReq, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -2038,7 +2028,7 @@ func (h *LlmProxyHandler) proxyAnthropic(w http.ResponseWriter, ctx context.Cont
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	// Invariant #8: ad-hoc completion has no run, so the dedup token is a
 	// deterministic hash of the request payload — identical requests collapse.
-	setLLMIdempotencyHeader(httpReq, llmIdempotencyKey(ctx, "anthropic", model, stringMessagesToAny(anthropicMsgs)))
+	setLLMIdempotencyHeader(httpReq, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -2823,9 +2813,9 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		// Invariant #8: dedup token so a rate-limit retry / crash-replay of
-		// this same logical call doesn't double-bill. Stable across turns of
-		// one logical call via the run-scoped ctx base.
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, messages))
+		// this same turn doesn't double-bill. Keyed by this turn's body, so the
+		// next turn (tool results appended) is not deduped into this one.
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
@@ -2949,7 +2939,7 @@ func (h *LlmProxyHandler) callLLMWithTools(
 	finalHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
 	// Distinct sub-step of the same logical call (tools-disabled synthesis):
 	// suffix so it dedups on retry but doesn't collide with the loop turns.
-	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "openai:final", model, msgs))
+	setLLMIdempotencyHeader(finalHTTPReq, llmBodyIdempotencyKey(ctx, "openai:final", finalBytes))
 	if resp, ferr := h.llmHTTPClient().Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
@@ -3129,7 +3119,7 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		req.Header.Set("anthropic-version", "2023-06-01")
 		// Invariant #8: dedup token so a rate-limit retry / crash-replay of
 		// this same logical call doesn't double-bill.
-		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, messages))
+		setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 
 		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
@@ -3265,7 +3255,7 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	finalHTTPReq.Header.Set("x-api-key", apiKey)
 	finalHTTPReq.Header.Set("anthropic-version", "2023-06-01")
 	// Distinct sub-step (tools-disabled synthesis) of the same logical call.
-	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "anthropic:final", model, messages))
+	setLLMIdempotencyHeader(finalHTTPReq, llmBodyIdempotencyKey(ctx, "anthropic:final", finalBytes))
 	if resp, ferr := h.llmHTTPClient().Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
