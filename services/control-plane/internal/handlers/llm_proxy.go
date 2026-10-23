@@ -2778,13 +2778,9 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		txt, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, flattenMessages(messages))
 		return txt, nil, ti, to, e
 	}
-	// Tool executors (web_search) spend tokens of their own; fold them in.
-	ctx, tu := withToolUsage(ctx)
-	defer func() {
-		in, out := tu.totals()
-		tokensIn += in
-		tokensOut += out
-	}()
+	// Tool executors (web_search) report their own spend on the caller's
+	// withToolUsage accumulator, priced at THEIR model (toolUsage.addTo); the
+	// totals returned here are this loop's own provider calls only.
 	if maxTurns <= 0 {
 		maxTurns = maxToolTurnsEnv()
 	}
@@ -3033,13 +3029,9 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	onToolCall func(inv ToolInvocation),
 	maxTurns int,
 ) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
-	// Tool executors (web_search) spend tokens of their own; fold them in.
-	ctx, tu := withToolUsage(ctx)
-	defer func() {
-		in, out := tu.totals()
-		tokensIn += in
-		tokensOut += out
-	}()
+	// Tool executors (web_search) report their own spend on the caller's
+	// withToolUsage accumulator, priced at THEIR model (toolUsage.addTo); the
+	// totals returned here are this loop's own provider calls only.
 	if maxTurns <= 0 {
 		// Cross-source queries (docs + Gmail + Calendar + WhatsApp
 		// history) routinely need 8-10 tool calls before the model has
