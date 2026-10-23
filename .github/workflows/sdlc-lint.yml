@@ -132,3 +132,6 @@ jobs:
 
       - name: tsc (whatsapp-bridge)
         run: cd services/whatsapp-bridge && npm install --no-audit --no-fund && npm run typecheck
+
+      - name: eslint (dashboard)
+        run: cd apps/web && npm ci && npx eslint .
