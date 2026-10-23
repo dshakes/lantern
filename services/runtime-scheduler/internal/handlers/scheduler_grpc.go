@@ -81,6 +81,9 @@ type SchedulerService struct {
 	// idempotentMu guards idempotentVMs for concurrent Schedule calls.
 	idempotentMu  sync.Mutex
 	idempotentVMs map[string]*idempotentEntry // tenant_id\x00idempotency_key -> cached handle
+
+	// vmLocks serializes lifecycle mutations per vm_id (see lockVM).
+	vmLocks sync.Map
 }
 
 // NewSchedulerService constructs the service. Caller must wire all deps.
@@ -353,7 +356,9 @@ func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest)
 			Usage:  v.Usage,
 			// The store has always recorded WHY a VM failed; nothing exposed
 			// it, so callers saw state=FAILED with no explanation.
-			Reason: v.Reason,
+			Reason:     v.Reason,
+			SnapshotId: v.SnapshotID,
+			ParentVmId: v.ParentVMID,
 		}
 		if !v.LastHeartbeat.IsZero() {
 			item.LastHeartbeat = timestamppb.New(v.LastHeartbeat)
@@ -382,9 +387,15 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	if vm.TenantID != tenantID {
 		return nil, status.Errorf(codes.PermissionDenied, "vm %q does not belong to caller", req.VmId)
 	}
+	defer s.lockVM(req.VmId)()
+	if vm, ok = s.Store.GetVM(req.VmId); !ok { // re-read under the lifecycle lock
+		return nil, status.Errorf(codes.NotFound, "vm %q not found", req.VmId)
+	}
 
-	// A FAILED VM already released its quota slot in dispatchSpawn.
-	quotaAlreadyFreed := vm.State == lanternv1.VmState_VM_STATE_FAILED
+	// A FAILED VM already released its quota slot in dispatchSpawn; a PAUSED
+	// one released it in Pause and is already stopped on its node.
+	paused := vm.State == lanternv1.VmState_VM_STATE_PAUSED
+	quotaAlreadyFreed := vm.State == lanternv1.VmState_VM_STATE_FAILED || paused
 
 	// Mark draining + emit event.
 	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_DRAINING, req.Reason, nil, time.Now().UTC())
@@ -399,7 +410,8 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	// running — do NOT free the quota slot or mark TERMINATED; leave the VM
 	// in DRAINING so the caller can retry and the quota is not fabricated.
 	node, _ := s.Store.GetNode(vm.NodeName)
-	if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{
+	// A PAUSED VM has nothing running to stop (its snapshot stays on the node).
+	if _, err := s.stopUnlessPaused(ctx, paused, node.Address, &lanternv1.StopRequest{
 		VmId:   req.VmId,
 		Grace:  req.Grace,
 		Reason: req.Reason,
@@ -421,6 +433,7 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		Reason: req.Reason,
 	})
 	s.Store.DeleteVM(req.VmId)
+	s.logIfSnapshotOrphaned(vm)
 	if !quotaAlreadyFreed {
 		s.Store.IncrTenantVMs(tenantID, -1)
 		if s.Metrics != nil {
@@ -429,6 +442,31 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	}
 
 	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
+}
+
+// logIfSnapshotOrphaned notes, once the last VM referencing a pause/fork
+// snapshot is gone, that the snapshot now lingers on its node. The manager has
+// no snapshot-delete RPC yet (ADR 0025 follow-up), so it cannot be reclaimed.
+func (s *SchedulerService) logIfSnapshotOrphaned(vm *cluster.VM) {
+	if vm.SnapshotID == "" {
+		return
+	}
+	if refs := s.Store.ListVMs(vm.TenantID, func(v *cluster.VM) bool { return v.SnapshotID == vm.SnapshotID }); len(refs) > 0 {
+		return
+	}
+	s.Logger.Info("snapshot orphaned: no VM references it and the manager has no delete RPC",
+		zap.String("snapshot_id", vm.SnapshotID),
+		zap.String("vm_id", vm.Handle.GetVmId()),
+		zap.String("node", vm.NodeName),
+		zap.String("tenant_id", vm.TenantID),
+	)
+}
+
+func (s *SchedulerService) stopUnlessPaused(ctx context.Context, paused bool, addr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
+	if paused {
+		return &lanternv1.StopResponse{Ok: true, Detail: "already stopped (paused)"}, nil
+	}
+	return s.Dialer.Stop(ctx, addr, req)
 }
 
 // Snapshot requests a snapshot of a running VM. Leader-only mutating operation.

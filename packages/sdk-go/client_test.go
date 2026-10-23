@@ -3,8 +3,11 @@ package lantern
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -148,5 +151,45 @@ func TestListEvalSuites_FiltersAndReturns(t *testing.T) {
 				t.Fatalf("unexpected suites: %+v", suites)
 			}
 		})
+	}
+}
+
+func TestVMLifecycle(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pause"):
+			w.Write([]byte(`{"vmId":"vm-1","snapshotId":"snap-1","state":"paused"}`))
+		case strings.HasSuffix(r.URL.Path, "/resume"):
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error":"conflict"}`))
+		case strings.HasSuffix(r.URL.Path, "/fork"):
+			w.Write([]byte(`{"sourceVmId":"vm-1","snapshotId":"snap-2","forks":[{"vmId":"vm-a","state":"running"},{"vmId":"vm-b","state":"failed","error":"boot"}]}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	ctx := context.Background()
+
+	p, err := c.PauseVM(ctx, "vm-1")
+	if err != nil || gotPath != "POST /v1/runtime/vms/vm-1/pause" || p.SnapshotID != "snap-1" || p.State != "paused" {
+		t.Fatalf("PauseVM = %+v, %v (%s)", p, err, gotPath)
+	}
+
+	_, err = c.ResumeVM(ctx, "vm-1")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || gotPath != "POST /v1/runtime/vms/vm-1/resume" {
+		t.Fatalf("ResumeVM err = %v (%s), want 409 APIError", err, gotPath)
+	}
+
+	f, err := c.ForkVM(ctx, "vm-1", 2)
+	if err != nil || gotPath != "POST /v1/runtime/vms/vm-1/fork" || gotBody != `{"count":2}` {
+		t.Fatalf("ForkVM = %v (%s %s)", err, gotPath, gotBody)
+	}
+	if f.SnapshotID != "snap-2" || len(f.Forks) != 2 || f.Forks[1].Error != "boot" {
+		t.Fatalf("ForkVM result = %+v", f)
 	}
 }
