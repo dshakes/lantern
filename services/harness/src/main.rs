@@ -24,6 +24,7 @@ mod logs;
 mod manager_client;
 mod otel;
 mod proto;
+mod reidentify;
 mod report;
 mod secrets;
 mod signals;
@@ -231,6 +232,23 @@ async fn run() -> Result<()> {
     //     workload is spawned so a bypassable allowlist never silently ships.
     egress::enforcement_preflight(&manager, egress_configured).await?;
 
+    // 4c. Re-identify watcher (ADR 0025 addendum): a guest restored from a
+    //     snapshot adopts the identity on its swapped cert drive. The
+    //     baseline is read NOW, before any snapshot of this VM can exist.
+    if let Some(device) = bootenv::cert_device() {
+        let baseline = tokio::task::spawn_blocking(move || reidentify::read_marker(device))
+            .await
+            .ok()
+            .flatten();
+        tokio::spawn(reidentify::run(
+            manager.clone(),
+            Arc::clone(&secrets),
+            Arc::clone(&egress_policy),
+            device,
+            baseline,
+        ));
+    }
+
     {
         let p = Arc::clone(&egress_policy);
         tokio::spawn(async move {
@@ -245,9 +263,8 @@ async fn run() -> Result<()> {
     //     workload always runs even if exec is unavailable.
     {
         let m = manager.clone();
-        let vm_id = env.vm_id.clone();
         tokio::spawn(async move {
-            if let Err(e) = exec::run(vm_id, m).await {
+            if let Err(e) = exec::run(m).await {
                 tracing::error!(error = %e, "exec: server exited");
             }
         });

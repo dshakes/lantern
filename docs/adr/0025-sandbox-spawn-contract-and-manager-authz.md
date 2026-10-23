@@ -114,7 +114,135 @@ check and boot two VMs.
 - A guest that leaks its cert can no longer control other VMs. Exfiltrating its
   cert gains nothing beyond its own harness channel.
 - Callers need a coordinated rollout to send the token (see §2).
-- A restored VM still runs with the *source* VM's in-guest identity (vm_id,
-  cert). Re-issuing identity on restore is a follow-up that belongs with the ADR
-  0007 drive-state work. Until then, restore is meant for same-tenant warm starts,
-  which ownership enforcement makes safe.
+- ~~A restored VM still runs with the *source* VM's in-guest identity.~~
+  Superseded by the addendum below: a restore re-issues identity.
+
+## Addendum (2026-10-23) — one identity per VM: wire vm_id at boot, re-identity on restore
+
+Wave 2 adds pause (Snapshot + Stop), resume (Spawn with the **same** wire
+vm_id and `restore_snapshot_id`) and fork (Spawn **N new** wire vm_ids, each
+restoring the same snapshot). Two defects blocked that.
+
+### A. Boot under the wire vm_id (identity gap)
+
+The Firecracker backend booted every VM under its own random UUID, which became
+the cert CN and the harness `vm_id`. The registry was then rekeyed to the
+scheduler's wire vm_id. As a result, harness Heartbeat and VendSecret lookups
+by the UUID missed after the rekey.
+
+**Decision.** `Spawn` copies `SpawnRequest.handle.vm_id` into the internal
+`ScheduleRequest.vm_id`. Firecracker boots under that id, so the cert CN/SAN,
+the `lantern.vm_id` boot-arg, `spawn.json.vm_id`, the `Handle.id` and the
+registry key are all the same value. The id is validated before it names host
+paths: 1-64 chars of `[A-Za-z0-9-]` with at least 12 hex digits. The
+scheduler's `vm-<uuid>` passes. The TAP name is `fc-` + the first 8 **hex
+digits** of the id, which matches the old naming for UUID ids. The rekey stays
+for backends that mint their own ids (docker/k8s) and is a no-op when the ids
+are equal.
+
+### B. A restore is a new identity
+
+A snapshot freezes the whole guest identity: in memory, the vm_id, the private
+key, the secret cache and the `ip=` addressing; in the vmstate, the NIC's TAP
+and the cert drive. Resuming it as-is would run N forks as one VM.
+
+**Mechanism (smallest correct one under Firecracker's snapshot model):**
+
+1. **Manager, before the guest runs.** `backend.restore` builds a full
+   `VmConfig` for the restoring request's vm_id. That gives it a fresh /30 +
+   TAP, a freshly issued cert (CN/SAN = new vm_id, new key) and a fresh
+   `certs.img` whose `spawn.json` carries the **restoring request's** contract
+   (`vm_id`, `declared_secrets`, `egress_rules`, env, `network`). The API
+   sequence is pure and unit-tested (`plan_identity_restore`):
+   `PUT /snapshot/load {resume_vm:false, network_overrides:[eth0 → own TAP]}`,
+   then `PATCH /drives/certs {path_on_host: new image}`, then
+   `PATCH /vm {Resumed}`. Jailed restores also stage the new `certs.img` (and
+   the base rootfs) at the in-jail basenames the vmstate references.
+2. **Manager, authz.** The registry pins the SHA-256 of the cert issued for the
+   VM's *current incarnation* (`HandleInfo.cert_sha256`, from
+   `RuntimeBackend::identity_pin`). Heartbeat, VendSecret and Report require
+   that exact cert. A cert frozen into a snapshot has the right CN but a
+   superseded fingerprint, so it is refused. This covers a resume under the
+   same id, and someone replaying the snapshot's stolen key. Secrets vended to
+   the old identity cannot be refreshed. The pin is dropped on Stop.
+3. **Guest, re-identify** (`services/harness/src/reidentify.rs`). Every
+   `mke2fs` image gets a new ext4 UUID. The harness records the cert drive's
+   UUID at boot and polls it every second (`posix_fadvise(DONTNEED)` + a 2 KiB
+   read). When the UUID changes, the harness:
+   - remounts the drive and overwrites the harness-only cert/key/CA copies in
+     place. TLS config is re-read on every connect, so no environment mutation
+     is needed.
+   - clears the secret cache and adopts the new declared secrets and egress
+     rules.
+   - re-addresses eth0 (SIOCSIFADDR/NETMASK, default route) and re-pins
+     `manager.lantern.internal` in `/etc/hosts`.
+   - swaps the shared `vm_id` and bumps an identity generation, which tears
+     down the Heartbeat and Report streams so they reconnect under the new
+     cert.
+   - adopts the new incarnation's tokens, held in the same shared state as
+     `vm_id`, so every reader sees the live value:
+     - `exec_token`: a typed `spawn.json` field that becomes
+       `LANTERN_HARNESS_EXEC_TOKEN`. The exec server's interceptor reads it per
+       call, so the previous token is rejected as soon as the swap lands.
+     - `LANTERN_AGENT_INSTANCE_TOKEN` from the new contract's `env`. The
+       control plane mints this per fork child.
+
+     If exec was authenticated and the new drive carries no exec token, the
+     re-identify is refused rather than keeping the old token.
+
+   A drive whose `spawn.json` has no `vm_id` is refused, and the harness
+   retries on the next tick. The fail-closed property comes from item 2, not
+   from the poll.
+
+**Not re-applied:** workload argv/env/uid. The restored workload is already
+running, and that state is what the snapshot exists to keep. Its tenant and
+contract, as enforced by the manager (registry tenant, secrets allowlist,
+egress), are the restoring request's.
+
+### Exec token per incarnation
+
+The manager mints a fresh exec token for every spawn **and** every restore,
+including a resume under the same vm_id. It is 244 bits taken from two v4
+UUIDs. The token is written only to the 0600 cert image, never to the kernel
+cmdline, and is recorded as `HandleInfo.exec_token`. The manager's two harness
+exec clients (Exec and ExecTool) send it as `authorization: Bearer`. Before
+this change the manager sent no token, so prod exec, which requires a token,
+could never authenticate.
+
+### Bare-mode fork of a running source fails closed
+
+A bare (non-jailed) restore reuses the snapshot's host paths verbatim,
+including the source VM's vsock UDS and `certs.img`. So when the snapshot's
+source vm is still registered on this node and the backend reports
+`restore_needs_stopped_source()` (bare Firecracker), the restore returns
+`FAILED_PRECONDITION` with the message "fork of a running VM requires the
+jailer". A resume is unaffected, because its source was stopped first. Jailed
+restores give each VM its own paths and are allowed.
+
+### Snapshot id for pause → resume/fork
+
+`RuntimeManager.Snapshot` returns `SnapshotResponse.snapshot_id` (field 1).
+That value is the bare snapshot-store id (a UUID, no `store://` prefix). Pass it
+back verbatim as `AgentSpec.restore_snapshot_id`. The snapshot is recorded
+under the registry tenant of the snapshotted VM, and restore is
+ownership-checked against `AgentSpec.tenant_id` (§4). `SnapshotResponse.sha256`
+is currently empty. Snapshot now reads the artifacts from the path the backend
+reports (`fc://…`, chroot-expanded for jailed VMs). Before this change, the
+service read the bare `/run/lantern/snapshots/<id>` path, so every jailed pause
+failed.
+
+### Residual risks (need a real KVM host to close)
+
+- `network_overrides` needs Firecracker >= 1.12. Older VMMs reject the load.
+- `PATCH /drives` between load and resume is assumed allowed. The guest must
+  observe the new backing file; it unmounts the drive after every read, which
+  drops its page cache, and also fadvises.
+- The vmstate's drive and vsock paths must resolve at load. A bare fork of a
+  *live* source is refused (see above). A bare fork of a stopped source still
+  needs the source's `certs.img` on disk. Jailed mode stages the **base**
+  rootfs, not the source VM's disk state (ADR 0007 Tier 2).
+- Fork of a live source: until the fork re-identifies (≤ ~1 s), it holds the
+  source's still-valid cert and IP. Exposure is same-tenant only, because
+  ownership gates the restore.
+- The guest re-addressing ioctls and the default-route swap are compiled and
+  unit-adjacent only. They are not exercised on a real guest kernel.
