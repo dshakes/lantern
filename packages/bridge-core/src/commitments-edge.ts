@@ -8,6 +8,8 @@
 //   * OWNER-ONLY: never surfaces a commitment to a contact; caller must gate.
 //   * DEFAULT OFF: whole edge is gated by LANTERN_CONCIERGE=on in session.ts.
 
+import { readFileSync, writeFileSync } from "node:fs";
+
 // ── API types (mirrors /v1/commitments contract) ──────────────────────────────
 
 export interface CommitmentStep {
@@ -523,9 +525,141 @@ export class CommitmentsClient {
   }
 }
 
+// ── Commitment ledger: follow-through (judge open → done) ────────────────────
+//
+// The open-commitment store is the control-plane /v1/commitments table (via
+// CommitmentsClient); nothing closed those rows unless the owner said so. The
+// ledger overlays {due, nextAction, state, evidence, lastJudgedAt} on each open
+// row and lets an LLM close ones the RECENT EVIDENCE shows are done. Anti-
+// hallucination (mirrors world-model.ts): open→done only when the model cites
+// evidence that appears VERBATIM in the evidence lines we sent. Any failure →
+// every state unchanged. OWNER-ONLY.
+
+export type LedgerState = "open" | "done" | "stale";
+
+export interface LedgerEntry {
+  id: string;
+  title: string;
+  due?: string;
+  nextAction: string;
+  state: LedgerState;
+  evidence?: string;
+  lastJudgedAt?: number;
+}
+
+const normWs = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+
+/** Ledger view of an open commitment (no judgment applied). */
+export function toLedgerEntry(c: Commitment): LedgerEntry {
+  return {
+    id: c.id,
+    title: c.title,
+    due: c.deadline,
+    nextAction: c.action_plan?.steps?.[0]?.title || c.title,
+    state: "open",
+  };
+}
+
+/**
+ * Ask the LLM (session key owner::commit-judge, supplied by the caller's
+ * llmCall) which open commitments the evidence shows are done/stale. Never
+ * throws; returns one entry per input commitment.
+ */
+export async function judgeCommitments(
+  open: Commitment[],
+  recentEvidence: string[],
+  llmCall: (prompt: string) => Promise<string>,
+  now: number = Date.now(),
+): Promise<LedgerEntry[]> {
+  const base = open.map(toLedgerEntry);
+  const evidence = recentEvidence.map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 150);
+  if (base.length === 0 || evidence.length === 0) return base;
+  const hay = normWs(evidence.join("\n"));
+  const prompt =
+    `You close the loop on the OWNER's open commitments. Below are open commitments and recent evidence ` +
+    `(the owner's messages/threads and actions the assistant took). For each commitment decide: ` +
+    `"done" ONLY if the evidence clearly shows it was fulfilled (then "evidence" MUST be one evidence line quoted ` +
+    `EXACTLY, copied verbatim); "stale" if it is clearly no longer relevant; otherwise "open". ` +
+    `Prefer "open" when unsure.\n` +
+    `Commitments:\n${base.map((b) => `- id=${b.id} | ${b.title}${b.due ? ` | due ${b.due}` : ""}`).join("\n")}\n` +
+    `Evidence:\n${evidence.map((l) => `> ${l.slice(0, 300)}`).join("\n")}\n` +
+    `Return STRICT JSON only: [{"id":"<id>","state":"open"|"done"|"stale","evidence":"<verbatim line or empty>"}]`;
+  let raw: string;
+  try {
+    raw = (await llmCall(prompt)) ?? "";
+  } catch {
+    return base;
+  }
+  const m = raw.match(/\[[\s\S]*\]/);
+  if (!m) return base;
+  let arr: unknown;
+  try { arr = JSON.parse(m[0]); } catch { return base; }
+  if (!Array.isArray(arr)) return base;
+  const byId = new Map(base.map((b) => [b.id, b]));
+  const judged = new Set<string>();
+  for (const it of arr as Array<{ id?: unknown; state?: unknown; evidence?: unknown }>) {
+    const e = typeof it?.id === "string" ? byId.get(it.id) : undefined;
+    if (!e) continue;
+    e.lastJudgedAt = now;
+    judged.add(e.id);
+    const ev = typeof it.evidence === "string" ? it.evidence.replace(/^>\s*/, "").trim() : "";
+    if (it.state === "done" && ev.length >= 8 && hay.includes(normWs(ev))) {
+      e.state = "done";
+      e.evidence = ev.slice(0, 300);
+    } else if (it.state === "stale") {
+      e.state = "stale";
+    }
+  }
+  return base;
+}
+
+export interface CommitmentJudgmentDeps {
+  client: Pick<CommitmentsClient, "list" | "done">;
+  /** JSON file holding {lastRunAt, entries}. */
+  stateFile: string;
+  now: number;
+  gatherEvidence: () => Promise<string[]> | string[];
+  llmCall: (prompt: string) => Promise<string>;
+  /** Owner self-chat send. */
+  send: (text: string) => Promise<unknown>;
+  intervalMs?: number;
+  log?: (msg: string, extra?: Record<string, unknown>) => void;
+}
+
+/** Cadenced (default 6h) driver: list open → judge → close done ones → FYI the owner. Never throws. */
+export async function runCommitmentJudgment(d: CommitmentJudgmentDeps): Promise<{ ran: boolean; closed: number }> {
+  const interval = d.intervalMs ?? 6 * 3_600_000;
+  try {
+    let lastRunAt = 0;
+    try { lastRunAt = (JSON.parse(readFileSync(d.stateFile, "utf8")) as { lastRunAt?: number }).lastRunAt || 0; } catch { /* first run */ }
+    if (d.now - lastRunAt < interval) return { ran: false, closed: 0 };
+    // Stamp BEFORE judging: a crash/throw costs one cycle, never a retry storm.
+    const save = (entries: LedgerEntry[]) => {
+      try { writeFileSync(d.stateFile, JSON.stringify({ lastRunAt: d.now, entries }), { mode: 0o600 }); } catch { /* non-fatal */ }
+    };
+    save([]);
+    const open = await d.client.list({ status: "open", limit: 20 });
+    const entries = await judgeCommitments(open, await d.gatherEvidence(), d.llmCall, d.now);
+    let closed = 0;
+    for (const e of entries) {
+      if (e.state !== "done") continue;
+      if (!(await d.client.done(e.id))) { e.state = "open"; d.log?.("commitment ledger: done() failed, left open", { id: e.id }); continue; }
+      closed += 1;
+      d.log?.("commitment ledger: closed", { id: e.id });
+      await d.send(`✅ closed: ${e.title}${e.evidence ? ` — saw: "${e.evidence}"` : ""}`).catch(() => {});
+    }
+    save(entries);
+    return { ran: true, closed };
+  } catch (err) {
+    d.log?.("commitment ledger failed (non-fatal)", { err: String(err) });
+    return { ran: true, closed: 0 };
+  }
+}
+
 // Self-chat prefixes this module emits — re-exported so bot-self.ts
 // stays in sync and the bridge never replies to its own concierge messages.
 export const CONCIERGE_SELF_PREFIXES: string[] = [
   "📝 tracking:", // task-capture ack
   "📌 ",          // commitment nudge
+  "✅ closed:",   // ledger follow-through FYI
 ];

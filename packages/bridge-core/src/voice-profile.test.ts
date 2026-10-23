@@ -165,7 +165,7 @@ describe("parseVoiceProfile", () => {
     const result = parseVoiceProfile(JSON.stringify(obj));
     assert.ok(result !== null);
     // Only the known fields survive; the extra one is dropped.
-    assert.equal((result as Record<string, unknown>)["someExtraField"], undefined);
+    assert.equal((result as unknown as Record<string, unknown>)["someExtraField"], undefined);
     assert.equal(result!.register, "casual");
   });
 });

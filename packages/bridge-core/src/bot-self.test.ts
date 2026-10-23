@@ -13,6 +13,7 @@ import { strict as assert } from "node:assert";
 import { isBotSelfMessage } from "./bot-self.ts";
 
 const BOT_TEXTS = [
+  "✅ closed: send Raju the deck — saw: \"sent Raju the deck\"",
   // From the 2026-05-29 log: bridge processing its own acks/progress
   "📁 one sec — looking through your files…",
   "📁 doc query: When should I apply for naturalization",
@@ -80,6 +81,7 @@ const BOT_TEXTS = [
 ];
 
 const USER_TEXTS = [
+  "✅ done with the deck, closed the loop",
   "When should I apply for US naturalization?",
   "When does my greencard expire",
   "When does my license expire",

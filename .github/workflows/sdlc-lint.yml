@@ -115,9 +115,20 @@ jobs:
         run: cd services/harness && cargo clippy --all-targets
 
       # ---- TypeScript -------------------------------------------------------
-      # TS lint/typecheck steps DEFERRED to a follow-up: ESLint 9 needs a flat
-      # eslint.config.js the packages don't have yet, and standalone `tsc` on
-      # bridge-core trips on missing @types/node + .ts import extensions (it is
-      # verified via tsx/`npm test` in the qa job, and the bridges typecheck via
-      # their own `npm run typecheck`). Adding proper eslint flat configs is its
-      # own task. The live lint gate is Go (govet) + Rust (clippy) above.
+      # ESLint 9 needs a flat eslint.config.js the packages don't have yet (own
+      # task), but typecheck is live: bridge-core is now tsc-clean (@types/node +
+      # allowImportingTsExtensions, noEmit — it is consumed as TS source), and the
+      # bridges typecheck against it. Parity/regression tests run in the qa job.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: tsc (bridge-core)
+        run: cd packages/bridge-core && npm ci && npx tsc --noEmit
+
+      - name: tsc (imessage-bridge)
+        run: cd services/imessage-bridge && npm ci && npm run typecheck
+
+      - name: tsc (whatsapp-bridge)
+        run: cd services/whatsapp-bridge && npm install --no-audit --no-fund && npm run typecheck
