@@ -69,6 +69,8 @@ Lantern is a serverless platform for running production AI agents reliably at an
    ─ Notifier (Go) ─ webhook · email · slack · sms · push
    ─ Billing  (Go) ─ usage events → metering pipeline → invoices
    ─ Scheduler (Go) ─ cron · delayed jobs · backpressure
+   ─ Runtime Scheduler (Go, :50055) ─ microVM placement; control-plane → scheduler → manager (:50054)
+     is the headless/microVM path, bypassing the engine (see Path B and the two-tier model below)
 ```
 
 ## Components in one paragraph each
@@ -89,6 +91,8 @@ The durable execution heart of Lantern. Event-sourced: every step start, step co
 
 Owns all interaction with physical compute. Receives "schedule this run on this isolation class" gRPC calls from the workflow engine and runtime scheduler. Builds a Kubernetes pod spec and sets `runtimeClassName` from the isolation class ([ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)): `runc` (TRUSTED), `gvisor` (STANDARD/UNTRUSTED), `kata-qemu` or `kata-fc` (HOSTILE), `crun+wasm` (WASM). Fail-closed: never downgrades UNTRUSTED/HOSTILE to a bare pod. Owns warm pools and snapshot/restore for fast cold starts (<200ms target). Enforces seccomp + egress filtering for untrusted classes. Streams stdout/stderr/events back over gRPC to the engine and gateway.
 
+On the microVM tier (Firecracker) the manager also owns the sandbox lifecycle — **pause** (snapshot + stop), **resume** (restore under the same `vm_id`), **fork** (N children from one snapshot) — and the **spawn contract**: a `spawn.json` on the read-only cert drive tells the in-VM harness what to run, which egress rules apply, and which uid to drop to. Every `RuntimeManager` RPC is authorized per call: callers present `x-lantern-service-token`; a per-VM cert (`OU=lantern-vm`) is refused everywhere except that VM's own harness channel. See [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
+
 ### Model Router (Rust)
 
 The single point of contact with all LLM providers. Implements a Vercel-AI-Gateway-style unified API: one endpoint, OpenAI Chat Completions and Responses–compatible. Adds:
@@ -99,6 +103,7 @@ The single point of contact with all LLM providers. Implements a Vercel-AI-Gatew
 - **Semantic cache** (embedding-based near-duplicate hit on read-only prompts)
 - **Provider failover** (transparent retry against the next provider on 5xx / rate limit)
 - **Per-tenant budgets** with hard cuts and warning webhooks
+- **Service-token auth** on its gRPC port (`x-lantern-service-token`, same shared token as the other internal services; invariant #7)
 - **Streaming generation IDs** injected on the first token (Vercel pattern) so dashboard reconnects can resume
 
 ### Memory Service (Go)
@@ -117,7 +122,7 @@ Listens to engine events. Delivers notifications via webhook, email (SES/Resend)
 
 ### Billing (Go)
 
-Captures usage events (CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress). Aggregates into a metering pipeline. Per-tenant cost attribution by tag. Hard budget enforcement integrated with the model router.
+Captures usage events (CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress). Aggregates into a metering pipeline. Per-tenant cost attribution by tag. Hard budget enforcement integrated with the model router. Budgets are per agent plus an optional tenant-wide daily cap (`PUT /v1/budgets/tenant`) that also covers agentless `/v1/completions`; workflow `ai-step` and `web_search` spend is metered into the same totals.
 
 ### Scheduler (Go)
 
@@ -182,7 +187,9 @@ The agent bundle runs as a process inside a hardened Kubernetes pod; the harness
    ├─ builds K8s pod spec; sets runtimeClassName (e.g., "gvisor")
    ├─ either restores from a warm snapshot (~28ms) or cold-boots (~150ms)
    ├─ injects the bundle, env, secrets, and a per-instance Ed25519 identity
-   └─ starts the harness (PID 1); harness starts the agent process
+   └─ starts the harness (PID 1); on Firecracker the contract (command, egress rules,
+      workload uid) arrives as spawn.json on the cert drive, and the harness drops the
+      workload to that uid
 
 5. Agent process executes user code inside the pod:
    ├─ each step() call hits the Workflow Engine over gRPC
@@ -211,6 +218,8 @@ The agent bundle runs as a process inside a hardened Kubernetes pod; the harness
    ├─ Engine writes RunCancelled
    └─ Streaming clients receive a final cancel event
 ```
+
+On the microVM tier a running VM can also be **paused** (snapshot + stop, frees the quota slot), **resumed** under the same `vm_id`, or **forked** into 1–10 children (`POST /v1/runtime/vms/{id}/pause|resume|fork`). A restored VM is re-issued a fresh identity — cert, exec token, network address — rather than reusing the source's. Diagram: [`sandbox-lifecycle.svg`](diagrams/sandbox-lifecycle.svg).
 
 ## Why each language
 

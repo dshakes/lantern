@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Concept } from "../_components/Concept";
 
 export default function SdkReferencePage() {
@@ -136,6 +137,14 @@ try {
         <code>@lantern/retry</code> package is planned but does not exist — do
         not import it.
       </div>
+
+      <p>
+        MicroVM sandboxes are managed under <code>client.runtime</code>{" "}
+        (<code>pause</code>, <code>resume</code>, <code>fork</code>,{" "}
+        <code>execStream</code>); Go has <code>PauseVM</code>/<code>ResumeVM</code>/
+        <code>ForkVM</code>. See{" "}
+        <Link href="/runtime/sandbox-lifecycle">Sandbox Lifecycle</Link>.
+      </p>
 
       <h2 id="python">Python SDK</h2>
 

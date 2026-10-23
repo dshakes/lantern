@@ -129,6 +129,12 @@ Enforces:
 - KMS-resolved secrets injected at exec time, never written to disk
 - Resource limits from `agent.yaml.limits` translated to cgroups + Firecracker MMIO
 
+**Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, 1–10 via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
+
+**Spawn contract.** The manager writes `spawn.json` (workload command, env, egress rules, `workload_uid`/`gid`) onto the read-only cert drive; the harness reads it at boot and drops the workload to that uid. The manager, not the caller, chooses the uid.
+
+**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](diagrams/sandbox-lifecycle.svg).
+
 See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 
 ---
@@ -167,6 +173,8 @@ Capabilities (not models):
 - **Semantic cache:** embedding of the prompt → kNN search in pgvector for near-duplicates within `cosine ≥ 0.985`. Read-only prompts only (no tools).
 
 **Generation IDs** are injected on the first token (Vercel pattern) so dashboard reconnects can resume mid-stream.
+
+**Auth.** The gRPC port is a trust boundary: callers must present `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, invariant #7).
 
 See [`06-model-router.md`](06-model-router.md).
 
@@ -218,7 +226,7 @@ Listens to engine events. Delivers notifications via webhook, email, Slack, Disc
 | **Internal surface** | gRPC: `EmitUsage`, `CheckBudget` |
 | **SLO** | Aggregation lag ≤ 60s; budget enforcement ≤ 5s |
 
-Captures usage events: CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress, connector-call counts. Aggregates into a metering pipeline. Per-tenant cost attribution by tag. **Hard budget enforcement is wired into the model router** — when a tenant hits 100% of budget, model calls return a `BudgetExceeded` structured error and the run goes to `paused-on-budget` state until topped up.
+Captures usage events: CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress, connector-call counts. Aggregates into a metering pipeline. Per-tenant cost attribution by tag. **Hard budget enforcement is wired into the model router** — when a tenant hits 100% of budget, model calls return a `BudgetExceeded` structured error and the run goes to `paused-on-budget` state until topped up. In the control plane, budgets are per agent plus an optional **tenant-wide daily cap** (`PUT /v1/budgets/tenant`, enforced on agentless `/v1/completions` too); workflow `ai-step` and built-in `web_search` spend is metered via `CheckBudget`/`RecordUsage`.
 
 ---
 
@@ -393,4 +401,10 @@ control-plane    model-router    surface-gateway
            │
            ▼
          vault
+
+  microVM path (headless runs): control-plane ─► runtime-scheduler (:50055)
+  ─► runtime-manager (:50054) ─► Firecracker VM (harness PID 1). Each hop
+  presents x-lantern-service-token (control-plane ─► scheduler, scheduler ─►
+  manager, control-plane ─► model-router). The engine's ExecTool client to the
+  manager still needs the token attached before prod enables it (ADR 0025 §2).
 ```

@@ -208,6 +208,14 @@ Re-identification matters because a restored guest otherwise resumes with the
 source VM's cert and id. Status: unit- and contract-tested; not yet exercised on a
 Linux/KVM host (see [`GA-READINESS.md`](../GA-READINESS.md)).
 
+## Diagrams
+
+<img src="diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime, including the microVM trust chain: control-plane to runtime-scheduler to runtime-manager to Firecracker VM with harness PID 1" width="100%">
+
+<img src="diagrams/sandbox-lifecycle.svg" alt="Sandbox lifecycle: running, pause (snapshot and stop), paused, resume (restore, re-identify, fresh exec token), and fork into N children each with a fresh identity" width="100%">
+
+Lifecycle and identity semantics: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
+
 ## Failure modes & recovery
 
 ### Node death
