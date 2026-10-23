@@ -91,14 +91,15 @@ async fn run_exec(
     argv: Vec<String>,
     tx: mpsc::Sender<Result<pb::ExecResponse, Status>>,
 ) {
-    let mut child = match tokio::process::Command::new(&command)
-        .args(&argv)
+    let mut cmd = tokio::process::Command::new(&command);
+    cmd.args(&argv)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-    {
+        .kill_on_drop(true);
+    // `vm exec` runs as the workload, never as PID 1's root.
+    crate::supervisor::apply_workload_identity(&mut cmd, crate::supervisor::workload_identity());
+    let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
             let _ = tx
@@ -234,7 +235,9 @@ fn spawn_on_pty(
         .stdout(std::process::Stdio::from(slave.try_clone()?))
         .stderr(std::process::Stdio::from(slave.try_clone()?))
         .kill_on_drop(true);
-    // SAFETY: `pre_exec` runs in the forked child before exec; setsid(2) and
+    crate::supervisor::apply_workload_identity(&mut cmd, crate::supervisor::workload_identity());
+    // SAFETY: `pre_exec` runs in the forked child before exec (after std's
+    // setgid/setuid, so TIOCSCTTY runs as the workload); setsid(2) and
     // ioctl(2) are both async-signal-safe.
     unsafe {
         cmd.pre_exec(|| {
