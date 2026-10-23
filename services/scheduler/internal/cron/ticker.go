@@ -22,10 +22,10 @@ type RunCreator func(ctx context.Context, tenantID, agentName string, input json
 
 // Ticker is the cron loop that checks schedules and fires them.
 type Ticker struct {
-	pool       *pgxpool.Pool
-	logger     *zap.Logger
-	interval   time.Duration
-	createRun  RunCreator
+	pool      *pgxpool.Pool
+	logger    *zap.Logger
+	interval  time.Duration
+	createRun RunCreator
 }
 
 // NewTicker creates a new cron Ticker.
@@ -79,11 +79,11 @@ func (t *Ticker) tick(ctx context.Context) {
 	defer rows.Close()
 
 	type dueSchedule struct {
-		id           string
-		tenantID     string
-		agentName    string
-		cronExpr     string
-		timezone     string
+		id            string
+		tenantID      string
+		agentName     string
+		cronExpr      string
+		timezone      string
 		inputTemplate json.RawMessage
 	}
 
