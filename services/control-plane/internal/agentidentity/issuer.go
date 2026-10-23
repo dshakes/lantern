@@ -241,8 +241,23 @@ func (iss *Issuer) withTTL(ttl time.Duration) *Issuer {
 //
 // On error the caller should fail the schedule request (fail-closed): an
 // agent that cannot be identified must not be scheduled.
-func (iss *Issuer) Issue(_ context.Context, tenantID, runID, agentVersionID string) (instanceID, token string, err error) {
-	instanceID = "ai-" + uuid.NewString()
+func (iss *Issuer) Issue(ctx context.Context, tenantID, runID, agentVersionID string) (instanceID, token string, err error) {
+	return iss.IssueForID(ctx, "ai-"+uuid.NewString(), tenantID, runID, agentVersionID)
+}
+
+// instanceIDNamespace scopes the name-based (v5) UUIDs InstanceIDForKey derives.
+var instanceIDNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("lantern:agent-instance"))
+
+// InstanceIDForKey derives a stable agent_instance_id from a schedule
+// idempotency key. A retried schedule that the scheduler dedups returns the VM
+// that booted with the FIRST attempt's token; deriving the id from the key
+// makes the retry's runtime_vms row carry the same id that token names.
+func InstanceIDForKey(tenantID, idempotencyKey string) string {
+	return "ai-" + uuid.NewSHA1(instanceIDNamespace, []byte(tenantID+"\x00"+idempotencyKey)).String()
+}
+
+// IssueForID is Issue with a caller-chosen instance id (see InstanceIDForKey).
+func (iss *Issuer) IssueForID(_ context.Context, instanceID, tenantID, runID, agentVersionID string) (string, string, error) {
 	now := iss.nowFn()
 
 	claims := Claims{
