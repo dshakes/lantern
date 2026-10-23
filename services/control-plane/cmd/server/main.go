@@ -840,7 +840,7 @@ func main() {
 		otelhttp.WithSpanNameFormatter(httpSpanName),
 	)
 	httpServer := &http.Server{
-		Addr:              ":8080",
+		Addr:              envOrDefault("HTTP_ADDR", ":8080"),
 		Handler:           tracedHTTP,
 		ReadHeaderTimeout: 5 * time.Second,
 	}

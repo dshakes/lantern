@@ -47,7 +47,7 @@ the personal harness is that stack dog-fooded on a real life.
 ### Wave 2 — sandbox lifecycle (the market differentiator)
 
 - `POST /v1/runtime/vms/{id}/pause` (snapshot + stop) / `resume`, and
-  `POST /v1/runtime/vms/{id}/fork?n=` (restore N times) on top of the now-honest
+  `POST /v1/runtime/vms/{id}/fork` with `{"count":N}` (restore N times, max 10) on top of the now-honest
   `restore_snapshot_id` path. SDK (TS/Python/Go) + `lantern vm pause|resume|fork`.
 - Snapshot-backed warm pool entries for sub-second resume.
 - File APIs exposed over REST + SDK (harness tools `read_file`/`write_file`/`list_dir` land in wave 1).
