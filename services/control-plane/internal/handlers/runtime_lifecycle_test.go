@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,7 @@ func TestStubScheduler_Lifecycle(t *testing.T) {
 	if snap1 == "" || snap1 != snap2 {
 		t.Fatalf("pause must be idempotent: %q vs %q", snap1, snap2)
 	}
-	res, err := s.Fork(ctx, "t", "vm-1", 3)
+	res, err := s.Fork(ctx, "t", "vm-1", []ForkIdentity{{"a", "x"}, {"b", "y"}, {"c", "z"}})
 	if err != nil || len(res.Forks) != 3 || res.SnapshotID != snap1 {
 		t.Fatalf("fork of paused stub vm = %+v, %v", res, err)
 	}
@@ -305,5 +306,51 @@ func TestManagerClient_SendsServiceToken(t *testing.T) {
 	_, _ = mgr.Stop(context.Background(), &lanternv1.StopRequest{VmId: "vm-1"})
 	if v := <-got; v != "s3cret" {
 		t.Errorf("manager saw token %q, want s3cret", v)
+	}
+}
+
+// TestFork_ChildrenGetFreshIdentities: each fork child is minted its own agent
+// identity; none inherits the source's instance id or token.
+func TestFork_ChildrenGetFreshIdentities(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+	tenant := uniqueTenantID("fork-id")
+	seedTestTenant(t, pool, tenant)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenant) })
+
+	sched := &recScheduler{}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+	tok := mintTestToken(t, tenant, "00000000-0000-0000-0000-0000000000c1", "owner")
+	src := "vm-fid-" + tenant[:8]
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, node, state, spec, agent_instance_id, created_at)
+		VALUES ($1, $2, 'node-a', 'running',
+		        '{"env":{"LANTERN_AGENT_INSTANCE_ID":"inst-src","LANTERN_AGENT_INSTANCE_TOKEN":"[redacted]"}}', 'inst-src', now())
+	`, src, tenant); err != nil {
+		t.Fatal(err)
+	}
+	c1, c2 := "vm-fid-a-"+tenant[:8], "vm-fid-b-"+tenant[:8]
+	sched.forkRes = ForkResult{SnapshotID: "snap-x", Forks: []ForkChildResult{{VMID: c1, State: "running"}, {VMID: c2, State: "running"}}}
+
+	if w := doLifecycle(h, tok, "fork", src, `{"count":2}`); w.Code != http.StatusOK {
+		t.Fatalf("fork: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(fmt.Sprint(sched.forkIdentities), "inst-src") {
+		t.Fatal("source identity passed to the scheduler")
+	}
+	ids := sched.forkIdentities
+	if len(ids) != 2 || ids[0].InstanceID == ids[1].InstanceID || ids[0].Token == ids[1].Token || ids[0].Token == "" {
+		t.Fatalf("identities not distinct/fresh: %d minted", len(ids))
+	}
+	for i, vm := range []string{c1, c2} {
+		var inst, envID string
+		if err := pool.QueryRow(context.Background(),
+			`SELECT agent_instance_id, spec->'env'->>'LANTERN_AGENT_INSTANCE_ID' FROM runtime_vms WHERE vm_id = $1`, vm,
+		).Scan(&inst, &envID); err != nil {
+			t.Fatal(err)
+		}
+		if inst == "inst-src" || inst != ids[i].InstanceID || envID != inst {
+			t.Errorf("child %s: agent_instance_id %q, spec env id %q, want %q", vm, inst, envID, ids[i].InstanceID)
+		}
 	}
 }
