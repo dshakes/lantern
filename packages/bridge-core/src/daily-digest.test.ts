@@ -65,9 +65,10 @@ test("formatNextEvent: skips past all-day events", () => {
 
 test("buildDigest deterministic fallback renders attention items (commitments/overdue/sleep)", async () => {
   const data: DigestData = {
-    autoReplies: 2,
+    repliesSent: 2,
     pausedContacts: [],
-    watchedThreads: 0,
+    monitoredChats: 0,
+    channelLabel: "iMessage",
     escalations: 1,
     commitments: [
       { title: "send Raju the deck", assignedBy: "Raju" },
@@ -78,7 +79,7 @@ test("buildDigest deterministic fallback renders attention items (commitments/ov
     // Pre-supplied so the fallback makes zero network calls in tests.
     drafts: { count: 1, sample: "Sam" },
     nextEvent: null,
-  } as DigestData;
+  };
 
   const body = await buildDigest(data);
   assert.match(body, /on your plate/);

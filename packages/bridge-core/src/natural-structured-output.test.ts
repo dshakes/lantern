@@ -11,7 +11,7 @@ test("suppresses the exact JSON that leaked in the field", () => {
   const draft = '{"topic": "customer pipeline", "outcome": "They discussed companies in the current pipeline."}';
   const v = detectBotTells(draft, "we have Intuit, squarespace, recall, Wells Fargo in pipeline rn");
   assert.equal(v.ok, false);
-  assert.match(v.reason, /structured|extraction/i);
+  assert.match(v.reason ?? "", /structured|extraction/i);
 });
 
 test("suppresses fenced JSON and other structured shapes", () => {

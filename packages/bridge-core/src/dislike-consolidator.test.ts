@@ -115,7 +115,7 @@ test("writeStyleLessons creates the managed section and dedups by id", async () 
 
   // Update one lesson's text → in-place update, still one occurrence.
   const r3 = await writeStyleLessons(
-    [{ id: "no-exclamation", text: "Never use exclamation marks.", support: 9 }],
+    [{ id: "no-exclamation", text: "Never use exclamation marks." }],
     { profilePath: path },
   );
   assert.deepEqual(r3.updated, ["no-exclamation"]);
