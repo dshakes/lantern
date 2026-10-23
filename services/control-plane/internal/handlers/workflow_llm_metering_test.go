@@ -58,7 +58,18 @@ func TestMeteredLLMCall(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err=%v want %v", err, tc.wantErr)
 			}
-			var tin int64
+			var tin, runs int64
+			var cost float64
+			_ = pool.QueryRow(ctx, `SELECT COALESCE(SUM(runs_count),0), COALESCE(SUM(cost_usd),0) FROM agent_usage_daily WHERE tenant_id=$1 AND agent_name=$2`, tenant, agent).Scan(&runs, &cost)
+			wantRuns, wantCost := int64(0), 0.01
+			if tc.exhausted {
+				wantRuns, wantCost = 1, 5 // seeded row only
+			} else if tc.wantTokens == 0 {
+				wantCost = 0
+			}
+			if runs != wantRuns || cost != wantCost {
+				t.Fatalf("runs_count=%d cost=%v want %d/%v", runs, cost, wantRuns, wantCost)
+			}
 			_ = pool.QueryRow(ctx, `SELECT COALESCE(SUM(tokens_in),0) FROM agent_usage_daily WHERE tenant_id=$1 AND agent_name=$2`, tenant, agent).Scan(&tin)
 			if tin != tc.wantTokens {
 				t.Fatalf("tokens_in=%d want %d", tin, tc.wantTokens)

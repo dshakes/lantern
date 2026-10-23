@@ -49,7 +49,6 @@ func runStatusDP(t *testing.T, pool *pgxpool.Pool, runID string) string {
 func TestDataPlane_RoutingLoop_E2E(t *testing.T) {
 	pool := openTestPool(t)
 	dpMigrateAndSeed(t, pool)
-	
 
 	const regToken = "loop-tok"
 	planeID := seedDP(t, pool, routeTenant, sha256Hex(regToken))

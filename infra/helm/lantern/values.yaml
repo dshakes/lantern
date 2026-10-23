@@ -74,6 +74,9 @@ workflowEngine:
   service:
     type: ClusterIP
     port: 50052
+  env:
+    LANTERN_ENV: "production"
+    LANTERN_RLS_ENFORCE: ""
   resources:
     requests:
       cpu: 200m
