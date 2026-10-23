@@ -688,3 +688,51 @@ export interface ForecastResult {
   wouldExceedBudget: boolean;
   blockReason?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Runtime (microVM) types
+// ---------------------------------------------------------------------------
+
+export type VmState = "pending" | "starting" | "running" | "paused" | "draining" | "terminated" | "failed" | (string & {});
+
+export interface RuntimeVm {
+  vmId: string;
+  state: VmState;
+  /** Set once the VM has been paused/snapshotted. */
+  snapshotId?: string;
+  /** Set on VMs created by fork(). */
+  parentVmId?: string;
+  [key: string]: unknown;
+}
+
+export interface VmPauseResult {
+  vmId: string;
+  snapshotId: string;
+  state: "paused";
+}
+
+export interface VmResumeResult {
+  vmId: string;
+  snapshotId: string;
+  state: "running";
+}
+
+export interface VmForkEntry {
+  vmId: string;
+  state: VmState;
+  /** Present when this particular fork failed. */
+  error?: string;
+}
+
+export interface VmForkResult {
+  sourceVmId: string;
+  snapshotId: string;
+  forks: VmForkEntry[];
+}
+
+export type ExecStreamEvent =
+  | { type: "stdout" | "stderr"; data: string }
+  | { type: "exit"; exitCode: number };
+
+/** Buffered (non-streaming) exec response; shape is owned by the control-plane. */
+export type ExecResult = Record<string, unknown>;

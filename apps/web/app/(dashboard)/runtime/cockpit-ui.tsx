@@ -16,6 +16,7 @@ export const STATE_STYLES: Record<VmState, { dot: string; text: string; label: s
   pending:    { dot: "bg-zinc-500",            text: "text-zinc-400", label: "Pending" },
   spawning:   { dot: "bg-zinc-400",            text: "text-zinc-300", label: "Spawning" },
   running:    { dot: "bg-emerald-500/80",      text: "text-zinc-200", label: "Running" },
+  paused:     { dot: "bg-amber-500/70",        text: "text-zinc-300", label: "Paused" },
   draining:   { dot: "bg-zinc-400",            text: "text-zinc-300", label: "Draining" },
   terminated: { dot: "bg-zinc-600",            text: "text-zinc-500", label: "Terminated" },
   failed:     { dot: "bg-red-500/70",          text: "text-zinc-300", label: "Failed" },
