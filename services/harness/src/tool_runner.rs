@@ -30,9 +30,12 @@
 //   read_file   args: { path: string, max_bytes?: number }
 //   write_file  args: { path: string, content: string, mode?: number|"0644" }
 //   list_dir    args: { path: string }
-//               Confined to the workspace root (LANTERN_WORKSPACE, default
-//               /workspace); `..`/symlink escapes rejected. Written files are
-//               chowned to the workload uid.
+//               Confined to the fixed workspace root /workspace (NOT
+//               configurable: workload env reaches the harness's own env, so
+//               an env-chosen root could be `/`); `..`/symlink escapes
+//               rejected. On Linux every open runs under the workload's
+//               fsuid/fsgid, so the kernel applies the workload's own file
+//               permissions and new files are owned by it.
 //
 // Every captured output is capped at TOOL_OUTPUT_MAX_BYTES; a truncated value
 // ends with TRUNCATED_MARKER and the result carries `"truncated": true`.
@@ -212,11 +215,21 @@ async fn dispatch(env: ToolEnvelope) -> ToolResult {
         "shell_exec" => shell_exec(env.args, timeout).await,
         "http_fetch" => http_fetch(env.args, timeout).await,
         "read_file" | "write_file" | "list_dir" => {
-            let root = workspace_root();
             let tool = env.tool;
             let args = env.args;
-            // Blocking fs syscalls stay off the executor.
-            let task = tokio::task::spawn_blocking(move || fs_tool(&tool, &args, &root));
+            // Blocking fs syscalls stay off the executor. Credentials are
+            // per-thread, so they are assumed on (and restored for) the
+            // blocking thread that does the work.
+            let task = tokio::task::spawn_blocking(move || {
+                let _creds = match FsCreds::assume(crate::supervisor::workload_identity()) {
+                    Ok(c) => c,
+                    Err(e) => return ToolResult::err(format!("{tool}: {e}")),
+                };
+                match workspace_root() {
+                    Ok(root) => fs_tool(&tool, &args, &root),
+                    Err(e) => ToolResult::err(format!("{tool}: {e}")),
+                }
+            });
             match tokio::time::timeout(timeout, task).await {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => ToolResult::err(format!("fs tool panicked: {e}")),
@@ -434,10 +447,93 @@ async fn http_fetch(args: serde_json::Value, timeout: Duration) -> ToolResult {
 /// Max entries `list_dir` returns.
 const LIST_DIR_MAX_ENTRIES: usize = 10_000;
 
-fn workspace_root() -> PathBuf {
-    std::env::var_os("LANTERN_WORKSPACE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/workspace"))
+/// Confinement root of the file tools. A constant, deliberately: spawn.json
+/// `env` and `lantern.env.*` boot-args are hydrated into the harness's OWN
+/// environment, so any env-chosen root is workload-chosen (`/` would expose
+/// the mTLS key under /run/lantern).
+const WORKSPACE_ROOT: &str = "/workspace";
+
+fn workspace_root() -> Result<PathBuf, String> {
+    check_workspace_root(Path::new(WORKSPACE_ROOT))
+}
+
+/// `root` must already be canonical (no symlink anywhere in it) and must not
+/// be `/`: a workload that could swap /workspace for a link to `/` or
+/// /run/lantern would otherwise move the confinement root itself.
+fn check_workspace_root(root: &Path) -> Result<PathBuf, String> {
+    let canonical = root
+        .canonicalize()
+        .map_err(|e| format!("workspace root {root:?} unavailable: {e}"))?;
+    if canonical != root || canonical == Path::new("/") {
+        return Err(format!(
+            "workspace root {root:?} resolves to {canonical:?}; refusing"
+        ));
+    }
+    Ok(canonical)
+}
+
+/// The workload's filesystem credentials on the CURRENT thread for as long as
+/// the guard lives (Linux `setfsuid`/`setfsgid` are per-thread syscalls). With
+/// a non-root fsuid the kernel drops the fs capabilities (DAC override,
+/// chown, …), so every open below is checked against the workload's own
+/// permissions — root-owned guest files are out of reach even if a path check
+/// were wrong. Restored on drop: the blocking pool reuses threads.
+///
+/// ponytail: supplementary groups stay the harness's (root's); files readable
+/// only via the root GROUP remain readable. Per-thread setgroups if that ever
+/// matters.
+#[cfg(target_os = "linux")]
+struct FsCreds(Option<(libc::c_long, libc::c_long)>);
+
+#[cfg(target_os = "linux")]
+impl FsCreds {
+    fn assume(id: Option<crate::supervisor::WorkloadIdentity>) -> Result<Self, String> {
+        let Some(id) = id else {
+            return Ok(Self(None)); // dev: no workload uid, harness creds
+        };
+        // Raw syscalls, not libc wrappers: explicitly this thread only.
+        // SAFETY: setfsuid/setfsgid take an id and return the previous one.
+        let prev_gid = unsafe { libc::syscall(libc::SYS_setfsgid, id.gid) };
+        // SAFETY: as above.
+        let prev_uid = unsafe { libc::syscall(libc::SYS_setfsuid, id.uid) };
+        let guard = Self(Some((prev_uid, prev_gid)));
+        // The calls report no error; an invalid id (-1) queries the current one.
+        // SAFETY: as above; -1 is never applied.
+        let (uid, gid) = unsafe {
+            (
+                libc::syscall(libc::SYS_setfsuid, u32::MAX),
+                libc::syscall(libc::SYS_setfsgid, u32::MAX),
+            )
+        };
+        if uid != libc::c_long::from(id.uid) || gid != libc::c_long::from(id.gid) {
+            return Err("could not assume the workload's filesystem credentials".into());
+        }
+        Ok(guard)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for FsCreds {
+    fn drop(&mut self) {
+        if let Some((uid, gid)) = self.0 {
+            // SAFETY: restoring the ids returned by `assume`.
+            unsafe {
+                libc::syscall(libc::SYS_setfsuid, uid);
+                libc::syscall(libc::SYS_setfsgid, gid);
+            }
+        }
+    }
+}
+
+/// Non-Linux dev hosts: no per-thread fs credentials; the harness's own apply.
+#[cfg(not(target_os = "linux"))]
+struct FsCreds;
+
+#[cfg(not(target_os = "linux"))]
+impl FsCreds {
+    fn assume(_id: Option<crate::supervisor::WorkloadIdentity>) -> Result<Self, String> {
+        Ok(Self)
+    }
 }
 
 /// Resolve `requested` (absolute, or relative to `root`) to a canonical path
@@ -680,12 +776,10 @@ fn write_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolR
     f.write_all(content.as_bytes())
         .map_err(|e| format!("{path}: {e}"))?;
     // `mode` at create is umask-filtered and ignored for an existing file.
+    // Ownership needs no chown: the file was created under the workload's
+    // fsuid/fsgid (see `FsCreds`).
     f.set_permissions(std::fs::Permissions::from_mode(mode))
         .map_err(|e| format!("{path}: {e}"))?;
-    if let Some(id) = crate::supervisor::workload_identity() {
-        std::os::unix::fs::fchown(&f, Some(id.uid), Some(id.gid))
-            .map_err(|e| format!("{path}: chown: {e}"))?;
-    }
     Ok(ToolResult::ok(
         serde_json::json!({ "bytes_written": content.len() }),
     ))
@@ -1047,6 +1141,84 @@ mod tests {
             "s3cret"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The confinement root is fixed: a workload-supplied LANTERN_WORKSPACE
+    /// (spawn.json env / lantern.env.* both land in the harness env) cannot
+    /// widen it to `/`.
+    #[tokio::test]
+    async fn workload_lantern_workspace_cannot_widen_the_root() {
+        // SAFETY: LANTERN_WORKSPACE is read by no harness code (that is the
+        // point of the test); std's env lock serialises std readers.
+        unsafe { std::env::set_var("LANTERN_WORKSPACE", "/") };
+        let r = dispatch(env("read_file", serde_json::json!({"path": "etc/passwd"}))).await;
+        unsafe { std::env::remove_var("LANTERN_WORKSPACE") };
+        assert!(!r.ok, "read outside /workspace must fail: {:?}", r.result);
+        assert_eq!(WORKSPACE_ROOT, "/workspace");
+    }
+
+    #[test]
+    fn workspace_root_must_be_canonical_and_not_slash() {
+        assert!(check_workspace_root(Path::new("/")).is_err());
+        let (base, ws) = sandbox("rootcheck");
+        let ws = ws.canonicalize().unwrap();
+        assert_eq!(check_workspace_root(&ws).unwrap(), ws);
+        // A root that is (or passes through) a symlink is refused, even when
+        // it points somewhere harmless.
+        let cbase = base.canonicalize().unwrap();
+        std::os::unix::fs::symlink(&ws, cbase.join("link-to-ws")).unwrap();
+        assert!(check_workspace_root(&cbase.join("link-to-ws")).is_err());
+        std::os::unix::fs::symlink("/", cbase.join("link-to-slash")).unwrap();
+        assert!(check_workspace_root(&cbase.join("link-to-slash")).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// File tools run under the workload's fs credentials. As root (the
+    /// in-guest harness): a root-only file is unreadable while assumed and
+    /// readable again after the guard drops. As non-root (CI): assuming
+    /// another uid is impossible and reported, never silently ignored.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fs_creds_apply_the_workload_identity_per_thread() {
+        use crate::supervisor::WorkloadIdentity;
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: plain id getters.
+        let (euid, egid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        if euid == 0 {
+            let (base, ws) = sandbox("fscreds");
+            let f = ws.join("root-only");
+            std::fs::write(&f, "x").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+            {
+                let _g = FsCreds::assume(Some(WorkloadIdentity {
+                    uid: 65534,
+                    gid: 65534,
+                }))
+                .expect("root can assume");
+                assert_eq!(
+                    std::fs::read(&f).unwrap_err().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                );
+            }
+            assert!(std::fs::read(&f).is_ok(), "creds restored on drop");
+            let _ = std::fs::remove_dir_all(&base);
+        } else {
+            assert!(
+                FsCreds::assume(Some(WorkloadIdentity {
+                    uid: euid,
+                    gid: egid
+                }))
+                .is_ok()
+            );
+            assert!(
+                FsCreds::assume(Some(WorkloadIdentity {
+                    uid: euid + 1,
+                    gid: egid + 1
+                }))
+                .is_err(),
+                "a failed switch must be reported"
+            );
+        }
     }
 
     #[test]

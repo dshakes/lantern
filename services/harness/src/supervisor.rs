@@ -98,7 +98,9 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 
 /// `LANTERN_*` keys a workload child may see: identity/locator values the
 /// workload SDK reads, none of them secret.
-const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 11] = [
+const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 12] = [
+    // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
+    "LANTERN_RESUME",
     "LANTERN_VM_ID",
     "LANTERN_RUN_ID",
     "LANTERN_ENV",
@@ -338,6 +340,21 @@ impl Supervisor {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn workload_sees_resume_marker() {
+        let env = workload_env_from(
+            [("LANTERN_RESUME", "1"), ("LANTERN_EGRESS_FAIL_CLOSED", "0")]
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into())),
+        );
+        let keys: Vec<_> = env
+            .iter()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        assert!(keys.contains(&"LANTERN_RESUME".to_string()));
+        assert!(!keys.contains(&"LANTERN_EGRESS_FAIL_CLOSED".to_string()));
+    }
 
     #[test]
     fn proxy_env_sets_all_three_proxy_vars_both_cases() {
