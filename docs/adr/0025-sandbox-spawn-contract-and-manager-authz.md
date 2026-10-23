@@ -179,6 +179,16 @@ and the cert drive. Resuming it as-is would run N forks as one VM.
    - swaps the shared `vm_id` and bumps an identity generation, which tears
      down the Heartbeat and Report streams so they reconnect under the new
      cert.
+   - adopts the new incarnation's tokens, held in the same shared state as
+     `vm_id`, so every reader sees the live value:
+     - `exec_token`: a typed `spawn.json` field that becomes
+       `LANTERN_HARNESS_EXEC_TOKEN`. The exec server's interceptor reads it per
+       call, so the previous token is rejected as soon as the swap lands.
+     - `LANTERN_AGENT_INSTANCE_TOKEN` from the new contract's `env`. The
+       control plane mints this per fork child.
+
+     If exec was authenticated and the new drive carries no exec token, the
+     re-identify is refused rather than keeping the old token.
 
    A drive whose `spawn.json` has no `vm_id` is refused, and the harness
    retries on the next tick. The fail-closed property comes from item 2, not
@@ -188,6 +198,26 @@ and the cert drive. Resuming it as-is would run N forks as one VM.
 running, and that state is what the snapshot exists to keep. Its tenant and
 contract, as enforced by the manager (registry tenant, secrets allowlist,
 egress), are the restoring request's.
+
+### Exec token per incarnation
+
+The manager mints a fresh exec token for every spawn **and** every restore,
+including a resume under the same vm_id. It is 244 bits taken from two v4
+UUIDs. The token is written only to the 0600 cert image, never to the kernel
+cmdline, and is recorded as `HandleInfo.exec_token`. The manager's two harness
+exec clients (Exec and ExecTool) send it as `authorization: Bearer`. Before
+this change the manager sent no token, so prod exec, which requires a token,
+could never authenticate.
+
+### Bare-mode fork of a running source fails closed
+
+A bare (non-jailed) restore reuses the snapshot's host paths verbatim,
+including the source VM's vsock UDS and `certs.img`. So when the snapshot's
+source vm is still registered on this node and the backend reports
+`restore_needs_stopped_source()` (bare Firecracker), the restore returns
+`FAILED_PRECONDITION` with the message "fork of a running VM requires the
+jailer". A resume is unaffected, because its source was stopped first. Jailed
+restores give each VM its own paths and are allowed.
 
 ### Snapshot id for pause → resume/fork
 
@@ -207,14 +237,12 @@ failed.
 - `PATCH /drives` between load and resume is assumed allowed. The guest must
   observe the new backing file; it unmounts the drive after every read, which
   drops its page cache, and also fadvises.
-- The vmstate's drive and vsock paths must resolve at load. Bare mode reuses
-  the source VM's vsock UDS path, so a fork of a *live* source collides; run
-  forks jailed. Jailed mode stages the **base** rootfs, not the source VM's disk
-  state (ADR 0007 Tier 2).
+- The vmstate's drive and vsock paths must resolve at load. A bare fork of a
+  *live* source is refused (see above). A bare fork of a stopped source still
+  needs the source's `certs.img` on disk. Jailed mode stages the **base**
+  rootfs, not the source VM's disk state (ADR 0007 Tier 2).
 - Fork of a live source: until the fork re-identifies (≤ ~1 s), it holds the
   source's still-valid cert and IP. Exposure is same-tenant only, because
   ownership gates the restore.
 - The guest re-addressing ioctls and the default-route swap are compiled and
   unit-adjacent only. They are not exercised on a real guest kernel.
-- `LANTERN_HARNESS_EXEC_TOKEN` / `LANTERN_AGENT_INSTANCE_TOKEN` are read from
-  boot env and stay snapshot-frozen across a re-identify.

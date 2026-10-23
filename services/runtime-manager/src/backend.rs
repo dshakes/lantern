@@ -190,6 +190,20 @@ pub trait RuntimeBackend: Send + Sync {
         None
     }
 
+    /// The in-guest exec server's bearer token for `handle_id`'s current
+    /// incarnation, when this backend mints one. Default `None`.
+    fn exec_token(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
+    /// Whether restoring a snapshot while its SOURCE VM still runs on this
+    /// node would collide on host resources the snapshot pins (bare
+    /// Firecracker: the source's vsock UDS and cert image paths). The service
+    /// then refuses the restore instead of colliding. Default `false`.
+    fn restore_needs_stopped_source(&self) -> bool {
+        false
+    }
+
     /// What the backend can say about a handle's liveness.
     ///
     /// The distinction that matters is `Starting` vs `Exited`. A workload can
