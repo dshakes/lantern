@@ -119,10 +119,16 @@ func (h *LlmProxyHandler) modelRouterClient() (lanternv1.ModelServiceClient, boo
 // credentials this carries are application-layer secrets — for cross-cluster
 // deployments this hop must run over mTLS or a service mesh (see ADR).
 func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, error) {
-	conn, err := grpc.NewClient(addr,
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-	)
+	}
+	// The router requires x-lantern-service-token (invariant #7); reuse the
+	// scheduler creds helper. Empty token → nothing attached (dev only).
+	if tok := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"); tok != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, nil, err
 	}
