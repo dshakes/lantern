@@ -57,15 +57,21 @@ fn parse_env() -> Result<HarnessEnv> {
     let vm_id = std::env::var("LANTERN_VM_ID").context("LANTERN_VM_ID env var required")?;
     let manager_addr =
         std::env::var("LANTERN_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
-    // Space-separated argv. A VM may legitimately declare NO workload — a
-    // boot/verification VM whose job is to come up, serve the secrets + exec
-    // channels, and heartbeat until it is stopped. Absent or blank therefore
-    // means "supervise nothing", not a configuration error.
-    let workload_cmd: Vec<String> = std::env::var("LANTERN_WORKLOAD_CMD")
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    // LANTERN_WORKLOAD_ARGV (JSON array, from spawn.json) is authoritative —
+    // it is the only form in which an argument containing a space survives.
+    // Otherwise LANTERN_WORKLOAD_CMD, space-separated. A VM may legitimately
+    // declare NO workload — a boot/verification VM whose job is to come up,
+    // serve the secrets + exec channels, and heartbeat until it is stopped.
+    // Absent or blank therefore means "supervise nothing", not an error.
+    let workload_cmd: Vec<String> = match std::env::var("LANTERN_WORKLOAD_ARGV") {
+        Ok(json) => serde_json::from_str(&json)
+            .context("LANTERN_WORKLOAD_ARGV must be a JSON array of strings")?,
+        Err(_) => std::env::var("LANTERN_WORKLOAD_CMD")
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect(),
+    };
 
     // LANTERN_DECLARED_SECRETS is a JSON array of {env_name, secret_uri}.
     // Missing or unparseable -> empty list; secrets module rejects all
@@ -124,7 +130,7 @@ fn main() -> Result<()> {
     // environment — the kernel passes the spawn contract on the command line
     // instead. Translate it before anything reads configuration (including
     // LANTERN_TRACE_PARENT below).
-    bootenv::bootstrap();
+    bootenv::bootstrap()?;
 
     // ---- async phase: the environment is now frozen ------------------------
     tokio::runtime::Builder::new_multi_thread()
