@@ -65,7 +65,7 @@
     <rect x="20" y="62" width="532" height="92" rx="10" fill="#11182a" stroke="#334155"/>
     <text x="36" y="84" class="t" font-size="12.5" font-weight="700">Workflow interpreter <tspan class="port" dx="200">internal/workflow</tspan></text>
     <text x="36" y="104" class="sub">trigger · ai-step · tool · connector · condition · loop · subagent · approval · end</text>
-    <text x="36" y="122" class="sub">per-step retry <tspan class="code">node.retry {maxAttempts, backoffMs, classes}</tspan> · confidence gate → human approval</text>
+    <text x="36" y="122" class="sub">per-step retry <tspan class="code">node.retry {maxAttempts, backoffMs, classes}</tspan> · confidence gate</text>
     <text x="36" y="140" class="sub">step_retrying + confidence_evaluated journaled — visible in the run waterfall</text>
 
     <rect x="20" y="168" width="532" height="74" rx="10" fill="#11182a" stroke="#334155"/>
@@ -75,7 +75,7 @@
 
     <rect x="20" y="256" width="532" height="56" rx="10" fill="#10241b" stroke="#1f6f4e"/>
     <text x="36" y="278" class="t" font-size="12" font-weight="700" fill="#6ee7b7">Guarantees</text>
-    <text x="36" y="297" class="sub">durable steps · crash-resume from last completed step · exactly-once side effects · budget-metered</text>
+    <text x="36" y="297" class="sub">durable steps · crash-resume from last completed step · exactly-once side effects</text>
   </g>
 
   <!-- ============ MICROVM TIER ============ -->
