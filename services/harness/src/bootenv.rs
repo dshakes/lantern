@@ -266,13 +266,37 @@ pub fn bootstrap() -> anyhow::Result<()> {
     }
     report_entropy_source();
     let spawn = mount_cert_drive();
-    // Read LANTERN_ENV before the contract is applied: whether a malformed
-    // contract is fatal cannot depend on that same contract.
-    let contract = resolve_spawn_contract(spawn, crate::tls::is_prod_env())?;
+    // Decide prod-ness before the contract is applied (whether a malformed
+    // contract is fatal cannot depend on that same contract) — but from the
+    // boot-args too, which are not hydrated yet: on Firecracker that is where
+    // LANTERN_ENV arrives.
+    let cmdline = std::fs::read_to_string(CMDLINE_PATH).ok();
+    let prod = boot_is_prod(
+        std::env::var("LANTERN_ENV").ok().as_deref(),
+        cmdline.as_deref(),
+    );
+    let contract = resolve_spawn_contract(spawn, prod)?;
     hydrate_env_from_cmdline(contract);
     assemble_declared_secrets();
     pin_manager_hostname();
     Ok(())
+}
+
+/// Whether this boot is production, for decisions taken before boot-args are
+/// hydrated. Prod if EITHER the process env or the boot-args say so. An
+/// unreadable cmdline counts as prod: it is only in doubt inside a guest
+/// (spawn.json only exists where the cert drive mounts, i.e. Linux with
+/// procfs), and there doubt must fail closed.
+pub fn boot_is_prod(process_env: Option<&str>, cmdline: Option<&str>) -> bool {
+    if process_env.is_some_and(crate::tls::is_prod_value) {
+        return true;
+    }
+    let Some(cmdline) = cmdline else {
+        return true;
+    };
+    env_from_cmdline(cmdline)
+        .iter()
+        .any(|(k, v)| k == "LANTERN_ENV" && crate::tls::is_prod_value(v))
 }
 
 /// Rebuild `LANTERN_DECLARED_SECRETS` from the per-secret boot-args keys.
@@ -863,6 +887,25 @@ mod tests {
         // Keys the contract does not set still come from boot-args.
         assert_eq!(all("LANTERN_VM_ID"), vec!["vm-1"]);
         assert_eq!(all("KEEP"), vec!["1"]);
+    }
+
+    /// LANTERN_ENV carried only in boot-args (the Firecracker path) must make
+    /// a malformed spawn.json fatal even though boot-args are hydrated later.
+    #[test]
+    fn prod_from_boot_args_makes_malformed_contract_fatal() {
+        let cmd =
+            |env: &str| format!("console=ttyS0 lantern.vm_id=v lantern.env.LANTERN_ENV={env}");
+        assert!(boot_is_prod(None, Some(&cmd("prod"))));
+        assert!(boot_is_prod(None, Some(&cmd("Staging"))));
+        assert!(!boot_is_prod(None, Some(&cmd("dev"))));
+        assert!(!boot_is_prod(None, Some("console=ttyS0")));
+        // Process env alone still counts; a dev cmdline cannot downgrade it.
+        assert!(boot_is_prod(Some("production"), Some(&cmd("dev"))));
+        // No cmdline to read: in doubt → prod (fail closed).
+        assert!(boot_is_prod(None, None));
+
+        let bad = Ok(Some(b"not json".to_vec()));
+        assert!(resolve_spawn_contract(bad, boot_is_prod(None, Some(&cmd("prod")))).is_err());
     }
 
     #[test]
