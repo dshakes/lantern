@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1936,6 +1937,29 @@ func postBridgeSendSelf(base, token, tenantID, message string) error {
 	return nil
 }
 
+// errWorkflowBudgetExceeded is returned by meteredLLMCall when a hard-fail
+// budget blocks the call before any provider spend.
+var errWorkflowBudgetExceeded = errors.New("budget limit exceeded")
+
+// meteredLLMCall wraps one workflow LLM call with the same budget discipline as
+// the single-call executor: CheckBudget before (hard-fail blocks, no spend),
+// RecordUsageSpend after with the call's real tokens/cost (runs_count untouched). Usage is recorded even
+// when the call errors after spending. Covers ai-steps and the self-consistency
+// confidence votes, which share Deps.CallLLM.
+func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName string,
+	call func() (text string, tokensIn, tokensOut int64, costUsd float64, err error)) (string, error) {
+	if bc := CheckBudget(ctx, pool, tenantID, agentName, 0); !bc.Allowed && bc.HardFail {
+		return "", fmt.Errorf("%w: %s", errWorkflowBudgetExceeded, bc.Reason)
+	}
+	text, tin, tout, cost, err := call()
+	if tin > 0 || tout > 0 || cost > 0 {
+		if recErr := RecordUsageSpend(ctx, pool, tenantID, agentName, tin, tout, cost); recErr != nil {
+			logger.Warn("workflow llm: RecordUsage failed", zap.String("agent", agentName), zap.Error(recErr))
+		}
+	}
+	return text, err
+}
+
 // runWorkflowIfPresent loads agents.workflow for the given agent and, if a
 // valid graph is stored, runs it via the workflow interpreter. Returns
 // true if the workflow was executed (caller short-circuits the single-
@@ -1972,7 +1996,10 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			if err != nil {
 				return "", err
 			}
-			text, _, _, _, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+			text, llmErr := meteredLLMCall(ctx, h.srv.Pool, h.logger(), tenantID, agentName,
+				func() (string, int64, int64, float64, error) {
+					return h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+				})
 			if llmErr == nil {
 				// Workflow ai-steps have no tools, so the performed set is nil.
 				// G3 guard: soften any unbacked completion claims before the

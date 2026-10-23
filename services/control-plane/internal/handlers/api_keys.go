@@ -41,6 +41,44 @@ func (h *ApiKeyHandler) contextWithTenant(r *http.Request) (context.Context, str
 	return ctx, claims.TenantID, nil
 }
 
+// knownScopes is the scope taxonomy accepted on new API keys.
+var knownScopes = map[Scope]bool{
+	ScopeRead: true, ScopeWrite: true, ScopeAdmin: true,
+	ScopeAgentsRead: true, ScopeAgentsWrite: true,
+	ScopeRunsRead: true, ScopeRunsWrite: true, ScopeRunsExecute: true,
+	ScopeConnectorsWrite: true, ScopeBudgetsWrite: true, ScopeSettingsWrite: true,
+}
+
+// validateGrantableScopes rejects unknown scopes and any request the caller
+// could not itself exercise (privilege escalation). JWT owner/admin sessions
+// count as admin; other JWT roles may not mint keys. An empty request means an
+// unrestricted legacy key, so it is only grantable by an unrestricted caller.
+func validateGrantableScopes(c *LanternClaims, requested []string) error {
+	for _, s := range requested {
+		if !knownScopes[Scope(s)] {
+			return fmt.Errorf("unknown scope: %q", s)
+		}
+	}
+	if c.Role != "service" {
+		if c.Role != "owner" && c.Role != "admin" {
+			return fmt.Errorf("only owner or admin may create API keys")
+		}
+		return nil
+	}
+	if len(c.Scopes) == 0 {
+		return nil // legacy unrestricted key
+	}
+	if len(requested) == 0 {
+		return fmt.Errorf("scopes are required: an unscoped key would exceed the caller's scopes")
+	}
+	for _, s := range requested {
+		if !HasScope(c, Scope(s)) {
+			return fmt.Errorf("cannot grant scope %q: not held by caller", s)
+		}
+	}
+	return nil
+}
+
 // ---------- Create API key ----------
 
 // CreateApiKey handles POST /v1/api-keys.
@@ -48,6 +86,11 @@ func (h *ApiKeyHandler) contextWithTenant(r *http.Request) (context.Context, str
 // prefix, and returns the full key exactly once.
 func (h *ApiKeyHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
@@ -69,6 +112,10 @@ func (h *ApiKeyHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 
 	if body.Scopes == nil {
 		body.Scopes = []string{}
+	}
+	if err := validateGrantableScopes(claims, body.Scopes); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
 	}
 
 	// Generate random key: hlx_live_ + 32 random hex chars (16 bytes).
