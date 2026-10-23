@@ -117,8 +117,9 @@ func ReconcileNodeInventory(
 			}
 			continue
 		}
-		if store.UpdateVMState(id, lanternv1.VmState_VM_STATE_TERMINATED,
-			"reconciled: node no longer reports this VM as live", nil, now) {
+		// CAS on the observed state: a racing Terminate must not release twice.
+		if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_TERMINATED,
+			"reconciled: node no longer reports this VM as live", now) {
 			store.IncrTenantVMs(v.TenantID, -1)
 			terminated = append(terminated, id)
 		}
