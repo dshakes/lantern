@@ -226,6 +226,14 @@ impl SecretCache {
 
         let listener = UnixListener::bind(&self.socket_path)
             .with_context(|| format!("bind {:?}", self.socket_path))?;
+        // The workload runs as an unprivileged uid; a umask-default 0755 socket
+        // would refuse its connect(). Authorization is SO_PEERCRED below, not
+        // file mode.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.socket_path, std::fs::Permissions::from_mode(0o666))
+                .with_context(|| format!("chmod {:?}", self.socket_path))?;
+        }
 
         // P2-B7 (1): announce the peer-auth posture once at startup.
         // P2-B7 (2): prod startup guard — LANTERN_WORKLOAD_UID must be set in
