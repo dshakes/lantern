@@ -1,3 +1,4 @@
+mod auth;
 mod cache;
 mod config;
 mod error;
@@ -89,9 +90,22 @@ async fn main() -> anyhow::Result<()> {
 
     let svc = ModelServiceImpl::new(router, cache);
 
+    // Service-token gate (invariant #7). Prod-like env without a token: refuse to start.
+    let token = std::env::var("LANTERN_GRPC_SERVICE_TOKEN").ok();
+    let env = std::env::var("LANTERN_ENV").unwrap_or_default();
+    if let Err(msg) = auth::check_startup(&env, token.as_deref()) {
+        anyhow::bail!(msg);
+    }
+    if token.as_deref().is_none_or(str::is_empty) {
+        tracing::warn!(
+            "LANTERN_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
+        );
+    }
+
     info!(listen_addr = %config.listen_addr, "gRPC server starting");
 
     tonic::transport::Server::builder()
+        .layer(tonic::service::interceptor(auth::interceptor(token)))
         .add_service(ModelServiceServer::new(svc))
         .serve_with_shutdown(config.listen_addr, shutdown_signal())
         .await?;
