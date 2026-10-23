@@ -239,6 +239,21 @@ pub fn verify_client_cert_vm_id(vm_id: &str, cert_der: &[u8]) -> Result<(), Stri
     ))
 }
 
+/// Organizational-unit marker stamped on every per-VM client cert.
+pub const VM_CERT_OU: &str = "lantern-vm";
+
+/// True when `cert_der` is a per-VM (guest) client cert, i.e. carries the
+/// [`VM_CERT_OU`] marker. Unparseable DER is treated as a VM cert
+/// (fail-closed: an identity we cannot read is never a trusted service).
+pub fn is_vm_client_cert(cert_der: &[u8]) -> bool {
+    let Ok((_, cert)) = x509_parser::parse_x509_certificate(cert_der) else {
+        return true;
+    };
+    cert.subject()
+        .iter_organizational_unit()
+        .any(|ou| ou.as_str().is_ok_and(|v| v == VM_CERT_OU))
+}
+
 /// Extract the vm_id embedded as the CN or first DNS SAN from a DER-encoded
 /// client certificate.
 ///
@@ -322,6 +337,11 @@ pub fn generate_vm_client_cert(
     leaf_params
         .distinguished_name
         .push(DnType::CommonName, vm_id);
+    // Marks this as a GUEST identity so the RuntimeManager authz layer can
+    // refuse it outright (ADR 0025) — a VM cert may only reach RuntimeHarness.
+    leaf_params
+        .distinguished_name
+        .push(DnType::OrganizationalUnitName, VM_CERT_OU);
 
     // Short validity window — the run is far shorter than this in practice.
     let now = time::OffsetDateTime::now_utc();
@@ -677,6 +697,20 @@ mod tests {
             leaf.issuer().to_string(),
             "leaf subject must differ from its issuer (not self-signed)"
         );
+    }
+
+    /// Issued VM certs carry the guest marker; a plain service cert does not;
+    /// garbage DER is treated as a guest (fail-closed).
+    #[test]
+    fn vm_cert_marker_distinguishes_guest_from_service() {
+        let (ca_cert, ca_key) = make_ca("manager-ca-ou");
+        let issued = generate_vm_client_cert("vm-ou", &ca_cert, &ca_key).unwrap();
+        assert!(is_vm_client_cert(&pem_to_der(issued.cert_pem.as_bytes())));
+
+        let service = rcgen::generate_simple_self_signed(vec!["scheduler".into()]).unwrap();
+        assert!(!is_vm_client_cert(service.cert.der()));
+
+        assert!(is_vm_client_cert(b"not a cert"));
     }
 
     /// Issuance with bad CA PEM fails cleanly (no panic).

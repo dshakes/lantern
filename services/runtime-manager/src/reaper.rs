@@ -262,6 +262,7 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             node_name: "n1".to_string(),
             declared_secret_uris: vec![],
+            agent_version_id: String::new(),
         }
     }
 

@@ -430,13 +430,17 @@ impl RuntimeManagerGrpc {
             "scheduling run"
         );
 
-        // Cold-start: call the chosen backend directly. The warm pool is not
-        // consulted here because pool.acquire() uses the pool's own backend
-        // (set at construction time) and does not go through `choose_backend`,
-        // meaning it would bypass the isolation gate. If warm-pool support is
-        // added in the future it must propagate the post-gate `backend` arc,
-        // not the pool's stored backend, to preserve the security invariant.
-        let handle = backend.schedule(&req).await.map_err(Self::to_status)?;
+        // Restore (when requested) or warm-pool/cold-start — both through the
+        // post-isolation-gate `backend`, never the pool's stored one, so the
+        // ADR-0009 gate above cannot be bypassed.
+        let handle = if req.restore_snapshot_id.is_empty() {
+            self.pool
+                .acquire_or_cold_start(backend.as_ref(), &req)
+                .await
+                .map_err(Self::to_status)?
+        } else {
+            self.restore_owned_snapshot(backend.as_ref(), &req).await?
+        };
 
         // Use the authenticated tenant_id field — never the env map. The env
         // map is caller-supplied; reading it here would re-introduce the same
@@ -459,6 +463,7 @@ impl RuntimeManagerGrpc {
             resource_limits: req.limits.clone(),
             node_name: handle.node_name.clone(),
             declared_secret_uris,
+            agent_version_id: req.agent_version_id.clone(),
         });
 
         tracing::info!(
@@ -556,6 +561,8 @@ impl RuntimeManagerGrpc {
     pub async fn snapshot(
         &self,
         request: Request<proto::SnapshotRequest>,
+        owner: &HandleInfo,
+        vm_id: &str,
     ) -> Result<Response<proto::SnapshotResponse>, Status> {
         let req = request.into_inner();
 
@@ -571,72 +578,42 @@ impl RuntimeManagerGrpc {
 
         tracing::info!(handle_id = %req.handle_id, backend = backend_name, "creating snapshot");
 
-        // Invoke the backend.  On Linux + Firecracker the files are written to
-        // /run/lantern/snapshots/<vm_id>/{snapshot,mem}.  We don't need the
-        // SnapshotInfo returned here (uri + size are derived from the store
-        // after persisting the artifacts), but we must propagate any error.
+        // Invoke the backend. On Linux + Firecracker the files are written to
+        // /run/lantern/snapshots/<handle_id>/{snapshot,mem}; uri + size are
+        // derived from the store after persisting, but errors must propagate.
         let _backend_info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
 
-        // Persist through the store.  The snapshot_uri from the backend is a
-        // path like `fc:///run/lantern/snapshots/<vm_id>/snapshot`; the actual
-        // files are already written to disk by the Firecracker backend.
-        // We read them back and hand the bytes to the store so the store owns
-        // the canonical copy under SNAPSHOT_DIR and can enforce retention.
+        // Persist through the store, which owns the canonical copy under
+        // SNAPSHOT_DIR and enforces retention. `put_files` STREAMS each file
+        // (the guest memory file is as large as the VM's RAM — never read it
+        // whole). An unreadable artifact fails the snapshot: storing a sha256
+        // over truncated data would let a later restore boot garbage.
         //
-        // Derive the agent_version_id from the handle registry (the handle
-        // was registered with LANTERN_AGENT_VERSION_ID in the env map at
-        // spawn time).  HandleInfo doesn't carry a dedicated agent_version_id
-        // field today; fall back to "unknown" when absent.
-        let agent_version_id = self
-            .registry
-            .get(&req.handle_id)
-            .map(|_h| "unknown".to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let vm_id = req.handle_id.clone();
-
-        // Build artifact map from the files the backend produced.
-        // Firecracker puts snapshot + mem under /run/lantern/snapshots/<vm_id>/.
-        let snapshot_base = format!("/run/lantern/snapshots/{vm_id}");
-        let artifact_paths = vec![
-            format!("{snapshot_base}/snapshot"),
-            format!("{snapshot_base}/mem"),
-        ];
-
-        let mut artifacts = crate::snapshot_store::ArtifactMap::new();
-        for path in &artifact_paths {
-            match tokio::fs::read(path).await {
-                Ok(bytes) => {
-                    let name = std::path::Path::new(path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(path)
-                        .to_string();
-                    artifacts.push((name, bytes));
-                }
-                Err(e) => {
-                    // An unreadable artifact must fail the snapshot — silently
-                    // storing empty bytes would produce a sha256 over truncated
-                    // data, and a later Restore would boot garbage without
-                    // knowing the snapshot was corrupt.
-                    return Err(Status::internal(format!(
-                        "snapshot: artifact file not readable — {path}: {e}"
-                    )));
-                }
-            }
-        }
+        // Ownership (ADR 0025): the snapshot records the spawn's tenant and
+        // agent version so restore can refuse any other tenant.
+        let agent_version_id = if owner.agent_version_id.is_empty() {
+            "unknown"
+        } else {
+            owner.agent_version_id.as_str()
+        };
+        let snapshot_base =
+            std::path::PathBuf::from(format!("/run/lantern/snapshots/{}", req.handle_id));
+        let snapshot_file = snapshot_base.join("snapshot");
+        let mem_file = snapshot_base.join("mem");
+        let files: [(&str, &std::path::Path); 2] =
+            [("snapshot", &snapshot_file), ("mem", &mem_file)];
 
         let meta = self
             .snapshot_store
-            .put(&agent_version_id, &vm_id, artifacts)
+            .put_files(agent_version_id, &owner.tenant_id, vm_id, &files)
             .await
             .map_err(|e| {
                 tracing::error!(
                     vm_id = %vm_id,
-                    error = %e,
+                    error = format!("{e:#}"),
                     "snapshot_store: put failed"
                 );
-                Status::internal(format!("snapshot store error: {e}"))
+                Status::internal(format!("snapshot store error: {e:#}"))
             })?;
 
         tracing::info!(
@@ -644,6 +621,7 @@ impl RuntimeManagerGrpc {
             sha256 = %meta.sha256,
             size_bytes = meta.size_bytes,
             vm_id = %vm_id,
+            tenant_id = %meta.tenant_id,
             "snapshot persisted to store"
         );
 
@@ -651,6 +629,61 @@ impl RuntimeManagerGrpc {
             snapshot_uri: format!("store://{}", meta.id),
             size_bytes: meta.size_bytes as i64,
         }))
+    }
+
+    /// Restore `req.restore_snapshot_id` through the post-gate `backend`,
+    /// refusing anything the caller's tenant does not own (ADR 0025).
+    ///
+    /// Only Firecracker restores from the snapshot store; any other backend
+    /// gets `FAILED_PRECONDITION` rather than a silent cold boot reported as
+    /// `from_snapshot = true`. A snapshot owned by another tenant, an
+    /// untenanted legacy snapshot, and a malformed id all yield the same
+    /// `NOT_FOUND` — no existence leak.
+    async fn restore_owned_snapshot(
+        &self,
+        backend: &dyn RuntimeBackend,
+        req: &proto::ScheduleRequest,
+    ) -> Result<crate::backend::Handle, Status> {
+        if backend.name() != "firecracker" {
+            return Err(Status::failed_precondition(format!(
+                "restore_snapshot_id is set but the '{}' backend cannot restore from the \
+                 snapshot store; refusing to cold-boot instead",
+                backend.name()
+            )));
+        }
+        let id = &req.restore_snapshot_id;
+        let not_found = || Status::not_found(format!("snapshot {id} not found"));
+        let meta = self
+            .snapshot_store
+            .find(id)
+            .await
+            .map_err(|e| {
+                tracing::error!(snapshot_id = %id, error = format!("{e:#}"), "snapshot lookup failed");
+                Status::internal("snapshot store lookup failed")
+            })?
+            .ok_or_else(not_found)?;
+        if !snapshot_owned_by(&meta, &req.tenant_id) {
+            tracing::warn!(
+                target: "lantern_audit",
+                snapshot_id = %id,
+                tenant_id = %req.tenant_id,
+                "restore DENIED: snapshot not owned by requesting tenant"
+            );
+            return Err(not_found());
+        }
+
+        let restore = proto::RestoreRequest {
+            snapshot_uri: format!("store://{}", meta.id),
+            run_id: req.run_id.clone(),
+            tenant_id: req.tenant_id.clone(),
+            input: req.input.clone(),
+            env: req.env.clone(),
+            secrets: req.secrets.clone(),
+        };
+        backend
+            .restore(&restore.snapshot_uri, &restore)
+            .await
+            .map_err(Self::to_status)
     }
 
     /// Restore a sandbox from a snapshot.
@@ -699,6 +732,7 @@ impl RuntimeManagerGrpc {
             resource_limits: proto::ResourceLimits::default(),
             node_name: handle.node_name.clone(),
             declared_secret_uris,
+            agent_version_id: String::new(),
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -804,7 +838,51 @@ fn json_to_prost_value(v: serde_json::Value) -> prost_types::Value {
 //   { "ok": false, "error": "…"  }   → ToolStatus::Error
 //   harness unreachable / dial fail  → ToolStatus::Unavailable
 
+/// Cap on the harness's tool output buffered in manager memory — the bytes
+/// come from an untrusted workload (same 1 MiB bound as the exec path).
+const MAX_TOOL_OUTPUT_BYTES: usize = 1 << 20;
+
+/// Upper bound on a caller-requested tool timeout.
+const MAX_TOOL_TIMEOUT_SECS: u64 = 900;
+
+/// Grace past the tool's own timeout so the harness's typed timeout error
+/// normally wins over the manager's.
+const TOOL_DEADLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run one tool call through the harness, bounded by `deadline` (dial, RPC
+/// and output collection all count) and by [`MAX_TOOL_OUTPUT_BYTES`].
 async fn run_tool_via_harness(
+    vm_id: &str,
+    endpoint: String,
+    tool_name: &str,
+    args_json: serde_json::Value,
+    idempotency_key: &str,
+    timeout_sec: u64,
+    deadline: std::time::Duration,
+) -> pb::ExecToolResponse {
+    tokio::time::timeout(
+        deadline,
+        run_tool_via_harness_inner(
+            vm_id,
+            endpoint,
+            tool_name,
+            args_json,
+            idempotency_key,
+            timeout_sec,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| pb::ExecToolResponse {
+        status: pb::ToolStatus::Error as i32,
+        result: None,
+        error: format!(
+            "exec_tool: harness call timed out after {}ms",
+            deadline.as_millis()
+        ),
+    })
+}
+
+async fn run_tool_via_harness_inner(
     vm_id: &str,
     endpoint: String,
     tool_name: &str,
@@ -871,6 +949,15 @@ async fn run_tool_via_harness(
     loop {
         match stream.message().await {
             Ok(Some(frame)) => {
+                if stdout_buf.len() + frame.stdout.len() > MAX_TOOL_OUTPUT_BYTES {
+                    return pb::ExecToolResponse {
+                        status: pb::ToolStatus::Error as i32,
+                        result: None,
+                        error: format!(
+                            "exec_tool: harness output exceeded the {MAX_TOOL_OUTPUT_BYTES}-byte cap"
+                        ),
+                    };
+                }
                 stdout_buf.extend_from_slice(&frame.stdout);
                 if frame.done {
                     break;
@@ -927,6 +1014,22 @@ async fn run_tool_via_harness(
                 .to_string(),
         }
     }
+}
+
+/// ExecTool tenant gate: a non-empty requested tenant must equal the VM's
+/// spawn-time tenant; an empty one is allowed only outside prod (rollout).
+fn exec_tool_tenant_ok(owner: &str, requested: &str, prod: bool) -> bool {
+    if requested.is_empty() {
+        !prod
+    } else {
+        requested == owner
+    }
+}
+
+/// Restore ownership: the snapshot's recorded tenant must equal the caller's.
+/// Untenanted (legacy) snapshots are never restorable.
+fn snapshot_owned_by(meta: &crate::snapshot_store::SnapshotMeta, tenant_id: &str) -> bool {
+    !meta.tenant_id.is_empty() && meta.tenant_id == tenant_id
 }
 
 /// Translate a wire `SpawnRequest` into the internal `ScheduleRequest` the
@@ -986,6 +1089,8 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
     // value can never win even if it was present in the labels too.
     env.remove("LANTERN_TENANT_ID");
     env.insert("LANTERN_TENANT_ID".to_string(), spec.tenant_id.clone());
+    // Same for the agent version: it keys snapshots, so never caller-chosen.
+    env.remove("LANTERN_AGENT_VERSION_ID");
     if !spec.agent_version_id.is_empty() {
         env.insert(
             "LANTERN_AGENT_VERSION_ID".to_string(),
@@ -1033,6 +1138,8 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         // Confidential compute — set by the control-plane from the agent
         // manifest; drives the fail-closed CC gate + Kata-CC selection below.
         confidential: spec.confidential,
+        agent_version_id: spec.agent_version_id.clone(),
+        restore_snapshot_id: spec.restore_snapshot_id.clone(),
     })
 }
 
@@ -1076,10 +1183,27 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             .map(|s| !s.restore_snapshot_id.is_empty())
             .unwrap_or(false);
 
-        // Idempotency guard (invariant #8): if the scheduler pre-allocated a wire
-        // vm_id and it is already live in the registry, return the existing handle
-        // without re-scheduling. This prevents a client-side Spawn timeout/retry
-        // from booting a second VM with the same secrets and orphaning the first.
+        // Idempotency guard (invariant #8). Reserve the scheduler's wire vm_id
+        // BEFORE booting so two concurrent Spawns cannot both pass the registry
+        // check and boot two VMs; the loser gets ABORTED and its retry hits the
+        // registry below. The reservation is held until the rekey (or until a
+        // failure returns early) and released on drop.
+        let wire_vm_id = pre_handle
+            .as_ref()
+            .map(|h| h.vm_id.as_str())
+            .filter(|id| !id.is_empty());
+        let _reservation = match wire_vm_id {
+            Some(id) => Some(self.registry.reserve(id).ok_or_else(|| {
+                Status::aborted(format!(
+                    "spawn for vm_id {id} is already in progress; retry"
+                ))
+            })?),
+            None => None,
+        };
+
+        // If the vm_id is already live, return the existing handle without
+        // re-scheduling (a client-side Spawn timeout/retry must not boot a
+        // second VM with the same secrets and orphan the first).
         if let Some(ref h) = pre_handle
             && !h.vm_id.is_empty()
             && self.registry.get(&h.vm_id).is_some()
@@ -1444,28 +1568,38 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             ));
         }
 
-        // Resolve vm_id: use the explicit field, or scan the registry by run_id.
-        let vm_id = if !req.vm_id.is_empty() {
-            if self.registry.get(&req.vm_id).is_none() {
-                return Err(Status::not_found(format!("vm {} not found", req.vm_id)));
-            }
-            req.vm_id.clone()
+        // Resolve the target: the explicit vm_id, or scan the registry by
+        // run_id. A VM owned by another tenant is indistinguishable from an
+        // absent one (NOT_FOUND, no existence leak — ADR 0025).
+        let prod = crate::tls::is_prod_env();
+        let found = if !req.vm_id.is_empty() {
+            self.registry
+                .get(&req.vm_id)
+                .map(|info| (req.vm_id.clone(), info))
         } else {
-            match self.registry.find_by_run_id(&req.run_id) {
-                Some((key, _)) => key,
-                None => {
-                    return Err(Status::not_found(format!(
-                        "no active vm found for run_id '{}'",
-                        req.run_id
-                    )));
+            self.registry.find_by_run_id(&req.run_id)
+        };
+        let (vm_id, info) = match found {
+            Some((vm_id, info)) if exec_tool_tenant_ok(&info.tenant_id, &req.tenant_id, prod) => {
+                (vm_id, info)
+            }
+            found => {
+                if found.is_some() {
+                    tracing::warn!(
+                        target: "lantern_audit",
+                        vm_id = %req.vm_id,
+                        run_id = %req.run_id,
+                        requested_tenant = %req.tenant_id,
+                        "exec_tool DENIED: tenant does not own the target vm"
+                    );
                 }
+                return Err(if req.vm_id.is_empty() {
+                    Status::not_found(format!("no active vm found for run_id '{}'", req.run_id))
+                } else {
+                    Status::not_found(format!("vm {} not found", req.vm_id))
+                });
             }
         };
-
-        let info = self
-            .registry
-            .get(&vm_id)
-            .ok_or_else(|| Status::not_found(format!("vm {vm_id} not found")))?;
 
         // Only Firecracker VMs run the in-guest harness tool registry.
         if info.backend != "firecracker" {
@@ -1506,11 +1640,11 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             std::net::SocketAddr::new(guest_ip, harness_exec_port())
         );
 
-        // Default timeout: the request's field if set, else 30s.
+        // Default timeout: the request's field if set, else 30s; capped.
         let timeout_sec = req
             .timeout
             .as_ref()
-            .map(|d| d.seconds.max(1) as u64)
+            .map(|d| (d.seconds.max(1) as u64).min(MAX_TOOL_TIMEOUT_SECS))
             .unwrap_or(30);
 
         // Convert args Struct → serde_json::Value for the envelope.
@@ -1521,28 +1655,18 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
         let started = std::time::Instant::now();
 
-        // +5s outer timeout so the harness timeout fires first and returns a
-        // typed error rather than the manager returning UNAVAILABLE.
-        let resp = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_sec + 5),
-            run_tool_via_harness(
-                &vm_id,
-                endpoint,
-                &req.tool_name,
-                args_json,
-                &req.idempotency_key,
-                timeout_sec,
-            ),
+        // Deadline = tool timeout + grace, so the harness's own (typed)
+        // timeout normally fires first.
+        let resp = run_tool_via_harness(
+            &vm_id,
+            endpoint,
+            &req.tool_name,
+            args_json,
+            &req.idempotency_key,
+            timeout_sec,
+            std::time::Duration::from_secs(timeout_sec) + TOOL_DEADLINE_GRACE,
         )
-        .await
-        .unwrap_or_else(|_| pb::ExecToolResponse {
-            status: pb::ToolStatus::Error as i32,
-            result: None,
-            error: format!(
-                "exec_tool: harness call timed out after {}s",
-                timeout_sec + 5
-            ),
-        });
+        .await;
 
         // Audit: tool name, duration, status — NEVER args content (invariant #10).
         tracing::info!(
@@ -1568,19 +1692,23 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // Map the wire SnapshotRequest to the internal one.
         // The wire vm_id maps to handle_id; we look up the registry so the
         // backend sees the backend-side handle id (container id / socket path).
-        let backend_handle = self
+        // The registry entry is required: it carries the owning tenant and
+        // agent version the snapshot is recorded under (ADR 0025).
+        let owner = self
             .registry
             .get(&req.vm_id)
-            .map(|h| h.handle_id)
-            .unwrap_or_else(|| req.vm_id.clone());
+            .ok_or_else(|| Status::not_found(format!("vm {} not found", req.vm_id)))?;
 
         let internal = proto::SnapshotRequest {
-            handle_id: backend_handle,
+            handle_id: owner.handle_id.clone(),
             bundle_digest: vec![],
             isolation_class: proto::IsolationClass::Unspecified,
         };
 
-        let resp = self.snapshot(Request::new(internal)).await?.into_inner();
+        let resp = self
+            .snapshot(Request::new(internal), &owner, &req.vm_id)
+            .await?
+            .into_inner();
 
         // Map the internal SnapshotResponse to the wire SnapshotResponse.
         // snapshot_uri is "store://<id>"; extract the id.
@@ -2663,6 +2791,7 @@ mod tests {
             resource_limits: proto::ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
+            agent_version_id: String::new(),
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -2835,6 +2964,7 @@ mod tests {
             resource_limits: proto::ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
+            agent_version_id: String::new(),
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -2889,6 +3019,7 @@ mod tests {
             resource_limits: proto::ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
+            agent_version_id: String::new(),
         });
         // Rekey so the wire vm_id resolves to the backend handle_id.
         svc.registry.rekey(handle_id, vm_id);
@@ -3087,6 +3218,7 @@ mod tests {
             resource_limits: proto::ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
+            agent_version_id: String::new(),
         });
         svc.registry.rekey(handle_id, vm_id);
         svc
@@ -3154,6 +3286,7 @@ mod tests {
             args: None,
             timeout: None,
             idempotency_key: "run-1:step-1:1".to_string(),
+            tenant_id: String::new(),
         });
         let err = svc
             .exec_tool(req)
@@ -3174,6 +3307,7 @@ mod tests {
             args: None,
             timeout: None,
             idempotency_key: String::new(),
+            tenant_id: String::new(),
         });
         let err = svc
             .exec_tool(req)
@@ -3194,6 +3328,7 @@ mod tests {
             args: None,
             timeout: None,
             idempotency_key: "run-1:step-1:1".to_string(),
+            tenant_id: String::new(),
         });
         let err = svc
             .exec_tool(req)
@@ -3216,6 +3351,7 @@ mod tests {
             args: None,
             timeout: None,
             idempotency_key: "run-1:step-1:1".to_string(),
+            tenant_id: String::new(),
         });
         let resp = svc
             .exec_tool(req)
@@ -3256,6 +3392,7 @@ mod tests {
             args: None,
             timeout: None,
             idempotency_key: "run-exec-route:step-1:1".to_string(),
+            tenant_id: String::new(),
         });
         let resp = svc
             .exec_tool(req)
@@ -3754,5 +3891,478 @@ mod tests {
             !would_drop,
             "OTLP frame with empty body_vm_id must NOT be dropped — cert_vm_id is used instead"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 — ExecTool tenant scoping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exec_tool_tenant_gate_decisions() {
+        assert!(exec_tool_tenant_ok("t-a", "t-a", true));
+        assert!(!exec_tool_tenant_ok("t-a", "t-b", true));
+        assert!(!exec_tool_tenant_ok("t-a", "t-b", false));
+        assert!(
+            !exec_tool_tenant_ok("t-a", "", true),
+            "empty is refused in prod"
+        );
+        assert!(
+            exec_tool_tenant_ok("t-a", "", false),
+            "empty allowed in dev (rollout)"
+        );
+    }
+
+    fn tool_req(vm_id: &str, run_id: &str, tenant_id: &str) -> Request<pb::ExecToolRequest> {
+        Request::new(pb::ExecToolRequest {
+            vm_id: vm_id.to_string(),
+            run_id: run_id.to_string(),
+            step_id: "step-1".to_string(),
+            tool_name: "search".to_string(),
+            args: None,
+            timeout: None,
+            idempotency_key: "k".to_string(),
+            tenant_id: tenant_id.to_string(),
+        })
+    }
+
+    /// Another tenant's VM is indistinguishable from a missing one, by vm_id
+    /// and by run_id; the owning tenant still reaches it.
+    #[tokio::test]
+    async fn exec_tool_cross_tenant_is_not_found() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-ten", "handle-ten"); // tenant t-exec
+
+        let err = svc
+            .exec_tool(tool_req("vm-ten", "", "t-attacker"))
+            .await
+            .expect_err("cross-tenant vm_id must be refused");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        let missing = svc
+            .exec_tool(tool_req("vm-nope", "", "t-attacker"))
+            .await
+            .expect_err("missing vm");
+        assert_eq!(
+            err.message(),
+            missing.message().replace("vm-nope", "vm-ten")
+        );
+
+        let err = svc
+            .exec_tool(tool_req("", "run-exec-route", "t-attacker"))
+            .await
+            .expect_err("cross-tenant run_id must be refused");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        let ok = svc
+            .exec_tool(tool_req("vm-ten", "", "t-exec"))
+            .await
+            .expect("owner reaches its own vm")
+            .into_inner();
+        assert_eq!(ok.status, pb::ToolStatus::Unavailable as i32);
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 — spawn reservation (concurrent idempotency)
+    // -----------------------------------------------------------------------
+
+    /// Backend that counts schedules and takes a while to "boot" (or fails).
+    struct SlowStub {
+        calls: std::sync::atomic::AtomicUsize,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for SlowStub {
+        async fn schedule(
+            &self,
+            req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if self.fail {
+                anyhow::bail!("boot failed");
+            }
+            Ok(crate::backend::Handle {
+                id: format!("slow-{}", req.run_id),
+                node_name: "n".to_string(),
+                cold_start_ms: 100.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            anyhow::bail!("unused")
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            _req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            anyhow::bail!("unused")
+        }
+        fn name(&self) -> &'static str {
+            "docker"
+        }
+    }
+
+    fn slow_manager(fail: bool) -> (RuntimeManagerGrpc, Arc<SlowStub>) {
+        let backend = Arc::new(SlowStub {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            fail,
+        });
+        let svc = RuntimeManagerGrpc::new(
+            Arc::clone(&backend) as Arc<dyn RuntimeBackend>,
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        (svc, backend)
+    }
+
+    /// Two concurrent Spawns for one wire vm_id boot exactly one VM: the loser
+    /// gets ABORTED, and its retry returns the original handle.
+    #[tokio::test]
+    async fn concurrent_spawns_for_same_vm_id_boot_once() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, backend) = slow_manager(false);
+
+        let a = svc.spawn(Request::new(make_spawn_request_with_handle(
+            "t",
+            "r",
+            "wire-race",
+        )));
+        let b = svc.spawn(Request::new(make_spawn_request_with_handle(
+            "t",
+            "r",
+            "wire-race",
+        )));
+        let (ra, rb) = tokio::join!(a, b);
+
+        assert_eq!(backend.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let (ok, err) = match (ra, rb) {
+            (Ok(o), Err(e)) | (Err(e), Ok(o)) => (o, e),
+            other => panic!("expected exactly one winner, got {other:?}"),
+        };
+        assert_eq!(err.code(), tonic::Code::Aborted);
+        assert_eq!(ok.into_inner().handle.unwrap().vm_id, "wire-race");
+        assert_eq!(svc.registry.len(), 1);
+
+        // The retry is idempotent and boots nothing new.
+        let retry = svc
+            .spawn(Request::new(make_spawn_request_with_handle(
+                "t",
+                "r",
+                "wire-race",
+            )))
+            .await
+            .expect("retry returns the existing handle");
+        assert_eq!(retry.into_inner().handle.unwrap().vm_id, "wire-race");
+        assert_eq!(backend.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A failed boot releases the reservation so a retry can proceed.
+    #[tokio::test]
+    async fn failed_spawn_releases_reservation() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, _backend) = slow_manager(true);
+        let err = svc
+            .spawn(Request::new(make_spawn_request_with_handle(
+                "t",
+                "r",
+                "wire-fail",
+            )))
+            .await
+            .expect_err("boot failure propagates");
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(
+            svc.registry.reserve("wire-fail").is_some(),
+            "reservation released"
+        );
+        assert!(svc.registry.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 — restore_snapshot_id wiring + snapshot ownership
+    // -----------------------------------------------------------------------
+
+    fn restore_spawn(tenant: &str, snapshot_id: &str) -> pb::SpawnRequest {
+        let mut req = make_spawn_request(tenant, HashMap::new());
+        if let Some(spec) = req.spec.as_mut() {
+            spec.restore_snapshot_id = snapshot_id.to_string();
+        }
+        req
+    }
+
+    /// Store with one snapshot owned by `tenant` (or untenanted when empty).
+    async fn store_with_snapshot(
+        dir: &std::path::Path,
+        tenant: &str,
+    ) -> (crate::snapshot_store::SnapshotStore, String) {
+        let store = crate::snapshot_store::SnapshotStore::new(dir.join("store"));
+        let art = dir.join("mem");
+        tokio::fs::write(&art, b"guest memory").await.unwrap();
+        let meta = if tenant.is_empty() {
+            store
+                .put("av-1", "vm-src", vec![("mem".to_string(), b"x".to_vec())])
+                .await
+                .unwrap()
+        } else {
+            store
+                .put_files("av-1", tenant, "vm-src", &[("mem", art.as_path())])
+                .await
+                .unwrap()
+        };
+        (store, meta.id)
+    }
+
+    fn fc_manager(store: crate::snapshot_store::SnapshotStore) -> RuntimeManagerGrpc {
+        RuntimeManagerGrpc::new(
+            NamedStub::microvm("firecracker"),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store)
+    }
+
+    #[tokio::test]
+    async fn restore_of_own_snapshot_restores_and_reports_from_snapshot() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, id) = store_with_snapshot(tmp.path(), "t-owner").await;
+        let svc = fc_manager(store);
+
+        let resp = svc
+            .spawn(Request::new(restore_spawn("t-owner", &id)))
+            .await
+            .expect("owner restores its snapshot")
+            .into_inner();
+        assert!(resp.from_snapshot);
+        // The handle came from backend.restore, not a cold boot.
+        assert_eq!(resp.handle.unwrap().vm_id, "stub-restored");
+        assert_eq!(
+            svc.registry.get("stub-restored").unwrap().tenant_id,
+            "t-owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_of_other_tenant_or_legacy_or_bogus_snapshot_is_not_found() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, id) = store_with_snapshot(tmp.path(), "t-owner").await;
+        let legacy = store
+            .put("av-1", "vm-old", vec![("mem".to_string(), b"x".to_vec())])
+            .await
+            .unwrap()
+            .id;
+        let svc = fc_manager(store);
+
+        for (tenant, snap) in [
+            ("t-attacker", id.as_str()),
+            ("t-owner", legacy.as_str()),
+            ("t-owner", "../../etc"),
+            ("t-owner", "00000000-0000-4000-8000-000000000000"),
+        ] {
+            let err = svc
+                .spawn(Request::new(restore_spawn(tenant, snap)))
+                .await
+                .expect_err("must be refused");
+            assert_eq!(
+                err.code(),
+                tonic::Code::NotFound,
+                "{tenant}/{snap}: {err:?}"
+            );
+        }
+        assert!(svc.registry.is_empty(), "nothing booted");
+    }
+
+    /// A backend that cannot restore from the store refuses — it must not cold
+    /// boot and claim from_snapshot.
+    #[tokio::test]
+    async fn restore_on_backend_without_store_restore_is_failed_precondition() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-x", "h-x");
+        let err = svc
+            .spawn(Request::new(restore_spawn(
+                "t",
+                "00000000-0000-4000-8000-000000000000",
+            )))
+            .await
+            .expect_err("docker cannot restore from the store");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    /// Snapshot requires a registered vm (the owner record); no fallback to a
+    /// raw backend id with an unknown owner.
+    #[tokio::test]
+    async fn snapshot_of_unregistered_vm_is_not_found() {
+        use pb::runtime_manager_server::RuntimeManager;
+        let svc = manager_with_backend_vm("firecracker", "vm-s", "h-s");
+        // Trait-qualified: the inherent `snapshot` (internal) shadows it.
+        let err = RuntimeManager::snapshot(
+            &svc,
+            Request::new(pb::SnapshotRequest {
+                vm_id: "vm-unknown".to_string(),
+                id_hint: String::new(),
+                keep_running: true,
+            }),
+        )
+        .await
+        .expect_err("unknown vm");
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// spawn_to_schedule carries agent_version_id + restore id, and a caller
+    /// cannot set LANTERN_AGENT_VERSION_ID through env.
+    #[test]
+    fn spawn_to_schedule_carries_version_and_restore_id() {
+        let mut env = HashMap::new();
+        env.insert("LANTERN_AGENT_VERSION_ID".to_string(), "forged".to_string());
+        let mut req = make_spawn_request("t", env);
+        if let Some(spec) = req.spec.as_mut() {
+            spec.agent_version_id = "av-real".to_string();
+            spec.restore_snapshot_id = "snap-1".to_string();
+        }
+        let internal = spawn_to_schedule(&req).unwrap();
+        assert_eq!(internal.agent_version_id, "av-real");
+        assert_eq!(internal.restore_snapshot_id, "snap-1");
+        assert_eq!(internal.env["LANTERN_AGENT_VERSION_ID"], "av-real");
+
+        let mut req = make_spawn_request(
+            "t",
+            HashMap::from([("LANTERN_AGENT_VERSION_ID".to_string(), "forged".to_string())]),
+        );
+        if let Some(spec) = req.spec.as_mut() {
+            spec.agent_version_id = String::new();
+        }
+        let internal = spawn_to_schedule(&req).unwrap();
+        assert!(!internal.env.contains_key("LANTERN_AGENT_VERSION_ID"));
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 / item 6 — tool output cap + deadline (mock in-guest harness)
+    // -----------------------------------------------------------------------
+
+    #[derive(Clone, Copy)]
+    enum MockMode {
+        Ok,
+        Flood,
+        Hang,
+    }
+
+    struct MockHarness(MockMode);
+
+    type MockStream<T> =
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<T, Status>> + Send + 'static>>;
+
+    #[tonic::async_trait]
+    impl pb::runtime_harness_server::RuntimeHarness for MockHarness {
+        type HeartbeatStream = MockStream<pb::HeartbeatAck>;
+        async fn heartbeat(
+            &self,
+            _r: Request<tonic::Streaming<pb::HeartbeatRequest>>,
+        ) -> Result<Response<Self::HeartbeatStream>, Status> {
+            Err(Status::unimplemented("mock"))
+        }
+        async fn vend_secret(
+            &self,
+            _r: Request<pb::VendSecretRequest>,
+        ) -> Result<Response<pb::VendSecretResponse>, Status> {
+            Err(Status::unimplemented("mock"))
+        }
+        async fn report(
+            &self,
+            _r: Request<tonic::Streaming<pb::HarnessReport>>,
+        ) -> Result<Response<pb::HarnessAck>, Status> {
+            Err(Status::unimplemented("mock"))
+        }
+        type ExecStream = MockStream<pb::ExecResponse>;
+        #[allow(clippy::result_large_err)] // stream items are tonic Results
+        async fn exec(
+            &self,
+            _r: Request<tonic::Streaming<pb::ExecRequest>>,
+        ) -> Result<Response<Self::ExecStream>, Status> {
+            let frame = |stdout: Vec<u8>, done: bool| {
+                Ok(pb::ExecResponse {
+                    stdout,
+                    stderr: vec![],
+                    exit_code: 0,
+                    done,
+                })
+            };
+            let stream: Self::ExecStream = match self.0 {
+                MockMode::Ok => Box::pin(futures::stream::iter([frame(
+                    br#"{"ok":true,"result":{"a":1}}"#.to_vec(),
+                    true,
+                )])),
+                // 2 MiB in 256 KiB frames, never `done` before the cap trips.
+                MockMode::Flood => Box::pin(futures::stream::iter(
+                    (0..8).map(move |_| frame(vec![b'x'; 256 * 1024], false)),
+                )),
+                MockMode::Hang => Box::pin(futures::stream::pending()),
+            };
+            Ok(Response::new(stream))
+        }
+    }
+
+    async fn start_mock_harness(mode: MockMode) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming =
+            tonic::transport::server::TcpIncoming::from_listener(listener, true, None).unwrap();
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(pb::runtime_harness_server::RuntimeHarnessServer::new(
+                    MockHarness(mode),
+                ))
+                .serve_with_incoming(incoming),
+        );
+        format!("http://{addr}")
+    }
+
+    async fn call_tool(endpoint: String, deadline: std::time::Duration) -> pb::ExecToolResponse {
+        run_tool_via_harness(
+            "vm-1",
+            endpoint,
+            "t",
+            serde_json::json!({}),
+            "k",
+            1,
+            deadline,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn tool_call_ok_is_parsed() {
+        let ep = start_mock_harness(MockMode::Ok).await;
+        let resp = call_tool(ep, std::time::Duration::from_secs(5)).await;
+        assert_eq!(resp.status, pb::ToolStatus::Ok as i32, "{}", resp.error);
+    }
+
+    #[tokio::test]
+    async fn tool_call_output_over_cap_is_error() {
+        let ep = start_mock_harness(MockMode::Flood).await;
+        let resp = call_tool(ep, std::time::Duration::from_secs(5)).await;
+        assert_eq!(resp.status, pb::ToolStatus::Error as i32);
+        assert!(resp.error.contains("cap"), "{}", resp.error);
+    }
+
+    #[tokio::test]
+    async fn tool_call_hang_hits_deadline() {
+        let ep = start_mock_harness(MockMode::Hang).await;
+        let started = std::time::Instant::now();
+        let resp = call_tool(ep, std::time::Duration::from_millis(300)).await;
+        assert_eq!(resp.status, pb::ToolStatus::Error as i32);
+        assert!(resp.error.contains("timed out"), "{}", resp.error);
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 }
