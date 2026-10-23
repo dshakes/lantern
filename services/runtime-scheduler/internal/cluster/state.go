@@ -80,6 +80,11 @@ type VM struct {
 	// distinction every short-lived agent had to wait out the full grace
 	// window before its terminal state was recorded.
 	InventorySeenAt time.Time
+	// SnapshotID is the snapshot this VM was paused into (PAUSED) or forked
+	// from (a fork child). "" = none.
+	SnapshotID string
+	// ParentVMID is the source VM of a fork. "" = not a fork.
+	ParentVMID string
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -102,8 +107,14 @@ type ClusterStore interface {
 	// inventory can never vouch for another's.
 	MarkVMsSeenOnNode(nodeName string, vmIDs []string, at time.Time)
 
+	// SetVMSnapshot records the snapshot a VM was paused into.
+	SetVMSnapshot(vmID, snapshotID string) bool
+
 	IncrTenantVMs(tenantID string, delta int)
 	TenantLiveVMs(tenantID string) int
+	// TryReserveTenantVMs atomically takes n concurrent-VM slots if the tenant
+	// stays within hardCap (<= 0 = uncapped). All-or-nothing.
+	TryReserveTenantVMs(tenantID string, n, hardCap int) bool
 
 	Subscribe(vmID, tenantID string) (<-chan *lanternv1.StatusEvent, func())
 	Publish(ev *lanternv1.StatusEvent, tenantID string)
@@ -255,6 +266,10 @@ func (s *InMemoryStore) CreateVM(v *VM) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.vms[v.Handle.VmId] = v
+	// A PAUSED VM (reloaded from the DB) occupies no node capacity.
+	if !occupiesNode(v.State) {
+		return
+	}
 	if n, ok := s.nodes[v.NodeName]; ok {
 		n.RunningVms++
 	}
@@ -290,11 +305,17 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	// node kept advertising VMs it was no longer running, which skewed both
 	// placement load scoring and the cluster view. Guarded on the edge so a
 	// repeated terminal update cannot double-decrement.
-	if !isTerminalVMState(v.State) && isTerminalVMState(state) {
+	// PAUSED is treated the same way: a paused VM is stopped on its node.
+	if occupiesNode(v.State) && !occupiesNode(state) {
 		if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
 			n.RunningVms--
 		}
 		s.releaseReservationLocked(vmID)
+	} else if v.State == lanternv1.VmState_VM_STATE_PAUSED && occupiesNode(state) {
+		// Resume: back on the node. Capacity is re-learned from the next heartbeat.
+		if n, exists := s.nodes[v.NodeName]; exists {
+			n.RunningVms++
+		}
 	}
 	v.State = state
 	v.Reason = reason
@@ -305,10 +326,26 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	return true
 }
 
-// isTerminalVMState reports whether a VM occupies no further node capacity.
+// isTerminalVMState reports whether a VM has finished for good.
 func isTerminalVMState(s lanternv1.VmState) bool {
 	return s == lanternv1.VmState_VM_STATE_TERMINATED ||
 		s == lanternv1.VmState_VM_STATE_FAILED
+}
+
+// occupiesNode reports whether a VM in state s is holding node capacity.
+func occupiesNode(s lanternv1.VmState) bool {
+	return !isTerminalVMState(s) && s != lanternv1.VmState_VM_STATE_PAUSED
+}
+
+func (s *InMemoryStore) SetVMSnapshot(vmID, snapshotID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.vms[vmID]
+	if !ok {
+		return false
+	}
+	v.SnapshotID = snapshotID
+	return true
 }
 
 func (s *InMemoryStore) GetVM(vmID string) (*VM, bool) {
@@ -364,8 +401,8 @@ func (s *InMemoryStore) DeleteVM(vmID string) bool {
 	}
 	delete(s.vms, vmID)
 	// Only decrement when the VM was still occupying the node — a VM already
-	// moved to a terminal state gave its slot back in UpdateVMState.
-	if !isTerminalVMState(v.State) {
+	// moved to a terminal (or paused) state gave its slot back in UpdateVMState.
+	if occupiesNode(v.State) {
 		if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
 			n.RunningVms--
 		}
@@ -410,6 +447,16 @@ func (s *InMemoryStore) IncrTenantVMs(tenantID string, delta int) {
 	if s.tenantVMs[tenantID] < 0 {
 		s.tenantVMs[tenantID] = 0
 	}
+}
+
+func (s *InMemoryStore) TryReserveTenantVMs(tenantID string, n, hardCap int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if hardCap > 0 && s.tenantVMs[tenantID]+n > hardCap {
+		return false
+	}
+	s.tenantVMs[tenantID] += n
+	return true
 }
 
 func (s *InMemoryStore) TenantLiveVMs(tenantID string) int {
