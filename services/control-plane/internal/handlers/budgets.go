@@ -333,6 +333,17 @@ func CheckToolBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 // RecordUsage upserts one run's worth of spend into the daily rollup.
 // Call this AFTER a run completes.
 func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, tokensIn, tokensOut int64, costUsd float64, toolCalls map[string]int) error {
+	return recordUsage(ctx, pool, tenantID, agentName, 1, tokensIn, tokensOut, costUsd, toolCalls)
+}
+
+// RecordUsageSpend adds tokens and cost to the daily rollup WITHOUT bumping
+// runs_count. For intra-run LLM calls (workflow ai-steps, consistency votes)
+// whose run is already counted, so runs/day budgets are not inflated.
+func RecordUsageSpend(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, tokensIn, tokensOut int64, costUsd float64) error {
+	return recordUsage(ctx, pool, tenantID, agentName, 0, tokensIn, tokensOut, costUsd, nil)
+}
+
+func recordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, runsDelta int, tokensIn, tokensOut int64, costUsd float64, toolCalls map[string]int) error {
 	today := usageDate(time.Now())
 	// json.Marshal of a NIL map yields the 4-byte literal `null`, not `{}` —
 	// so the len()==0 guard never fired, and every caller that passes nil
@@ -351,9 +362,9 @@ func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName st
 	_, err := pool.Exec(ctx, `
 		INSERT INTO agent_usage_daily
 		  (tenant_id, agent_name, usage_date, runs_count, tokens_in, tokens_out, cost_usd, tool_counts)
-		VALUES ($1, $2, $3, 1, $4, $5, $6, $7::jsonb)
+		VALUES ($1, $2, $3, $8, $4, $5, $6, $7::jsonb)
 		ON CONFLICT (tenant_id, agent_name, usage_date) DO UPDATE SET
-		  runs_count   = agent_usage_daily.runs_count + 1,
+		  runs_count   = agent_usage_daily.runs_count + EXCLUDED.runs_count,
 		  tokens_in    = agent_usage_daily.tokens_in + EXCLUDED.tokens_in,
 		  tokens_out   = agent_usage_daily.tokens_out + EXCLUDED.tokens_out,
 		  cost_usd     = agent_usage_daily.cost_usd + EXCLUDED.cost_usd,
@@ -361,7 +372,7 @@ func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName st
 		    SELECT jsonb_object_agg(k, COALESCE((agent_usage_daily.tool_counts->>k)::int, 0) + COALESCE((EXCLUDED.tool_counts->>k)::int, 0))
 		    FROM jsonb_object_keys(agent_usage_daily.tool_counts || EXCLUDED.tool_counts) k
 		  ), '{}'::jsonb)
-	`, tenantID, agentName, today, tokensIn, tokensOut, costUsd, toolCallsJSON)
+	`, tenantID, agentName, today, tokensIn, tokensOut, costUsd, toolCallsJSON, runsDelta)
 	return err
 }
 
