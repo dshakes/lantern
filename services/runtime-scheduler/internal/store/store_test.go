@@ -536,3 +536,52 @@ func TestDB_DeleteVMRemovesRow(t *testing.T) {
 		t.Errorf("expected VM row to be deleted, got count=%d", count)
 	}
 }
+
+// TestWriteThroughStore_PausedForkRoundTrip persists a PAUSED VM (with its
+// snapshot) and a fork child (with parent + snapshot), reloads, and checks the
+// lifecycle columns survive and that the PAUSED VM does not re-take a quota
+// slot or node capacity on boot.
+func TestWriteThroughStore_PausedForkRoundTrip(t *testing.T) {
+	pool, dbURL := openTestPool(t)
+	defer pool.Close()
+	migrateDB(t, pool)
+	cleanupTables(t, dbURL)
+	t.Cleanup(func() { cleanupTables(t, dbURL) })
+
+	_, wt := newWriteThrough(t, pool)
+	wt.UpsertNode(cluster.Node{Name: "n1", Address: "n1:50054", LastHeartbeat: time.Now().UTC()})
+	wt.CreateVM(&cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-paused", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
+	})
+	wt.SetVMSnapshot("vm-paused", "snap-1")
+	wt.UpdateVMState("vm-paused", lanternv1.VmState_VM_STATE_PAUSED, "paused", nil, time.Now().UTC())
+	wt.CreateVM(&cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-child", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
+		SnapshotID: "snap-1", ParentVMID: "vm-paused",
+	})
+
+	mem2, wt2 := newWriteThrough(t, pool)
+	if err := wt2.LoadFromDB(context.Background(), time.Hour); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+	p, ok := mem2.GetVM("vm-paused")
+	if !ok || p.State != lanternv1.VmState_VM_STATE_PAUSED || p.SnapshotID != "snap-1" {
+		t.Fatalf("paused vm reloaded as %+v (ok=%v)", p, ok)
+	}
+	c, ok := mem2.GetVM("vm-child")
+	if !ok || c.ParentVMID != "vm-paused" || c.SnapshotID != "snap-1" {
+		t.Fatalf("fork child reloaded as %+v (ok=%v)", c, ok)
+	}
+	if got := mem2.TenantLiveVMs("t1"); got != 1 {
+		t.Errorf("reloaded quota = %d, want 1 (only the running child)", got)
+	}
+	if n, _ := mem2.GetNode("n1"); n.RunningVms != 1 {
+		t.Errorf("reloaded RunningVms = %d, want 1", n.RunningVms)
+	}
+}
