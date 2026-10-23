@@ -10,6 +10,7 @@ export type VmState =
   | "pending"
   | "spawning"
   | "running"
+  | "paused"
   | "draining"
   | "terminated"
   | "failed";
@@ -25,6 +26,10 @@ export interface VmRow {
   terminatedAt?: string | null;
   lastHeartbeatAt?: string | null;
   spec: Record<string, unknown> | null;
+  /** Set once the VM has been paused/snapshotted. */
+  snapshotId?: string | null;
+  /** Set on VMs created by fork. */
+  parentVmId?: string | null;
 
   // ---- cockpit-only, demo-seeded (see honesty contract in runtime-demo.ts)
   /** Friendly workload / agent name. Real rows may not carry one. */

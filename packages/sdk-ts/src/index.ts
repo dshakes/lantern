@@ -109,4 +109,12 @@ export type {
   FeedbackSummary,
   RehearseResponse,
   ForecastResult,
+  VmState,
+  RuntimeVm,
+  VmPauseResult,
+  VmResumeResult,
+  VmForkResult,
+  VmForkEntry,
+  ExecStreamEvent,
+  ExecResult,
 } from "./types.js";
