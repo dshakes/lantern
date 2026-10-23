@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,10 +139,65 @@ func TestExecuteWebSearchTool_ReportsUsage(t *testing.T) {
 			if _, err := executeWebSearchTool(ctx, nil, "t1", map[string]any{"query": "q"}); err != nil {
 				t.Fatal(err)
 			}
-			in, out := tu.totals()
+			in, out, _ := tu.totals()
 			if in != tc.wantIn || out != tc.wantOut {
 				t.Fatalf("usage=%d/%d want %d/%d", in, out, tc.wantIn, tc.wantOut)
 			}
 		})
+	}
+}
+
+// Tool spend must be priced at the tool's own provider/model: a web_search on
+// Anthropic Sonnet inside a cheap gpt-4o-mini loop must not be billed at
+// gpt-4o-mini rates.
+func TestToolUsage_PricedAtToolModel(t *testing.T) {
+	ctx, tu := withToolUsage(context.Background())
+	if ctx2, tu2 := withToolUsage(ctx); tu2 != tu || ctx2 != ctx {
+		t.Fatal("nested withToolUsage must share the caller's accumulator")
+	}
+	addToolUsage(ctx, "anthropic", "claude-sonnet-4-6", 1_000_000, 1_000_000)
+	in, out, cost := tu.addTo("openai", "gpt-4o-mini", 1_000_000, 0)
+	if in != 2_000_000 || out != 1_000_000 {
+		t.Fatalf("tokens = %d/%d, want 2000000/1000000", in, out)
+	}
+	want := 0.15 + 3.00 + 15.00 // outer mini input + sonnet in/out
+	if cost < want-1e-9 || cost > want+1e-9 {
+		t.Fatalf("cost = %v, want %v (tool priced at its own model)", cost, want)
+	}
+}
+
+// The tool loop returns only its own provider tokens; tool spend reaches the
+// caller through the accumulator (so it is not double counted or mispriced).
+func TestCallLLMWithTools_ToolSpendStaysOnAccumulator(t *testing.T) {
+	reply := func(msg map[string]any) func(*http.Request) (*http.Response, error) {
+		return func(*http.Request) (*http.Response, error) {
+			b, _ := json.Marshal(map[string]any{
+				"choices": []any{map[string]any{"message": msg}},
+				"usage":   map[string]any{"prompt_tokens": 10, "completion_tokens": 1},
+			})
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(b)), Header: http.Header{}}, nil
+		}
+	}
+	stub := &stubRoundTripper{responses: []func(*http.Request) (*http.Response, error){
+		reply(map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+			"id": "c1", "type": "function", "function": map[string]any{"name": "web_search", "arguments": "{}"}}}}),
+		reply(map[string]any{"role": "assistant", "content": "done"}),
+	}}
+	h := newTestProxyWithStub(t, stub)
+	ctx, tu := withToolUsage(context.Background())
+	_, _, tin, tout, err := h.callLLMWithTools(ctx, "openai", "gpt-4o-mini", "k",
+		[]map[string]any{{"role": "user", "content": "hi"}}, nil,
+		func(ctx context.Context, _ string, _ map[string]any) (any, error) {
+			addToolUsage(ctx, "anthropic", "claude-sonnet-4-6", 500, 50)
+			return "r", nil
+		}, nil, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tin != 20 || tout != 2 {
+		t.Errorf("loop tokens = %d/%d, want 20/2 (outer calls only)", tin, tout)
+	}
+	if in, out, cost := tu.totals(); in != 500 || out != 50 || cost != estimateCost("anthropic", "claude-sonnet-4-6", 500, 50) {
+		t.Errorf("accumulator = %d/%d $%v", in, out, cost)
 	}
 }
