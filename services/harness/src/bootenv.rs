@@ -75,6 +75,35 @@ pub struct SpawnContract {
     pub network: Option<GuestNetwork>,
     /// Per-incarnation exec-server bearer (→ `LANTERN_HARNESS_EXEC_TOKEN`).
     pub exec_token: Option<String>,
+    /// The manager's environment class (→ `LANTERN_ENV`). Typed, so it can
+    /// never come from the caller-supplied `env` map.
+    pub lantern_env: Option<String>,
+}
+
+/// `LANTERN_*` keys a caller may legitimately put in the workload env (agent
+/// identity, trace parent, crash-resume marker). Any other `LANTERN_*` key is
+/// harness configuration — `LANTERN_ENV`, egress, workload uid, … — and only
+/// the manager's typed fields / own boot-args may set it. Keep in sync with
+/// the manager's `service::CALLER_LANTERN_KEYS`.
+pub const CALLER_LANTERN_KEYS: [&str; 4] = [
+    "LANTERN_AGENT_INSTANCE_ID",
+    "LANTERN_AGENT_INSTANCE_TOKEN",
+    "LANTERN_TRACE_PARENT",
+    "LANTERN_RESUME",
+];
+
+/// `lantern.env.LANTERN_*` boot-args the MANAGER itself emits (not caller env;
+/// the manager strips caller `LANTERN_*` keys before building boot-args).
+const MANAGER_CMDLINE_KEYS: [&str; 3] = [
+    "LANTERN_MANAGER_ADDR",
+    "LANTERN_WORKLOAD_UID",
+    "LANTERN_ENV",
+];
+
+/// Whether a free-form (caller-supplied) env key may be applied: anything
+/// outside the `LANTERN_` namespace, or an allowlisted caller key.
+fn caller_key_allowed(key: &str) -> bool {
+    !key.starts_with("LANTERN_") || CALLER_LANTERN_KEYS.contains(&key)
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -122,11 +151,21 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
             serde_json::to_string(secrets)?,
         ));
     }
+    if let Some(env) = c.lantern_env.as_ref().filter(|e| !e.is_empty()) {
+        pairs.push(("LANTERN_ENV".into(), env.clone()));
+    }
     let typed = pairs.len();
+    let mut dropped: Vec<&str> = Vec::new();
     for (k, v) in &c.env {
-        if !pairs[..typed].iter().any(|(t, _)| t == k) {
+        if !caller_key_allowed(k) {
+            dropped.push(k);
+        } else if !pairs[..typed].iter().any(|(t, _)| t == k) {
             pairs.push((k.clone(), v.clone()));
         }
+    }
+    if !dropped.is_empty() {
+        // Names only — values may be sensitive.
+        tracing::warn!(keys = ?dropped, "bootenv: ignored LANTERN_* keys in spawn.json env (harness config is manager-owned)");
     }
     Ok(pairs)
 }
@@ -637,8 +676,13 @@ fn umount(target: &str) -> bool {
 /// contract (`console=`, `panic=`, `pci=off`, …).
 fn cmdline_key_to_env(key: &str) -> Option<String> {
     // `lantern.env.FOO=bar` carries caller-supplied env through verbatim.
+    // `LANTERN_*` names are harness config: only the manager's own keys and
+    // the caller allowlist are honoured (a caller value that slipped through an
+    // older manager must not configure the harness).
     if let Some(name) = key.strip_prefix("lantern.env.") {
-        return (!name.is_empty()).then(|| name.to_string());
+        let ok =
+            !name.is_empty() && (caller_key_allowed(name) || MANAGER_CMDLINE_KEYS.contains(&name));
+        return ok.then(|| name.to_string());
     }
     let mapped = match key {
         "lantern.vm_id" => "LANTERN_VM_ID",
@@ -887,6 +931,69 @@ mod tests {
         // Keys the contract does not set still come from boot-args.
         assert_eq!(all("LANTERN_VM_ID"), vec!["vm-1"]);
         assert_eq!(all("KEEP"), vec!["1"]);
+    }
+
+    /// Caller env (spawn.json `env` / `lantern.env.*`) cannot set harness
+    /// config: LANTERN_ENV=dev from the caller on a prod manager stays prod;
+    /// egress/proxy knobs are ignored; agent identity keys pass through.
+    #[test]
+    fn caller_env_cannot_set_harness_security_config() {
+        let contract = parse_spawn_contract(
+            br#"{"lantern_env":"prod","env":{
+                "LANTERN_ENV":"dev","LANTERN_EGRESS_FAIL_CLOSED":"0",
+                "LANTERN_NO_PROXY":"*","LANTERN_EGRESS_RULES":"[]",
+                "LANTERN_WORKLOAD_UID":"0","LANTERN_AGENT_INSTANCE_ID":"inst",
+                "LANTERN_AGENT_INSTANCE_TOKEN":"tok","FOO":"bar"}}"#,
+        )
+        .unwrap();
+        let pairs = contract_env_pairs(&contract).unwrap();
+        let get = |k: &str| {
+            pairs
+                .iter()
+                .filter(|(n, _)| n == k)
+                .map(|(_, v)| v.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(get("LANTERN_ENV"), ["prod"]);
+        for k in [
+            "LANTERN_EGRESS_FAIL_CLOSED",
+            "LANTERN_NO_PROXY",
+            "LANTERN_EGRESS_RULES",
+            "LANTERN_WORKLOAD_UID",
+        ] {
+            assert!(get(k).is_empty(), "{k} must not come from caller env");
+        }
+        assert_eq!(get("LANTERN_AGENT_INSTANCE_ID"), ["inst"]);
+        assert_eq!(get("LANTERN_AGENT_INSTANCE_TOKEN"), ["tok"]);
+        assert_eq!(get("FOO"), ["bar"]);
+
+        // Boot-args: same rule; the manager's own keys still apply.
+        let cmd = env_from_cmdline(
+            "lantern.env.LANTERN_EGRESS_FAIL_CLOSED=0 lantern.env.LANTERN_NO_PROXY=* \
+             lantern.env.LANTERN_HARNESS_EXEC_TOKEN=x lantern.env.LANTERN_MANAGER_ADDR=10.0.0.1:50054 \
+             lantern.env.LANTERN_ENV=prod lantern.env.LANTERN_WORKLOAD_UID=1000 \
+             lantern.env.LANTERN_AGENT_INSTANCE_ID=inst lantern.env.FOO=bar",
+        );
+        let names: Vec<&str> = cmd.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "LANTERN_MANAGER_ADDR",
+                "LANTERN_ENV",
+                "LANTERN_WORKLOAD_UID",
+                "LANTERN_AGENT_INSTANCE_ID",
+                "FOO"
+            ]
+        );
+
+        // Prod manager, caller "dev" in spawn.json env only, no typed field
+        // (older manager): the manager's boot-arg LANTERN_ENV=prod wins.
+        let old = parse_spawn_contract(br#"{"env":{"LANTERN_ENV":"dev"}}"#).unwrap();
+        let layered = layer_boot_env(
+            env_from_cmdline("lantern.env.LANTERN_ENV=prod"),
+            contract_env_pairs(&old).unwrap(),
+        );
+        assert_eq!(layered, vec![("LANTERN_ENV".into(), "prod".into())]);
     }
 
     /// LANTERN_ENV carried only in boot-args (the Firecracker path) must make

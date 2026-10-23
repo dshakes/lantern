@@ -212,6 +212,27 @@ exec clients (Exec and ExecTool) send it as `authorization: Bearer`. Before
 this change the manager sent no token, so prod exec, which requires a token,
 could never authenticate.
 
+### Harness configuration is manager-owned
+
+Caller env reaches the harness's own process environment (spawn.json `env`,
+`lantern.env.*` boot-args, container env). Before this change a caller could
+therefore set harness config, for example `LANTERN_ENV=dev` to turn off every
+prod fail-closed guard, or `LANTERN_EGRESS_FAIL_CLOSED` / `LANTERN_NO_PROXY`.
+
+- **Manager** (`schedule` and `restore`, the single choke point for every
+  backend): drops each caller `LANTERN_*` key except `CALLER_LANTERN_KEYS`
+  (`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN`,
+  `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`). It logs the dropped names, never
+  values, then stamps its own `LANTERN_ENV`, which it also writes as the typed
+  `spawn.json` field `lantern_env`.
+- **Harness**: ignores `LANTERN_*` keys in the `spawn.json` `env` map unless
+  they are allowlisted. `LANTERN_ENV` comes from the typed field. From
+  `lantern.env.*` boot-args it accepts only the manager's own keys
+  (`LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`, `LANTERN_ENV`) plus the
+  allowlist.
+- Residual risk: an older manager that does not filter can still pass a caller
+  `lantern.env.LANTERN_ENV` through boot-args. Upgrade the manager.
+
 ### Bare-mode fork of a running source fails closed
 
 A bare (non-jailed) restore reuses the snapshot's host paths verbatim,

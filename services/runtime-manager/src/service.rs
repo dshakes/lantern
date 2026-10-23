@@ -401,6 +401,49 @@ impl RuntimeManagerGrpc {
 // gRPC method implementations
 // ---------------------------------------------------------------------------
 
+/// `LANTERN_*` env keys a CALLER (control plane / scheduler) legitimately sets
+/// on a workload: agent identity, trace parent, crash-resume marker. Every
+/// other `LANTERN_*` key is harness configuration (`LANTERN_ENV`, egress,
+/// workload uid, …) and is manager-owned. Keep in sync with the harness's
+/// `bootenv::CALLER_LANTERN_KEYS`.
+pub const CALLER_LANTERN_KEYS: [&str; 4] = [
+    "LANTERN_AGENT_INSTANCE_ID",
+    "LANTERN_AGENT_INSTANCE_TOKEN",
+    "LANTERN_TRACE_PARENT",
+    "LANTERN_RESUME",
+];
+
+/// Make a request's env safe to hand to the harness: drop caller-supplied
+/// `LANTERN_*` keys outside [`CALLER_LANTERN_KEYS`] (names logged, never
+/// values) and stamp the manager's OWN `LANTERN_ENV`, so a caller cannot
+/// downgrade a prod guest to dev or switch off its egress/uid guards. Every
+/// backend gets its env through `schedule`/`restore`, so this is the one
+/// choke point.
+fn own_workload_env(
+    env: &mut std::collections::HashMap<String, String>,
+    manager_lantern_env: Option<&str>,
+) {
+    let mut dropped: Vec<String> = env
+        .keys()
+        .filter(|k| k.starts_with("LANTERN_") && !CALLER_LANTERN_KEYS.contains(&k.as_str()))
+        .cloned()
+        .collect();
+    for k in &dropped {
+        env.remove(k);
+    }
+    if !dropped.is_empty() {
+        dropped.sort();
+        tracing::warn!(
+            target: "lantern_audit",
+            keys = ?dropped,
+            "dropped caller-supplied LANTERN_* env keys: harness config is manager-owned"
+        );
+    }
+    if let Some(v) = manager_lantern_env.filter(|v| !v.is_empty()) {
+        env.insert("LANTERN_ENV".to_string(), v.to_string());
+    }
+}
+
 impl RuntimeManagerGrpc {
     /// Schedule a new sandbox for a run.
     pub async fn schedule(
@@ -408,6 +451,7 @@ impl RuntimeManagerGrpc {
         request: Request<proto::ScheduleRequest>,
     ) -> Result<Response<proto::ScheduleResponse>, Status> {
         let mut req = request.into_inner();
+        own_workload_env(&mut req.env, std::env::var("LANTERN_ENV").ok().as_deref());
 
         // Confidential-compute isolation floor: upgrade any weaker trust class to
         // HOSTILE-tier (upgrade only, audited). Mutate the request so build_job +
@@ -733,7 +777,8 @@ impl RuntimeManagerGrpc {
         &self,
         request: Request<proto::RestoreRequest>,
     ) -> Result<Response<proto::RestoreResponse>, Status> {
-        let req = request.into_inner();
+        let mut req = request.into_inner();
+        own_workload_env(&mut req.env, std::env::var("LANTERN_ENV").ok().as_deref());
 
         tracing::info!(
             snapshot_uri = %req.snapshot_uri,
@@ -3687,6 +3732,82 @@ mod tests {
             1,
             "registry must still have exactly one handle after idempotent retry"
         );
+    }
+
+    /// Caller env cannot choose harness config: LANTERN_ENV=dev on a prod
+    /// manager comes out prod; egress/uid knobs are dropped; agent identity,
+    /// trace and resume keys pass through.
+    #[test]
+    fn caller_lantern_env_keys_are_replaced_by_manager_owned_values() {
+        let mut env: HashMap<String, String> = [
+            ("LANTERN_ENV", "dev"),
+            ("LANTERN_EGRESS_FAIL_CLOSED", "0"),
+            ("LANTERN_NO_PROXY", "*"),
+            ("LANTERN_EGRESS_RULES", "[]"),
+            ("LANTERN_WORKLOAD_UID", "0"),
+            ("LANTERN_AGENT_INSTANCE_ID", "inst-1"),
+            ("LANTERN_AGENT_INSTANCE_TOKEN", "tok"),
+            ("LANTERN_TRACE_PARENT", "00-abc-def-01"),
+            ("LANTERN_RESUME", "1"),
+            ("FOO", "bar"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        own_workload_env(&mut env, Some("prod"));
+        let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "FOO",
+                "LANTERN_AGENT_INSTANCE_ID",
+                "LANTERN_AGENT_INSTANCE_TOKEN",
+                "LANTERN_ENV",
+                "LANTERN_RESUME",
+                "LANTERN_TRACE_PARENT"
+            ]
+        );
+        assert_eq!(env["LANTERN_ENV"], "prod");
+
+        // The Firecracker contract carries it as the typed field, not in env.
+        let mut req = spawn_to_schedule(&make_spawn_request_with_handle("t", "r", "w")).unwrap();
+        req.env = env.clone();
+        let c = crate::backends::firecracker::SpawnContract::from_schedule(&req);
+        assert_eq!(c.lantern_env, "prod");
+        assert!(!c.env.contains_key("LANTERN_ENV"));
+
+        // A dev manager (no LANTERN_ENV) never inherits the caller's value.
+        let mut env: HashMap<String, String> =
+            [("LANTERN_ENV".to_string(), "prod-ish".to_string())].into();
+        own_workload_env(&mut env, None);
+        assert!(env.is_empty());
+    }
+
+    /// End to end through Spawn → schedule: the backend never sees a caller
+    /// LANTERN_* config key.
+    #[tokio::test]
+    async fn schedule_strips_caller_harness_config_before_the_backend() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let stub = Arc::new(IdentityStub::default());
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        let mut req =
+            make_spawn_request_with_handle("t", "r", "vm-0f1e2d3c-4b5a-4968-8776-6554433221aa");
+        let spec = req.spec.as_mut().unwrap();
+        spec.env.insert("LANTERN_ENV".into(), "dev".into());
+        spec.env
+            .insert("LANTERN_EGRESS_FAIL_CLOSED".into(), "0".into());
+        spec.env
+            .insert("LANTERN_AGENT_INSTANCE_ID".into(), "inst".into());
+        svc.spawn(Request::new(req)).await.expect("spawn");
+        let seen = stub.scheduled.lock().unwrap()[0].env.clone();
+        assert!(!seen.contains_key("LANTERN_EGRESS_FAIL_CLOSED"));
+        assert_ne!(seen.get("LANTERN_ENV").map(String::as_str), Some("dev"));
+        assert_eq!(seen["LANTERN_AGENT_INSTANCE_ID"], "inst");
     }
 
     /// A duplicate vm_id from a DIFFERENT tenant (or run) must not get the
