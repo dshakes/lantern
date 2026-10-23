@@ -35,7 +35,14 @@ use crate::proto::{
 #[derive(Clone)]
 pub struct ManagerClient {
     pub manager_addr: String,
-    pub vm_id: String,
+    /// Shared across clones: a guest restored from a snapshot re-identifies
+    /// (`reidentify.rs`) and every subsystem must pick up the new id at once.
+    // ponytail: std RwLock, never held across an await.
+    vm_id: Arc<std::sync::RwLock<String>>,
+    /// Bumped on every re-identify. Long-lived streams (Heartbeat, Report)
+    /// watch it and reconnect, so the TLS session presents the NEW cert —
+    /// an established session keeps the identity it was opened with.
+    identity_gen: Arc<tokio::sync::watch::Sender<u64>>,
     /// Per-instance identity token minted by the control-plane at schedule
     /// time and injected as `LANTERN_AGENT_INSTANCE_TOKEN`. Attached as
     /// `authorization: Bearer <token>` metadata on every `VendSecret` call
@@ -69,13 +76,46 @@ impl ManagerClient {
             .filter(|t| !t.is_empty());
         Self {
             manager_addr,
-            vm_id,
+            vm_id: Arc::new(std::sync::RwLock::new(vm_id)),
+            identity_gen: Arc::new(tokio::sync::watch::channel(0).0),
             agent_instance_token,
             inner: Arc::new(Mutex::new(Inner {
                 report_tx: None,
                 last_contact_ms: 0,
                 has_ever_connected: false,
             })),
+        }
+    }
+
+    /// This VM's current identity.
+    pub fn vm_id(&self) -> String {
+        self.vm_id
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Adopt a new identity and force every long-lived manager stream to
+    /// reconnect (presenting whatever cert is on disk now). The caller must
+    /// have installed the new cert material first.
+    pub fn reidentify(&self, new_vm_id: String) {
+        *self
+            .vm_id
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_vm_id;
+        self.identity_gen.send_modify(|g| *g += 1);
+    }
+
+    /// Resolves when the identity changes after this call.
+    pub(crate) fn identity_changed(
+        &self,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let mut rx = self.identity_gen.subscribe();
+        async move {
+            // Err = sender gone (never, while a client exists): park forever.
+            if rx.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
         }
     }
 
@@ -129,6 +169,9 @@ impl ManagerClient {
     pub async fn open_heartbeat_stream(
         &self,
     ) -> Result<(mpsc::Sender<HeartbeatRequest>, mpsc::Receiver<HeartbeatAck>)> {
+        // Subscribe BEFORE reading the cert files: a re-identify that lands
+        // after this point always tears the stream down.
+        let identity_changed = self.identity_changed();
         let tls_config = crate::tls::build_client_tls_config()
             .with_context(|| "heartbeat: failed to build TLS client config")?;
 
@@ -181,7 +224,7 @@ impl ManagerClient {
         // We use a separate mpsc to avoid holding req_rx across the await.
         let (wire_tx, wire_rx) = mpsc::channel::<pb::HeartbeatRequest>(8);
         let manager_addr = self.manager_addr.clone();
-        let vm_id = self.vm_id.clone();
+        let vm_id = self.vm_id();
 
         // Converter task: internal HeartbeatRequest → pb wire type.
         tokio::spawn(async move {
@@ -224,8 +267,16 @@ impl ManagerClient {
                 "heartbeat: bidi stream established"
             );
 
+            tokio::pin!(identity_changed);
             loop {
-                match ack_stream.message().await {
+                let msg = tokio::select! {
+                    m = ack_stream.message() => m,
+                    () = &mut identity_changed => {
+                        tracing::info!(vm_id = %vm_id, "heartbeat: identity changed; reconnecting");
+                        break;
+                    }
+                };
+                match msg {
                     Ok(Some(wire_ack)) => {
                         // Refresh liveness on every ack so /healthz (when it
                         // lands) reflects ongoing contact, not just stream-open.
@@ -274,6 +325,8 @@ impl ManagerClient {
     /// caller therefore owns the un-acked reports it pulled and is responsible
     /// for not silently dropping security-critical audit events.
     pub async fn report_stream(&self, report_rx: mpsc::Receiver<HarnessReport>) -> Result<()> {
+        // Subscribe BEFORE reading the cert files (see open_heartbeat_stream).
+        let identity_changed = self.identity_changed();
         let tls_config = crate::tls::build_client_tls_config()
             .with_context(|| "report: failed to build TLS client config")?;
 
@@ -330,10 +383,14 @@ impl ManagerClient {
             request.metadata_mut(),
         );
 
-        client
-            .report(request)
-            .await
-            .with_context(|| "report: Report RPC stream failed")?;
+        // A re-identify ends this stream: frames sent on a session opened with
+        // the old cert would be attributed to (or rejected as) the old VM.
+        tokio::select! {
+            r = client.report(request) => {
+                r.with_context(|| "report: Report RPC stream failed")?;
+            }
+            () = identity_changed => anyhow::bail!("report: identity changed; reconnecting"),
+        }
 
         self.note_contact().await;
         Ok(())
@@ -365,12 +422,12 @@ impl ManagerClient {
             .unwrap_or(false)
         {
             tracing::warn!(
-                vm_id = %self.vm_id,
+                vm_id = %self.vm_id(),
                 secret_uri = %req.secret_uri,
                 "vend_secret: STUB mode (LANTERN_ALLOW_SECRET_STUB=1) — \
                  returning a fake value. Dev/test use only."
             );
-            return Ok(Self::stub_response(&self.vm_id, &req.secret_uri));
+            return Ok(Self::stub_response(&self.vm_id(), &req.secret_uri));
         }
 
         // Real path: call the manager's RuntimeHarness.VendSecret RPC.

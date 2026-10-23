@@ -446,6 +446,7 @@ impl RuntimeManagerGrpc {
         // map is caller-supplied; reading it here would re-introduce the same
         // namespace-escape the spawn gate above was designed to close.
         let tenant_id = req.tenant_id.clone();
+        let cert_sha256 = backend.identity_pin(&handle.id);
 
         // Register the handle. `declared_secret_uris` is sourced from the
         // manager's own spawn record (via `req.secrets`) — never from
@@ -464,6 +465,9 @@ impl RuntimeManagerGrpc {
             node_name: handle.node_name.clone(),
             declared_secret_uris,
             agent_version_id: req.agent_version_id.clone(),
+            // Pin THIS incarnation's cert so a superseded one (e.g. frozen in
+            // the snapshot a restore came from) cannot act as the VM.
+            cert_sha256,
         });
 
         tracing::info!(
@@ -581,7 +585,7 @@ impl RuntimeManagerGrpc {
         // Invoke the backend. On Linux + Firecracker the files are written to
         // /run/lantern/snapshots/<handle_id>/{snapshot,mem}; uri + size are
         // derived from the store after persisting, but errors must propagate.
-        let _backend_info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
+        let backend_info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
 
         // Persist through the store, which owns the canonical copy under
         // SNAPSHOT_DIR and enforces retention. `put_files` STREAMS each file
@@ -596,10 +600,8 @@ impl RuntimeManagerGrpc {
         } else {
             owner.agent_version_id.as_str()
         };
-        let snapshot_base =
-            std::path::PathBuf::from(format!("/run/lantern/snapshots/{}", req.handle_id));
-        let snapshot_file = snapshot_base.join("snapshot");
-        let mem_file = snapshot_base.join("mem");
+        let (snapshot_file, mem_file) =
+            snapshot_artifact_paths(&backend_info.snapshot_uri, &req.handle_id);
         let files: [(&str, &std::path::Path); 2] =
             [("snapshot", &snapshot_file), ("mem", &mem_file)];
 
@@ -679,6 +681,10 @@ impl RuntimeManagerGrpc {
             input: req.input.clone(),
             env: req.env.clone(),
             secrets: req.secrets.clone(),
+            // The restored guest is re-keyed to the RESTORING request's identity
+            // and contract, never left running as the snapshot's source VM.
+            vm_id: req.vm_id.clone(),
+            egress_rules: req.egress_rules.clone(),
         };
         backend
             .restore(&restore.snapshot_uri, &restore)
@@ -733,6 +739,7 @@ impl RuntimeManagerGrpc {
             node_name: handle.node_name.clone(),
             declared_secret_uris,
             agent_version_id: String::new(),
+            cert_sha256: self.backend.identity_pin(&handle.id),
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -1026,6 +1033,29 @@ fn exec_tool_tenant_ok(owner: &str, requested: &str, prod: bool) -> bool {
     }
 }
 
+/// Host paths of the `(vmstate, mem)` files a backend snapshot just wrote.
+///
+/// Firecracker reports them as `fc://<host path>` — chroot-expanded for a
+/// jailed VM, which is the only place they exist then. Reading the bare
+/// `/run/lantern/snapshots/<id>` path instead made every jailed pause fail.
+/// Anything else keeps the conventional bare layout.
+fn snapshot_artifact_paths(
+    snapshot_uri: &str,
+    handle_id: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    use crate::backends::firecracker::{SnapshotSource, parse_snapshot_source};
+    if snapshot_uri.starts_with("fc://")
+        && let SnapshotSource::HostPath {
+            vmstate_path,
+            mem_path,
+        } = parse_snapshot_source(snapshot_uri)
+    {
+        return (vmstate_path.into(), mem_path.into());
+    }
+    let base = std::path::PathBuf::from(format!("/run/lantern/snapshots/{handle_id}"));
+    (base.join("snapshot"), base.join("mem"))
+}
+
 /// Restore ownership: the snapshot's recorded tenant must equal the caller's.
 /// Untenanted (legacy) snapshots are never restorable.
 fn snapshot_owned_by(meta: &crate::snapshot_store::SnapshotMeta, tenant_id: &str) -> bool {
@@ -1140,6 +1170,8 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         confidential: spec.confidential,
         agent_version_id: spec.agent_version_id.clone(),
         restore_snapshot_id: spec.restore_snapshot_id.clone(),
+        // Set by `spawn` from the scheduler-issued handle.
+        vm_id: String::new(),
     })
 }
 
@@ -1223,6 +1255,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         }
 
         let mut internal = spawn_to_schedule(&req)?;
+        // Boot under the scheduler's wire vm_id so cert CN/SAN, harness vm_id
+        // and registry key are one id (the Firecracker identity gap). Backends
+        // that mint their own ids ignore it and the rekey below maps them.
+        internal.vm_id = wire_vm_id.unwrap_or_default().to_string();
 
         // Inject the W3C traceparent into the workload's env so the in-VM
         // harness can continue the same distributed trace.  LANTERN_TRACE_PARENT
@@ -2012,13 +2048,28 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                         // Only accept heartbeats from VMs we actually spawned.
                         // Silently skipping keeps the stream alive so the harness
                         // isn't penalised for a racy reconnect during boot.
-                        if registry.get(&hb.vm_id).is_none() {
+                        let Some(info) = registry.get(&hb.vm_id) else {
                             tracing::debug!(
                                 vm_id = %hb.vm_id,
                                 "heartbeat: vm_id not registered; skipping (may be a reconnect race)"
                             );
                             // IMPORTANT: continue here — do NOT fall through to the
                             // cache/harness_addrs writes for an unregistered vm_id.
+                            continue;
+                        };
+                        // A cert from an earlier incarnation of this vm_id (a
+                        // guest restored from a snapshot that has not yet
+                        // re-identified) must not steer exec dial-back.
+                        if mtls_enabled
+                            && !crate::tls::cert_matches_pin(
+                                info.cert_sha256.as_deref(),
+                                peer_cert_der.as_deref(),
+                            )
+                        {
+                            tracing::warn!(
+                                vm_id = %hb.vm_id,
+                                "heartbeat: superseded VM cert (stale incarnation) — dropping message"
+                            );
                             continue;
                         }
 
@@ -2130,6 +2181,24 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
             .registry
             .get(&req.vm_id)
             .ok_or_else(|| Status::not_found(format!("vm_id '{}' not registered", req.vm_id)))?;
+
+        // Step 1b: the cert must be THIS incarnation's. A restored guest still
+        // holding the snapshot's cert (same CN) is refused until it re-reads
+        // its fresh identity off the cert drive — secrets vended to the old
+        // identity die with it.
+        if self.mtls_enabled
+            && !crate::tls::cert_matches_pin(info.cert_sha256.as_deref(), peer_cert_der.as_deref())
+        {
+            tracing::warn!(
+                vm_id = %req.vm_id,
+                secret_uri = %req.secret_uri,
+                "VendSecret DENIED: superseded VM cert (stale incarnation)"
+            );
+            return Err(Status::permission_denied(format!(
+                "client certificate for vm '{}' has been superseded; re-identify",
+                req.vm_id
+            )));
+        }
 
         // Step 2: enforce the declared-secrets allowlist.
         if !info.declared_secret_uris.contains(&req.secret_uri) {
@@ -2282,6 +2351,20 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                                     cert_vm_id = %cid,
                                     frame_vm_id = %body_vm_id,
                                     "report: frame vm_id disagrees with peer cert — dropping frame"
+                                );
+                                continue;
+                            }
+                            // Frames from a superseded cert (stale incarnation)
+                            // must not be attributed to the current VM.
+                            if let Some(info) = registry.get(cid)
+                                && !crate::tls::cert_matches_pin(
+                                    info.cert_sha256.as_deref(),
+                                    peer_cert_der.as_deref(),
+                                )
+                            {
+                                tracing::warn!(
+                                    cert_vm_id = %cid,
+                                    "report: superseded VM cert (stale incarnation) — dropping frame"
                                 );
                                 continue;
                             }
@@ -2792,6 +2875,7 @@ mod tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
             agent_version_id: String::new(),
+            cert_sha256: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -2965,6 +3049,7 @@ mod tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
             agent_version_id: String::new(),
+            cert_sha256: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3020,6 +3105,7 @@ mod tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
+            cert_sha256: None,
         });
         // Rekey so the wire vm_id resolves to the backend handle_id.
         svc.registry.rekey(handle_id, vm_id);
@@ -3219,6 +3305,7 @@ mod tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
+            cert_sha256: None,
         });
         svc.registry.rekey(handle_id, vm_id);
         svc
@@ -4364,5 +4451,175 @@ mod tests {
         assert_eq!(resp.status, pb::ToolStatus::Error as i32);
         assert!(resp.error.contains("timed out"), "{}", resp.error);
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 addendum — wire vm_id identity + restore re-identity
+    // -----------------------------------------------------------------------
+
+    /// Identity-bearing backend double (Firecracker semantics): boots/restores
+    /// under the requested vm_id, pins a per-incarnation cert, and records the
+    /// requests it saw.
+    #[derive(Default)]
+    struct IdentityStub {
+        scheduled: std::sync::Mutex<Vec<proto::ScheduleRequest>>,
+        restored: std::sync::Mutex<Vec<proto::RestoreRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for IdentityStub {
+        async fn schedule(
+            &self,
+            req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            self.scheduled.lock().unwrap().push(req.clone());
+            Ok(crate::backend::Handle {
+                id: req.vm_id.clone(),
+                node_name: "n".into(),
+                cold_start_ms: 0.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            anyhow::bail!("unused")
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            self.restored.lock().unwrap().push(req.clone());
+            Ok(crate::backend::Handle {
+                id: req.vm_id.clone(),
+                node_name: "n".into(),
+                cold_start_ms: 0.0,
+            })
+        }
+        fn name(&self) -> &'static str {
+            "firecracker"
+        }
+        fn satisfies_isolation(&self, _class: proto::IsolationClass) -> bool {
+            true
+        }
+        fn identity_pin(&self, handle_id: &str) -> Option<String> {
+            Some(format!("pin-{handle_id}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_boots_under_the_wire_vm_id_and_pins_its_cert() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let stub = Arc::new(IdentityStub::default());
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        let wire = "vm-0f1e2d3c-4b5a-4968-8776-655443322110";
+        svc.spawn(Request::new(make_spawn_request_with_handle("t", "r", wire)))
+            .await
+            .expect("spawn");
+
+        assert_eq!(stub.scheduled.lock().unwrap()[0].vm_id, wire);
+        // Registry key, backend handle id (cert CN) and harness vm_id agree —
+        // a harness Heartbeat/VendSecret by its own id now resolves.
+        let info = svc
+            .registry
+            .get(wire)
+            .expect("registered under the wire id");
+        assert_eq!(info.handle_id, wire);
+        assert_eq!(info.cert_sha256.as_deref(), Some(&*format!("pin-{wire}")));
+        assert_eq!(svc.registry.len(), 1, "no second (rekeyed) alias");
+    }
+
+    #[tokio::test]
+    async fn restore_spawn_re_identifies_as_the_requested_vm_id() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, snap) = store_with_snapshot(tmp.path(), "t-owner").await;
+        let stub = Arc::new(IdentityStub::default());
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store);
+
+        // Fork: two NEW wire ids restoring the same snapshot.
+        for wire in [
+            "vm-aaaaaaaa-0000-4000-8000-000000000001",
+            "vm-bbbbbbbb-0000-4000-8000-000000000002",
+        ] {
+            let mut req = restore_spawn("t-owner", &snap);
+            req.handle = make_spawn_request_with_handle("t-owner", "r", wire).handle;
+            if let Some(spec) = req.spec.as_mut() {
+                spec.egress_rules = vec![pb::EgressRule {
+                    pattern: format!("{wire}.example.com"),
+                    http_methods: vec![],
+                    rate_bps: 0,
+                }];
+            }
+            let resp = svc
+                .spawn(Request::new(req))
+                .await
+                .expect("restore")
+                .into_inner();
+            assert!(resp.from_snapshot);
+            assert_eq!(resp.handle.unwrap().vm_id, wire);
+            let info = svc.registry.get(wire).expect("registered");
+            assert_eq!(info.tenant_id, "t-owner");
+            assert_eq!(info.cert_sha256.as_deref(), Some(&*format!("pin-{wire}")));
+        }
+        let restored = stub.restored.lock().unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_ne!(
+            restored[0].vm_id, restored[1].vm_id,
+            "forks never share an identity"
+        );
+        assert!(
+            restored[1].egress_rules[0]
+                .pattern
+                .starts_with(&restored[1].vm_id)
+        );
+        assert_eq!(restored[0].snapshot_uri, format!("store://{snap}"));
+    }
+
+    #[test]
+    fn snapshot_artifacts_follow_the_backend_reported_host_path() {
+        // Jailed: the files exist only under the chroot.
+        let (v, m) = snapshot_artifact_paths(
+            "fc:///srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/snapshot",
+            "vm-1",
+        );
+        assert_eq!(
+            v,
+            std::path::Path::new(
+                "/srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/snapshot"
+            )
+        );
+        assert_eq!(
+            m,
+            std::path::Path::new(
+                "/srv/jailer/firecracker/vm-1/root/run/lantern/snapshots/vm-1/mem"
+            )
+        );
+        // Anything else: the conventional bare layout.
+        let (v, m) = snapshot_artifact_paths("stub://", "h-2");
+        assert_eq!(
+            v,
+            std::path::Path::new("/run/lantern/snapshots/h-2/snapshot")
+        );
+        assert_eq!(m, std::path::Path::new("/run/lantern/snapshots/h-2/mem"));
     }
 }

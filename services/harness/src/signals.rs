@@ -135,7 +135,7 @@ async fn drain(manager: &ManagerClient, supervisor: &SupervisorHandles) {
 
     manager
         .enqueue_report(HarnessReport::Audit(AuditEvent {
-            vm_id: manager.vm_id.clone(),
+            vm_id: manager.vm_id(),
             action: "drain_start".into(),
             at_unix_ms: now_unix_ms(),
             attrs: [("grace_secs".into(), grace.to_string())]
@@ -173,7 +173,7 @@ async fn drain(manager: &ManagerClient, supervisor: &SupervisorHandles) {
     crate::logs::flush();
     manager
         .enqueue_report(HarnessReport::Audit(AuditEvent {
-            vm_id: manager.vm_id.clone(),
+            vm_id: manager.vm_id(),
             action: "drain_complete".into(),
             at_unix_ms: now_unix_ms(),
             attrs: Default::default(),
@@ -184,7 +184,7 @@ async fn drain(manager: &ManagerClient, supervisor: &SupervisorHandles) {
 async fn snapshot(manager: &ManagerClient, supervisor: &SupervisorHandles) {
     manager
         .enqueue_report(HarnessReport::Audit(AuditEvent {
-            vm_id: manager.vm_id.clone(),
+            vm_id: manager.vm_id(),
             action: "snapshot".into(),
             at_unix_ms: now_unix_ms(),
             attrs: Default::default(),

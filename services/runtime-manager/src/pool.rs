@@ -407,6 +407,7 @@ mod tests {
             confidential: false,
             agent_version_id: String::new(),
             restore_snapshot_id: String::new(),
+            vm_id: String::new(),
         }
     }
 

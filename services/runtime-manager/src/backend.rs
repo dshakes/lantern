@@ -182,6 +182,14 @@ pub trait RuntimeBackend: Send + Sync {
         );
     }
 
+    /// SHA-256 (hex) of the per-VM client cert issued for `handle_id`'s current
+    /// incarnation, if this backend issues guest certs. The registry pins it so
+    /// a superseded cert (e.g. one restored from a snapshot) cannot act as the
+    /// VM. Default `None`: backends without guest certs pin nothing.
+    fn identity_pin(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
     /// What the backend can say about a handle's liveness.
     ///
     /// The distinction that matters is `Starting` vs `Exited`. A workload can
