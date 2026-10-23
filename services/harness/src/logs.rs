@@ -47,7 +47,7 @@ where
                 }
                 let attrs = parse_json_attrs(&text).unwrap_or_default();
                 let line = LogLine {
-                    vm_id: manager.vm_id.clone(),
+                    vm_id: manager.vm_id(),
                     at_unix_ms: now_unix_ms(),
                     stream: stream.to_string(),
                     text,

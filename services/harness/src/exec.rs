@@ -47,13 +47,12 @@ const CHUNK_SIZE: usize = 8 * 1024;
 /// manager-served RPCs (this process is their *client*, via
 /// `ManagerClient`); a peer calling them on the guest gets UNIMPLEMENTED.
 pub struct ExecService {
-    vm_id: String,
     manager: ManagerClient,
 }
 
 impl ExecService {
-    pub fn new(vm_id: String, manager: ManagerClient) -> Self {
-        Self { vm_id, manager }
+    pub fn new(manager: ManagerClient) -> Self {
+        Self { manager }
     }
 }
 
@@ -437,7 +436,9 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
             .map_err(|e| Status::internal(format!("exec: stream read error: {e}")))?
             .ok_or_else(|| Status::invalid_argument("exec: empty request stream"))?;
 
-        validate_first_frame(&first, &self.vm_id)?;
+        // Read per call: a restored guest re-identifies at runtime.
+        let vm_id = self.manager.vm_id();
+        validate_first_frame(&first, &vm_id)?;
 
         // Intercept the tool-runner magic command BEFORE the general exec audit.
         // The general audit logs argv, which for tool calls contains the
@@ -448,7 +449,7 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
             tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
             let (tx, rx) = mpsc::channel(4);
             tokio::spawn(crate::tool_runner::run_tool_call(
-                self.vm_id.clone(),
+                vm_id,
                 first.argv,
                 self.manager.clone(),
                 tx,
@@ -458,7 +459,7 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
         }
 
         tracing::info!(
-            vm_id = %self.vm_id,
+            vm_id = %vm_id,
             command = %first.command,
             argv = ?first.argv,
             "exec: running command in guest"
@@ -468,7 +469,7 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
         // fan-in; never blocks the exec itself.
         self.manager
             .enqueue_report(HarnessReport::Audit(AuditEvent {
-                vm_id: self.vm_id.clone(),
+                vm_id,
                 action: "exec".to_string(),
                 at_unix_ms: proto::now_unix_ms(),
                 attrs: std::collections::HashMap::from([
@@ -534,7 +535,7 @@ fn check_bearer_token(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|t| t == expected)
+        .map(|t| ct_eq(t.as_bytes(), expected.as_bytes()))
         .unwrap_or(false);
     if ok {
         Ok(req)
@@ -543,6 +544,22 @@ fn check_bearer_token(
             "exec: invalid or missing bearer token",
         ))
     }
+}
+
+/// Constant-time byte comparison so the bearer check doesn't leak how many
+/// leading bytes matched. Length is not secret (tokens are fixed-size).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// The exec server's interceptor: the bearer must equal the CURRENT
+/// incarnation's token (empty = dev pass-through, refused in prod by `run`).
+#[allow(clippy::result_large_err)] // tonic's Interceptor signature
+fn exec_auth(
+    manager: &ManagerClient,
+    req: tonic::Request<()>,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    check_bearer_token(req, &manager.exec_token())
 }
 
 /// Bind and serve the in-guest exec server. Address comes from
@@ -556,15 +573,14 @@ fn check_bearer_token(
 /// accepts arbitrary shell commands as the harness uid; anything on the guest
 /// tap interface can reach it.  In dev (token unset) a SECURITY warning is
 /// logged; in prod a missing token is fatal (mirrors the TLS prod guard).
-pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
+pub async fn run(manager: ManagerClient) -> Result<()> {
     let addr_raw = std::env::var("LANTERN_HARNESS_EXEC_ADDR")
         .unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
     let addr: std::net::SocketAddr = addr_raw
         .parse()
         .with_context(|| format!("exec: invalid LANTERN_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
 
-    let exec_token = std::env::var("LANTERN_HARNESS_EXEC_TOKEN").unwrap_or_default();
-    if exec_token.is_empty() {
+    if manager.exec_token().is_empty() {
         if crate::tls::is_prod_env() {
             anyhow::bail!(
                 "exec: LANTERN_HARNESS_EXEC_TOKEN must be set in production \
@@ -582,10 +598,11 @@ pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
 
     tracing::info!(%addr, "exec: in-guest exec server listening");
 
-    let svc = ExecService::new(vm_id, manager);
-    // ponytail: always use with_interceptor; the interceptor is a no-op when
-    // the token is empty (dev path, guarded by the prod bail above).
-    let token_for_interceptor = exec_token;
+    // The token is read from the shared client state per call: a guest
+    // restored from a snapshot re-identifies and must start rejecting the
+    // previous incarnation's token immediately.
+    let auth = manager.clone();
+    let svc = ExecService::new(manager);
     tonic::transport::Server::builder()
         .add_service(
             pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
@@ -596,7 +613,7 @@ pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
                 // `FnMut(Request<()>) -> Result<Request<()>, Status>`, so the
                 // error cannot be boxed without failing to implement the trait.
                 #[allow(clippy::result_large_err)]
-                move |req: tonic::Request<()>| check_bearer_token(req, &token_for_interceptor),
+                move |req: tonic::Request<()>| exec_auth(&auth, req),
             ),
         )
         .serve(addr)
@@ -612,6 +629,46 @@ pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bearer(token: &str) -> tonic::Request<()> {
+        let mut req = tonic::Request::new(());
+        req.metadata_mut().insert(
+            "authorization",
+            format!("Bearer {token}").parse().expect("ascii"),
+        );
+        req
+    }
+
+    /// The interceptor reads the LIVE token: after a re-identify the previous
+    /// incarnation's token is rejected and the new one accepted.
+    #[test]
+    fn ct_eq_matches_only_identical_bytes() {
+        assert!(ct_eq(b"tok-123", b"tok-123"));
+        assert!(!ct_eq(b"tok-123", b"tok-124"));
+        assert!(!ct_eq(b"tok-123", b"tok-12"));
+        assert!(!ct_eq(b"", b"x"));
+    }
+
+    #[test]
+    fn exec_auth_follows_reidentify() {
+        let m = ManagerClient::new("127.0.0.1:1".into(), "vm-src".into());
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-src".into(),
+            exec_token: "tok-old".into(),
+            agent_instance_token: None,
+        });
+        assert!(exec_auth(&m, bearer("tok-old")).is_ok());
+
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-fork".into(),
+            exec_token: "tok-new".into(),
+            agent_instance_token: None,
+        });
+        let err = exec_auth(&m, bearer("tok-old")).expect_err("superseded token");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+        assert!(exec_auth(&m, bearer("tok-new")).is_ok());
+        assert!(exec_auth(&m, tonic::Request::new(())).is_err(), "no token");
+    }
 
     /// Drain every frame from a run_exec channel.
     async fn collect(command: &str, argv: &[&str]) -> Vec<Result<pb::ExecResponse, Status>> {

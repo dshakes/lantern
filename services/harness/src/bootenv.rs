@@ -66,6 +66,24 @@ pub struct SpawnContract {
     pub egress_rules: Option<Vec<crate::proto::EgressRule>>,
     pub workload_uid: Option<u32>,
     pub workload_gid: Option<u32>,
+    /// This VM's identity (== the cert CN on the same drive). Re-read on
+    /// resume detection — see `reidentify.rs`.
+    pub vm_id: Option<String>,
+    pub declared_secrets: Option<Vec<crate::proto::SecretRef>>,
+    /// Point-to-point addressing; only used to re-address a restored guest
+    /// (a cold boot is configured by the kernel's `ip=`).
+    pub network: Option<GuestNetwork>,
+    /// Per-incarnation exec-server bearer (→ `LANTERN_HARNESS_EXEC_TOKEN`).
+    pub exec_token: Option<String>,
+}
+
+/// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
+pub struct GuestNetwork {
+    pub guest_ip: String,
+    pub host_ip: String,
+    pub netmask: String,
 }
 
 pub fn parse_spawn_contract(bytes: &[u8]) -> serde_json::Result<SpawnContract> {
@@ -91,6 +109,18 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if let Some(gid) = c.workload_gid {
         pairs.push(("LANTERN_WORKLOAD_GID".into(), gid.to_string()));
+    }
+    if let Some(t) = c.exec_token.as_ref().filter(|t| !t.is_empty()) {
+        pairs.push(("LANTERN_HARNESS_EXEC_TOKEN".into(), t.clone()));
+    }
+    if let Some(vm_id) = c.vm_id.as_ref().filter(|v| !v.is_empty()) {
+        pairs.push(("LANTERN_VM_ID".into(), vm_id.clone()));
+    }
+    if let Some(secrets) = c.declared_secrets.as_ref().filter(|s| !s.is_empty()) {
+        pairs.push((
+            "LANTERN_DECLARED_SECRETS".into(),
+            serde_json::to_string(secrets)?,
+        ));
     }
     let typed = pairs.len();
     for (k, v) in &c.env {
@@ -292,7 +322,7 @@ fn assemble_declared_secrets() {
 /// Name the manager is reached by from inside the guest.
 ///
 /// Must match a DNS SAN on the manager's server certificate.
-const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
+pub(crate) const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
 
 /// Make the manager reachable by NAME rather than by address.
 ///
@@ -426,6 +456,70 @@ fn ensure_procfs() {}
 /// Returns the raw `spawn.json` from the drive root (`Ok(None)` when there is
 /// no drive or no file). The drive is UNMOUNTED before returning, after its
 /// cert material is copied into the harness-only `PRIVATE_DIR` — see there.
+/// The block device the cert drive was found on at boot — what the
+/// re-identify watcher polls (`reidentify.rs`).
+static CERT_DEVICE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+pub fn cert_device() -> Option<&'static str> {
+    CERT_DEVICE.get().copied()
+}
+
+/// What one mount of the cert drive yielded.
+#[cfg(target_os = "linux")]
+pub struct CertDriveLoad {
+    /// Raw `spawn.json` (`Ok(None)` when absent).
+    pub spawn: std::io::Result<Option<Vec<u8>>>,
+    /// Paths of the harness-only copies (cert, key, CA), when stashed.
+    pub private: Option<Vec<std::path::PathBuf>>,
+}
+
+/// Mount `device`, verify it is the cert drive, copy its material into the
+/// harness-only dir (overwriting — the paths stay the same, so every later
+/// connect presents whatever identity is there now), read `spawn.json`,
+/// unmount. `None` when `device` is not the cert drive.
+#[cfg(target_os = "linux")]
+pub fn load_cert_device(device: &str) -> Option<CertDriveLoad> {
+    if !std::path::Path::new(device).exists() || !mount_ro_ext4(device, CERT_MOUNT) {
+        return None;
+    }
+    // Verify this really is the cert drive before trusting anything —
+    // probing means we may have just mounted some other volume.
+    let is_cert_drive = CERT_FILES
+        .iter()
+        .all(|name| std::path::Path::new(&format!("{CERT_MOUNT}/{name}")).exists());
+    if !is_cert_drive {
+        // Wrong volume: leave nothing mounted behind for the next candidate.
+        umount(CERT_MOUNT);
+        return None;
+    }
+    let spawn = match std::fs::read(format!("{CERT_MOUNT}/{SPAWN_FILE}")) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    };
+    let private = match stash_private(
+        std::path::Path::new(CERT_MOUNT),
+        std::path::Path::new(PRIVATE_DIR),
+        &CERT_FILES,
+    ) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::warn!(error = %e, "certs: cannot stash cert material");
+            None
+        }
+    };
+    // Nothing on the drive may stay reachable by the workload uid.
+    if !umount(CERT_MOUNT) {
+        tracing::error!(
+            mount = CERT_MOUNT,
+            error = %std::io::Error::last_os_error(),
+            "certs: SECURITY could not unmount the cert drive — its files remain \
+             subject to the image's file modes"
+        );
+    }
+    Some(CertDriveLoad { spawn, private })
+}
+
 #[cfg(target_os = "linux")]
 fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
     // Already resolvable — a real environment was injected (docker/K8s), or
@@ -443,60 +537,30 @@ fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
     }
 
     for device in CERT_DEVICE_CANDIDATES {
-        if !std::path::Path::new(device).exists() || !mount_ro_ext4(device, CERT_MOUNT) {
+        let Some(load) = load_cert_device(device) else {
             continue;
-        }
-
-        // Verify this really is the cert drive before publishing anything —
-        // probing means we may have just mounted some other volume.
-        let paths: Vec<String> = CERT_FILES
-            .iter()
-            .map(|name| format!("{CERT_MOUNT}/{name}"))
-            .collect();
-        if paths.iter().all(|p| std::path::Path::new(p).exists()) {
-            let spawn = match std::fs::read(format!("{CERT_MOUNT}/{SPAWN_FILE}")) {
-                Ok(b) => Ok(Some(b)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(e) => Err(e),
-            };
-            match stash_private(
-                std::path::Path::new(CERT_MOUNT),
-                std::path::Path::new(PRIVATE_DIR),
-                &CERT_FILES,
-            ) {
-                Ok(private) => {
-                    // SAFETY: single-threaded startup — see the contract on `main`.
-                    unsafe {
-                        std::env::set_var("LANTERN_VM_TLS_CERT", &private[0]);
-                        std::env::set_var("LANTERN_VM_TLS_KEY", &private[1]);
-                        std::env::set_var("LANTERN_MANAGER_TLS_CA", &private[2]);
-                    }
-                    tracing::info!(
-                        device,
-                        private_dir = PRIVATE_DIR,
-                        "certs: per-VM cert drive copied to harness-only dir — \
-                         harness→manager channel is mTLS"
-                    );
+        };
+        let _ = CERT_DEVICE.set(device);
+        match load.private {
+            Some(private) => {
+                // SAFETY: single-threaded startup — see the contract on `main`.
+                unsafe {
+                    std::env::set_var("LANTERN_VM_TLS_CERT", &private[0]);
+                    std::env::set_var("LANTERN_VM_TLS_KEY", &private[1]);
+                    std::env::set_var("LANTERN_MANAGER_TLS_CA", &private[2]);
                 }
-                Err(e) => tracing::warn!(
-                    error = %e,
-                    "certs: cannot stash cert material — harness→manager channel will be PLAINTEXT"
-                ),
-            }
-            // Nothing on the drive may stay reachable by the workload uid.
-            if !umount(CERT_MOUNT) {
-                tracing::error!(
-                    mount = CERT_MOUNT,
-                    error = %std::io::Error::last_os_error(),
-                    "certs: SECURITY could not unmount the cert drive — its files remain \
-                     subject to the image's file modes"
+                tracing::info!(
+                    device,
+                    private_dir = PRIVATE_DIR,
+                    "certs: per-VM cert drive copied to harness-only dir — \
+                     harness→manager channel is mTLS"
                 );
             }
-            return spawn;
+            None => tracing::warn!(
+                "certs: cannot stash cert material — harness→manager channel will be PLAINTEXT"
+            ),
         }
-
-        // Wrong volume: leave nothing mounted behind for the next candidate.
-        umount(CERT_MOUNT);
+        return load.spawn;
     }
 
     tracing::warn!(
@@ -858,6 +922,40 @@ mod tests {
         assert_eq!(mode(&out[1]), 0o600);
         assert_eq!(std::fs::read_to_string(&out[1]).expect("read"), "tls.key");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn contract_identity_and_secrets_beat_the_cmdline() {
+        // spawn.json is the identity of record: the cmdline copy is frozen in
+        // guest memory and may name a snapshot's source VM.
+        let c = parse_spawn_contract(
+            br#"{"vm_id":"vm-new","declared_secrets":[{"env_name":"K","secret_uri":"u"}]}"#,
+        )
+        .expect("valid");
+        let got = layer_boot_env(
+            env_from_cmdline("lantern.vm_id=vm-old"),
+            contract_env_pairs(&c).expect("encodable"),
+        );
+        let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("LANTERN_VM_ID"), Some("vm-new"));
+        assert_eq!(
+            get("LANTERN_DECLARED_SECRETS"),
+            Some(r#"[{"env_name":"K","secret_uri":"u"}]"#)
+        );
+        let c = parse_spawn_contract(
+            br#"{"exec_token":"tok","env":{"LANTERN_HARNESS_EXEC_TOKEN":"forged"}}"#,
+        )
+        .expect("valid");
+        let pairs = contract_env_pairs(&c).expect("ok");
+        let toks: Vec<&str> = pairs
+            .iter()
+            .filter(|(k, _)| k == "LANTERN_HARNESS_EXEC_TOKEN")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(toks, vec!["tok"], "typed token beats free-form env");
+        // An empty vm_id never overrides the cmdline.
+        let c = parse_spawn_contract(br#"{"vm_id":""}"#).expect("valid");
+        assert!(contract_env_pairs(&c).expect("ok").is_empty());
     }
 
     #[test]
