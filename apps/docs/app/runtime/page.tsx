@@ -266,6 +266,7 @@ export default function RuntimeOverviewPage() {
         <li><Link href="/runtime/durable-execution"><strong>Durable execution</strong></Link> — exactly-once under crash: journal, replay, per-step retry, idempotency keys</li>
         <li><Link href="/runtime/streaming"><strong>Token streaming</strong></Link> — <code>message_delta</code> / <code>message_completed</code> / <code>message_error</code> contract and the SDK async iterator</li>
         <li><Link href="/runtime/sessions-and-memory"><strong>Sessions &amp; memory</strong></Link> — interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory</li>
+        <li><Link href="/runtime/sandbox-lifecycle"><strong>Sandbox lifecycle</strong></Link> — pause / resume / fork a microVM, streaming exec, with TS / Python / CLI examples</li>
         <li><Link href="/runtime/observability"><strong>Observability</strong></Link> — OTel span attributes, the five <code>lantern.run.*</code> metrics, service-health sweep</li>
         <li><Link href="/runtime/identity"><strong>Identity &amp; secrets</strong></Link> — per-instance Ed25519 keys and short-TTL secret vending (microVM tier)</li>
         <li><Link href="/runtime/receipts"><strong>Verifiable receipts</strong></Link> — signed, offline-verifiable proof of what ran</li>
