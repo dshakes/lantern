@@ -85,6 +85,10 @@ type VM struct {
 	SnapshotID string
 	// ParentVMID is the source VM of a fork. "" = not a fork.
 	ParentVMID string
+	// RespawnedAt is when a PAUSED VM was put back on its node (resume).
+	// Inventory confirmations from before it say nothing about the new
+	// incarnation, so reconciliation grants it the dispatch grace again.
+	RespawnedAt time.Time
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -316,6 +320,7 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 		if n, exists := s.nodes[v.NodeName]; exists {
 			n.RunningVms++
 		}
+		v.RespawnedAt = at
 	}
 	v.State = state
 	v.Reason = reason

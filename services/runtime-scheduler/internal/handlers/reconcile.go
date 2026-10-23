@@ -95,8 +95,16 @@ func ReconcileNodeInventory(
 		// later inventory is authoritative straight away; making a
 		// short-lived agent wait out the grace just to record a terminal
 		// state it already reached is pure latency.
-		if v.InventorySeenAt.IsZero() && createdAt(v).Add(reconcileGrace).After(now) {
-			continue // never confirmed, still inside the dispatch window
+		//
+		// "Confirmed" means confirmed since the VM's CURRENT incarnation began:
+		// a resumed VM's old InventorySeenAt (from before the pause) and any
+		// inventory computed before the respawn must not terminate it.
+		born := createdAt(v)
+		if v.RespawnedAt.After(born) {
+			born = v.RespawnedAt
+		}
+		if !v.InventorySeenAt.After(born) && born.Add(reconcileGrace).After(now) {
+			continue // not confirmed since (re)spawn, still inside the dispatch window
 		}
 		if store.UpdateVMState(id, lanternv1.VmState_VM_STATE_TERMINATED,
 			"reconciled: node no longer reports this VM as live", nil, now) {

@@ -196,6 +196,16 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 	if count < 1 || count > maxForkCount {
 		return nil, status.Errorf(codes.InvalidArgument, "count must be 1..%d, got %d", maxForkCount, count)
 	}
+	// Each child gets its OWN identity; inheriting the source's would let N
+	// sandboxes act as one agent instance. Fail closed without them.
+	if len(req.GetIdentities()) != count {
+		return nil, status.Errorf(codes.InvalidArgument, "fork needs one fresh agent identity per child: got %d for count %d", len(req.GetIdentities()), count)
+	}
+	for _, id := range req.GetIdentities() {
+		if id.GetAgentInstanceId() == "" || id.GetAgentInstanceToken() == "" {
+			return nil, status.Error(codes.InvalidArgument, "fork identity is missing agent_instance_id or agent_instance_token")
+		}
+	}
 	srcID := req.GetVmId()
 	defer s.lockVM(srcID)()
 	span.SetAttributes(attribute.String("tenant_id", tenantID), attribute.String("vm_id", srcID), attribute.Int("fork.count", count))
@@ -245,9 +255,10 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 			AvailabilityZone: node.AvailabilityZone,
 			CreatedAt:        timestamppb.Now(),
 		}
+		ident := req.GetIdentities()[i]
 		child := &cluster.VM{
 			Handle:      handle,
-			Spec:        src.Spec,
+			Spec:        withIdentity(src.Spec, ident),
 			State:       lanternv1.VmState_VM_STATE_SPAWNING,
 			TenantID:    tenantID,
 			NodeName:    src.NodeName,
@@ -257,7 +268,7 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 		}
 		s.Store.CreateVM(child)
 
-		out := &lanternv1.ForkChild{VmId: handle.VmId, Node: src.NodeName}
+		out := &lanternv1.ForkChild{VmId: handle.VmId, Node: src.NodeName, AgentInstanceId: ident.GetAgentInstanceId()}
 		if err := s.spawnFromSnapshot(ctx, node.Address, child, handle, snapID); err != nil {
 			s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
 			s.Store.IncrTenantVMs(tenantID, -1)
@@ -279,6 +290,29 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 	}
 	s.Logger.Info("vm forked", zap.String("vm_id", srcID), zap.String("snapshot_id", snapID), zap.Int("count", count))
 	return resp, nil
+}
+
+// Spawn-contract env keys carrying a VM's agent identity.
+const (
+	envAgentInstanceID    = "LANTERN_AGENT_INSTANCE_ID"
+	envAgentInstanceToken = "LANTERN_AGENT_INSTANCE_TOKEN"
+)
+
+// withIdentity returns a copy of spec whose env carries `ident` instead of
+// whatever identity the source had. The source spec is never mutated.
+func withIdentity(spec *lanternv1.AgentSpec, ident *lanternv1.ForkIdentity) *lanternv1.AgentSpec {
+	out := &lanternv1.AgentSpec{}
+	if spec != nil {
+		out = proto.Clone(spec).(*lanternv1.AgentSpec)
+	}
+	if out.Env == nil {
+		out.Env = map[string]string{}
+	}
+	delete(out.Env, envAgentInstanceID)
+	delete(out.Env, envAgentInstanceToken)
+	out.Env[envAgentInstanceID] = ident.GetAgentInstanceId()
+	out.Env[envAgentInstanceToken] = ident.GetAgentInstanceToken()
+	return out
 }
 
 // spawnFromSnapshot asks the manager to boot `handle` restored from snapID,

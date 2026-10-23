@@ -94,7 +94,8 @@ type SchedulerClient interface {
 	// codes: NotFound, FailedPrecondition (wrong state), ResourceExhausted.
 	Pause(ctx context.Context, tenantID, vmID string) (snapshotID string, err error)
 	Resume(ctx context.Context, tenantID, vmID string) (snapshotID string, err error)
-	Fork(ctx context.Context, tenantID, vmID string, count int) (ForkResult, error)
+	// Fork spawns len(identities) children, child i carrying identities[i].
+	Fork(ctx context.Context, tenantID, vmID string, identities []ForkIdentity) (ForkResult, error)
 }
 
 type stubSchedulerClient struct {

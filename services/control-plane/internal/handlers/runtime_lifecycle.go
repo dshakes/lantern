@@ -37,6 +37,15 @@ type ForkChildResult struct {
 	VMID  string `json:"vmId"`
 	State string `json:"state"`
 	Error string `json:"error,omitempty"`
+	// AgentInstanceID is the child's own freshly minted identity.
+	AgentInstanceID string `json:"-"`
+}
+
+// ForkIdentity is a freshly minted agent identity for one fork child. Token is
+// a live bearer credential — never logged or persisted.
+type ForkIdentity struct {
+	InstanceID string
+	Token      string
 }
 
 // ForkResult is the scheduler's answer to a Fork call.
@@ -62,14 +71,15 @@ func (s *stubSchedulerClient) Resume(_ context.Context, _, vmID string) (string,
 	return snap.(string), nil
 }
 
-func (s *stubSchedulerClient) Fork(_ context.Context, _, vmID string, count int) (ForkResult, error) {
+func (s *stubSchedulerClient) Fork(_ context.Context, _, vmID string, identities []ForkIdentity) (ForkResult, error) {
+	count := len(identities)
 	snap, ok := s.paused.Load(vmID)
 	if !ok {
 		snap = "snap-stub-" + newID()
 	}
 	res := ForkResult{SnapshotID: snap.(string)}
 	for i := 0; i < count; i++ {
-		res.Forks = append(res.Forks, ForkChildResult{VMID: "vm-" + newID(), State: "running"})
+		res.Forks = append(res.Forks, ForkChildResult{VMID: "vm-" + newID(), State: "running", AgentInstanceID: identities[i].InstanceID})
 	}
 	s.logger.Info("stub scheduler: fork", zap.String("vm_id", vmID), zap.Int("count", count))
 	return res, nil
@@ -93,14 +103,20 @@ func (c *grpcSchedulerClient) Resume(ctx context.Context, tenantID, vmID string)
 	return resp.GetSnapshotId(), nil
 }
 
-func (c *grpcSchedulerClient) Fork(ctx context.Context, tenantID, vmID string, count int) (ForkResult, error) {
-	resp, err := c.client.Fork(withTenant(ctx, tenantID), &lanternv1.ForkRequest{VmId: vmID, Count: int32(count)})
+func (c *grpcSchedulerClient) Fork(ctx context.Context, tenantID, vmID string, identities []ForkIdentity) (ForkResult, error) {
+	req := &lanternv1.ForkRequest{VmId: vmID, Count: int32(len(identities))}
+	for _, id := range identities {
+		req.Identities = append(req.Identities, &lanternv1.ForkIdentity{AgentInstanceId: id.InstanceID, AgentInstanceToken: id.Token})
+	}
+	resp, err := c.client.Fork(withTenant(ctx, tenantID), req)
 	if err != nil {
 		return ForkResult{}, err
 	}
 	res := ForkResult{SnapshotID: resp.GetSnapshotId()}
 	for _, f := range resp.GetForks() {
-		res.Forks = append(res.Forks, ForkChildResult{VMID: f.GetVmId(), State: vmStateString(f.GetState()), Error: f.GetError()})
+		res.Forks = append(res.Forks, ForkChildResult{
+			VMID: f.GetVmId(), State: vmStateString(f.GetState()), Error: f.GetError(), AgentInstanceID: f.GetAgentInstanceId(),
+		})
 	}
 	return res, nil
 }
@@ -137,6 +153,13 @@ func (h *RuntimeHandler) lifecycleTarget(w http.ResponseWriter, r *http.Request)
 		return nil, nil, "", false
 	}
 	return claims, ctx, vmID, true
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // writeLifecycleErr maps a scheduler error onto an HTTP response.
@@ -247,15 +270,39 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	if !h.quotaGate(ctx, w, claims, vmID, "fork", count) {
 		return
 	}
-	res, err := h.scheduler.Fork(ctx, claims.TenantID, vmID, count)
+	// Every child gets its OWN agent identity, minted exactly like
+	// scheduleAgentSpec does — never the source's (N sandboxes sharing one
+	// identity would be indistinguishable to secret vending and audit).
+	var runID, agentVersionID *string
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT run_id::text, agent_version_id::text FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`,
+			vmID, claims.TenantID).Scan(&runID, &agentVersionID)
+	}); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
+		return
+	}
+	identities := make([]ForkIdentity, 0, count)
+	for i := 0; i < count; i++ {
+		id, tok, err := h.identity.Issue(ctx, claims.TenantID, derefStr(runID), derefStr(agentVersionID))
+		if err != nil {
+			h.logger().Error("fork: mint agent identity failed", zap.String("vm_id", vmID), zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
+			return
+		}
+		identities = append(identities, ForkIdentity{InstanceID: id, Token: tok})
+	}
+
+	res, err := h.scheduler.Fork(ctx, claims.TenantID, vmID, identities)
 	if err != nil {
 		h.writeLifecycleErr(w, "Fork", vmID, err)
 		return
 	}
 
 	ids := make([]string, 0, len(res.Forks))
+	instanceIDs := make([]string, 0, len(res.Forks))
 	for _, f := range res.Forks {
 		ids = append(ids, f.VMID)
+		instanceIDs = append(instanceIDs, f.AgentInstanceID)
 		// The child inherits the source's placement, isolation and (redacted)
 		// spec; it is linked back via parent_vm_id + snapshot_id.
 		if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
@@ -264,17 +311,19 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 				  (vm_id, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
 				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id, created_at)
 				SELECT $1, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
-				       $2, NULLIF($3, ''), spec, agent_instance_id, confidential, vm_id, $4, now()
+				       $2, NULLIF($3, ''),
+				       jsonb_set(spec, '{env,LANTERN_AGENT_INSTANCE_ID}', to_jsonb($7::text)),
+				       NULLIF($7, ''), confidential, vm_id, $4, now()
 				FROM runtime_vms WHERE vm_id = $5 AND tenant_id = $6
 				ON CONFLICT (vm_id) DO NOTHING
-			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID)
+			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID, f.AgentInstanceID)
 			return e
 		}); err != nil {
 			h.logger().Error("runtime_vms fork insert failed", zap.String("vm_id", f.VMID), zap.Error(err))
 		}
 	}
 	h.auditRuntime(ctx, claims.TenantID, vmID, "fork", map[string]any{
-		"snapshot_id": res.SnapshotID, "count": count, "fork_vm_ids": ids,
+		"snapshot_id": res.SnapshotID, "count": count, "fork_vm_ids": ids, "agent_instance_ids": instanceIDs,
 	}, claims.Subject, "")
 
 	forks := res.Forks

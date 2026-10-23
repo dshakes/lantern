@@ -164,6 +164,8 @@ type recScheduler struct {
 	lifecycleErr error    // returned by Pause/Resume/Fork when set
 	forkRes      ForkResult
 	lastTenant   string // tenant passed to the most recent lifecycle call
+	// forkIdentities are the identities passed to the most recent Fork.
+	forkIdentities []ForkIdentity
 }
 
 func (r *recScheduler) Schedule(_ context.Context, _ map[string]any) (string, string, string, error) {
@@ -218,9 +220,18 @@ func (r *recScheduler) Resume(_ context.Context, tenantID, vmID string) (string,
 	return "snap-" + vmID, r.lifecycleErr
 }
 
-func (r *recScheduler) Fork(_ context.Context, tenantID, vmID string, count int) (ForkResult, error) {
-	r.calls, r.lastTenant = append(r.calls, fmt.Sprintf("fork:%s:%d", vmID, count)), tenantID
-	return r.forkRes, r.lifecycleErr
+func (r *recScheduler) Fork(_ context.Context, tenantID, vmID string, identities []ForkIdentity) (ForkResult, error) {
+	r.calls, r.lastTenant = append(r.calls, fmt.Sprintf("fork:%s:%d", vmID, len(identities))), tenantID
+	r.forkIdentities = identities
+	res := r.forkRes
+	// Mirror the scheduler: child i carries identities[i].
+	res.Forks = append([]ForkChildResult(nil), r.forkRes.Forks...)
+	for i := range res.Forks {
+		if i < len(identities) {
+			res.Forks[i].AgentInstanceID = identities[i].InstanceID
+		}
+	}
+	return res, r.lifecycleErr
 }
 
 // ---------------------------------------------------------------------------

@@ -118,3 +118,15 @@ check and boot two VMs.
   cert). Re-issuing identity on restore is a follow-up that belongs with the ADR
   0007 drive-state work. Until then, restore is meant for same-tenant warm starts,
   which ownership enforcement makes safe.
+
+## Follow-ups
+
+- **Snapshot reclamation.** The manager has no snapshot-delete RPC, so Wave 2
+  pause/resume/fork snapshots are never reclaimed. Terminating a PAUSED VM, or
+  the last fork child that references a snapshot, leaves the snapshot on its
+  node. The scheduler logs `snapshot orphaned` at info with `snapshot_id`,
+  `vm_id`, `node` and `tenant_id`, and does not try to delete it. Needed: an
+  add-only `RuntimeManager.DeleteSnapshot(snapshot_id)` with the same
+  owner-tenant check as restore. The scheduler calls it best-effort when the
+  last reference goes away. A running fork source does not hold its fork
+  snapshot id, so only the children count as references.
