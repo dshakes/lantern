@@ -92,7 +92,7 @@ impl Heartbeat {
                                 ticker.tick().await;
                                 let snap = usage.lock().await.clone();
                                 let req = HeartbeatRequest {
-                                    vm_id: manager.vm_id.clone(),
+                                    vm_id: manager.vm_id(),
                                     at_unix_ms: now_unix_ms(),
                                     usage: snap,
                                     worker_pid: supervisor.worker_pid.load(Ordering::SeqCst),

@@ -340,7 +340,7 @@ impl EgressPolicy {
         };
         self.manager
             .enqueue_report(HarnessReport::Audit(AuditEvent {
-                vm_id: self.manager.vm_id.clone(),
+                vm_id: self.manager.vm_id(),
                 action: "egress".into(),
                 at_unix_ms: now_unix_ms(),
                 attrs,
@@ -571,7 +571,7 @@ async fn audit_preflight(manager: &ManagerClient, proxy_port: u16, decision: &st
     attrs.insert("proxy_port".into(), proxy_port.to_string());
     manager
         .enqueue_report(HarnessReport::Audit(AuditEvent {
-            vm_id: manager.vm_id.clone(),
+            vm_id: manager.vm_id(),
             action: "egress_preflight".into(),
             at_unix_ms: now_unix_ms(),
             attrs,
