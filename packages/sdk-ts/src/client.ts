@@ -11,6 +11,8 @@ import type {
   EvalSuite,
   Experiment,
   FeedbackEntry,
+  ExecResult,
+  ExecStreamEvent,
   FeedbackSummary,
   ForecastResult,
   MarketplaceAgent,
@@ -24,6 +26,10 @@ import type {
   SessionStreamEvent,
   SignedReceipt,
   StreamEvent,
+  VmForkResult,
+  VmPauseResult,
+  VmResumeResult,
+  RuntimeVm,
 } from "./types.js";
 import { isNetworkError, withRetry } from "./retry.js";
 
@@ -48,6 +54,10 @@ const messageCompletedSchema = z.object({
     costUsd: z.number(),
   }),
 });
+
+const execExitSchema = z.object({ exitCode: z.number().int() });
+const execChunkSchema = z.object({ data: z.string() });
+const execErrorSchema = z.object({ error: z.string().optional(), message: z.string().optional() });
 
 const messageErrorSchema = z.object({
   turnId: z.string().optional(),
@@ -126,6 +136,85 @@ export class LanternClient {
     delete: (name: string): Promise<void> =>
       this.fetch(`/v1/agents/${encodeURIComponent(name)}`, { method: "DELETE" }),
   };
+
+  readonly runtime = {
+    /** Submit an AgentSpec; the spec shape is owned by runtime.proto. */
+    schedule: (spec: Record<string, unknown>): Promise<{ vmId: string } & Record<string, unknown>> =>
+      this.fetch("/v1/runtime/schedule", { method: "POST", body: JSON.stringify(spec) }),
+
+    // The list endpoint returns bare rows; the detail endpoint wraps the row as
+    // `{vm, events}`. Both are normalized to plain RuntimeVm rows.
+    list: async (params?: { state?: string; limit?: number }): Promise<RuntimeVm[]> => {
+      const data = await this.fetch<RuntimeVm[] | { vms: RuntimeVm[] }>(`/v1/runtime/vms${this.qs(params)}`);
+      return Array.isArray(data) ? data : data.vms ?? [];
+    },
+
+    get: async (id: string): Promise<RuntimeVm> => {
+      const data = await this.fetch<RuntimeVm | { vm: RuntimeVm }>(`/v1/runtime/vms/${encodeURIComponent(id)}`);
+      return "vm" in data && data.vm ? (data.vm as RuntimeVm) : (data as RuntimeVm);
+    },
+
+    terminate: (id: string, params?: { grace?: string }): Promise<void> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}${this.qs(params)}`, { method: "DELETE" }),
+
+    /** Buffered exec (execve-style: `command` is the executable, `argv` its args). */
+    exec: (id: string, params: { command: string; argv?: string[] }): Promise<ExecResult> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/exec`, { method: "POST", body: JSON.stringify(params) }),
+
+    /** Streaming exec over SSE. Yields stdout/stderr chunks, then a final exit event. */
+    execStream: (id: string, params: { command: string; argv?: string[] }): AsyncIterable<ExecStreamEvent> =>
+      this.execStream(id, params),
+
+    /** Snapshot and pause a running VM. 409 if not running. */
+    pause: (id: string): Promise<VmPauseResult> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/pause`, { method: "POST" }),
+
+    /** Resume a paused VM. 402 on quota exceeded, 409 if not paused. */
+    resume: (id: string): Promise<VmResumeResult> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+
+    /** Fork N (1..10, default 1) copies from a snapshot of the VM. Per-fork failures are in `forks[].error`. */
+    fork: (id: string, params: { count?: number } = {}): Promise<VmForkResult> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/fork`, {
+        method: "POST",
+        body: JSON.stringify({ count: params.count ?? 1 }),
+      }),
+  };
+
+  private async *execStream(
+    id: string,
+    params: { command: string; argv?: string[] },
+  ): AsyncIterable<ExecStreamEvent> {
+    const res = await fetch(`${this.baseUrl}/v1/runtime/vms/${encodeURIComponent(id)}/exec`, {
+      method: "POST",
+      headers: { ...this.headers(), Accept: "text/event-stream" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      throw new LanternApiError(res.status, await res.text().catch(() => ""));
+    }
+    for await (const { event, data } of this.rawSSEWithEvent(res)) {
+      let json: unknown;
+      try {
+        json = JSON.parse(data);
+      } catch {
+        continue; // malformed — skip
+      }
+      if (event === "stdout" || event === "stderr") {
+        const p = execChunkSchema.safeParse(json);
+        if (p.success) yield { type: event, data: p.data.data };
+      } else if (event === "exit") {
+        const p = execExitSchema.safeParse(json);
+        if (p.success) {
+          yield { type: "exit", exitCode: p.data.exitCode };
+          return;
+        }
+      } else if (event === "error") {
+        const p = execErrorSchema.safeParse(json);
+        throw new MessageStreamError(p.success ? (p.data.error ?? p.data.message ?? "exec stream error") : "exec stream error");
+      }
+    }
+  }
 
   readonly runs = {
     create: async (params: {

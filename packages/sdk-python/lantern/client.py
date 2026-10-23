@@ -12,7 +12,19 @@ from typing import Any
 import httpx
 
 from lantern.errors import LanternApiError
-from lantern.types import AgentInfo, ConnectorInfo, ConnectorResult, Run, Session, SessionMessage, StreamEvent
+from lantern.types import (
+    AgentInfo,
+    ConnectorInfo,
+    ConnectorResult,
+    ExecStreamEvent,
+    Run,
+    Session,
+    SessionMessage,
+    StreamEvent,
+    VmForkResult,
+    VmPauseResult,
+    VmResumeResult,
+)
 
 # Bounded exponential backoff with full jitter, mirroring
 # packages/bridge-core/src/retry.ts. Only 429/503 and network-layer
@@ -68,6 +80,7 @@ class LanternClient:
         self.receipts = self._Receipts(self)
         self.feedback = self._Feedback(self)
         self.rehearsals = self._Rehearsals(self)
+        self.runtime = self._Runtime(self)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -968,6 +981,106 @@ class LanternClient:
 
     # ------------------------------------------------------------------
     # rehearsals namespace
+    # ------------------------------------------------------------------
+    # runtime namespace (microVMs)
+    # ------------------------------------------------------------------
+
+    class _Runtime:
+        def __init__(self, client: LanternClient) -> None:
+            self._c = client
+
+        async def schedule(self, spec: dict[str, Any]) -> dict[str, Any]:
+            return await self._c._request("POST", "/v1/runtime/schedule", body=spec)
+
+        async def list(self, *, state: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+            data = await self._c._request("GET", "/v1/runtime/vms", params={"state": state, "limit": limit})
+            return self._c._items(data, "vms")
+
+        async def get(self, vm_id: str) -> dict[str, Any]:
+            """Bare VM row (the detail endpoint wraps it as ``{vm, events}``)."""
+            data = await self._c._request("GET", f"/v1/runtime/vms/{vm_id}")
+            if isinstance(data, dict) and isinstance(data.get("vm"), dict):
+                return data["vm"]
+            return data
+
+        async def terminate(self, vm_id: str, *, grace: str | None = None) -> None:
+            await self._c._request("DELETE", f"/v1/runtime/vms/{vm_id}", params={"grace": grace})
+
+        async def exec(self, vm_id: str, command: str, argv: list[str] | None = None) -> dict[str, Any]:
+            """Buffered exec (execve-style: ``command`` is the executable)."""
+            return await self._c._request(
+                "POST", f"/v1/runtime/vms/{vm_id}/exec", body={"command": command, "argv": argv or []}
+            )
+
+        async def exec_stream(
+            self, vm_id: str, command: str, argv: list[str] | None = None
+        ) -> AsyncIterator[ExecStreamEvent]:
+            """Streaming exec over SSE: stdout/stderr chunks, then one ``exit`` event.
+
+            Raises LanternApiError on non-2xx and on an SSE ``error`` event.
+            """
+            client = await self._c._get_client()
+            headers = {**self._c._headers(), "Accept": "text/event-stream"}
+            body = json.dumps({"command": command, "argv": argv or []})
+            async with client.stream(
+                "POST", f"/v1/runtime/vms/{vm_id}/exec", headers=headers, content=body
+            ) as resp:
+                if not resp.is_success:
+                    raw = await resp.aread()
+                    raise LanternApiError(resp.status_code, raw.decode("utf-8", errors="replace"))
+
+                event, data = "message", ""
+                buffer = ""
+                # aiter_text decodes incrementally, so split multibyte chars are safe.
+                async for chunk in resp.aiter_text():
+                    buffer += chunk
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.rstrip("\r")
+                        if line == "":
+                            if data:
+                                out = self._parse_exec_event(event, data)
+                                if out is not None:
+                                    yield out
+                                    if out.type == "exit":
+                                        return
+                            event, data = "message", ""
+                        elif line.startswith("event:"):
+                            event = line[6:].strip()
+                        elif line.startswith("data:"):
+                            data = line[5:].strip()
+
+        @staticmethod
+        def _parse_exec_event(event: str, data: str) -> ExecStreamEvent | None:
+            try:
+                payload = json.loads(data)
+            except ValueError:
+                return None
+            if not isinstance(payload, dict):
+                return None
+            if event in ("stdout", "stderr"):
+                return ExecStreamEvent(type=event, data=str(payload.get("data", "")))
+            if event == "exit":
+                return ExecStreamEvent(type="exit", exit_code=int(payload.get("exitCode", 0)))
+            if event == "error":
+                raise LanternApiError(500, str(payload.get("error") or payload.get("message") or "exec stream error"))
+            return None
+
+        async def pause(self, vm_id: str) -> VmPauseResult:
+            """Snapshot + pause a running VM. 409 if not running."""
+            data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/pause")
+            return VmPauseResult.model_validate(data)
+
+        async def resume(self, vm_id: str) -> VmResumeResult:
+            """Resume a paused VM. 402 quota exceeded, 409 if not paused."""
+            data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/resume")
+            return VmResumeResult.model_validate(data)
+
+        async def fork(self, vm_id: str, *, count: int = 1) -> VmForkResult:
+            """Fork ``count`` (1..10) VMs from a snapshot. Per-fork failures are in ``forks[].error``."""
+            data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/fork", body={"count": count})
+            return VmForkResult.model_validate(data)
+
     # ------------------------------------------------------------------
 
     class _Rehearsals:

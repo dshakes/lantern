@@ -86,6 +86,18 @@ class LanternRuntimeClient:
         data = self._request("POST", f"/v1/runtime/vms/{vm_id}/exec", json=payload)
         return data.get("stdout", ""), data.get("stderr", ""), int(data.get("exitCode", 0))
 
+    def pause(self, vm_id: str) -> dict[str, Any]:
+        """POST /v1/runtime/vms/{id}/pause -> {vmId, snapshotId, state:"paused"}."""
+        return self._request("POST", f"/v1/runtime/vms/{vm_id}/pause")
+
+    def resume(self, vm_id: str) -> dict[str, Any]:
+        """POST /v1/runtime/vms/{id}/resume -> {vmId, snapshotId, state:"running"}. 402 quota, 409 state."""
+        return self._request("POST", f"/v1/runtime/vms/{vm_id}/resume")
+
+    def fork(self, vm_id: str, *, count: int = 1) -> dict[str, Any]:
+        """POST /v1/runtime/vms/{id}/fork -> {sourceVmId, snapshotId, forks:[{vmId,state,error?}]}."""
+        return self._request("POST", f"/v1/runtime/vms/{vm_id}/fork", json={"count": count})
+
     def terminate(self, vm_id: str, *, grace: str = "30s") -> None:
         self._request("DELETE", f"/v1/runtime/vms/{vm_id}", params={"grace": grace})
 
