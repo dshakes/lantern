@@ -149,7 +149,7 @@ Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 
 | Checkpointing | every step journaled before it runs · Firecracker snapshots → S3 | [durable execution](https://dshakes.github.io/lantern/runtime/durable-execution) |
 | Auto-restart | recovery sweep re-drives from the last completed step · scheduler HA | `LANTERN_RECOVERY_INTERVAL` (30 s) |
 | Throttling | budget gate `402` · concurrent-VM hard cap · spawn-storm guard `429` | `LANTERN_SPAWN_RATE_PER_MIN` (120) · `LANTERN_SPAWN_BURST` |
-| Job monitoring | VM list / detail / audit / live logs / cluster / quota | `lantern vm list\|get\|logs\|stop\|exec` · `GET /v1/runtime/*` |
+| Job monitoring | VM list / detail / audit / live logs / cluster / quota | `lantern vm list\|get\|logs\|stop\|exec\|pause\|resume\|fork` · `GET /v1/runtime/*` |
 | Telemetry | five `lantern.run.*` OTel metrics · Prometheus scrape · alerts + 8 runbooks | scheduler `:8085/metrics` · `infra/monitoring/` |
 | Traceability | W3C trace context CP → scheduler → manager → in-VM harness · signed receipts | [observability](https://dshakes.github.io/lantern/runtime/observability) |
 
@@ -158,6 +158,15 @@ Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 
 </p>
 
 The in-guest tool runner (`services/harness/src/tool_runner.rs`) shipped 2026-07-23 and makes the microVM tier a real step executor for workflow-graph agents. Full details in [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md).
+
+**Sandbox lifecycle** — microVMs are stateful, not disposable:
+
+- **Pause / resume / fork.** `pause` snapshots a VM and frees its quota slot; `resume` restores it under the same `vm_id`; `fork` restores 1–10 copies, each with its own `vm_id`, cert and agent identity. Forking a *running* VM needs Firecracker ≥ 1.12 + jailer. Snapshots are tenant-owned and cross-tenant restore is `NotFound` ([ADR 0025](docs/adr/0025-sandbox-spawn-contract-and-manager-authz.md)).
+- **Streaming exec + file tools.** `Accept: text/event-stream` on `POST /v1/runtime/vms/{id}/exec` streams `stdout`/`stderr`/`exit`; `read_file`/`write_file`/`list_dir` are confined to the workspace (`openat2` `RESOLVE_BENEATH`).
+- **Per-sandbox egress.** Each spec declares an allowlist enforced in-guest; the workload runs as an unprivileged uid with `LANTERN_*` env withheld.
+- **Self-hostable.** The data plane runs in your VPC. SDKs: `client.runtime.{pause,resume,fork,execStream}` (TS), `client.runtime.{pause,resume,fork,exec_stream}` (Python), `PauseVM`/`ResumeVM`/`ForkVM` (Go); CLI `lantern vm pause|resume|fork [--count N]`.
+
+Pause/resume/fork is contract- and unit-tested; it has not yet been run end-to-end on a Linux/KVM host ([`docs/GA-READINESS.md`](docs/GA-READINESS.md)).
 
 <p align="center">
   <img src="docs/assets/v2/runtime-architecture.svg" alt="Agent Execution Kernel — control-plane (identity, secret relay, report ingestion, receipts, OTel) → HA scheduler → per-node manager (K8s-default, fail-closed isolation gate, hardened pods) → in-VM harness (token-authenticated, egress deny-default, identity-bound report), over a durable journal + Ed25519 receipt spine" width="100%">
