@@ -354,3 +354,69 @@ func TestFork_ChildrenGetFreshIdentities(t *testing.T) {
 		}
 	}
 }
+
+// TestFork_InsertFailureTerminatesChildren: if the children's runtime_vms rows
+// cannot be written, the API must not return 200 with live, untracked children
+// — every spawned child is terminated and no child row is left behind.
+func TestFork_InsertFailureTerminatesChildren(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+	tenant := uniqueTenantID("fork-fail")
+	seedTestTenant(t, pool, tenant)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenant) })
+
+	sched := &recScheduler{}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+	tok := mintTestToken(t, tenant, "00000000-0000-0000-0000-0000000000c1", "owner")
+	src := "vm-ff-" + tenant[:8]
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, node, state, spec, created_at)
+		VALUES ($1, $2, 'node-a', 'running', '{"env":{}}', now())
+	`, src, tenant); err != nil {
+		t.Fatal(err)
+	}
+	c1, c2 := "vm-ff-a-"+tenant[:8], "vm-ff-b-"+tenant[:8]
+	// A NUL byte is rejected by Postgres text columns: the second insert fails.
+	sched.forkRes = ForkResult{SnapshotID: "snap-x", Forks: []ForkChildResult{{VMID: c1, State: "running"}, {VMID: c2, State: "run\x00ning"}}}
+
+	if w := doLifecycle(h, tok, "fork", src, `{"count":2}`); w.Code != http.StatusInternalServerError {
+		t.Fatalf("fork with failing insert: %d %s, want 500", w.Code, w.Body)
+	}
+	calls := strings.Join(sched.calls, ",")
+	for _, c := range []string{c1, c2} {
+		if !strings.Contains(calls, "terminate:"+c) {
+			t.Errorf("child %s not terminated; calls=%s", c, calls)
+		}
+	}
+	var n int
+	_ = pool.QueryRow(context.Background(), `SELECT count(*) FROM runtime_vms WHERE parent_vm_id = $1`, src).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d child rows persisted after a failed fork, want 0 (all-or-nothing)", n)
+	}
+}
+
+// TestListVMs_IncludesForkLineage: list must surface snapshot_id/parent_vm_id
+// exactly like GET /v1/runtime/vms/{id}.
+func TestListVMs_IncludesForkLineage(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+	tenant := uniqueTenantID("list-lin")
+	seedTestTenant(t, pool, tenant)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenant) })
+	child := "vm-ll-" + tenant[:8]
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec, parent_vm_id, snapshot_id, created_at)
+		VALUES ($1, $2, 'running', '{}', 'vm-parent', 'snap-1', now())
+	`, child, tenant); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestRuntimeHandlerWithPool(t, pool, &recScheduler{})
+	w := doListVMs(h, mintTestToken(t, tenant, "00000000-0000-0000-0000-0000000000c1", "owner"))
+	var rows []vmRow
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("list: %d %s (%v)", w.Code, w.Body, err)
+	}
+	if derefStr(rows[0].ParentVMID) != "vm-parent" || derefStr(rows[0].SnapshotID) != "snap-1" {
+		t.Errorf("lineage missing from list: parent=%v snapshot=%v", rows[0].ParentVMID, rows[0].SnapshotID)
+	}
+}

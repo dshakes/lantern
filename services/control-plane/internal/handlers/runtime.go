@@ -1855,7 +1855,8 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-		       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at
+		       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at,
+		       snapshot_id, parent_vm_id
 		FROM runtime_vms
 		WHERE tenant_id = $1
 	`
@@ -1878,7 +1879,7 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 			var specJSON []byte
 			if err := rows.Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
 				&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &v.StateReason, &specJSON,
-				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); err != nil {
+				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt, &v.SnapshotID, &v.ParentVMID); err != nil {
 				continue
 			}
 			if len(specJSON) == 0 {
