@@ -411,6 +411,7 @@ import {
   type OrchestratorDeps,
 } from "@lantern/bridge-core/call-orchestrator";
 import { resolveVoiceCloneConfig } from "@lantern/bridge-core/outbound-call";
+import { appendSentLog, noteDraftMeta } from "@lantern/bridge-core/sent-log";
 import { CallCommitments } from "@lantern/bridge-core/call-commitments";
 import { resolveContact as universalResolveContact, formatSuggestions } from "@lantern/bridge-core/contact-resolver";
 import {
@@ -443,6 +444,7 @@ import {
   renderNudge,
   resolveReply,
   CommitmentsClient,
+  runCommitmentJudgment,
   type PendingCommitmentNudge,
 } from "@lantern/bridge-core/commitments-edge";
 import {
@@ -2229,6 +2231,9 @@ export class IMessageSession {
       // next tick after the window picks it up.
       const quiet = isQuietHours(new Date(), defaultQuietHours()) || now < this.proactiveMuteUntil;
       if (!quiet) this.maybeRefreshWorldModel(target, now);
+      // COMMITMENT LEDGER follow-through: same owner-side loop, same placement
+      // (ABOVE the pause gate) — a muted channel must still close done items.
+      if (!quiet) void this.maybeJudgeCommitments(target, now);
 
       // Quiet hours: defer nudges (don't wake the owner). The next tick
       // picks them up once the window reopens; dedupe keys keep them fresh.
@@ -3039,6 +3044,36 @@ export class IMessageSession {
       this.worldModelInFlight = false;
       this.worldModelLastRunAt = Date.now();
       try { writeFileSync(join(this.stateDir, "world-model.json"), JSON.stringify({ lastRunAt: this.worldModelLastRunAt }), { mode: 0o600 }); } catch {}
+    }
+  }
+
+  private commitJudgeInFlight = false;
+
+  /** Closes open commitments the owner's own recent messages/actions show are done (≤ once / ~6h; cadence persisted in commitment-ledger.json). */
+  private async maybeJudgeCommitments(target: string, now: number): Promise<void> {
+    if ((process.env.LANTERN_COMMITMENT_LEDGER || "1") === "0" || this.commitJudgeInFlight) return;
+    this.commitJudgeInFlight = true;
+    try {
+      await runCommitmentJudgment({
+        client: this.commitments,
+        stateFile: join(this.stateDir, "commitment-ledger.json"),
+        now,
+        gatherEvidence: () => {
+          const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+          const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9@.]/g, "");
+          const rows = this.db.recentMessagesSince({ sinceDays: 3, limit: 800 }).map((r) => ({
+            ...r,
+            isOwnerChat: (!!ownerEnv && norm(r.handle) === norm(ownerEnv)) || this.isSelfChat(r.chatRowid, r.handle),
+          }));
+          const ev = imessageEvidence(rows, { nameFor: (h) => this.contactNames.get(h) || h });
+          return [...ev.selfChat, ...ev.threads, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
+        },
+        llmCall: async (p) => (await this.agent.respondTo("owner::commit-judge", p, undefined, { withTools: false })) ?? "",
+        send: (t) => this.send(target, t),
+        log: (m, x) => this.logger.info(x ?? {}, m),
+      });
+    } finally {
+      this.commitJudgeInFlight = false;
     }
   }
 
@@ -5901,6 +5936,12 @@ export class IMessageSession {
     return this.send(pending.target, body);
   }
 
+  /** Quality loop: encrypted sent-log of CONTACT replies only (never bot-self/owner traffic). */
+  private logSentReply(to: string, text: string): void {
+    if (!this.stateDir || !text || isBotSelfMessage(text) || this.isOwnerTarget(to)) return;
+    void appendSentLog(this.stateDir, { channel: "imessage", to, text });
+  }
+
   async send(to: string, text: string): Promise<{ ok: boolean; reason?: string }> {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };
@@ -5985,6 +6026,7 @@ export class IMessageSession {
             { to, textPreview: text.slice(0, 160), len: text.length, botSelf: isBotSelfMessage(text), via: "sms-preroute" },
             "outbound sent",
           );
+          this.logSentReply(to, text);
           this.recordBridgeSend(text);
           this.enqueueOutboundEcho(to, text);
           this.broadcast({ type: "agent_reply", data: { to, text, timestamp: Date.now() } });
@@ -6026,6 +6068,7 @@ export class IMessageSession {
       },
       "outbound sent",
     );
+    this.logSentReply(to, text);
     // Record so the polling loop skips this row when chat.db echoes
     // it back as is_from_me=1.
     this.recordBridgeSend(text);
@@ -8703,6 +8746,8 @@ export class IMessageSession {
 
     // MEDIUM-confidence audit ping — let owner know what just went
     // out so they can correct if needed.
+    // Quality loop: remember the final tier + voice delta so the send boundary can log them.
+    noteDraftMeta(row.handle, { tier: tier.tier, voiceDelta: scoreVoice(botTellCtx.voiceModel, draft)?.delta });
     if (tier.tier === "MEDIUM" && !isGroup) {
       void this.mirrorToEmail(`🟡 MEDIUM-confidence reply sent to ${this.contactNames.get(row.handle) || row.handle}\n\nThey: ${text.slice(0, 200)}\n\nYou: ${draft.slice(0, 300)}`);
     }

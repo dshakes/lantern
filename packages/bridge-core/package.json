@@ -77,6 +77,7 @@
     "./mail-index": "./src/mail-index.ts",
     "./device-signals": "./src/device-signals.ts",
     "./commitments-edge": "./src/commitments-edge.ts",
+    "./sent-log": "./src/sent-log.ts",
     "./proactive-loops": "./src/proactive-loops.ts",
     "./live-watch": "./src/live-watch.ts",
     "./commitment-gate": "./src/commitment-gate.ts",

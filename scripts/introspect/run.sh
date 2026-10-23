@@ -49,6 +49,25 @@ else
   notify "introspect STALE — no report ever written"
 fi
 
+# SUCCESS-STALENESS ALARM. The report check above is by file mtime in DAYS; this
+# one tracks the last run that actually COMPLETED (rc=0, marker touched at the
+# bottom) and shouts after 36h — at 4 runs/day that is ~8 missed runs. Mirrors
+# introspectStaleness() in packages/bridge-core/src/introspect-staleness.ts
+# (tested there; keep the threshold in sync).
+STALE_HOURS=36
+SUCCESS_MARK="$STATE_DIR/last-success"
+[ -f "$SUCCESS_MARK" ] || SUCCESS_MARK="$NEWEST_REPORT"   # first deploy: fall back to newest report
+if [ -n "$SUCCESS_MARK" ] && [ -f "$SUCCESS_MARK" ]; then
+  SUCCESS_AGE_H=$(( ( $(date +%s) - $(stat -f %m "$SUCCESS_MARK") ) / 3600 ))
+  if [ "$SUCCESS_AGE_H" -ge "$STALE_HOURS" ]; then
+    log "ALARM: last successful introspect run was ${SUCCESS_AGE_H}h ago (>= ${STALE_HOURS}h) — the audit loop is not completing"
+    notify "introspect ALARM — no successful run in ${SUCCESS_AGE_H}h"
+  fi
+else
+  log "ALARM: no successful introspect run has ever been recorded"
+  notify "introspect ALARM — no successful run ever recorded"
+fi
+
 # GUARD: never run over uncommitted work — the cadence commits to master, so a
 # dirty tree could sweep in the owner's in-progress edits.
 if [ -n "$(git status --porcelain)" ]; then
@@ -100,9 +119,11 @@ kill "$WATCHDOG" 2>/dev/null || true
 
 AFTER="$(git rev-parse HEAD)"
 if [ "$BEFORE" != "$AFTER" ]; then
+  [ "$RC" -eq 0 ] && touch "$STATE_DIR/last-success"
   log "introspection MERGED: $BEFORE -> $AFTER (rc=$RC)"
   notify "merged a fix to master ($(git log -1 --format=%s | cut -c1-60))"
 elif [ "$RC" -eq 0 ]; then
+  touch "$STATE_DIR/last-success"
   log "introspection done, no merge (rc=0) — audit ran, found nothing to fix"
   notify "review done — no changes"
 else
