@@ -162,16 +162,29 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
     expect(s.shouldAutoReplyToInbound({ jid: group, text: "hey", isGroup: true, targetsOwner: true })).toBe(false);
   });
 
+  // Group replies are OFF by default (owner, 2026-08-24); the monitoring and
+  // wish rules below only apply once LANTERN_GROUP_REPLIES=1 re-enables them.
+  it("group replies are off by default, even for a monitored, targeted group", () => {
+    delete process.env.LANTERN_GROUP_REPLIES;
+    const sess = makeSession();
+    sess.monitorGroup(group);
+    const s = sess as unknown as Gate;
+    expect(s.shouldAutoReplyToInbound({ jid: group, text: "yo @you", isGroup: true, targetsOwner: true })).toBe(false);
+  });
+
   it("monitored group requires owner-targeting", () => {
+    process.env.LANTERN_GROUP_REPLIES = "1";
     const sess = makeSession();
     sess.monitorGroup(group);
     const s = sess as unknown as Gate;
     expect(s.shouldAutoReplyToInbound({ jid: group, text: "random chatter", isGroup: true, targetsOwner: false })).toBe(false);
     expect(s.shouldAutoReplyToInbound({ jid: group, text: "yo @you", isGroup: true, targetsOwner: true })).toBe(true);
+    delete process.env.LANTERN_GROUP_REPLIES;
   });
 
   it("a celebratory wish naming the owner bypasses monitoring + targeting", () => {
     process.env.LANTERN_OWNER_NAME = "Ada";
+    process.env.LANTERN_GROUP_REPLIES = "1";
     const s = makeSession() as unknown as Gate;
     // unmonitored group, not @mention-targeted, but it's a wish naming the owner
     expect(
@@ -183,6 +196,7 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
       }),
     ).toBe(true);
     delete process.env.LANTERN_OWNER_NAME;
+    delete process.env.LANTERN_GROUP_REPLIES;
   });
 
   it("owner channel is excluded (handled elsewhere)", () => {
