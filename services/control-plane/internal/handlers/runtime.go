@@ -48,6 +48,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/jackc/pgx/v5"
 
@@ -261,7 +262,8 @@ func (c *grpcSchedulerClient) Schedule(ctx context.Context, spec map[string]any)
 	ctx = withTenant(ctx, tenantID)
 
 	agent := agentSpecFromMap(spec)
-	req := &lanternv1.ScheduleRequest{Spec: agent}
+	idemKey, _ := spec["idempotency_key"].(string)
+	req := &lanternv1.ScheduleRequest{Spec: agent, IdempotencyKey: idemKey}
 
 	resp, err := c.client.Schedule(ctx, req)
 	if err != nil {
@@ -285,6 +287,37 @@ func (c *grpcSchedulerClient) Terminate(ctx context.Context, vmID, reason string
 }
 
 func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command string, argv []string) (string, string, int32, error) {
+	var stdout, stderr []byte
+	exit, truncated, err := c.ExecStream(ctx, node, vmID, command, argv, func(stream string, data []byte) error {
+		if stream == "stdout" {
+			stdout = append(stdout, data...)
+		} else {
+			stderr = append(stderr, data...)
+		}
+		return nil
+	})
+	if err != nil {
+		// Return what we collected alongside the error so a partial
+		// failure is still diagnosable.
+		return string(stdout), string(stderr), exit, err
+	}
+	if truncated {
+		stderr = append(stderr, execTruncatedNotice...)
+	}
+	return string(stdout), string(stderr), exit, nil
+}
+
+const execTruncatedNotice = "\n[lantern: output truncated at 1 MiB by control-plane cap]\n"
+
+// execStreamer is implemented by schedulers that can deliver exec output
+// incrementally (invariant #4). ExecVM uses it for Accept: text/event-stream.
+type execStreamer interface {
+	// ExecStream calls emit("stdout"|"stderr", chunk) as frames arrive, capping
+	// each stream at execMaxOutputBytes in total (excess dropped, truncated=true).
+	ExecStream(ctx context.Context, node, vmID, command string, argv []string, emit func(stream string, data []byte) error) (exitCode int32, truncated bool, err error)
+}
+
+func (c *grpcSchedulerClient) ExecStream(ctx context.Context, node, vmID, command string, argv []string, emit func(stream string, data []byte) error) (int32, bool, error) {
 	// Exec dispatches DIRECTLY to the runtime-manager, mirroring the Logs SSE
 	// proxy: the scheduler places workloads, but the manager owns the exec
 	// channel into them.
@@ -296,47 +329,67 @@ func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command stri
 	// which keeps single-node dev working.
 	mgr, err := c.managerClient(node)
 	if err != nil {
-		return "", "", 0, err
+		return 0, false, err
 	}
-
 	stream, err := mgr.Exec(ctx)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("open exec stream: %w", err)
+		return 0, false, fmt.Errorf("open exec stream: %w", err)
 	}
+	return pumpExec(stream, vmID, command, argv, emit)
+}
 
+// execClientStream is the slice of the manager's bidi stream pumpExec needs.
+type execClientStream interface {
+	Send(*lanternv1.ExecRequest) error
+	CloseSend() error
+	Recv() (*lanternv1.ExecResponse, error)
+}
+
+func pumpExec(stream execClientStream, vmID, command string, argv []string, emit func(string, []byte) error) (int32, bool, error) {
 	// The first frame MUST carry vm_id + command. We pipe no stdin, so
 	// half-close immediately and just drain the response side.
-	if err := stream.Send(&lanternv1.ExecRequest{
-		VmId:    vmID,
-		Command: command,
-		Argv:    argv,
-	}); err != nil {
-		return "", "", 0, fmt.Errorf("send exec request: %w", err)
+	if err := stream.Send(&lanternv1.ExecRequest{VmId: vmID, Command: command, Argv: argv}); err != nil {
+		return 0, false, fmt.Errorf("send exec request: %w", err)
 	}
 	if err := stream.CloseSend(); err != nil {
-		return "", "", 0, fmt.Errorf("close exec send: %w", err)
+		return 0, false, fmt.Errorf("close exec send: %w", err)
 	}
 
-	var stdout, stderr []byte
-	var exitCode int32
+	var sentOut, sentErr int
 	truncated := false
+	// capped trims chunk to the remaining per-stream budget.
+	capped := func(sent *int, chunk []byte) []byte {
+		room := execMaxOutputBytes - *sent
+		if room < len(chunk) {
+			truncated = true
+			if room < 0 {
+				room = 0
+			}
+			chunk = chunk[:room]
+		}
+		*sent += len(chunk)
+		return chunk
+	}
 
+	var exitCode int32
 	for {
 		resp, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			// Return what we collected alongside the error so a partial
-			// failure is still diagnosable.
-			return string(stdout), string(stderr), exitCode, fmt.Errorf("exec stream: %w", err)
+			return exitCode, truncated, fmt.Errorf("exec stream: %w", err)
 		}
-
-		var tOut, tErr bool
-		stdout, tOut = appendCapped(stdout, resp.Stdout)
-		stderr, tErr = appendCapped(stderr, resp.Stderr)
-		truncated = truncated || tOut || tErr
-
+		if c := capped(&sentOut, resp.Stdout); len(c) > 0 {
+			if err := emit("stdout", c); err != nil {
+				return exitCode, truncated, err
+			}
+		}
+		if c := capped(&sentErr, resp.Stderr); len(c) > 0 {
+			if err := emit("stderr", c); err != nil {
+				return exitCode, truncated, err
+			}
+		}
 		// The manager marks the terminal frame with done=true and the real
 		// exit code; frames before it carry only output.
 		if resp.Done {
@@ -344,12 +397,7 @@ func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command stri
 			break
 		}
 	}
-
-	if truncated {
-		stderr = append(stderr, "\n[lantern: output truncated at 1 MiB by control-plane cap]\n"...)
-	}
-
-	return string(stdout), string(stderr), exitCode, nil
+	return exitCode, truncated, nil
 }
 
 // execMaxOutputBytes caps how much stdout/stderr a single exec accumulates in
@@ -358,22 +406,6 @@ func (c *grpcSchedulerClient) Exec(ctx context.Context, node, vmID, command stri
 // the cap we stop appending and say so in stderr rather than truncating
 // silently.
 const execMaxOutputBytes = 1 << 20 // 1 MiB per stream
-
-// appendCapped appends src to dst up to execMaxOutputBytes, reporting whether
-// anything had to be dropped.
-func appendCapped(dst, src []byte) ([]byte, bool) {
-	if len(src) == 0 {
-		return dst, false
-	}
-	room := execMaxOutputBytes - len(dst)
-	if room <= 0 {
-		return dst, true
-	}
-	if len(src) > room {
-		return append(dst, src[:room]...), true
-	}
-	return append(dst, src...), false
-}
 
 func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, error) {
 	// Cluster is gated by tenant_id on the scheduler side — propagate
@@ -516,14 +548,123 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 	if b, ok := spec["confidential"].(bool); ok {
 		a.Confidential = b
 	}
+	if lims, ok := spec["limits"].(map[string]any); ok && len(lims) > 0 {
+		a.Limits = limitsFromMap(lims)
+	}
+	for _, r := range mapSlice(spec["egress_rules"]) {
+		er := &lanternv1.EgressRule{}
+		er.Pattern, _ = r["pattern"].(string)
+		for _, m := range anySlice(firstOf(r, "http_methods", "httpMethods")) {
+			if s, ok := m.(string); ok {
+				er.HttpMethods = append(er.HttpMethods, s)
+			}
+		}
+		er.RateBps = int64Of(firstOf(r, "rate_bps", "rateBps"))
+		a.EgressRules = append(a.EgressRules, er)
+	}
+	for _, r := range mapSlice(spec["secrets"]) {
+		sr := &lanternv1.SecretRef{}
+		sr.EnvName, _ = firstOf(r, "env_name", "envName").(string)
+		sr.SecretUri, _ = firstOf(r, "secret_uri", "secretUri").(string)
+		a.Secrets = append(a.Secrets, sr)
+	}
 	return a
+}
+
+func firstOf(m map[string]any, keys ...string) any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			return v
+		}
+	}
+	return nil
+}
+
+func anySlice(v any) []any {
+	switch t := v.(type) {
+	case []any:
+		return t
+	case []string:
+		out := make([]any, len(t))
+		for i, s := range t {
+			out[i] = s
+		}
+		return out
+	}
+	return nil
+}
+
+// mapSlice normalizes []map[string]any / []any-of-maps (JSON round-trip form).
+func mapSlice(v any) []map[string]any {
+	switch t := v.(type) {
+	case []map[string]any:
+		return t
+	case []any:
+		var out []map[string]any
+		for _, e := range t {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func int64Of(v any) int64 {
+	switch t := v.(type) {
+	case int64:
+		return t
+	case int:
+		return int64(t)
+	case float64:
+		return int64(t)
+	case json.Number:
+		n, _ := t.Int64()
+		return n
+	}
+	return 0
+}
+
+func float64Of(v any) float64 {
+	switch t := v.(type) {
+	case float64:
+		return t
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	}
+	return 0
+}
+
+// limitsFromMap decodes the opaque limits map (camelCase REST or snake_case
+// manifest keys). timeout accepts a Go duration string ("5m") or seconds.
+func limitsFromMap(m map[string]any) *lanternv1.ResourceLimits {
+	l := &lanternv1.ResourceLimits{}
+	l.Vcpu, _ = m["vcpu"].(string)
+	l.Memory, _ = m["memory"].(string)
+	l.Gpu, _ = m["gpu"].(string)
+	l.ScratchSize, _ = firstOf(m, "scratch_size", "scratchSize").(string)
+	l.MaxSteps = int64Of(firstOf(m, "max_steps", "maxSteps"))
+	l.MaxTokens = int64Of(firstOf(m, "max_tokens", "maxTokens"))
+	l.MaxCostUsd = float64Of(firstOf(m, "max_cost_usd", "maxCostUsd"))
+	switch t := m["timeout"].(type) {
+	case string:
+		if d, err := time.ParseDuration(t); err == nil {
+			l.Timeout = durationpb.New(d)
+		}
+	case float64, int, int64:
+		l.Timeout = durationpb.New(time.Duration(float64Of(t) * float64(time.Second)))
+	}
+	return l
 }
 
 func parseIsolation(s string) lanternv1.IsolationClass {
 	switch strings.ToLower(s) {
 	case "trusted":
 		return lanternv1.IsolationClass_ISOLATION_TRUSTED
-	case "standard":
+	case "standard", "microvm", "firecracker":
 		return lanternv1.IsolationClass_ISOLATION_STANDARD
 	case "untrusted":
 		return lanternv1.IsolationClass_ISOLATION_UNTRUSTED
@@ -598,8 +739,14 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		return "", "", "", "", time.Time{}, fmt.Errorf("mint agent identity: %w", err)
 	}
 
+	idemKey := spec.IdempotencyKey
+	if idemKey == "" {
+		idemKey = uuid.NewString()
+	}
+
 	// Build the spec map. tenant_id always comes from context; never from the caller.
 	specMap := map[string]any{
+		"idempotency_key":     idemKey,
 		"image_digest":        spec.ImageDigest,
 		"isolation":           spec.Isolation,
 		"network":             spec.Network,
@@ -710,6 +857,8 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 		Isolation:      "microvm",
 		AgentVersionID: agentVersionID,
 		RunID:          runID,
+		// Deterministic: a recovery re-drive of the same run dedups at the scheduler.
+		IdempotencyKey: "run:" + runID,
 	}
 	if lims, ok := manifest["limits"].(map[string]any); ok {
 		spec.Limits = lims
@@ -1186,6 +1335,10 @@ type agentSpecDTO struct {
 	Limits      map[string]any   `json:"limits,omitempty"`
 	EgressRules []map[string]any `json:"egressRules,omitempty"`
 	Secrets     []map[string]any `json:"secrets,omitempty"`
+	// IdempotencyKey dedups a retried schedule at the scheduler. Run-executor
+	// callers derive it from run_id; REST callers may supply it (field or
+	// Idempotency-Key header); otherwise scheduleAgentSpec mints a fresh uuid.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 type scheduleResponse struct {
@@ -1419,6 +1572,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, "invalid body")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
+	}
+	if h := r.Header.Get("Idempotency-Key"); h != "" {
+		spec.IdempotencyKey = h
 	}
 	// Snake_case alias fallback: populate empty fields from snake_case keys
 	// emitted by `lantern run` / agent.yaml YAML sources.
@@ -1976,6 +2132,10 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 	if node != nil {
 		nodeName = *node
 	}
+	if st, ok := h.scheduler.(execStreamer); ok && strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		h.streamExec(w, r, st, withTenant(ctx, tenantID), tenantID, claims.Subject, nodeName, vmID, body.Command, body.Argv)
+		return
+	}
 	stdout, stderr, exit, err := h.scheduler.Exec(withTenant(ctx, tenantID), nodeName, vmID, body.Command, body.Argv)
 	if err != nil {
 		h.logger().Error("scheduler.Exec failed", zap.Error(err))
@@ -1991,6 +2151,42 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		"stderr":   stderr,
 		"exitCode": exit,
 	})
+}
+
+// streamExec relays exec output as SSE (event: stdout|stderr|exit) as chunks
+// arrive from the manager, with no full-response buffering (invariant #4).
+func (h *RuntimeHandler) streamExec(w http.ResponseWriter, r *http.Request, st execStreamer, ctx context.Context, tenantID, principalID, node, vmID, command string, argv []string) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	send := func(event string, payload any) error {
+		b, _ := json.Marshal(payload)
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
+			return err
+		}
+		fl.Flush()
+		return nil
+	}
+	exit, truncated, err := st.ExecStream(ctx, node, vmID, command, argv, func(stream string, data []byte) error {
+		return send(stream, map[string]string{"data": string(data)})
+	})
+	if err != nil {
+		h.logger().Error("scheduler.ExecStream failed", zap.Error(err))
+		_ = send("error", map[string]string{"error": "scheduler error"})
+		return
+	}
+	if truncated {
+		_ = send("stderr", map[string]string{"data": execTruncatedNotice})
+	}
+	h.auditRuntime(ctx, tenantID, vmID, "exec",
+		map[string]any{"command": command, "exit_code": exit}, principalID, "")
+	_ = send("exit", map[string]int32{"exitCode": exit})
 }
 
 // Cluster handles GET /v1/runtime/cluster. Requires runtime:admin scope

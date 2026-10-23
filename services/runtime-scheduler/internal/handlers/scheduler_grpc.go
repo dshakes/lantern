@@ -58,6 +58,11 @@ func (alwaysLeader) IsLeader() bool { return true }
 type idempotentEntry struct {
 	handle    *lanternv1.VmHandle
 	expiresAt time.Time
+	// done is closed once the reserving call finishes; concurrent callers with
+	// the same key wait on it, then read handle (nil => the first call failed,
+	// err says why).
+	done chan struct{}
+	err  error
 }
 
 // SchedulerService implements lanternv1.RuntimeSchedulerServer.
@@ -75,7 +80,7 @@ type SchedulerService struct {
 
 	// idempotentMu guards idempotentVMs for concurrent Schedule calls.
 	idempotentMu  sync.Mutex
-	idempotentVMs map[string]idempotentEntry // idempotency_key -> cached handle
+	idempotentVMs map[string]*idempotentEntry // tenant_id\x00idempotency_key -> cached handle
 }
 
 // NewSchedulerService constructs the service. Caller must wire all deps.
@@ -93,7 +98,7 @@ func NewSchedulerService(
 		Logger:        logger.Named("scheduler_grpc"),
 		TenantHardCap: tenantHardCap,
 		Elector:       alwaysLeader{},
-		idempotentVMs: make(map[string]idempotentEntry),
+		idempotentVMs: make(map[string]*idempotentEntry),
 	}
 }
 
@@ -103,7 +108,7 @@ func NewSchedulerService(
 //
 // Schedule is a leader-only mutating operation; standbys return Unavailable so
 // the caller can retry against another replica.
-func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.ScheduleRequest) (*lanternv1.VmHandle, error) {
+func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.ScheduleRequest) (retHandle *lanternv1.VmHandle, retErr error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Schedule")
 	defer span.End()
 
@@ -112,21 +117,6 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 			s.Metrics.ScheduleTotal.WithLabelValues("standby").Inc()
 		}
 		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
-	}
-
-	// Idempotency: a repeated request with the same key returns the original
-	// VmHandle so client retries after a timeout don't double-create a billed VM.
-	if req != nil && req.IdempotencyKey != "" {
-		s.idempotentMu.Lock()
-		entry, exists := s.idempotentVMs[req.IdempotencyKey]
-		s.idempotentMu.Unlock()
-		if exists && time.Now().Before(entry.expiresAt) {
-			s.Logger.Info("schedule: returning cached handle for idempotency key",
-				zap.String("idempotency_key", req.IdempotencyKey),
-				zap.String("vm_id", entry.handle.VmId),
-			)
-			return entry.handle, nil
-		}
 	}
 
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -154,6 +144,31 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 
 	// Tenant identity comes from the JWT, not the caller-supplied spec.
 	req.Spec.TenantId = tenantID
+
+	// Idempotency: a repeated request with the same (tenant, key) returns the
+	// original VmHandle so client retries after a timeout don't double-create a
+	// billed VM. Reserve-then-fill: the first caller installs an in-flight
+	// entry under the lock, so a concurrent duplicate waits for it instead of
+	// racing past a check-then-insert. Keyed by tenant AFTER auth, so one
+	// tenant can never read another's handle.
+	if req.IdempotencyKey != "" {
+		ikey := tenantID + "\x00" + req.IdempotencyKey
+		entry, owner := s.reserveIdempotent(ikey)
+		if !owner {
+			select {
+			case <-entry.done:
+			case <-ctx.Done():
+				return nil, status.FromContextError(ctx.Err()).Err()
+			}
+			if entry.handle == nil {
+				return nil, entry.err
+			}
+			s.Logger.Info("schedule: returning cached handle for idempotency key",
+				zap.String("vm_id", entry.handle.VmId))
+			return entry.handle, nil
+		}
+		defer func() { s.finishIdempotent(ikey, entry, retHandle, retErr) }()
+	}
 
 	// Quota enforcement (hard cap). Soft cap is encoded in the score.
 	live := s.Store.TenantLiveVMs(tenantID)
@@ -215,23 +230,6 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 		s.Metrics.ScheduleTotal.WithLabelValues("ok").Inc()
 	}
 
-	// Record idempotency entry so retries return the same handle (24 h TTL).
-	if req.IdempotencyKey != "" {
-		s.idempotentMu.Lock()
-		s.idempotentVMs[req.IdempotencyKey] = idempotentEntry{
-			handle:    handle,
-			expiresAt: time.Now().Add(24 * time.Hour),
-		}
-		// Lazy eviction: prune expired entries on each successful insert.
-		now := time.Now()
-		for k, v := range s.idempotentVMs {
-			if now.After(v.expiresAt) {
-				delete(s.idempotentVMs, k)
-			}
-		}
-		s.idempotentMu.Unlock()
-	}
-
 	// Emit PENDING then dispatch the spawn.
 	s.emit(tenantID, &lanternv1.StatusEvent{
 		VmId:   handle.VmId,
@@ -253,6 +251,44 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	go s.dispatchSpawn(decision.NodeAddr, req.Spec, handle, tenantID)
 
 	return handle, nil
+}
+
+// reserveIdempotent returns the entry for key and whether the caller owns it
+// (must later call finishIdempotent). Expired entries are replaced.
+func (s *SchedulerService) reserveIdempotent(key string) (*idempotentEntry, bool) {
+	s.idempotentMu.Lock()
+	defer s.idempotentMu.Unlock()
+	now := time.Now()
+	if e, ok := s.idempotentVMs[key]; ok && (e.handle == nil || now.Before(e.expiresAt)) {
+		return e, false
+	}
+	// Lazy eviction of expired completed entries.
+	for k, v := range s.idempotentVMs {
+		if v.handle != nil && now.After(v.expiresAt) {
+			delete(s.idempotentVMs, k)
+		}
+	}
+	e := &idempotentEntry{done: make(chan struct{})}
+	s.idempotentVMs[key] = e
+	return e, true
+}
+
+// finishIdempotent fills the reservation (24 h TTL) or, on failure, drops it so
+// a retry can run fresh; waiters see err.
+func (s *SchedulerService) finishIdempotent(key string, e *idempotentEntry, h *lanternv1.VmHandle, err error) {
+	s.idempotentMu.Lock()
+	if err != nil || h == nil {
+		e.err = err
+		if e.err == nil {
+			e.err = status.Error(codes.Internal, "schedule produced no handle")
+		}
+		delete(s.idempotentVMs, key)
+	} else {
+		e.handle = h
+		e.expiresAt = time.Now().Add(24 * time.Hour)
+	}
+	s.idempotentMu.Unlock()
+	close(e.done)
 }
 
 // Events streams StatusEvents for one or all of the caller's VMs.
@@ -347,6 +383,9 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		return nil, status.Errorf(codes.PermissionDenied, "vm %q does not belong to caller", req.VmId)
 	}
 
+	// A FAILED VM already released its quota slot in dispatchSpawn.
+	quotaAlreadyFreed := vm.State == lanternv1.VmState_VM_STATE_FAILED
+
 	// Mark draining + emit event.
 	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_DRAINING, req.Reason, nil, time.Now().UTC())
 	s.emit(tenantID, &lanternv1.StatusEvent{
@@ -382,9 +421,11 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		Reason: req.Reason,
 	})
 	s.Store.DeleteVM(req.VmId)
-	s.Store.IncrTenantVMs(tenantID, -1)
-	if s.Metrics != nil {
-		s.Metrics.ActiveVMs.Dec()
+	if !quotaAlreadyFreed {
+		s.Store.IncrTenantVMs(tenantID, -1)
+		if s.Metrics != nil {
+			s.Metrics.ActiveVMs.Dec()
+		}
 	}
 
 	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
@@ -519,7 +560,17 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 			zap.String("node", handle.Node),
 			zap.Error(err),
 		)
+		// Release the quota slot taken in Schedule exactly once: only if the VM
+		// still exists and wasn't already terminal (Terminate/reconcile freed it).
+		// Reconcile skips FAILED, so nobody else will.
+		prior, existed := s.Store.GetVM(handle.VmId)
 		s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
+		if existed && prior.State != lanternv1.VmState_VM_STATE_FAILED && prior.State != lanternv1.VmState_VM_STATE_TERMINATED {
+			s.Store.IncrTenantVMs(tenantID, -1)
+			if s.Metrics != nil {
+				s.Metrics.ActiveVMs.Dec()
+			}
+		}
 		s.emit(tenantID, &lanternv1.StatusEvent{
 			VmId:   handle.VmId,
 			State:  lanternv1.VmState_VM_STATE_FAILED,
