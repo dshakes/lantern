@@ -171,6 +171,43 @@ Metrics on the same channel: `lantern_vm_boot_duration_seconds{class}`, `lantern
 
 ---
 
+## Spawn contract, identity pinning, and sandbox lifecycle
+
+Rationale and rollout: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
+
+**Spawn contract.** The guest learns what to run from `spawn.json` at the root of
+the read-only cert image the manager attaches to every Firecracker VM:
+`{version, workload_cmd, env, egress_rules, workload_uid, workload_gid}`. JSON is
+byte-exact (the old kernel-cmdline path mangled spaces and quotes); the cmdline is
+kept only for harness builds that predate the file. The harness rejects unknown
+`version`s, drops the workload, exec and shell children to `workload_uid`/`gid`,
+and gives them an explicit env with `LANTERN_*` withheld except a non-secret
+allowlist. The uid is set by the manager (`LANTERN_WORKLOAD_UID_DEFAULT`); a
+caller-supplied `LANTERN_WORKLOAD_UID` is dropped.
+
+**Identity pinning.** Per-VM certs are CN = `vm_id` and carry `OU=lantern-vm`. The
+manager's `RuntimeManager` interceptor refuses any such cert and requires
+`x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`), so a guest can reach only
+`RuntimeHarness`, where each message is bound to its own `vm_id`. `ExecTool`
+carries `tenant_id` and returns `NOT_FOUND` on mismatch. Snapshots record the
+owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
+
+**Pause / resume / fork.**
+
+1. `pause` — manager snapshots (memory + disk, streamed to the store in 1 MiB
+   chunks), stops the VM, and the control-plane releases the tenant quota slot.
+   State becomes `paused`; `snapshotId` is recorded on the VM.
+2. `resume` — claims a quota slot (402 if none; 409 if the VM is not `paused`),
+   restores the snapshot under the same `vm_id`, and the harness re-identifies.
+3. `fork {count 1..10}` — restores the snapshot `count` times; each fork gets a
+   new `vm_id`, cert and agent identity, with `parentVmId` pointing at the source.
+   Forking a running VM requires Firecracker ≥ 1.12 + jailer. Per-fork failures
+   come back in `forks[].error`; they do not fail the whole call.
+
+Re-identification matters because a restored guest otherwise resumes with the
+source VM's cert and id. Status: unit- and contract-tested; not yet exercised on a
+Linux/KVM host (see [`GA-READINESS.md`](../GA-READINESS.md)).
+
 ## Failure modes & recovery
 
 ### Node death
