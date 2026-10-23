@@ -83,6 +83,10 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusUnauthorized, slackReply("Signature verification failed."))
 			return
 		}
+	} else if IsProd() {
+		h.logger().Error("SLACK_SIGNING_SECRET not set in prod — refusing unverified slash command")
+		writeJSON(w, http.StatusUnauthorized, slackReply("Signature verification failed."))
+		return
 	} else {
 		h.logger().Warn("SLACK_SIGNING_SECRET not set — accepting unverified slash command (dev only)")
 	}
@@ -106,6 +110,10 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 	// config.workspaceId; fall back to the dev tenant so /lantern works
 	// out of the box on the seeded data.
 	tenantID := h.resolveTenantFromSlackTeam(r.Context(), teamID)
+	if tenantID == "" {
+		writeJSON(w, http.StatusOK, slackReply("This Slack workspace is not linked to a Lantern tenant."))
+		return
+	}
 
 	// Now that the tenant is resolved, inject it into the context so the
 	// post-resolution reply handlers can route their tenant-scoped reads
@@ -244,10 +252,12 @@ func (h *SlackCommandHandler) agentsReply(ctx context.Context, tenantID string) 
 // resolveTenantFromSlackTeam looks up the tenant that owns this Slack
 // workspace by team_id stored in surface_configs.config. Falls back to
 // the dev tenant when nothing is configured so /lantern works against
-// seeded data without explicit setup.
+// seeded data without explicit setup. In prod there is no fallback: an
+// unlinked workspace returns "" so the caller refuses rather than act as the
+// dev tenant.
 func (h *SlackCommandHandler) resolveTenantFromSlackTeam(ctx context.Context, teamID string) string {
 	if teamID == "" {
-		return devTenantID
+		return slackFallbackTenant()
 	}
 	var tenantID string
 	// rls-exempt: pre-tenant-resolution lookup — maps a Slack workspace/team to
@@ -261,9 +271,17 @@ func (h *SlackCommandHandler) resolveTenantFromSlackTeam(ctx context.Context, te
 		teamID,
 	).Scan(&tenantID)
 	if err != nil {
-		return devTenantID
+		return slackFallbackTenant()
 	}
 	return tenantID
+}
+
+// slackFallbackTenant is the dev tenant outside prod and "" in prod.
+func slackFallbackTenant() string {
+	if IsProd() {
+		return ""
+	}
+	return devTenantID
 }
 
 // verifySlackSignature implements Slack's signed-request verification.
