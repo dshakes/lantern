@@ -406,6 +406,9 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 	// can read journal_events CompletedStep rows to skip finished nodes.
 	env := map[string]any{"LANTERN_RESUME": "1"}
 	manifest["env"] = env
+	// Distinct scheduler idempotency key per re-drive attempt: reusing the
+	// first attempt's key would hand back the crashed VM's handle.
+	manifest["attempt"] = totalVMs + 1
 
 	log.Info("resumeMicroVMRun: scheduling new VM for crashed run",
 		zap.String("run_id", run.runID),
