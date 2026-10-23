@@ -90,9 +90,12 @@ func main() {
 	// with a typed error rather than executing.
 	var modelClient lanternv1.ModelServiceClient
 	if cfg.ModelRouterAddr != "" {
-		conn, err := grpc.NewClient(cfg.ModelRouterAddr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+		if cfg.GRPCServiceToken != "" {
+			// The router rejects calls without x-lantern-service-token.
+			mrOpts = append(mrOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
+		}
+		conn, err := grpc.NewClient(cfg.ModelRouterAddr, mrOpts...)
 		if err != nil {
 			logger.Fatal("failed to dial model router", zap.String("addr", cfg.ModelRouterAddr), zap.Error(err))
 		}
@@ -432,3 +435,13 @@ type wrappedStream struct {
 func (w *wrappedStream) Context() context.Context {
 	return w.ctx
 }
+
+// serviceTokenCreds attaches the shared service token to every outbound RPC.
+type serviceTokenCreds struct{ token string }
+
+func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{"x-lantern-service-token": c.token}, nil
+}
+
+// RequireTransportSecurity is false: in-cluster hop, same as the other dials.
+func (c serviceTokenCreds) RequireTransportSecurity() bool { return false }
