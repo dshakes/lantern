@@ -41,7 +41,7 @@ VOLUME ["/run/lantern"]
 #   LANTERN_WORKLOAD_UID     — uid the workload runs as (fatal if unset in prod)
 # Optional:
 #   LANTERN_WORKLOAD_GID     — gid for the workload (default: the uid)
-#   LANTERN_WORKSPACE        — root for the read/write/list_dir tools (/workspace)
+#   (file tools are confined to the fixed /workspace; not env-configurable)
 #   LANTERN_DECLARED_SECRETS — JSON array of {env_name, secret_uri}
 #   LANTERN_MAX_RESTARTS     — supervisor restart budget (default 5)
 #   LANTERN_DRAIN_GRACE_SECS — SIGTERM→SIGKILL window (default 25)
