@@ -535,7 +535,7 @@ fn check_bearer_token(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|t| t == expected)
+        .map(|t| ct_eq(t.as_bytes(), expected.as_bytes()))
         .unwrap_or(false);
     if ok {
         Ok(req)
@@ -544,6 +544,12 @@ fn check_bearer_token(
             "exec: invalid or missing bearer token",
         ))
     }
+}
+
+/// Constant-time byte comparison so the bearer check doesn't leak how many
+/// leading bytes matched. Length is not secret (tokens are fixed-size).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// The exec server's interceptor: the bearer must equal the CURRENT
@@ -635,6 +641,14 @@ mod tests {
 
     /// The interceptor reads the LIVE token: after a re-identify the previous
     /// incarnation's token is rejected and the new one accepted.
+    #[test]
+    fn ct_eq_matches_only_identical_bytes() {
+        assert!(ct_eq(b"tok-123", b"tok-123"));
+        assert!(!ct_eq(b"tok-123", b"tok-124"));
+        assert!(!ct_eq(b"tok-123", b"tok-12"));
+        assert!(!ct_eq(b"", b"x"));
+    }
+
     #[test]
     fn exec_auth_follows_reidentify() {
         let m = ManagerClient::new("127.0.0.1:1".into(), "vm-src".into());
