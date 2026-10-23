@@ -184,7 +184,7 @@ func (h *BudgetHandler) ListBudgets(w http.ResponseWriter, r *http.Request) {
 		rows, qErr := tx.Query(ctx, `
 			SELECT agent_name, max_cost_usd_per_day, max_cost_usd_per_run,
 			       max_tokens_per_day, max_runs_per_day, tool_limits, hard_fail, notify_at_pct, updated_at
-			FROM agent_budgets WHERE tenant_id = $1 ORDER BY agent_name
+			FROM agent_budgets WHERE tenant_id = $1 AND agent_name <> '*' ORDER BY agent_name -- the tenant-wide cap lives at /v1/budgets/tenant
 		`, tenantID)
 		if qErr != nil {
 			return qErr
