@@ -2111,8 +2111,12 @@ type ExecToolRequest struct {
 	// Derived from (run_id, step_id, attempt) — the manager de-duplicates a
 	// retried tool side-effect against this key (invariant #8).
 	IdempotencyKey string `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Owning tenant of the run (from the engine's run record). The manager
+	// compares it to the VM's spawn-time tenant; mismatch → NOT_FOUND (no
+	// existence leak). Required in prod (ADR 0025).
+	TenantId      string `protobuf:"bytes,8,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecToolRequest) Reset() {
@@ -2190,6 +2194,13 @@ func (x *ExecToolRequest) GetTimeout() *durationpb.Duration {
 func (x *ExecToolRequest) GetIdempotencyKey() string {
 	if x != nil {
 		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *ExecToolRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
 	}
 	return ""
 }
@@ -3166,7 +3177,7 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\fR\x06stderr\x12\x1b\n" +
 	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x12\n" +
-	"\x04done\x18\x04 \x01(\bR\x04done\"\xfe\x01\n" +
+	"\x04done\x18\x04 \x01(\bR\x04done\"\x9b\x02\n" +
 	"\x0fExecToolRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
@@ -3174,7 +3185,8 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\ttool_name\x18\x04 \x01(\tR\btoolName\x12+\n" +
 	"\x04args\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x04args\x123\n" +
 	"\atimeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12'\n" +
-	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\"\x89\x01\n" +
+	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x12\x1b\n" +
+	"\ttenant_id\x18\b \x01(\tR\btenantId\"\x89\x01\n" +
 	"\x10ExecToolResponse\x12.\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x16.lantern.v1.ToolStatusR\x06status\x12/\n" +
 	"\x06result\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06result\x12\x14\n" +

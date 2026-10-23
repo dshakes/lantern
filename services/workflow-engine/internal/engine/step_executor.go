@@ -403,6 +403,7 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 		ToolName:       req.ToolName,
 		Args:           args,
 		IdempotencyKey: idempotencyKey,
+		TenantId:       state.TenantID,
 	}
 
 	// Forward the step's remaining deadline (set from StepPayload.TimeoutSec) so
