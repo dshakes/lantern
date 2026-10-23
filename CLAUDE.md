@@ -56,7 +56,7 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
 7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
-8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
+8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key, and the key also folds in a hash of the request body so distinct requests within one run no longer collide. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
 9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `LANTERN_OTEL_ENABLED` unset).
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
 
@@ -409,6 +409,11 @@ deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
 follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
 fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
 
+**Key creation is subset-checked.** A non-admin caller cannot mint an API key
+with a scope it could not itself exercise (privilege escalation;
+`internal/handlers/api_keys.go`); JWT owner/admin sessions are exempt. Several
+previously unscoped mutators now carry `WithScope` annotations.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |
@@ -446,7 +451,17 @@ directory lists only `is_public` agents.
 | `PUT`    | `/v1/agents/{name}/budget` | Upsert per-agent budget (cost/day, cost/run, tokens/day, runs/day, per-tool limits, hard-fail)    |
 | `GET`    | `/v1/agents/{name}/budget` | Get agent budget                                                                                  |
 | `DELETE` | `/v1/agents/{name}/budget` | Remove budget                                                                                     |
-| `GET`    | `/v1/budgets`              | List all tenant budgets                                                                           |
+| `GET`    | `/v1/budgets`              | List all per-agent budgets (the tenant-wide row is hidden from this list)                         |
+| `PUT`    | `/v1/budgets/tenant`       | Upsert the tenant-wide daily spend cap `{maxCostUsdPerDay, hardFail}`; stored in `agent_budgets` under reserved `agent_name = '*'`. Enforced on agentless (`/v1/completions`) and agent calls |
+| `GET`    | `/v1/budgets/tenant`       | Get the tenant-wide cap                                                                           |
+| `DELETE` | `/v1/budgets/tenant`       | Remove the tenant-wide cap                                                                        |
+
+**Metering coverage.** Workflow `ai-step` and confidence-vote LLM calls and the
+built-in `web_search` are checked against budgets and recorded via `CheckBudget`
+/ `RecordUsageSpend` (`internal/handlers/budgets.go`) — the latter accrues tokens
+and cost WITHOUT bumping `runs_count`, so workflow spend does not inflate the
+runs/day limit. Streaming and no-tools Anthropic paths send the system prompt
+with prompt caching (`anthropicSystemWithCache`).
 
 ### Eval suites + CI gating (wedge #2)
 
@@ -711,9 +726,8 @@ fails it.)
 
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 
-The dormant durable engine's leaf executors
-(`internal/engine/step_executor.go`) now do real dispatch instead of
-returning placeholder strings:
+The durable engine is live via the data-plane `RouteRun` path; its leaf
+executors (`internal/engine/step_executor.go`) do real dispatch:
 
 - **`llm_call` steps** dispatch through the **model router**
   (`ModelService.Complete`), never to a provider directly (invariant #6).
@@ -736,11 +750,14 @@ returning placeholder strings:
   Dial address is `LANTERN_RUNTIME_MANAGER_ADDR` (default
   `runtime-manager:50054`); when unset, the client stays nil and tool_call
   steps fail with the typed `ErrRuntimeManagerUnavailable` rather than faking
-  output. The runtime-manager side is honest-but-incomplete: there is no
-  in-guest tool-runner yet (the harness serves a raw `Exec` shell channel, not
-  a typed tool registry), so `exec_tool` validates the request and returns
-  `TOOL_STATUS_UNAVAILABLE` — never a fabricated success — until the in-VM
-  runner lands.
+  output. The request also carries `tenant_id` (field 8, set from the run's
+  tenant); the manager returns `NotFound` on a tenant mismatch (ADR 0025). The
+  in-guest typed tool runner (`services/harness/src/tool_runner.rs`) serves
+  `shell_exec`, `http_fetch`, `read_file`, `write_file`, `list_dir`; file tools
+  are confined to `LANTERN_WORKSPACE` (default `/workspace`) via `openat2`
+  `RESOLVE_BENEATH`, and tool output is capped at 1 MiB. An unknown tool or a
+  VM without a runner still yields `TOOL_STATUS_UNAVAILABLE`, never a
+  fabricated success.
 - **`child_run` steps** invoke another agent and wait for it, in the engine
   itself (`internal/engine/child_run.go`) — NOT via a control-plane client. The
   engine is the only thing that mutates run state (invariant #2) and is already
@@ -980,6 +997,23 @@ controls, all fail-safe:
   fail-open). In dev, `LANTERN_EGRESS_FAIL_CLOSED=1` opts in to the same
   refusal; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
   Decision logic: `resolve_fail_closed` in `egress.rs`.
+- **Spawn contract (`spawn.json`, ADR 0025).** The manager writes
+  `spawn.json` at the root of the read-only cert image
+  (`{version, workload_cmd, env, egress_rules, workload_uid, workload_gid}`);
+  the harness reads it at boot (unknown `version` rejected) and ignores the
+  kernel-cmdline env when it is present (cmdline kept for older harness builds).
+  uid/gid come from the manager's `LANTERN_WORKLOAD_UID_DEFAULT` (default 1000) /
+  `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid); a caller-supplied
+  `LANTERN_WORKLOAD_UID` in the spec env is dropped.
+- **Privilege drop + env isolation.** The workload, VM exec and shell children
+  run as `LANTERN_WORKLOAD_UID`/`GID`, not the harness uid, so SO_PEERCRED, the
+  egress REDIRECT and cert-key isolation actually bind. Children get an explicit
+  env: every `LANTERN_*` key is withheld except an allowlist of non-secret
+  identity/locator values (`WORKLOAD_VISIBLE_LANTERN_KEYS` in `supervisor.rs`).
+  In prod `parse_env` refuses to start without a workload uid
+  (`require_workload_identity`). Restore: a VM restored from a snapshot
+  re-identifies (new vm_id/cert/agent identity) rather than running with the
+  source VM's.
 - **Security audits are never silently dropped.** The harness wires the real
   `RuntimeHarness.Report` client-streaming RPC with reconnect. Security-critical
   audits (`secret_vend`, egress `deny`, `secret_access_denied`,
@@ -998,17 +1032,21 @@ loopback + `169.254.169.254` direct).
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
 | `GET`    | `/v1/runtime/vms`                | List VMs (`?state=running&limit=50`)                                                                    |
-| `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events                                                                         |
+| `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
+| `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
+| `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state |
+| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..10) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
-| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
+| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
 | `GET`    | `/v1/runtime/cluster`            | Owner-only. Node load + warm-pool capacity                                                              |
 | `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
 
-CLI surface (`lantern run`, `lantern vm …`) and dashboard pages
-(`/runtime`, `/runtime/{vm}`) consume these endpoints. End-to-end demo
+CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork [--count N]`) and dashboard pages
+(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{pause,resume,fork,execStream}`,
+Python `client.runtime.{pause,resume,fork,exec_stream}`, Go `PauseVM`/`ResumeVM`/`ForkVM`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Wiring env vars (set on control-plane + scheduler):**
@@ -1033,6 +1071,9 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   `RuntimeManager.ExecTool` (ADR 0015). Unset → the engine's runtime client
   stays nil and tool_call steps fail with the typed
   `ErrRuntimeManagerUnavailable` rather than fabricating tool output.
+- `LANTERN_RUNTIME_MANAGER_TLS_CA` / `_CERT` / `_KEY` — client TLS material the
+  manager's callers (control-plane exec/pause/fork client, workflow-engine,
+  scheduler dialer) use to dial the manager. Prod requires the CA + client cert.
 - `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
   when the scheduler picks a named node and its IP isn't discoverable
   via DNS.
@@ -1064,7 +1105,24 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   service-auth interceptor before tenant extraction, fail-closed in prod, and the
   control-plane caller (`internal/handlers/runtime.go`) attaches the token as
   `PerRPCCredentials`. Set `LANTERN_GRPC_SERVICE_TOKEN` to the **same value** on
-  control-plane, gateway, workflow-engine, and runtime-scheduler.
+  control-plane, gateway, workflow-engine, runtime-scheduler, **model-router
+  (`:50053`, which carries tenant provider keys; fail-closed in prod)**, and
+  **runtime-manager (`:50054`)**. The manager adds per-call authz (ADR 0025): a
+  tonic interceptor refuses per-VM certs (`OU=lantern-vm`) with
+  `PERMISSION_DENIED` on every `RuntimeManager` method (guests reach only
+  `RuntimeHarness`) and requires `x-lantern-service-token`; its callers (scheduler
+  dialer, control-plane exec client, workflow-engine ExecTool client) attach the
+  token, so set it on the callers before the manager. Manager refuses to start
+  in prod without it.
+
+**Production guards (`LANTERN_ENV=prod/production/staging`).** The Helm chart
+(`infra/helm/lantern`) now defaults `LANTERN_ENV=production`, wires `JWT_SECRET`
+into the control-plane from the chart secret (`jwt-secret`), and ships
+`values-prod.yaml` — previously `LANTERN_ENV` defaulted to `""`, which left every
+prod guard off. In prod the control-plane additionally: refuses to start with
+`LANTERN_TWILIO_WEBHOOK_AUTH=off` or `LANTERN_USE_CLAUDE_CODE=1`
+(`insecureFlagsDecision`); refuses unsigned Slack slash commands when
+`SLACK_SIGNING_SECRET` is unset (request-time 4xx, dev only warns).
 
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go
@@ -1622,6 +1680,27 @@ Privacy posture (HARD rules):
   never a throw/crash. Source rows: `ZOBJECT` where `ZSTREAMNAME` is
   `/app/usage` or `/app/inFocus`; `ZVALUESTRING` = bundle id; `ZSTARTDATE`/
   `ZENDDATE` are Mac-absolute-time seconds (Unix = mac + 978307200).
+
+### Commitment ledger (follow-through to closure)
+
+`packages/bridge-core/src/commitments-edge.ts` (`runCommitmentJudgment`) closes
+open commitments instead of only surfacing them: an LLM judge (session key
+`owner::commit-judge`) reads recent activity and marks a commitment done only when
+it quotes verbatim evidence present in the inputs; a closure is FYI'd to
+self-chat as `✅ closed: <title> — saw: "<evidence>"` (prefix registered in
+`bot-self.ts`). Wired above the mute gate on the proactive tick; fail-safe
+(any error → nothing closed). `LANTERN_COMMITMENT_LEDGER=0` disables.
+
+### Quality telemetry + gates
+
+- **Sent-reply log.** Every sent contact reply is appended (with text) to an
+  AES-256-GCM-encrypted `sent-log.jsonl` via `bridge-core/src/sent-log.ts` +
+  `secure-store.ts`, so reply quality is measurable.
+- **Introspect staleness alarm.** `scripts/introspect/run.sh` shouts after 36h
+  (`STALE_HOURS`) without a successful audit run.
+- **Parity gate.** `packages/bridge-core/src/bridge-parity.test.ts` fails when a
+  shared reply-pipeline/owner-loop module is wired in one bridge but not the other.
+  `tsc` for bridge-core is enforced in CI.
 
 ### Required env (bridge process)
 
