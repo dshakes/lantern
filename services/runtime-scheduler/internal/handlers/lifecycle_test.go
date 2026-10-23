@@ -3,12 +3,16 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
@@ -263,7 +267,7 @@ func TestFork(t *testing.T) {
 			svc := newService(store, tc.d)
 			svc.TenantHardCap = tc.hardCap
 
-			resp, err := svc.Fork(ctxWithTenant("t1"), &lanternv1.ForkRequest{VmId: "vm-src", Count: tc.count})
+			resp, err := svc.Fork(ctxWithTenant("t1"), &lanternv1.ForkRequest{VmId: "vm-src", Count: tc.count, Identities: idents(int(tc.count))})
 			wantCode(t, err, tc.wantCode)
 			if got := store.TenantLiveVMs("t1"); got != tc.wantQuota {
 				t.Errorf("quota = %d, want %d", got, tc.wantQuota)
@@ -328,7 +332,7 @@ func TestLifecycle_TenantIsolation(t *testing.T) {
 	wantCode(t, err, codes.NotFound)
 	_, err = svc.Resume(other, &lanternv1.ResumeRequest{VmId: "vm-p"})
 	wantCode(t, err, codes.NotFound)
-	_, err = svc.Fork(other, &lanternv1.ForkRequest{VmId: "vm-1", Count: 1})
+	_, err = svc.Fork(other, &lanternv1.ForkRequest{VmId: "vm-1", Count: 1, Identities: idents(1)})
 	wantCode(t, err, codes.NotFound)
 	_, err = svc.Pause(other, &lanternv1.PauseRequest{VmId: "nope"})
 	wantCode(t, err, codes.NotFound)
@@ -372,5 +376,147 @@ func TestReconcile_IgnoresPausedVM(t *testing.T) {
 	}
 	if vm, _ := store.GetVM("vm-p"); vm.State != lanternv1.VmState_VM_STATE_PAUSED {
 		t.Errorf("state = %v", vm.State)
+	}
+}
+
+// idents mints n distinct fake fork identities.
+func idents(n int) []*lanternv1.ForkIdentity {
+	out := make([]*lanternv1.ForkIdentity, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, &lanternv1.ForkIdentity{
+			AgentInstanceId:    fmt.Sprintf("inst-child-%d", i),
+			AgentInstanceToken: fmt.Sprintf("tok-child-%d", i),
+		})
+	}
+	return out
+}
+
+func TestFork_ChildrenGetOwnIdentity(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	store.CreateVM(&cluster.VM{
+		Handle: &lanternv1.VmHandle{VmId: "vm-src", Node: "n1"},
+		Spec: &lanternv1.AgentSpec{ImageDigest: "sha256:abc", Env: map[string]string{
+			"LANTERN_AGENT_INSTANCE_ID": "inst-src", "LANTERN_AGENT_INSTANCE_TOKEN": "tok-src", "KEEP": "me",
+		}},
+		State: lanternv1.VmState_VM_STATE_RUNNING, TenantID: "t1", NodeName: "n1",
+	})
+	store.IncrTenantVMs("t1", 1)
+	d := &lifecycleDialer{}
+	svc := newService(store, d)
+
+	resp, err := svc.Fork(ctxWithTenant("t1"), &lanternv1.ForkRequest{VmId: "vm-src", Count: 2, Identities: idents(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenIDs, seenToks := map[string]bool{}, map[string]bool{}
+	for i, sp := range d.spawns {
+		id, tok := sp.Spec.Env["LANTERN_AGENT_INSTANCE_ID"], sp.Spec.Env["LANTERN_AGENT_INSTANCE_TOKEN"]
+		if id == "inst-src" || tok == "tok-src" || id == "" || tok == "" {
+			t.Errorf("child %d spawned with identity (%q, %q)", i, id, tok)
+		}
+		if seenIDs[id] || seenToks[tok] {
+			t.Errorf("child %d reuses another child's identity", i)
+		}
+		seenIDs[id], seenToks[tok] = true, true
+		if sp.Spec.Env["KEEP"] != "me" {
+			t.Error("non-identity env must be inherited")
+		}
+		if resp.Forks[i].AgentInstanceId != id {
+			t.Errorf("ForkChild.agent_instance_id = %q, spawned with %q", resp.Forks[i].AgentInstanceId, id)
+		}
+	}
+	if src, _ := store.GetVM("vm-src"); src.Spec.Env["LANTERN_AGENT_INSTANCE_TOKEN"] != "tok-src" {
+		t.Error("source spec was mutated")
+	}
+}
+
+func TestFork_RequiresOneIdentityPerChild(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	seedVM(store, "vm-src", "t1", lanternv1.VmState_VM_STATE_RUNNING, "")
+	d := &lifecycleDialer{}
+	svc := newService(store, d)
+	for _, ids := range [][]*lanternv1.ForkIdentity{nil, idents(1), {{AgentInstanceId: "x"}, {AgentInstanceId: "y", AgentInstanceToken: "t"}}} {
+		_, err := svc.Fork(ctxWithTenant("t1"), &lanternv1.ForkRequest{VmId: "vm-src", Count: 2, Identities: ids})
+		wantCode(t, err, codes.InvalidArgument)
+	}
+	if len(d.spawns)+len(d.snaps) != 0 || store.TenantLiveVMs("t1") != 1 {
+		t.Error("rejected fork touched the manager or quota")
+	}
+}
+
+// A resumed VM must not be terminated by a pre-pause inventory confirmation
+// plus a heartbeat that has not caught up with the respawn yet.
+func TestReconcile_ResumedVMGetsGrace(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	old := time.Now().Add(-time.Hour)
+	store.CreateVM(&cluster.VM{
+		Handle: &lanternv1.VmHandle{VmId: "vm-1", Node: "n1", CreatedAt: timestamppb.New(old)},
+		Spec:   &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:  lanternv1.VmState_VM_STATE_RUNNING, TenantID: "t1", NodeName: "n1",
+	})
+	store.IncrTenantVMs("t1", 1)
+	store.MarkVMsSeenOnNode("n1", []string{"vm-1"}, old.Add(time.Minute)) // confirmed long before pause
+	svc := newService(store, &lifecycleDialer{})
+	if _, err := svc.Pause(ctxWithTenant("t1"), &lanternv1.PauseRequest{VmId: "vm-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Resume(ctxWithTenant("t1"), &lanternv1.ResumeRequest{VmId: "vm-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stale inventory (does not list the respawned VM) right after resume.
+	if got := handlers.ReconcileNodeInventory(store, "n1", nil, true, time.Now()); len(got) != 0 {
+		t.Fatalf("resumed VM terminated inside the grace window: %v", got)
+	}
+	if vm, _ := store.GetVM("vm-1"); vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+		t.Fatalf("state = %v", vm.State)
+	}
+	// Past the grace window an absent VM is reconciled as usual.
+	if got := handlers.ReconcileNodeInventory(store, "n1", nil, true, time.Now().Add(2*time.Hour)); len(got) != 1 {
+		t.Fatalf("after grace: terminated %v, want vm-1", got)
+	}
+}
+
+// Once the node confirms the resumed VM, a later omission is authoritative
+// immediately (no grace needed).
+func TestReconcile_ResumedVMConfirmedThenGone(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	seedVM(store, "vm-1", "t1", lanternv1.VmState_VM_STATE_PAUSED, "snap-1")
+	svc := newService(store, &lifecycleDialer{})
+	if _, err := svc.Resume(ctxWithTenant("t1"), &lanternv1.ResumeRequest{VmId: "vm-1"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(time.Second)
+	handlers.ReconcileNodeInventory(store, "n1", []string{"vm-1"}, true, now)
+	if got := handlers.ReconcileNodeInventory(store, "n1", nil, true, now.Add(time.Second)); len(got) != 1 {
+		t.Fatalf("confirmed-then-gone resumed VM not reconciled: %v", got)
+	}
+}
+
+func TestTerminate_LogsOrphanedSnapshot(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	seedVM(store, "vm-p", "t1", lanternv1.VmState_VM_STATE_PAUSED, "snap-shared")
+	seedVM(store, "vm-c", "t1", lanternv1.VmState_VM_STATE_RUNNING, "snap-shared") // fork child
+	svc := newService(store, &lifecycleDialer{})
+	svc.Logger = zap.New(core)
+	orphaned := func() int { return logs.FilterMessageSnippet("snapshot orphaned").Len() }
+
+	if _, err := svc.Terminate(ctxWithTenant("t1"), &lanternv1.TerminateRequest{VmId: "vm-p"}); err != nil {
+		t.Fatal(err)
+	}
+	if orphaned() != 0 {
+		t.Fatal("snapshot still referenced by the fork child — not orphaned yet")
+	}
+	if _, err := svc.Terminate(ctxWithTenant("t1"), &lanternv1.TerminateRequest{VmId: "vm-c"}); err != nil {
+		t.Fatal(err)
+	}
+	if orphaned() != 1 {
+		t.Fatalf("orphan logs = %d, want 1 after the last reference is gone", orphaned())
 	}
 }

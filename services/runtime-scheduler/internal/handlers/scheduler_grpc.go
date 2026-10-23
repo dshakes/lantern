@@ -433,6 +433,7 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		Reason: req.Reason,
 	})
 	s.Store.DeleteVM(req.VmId)
+	s.logIfSnapshotOrphaned(vm)
 	if !quotaAlreadyFreed {
 		s.Store.IncrTenantVMs(tenantID, -1)
 		if s.Metrics != nil {
@@ -441,6 +442,24 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	}
 
 	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
+}
+
+// logIfSnapshotOrphaned notes, once the last VM referencing a pause/fork
+// snapshot is gone, that the snapshot now lingers on its node. The manager has
+// no snapshot-delete RPC yet (ADR 0025 follow-up), so it cannot be reclaimed.
+func (s *SchedulerService) logIfSnapshotOrphaned(vm *cluster.VM) {
+	if vm.SnapshotID == "" {
+		return
+	}
+	if refs := s.Store.ListVMs(vm.TenantID, func(v *cluster.VM) bool { return v.SnapshotID == vm.SnapshotID }); len(refs) > 0 {
+		return
+	}
+	s.Logger.Info("snapshot orphaned: no VM references it and the manager has no delete RPC",
+		zap.String("snapshot_id", vm.SnapshotID),
+		zap.String("vm_id", vm.Handle.GetVmId()),
+		zap.String("node", vm.NodeName),
+		zap.String("tenant_id", vm.TenantID),
+	)
 }
 
 func (s *SchedulerService) stopUnlessPaused(ctx context.Context, paused bool, addr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error) {
