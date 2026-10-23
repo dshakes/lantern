@@ -113,9 +113,16 @@ func main() {
 	// fabricating a tool result.
 	var runtimeClient lanternv1.RuntimeManagerClient
 	if cfg.RuntimeManagerAddr != "" {
-		conn, err := grpc.NewClient(cfg.RuntimeManagerAddr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		// The manager requires the service token and, in prod, mTLS.
+		rmCreds, err := managerTransportCreds(prod)
+		if err != nil {
+			logger.Fatal("runtime-manager dial credentials", zap.Error(err))
+		}
+		rmOpts := []grpc.DialOption{grpc.WithTransportCredentials(rmCreds)}
+		if cfg.GRPCServiceToken != "" {
+			rmOpts = append(rmOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
+		}
+		conn, err := grpc.NewClient(cfg.RuntimeManagerAddr, rmOpts...)
 		if err != nil {
 			logger.Fatal("failed to dial runtime manager", zap.String("addr", cfg.RuntimeManagerAddr), zap.Error(err))
 		}
