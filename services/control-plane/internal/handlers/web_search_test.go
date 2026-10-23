@@ -106,3 +106,41 @@ func TestExecuteWebSearchToolOpenAIFallback(t *testing.T) {
 		t.Fatal("no keys must error")
 	}
 }
+
+func TestExecuteWebSearchTool_ReportsUsage(t *testing.T) {
+	cases := []struct {
+		name            string
+		anthropic       bool
+		body            string
+		wantIn, wantOut int64
+	}{
+		{"anthropic", true, `{"content":[{"type":"text","text":"x"}],"usage":{"input_tokens":120,"output_tokens":45}}`, 120, 45},
+		{"openai", false, `{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":80,"completion_tokens":20}}`, 80, 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.anthropic {
+				t.Setenv("ANTHROPIC_API_KEY", "k")
+			} else {
+				t.Setenv("ANTHROPIC_API_KEY", "")
+				t.Setenv("OPENAI_API_KEY", "k")
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			oa, oo := anthropicWebSearchURL, openaiWebSearchURL
+			anthropicWebSearchURL, openaiWebSearchURL = srv.URL, srv.URL
+			defer func() { anthropicWebSearchURL, openaiWebSearchURL = oa, oo }()
+
+			ctx, tu := withToolUsage(context.Background())
+			if _, err := executeWebSearchTool(ctx, nil, "t1", map[string]any{"query": "q"}); err != nil {
+				t.Fatal(err)
+			}
+			in, out := tu.totals()
+			if in != tc.wantIn || out != tc.wantOut {
+				t.Fatalf("usage=%d/%d want %d/%d", in, out, tc.wantIn, tc.wantOut)
+			}
+		})
+	}
+}
