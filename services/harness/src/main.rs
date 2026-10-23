@@ -53,7 +53,25 @@ struct HarnessEnv {
     declared_egress: Vec<EgressRule>,
 }
 
+/// Prod must know which uid to drop the workload to BEFORE anything is
+/// spawned. The secrets server performs the same check, but in a task that
+/// races the supervisor, so on its own the workload could run as root briefly.
+/// An unparseable uid counts as missing.
+fn require_workload_identity(
+    prod: bool,
+    identity: Option<supervisor::WorkloadIdentity>,
+) -> Result<()> {
+    if prod && identity.is_none() {
+        anyhow::bail!(
+            "LANTERN_WORKLOAD_UID must be set to a numeric uid in production — \
+             refusing to start a workload as the harness (root) uid"
+        );
+    }
+    Ok(())
+}
+
 fn parse_env() -> Result<HarnessEnv> {
+    require_workload_identity(tls::is_prod_env(), supervisor::workload_identity())?;
     let vm_id = std::env::var("LANTERN_VM_ID").context("LANTERN_VM_ID env var required")?;
     let manager_addr =
         std::env::var("LANTERN_MANAGER_ADDR").unwrap_or_else(|_| "127.0.0.1:50054".to_string());
@@ -322,4 +340,23 @@ async fn run() -> Result<()> {
     // Stop the report forwarder so the runtime can drop.
     report_handle.abort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supervisor::WorkloadIdentity;
+
+    #[test]
+    fn prod_without_workload_uid_is_fatal() {
+        let id = Some(WorkloadIdentity {
+            uid: 1000,
+            gid: 1000,
+        });
+        assert!(require_workload_identity(true, None).is_err());
+        assert!(require_workload_identity(true, id).is_ok());
+        // Dev keeps working without one.
+        assert!(require_workload_identity(false, None).is_ok());
+        assert!(require_workload_identity(false, id).is_ok());
+    }
 }

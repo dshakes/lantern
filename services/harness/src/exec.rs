@@ -98,7 +98,7 @@ async fn run_exec(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     // `vm exec` runs as the workload, never as PID 1's root.
-    crate::supervisor::apply_workload_identity(&mut cmd, crate::supervisor::workload_identity());
+    crate::supervisor::as_workload(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -229,13 +229,14 @@ fn spawn_on_pty(
     slave: &std::os::fd::OwnedFd,
 ) -> std::io::Result<tokio::process::Child> {
     let mut cmd = tokio::process::Command::new(command);
+    // Workload env + uid first: it clears the environment, so TERM goes after.
+    crate::supervisor::as_workload(&mut cmd);
     cmd.args(argv)
         .env("TERM", if term.is_empty() { "xterm" } else { term })
         .stdin(std::process::Stdio::from(slave.try_clone()?))
         .stdout(std::process::Stdio::from(slave.try_clone()?))
         .stderr(std::process::Stdio::from(slave.try_clone()?))
         .kill_on_drop(true);
-    crate::supervisor::apply_workload_identity(&mut cmd, crate::supervisor::workload_identity());
     // SAFETY: `pre_exec` runs in the forked child before exec (after std's
     // setgid/setuid, so TIOCSCTTY runs as the workload); setsid(2) and
     // ioctl(2) are both async-signal-safe.
