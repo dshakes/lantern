@@ -41,9 +41,11 @@ export function takeDraftMeta(handle: string, now = Date.now()): { tier: string;
 export async function appendSentLog(
   stateDir: string,
   e: { channel: SentLogEntry["channel"]; to: string; text: string; now?: number },
-  key: Buffer = loadOrCreateStateKey(stateDir),
+  key?: Buffer,
 ): Promise<void> {
   try {
+    // Inside the try: a corrupt/unreadable key must not reject a fire-and-forget send.
+    key ??= loadOrCreateStateKey(stateDir);
     const now = e.now ?? Date.now();
     const meta = takeDraftMeta(e.to, now);
     const entry: SentLogEntry = { ts: now, channel: e.channel, handleHash: hashHandle(e.to), tier: meta?.tier, voiceDelta: meta?.voiceDelta, text: e.text };
