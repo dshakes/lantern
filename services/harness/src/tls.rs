@@ -51,13 +51,12 @@ pub const DEFAULT_MANAGER_SERVER_NAME: &str = "manager.lantern.internal";
 
 /// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
-    matches!(
-        std::env::var("LANTERN_ENV")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str(),
-        "prod" | "production" | "staging"
-    )
+    is_prod_value(&std::env::var("LANTERN_ENV").unwrap_or_default())
+}
+
+/// Whether a `LANTERN_ENV` value is production-like.
+pub fn is_prod_value(v: &str) -> bool {
+    matches!(v.to_lowercase().as_str(), "prod" | "production" | "staging")
 }
 
 /// Build a tonic `ClientTlsConfig` from the three env-var paths, or return
