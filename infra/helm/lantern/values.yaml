@@ -48,6 +48,9 @@ controlPlane:
       memory: 512Mi
   env:
     LISTEN_ADDR: ":50051"
+    # Secure by default: prod-like startup guards (JWT secret, service token,
+    # credential key) are ON. Dev/kind values files must opt out explicitly.
+    LANTERN_ENV: "production"
 
 modelRouter:
   replicas: 2
