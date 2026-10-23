@@ -40,6 +40,9 @@ const (
 	RuntimeScheduler_Terminate_FullMethodName = "/lantern.v1.RuntimeScheduler/Terminate"
 	RuntimeScheduler_Snapshot_FullMethodName  = "/lantern.v1.RuntimeScheduler/Snapshot"
 	RuntimeScheduler_Cluster_FullMethodName   = "/lantern.v1.RuntimeScheduler/Cluster"
+	RuntimeScheduler_Pause_FullMethodName     = "/lantern.v1.RuntimeScheduler/Pause"
+	RuntimeScheduler_Resume_FullMethodName    = "/lantern.v1.RuntimeScheduler/Resume"
+	RuntimeScheduler_Fork_FullMethodName      = "/lantern.v1.RuntimeScheduler/Fork"
 )
 
 // RuntimeSchedulerClient is the client API for RuntimeScheduler service.
@@ -60,6 +63,16 @@ type RuntimeSchedulerClient interface {
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
 	// Cluster health / capacity for dashboards.
 	Cluster(ctx context.Context, in *ClusterRequest, opts ...grpc.CallOption) (*ClusterResponse, error)
+	// Sandbox lifecycle (Wave 2). All three are built on the manager's
+	// Snapshot / Spawn(restore_snapshot_id) / Stop RPCs.
+	//
+	// Pause snapshots a RUNNING VM, stops it, and releases its concurrent-VM
+	// quota slot. Idempotent: pausing a PAUSED VM returns the same snapshot.
+	Pause(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error)
+	// Resume re-spawns a PAUSED VM under the SAME vm_id from its snapshot.
+	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
+	// Fork spawns `count` new VMs from a snapshot of a RUNNING or PAUSED VM.
+	Fork(ctx context.Context, in *ForkRequest, opts ...grpc.CallOption) (*ForkResponse, error)
 }
 
 type runtimeSchedulerClient struct {
@@ -139,6 +152,36 @@ func (c *runtimeSchedulerClient) Cluster(ctx context.Context, in *ClusterRequest
 	return out, nil
 }
 
+func (c *runtimeSchedulerClient) Pause(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PauseResponse)
+	err := c.cc.Invoke(ctx, RuntimeScheduler_Pause_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *runtimeSchedulerClient) Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeResponse)
+	err := c.cc.Invoke(ctx, RuntimeScheduler_Resume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *runtimeSchedulerClient) Fork(ctx context.Context, in *ForkRequest, opts ...grpc.CallOption) (*ForkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForkResponse)
+	err := c.cc.Invoke(ctx, RuntimeScheduler_Fork_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RuntimeSchedulerServer is the server API for RuntimeScheduler service.
 // All implementations must embed UnimplementedRuntimeSchedulerServer
 // for forward compatibility.
@@ -157,6 +200,16 @@ type RuntimeSchedulerServer interface {
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
 	// Cluster health / capacity for dashboards.
 	Cluster(context.Context, *ClusterRequest) (*ClusterResponse, error)
+	// Sandbox lifecycle (Wave 2). All three are built on the manager's
+	// Snapshot / Spawn(restore_snapshot_id) / Stop RPCs.
+	//
+	// Pause snapshots a RUNNING VM, stops it, and releases its concurrent-VM
+	// quota slot. Idempotent: pausing a PAUSED VM returns the same snapshot.
+	Pause(context.Context, *PauseRequest) (*PauseResponse, error)
+	// Resume re-spawns a PAUSED VM under the SAME vm_id from its snapshot.
+	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
+	// Fork spawns `count` new VMs from a snapshot of a RUNNING or PAUSED VM.
+	Fork(context.Context, *ForkRequest) (*ForkResponse, error)
 	mustEmbedUnimplementedRuntimeSchedulerServer()
 }
 
@@ -184,6 +237,15 @@ func (UnimplementedRuntimeSchedulerServer) Snapshot(context.Context, *SnapshotRe
 }
 func (UnimplementedRuntimeSchedulerServer) Cluster(context.Context, *ClusterRequest) (*ClusterResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Cluster not implemented")
+}
+func (UnimplementedRuntimeSchedulerServer) Pause(context.Context, *PauseRequest) (*PauseResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Pause not implemented")
+}
+func (UnimplementedRuntimeSchedulerServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Resume not implemented")
+}
+func (UnimplementedRuntimeSchedulerServer) Fork(context.Context, *ForkRequest) (*ForkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Fork not implemented")
 }
 func (UnimplementedRuntimeSchedulerServer) mustEmbedUnimplementedRuntimeSchedulerServer() {}
 func (UnimplementedRuntimeSchedulerServer) testEmbeddedByValue()                          {}
@@ -307,6 +369,60 @@ func _RuntimeScheduler_Cluster_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RuntimeScheduler_Pause_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PauseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeSchedulerServer).Pause(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RuntimeScheduler_Pause_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeSchedulerServer).Pause(ctx, req.(*PauseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RuntimeScheduler_Resume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeSchedulerServer).Resume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RuntimeScheduler_Resume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeSchedulerServer).Resume(ctx, req.(*ResumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RuntimeScheduler_Fork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeSchedulerServer).Fork(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RuntimeScheduler_Fork_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeSchedulerServer).Fork(ctx, req.(*ForkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RuntimeScheduler_ServiceDesc is the grpc.ServiceDesc for RuntimeScheduler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -333,6 +449,18 @@ var RuntimeScheduler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cluster",
 			Handler:    _RuntimeScheduler_Cluster_Handler,
+		},
+		{
+			MethodName: "Pause",
+			Handler:    _RuntimeScheduler_Pause_Handler,
+		},
+		{
+			MethodName: "Resume",
+			Handler:    _RuntimeScheduler_Resume_Handler,
+		},
+		{
+			MethodName: "Fork",
+			Handler:    _RuntimeScheduler_Fork_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
