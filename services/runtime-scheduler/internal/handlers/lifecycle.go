@@ -8,7 +8,7 @@ package handlers
 // own vm_id; Fork mints new ones.
 //
 // Quota: a PAUSED VM holds no concurrent-VM slot. Pause releases exactly one
-// (only on the RUNNING→PAUSED edge, under the per-VM lock); Resume and Fork
+// (only on the pausing→PAUSED edge, CAS-guarded against reconcile); Resume and Fork
 // take slots with TryReserveTenantVMs (atomic, all-or-nothing) and give back
 // every slot whose spawn failed.
 
@@ -33,6 +33,18 @@ import (
 
 // maxForkCount bounds a single Fork call.
 const maxForkCount = 10
+
+// Crash-safe transitions. A VM mid-Pause is persisted as DRAINING+ReasonPausing
+// and mid-Resume as SPAWNING+ReasonResuming — both states loadVMs counts as
+// live, so a scheduler crash inside the manager call can over-count a slot for
+// a while but never reloads a running VM as PAUSED (outside quota and
+// reconciliation). ReconcileNodeInventory resolves either marker to PAUSED once
+// the node shows the VM is not running; the RPC and reconciliation settle the
+// marker with TransitionVMState so exactly one of them releases the slot.
+const (
+	ReasonPausing  = "scheduler:pausing"
+	ReasonResuming = "scheduler:resuming"
+)
 
 // lockVM serializes lifecycle mutations (Pause/Resume/Fork/Terminate) on one
 // VM so two concurrent calls cannot both snapshot/stop it or double-release
@@ -107,22 +119,27 @@ func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseReques
 		s.SnapshotPersister.PersistSnapshot(ctx, snap.SnapshotId, vmID, tenantID, vm.NodeName, false, snap)
 	}
 
-	// Mark PAUSED BEFORE Stop: inventory reconciliation ignores PAUSED, so the
-	// VM disappearing from the node's next heartbeat cannot be mistaken for an
-	// exit (which would terminate it and release its slot a second time).
+	// Persist the snapshot, then the pausing marker, BEFORE Stop. Reconcile
+	// resolves a pausing VM that leaves the node's inventory to PAUSED (not
+	// TERMINATED), and a crash here reloads it still holding its slot.
 	s.Store.SetVMSnapshot(vmID, snap.SnapshotId)
-	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_PAUSED, "pausing", nil, time.Now().UTC())
+	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing, nil, time.Now().UTC())
 
 	if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{VmId: vmID, Reason: "paused"}); err != nil {
 		// Still running on the node: restore RUNNING, keep the slot.
-		s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_RUNNING, "pause failed: "+err.Error(), nil, time.Now().UTC())
+		s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing,
+			lanternv1.VmState_VM_STATE_RUNNING, "pause failed: "+err.Error(), time.Now().UTC())
 		return nil, status.Errorf(codes.Unavailable, "pause %s: manager stop failed: %v", vmID, err)
 	}
 
-	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_PAUSED, "paused", nil, time.Now().UTC())
-	s.Store.IncrTenantVMs(tenantID, -1)
-	if s.Metrics != nil {
-		s.Metrics.ActiveVMs.Dec()
+	// Reconcile may already have settled it (node heartbeat after Stop) and
+	// released the slot; only the winner releases.
+	if s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_DRAINING, ReasonPausing,
+		lanternv1.VmState_VM_STATE_PAUSED, "paused", time.Now().UTC()) {
+		s.Store.IncrTenantVMs(tenantID, -1)
+		if s.Metrics != nil {
+			s.Metrics.ActiveVMs.Dec()
+		}
 	}
 	s.emit(tenantID, &lanternv1.StatusEvent{
 		VmId: vmID, State: lanternv1.VmState_VM_STATE_PAUSED, At: timestamppb.Now(), Reason: "paused",
@@ -162,12 +179,29 @@ func (s *SchedulerService) Resume(ctx context.Context, req *lanternv1.ResumeRequ
 			"tenant %s is at the concurrent-VM hard cap (%d)", tenantID, s.TenantHardCap)
 	}
 
+	// Persist the resuming marker BEFORE Spawn so a crash mid-spawn reloads
+	// the VM holding the slot just reserved, not as PAUSED.
+	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming, nil, time.Now().UTC())
+
 	if err := s.spawnFromSnapshot(ctx, node.Address, vm, vm.Handle, vm.SnapshotID); err != nil {
-		s.Store.IncrTenantVMs(tenantID, -1)
+		if s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
+			lanternv1.VmState_VM_STATE_PAUSED, "resume failed: "+err.Error(), time.Now().UTC()) {
+			s.Store.IncrTenantVMs(tenantID, -1)
+		}
 		return nil, status.Errorf(codes.Unavailable, "resume %s: manager spawn failed (vm stays paused): %v", vmID, err)
 	}
 
-	s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_RUNNING, "resumed", nil, time.Now().UTC())
+	if !s.Store.TransitionVMState(vmID, lanternv1.VmState_VM_STATE_SPAWNING, ReasonResuming,
+		lanternv1.VmState_VM_STATE_RUNNING, "resumed", time.Now().UTC()) {
+		// Reconcile gave up on this resume (spawn outlived its grace), recorded
+		// it PAUSED and released the slot. Stop what we just booted rather than
+		// leave it running uncounted.
+		if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{VmId: vmID, Reason: "resume superseded"}); err != nil {
+			s.Logger.Error("resume: superseded respawn could not be stopped — running outside quota until reconciled",
+				zap.String("vm_id", vmID), zap.String("node", vm.NodeName), zap.Error(err))
+		}
+		return nil, status.Errorf(codes.Unavailable, "resume %s: superseded by reconciliation (vm stays paused); retry", vmID)
+	}
 	if s.Metrics != nil {
 		s.Metrics.ActiveVMs.Inc()
 	}
@@ -214,35 +248,40 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "vm %q not found", srcID)
 	}
-	node, nodeOK := s.Store.GetNode(src.NodeName)
-	var snapID string
 	switch src.State {
 	case lanternv1.VmState_VM_STATE_PAUSED:
-		snapID = src.SnapshotID
-		if snapID == "" {
+		if src.SnapshotID == "" {
 			return nil, status.Errorf(codes.FailedPrecondition, "vm %q is paused without a snapshot", srcID)
 		}
 	case lanternv1.VmState_VM_STATE_RUNNING:
+	default:
+		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a RUNNING or PAUSED vm can be forked", srcID, src.State)
+	}
+	node, ok := s.Store.GetNode(src.NodeName)
+	if !ok {
+		return nil, status.Errorf(codes.Unavailable, "fork %s: node %q holding the snapshot is not registered", srcID, src.NodeName)
+	}
+	// Reserve quota BEFORE snapshotting: a denied fork must cost no snapshot
+	// I/O or storage. Every early return below gives the slots back.
+	if !s.Store.TryReserveTenantVMs(tenantID, count, s.TenantHardCap) {
+		return nil, status.Errorf(codes.ResourceExhausted,
+			"tenant %s cannot fit %d more VMs under the concurrent-VM hard cap (%d)", tenantID, count, s.TenantHardCap)
+	}
+	snapID := src.SnapshotID
+	if src.State == lanternv1.VmState_VM_STATE_RUNNING {
 		snap, err := s.Dialer.Snapshot(ctx, node.Address, &lanternv1.SnapshotRequest{VmId: srcID, KeepRunning: true})
 		if err != nil {
+			s.Store.IncrTenantVMs(tenantID, -count)
 			return nil, status.Errorf(codes.Unavailable, "fork %s: manager snapshot failed: %v", srcID, err)
 		}
 		if snap.GetSnapshotId() == "" {
+			s.Store.IncrTenantVMs(tenantID, -count)
 			return nil, status.Errorf(codes.Internal, "fork %s: manager returned an empty snapshot id", srcID)
 		}
 		snapID = snap.SnapshotId
 		if s.SnapshotPersister != nil {
 			s.SnapshotPersister.PersistSnapshot(ctx, snapID, srcID, tenantID, src.NodeName, true, snap)
 		}
-	default:
-		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a RUNNING or PAUSED vm can be forked", srcID, src.State)
-	}
-	if !nodeOK {
-		return nil, status.Errorf(codes.Unavailable, "fork %s: node %q holding the snapshot is not registered", srcID, src.NodeName)
-	}
-	if !s.Store.TryReserveTenantVMs(tenantID, count, s.TenantHardCap) {
-		return nil, status.Errorf(codes.ResourceExhausted,
-			"tenant %s cannot fit %d more VMs under the concurrent-VM hard cap (%d)", tenantID, count, s.TenantHardCap)
 	}
 
 	resp := &lanternv1.ForkResponse{SourceVmId: srcID, SnapshotId: snapID}

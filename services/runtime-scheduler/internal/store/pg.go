@@ -307,12 +307,26 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 
 // UpdateVMState updates memory then syncs to Postgres.
 func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) bool {
-	ok := s.mem.UpdateVMState(vmID, state, reason, usage, at)
-	if !ok {
+	if !s.mem.UpdateVMState(vmID, state, reason, usage, at) {
 		return false
 	}
+	s.persistVMState(vmID, state, reason, at)
+	return true
+}
+
+// TransitionVMState applies the compare-and-set in memory (the source of truth
+// for the race) then syncs the winner's write to Postgres.
+func (s *WriteThroughStore) TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool {
+	if !s.mem.TransitionVMState(vmID, from, fromReason, to, reason, at) {
+		return false
+	}
+	s.persistVMState(vmID, to, reason, at)
+	return true
+}
+
+func (s *WriteThroughStore) persistVMState(vmID string, state lanternv1.VmState, reason string, at time.Time) {
 	if s.pool == nil {
-		return true
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -323,7 +337,6 @@ func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, 
 		s.logger.Warn("sched_vms state update failed",
 			zap.String("vm_id", vmID), zap.Error(err))
 	}
-	return true
 }
 
 // SetVMSnapshot records the pause snapshot in memory then Postgres.
