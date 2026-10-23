@@ -71,9 +71,8 @@ func (h *BudgetHandler) UpsertBudget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	agentName := r.PathValue("name")
-	if agentName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name required"})
+	agentName, ok := budgetAgentName(w, r)
+	if !ok {
 		return
 	}
 
@@ -125,7 +124,10 @@ func (h *BudgetHandler) GetBudget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	agentName := r.PathValue("name")
+	agentName, ok := budgetAgentName(w, r)
+	if !ok {
+		return
+	}
 
 	var dto budgetDTO
 	dto.AgentName = agentName
@@ -158,7 +160,10 @@ func (h *BudgetHandler) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	agentName := r.PathValue("name")
+	agentName, ok := budgetAgentName(w, r)
+	if !ok {
+		return
+	}
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx,
 			`DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`,
@@ -170,6 +175,23 @@ func (h *BudgetHandler) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// budgetAgentName reads {name} for the per-agent budget routes. The tenant-wide
+// cap's sentinel row is reachable only via /v1/budgets/tenant: letting
+// /v1/agents/*/budget address it would let a per-agent call rewrite or delete
+// the tenant cap.
+func budgetAgentName(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name := r.PathValue("name")
+	switch name {
+	case "":
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name required"})
+		return "", false
+	case TenantBudgetAgent:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `agent name "*" is reserved; use /v1/budgets/tenant`})
+		return "", false
+	}
+	return name, true
 }
 
 // ListBudgets handles GET /v1/budgets.
@@ -310,17 +332,29 @@ type BudgetCheckResult struct {
 //
 // The tenant-wide cap (agent_budgets row with agent_name = TenantBudgetAgent)
 // is checked first, against spend summed across every agent.
+// A hard-fail violation from either budget wins: a soft tenant cap that is
+// exceeded must not mask the agent's own hard-fail limit (callers block only
+// on !Allowed && HardFail).
 func CheckBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64) BudgetCheckResult {
-	if tc := CheckTenantBudget(ctx, pool, tenantID, estCostUsd); !tc.Allowed {
+	tc := CheckTenantBudget(ctx, pool, tenantID, estCostUsd)
+	if !tc.Allowed && tc.HardFail {
 		return tc
 	}
-	return checkAgentBudget(ctx, pool, tenantID, agentName, estCostUsd)
+	ac := checkAgentBudget(ctx, pool, tenantID, agentName, estCostUsd)
+	if !ac.Allowed && ac.HardFail {
+		return ac
+	}
+	if !tc.Allowed {
+		return tc // soft tenant overrun: warn, don't block
+	}
+	return ac
 }
 
 // TenantBudgetAgent is the reserved agent_budgets.agent_name holding the
 // tenant-wide daily spend cap. Reusing agent_budgets (UNIQUE tenant_id,
-// agent_name) avoids a new table, migration and RLS catalog entry; "*" cannot
-// collide with a real agent name.
+// agent_name) avoids a new table, migration and RLS catalog entry. "*" is
+// rejected as an agent name and on the per-agent budget routes so nothing else
+// can address this row.
 const TenantBudgetAgent = "*"
 
 // CheckTenantBudget enforces the tenant-wide max_cost_usd_per_day against
