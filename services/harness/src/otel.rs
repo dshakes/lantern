@@ -33,6 +33,11 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
     }
     let _ = tokio::fs::remove_file(&path).await;
     let listener = UnixListener::bind(&path)?;
+    // Reachable by the unprivileged workload uid (it is the OTLP producer).
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
+    }
     tracing::info!(?path, "otel: OTLP socket listening");
 
     loop {
