@@ -721,6 +721,56 @@ func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOp
 	return &out, err
 }
 
+// ---------- Sandbox lifecycle (microVM pause / resume / fork) ----------
+
+// VMLifecycle is the result of pausing or resuming a runtime VM.
+type VMLifecycle struct {
+	VMID       string `json:"vmId"`
+	SnapshotID string `json:"snapshotId"`
+	State      string `json:"state"` // "paused" | "running"
+}
+
+// ForkedVM is one child of a fork. Error is set when that child failed to
+// spawn (its quota slot was released).
+type ForkedVM struct {
+	VMID  string `json:"vmId"`
+	State string `json:"state"`
+	Error string `json:"error,omitempty"`
+}
+
+// ForkResult is the response to ForkVM.
+type ForkResult struct {
+	SourceVMID string     `json:"sourceVmId"`
+	SnapshotID string     `json:"snapshotId"`
+	Forks      []ForkedVM `json:"forks"`
+}
+
+// PauseVM snapshots a running VM and stops it, freeing its concurrent-VM
+// quota slot. Pausing an already-paused VM returns the same snapshot.
+func (c *Client) PauseVM(ctx context.Context, vmID string) (*VMLifecycle, error) {
+	var out VMLifecycle
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/vms/"+url.PathEscape(vmID)+"/pause", nil, &out)
+	return &out, err
+}
+
+// ResumeVM restores a paused VM from its snapshot under the same vm id.
+// Returns an *APIError with Status 402 when the tenant is over quota and 409
+// when the VM is not paused.
+func (c *Client) ResumeVM(ctx context.Context, vmID string) (*VMLifecycle, error) {
+	var out VMLifecycle
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/vms/"+url.PathEscape(vmID)+"/resume", nil, &out)
+	return &out, err
+}
+
+// ForkVM spawns count (1..10) new VMs from a snapshot of a running or paused
+// VM. A running source keeps running. Per-child failures are reported in
+// ForkResult.Forks rather than as an error.
+func (c *Client) ForkVM(ctx context.Context, vmID string, count int) (*ForkResult, error) {
+	var out ForkResult
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/vms/"+url.PathEscape(vmID)+"/fork", map[string]int{"count": count}, &out)
+	return &out, err
+}
+
 // ---------- internals ----------
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

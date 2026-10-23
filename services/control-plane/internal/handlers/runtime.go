@@ -25,6 +25,8 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -46,6 +48,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -87,10 +90,19 @@ type SchedulerClient interface {
 	// back to runtime_vms. Returns an empty map (not an error) when the
 	// scheduler has no live VMs.
 	ListStates(ctx context.Context, tenantID string) (map[string]VMStateInfo, error)
+	// Sandbox lifecycle (runtime_lifecycle.go). Errors carry gRPC status
+	// codes: NotFound, FailedPrecondition (wrong state), ResourceExhausted.
+	Pause(ctx context.Context, tenantID, vmID string) (snapshotID string, err error)
+	Resume(ctx context.Context, tenantID, vmID string) (snapshotID string, err error)
+	Fork(ctx context.Context, tenantID, vmID string, count int) (ForkResult, error)
 }
 
 type stubSchedulerClient struct {
 	logger *zap.Logger
+	// paused tracks stub VMs that are paused (vm_id -> snapshot id) so the
+	// stub honours the real state rules: idempotent pause, resume only when
+	// paused.
+	paused sync.Map
 }
 
 func (s *stubSchedulerClient) Schedule(_ context.Context, spec map[string]any) (string, string, string, error) {
@@ -149,13 +161,15 @@ func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[strin
 // today — the wire runs inside the cluster VPC and is wrapped by the
 // existing gateway TLS at the edge.
 type grpcSchedulerClient struct {
-	logger     *zap.Logger
-	conn       *grpc.ClientConn
-	client     lanternv1.RuntimeSchedulerClient
-	defaultMgr string                      // LANTERN_DEFAULT_MANAGER_ADDR
-	mgrMu      sync.Mutex                  // guards mgrConns
-	mgrConns   map[string]*grpc.ClientConn // nodeName -> conn
-	mgrClients map[string]lanternv1.RuntimeManagerClient
+	logger       *zap.Logger
+	serviceToken string                           // sent to managers as x-lantern-service-token
+	mgrCreds     credentials.TransportCredentials // TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set
+	conn         *grpc.ClientConn
+	client       lanternv1.RuntimeSchedulerClient
+	defaultMgr   string                      // LANTERN_DEFAULT_MANAGER_ADDR
+	mgrMu        sync.Mutex                  // guards mgrConns
+	mgrConns     map[string]*grpc.ClientConn // nodeName -> conn
+	mgrClients   map[string]lanternv1.RuntimeManagerClient
 }
 
 // schedulerTokenCreds attaches the shared service token to every outbound gRPC
@@ -181,6 +195,10 @@ func (c schedulerTokenCreds) RequireTransportSecurity() bool { return false }
 // scheduler's service-auth interceptor accepts the call. Read it from
 // LANTERN_GRPC_SERVICE_TOKEN at the call site.
 func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grpcSchedulerClient, error) {
+	mgrCreds, err := ManagerTransportCreds(IsProd())
+	if err != nil {
+		return nil, err
+	}
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
@@ -193,12 +211,74 @@ func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grp
 		return nil, fmt.Errorf("dial scheduler %s: %w", addr, err)
 	}
 	return &grpcSchedulerClient{
-		logger:     logger,
-		conn:       conn,
-		client:     lanternv1.NewRuntimeSchedulerClient(conn),
-		defaultMgr: os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
-		mgrConns:   make(map[string]*grpc.ClientConn),
-		mgrClients: make(map[string]lanternv1.RuntimeManagerClient),
+		logger:       logger,
+		serviceToken: serviceToken,
+		mgrCreds:     mgrCreds,
+		conn:         conn,
+		client:       lanternv1.NewRuntimeSchedulerClient(conn),
+		defaultMgr:   os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
+		mgrConns:     make(map[string]*grpc.ClientConn),
+		mgrClients:   make(map[string]lanternv1.RuntimeManagerClient),
+	}, nil
+}
+
+// ManagerTransportCreds resolves the transport credentials for dialing a
+// runtime-manager. The manager forces mTLS in prod (it verifies client certs
+// against its CA), so:
+//
+//   - LANTERN_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
+//     that CA; LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
+//     client certificate.
+//   - unset in dev → insecure (plaintext), so `make dev` works.
+//   - unset in prod, client cert missing in prod, half-set cert/key, or an
+//     unreadable file → error; runStartupGuards treats it as fatal.
+func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
+	caPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CA"))
+	certPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_KEY"))
+	if (certPath == "") != (keyPath == "") {
+		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
+	}
+	if caPath == "" {
+		if isProd {
+			return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set LANTERN_RUNTIME_MANAGER_TLS_CA plus LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
+		}
+		return insecure.NewCredentials(), nil
+	}
+	if isProd && certPath == "" {
+		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read LANTERN_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
+	}
+	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	if certPath != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load runtime-manager client cert/key (%s, %s): %w", certPath, keyPath, err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return credentials.NewTLS(cfg), nil
+}
+
+// ManagerDialOptions returns the dial options every runtime-manager client in
+// the control-plane must use: ManagerTransportCreds + the shared service token
+// (LANTERN_GRPC_SERVICE_TOKEN), which the manager requires when it is set.
+func ManagerDialOptions(serviceToken string) ([]grpc.DialOption, error) {
+	creds, err := ManagerTransportCreds(IsProd())
+	if err != nil {
+		return nil, err
+	}
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(creds),
+		grpc.WithPerRPCCredentials(schedulerTokenCreds{token: serviceToken}),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}, nil
 }
 
@@ -243,8 +323,13 @@ func (c *grpcSchedulerClient) managerClient(node string) (lanternv1.RuntimeManag
 	if cl, ok := c.mgrClients[node]; ok {
 		return cl, nil
 	}
+	creds := c.mgrCreds
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
 	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
+		grpc.WithPerRPCCredentials(schedulerTokenCreds{token: c.serviceToken}),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {
@@ -479,6 +564,8 @@ func vmStateString(s lanternv1.VmState) string {
 		return "terminated"
 	case lanternv1.VmState_VM_STATE_FAILED:
 		return "failed"
+	case lanternv1.VmState_VM_STATE_PAUSED:
+		return "paused"
 	default:
 		return "pending"
 	}
@@ -1371,11 +1458,14 @@ type vmRow struct {
 	// StateReason explains a terminal state — e.g. "isolation class
 	// 'untrusted' not satisfiable by the 'docker' backend". Absent when the
 	// scheduler never supplied one.
-	StateReason     *string         `json:"stateReason,omitempty"`
-	Spec            json.RawMessage `json:"spec"`
-	LastHeartbeatAt *time.Time      `json:"lastHeartbeatAt,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	TerminatedAt    *time.Time      `json:"terminatedAt,omitempty"`
+	StateReason *string         `json:"stateReason,omitempty"`
+	Spec        json.RawMessage `json:"spec"`
+	// SnapshotID / ParentVMID are set by pause/fork (GET /v1/runtime/vms/{id}).
+	SnapshotID      *string    `json:"snapshotId,omitempty"`
+	ParentVMID      *string    `json:"parentVmId,omitempty"`
+	LastHeartbeatAt *time.Time `json:"lastHeartbeatAt,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	TerminatedAt    *time.Time `json:"terminatedAt,omitempty"`
 }
 
 type quotaDTO struct {
@@ -1420,6 +1510,11 @@ type quotaCheckResult struct {
 // HTTP 402; with hard_fail=false the caller may proceed but the
 // denial is still audit-logged.
 func (h *RuntimeHandler) checkRuntimeQuota(ctx context.Context, tenantID string, _ agentSpecDTO) quotaCheckResult {
+	return h.checkRuntimeQuotaN(ctx, tenantID, 1)
+}
+
+// checkRuntimeQuotaN is checkRuntimeQuota for adding n VMs at once (fork).
+func (h *RuntimeHandler) checkRuntimeQuotaN(ctx context.Context, tenantID string, n int) quotaCheckResult {
 	var q struct {
 		maxConcurrent int
 		maxCostDay    float64
@@ -1459,7 +1554,7 @@ func (h *RuntimeHandler) checkRuntimeQuota(ctx context.Context, tenantID string,
 	if !q.exists {
 		return quotaCheckResult{Allowed: true}
 	}
-	if q.maxConcurrent > 0 && live >= q.maxConcurrent {
+	if q.maxConcurrent > 0 && live+n > q.maxConcurrent {
 		return quotaCheckResult{
 			Allowed:  false,
 			HardFail: q.hardFail,
@@ -1825,12 +1920,13 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		if e := tx.QueryRow(ctx, `
 			SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-			       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at
+			       isolation_class, state, state_reason, spec, last_heartbeat_at, created_at, terminated_at,
+			       snapshot_id, parent_vm_id
 			FROM runtime_vms
 			WHERE vm_id = $1 AND tenant_id = $2
 		`, vmID, tenantID).Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
 			&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &v.StateReason, &specJSON,
-			&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); e != nil {
+			&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt, &v.SnapshotID, &v.ParentVMID); e != nil {
 			return e
 		}
 		// Recent audit events for this VM.
