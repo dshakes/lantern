@@ -727,3 +727,38 @@ async def _default_notify(opts: NotifyOptions) -> None:
 
 async def _default_subagent(agent: str, input: Any) -> Any:
     raise NotImplementedError("subagent() is only available in the Lantern runtime")
+
+
+# --- Runtime (microVM) pause / resume / fork / exec-stream ---------------
+
+
+class VmPauseResult(ApiModel):
+    vm_id: str
+    snapshot_id: str
+    state: str
+
+
+class VmResumeResult(ApiModel):
+    vm_id: str
+    snapshot_id: str
+    state: str
+
+
+class VmForkEntry(ApiModel):
+    vm_id: str
+    state: str
+    error: str | None = None
+
+
+class VmForkResult(ApiModel):
+    source_vm_id: str
+    snapshot_id: str
+    forks: list[VmForkEntry]
+
+
+class ExecStreamEvent(ApiModel):
+    """One SSE event from a streaming exec. ``type`` is stdout|stderr|exit."""
+
+    type: str
+    data: str = ""
+    exit_code: int | None = None
