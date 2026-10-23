@@ -617,6 +617,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		llmErr                  error
 	)
 
+	var toolSpend *toolUsage
 	if len(tools) == 0 {
 		// Streaming path — onDelta publishes message_delta events per token.
 		// ponytail: tool-bearing turns buffer internally (callLLMWithTools is
@@ -628,8 +629,10 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	} else {
 		// Non-streaming tool loop — up to 5 turns of tool use.
 		var invs []ToolInvocation
+		toolCtx, spend := withToolUsage(ctx)
+		toolSpend = spend
 		result, invs, usedProvider, usedModel, tokensIn, tokensOut, llmErr = h.llmProxy.callLLMWithFailover(
-			ctx, tenantID,
+			toolCtx, tenantID,
 			promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
 		)
 		_ = invs
@@ -661,6 +664,10 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// estCost=0 so it reads the current daily total; the write below is the
 	// only RecordUsage call for this session turn.
 	costUsd := estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut))
+	if toolSpend != nil {
+		// web_search spend is priced at its own model, not the outer provider's.
+		tokensIn, tokensOut, costUsd = toolSpend.addTo(usedProvider, usedModel, tokensIn, tokensOut)
+	}
 	// rls-exempt: shared usage-rollup helper takes a *Pool and self-scopes by
 	// the tenantID arg; reused identically across handlers.
 	if recErr := RecordUsage(ctx, h.llmProxy.srv.Pool, tenantID, agentName, tokensIn, tokensOut, costUsd, nil); recErr != nil {

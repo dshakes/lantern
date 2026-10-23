@@ -1694,7 +1694,7 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	// crash-replay re-running this step — dedups at the provider instead of
 	// double-billing. attempt=1 matches the journal's per-step attempt; the
 	// builder suffixes the provider name so failover targets stay distinct.
-	llmCtx := WithLLMIdempotencyBase(ctx, llmIdempotencyBaseFor(runID, llmStepID, 1))
+	llmCtx, toolSpend := withToolUsage(WithLLMIdempotencyBase(ctx, llmIdempotencyBaseFor(runID, llmStepID, 1)))
 	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
 		llmCtx, tenantID,
 		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5, false,
@@ -1703,7 +1703,8 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		provider = usedProvider
 		model = usedModel
 	}
-	costUsd := estimateCost(provider, model, int(tokensIn), int(tokensOut))
+	// web_search spend is priced at its own model, not the outer provider's.
+	tokensIn, tokensOut, costUsd := toolSpend.addTo(provider, model, tokensIn, tokensOut)
 
 	if llmErr != nil {
 		h.logger().Error("inline executor: LLM call failed", zap.Error(llmErr))

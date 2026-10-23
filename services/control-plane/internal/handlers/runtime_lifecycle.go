@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -303,10 +304,16 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	for _, f := range res.Forks {
 		ids = append(ids, f.VMID)
 		instanceIDs = append(instanceIDs, f.AgentInstanceID)
-		// The child inherits the source's placement, isolation and (redacted)
-		// spec; it is linked back via parent_vm_id + snapshot_id.
-		if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
-			_, e := tx.Exec(ctx, `
+	}
+	// Every live child must be tracked: all rows go in ONE transaction, and if
+	// it fails the children the scheduler already spawned are terminated rather
+	// than left running with no runtime_vms row (invisible to GET/DELETE, quota
+	// and secret binding).
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		for _, f := range res.Forks {
+			// The child inherits the source's placement, isolation and (redacted)
+			// spec; it is linked back via parent_vm_id + snapshot_id.
+			if _, e := tx.Exec(ctx, `
 				INSERT INTO runtime_vms
 				  (vm_id, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
 				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id, created_at)
@@ -316,11 +323,25 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 				       NULLIF($7, ''), confidential, vm_id, $4, now()
 				FROM runtime_vms WHERE vm_id = $5 AND tenant_id = $6
 				ON CONFLICT (vm_id) DO NOTHING
-			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID, f.AgentInstanceID)
-			return e
-		}); err != nil {
-			h.logger().Error("runtime_vms fork insert failed", zap.String("vm_id", f.VMID), zap.Error(err))
+			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID, f.AgentInstanceID); e != nil {
+				return fmt.Errorf("insert fork child %s: %w", f.VMID, e)
+			}
 		}
+		return nil
+	}); err != nil {
+		h.logger().Error("runtime_vms fork insert failed; terminating untracked children",
+			zap.String("vm_id", vmID), zap.Strings("fork_vm_ids", ids), zap.Error(err))
+		for _, id := range ids {
+			if id == "" {
+				continue
+			}
+			if tErr := h.scheduler.Terminate(ctx, id, "fork_untracked"); tErr != nil {
+				h.logger().Error("fork compensation: terminate child failed",
+					zap.String("vm_id", id), zap.Error(tErr))
+			}
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "fork failed: could not record child VMs"})
+		return
 	}
 	h.auditRuntime(ctx, claims.TenantID, vmID, "fork", map[string]any{
 		"snapshot_id": res.SnapshotID, "count": count, "fork_vm_ids": ids, "agent_instance_ids": instanceIDs,

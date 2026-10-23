@@ -614,12 +614,16 @@ func (h *RuntimeSecretsHandler) verifyInstanceToken(ctx context.Context, r *http
 	var rowTenantID, rowVmID, rowState string
 	// rls-exempt: trust-boundary check — resolves the VM bound to this
 	// agent_instance_id across tenants (service token, no JWT) and verifies the
-	// tenant/vm match below; runs on the privileged pool.
+	// tenant/vm match below; runs on the privileged pool. Instance ids derive
+	// from (tenant, idempotency key), so a replay the scheduler no longer dedups
+	// (cache TTL) can leave two rows with one id — prefer the presenting VM's.
 	dbErr := h.srv.Pool.QueryRow(ctx, `
 		SELECT tenant_id, vm_id, state
 		FROM runtime_vms
 		WHERE agent_instance_id = $1
-	`, claims.AgentInstanceID).Scan(&rowTenantID, &rowVmID, &rowState)
+		ORDER BY (vm_id = $2) DESC, created_at DESC
+		LIMIT 1
+	`, claims.AgentInstanceID, vmID).Scan(&rowTenantID, &rowVmID, &rowState)
 	if dbErr != nil {
 		if errors.Is(dbErr, pgx.ErrNoRows) {
 			return "", errors.New("agent_instance_id not found in runtime_vms")

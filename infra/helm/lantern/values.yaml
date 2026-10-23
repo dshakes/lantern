@@ -51,6 +51,11 @@ controlPlane:
     # Secure by default: prod-like startup guards (JWT secret, service token,
     # credential key) are ON. Dev/kind values files must opt out explicitly.
     LANTERN_ENV: "production"
+  # Prod-class inputs the startup guards require that are not secrets in
+  # `secrets:` — scheduler address and TLS file paths (see values-prod.yaml).
+  extraEnv: []
+  extraVolumeMounts: []
+  extraVolumes: []
 
 modelRouter:
   replicas: 2
