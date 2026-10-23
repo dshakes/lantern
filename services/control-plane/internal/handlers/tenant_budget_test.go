@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"go.uber.org/zap"
 )
 
 func setTenantCap(t *testing.T, tenantID string, capUsd float64, hardFail bool) {
@@ -112,5 +115,25 @@ func TestTenantBudget_NoRowUnlimited_SoftFailDoesNotBlock(t *testing.T) {
 	setTenantCap(t, tenant, 1.00, false)
 	if r := CheckTenantBudget(ctx, pool, tenant, 0); r.Allowed || r.HardFail {
 		t.Fatalf("soft cap should report breach with HardFail=false, got %+v", r)
+	}
+}
+
+// The tenant-wide "*" row is not an agent: it must not appear in the per-agent
+// list the dashboard Budgets page renders.
+func TestTenantBudget_HiddenFromAgentBudgetList(t *testing.T) {
+	pool := openTestPool(t)
+	tenant := seedCommitmentTenant(t, pool)
+	setTenantCap(t, tenant, 5.00, true)
+	srv := &server.Server{Pool: pool, Logger: zap.NewNop()}
+	h := NewBudgetHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	req := httptest.NewRequest(http.MethodGet, "/v1/budgets", nil)
+	req.Header.Set("Authorization", "Bearer "+mintTestToken(t, tenant, "user-"+tenant, "owner"))
+	rr := httptest.NewRecorder()
+	h.ListBudgets(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list budgets: %d %s", rr.Code, rr.Body.String())
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte(`"`+TenantBudgetAgent+`"`)) {
+		t.Errorf("tenant-wide row leaked into agent budget list: %s", rr.Body.String())
 	}
 }
