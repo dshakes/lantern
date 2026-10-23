@@ -57,7 +57,7 @@ the personal harness is that stack dog-fooded on a real life.
 
 - `reasoning-small` capability for `::purpose` side calls (gates, judges) instead
   of the default large model; replace remaining hardcoded model ids (invariant #6).
-- Tenant-wide budget row (agentless `/v1/completions` has no cap today).
+- ~~Tenant-wide budget row~~ — shipped: `PUT/GET/DELETE /v1/budgets/tenant` caps agentless `/v1/completions`.
 - Model-router LIVE cutover (ADR 0014) once S2 is deployed.
 
 ### Wave 4 — personal harness

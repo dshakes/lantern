@@ -45,7 +45,7 @@
   <g transform="translate(270,92)">
     <rect x="0" y="0" width="470" height="86" rx="10" fill="#11182a" stroke="#334155"/>
     <text x="16" y="23" class="t" font-size="12.5" font-weight="700">pause <tspan class="code" dx="10">POST /v1/runtime/vms/&#123;id&#125;/pause</tspan></text>
-    <text x="16" y="43" class="sub">manager <tspan class="code">Snapshot</tspan> (guest memory + vmstate streamed to the snapshot store), then <tspan class="code">Stop</tspan></text>
+    <text x="16" y="43" class="sub">manager <tspan class="code">Snapshot</tspan> (memory + vmstate → snapshot store), then <tspan class="code">Stop</tspan></text>
     <text x="16" y="61" class="sub">snapshot recorded under the VM's tenant · quota slot freed</text>
     <text x="16" y="78" class="sub">the pinned cert for the old incarnation is dropped on Stop</text>
   </g>
@@ -55,7 +55,7 @@
   <g transform="translate(270,215)">
     <rect x="0" y="0" width="470" height="146" rx="10" fill="#171226" stroke="#5b3fa8"/>
     <text x="16" y="23" class="t" font-size="12.5" font-weight="700">resume <tspan class="code" dx="10">POST /v1/runtime/vms/&#123;id&#125;/resume</tspan></text>
-    <text x="16" y="43" class="sub">402 quota exhausted · 409 not paused · <tspan class="code">Spawn</tspan> with same vm_id + <tspan class="code">restore_snapshot_id</tspan></text>
+    <text x="16" y="43" class="sub">402 no quota · 409 not paused · <tspan class="code">Spawn</tspan> with same vm_id + <tspan class="code">restore_snapshot_id</tspan></text>
     <text x="16" y="62" class="sub">manager: fresh /30 + TAP · new cert (pinned) · new <tspan class="code">certs.img</tspan> + spawn.json</text>
     <text x="16" y="80" class="sub">fresh exec token minted per incarnation — the previous token is rejected</text>
     <text x="16" y="98" class="sub">harness re-identify: cert drive UUID changes → swap cert, vm_id, secrets, eth0</text>
@@ -81,7 +81,7 @@
     <rect x="0" y="0" width="210" height="72" rx="10" fill="#11182a" stroke="#334155"/>
     <text x="16" y="24" class="t" font-size="12.5" font-weight="700">snapshot</text>
     <text x="16" y="44" class="sub">one <tspan class="code">snapshot_id</tspan>, tenant-owned</text>
-    <text x="16" y="60" class="sub">cross-tenant restore → NOT_FOUND</text>
+    <text x="16" y="60" class="sub">other tenant → NOT_FOUND</text>
   </g>
 
   <path d="M 470 502 C 520 502 520 436 560 436" stroke="#a78bfa" stroke-width="1.5" fill="none" marker-end="url(#sl-arrp)"/>
