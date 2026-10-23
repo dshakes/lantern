@@ -30,6 +30,23 @@ use crate::proto::{
     self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
 };
 
+/// Everything a re-identify swaps at once.
+pub struct Identity {
+    pub vm_id: String,
+    pub exec_token: String,
+    pub agent_instance_token: Option<String>,
+}
+
+fn read<T: Clone>(l: &std::sync::RwLock<T>) -> T {
+    l.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn write<T>(l: &std::sync::RwLock<T>, v: T) {
+    *l.write().unwrap_or_else(std::sync::PoisonError::into_inner) = v;
+}
+
 /// Connection state for the manager. The harness MUST tolerate the manager
 /// being unreachable — the workload always runs even if no heartbeats land.
 #[derive(Clone)]
@@ -51,7 +68,13 @@ pub struct ManagerClient {
     /// `None` when the env var is absent (dev / older deployments) — in that
     /// case no `authorization` metadata is sent and the relay behaves as before.
     /// The token is never logged.
-    agent_instance_token: Option<String>,
+    /// Shared + swappable: a forked guest adopts the fork's freshly minted
+    /// agent identity on re-identify (`reidentify.rs`).
+    agent_instance_token: Arc<std::sync::RwLock<Option<String>>>,
+    /// Bearer the in-guest exec server accepts — per incarnation, swapped on
+    /// re-identify so the previous incarnation's token is rejected. Empty =
+    /// unauthenticated (dev only; `exec::run` refuses that in prod).
+    exec_token: Arc<std::sync::RwLock<String>>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -78,7 +101,10 @@ impl ManagerClient {
             manager_addr,
             vm_id: Arc::new(std::sync::RwLock::new(vm_id)),
             identity_gen: Arc::new(tokio::sync::watch::channel(0).0),
-            agent_instance_token,
+            agent_instance_token: Arc::new(std::sync::RwLock::new(agent_instance_token)),
+            exec_token: Arc::new(std::sync::RwLock::new(
+                std::env::var("LANTERN_HARNESS_EXEC_TOKEN").unwrap_or_default(),
+            )),
             inner: Arc::new(Mutex::new(Inner {
                 report_tx: None,
                 last_contact_ms: 0,
@@ -89,20 +115,26 @@ impl ManagerClient {
 
     /// This VM's current identity.
     pub fn vm_id(&self) -> String {
-        self.vm_id
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        read(&self.vm_id)
     }
 
-    /// Adopt a new identity and force every long-lived manager stream to
-    /// reconnect (presenting whatever cert is on disk now). The caller must
-    /// have installed the new cert material first.
-    pub fn reidentify(&self, new_vm_id: String) {
-        *self
-            .vm_id
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_vm_id;
+    /// The exec server's current bearer token (read per call).
+    pub fn exec_token(&self) -> String {
+        read(&self.exec_token)
+    }
+
+    /// The current per-instance identity token, if any.
+    pub fn agent_instance_token(&self) -> Option<String> {
+        read(&self.agent_instance_token)
+    }
+
+    /// Adopt a new identity — vm_id and its per-incarnation tokens — and force
+    /// every long-lived manager stream to reconnect (presenting whatever cert
+    /// is on disk now). The caller must have installed the new cert first.
+    pub fn reidentify(&self, next: Identity) {
+        write(&self.vm_id, next.vm_id);
+        write(&self.exec_token, next.exec_token);
+        write(&self.agent_instance_token, next.agent_instance_token);
         self.identity_gen.send_modify(|g| *g += 1);
     }
 
@@ -508,7 +540,7 @@ impl ManagerClient {
             tonic_req.metadata_mut(),
         );
 
-        if let Some(token) = &self.agent_instance_token {
+        if let Some(token) = self.agent_instance_token() {
             let bearer = format!("Bearer {token}");
             // MetadataValue::try_from fails only if the string contains
             // non-visible-ASCII bytes. Our tokens are JWTs (base64url + dots)

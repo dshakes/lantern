@@ -73,6 +73,8 @@ pub struct SpawnContract {
     /// Point-to-point addressing; only used to re-address a restored guest
     /// (a cold boot is configured by the kernel's `ip=`).
     pub network: Option<GuestNetwork>,
+    /// Per-incarnation exec-server bearer (→ `LANTERN_HARNESS_EXEC_TOKEN`).
+    pub exec_token: Option<String>,
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -107,6 +109,9 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if let Some(gid) = c.workload_gid {
         pairs.push(("LANTERN_WORKLOAD_GID".into(), gid.to_string()));
+    }
+    if let Some(t) = c.exec_token.as_ref().filter(|t| !t.is_empty()) {
+        pairs.push(("LANTERN_HARNESS_EXEC_TOKEN".into(), t.clone()));
     }
     if let Some(vm_id) = c.vm_id.as_ref().filter(|v| !v.is_empty()) {
         pairs.push(("LANTERN_VM_ID".into(), vm_id.clone()));
@@ -937,6 +942,17 @@ mod tests {
             get("LANTERN_DECLARED_SECRETS"),
             Some(r#"[{"env_name":"K","secret_uri":"u"}]"#)
         );
+        let c = parse_spawn_contract(
+            br#"{"exec_token":"tok","env":{"LANTERN_HARNESS_EXEC_TOKEN":"forged"}}"#,
+        )
+        .expect("valid");
+        let pairs = contract_env_pairs(&c).expect("ok");
+        let toks: Vec<&str> = pairs
+            .iter()
+            .filter(|(k, _)| k == "LANTERN_HARNESS_EXEC_TOKEN")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(toks, vec!["tok"], "typed token beats free-form env");
         // An empty vm_id never overrides the cmdline.
         let c = parse_spawn_contract(br#"{"vm_id":""}"#).expect("valid");
         assert!(contract_env_pairs(&c).expect("ok").is_empty());

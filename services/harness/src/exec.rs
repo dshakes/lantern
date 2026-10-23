@@ -546,6 +546,16 @@ fn check_bearer_token(
     }
 }
 
+/// The exec server's interceptor: the bearer must equal the CURRENT
+/// incarnation's token (empty = dev pass-through, refused in prod by `run`).
+#[allow(clippy::result_large_err)] // tonic's Interceptor signature
+fn exec_auth(
+    manager: &ManagerClient,
+    req: tonic::Request<()>,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    check_bearer_token(req, &manager.exec_token())
+}
+
 /// Bind and serve the in-guest exec server. Address comes from
 /// `LANTERN_HARNESS_EXEC_ADDR` (default [`DEFAULT_EXEC_ADDR`]). Runs until
 /// process exit; the caller spawns it and the harness tolerates failure
@@ -564,8 +574,7 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
         .parse()
         .with_context(|| format!("exec: invalid LANTERN_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
 
-    let exec_token = std::env::var("LANTERN_HARNESS_EXEC_TOKEN").unwrap_or_default();
-    if exec_token.is_empty() {
+    if manager.exec_token().is_empty() {
         if crate::tls::is_prod_env() {
             anyhow::bail!(
                 "exec: LANTERN_HARNESS_EXEC_TOKEN must be set in production \
@@ -583,10 +592,11 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
 
     tracing::info!(%addr, "exec: in-guest exec server listening");
 
+    // The token is read from the shared client state per call: a guest
+    // restored from a snapshot re-identifies and must start rejecting the
+    // previous incarnation's token immediately.
+    let auth = manager.clone();
     let svc = ExecService::new(manager);
-    // ponytail: always use with_interceptor; the interceptor is a no-op when
-    // the token is empty (dev path, guarded by the prod bail above).
-    let token_for_interceptor = exec_token;
     tonic::transport::Server::builder()
         .add_service(
             pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
@@ -597,7 +607,7 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
                 // `FnMut(Request<()>) -> Result<Request<()>, Status>`, so the
                 // error cannot be boxed without failing to implement the trait.
                 #[allow(clippy::result_large_err)]
-                move |req: tonic::Request<()>| check_bearer_token(req, &token_for_interceptor),
+                move |req: tonic::Request<()>| exec_auth(&auth, req),
             ),
         )
         .serve(addr)
@@ -613,6 +623,38 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bearer(token: &str) -> tonic::Request<()> {
+        let mut req = tonic::Request::new(());
+        req.metadata_mut().insert(
+            "authorization",
+            format!("Bearer {token}").parse().expect("ascii"),
+        );
+        req
+    }
+
+    /// The interceptor reads the LIVE token: after a re-identify the previous
+    /// incarnation's token is rejected and the new one accepted.
+    #[test]
+    fn exec_auth_follows_reidentify() {
+        let m = ManagerClient::new("127.0.0.1:1".into(), "vm-src".into());
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-src".into(),
+            exec_token: "tok-old".into(),
+            agent_instance_token: None,
+        });
+        assert!(exec_auth(&m, bearer("tok-old")).is_ok());
+
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-fork".into(),
+            exec_token: "tok-new".into(),
+            agent_instance_token: None,
+        });
+        let err = exec_auth(&m, bearer("tok-old")).expect_err("superseded token");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+        assert!(exec_auth(&m, bearer("tok-new")).is_ok());
+        assert!(exec_auth(&m, tonic::Request::new(())).is_err(), "no token");
+    }
 
     /// Drain every frame from a run_exec channel.
     async fn collect(command: &str, argv: &[&str]) -> Vec<Result<pb::ExecResponse, Status>> {

@@ -83,6 +83,11 @@ impl IdentityWatch {
 #[derive(Debug)]
 pub struct Reidentify {
     pub vm_id: String,
+    /// The new incarnation's exec-server token (`None` = not provided).
+    pub exec_token: Option<String>,
+    /// The new incarnation's agent identity (`spawn.json` env
+    /// `LANTERN_AGENT_INSTANCE_TOKEN`; minted per fork child).
+    pub agent_instance_token: Option<String>,
     pub declared_secrets: Vec<SecretRef>,
     pub egress_rules: Vec<EgressRule>,
     pub network: Option<GuestNetwork>,
@@ -95,14 +100,32 @@ pub fn plan(contract: SpawnContract) -> anyhow::Result<Reidentify> {
         .vm_id
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("spawn.json on the new cert drive carries no vm_id"))?;
+    let nonempty = |t: Option<&String>| t.filter(|t| !t.is_empty()).cloned();
     Ok(Reidentify {
         vm_id,
+        exec_token: nonempty(contract.exec_token.as_ref()),
+        agent_instance_token: nonempty(contract.env.get("LANTERN_AGENT_INSTANCE_TOKEN")),
         declared_secrets: contract.declared_secrets.unwrap_or_default(),
         egress_rules: contract.egress_rules.unwrap_or_default(),
         network: contract
             .network
             .filter(|n| !n.guest_ip.is_empty() && !n.host_ip.is_empty()),
     })
+}
+
+/// The exec token the new incarnation runs with. Never the previous one: if
+/// exec was authenticated and the new drive carries no token, refuse (the
+/// caller retries; the stale identity is already pinned out manager-side).
+/// Unauthenticated dev stays unauthenticated.
+pub fn next_exec_token(new: Option<String>, current: &str) -> anyhow::Result<String> {
+    match new {
+        Some(t) => Ok(t),
+        None if current.is_empty() => Ok(String::new()),
+        None => anyhow::bail!(
+            "new cert drive carries no exec token; refusing to keep the previous \
+             incarnation's"
+        ),
+    }
 }
 
 /// `/etc/hosts` with the manager's name re-pinned to `host_ip` (the restored
@@ -163,6 +186,8 @@ async fn apply(
 ) -> anyhow::Result<()> {
     let load = tokio::task::spawn_blocking(move || load_drive(device)).await??;
     let next = plan(crate::bootenv::parse_spawn_contract(&load)?)?;
+    // Decide before mutating anything, so a refusal leaves state untouched.
+    let exec_token = next_exec_token(next.exec_token, &manager.exec_token())?;
 
     // Secrets first: anything vended to the old identity is dead.
     secrets.reset(next.declared_secrets);
@@ -178,7 +203,11 @@ async fn apply(
 
     let previous = manager.vm_id();
     // Last: reconnects present the cert installed by `load_drive`.
-    manager.reidentify(next.vm_id.clone());
+    manager.reidentify(crate::manager_client::Identity {
+        vm_id: next.vm_id.clone(),
+        exec_token,
+        agent_instance_token: next.agent_instance_token,
+    });
     manager
         .enqueue_report(HarnessReport::Audit(AuditEvent {
             vm_id: next.vm_id.clone(),
@@ -432,16 +461,47 @@ mod tests {
         assert!(!err.to_string().contains("not declared"), "{err}");
     }
 
+    #[test]
+    fn plan_takes_the_new_incarnations_tokens() {
+        let c = crate::bootenv::parse_spawn_contract(
+            br#"{"vm_id":"vm-f","exec_token":"exec-new",
+                "env":{"LANTERN_AGENT_INSTANCE_TOKEN":"agent-new","OTHER":"x"}}"#,
+        )
+        .expect("valid");
+        let p = plan(c).expect("plan");
+        assert_eq!(p.exec_token.as_deref(), Some("exec-new"));
+        assert_eq!(p.agent_instance_token.as_deref(), Some("agent-new"));
+        let c = crate::bootenv::parse_spawn_contract(br#"{"vm_id":"v","exec_token":""}"#).unwrap();
+        let p = plan(c).unwrap();
+        assert!(p.exec_token.is_none() && p.agent_instance_token.is_none());
+    }
+
+    #[test]
+    fn exec_token_never_carries_over_from_the_previous_incarnation() {
+        assert_eq!(next_exec_token(Some("new".into()), "old").unwrap(), "new");
+        assert!(next_exec_token(None, "old").is_err(), "no silent reuse");
+        assert_eq!(next_exec_token(None, "").unwrap(), "", "dev stays dev");
+    }
+
     #[tokio::test]
-    async fn reidentify_swaps_vm_id_across_clones_and_signals_streams() {
+    async fn reidentify_swaps_identity_across_clones_and_signals_streams() {
         let m = ManagerClient::new("127.0.0.1:1".into(), "vm-src".into());
         let clone = m.clone();
         let changed = clone.identity_changed();
-        m.reidentify("vm-fork-1".into());
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-fork-1".into(),
+            exec_token: "exec-fork-1".into(),
+            agent_instance_token: Some("agent-fork-1".into()),
+        });
         assert_eq!(
             clone.vm_id(),
             "vm-fork-1",
             "every subsystem sees the new id"
+        );
+        assert_eq!(clone.exec_token(), "exec-fork-1");
+        assert_eq!(
+            clone.agent_instance_token().as_deref(),
+            Some("agent-fork-1")
         );
         tokio::time::timeout(Duration::from_secs(1), changed)
             .await
