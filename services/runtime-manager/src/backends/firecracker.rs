@@ -79,6 +79,36 @@ pub struct SpawnContract {
     pub egress_rules: Vec<EgressRule>,
     pub workload_uid: u32,
     pub workload_gid: u32,
+    /// The VM's identity — equal to the cert CN/SAN on the same image. The
+    /// harness re-reads this on resume detection, which is how a guest
+    /// restored from a snapshot learns it is now a DIFFERENT VM (ADR 0025
+    /// addendum). Optional field: older harnesses ignore it.
+    #[serde(default)]
+    pub vm_id: String,
+    /// Declared secrets (`env_name`/`secret_uri`, the harness's own JSON
+    /// shape) so a re-identified guest adopts the RESTORING request's
+    /// allowlist rather than the snapshot's.
+    #[serde(default)]
+    pub declared_secrets: Vec<ContractSecret>,
+    /// This VM's point-to-point addressing. A restored guest still carries
+    /// the source VM's `ip=` config in memory; it re-addresses eth0 from this.
+    #[serde(default)]
+    pub network: Option<ContractNetwork>,
+}
+
+/// One declared secret in `spawn.json` (matches the harness `SecretRef`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractSecret {
+    pub env_name: String,
+    pub secret_uri: String,
+}
+
+/// Guest addressing in `spawn.json` (see [`VmNetwork`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractNetwork {
+    pub guest_ip: String,
+    pub host_ip: String,
+    pub netmask: String,
 }
 
 impl SpawnContract {
@@ -104,8 +134,63 @@ impl SpawnContract {
             egress_rules: req.egress_rules.clone(),
             workload_uid,
             workload_gid,
+            vm_id: String::new(),
+            declared_secrets: req
+                .secrets
+                .iter()
+                .filter(|s| !s.env_var.is_empty() && !s.vault_ref.is_empty())
+                .map(|s| ContractSecret {
+                    env_name: s.env_var.clone(),
+                    secret_uri: s.vault_ref.clone(),
+                })
+                .collect(),
+            network: None,
         }
     }
+}
+
+/// Validate a caller-supplied (scheduler-issued) vm_id before it names host
+/// paths, the TAP device, the jail dir and the cert CN.
+///
+/// ASCII alphanumerics and `-` only (the jailer's `--id` charset — and no `/`
+/// or `..`, so it cannot escape `/run/lantern/...`), at most 64 bytes, and at
+/// least 12 hex digits so the derived MAC and TAP name have entropy. The
+/// scheduler issues `vm-<uuid>`, which passes.
+pub fn validate_vm_id(vm_id: &str) -> Result<()> {
+    let ok_chars = vm_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let hex_digits = vm_id.bytes().filter(u8::is_ascii_hexdigit).count();
+    if vm_id.is_empty() || vm_id.len() > 64 || !ok_chars || hex_digits < 12 {
+        bail!(
+            "invalid vm_id {vm_id:?}: want 1-64 chars of [A-Za-z0-9-] with at least 12 hex \
+             digits (e.g. vm-<uuid>)"
+        );
+    }
+    Ok(())
+}
+
+/// The id a new VM boots under: the scheduler's wire vm_id when given
+/// (validated), else a fresh UUID (legacy / warm-pool path).
+fn resolve_vm_id(requested: &str) -> Result<String> {
+    if requested.is_empty() {
+        return Ok(Uuid::new_v4().to_string());
+    }
+    validate_vm_id(requested)?;
+    Ok(requested.to_string())
+}
+
+/// Host TAP device name for a VM: `fc-` + the first 8 hex digits of its id.
+/// Hex digits, not raw chars, so `vm-<uuid>` ids get 32 bits of entropy
+/// (raw would be `fc-vm-12345`); identical to the old naming for UUID ids.
+#[must_use]
+pub fn tap_name(vm_id: &str) -> String {
+    let hex: String = vm_id
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .take(8)
+        .collect();
+    format!("fc-{hex}")
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +297,44 @@ pub struct SnapshotLoadParams {
     pub enable_diff_snapshots: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_vm: Option<bool>,
+    /// Re-point a snapshotted NIC at a different host TAP (Firecracker
+    /// >= 1.12). A restored VM gets its OWN TAP, never the source VM's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_overrides: Option<Vec<NetworkOverride>>,
+}
+
+/// One entry of `SnapshotLoadParams::network_overrides`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkOverride {
+    pub iface_id: String,
+    pub host_dev_name: String,
+}
+
+/// PATCH /drives/{id} — swap a drive's backing file on a started (or
+/// snapshot-loaded, not yet resumed) VM.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DrivePatch {
+    pub drive_id: String,
+    pub path_on_host: String,
+}
+
+/// One Firecracker API request in a planned sequence. Plans are built by pure
+/// functions (unit-tested for order and bodies) and run by [`run_api_plan`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApiCall {
+    pub method: &'static str,
+    pub path: String,
+    pub body: serde_json::Value,
+}
+
+impl ApiCall {
+    fn new<T: Serialize>(method: &'static str, path: &str, body: &T) -> Result<Self> {
+        Ok(Self {
+            method,
+            path: path.to_string(),
+            body: serde_json::to_value(body).context("serialize Firecracker API body")?,
+        })
+    }
 }
 
 /// Memory backend for snapshot loading.
@@ -269,13 +392,19 @@ impl VmConfig {
     /// Derive a `VmConfig` from a `ScheduleRequest`.
     ///
     /// Pure function — no I/O.  Unit-testable on any platform.
+    /// Boots under `req.vm_id` when set (validated), else a fresh UUID.
     pub fn from_schedule(
         req: &ScheduleRequest,
         kernel_image_path: &str,
         rootfs_path: &str,
-    ) -> Self {
-        let vm_id = Uuid::new_v4().to_string();
-        Self::from_schedule_with_id(req, kernel_image_path, rootfs_path, &vm_id)
+    ) -> Result<Self> {
+        let vm_id = resolve_vm_id(&req.vm_id)?;
+        Ok(Self::from_schedule_with_id(
+            req,
+            kernel_image_path,
+            rootfs_path,
+            &vm_id,
+        ))
     }
 
     /// Same as `from_schedule` but caller provides the vm_id (for testing).
@@ -310,7 +439,13 @@ impl VmConfig {
 
         // Point-to-point /30 for this VM; the guest learns it via ip= below.
         let network = VmNetwork::allocate();
-        let spawn_contract = SpawnContract::from_schedule(req);
+        let mut spawn_contract = SpawnContract::from_schedule(req);
+        spawn_contract.vm_id = vm_id.to_string();
+        spawn_contract.network = Some(ContractNetwork {
+            guest_ip: network.guest_ip.clone(),
+            host_ip: network.host_ip.clone(),
+            netmask: network.netmask.clone(),
+        });
 
         let boot_args = build_boot_args(
             vm_id,
@@ -331,7 +466,7 @@ impl VmConfig {
             boot_args,
             vcpu_count,
             mem_size_mib,
-            tap_dev: format!("fc-{}", &vm_id[..8]),
+            tap_dev: tap_name(vm_id),
             guest_mac,
             vsock_uds_path: format!("/run/lantern/vsock/{vm_id}.sock"),
             snapshot_dir: format!("/run/lantern/snapshots/{vm_id}"),
@@ -664,7 +799,7 @@ pub fn build_boot_args(
 /// CA is expected to be configured.)
 ///
 /// LINUX-ONLY in practice: only reached after `firecracker_available()`.
-fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
+fn provision_vm_cert(cfg: &VmConfig) -> Result<String> {
     use std::path::Path;
 
     let (ca_cert_pem, ca_key_pem) = crate::tls::load_signing_ca()?.ok_or_else(|| {
@@ -682,6 +817,8 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
 
     let issued = crate::tls::generate_vm_client_cert(&cfg.vm_id, &ca_cert_pem, &ca_key_pem)
         .with_context(|| format!("issue client cert for vm '{}'", cfg.vm_id))?;
+    let pin = crate::tls::cert_pem_sha256(&issued.cert_pem)
+        .ok_or_else(|| anyhow::anyhow!("issued cert for vm '{}' is unparseable", cfg.vm_id))?;
 
     // The cert root is the grandparent of `<root>/<vm_id>/tls.crt`. Writing
     // through the shared helper keeps the boot-args paths and the on-disk
@@ -708,7 +845,7 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
         image = %cfg.certs_image_path,
         "provisioned per-VM client cert (CN=vm_id) + packed cert image"
     );
-    Ok(())
+    Ok(pin)
 }
 
 /// Build the `mke2fs` argv that packs `src_dir` into a small ext4 image at
@@ -936,6 +1073,18 @@ pub async fn unix_socket_patch<T: Serialize>(
     body: &T,
 ) -> Result<()> {
     unix_socket_request(socket_path, "PATCH", path, Some(body)).await
+}
+
+/// Run a planned API sequence in order, stopping at the first failure.
+///
+/// LINUX-ONLY: same constraints as `unix_socket_put`.
+pub async fn run_api_plan(socket_path: &str, plan: &[ApiCall]) -> Result<()> {
+    for call in plan {
+        unix_socket_request(socket_path, call.method, &call.path, Some(&call.body))
+            .await
+            .with_context(|| format!("Firecracker {} {}", call.method, call.path))?;
+    }
+    Ok(())
 }
 
 /// Core HTTP-over-Unix-socket helper.
@@ -1906,6 +2055,79 @@ pub fn build_snapshot_load_body(
         },
         enable_diff_snapshots: Some(true),
         resume_vm: Some(true),
+        network_overrides: None,
+    }
+}
+
+/// The API sequence that restores a snapshot AS A NEW VM (ADR 0025 addendum).
+///
+/// A snapshot freezes the source VM's whole identity: its NIC's TAP, its cert
+/// drive and — in guest memory — its vm_id and private key. Resuming it as-is
+/// would run N forks as one identity. So:
+///
+///   1. `PUT /snapshot/load`, **not resumed**, with the NIC re-pointed at this
+///      VM's own TAP.
+///   2. `PATCH /drives/certs` → this VM's freshly issued cert image (new
+///      CN/SAN = new vm_id, new key, its own `spawn.json`). Allowed between
+///      load and resume.
+///   3. `PATCH /vm Resumed`.
+///
+/// The guest notices the cert drive changed (its ext4 UUID differs — every
+/// image is built fresh) and re-identifies; the manager's per-incarnation
+/// cert pin refuses the stale identity until it does.
+pub fn plan_identity_restore(
+    mut load: SnapshotLoadParams,
+    tap_dev: &str,
+    certs_image_path: &str,
+) -> Result<Vec<ApiCall>> {
+    load.resume_vm = Some(false);
+    load.network_overrides = Some(vec![NetworkOverride {
+        iface_id: "eth0".to_string(),
+        host_dev_name: tap_dev.to_string(),
+    }]);
+    Ok(vec![
+        ApiCall::new("PUT", "/snapshot/load", &load)?,
+        ApiCall::new(
+            "PATCH",
+            "/drives/certs",
+            &DrivePatch {
+                drive_id: "certs".to_string(),
+                path_on_host: certs_image_path.to_string(),
+            },
+        )?,
+        ApiCall::new(
+            "PATCH",
+            "/vm",
+            &VmState {
+                state: "Resumed".to_string(),
+            },
+        )?,
+    ])
+}
+
+/// The `ScheduleRequest` view of a restore: what the restored VM's
+/// `VmConfig` / `spawn.json` are built from. No workload argv — the restored
+/// workload is already running; everything else is the RESTORING request's.
+fn restore_schedule_view(req: &RestoreRequest, vm_id: &str) -> ScheduleRequest {
+    ScheduleRequest {
+        run_id: req.run_id.clone(),
+        tenant_id: req.tenant_id.clone(),
+        bundle_uri: String::new(),
+        bundle_digest: Vec::new(),
+        isolation_class: IsolationClass::Unspecified,
+        limits: crate::proto::ResourceLimits::default(),
+        env: req.env.clone(),
+        secrets: req.secrets.clone(),
+        input: req.input.clone(),
+        command: Vec::new(),
+        args: Vec::new(),
+        image: String::new(),
+        network_policy: crate::proto::NetworkPolicyClass::Unspecified,
+        egress_rules: req.egress_rules.clone(),
+        confidential: false,
+        agent_version_id: String::new(),
+        restore_snapshot_id: String::new(),
+        vm_id: vm_id.to_string(),
     }
 }
 
@@ -2277,6 +2499,10 @@ pub struct FirecrackerBackend {
     /// SIGKILL as a reliable fallback after `SendCtrlAltDel`.  Empty on hosts
     /// where the backend is unavailable (no VM is ever spawned there).
     processes: ProcessTable<tokio::process::Child>,
+    /// vm_id -> SHA-256 of the cert issued for its CURRENT incarnation; the
+    /// service pins it in the registry (`RuntimeBackend::identity_pin`).
+    // ponytail: std Mutex, held for one map op — never across an await.
+    identity_pins: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl FirecrackerBackend {
@@ -2319,7 +2545,31 @@ impl FirecrackerBackend {
             binary_path,
             jailer,
             processes: ProcessTable::new(),
+            identity_pins: Arc::default(),
         }
+    }
+
+    fn set_identity_pin(&self, vm_id: &str, pin: Option<String>) {
+        let mut pins = self
+            .identity_pins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match pin {
+            Some(p) => pins.insert(vm_id.to_string(), p),
+            None => pins.remove(vm_id),
+        };
+    }
+
+    /// Issue this VM's cert + pack its cert image (blocking I/O off the
+    /// executor) and record the identity pin.
+    async fn provision_identity(&self, cfg: &VmConfig) -> Result<()> {
+        let cfg_clone = cfg.clone();
+        let pin = tokio::task::spawn_blocking(move || provision_vm_cert(&cfg_clone))
+            .await
+            .context("cert provisioning task join")?
+            .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
+        self.set_identity_pin(&cfg.vm_id, Some(pin));
+        Ok(())
     }
 
     /// Host-visible API socket path for a VM, jail-aware: the conventional
@@ -2380,13 +2630,7 @@ impl FirecrackerBackend {
         //
         // provision_vm_cert uses std::fs + std::process::Command; wrap in
         // spawn_blocking so we don't block the async executor.
-        {
-            let cfg_clone = cfg.clone();
-            tokio::task::spawn_blocking(move || provision_vm_cert(&cfg_clone))
-                .await
-                .context("cert provisioning task join")?
-                .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
-        }
+        self.provision_identity(cfg).await?;
 
         // Step 0.5: ensure the host runtime dirs for the API socket and the
         // vsock UDS exist. Firecracker binds the vsock host-side Unix socket
@@ -2529,38 +2773,29 @@ impl FirecrackerBackend {
         Ok(())
     }
 
-    /// Jailed restore path (ADR-0006 §Jailer + ADR-0007 snapshot store).
+    /// Restore a snapshot as a NEW VM with its own identity (ADR 0025
+    /// addendum), bare or jailed.
     ///
     /// Sequence:
-    ///   1. Resolve the snapshot's `(vmstate, mem)` artifacts on the host —
-    ///      from the snapshot store for `store://<id>` URIs (local
-    ///      `SNAPSHOT_DIR` tier, then S3 fallback when configured; a missing
-    ///      id is a clear not-found error), or directly from the host
-    ///      filesystem for `fc://` / bare-path URIs.
-    ///   2. Stage them into the NEW VM's chroot at
-    ///      `<chroot_root>/snapshot/{vmstate,mem}` owned by the jail
-    ///      uid/gid — the same copy+chown pattern `stage_jailed_artifacts`
-    ///      uses for kernel/rootfs at boot.
-    ///   3. Spawn a fresh jailed firecracker for the new vm_id.
-    ///   4. `PUT /snapshot/load` over the in-jail API socket with the
-    ///      in-jail RELATIVE paths ([`JAILED_SNAPSHOT_VMSTATE`] /
-    ///      [`JAILED_SNAPSHOT_MEM`]), resuming the VM — same semantics as
-    ///      the bare restore.
+    ///   1. Resolve the `(vmstate, mem)` artifacts (store / host path) — first,
+    ///      so a missing snapshot fails before anything is created.
+    ///   2. Build this VM's config under the RESTORING request's vm_id: fresh
+    ///      /30 + TAP, fresh cert (CN/SAN = vm_id) and cert image whose
+    ///      `spawn.json` carries the restoring request's contract.
+    ///   3. TAP up; jailed: stage vmstate/mem + cert image + rootfs into the new
+    ///      chroot; spawn firecracker.
+    ///   4. [`plan_identity_restore`]: load (paused, NIC → own TAP), swap the
+    ///      cert drive, resume.
     ///
-    /// LINUX-RUNTIME-ONLY: only reached behind the `firecracker_available()`
-    /// gate (Linux + KVM + jailer binary).  The path/body/staging
-    /// construction is pure and unit-tested on any platform; the live jailed
-    /// load is validated by the microvm integration CI (KVM runner / Lima).
+    /// LINUX-RUNTIME-ONLY behind the availability gate; the plan/staging/config
+    /// construction is pure and unit-tested.
     ///
-    /// Known limitation (Linux-CI territory, shared with drive-state
-    /// fidelity in ADR 0007 Tier 2): Firecracker's snapshot/load also
-    /// requires the drive backing files the vmstate references (rootfs /
-    /// certs image at their boot-time in-jail paths) to resolve inside the
-    /// new chroot.  The store persists vmstate + mem today; persisting and
-    /// re-staging the block-device files is the documented follow-up.
-    async fn restore_jailed(
+    /// Known limitations (need a KVM host to close — see the ADR addendum):
+    /// the snapshot's rootfs / vsock paths must resolve at load (bare: the
+    /// source VM's vsock UDS; jailed: the base rootfs is staged, not the source
+    /// VM's disk state — ADR 0007 Tier 2).
+    async fn restore_with_identity(
         &self,
-        jailer: &JailerConfig,
         snapshot_uri: &str,
         req: &RestoreRequest,
     ) -> Result<Handle> {
@@ -2568,88 +2803,126 @@ impl FirecrackerBackend {
         let binary = self
             .binary_path
             .as_deref()
-            .ok_or_else(Self::not_available_error)?;
-        let vm_id = Uuid::new_v4().to_string();
+            .ok_or_else(Self::not_available_error)?
+            .to_string();
 
         // Step 1: resolve the snapshot artifacts to host file paths.
         let (host_vmstate, host_mem) = match parse_snapshot_source(snapshot_uri) {
             SnapshotSource::HostPath {
                 vmstate_path,
                 mem_path,
-            } => (
-                std::path::PathBuf::from(vmstate_path),
-                std::path::PathBuf::from(mem_path),
-            ),
+            } => (vmstate_path, mem_path),
             SnapshotSource::Store { snapshot_id } => {
-                let root = snapshot_store_root();
                 let s3 = snapshot_s3_from_env();
-                resolve_store_snapshot(&root, s3.as_deref(), &snapshot_id).await?
+                let (v, m) =
+                    resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
+                        .await?;
+                (v.display().to_string(), m.display().to_string())
             }
         };
 
+        // Step 2: this VM's own identity + contract.
+        let vm_id = resolve_vm_id(&req.vm_id)?;
+        let cfg = VmConfig::from_schedule_with_id(
+            &restore_schedule_view(req, &vm_id),
+            &self.kernel_image_path,
+            &self.rootfs_path,
+            &vm_id,
+        );
         tracing::info!(
             vm_id = %vm_id,
             run_id = %req.run_id,
-            snapshot_uri = snapshot_uri,
-            vmstate = ?host_vmstate,
-            // requires Linux + /dev/kvm + jailer; validated by microvm CI
-            "Firecracker: restoring from snapshot into a fresh jail (LINUX-ONLY)"
+            snapshot_uri,
+            jailed = self.jailer.is_some(),
+            "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
+        self.provision_identity(&cfg).await?;
 
-        // Step 2: stage vmstate + mem into the new chroot (copy + chown to
-        // the jail uid/gid, exactly as kernel/rootfs are staged at boot).
-        let chroot_root = jailer.chroot_root(binary, &vm_id);
-        let plan = plan_jailed_snapshot_staging(
-            &chroot_root,
-            &vm_id,
-            &host_vmstate.display().to_string(),
-            &host_mem.display().to_string(),
-        );
-        stage_jailed_snapshot(&plan, jailer).await?;
-
-        // Step 3: spawn the jailed firecracker for the new VM.
-        // LINUX-ONLY
-        let socket_path = jailer.host_api_socket_path(binary, &vm_id);
-        let child = spawn_firecracker_process(&SpawnConfig {
-            binary_path: binary.to_string(),
-            socket_path: socket_path.clone(),
-            vm_id: vm_id.clone(),
-            jailer: Some(jailer.clone()),
-        })
+        // Step 3+4, with the TAP torn down on any failure (see boot_vm).
+        setup_tap_device(
+            &cfg.tap_dev,
+            self.bridge_name.as_deref(),
+            Some(&cfg.network.host_ip),
+        )
         .await?;
-        if let Some(mut prev) = self.processes.insert(&vm_id, child) {
-            prev.force_kill()
-                .with_context(|| format!("force-kill stale process on collision: {vm_id}"))?;
-            tracing::warn!(vm_id = %vm_id, "process table collision; killed stale child");
+        if let Err(e) = self
+            .restore_after_tap(&cfg, &binary, &host_vmstate, &host_mem)
+            .await
+        {
+            if let Err(te) = teardown_tap_device(&cfg.tap_dev).await {
+                tracing::warn!(vm_id = %vm_id, error = %te, "restore failed and TAP cleanup ALSO failed");
+            }
+            self.processes.kill(&vm_id).ok();
+            self.set_identity_pin(&vm_id, None);
+            return Err(e);
         }
 
-        // Step 4: load the snapshot with the in-jail RELATIVE paths and
-        // resume.  LINUX-ONLY
-        unix_socket_put(
-            &socket_path,
-            "/snapshot/load",
-            &build_snapshot_load_body(
-                true,
-                &host_vmstate.display().to_string(),
-                &host_mem.display().to_string(),
-            ),
-        )
-        .await
-        .context("failed to load snapshot in jailed VM")?;
-
         let restore_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-        tracing::info!(
-            vm_id = %vm_id,
-            restore_ms,
-            "Firecracker: microVM restored from snapshot (jailed)"
-        );
-
+        tracing::info!(vm_id = %vm_id, restore_ms, "Firecracker: microVM restored under its own identity");
         Ok(Handle {
             id: vm_id,
             node_name: "firecracker-local".to_string(),
             cold_start_ms: restore_ms,
         })
+    }
+
+    async fn restore_after_tap(
+        &self,
+        cfg: &VmConfig,
+        binary: &str,
+        host_vmstate: &str,
+        host_mem: &str,
+    ) -> Result<()> {
+        let (socket_path, certs_path) = match &self.jailer {
+            Some(jailer) => {
+                let chroot_root = jailer.chroot_root(binary, &cfg.vm_id);
+                let mut plan =
+                    plan_jailed_snapshot_staging(&chroot_root, &cfg.vm_id, host_vmstate, host_mem);
+                // The snapshot names its drives by in-jail basename; staging
+                // THIS VM's cert image there means the load already resolves
+                // the new identity (the PATCH below makes it explicit).
+                for host in [&cfg.certs_image_path, &cfg.rootfs_path] {
+                    plan.copies.push((
+                        host.clone(),
+                        format!("{chroot_root}{}", jail_artifact_path(host)),
+                    ));
+                }
+                stage_jailed_snapshot(&plan, jailer).await?;
+                (
+                    jailer.host_api_socket_path(binary, &cfg.vm_id),
+                    jail_artifact_path(&cfg.certs_image_path),
+                )
+            }
+            None => {
+                for p in [cfg.socket_path.as_str(), cfg.vsock_uds_path.as_str()] {
+                    if let Some(dir) = Path::new(p).parent() {
+                        tokio::fs::create_dir_all(dir)
+                            .await
+                            .with_context(|| format!("create runtime dir {dir:?}"))?;
+                    }
+                }
+                (cfg.socket_path.clone(), cfg.certs_image_path.clone())
+            }
+        };
+
+        let child = spawn_firecracker_process(&SpawnConfig {
+            binary_path: binary.to_string(),
+            socket_path: socket_path.clone(),
+            vm_id: cfg.vm_id.clone(),
+            jailer: self.jailer.clone(),
+        })
+        .await?;
+        if let Some(mut prev) = self.processes.insert(&cfg.vm_id, child) {
+            prev.force_kill()
+                .with_context(|| format!("force-kill stale process on collision: {}", cfg.vm_id))?;
+            tracing::warn!(vm_id = %cfg.vm_id, "process table collision; killed stale child");
+        }
+
+        let load = build_snapshot_load_body(self.jailer.is_some(), host_vmstate, host_mem);
+        let plan = plan_identity_restore(load, &cfg.tap_dev, &certs_path)?;
+        run_api_plan(&socket_path, &plan)
+            .await
+            .context("failed to restore snapshot under a new identity")
     }
 }
 
@@ -2674,7 +2947,7 @@ impl RuntimeBackend for FirecrackerBackend {
         }
 
         let start = Instant::now();
-        let cfg = VmConfig::from_schedule(req, &self.kernel_image_path, &self.rootfs_path);
+        let cfg = VmConfig::from_schedule(req, &self.kernel_image_path, &self.rootfs_path)?;
         let vm_id = cfg.vm_id.clone();
 
         tracing::info!(
@@ -2687,12 +2960,14 @@ impl RuntimeBackend for FirecrackerBackend {
             "Firecracker: booting microVM (LINUX-ONLY)"
         );
 
-        self.boot_vm(&cfg).await.with_context(|| {
-            format!(
+        if let Err(e) = self.boot_vm(&cfg).await {
+            // No VM, no identity: never leave a pin for a cert nothing presents.
+            self.set_identity_pin(&vm_id, None);
+            return Err(e.context(format!(
                 "failed to boot Firecracker microVM {vm_id} for run {}",
                 req.run_id
-            )
-        })?;
+            )));
+        }
 
         let cold_start_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -2769,7 +3044,9 @@ impl RuntimeBackend for FirecrackerBackend {
         }
 
         // LINUX-ONLY: TAP cleanup.
-        let tap_dev = format!("fc-{}", &handle_id[..8.min(handle_id.len())]);
+        // The incarnation is over: its cert must never authenticate again.
+        self.set_identity_pin(handle_id, None);
+        let tap_dev = tap_name(handle_id);
         teardown_tap_device(&tap_dev).await?;
 
         // Jailed VMs leave a per-VM chroot with copied artifacts (rootfs can
@@ -2932,112 +3209,21 @@ impl RuntimeBackend for FirecrackerBackend {
         })
     }
 
-    /// Restore a microVM from a snapshot.
-    ///
-    /// Bare (non-jailed) sequence — unchanged from the pre-jailer contract:
-    ///   1. Spawn a fresh Firecracker process for the new VM id
-    ///   2. PUT /snapshot/load (absolute host paths)
-    ///
-    /// Jailed sequence (`FIRECRACKER_JAILER_PATH` set): delegates to
-    /// [`Self::restore_jailed`], which fetches the artifacts from the
-    /// snapshot store (`store://<id>`; local tier then S3 fallback) or the
-    /// host filesystem (`fc://` / bare path), stages them into the new VM's
-    /// chroot, and loads via the in-jail RELATIVE paths.
-    ///
-    /// LINUX-ONLY: requires Firecracker binary + /dev/kvm (+ jailer for the
-    /// jailed path). Integration-tested on a Linux host.
+    /// Restore a microVM from a snapshot — always as a NEW identity
+    /// (`req.vm_id`, or a fresh UUID): see [`Self::restore_with_identity`].
     async fn restore(&self, snapshot_uri: &str, req: &RestoreRequest) -> Result<Handle> {
         if !self.available {
             return Err(Self::not_available_error());
         }
+        self.restore_with_identity(snapshot_uri, req).await
+    }
 
-        // Jailed restore: the chrooted firecracker cannot open host paths,
-        // so the artifacts are staged into the new jail first.
-        // LINUX-RUNTIME-ONLY (behind the availability gate above).
-        if let Some(jailer) = self.jailer.clone() {
-            return self.restore_jailed(&jailer, snapshot_uri, req).await;
-        }
-
-        let start = Instant::now();
-        let vm_id = Uuid::new_v4().to_string();
-        let socket_path = format!("/run/firecracker/{vm_id}.sock");
-
-        // Derive the sibling mem-file path. NOT a substring replace of
-        // "/snapshot" -> "/mem" — that also rewrites a "/snapshots/" directory
-        // segment (e.g. /run/lantern/snapshots/<vm>/snapshot would yield a
-        // nonexistent /run/lantern/mems/<vm>/mem). parse_snapshot_source takes
-        // the file basename only, the same derivation the jailed path uses.
-        let (snapshot_path, mem_file_path) = match parse_snapshot_source(snapshot_uri) {
-            SnapshotSource::HostPath {
-                vmstate_path,
-                mem_path,
-            } => (vmstate_path, mem_path),
-            // store:// (AgentSpec.restore_snapshot_id, ADR 0025): resolve the
-            // artifacts exactly as the jailed path does; the bare firecracker
-            // opens host paths directly, so no staging is needed.
-            SnapshotSource::Store { snapshot_id } => {
-                let s3 = snapshot_s3_from_env();
-                let (vmstate, mem) =
-                    resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
-                        .await?;
-                (vmstate.display().to_string(), mem.display().to_string())
-            }
-        };
-
-        tracing::info!(
-            vm_id = %vm_id,
-            run_id = %req.run_id,
-            snapshot_uri = snapshot_uri,
-            // requires Linux + /dev/kvm; integration-tested on a Linux host
-            "Firecracker: restoring from snapshot (LINUX-ONLY)"
-        );
-
-        let binary = self
-            .binary_path
-            .as_deref()
-            .ok_or_else(Self::not_available_error)?;
-
-        // Spawn fresh Firecracker process.
-        // LINUX-ONLY
-        let _child = spawn_firecracker_process(&SpawnConfig {
-            binary_path: binary.to_string(),
-            socket_path: socket_path.clone(),
-            vm_id: vm_id.clone(),
-            jailer: None, // bare path: jailed restore delegated above
-        })
-        .await?;
-
-        // Load snapshot.
-        // LINUX-ONLY
-        unix_socket_put(
-            &socket_path,
-            "/snapshot/load",
-            &SnapshotLoadParams {
-                snapshot_path: snapshot_path.to_string(),
-                mem_backend: MemBackend {
-                    backend_type: "File".to_string(),
-                    backend_path: mem_file_path,
-                },
-                enable_diff_snapshots: Some(true),
-                resume_vm: Some(true),
-            },
-        )
-        .await
-        .context("failed to load snapshot")?;
-
-        let restore_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-        tracing::info!(
-            vm_id = %vm_id,
-            restore_ms,
-            "Firecracker: microVM restored from snapshot"
-        );
-
-        Ok(Handle {
-            id: vm_id,
-            node_name: "firecracker-local".to_string(),
-            cold_start_ms: restore_ms,
-        })
+    fn identity_pin(&self, handle_id: &str) -> Option<String> {
+        self.identity_pins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(handle_id)
+            .cloned()
     }
 
     fn name(&self) -> &'static str {
@@ -3193,6 +3379,7 @@ mod tests {
             confidential: false,
             agent_version_id: String::new(),
             restore_snapshot_id: String::new(),
+            vm_id: String::new(),
         }
     }
 
@@ -3369,6 +3556,7 @@ mod tests {
             },
             enable_diff_snapshots: Some(true),
             resume_vm: Some(true),
+            network_overrides: None,
         };
         let json: serde_json::Value = serde_json::to_value(&p).unwrap();
         assert_eq!(json["snapshot_path"], "/snapshots/vm1/snap");
@@ -3388,6 +3576,7 @@ mod tests {
             },
             enable_diff_snapshots: None,
             resume_vm: None,
+            network_overrides: None,
         };
         let json: serde_json::Value = serde_json::to_value(&p).unwrap();
         assert!(json.get("enable_diff_snapshots").is_none());
@@ -4085,6 +4274,8 @@ mod tests {
             input: serde_json::Value::Null,
             env: HashMap::new(),
             secrets: vec![],
+            vm_id: String::new(),
+            egress_rules: vec![],
         };
         let err = backend.restore("fc:///snap", &req).await.unwrap_err();
         assert!(err.to_string().contains("not available"));
@@ -4720,6 +4911,7 @@ mod tests {
                 },
                 enable_diff_snapshots: Some(true),
                 resume_vm: Some(true),
+                network_overrides: None,
             }
         );
     }
@@ -4969,6 +5161,8 @@ mod tests {
             input: serde_json::Value::Null,
             env: HashMap::new(),
             secrets: vec![],
+            vm_id: String::new(),
+            egress_rules: vec![],
         };
         let err = backend.restore(&uri, &req).await.unwrap_err().to_string();
 
@@ -4981,5 +5175,172 @@ mod tests {
             backend.processes.is_empty(),
             "no process may be spawned when resolution fails"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 addendum — wire vm_id identity + restore re-identity
+    // -----------------------------------------------------------------------
+
+    const WIRE: &str = "vm-0f1e2d3c-4b5a-4968-8776-655443322110";
+
+    #[test]
+    fn validate_vm_id_accepts_scheduler_ids_and_rejects_path_tricks() {
+        assert!(validate_vm_id(WIRE).is_ok());
+        assert!(validate_vm_id(&Uuid::new_v4().to_string()).is_ok());
+        for bad in [
+            "",
+            "vm-short",
+            "vm-../../etc/0123456789abcdef",
+            "vm-0123456789ab/cd",
+            "vm 0123456789abcdef",
+            &format!("vm-{}", "a".repeat(62)),
+        ] {
+            assert!(validate_vm_id(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn tap_name_uses_hex_digits_and_keeps_uuid_naming() {
+        let uuid = "abcdef01-2345-6789-abcd-ef0123456789";
+        // Unchanged for UUID ids, so a manager upgrade still finds old TAPs.
+        assert_eq!(tap_name(uuid), "fc-abcdef01");
+        // `vm-<uuid>` must not collapse to the low-entropy `fc-vm-0f1e2`.
+        assert_eq!(tap_name(WIRE), "fc-0f1e2d3c");
+        assert!(tap_name(WIRE).len() <= 15, "IFNAMSIZ");
+    }
+
+    #[test]
+    fn vm_config_boots_under_the_wire_vm_id() {
+        let mut req = minimal_schedule_req();
+        req.vm_id = WIRE.to_string();
+        let cfg = VmConfig::from_schedule(&req, "/k", "/r").expect("valid wire id");
+        // Cert CN/SAN (issued for cfg.vm_id), harness vm_id (boot-args +
+        // spawn.json) and the registry key (Handle.id = cfg.vm_id) are one id.
+        assert_eq!(cfg.vm_id, WIRE);
+        assert!(cfg.boot_args.contains(&format!("lantern.vm_id={WIRE} ")));
+        assert_eq!(cfg.spawn_contract.vm_id, WIRE);
+        assert!(cfg.certs_image_path.contains(WIRE));
+        assert_eq!(cfg.tap_dev, tap_name(WIRE));
+        let net = cfg
+            .spawn_contract
+            .network
+            .as_ref()
+            .expect("network in contract");
+        assert_eq!(net.guest_ip, cfg.network.guest_ip);
+        assert_eq!(net.host_ip, cfg.network.host_ip);
+
+        // No wire id → legacy random UUID; a bad one fails before any I/O.
+        let legacy = VmConfig::from_schedule(&minimal_schedule_req(), "/k", "/r").unwrap();
+        assert!(Uuid::parse_str(&legacy.vm_id).is_ok());
+        req.vm_id = "../escape".to_string();
+        assert!(VmConfig::from_schedule(&req, "/k", "/r").is_err());
+    }
+
+    #[test]
+    fn spawn_contract_carries_identity_secrets_and_network() {
+        let mut req = minimal_schedule_req();
+        req.secrets = vec![
+            crate::proto::SecretRef {
+                alias: "K".into(),
+                vault_ref: "lantern.secret://t/K".into(),
+                env_var: "K".into(),
+            },
+            // Undeclarable (no env var) — dropped, as on the cmdline.
+            crate::proto::SecretRef {
+                alias: String::new(),
+                vault_ref: "lantern.secret://t/X".into(),
+                env_var: String::new(),
+            },
+        ];
+        let cfg = VmConfig::from_schedule_with_id(&req, "/k", "/r", WIRE);
+        let json = serde_json::to_value(&cfg.spawn_contract).unwrap();
+        assert_eq!(json["vm_id"], WIRE);
+        assert_eq!(
+            json["declared_secrets"],
+            serde_json::json!([{"env_name":"K","secret_uri":"lantern.secret://t/K"}])
+        );
+        assert_eq!(json["network"]["netmask"], "255.255.255.252");
+    }
+
+    #[test]
+    fn restore_view_takes_the_restoring_requests_contract() {
+        let req = crate::proto::RestoreRequest {
+            snapshot_uri: "store://s".into(),
+            run_id: "run-fork-2".into(),
+            tenant_id: "t-1".into(),
+            input: serde_json::Value::Null,
+            env: HashMap::from([("A".to_string(), "fork".to_string())]),
+            secrets: vec![crate::proto::SecretRef {
+                alias: "K".into(),
+                vault_ref: "lantern.secret://t/K2".into(),
+                env_var: "K".into(),
+            }],
+            vm_id: WIRE.into(),
+            egress_rules: vec![EgressRule {
+                pattern: "api.example.com".into(),
+                ..Default::default()
+            }],
+        };
+        let view = restore_schedule_view(&req, WIRE);
+        let cfg = VmConfig::from_schedule_with_id(&view, "/k", "/r", WIRE);
+        let c = &cfg.spawn_contract;
+        assert_eq!(c.vm_id, WIRE);
+        assert_eq!(c.env["A"], "fork");
+        assert_eq!(c.declared_secrets[0].secret_uri, "lantern.secret://t/K2");
+        assert_eq!(c.egress_rules, req.egress_rules);
+        assert!(
+            c.workload_cmd.is_empty(),
+            "restored workload is already running"
+        );
+        assert!(cfg.boot_args.contains("lantern.run_id=run-fork-2"));
+    }
+
+    #[test]
+    fn identity_restore_plan_loads_paused_swaps_cert_drive_then_resumes() {
+        let load = build_snapshot_load_body(true, "/h/vmstate", "/h/mem");
+        let plan = plan_identity_restore(load, "fc-0f1e2d3c", "/certs.img").unwrap();
+        let seq: Vec<(&str, &str)> = plan.iter().map(|c| (c.method, c.path.as_str())).collect();
+        assert_eq!(
+            seq,
+            vec![
+                ("PUT", "/snapshot/load"),
+                ("PATCH", "/drives/certs"),
+                ("PATCH", "/vm"),
+            ],
+            "the cert drive must be swapped BEFORE the guest runs a single instruction"
+        );
+        // Loaded paused, NIC on THIS VM's TAP (never the source's).
+        assert_eq!(plan[0].body["resume_vm"], false);
+        assert_eq!(plan[0].body["snapshot_path"], JAILED_SNAPSHOT_VMSTATE);
+        assert_eq!(
+            plan[0].body["network_overrides"],
+            serde_json::json!([{"iface_id":"eth0","host_dev_name":"fc-0f1e2d3c"}])
+        );
+        assert_eq!(
+            plan[1].body,
+            serde_json::json!({"drive_id":"certs","path_on_host":"/certs.img"})
+        );
+        assert_eq!(plan[2].body, serde_json::json!({"state":"Resumed"}));
+    }
+
+    #[test]
+    fn plain_load_body_omits_network_overrides() {
+        // Older Firecracker rejects unknown fields; only the identity restore
+        // sends `network_overrides`.
+        let v = serde_json::to_value(build_snapshot_load_body(false, "/a", "/b")).unwrap();
+        assert!(v.get("network_overrides").is_none());
+    }
+
+    #[test]
+    fn identity_pins_are_per_incarnation() {
+        let backend = FirecrackerBackend::new();
+        assert_eq!(backend.identity_pin(WIRE), None);
+        backend.set_identity_pin(WIRE, Some("aa".into()));
+        assert_eq!(backend.identity_pin(WIRE).as_deref(), Some("aa"));
+        // A re-spawn (resume) of the same id replaces the pin.
+        backend.set_identity_pin(WIRE, Some("bb".into()));
+        assert_eq!(backend.identity_pin(WIRE).as_deref(), Some("bb"));
+        backend.set_identity_pin(WIRE, None);
+        assert_eq!(backend.identity_pin(WIRE), None);
     }
 }
