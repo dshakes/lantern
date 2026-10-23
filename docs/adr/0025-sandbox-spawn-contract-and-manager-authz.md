@@ -106,8 +106,11 @@ whether the VM exists. An empty value in dev is allowed for rollout. The
 The scheduler-issued vm_id is **reserved** before booting and released after
 the registry rekey or on failure. A concurrent duplicate Spawn gets `ABORTED`
 and should retry. The retry then hits the registry and receives the original
-handle. Before this change, two concurrent Spawns could both pass the registry
-check and boot two VMs.
+handle — only when its `tenant_id` and `run_id` match the registered VM's. A
+duplicate vm_id from any other owner gets `ALREADY_EXISTS` ("vm_id … is not
+available", no owner details), never another tenant's handle. Before this
+change, two concurrent Spawns could both pass the registry check and boot two
+VMs.
 
 ## Consequences
 
@@ -216,8 +219,12 @@ including the source VM's vsock UDS and `certs.img`. So when the snapshot's
 source vm is still registered on this node and the backend reports
 `restore_needs_stopped_source()` (bare Firecracker), the restore returns
 `FAILED_PRECONDITION` with the message "fork of a running VM requires the
-jailer". A resume is unaffected, because its source was stopped first. Jailed
-restores give each VM its own paths and are allowed.
+jailer". A bare restore under a vm_id OTHER than the snapshot's source is also
+refused ("fork requires the jailer"), even with the source stopped: the
+snapshot's device state pins the source's absolute vsock UDS path, so the guest
+would be unreachable on the new vm_id's socket. So bare mode supports
+pause → resume (same vm_id) only; forks need the jailer, whose restores give
+each VM its own paths.
 
 ### Snapshot id for pause → resume/fork
 
@@ -237,9 +244,9 @@ failed.
 - `PATCH /drives` between load and resume is assumed allowed. The guest must
   observe the new backing file; it unmounts the drive after every read, which
   drops its page cache, and also fadvises.
-- The vmstate's drive and vsock paths must resolve at load. A bare fork of a
-  *live* source is refused (see above). A bare fork of a stopped source still
-  needs the source's `certs.img` on disk. Jailed mode stages the **base**
+- The vmstate's drive and vsock paths must resolve at load. Every bare fork is
+  refused (see above); a bare resume still needs the source's `certs.img` on
+  disk. Jailed mode stages the **base**
   rootfs, not the source VM's disk state (ADR 0007 Tier 2).
 - Fork of a live source: until the fork re-identifies (≤ ~1 s), it holds the
   source's still-valid cert and IP. Exposure is same-tenant only, because

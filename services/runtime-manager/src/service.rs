@@ -697,6 +697,18 @@ impl RuntimeManagerGrpc {
                 meta.vm_id
             )));
         }
+        // Even with the source stopped, a bare restore under a DIFFERENT vm_id
+        // boots with the source's absolute vsock UDS path (snapshot device
+        // state) while the manager listens on the new vm_id's path — the guest
+        // would be unreachable. Only a same-id resume works bare.
+        if backend.restore_needs_stopped_source() && req.vm_id != meta.vm_id {
+            return Err(Status::failed_precondition(format!(
+                "fork requires the jailer: a bare (non-jailed) restore of snapshot {id} can only \
+                 resume its source vm {} — under vm {:?} the guest would keep the source's \
+                 vsock socket path and be unreachable; enable FIRECRACKER_JAILER_PATH",
+                meta.vm_id, req.vm_id
+            )));
+        }
 
         let restore = proto::RestoreRequest {
             snapshot_uri: format!("store://{}", meta.id),
@@ -1278,11 +1290,29 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
         // If the vm_id is already live, return the existing handle without
         // re-scheduling (a client-side Spawn timeout/retry must not boot a
-        // second VM with the same secrets and orphan the first).
+        // second VM with the same secrets and orphan the first). Only for the
+        // SAME owner: a colliding/stale vm_id held by another tenant or run is
+        // refused, never handed back as this caller's VM.
         if let Some(ref h) = pre_handle
             && !h.vm_id.is_empty()
-            && self.registry.get(&h.vm_id).is_some()
+            && let Some(existing) = self.registry.get(&h.vm_id)
         {
+            let same_owner = req
+                .spec
+                .as_ref()
+                .is_some_and(|s| s.tenant_id == existing.tenant_id && s.run_id == existing.run_id);
+            if !same_owner {
+                tracing::warn!(
+                    target: "lantern_audit",
+                    vm_id = %h.vm_id,
+                    "spawn DENIED: vm_id already registered to a different owner"
+                );
+                // Owner-free message: no tenant/run of the holder is leaked.
+                return Err(Status::already_exists(format!(
+                    "vm_id {} is not available",
+                    h.vm_id
+                )));
+            }
             tracing::info!(
                 vm_id = %h.vm_id,
                 "spawn: idempotent return — vm_id already registered"
@@ -2347,16 +2377,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
         let mtls_enabled = self.mtls_enabled;
 
-        // Derive the authoritative vm_id from the cert (single source of truth
-        // when mTLS is enabled).  None when mTLS is disabled or the cert is
-        // absent / unparseable.
-        let cert_vm_id: Option<String> = if mtls_enabled {
-            peer_cert_der
-                .as_deref()
-                .and_then(crate::tls::vm_id_from_cert_der)
-        } else {
-            None
-        };
+        let cert_vm_id = report_cert_vm_id(mtls_enabled, peer_cert_der.as_deref())?;
 
         let mut stream = request.into_inner();
 
@@ -2384,8 +2405,9 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                     // Determine the authoritative vm_id for this frame:
                     // - mTLS enabled + cert parsed → cert_vm_id is authoritative
                     //   (covers OTLP/Prom which have empty body_vm_id).
-                    // - mTLS disabled / no cert    → fall back to body_vm_id
-                    //   (dev mode, same as before).
+                    // - mTLS disabled              → fall back to body_vm_id
+                    //   (dev mode). mTLS without a mappable cert never gets
+                    //   here: `report_cert_vm_id` refused the stream.
                     let effective_vm_id: &str = match &cert_vm_id {
                         Some(cid) => {
                             // SECURITY: when the frame also asserts a vm_id
@@ -2489,6 +2511,30 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
 // ---------------------------------------------------------------------------
 // Report handler helpers
 // ---------------------------------------------------------------------------
+
+/// The authoritative vm_id of a Report stream. Under mTLS it is the peer
+/// cert's identity, and a stream whose cert does not map to a VM (absent,
+/// unparseable, a non-VM service cert) is refused — falling back to the
+/// frame body's vm_id would let any CA-signed peer forge frames for any VM.
+/// Plaintext (dev) has no cert: `None`, and the body vm_id is used.
+#[allow(clippy::result_large_err)] // tonic::Status, same as the handlers
+fn report_cert_vm_id(
+    mtls_enabled: bool,
+    peer_cert_der: Option<&[u8]>,
+) -> Result<Option<String>, Status> {
+    if !mtls_enabled {
+        return Ok(None);
+    }
+    match peer_cert_der.and_then(crate::tls::vm_id_from_cert_der) {
+        Some(id) => Ok(Some(id)),
+        None => {
+            tracing::warn!("report DENIED: mTLS peer certificate does not identify a VM");
+            Err(Status::permission_denied(
+                "client certificate does not identify a VM",
+            ))
+        }
+    }
+}
 
 /// Extract `(vm_id, tenant_id, run_id)` for a [`pb::HarnessReport`] message.
 ///
@@ -3643,6 +3689,41 @@ mod tests {
         );
     }
 
+    /// A duplicate vm_id from a DIFFERENT tenant (or run) must not get the
+    /// existing VM's handle back as if it were its own.
+    #[tokio::test]
+    async fn spawn_duplicate_vm_id_for_another_owner_is_refused() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = RuntimeManagerGrpc::new(
+            NamedStub::arc("docker"),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        svc.spawn(Request::new(make_spawn_request_with_handle(
+            "tenant-a", "run-a", "wire-dup",
+        )))
+        .await
+        .expect("owner spawn");
+
+        for (tenant, run) in [("tenant-b", "run-a"), ("tenant-a", "run-b")] {
+            let err = svc
+                .spawn(Request::new(make_spawn_request_with_handle(
+                    tenant, run, "wire-dup",
+                )))
+                .await
+                .expect_err("foreign owner must not receive the existing handle");
+            assert_eq!(err.code(), tonic::Code::AlreadyExists, "{tenant}/{run}");
+            assert!(
+                !err.message().contains("tenant-a") && !err.message().contains("run-a"),
+                "must not leak the holder: {err:?}"
+            );
+        }
+        let info = svc.registry.get("wire-dup").expect("still registered");
+        assert_eq!(info.tenant_id, "tenant-a", "original owner untouched");
+        assert_eq!(svc.registry.len(), 1);
+    }
+
     // -----------------------------------------------------------------------
     // Multi-tenant namespace isolation (CVE-fix: invariant #7)
     //
@@ -3936,6 +4017,40 @@ mod tests {
     /// When mTLS is disabled, the per-frame cert check is skipped even when
     /// there is no peer cert (synthetic `Request`).  This mirrors the gate
     /// `if mtls_enabled && !msg_vm_id.is_empty() { ... }` in the handler.
+    /// Under mTLS a Report stream whose cert does not map to a VM is refused
+    /// outright — never attributed via the frame body's vm_id.
+    #[test]
+    fn report_fails_closed_under_mtls_without_a_vm_cert() {
+        let deny = |cert: Option<&[u8]>| {
+            report_cert_vm_id(true, cert)
+                .expect_err("must fail closed")
+                .code()
+        };
+        assert_eq!(deny(None), tonic::Code::PermissionDenied);
+        assert_eq!(deny(Some(b"not a cert")), tonic::Code::PermissionDenied);
+
+        let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
+        let issued = crate::tls::generate_vm_client_cert(
+            "vm-rep",
+            &ca.cert.pem(),
+            &ca.key_pair.serialize_pem(),
+        )
+        .unwrap();
+        let der = rustls_pemfile::certs(&mut std::io::BufReader::new(std::io::Cursor::new(
+            issued.cert_pem.as_bytes(),
+        )))
+        .next()
+        .unwrap()
+        .unwrap()
+        .to_vec();
+        assert_eq!(
+            report_cert_vm_id(true, Some(&der)).unwrap().as_deref(),
+            Some("vm-rep")
+        );
+        // Plaintext/dev: no cert identity; the body vm_id is used.
+        assert_eq!(report_cert_vm_id(false, None).unwrap(), None);
+    }
+
     #[test]
     fn report_frame_mtls_disabled_skips_cert_check() {
         let synthetic: tonic::Request<()> = tonic::Request::new(());
@@ -4655,12 +4770,25 @@ mod tests {
         );
         assert!(svc.registry.get(fork).is_none());
 
-        // Once the source is stopped (pause = Snapshot + Stop), the same
-        // restore — e.g. a resume — goes through.
+        // Source stopped: a bare restore under a NEW vm_id is still refused —
+        // the guest would keep the source's vsock path (unreachable).
         svc.registry.deregister("vm-src");
-        svc.spawn(Request::new(fork_spawn(&snap, fork)))
+        let err = svc
+            .spawn(Request::new(fork_spawn(&snap, fork)))
             .await
-            .expect("source stopped → restore allowed");
+            .expect_err("bare fork to a different vm_id must be refused");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("fork requires the jailer"),
+            "{err:?}"
+        );
+        assert!(stub.restored.lock().unwrap().is_empty());
+
+        // A same-id resume (pause = Snapshot + Stop, then Resume) goes through.
+        svc.spawn(Request::new(fork_spawn(&snap, "vm-src")))
+            .await
+            .expect("bare resume under the source vm_id is allowed");
+        assert_eq!(stub.restored.lock().unwrap()[0].vm_id, "vm-src");
     }
 
     #[tokio::test]
