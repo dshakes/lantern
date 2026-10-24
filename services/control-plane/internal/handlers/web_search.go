@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -100,6 +101,39 @@ func executeWebSearchTool(ctx context.Context, pool *pgxpool.Pool, tenantID stri
 	return nil, fmt.Errorf("web_search unavailable: no anthropic key (%v) and no openai key (%v)", anthErr, oaiErr)
 }
 
+// toolUsage accumulates tokens spent by tool executors (web_search makes its
+// own LLM call) so the tool loop can add them to the turn's totals and the
+// caller's RecordUsage sees the real spend. Carried on ctx to avoid changing
+// the dispatch signature shared by every tool-loop caller.
+type toolUsage struct {
+	mu                  sync.Mutex
+	tokensIn, tokensOut int64
+}
+
+type toolUsageKey struct{}
+
+// withToolUsage installs a fresh accumulator on ctx.
+func withToolUsage(ctx context.Context) (context.Context, *toolUsage) {
+	u := &toolUsage{}
+	return context.WithValue(ctx, toolUsageKey{}, u), u
+}
+
+// addToolUsage records tool-side spend on the ctx accumulator; no-op without one.
+func addToolUsage(ctx context.Context, in, out int64) {
+	if u, _ := ctx.Value(toolUsageKey{}).(*toolUsage); u != nil {
+		u.mu.Lock()
+		u.tokensIn += in
+		u.tokensOut += out
+		u.mu.Unlock()
+	}
+}
+
+func (u *toolUsage) totals() (in, out int64) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.tokensIn, u.tokensOut
+}
+
 func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, error) {
 	reqBody := map[string]any{
 		"model":      webSearchModel(),
@@ -134,7 +168,11 @@ func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, err
 
 	var antResp struct {
 		Content []map[string]any `json:"content"`
-		Error   *struct {
+		Usage   struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+		Error *struct {
 			Message string `json:"message"`
 		} `json:"error,omitempty"`
 	}
@@ -144,6 +182,8 @@ func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, err
 	if antResp.Error != nil {
 		return nil, fmt.Errorf("web_search: %s", antResp.Error.Message)
 	}
+
+	addToolUsage(ctx, antResp.Usage.InputTokens, antResp.Usage.OutputTokens)
 
 	// Concatenate text blocks; server_tool_use / web_search_tool_result
 	// blocks are Anthropic-internal plumbing we don't need to relay.
@@ -198,6 +238,10 @@ func webSearchViaOpenAI(ctx context.Context, apiKey, prompt string) (any, error)
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error,omitempty"`
@@ -208,6 +252,7 @@ func webSearchViaOpenAI(ctx context.Context, apiKey, prompt string) (any, error)
 	if oaiResp.Error != nil {
 		return nil, fmt.Errorf("web_search: %s", oaiResp.Error.Message)
 	}
+	addToolUsage(ctx, oaiResp.Usage.PromptTokens, oaiResp.Usage.CompletionTokens)
 	if len(oaiResp.Choices) == 0 {
 		return nil, fmt.Errorf("web_search: empty result")
 	}

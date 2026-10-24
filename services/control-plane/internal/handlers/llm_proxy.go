@@ -863,10 +863,12 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 			"model":      model,
 			"max_tokens": 1024,
 			"stream":     true,
-			"system":     systemPrompt,
 			"messages": []map[string]string{
 				{"role": "user", "content": userPrompt},
 			},
+		}
+		if systemPrompt != "" {
+			reqBody["system"] = anthropicSystemWithCache(systemPrompt)
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -880,7 +882,7 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		}))
-		resp, httpErr := http.DefaultClient.Do(req)
+		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
 		}
@@ -1066,7 +1068,7 @@ func (h *LlmProxyHandler) callLLMStreamingMessages(
 			"messages":   antMsgs,
 		}
 		if system != "" {
-			reqBody["system"] = system
+			reqBody["system"] = anthropicSystemWithCache(system)
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -2771,6 +2773,13 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		txt, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, flattenMessages(messages))
 		return txt, nil, ti, to, e
 	}
+	// Tool executors (web_search) spend tokens of their own; fold them in.
+	ctx, tu := withToolUsage(ctx)
+	defer func() {
+		in, out := tu.totals()
+		tokensIn += in
+		tokensOut += out
+	}()
 	if maxTurns <= 0 {
 		maxTurns = maxToolTurnsEnv()
 	}
@@ -3019,6 +3028,13 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	onToolCall func(inv ToolInvocation),
 	maxTurns int,
 ) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
+	// Tool executors (web_search) spend tokens of their own; fold them in.
+	ctx, tu := withToolUsage(ctx)
+	defer func() {
+		in, out := tu.totals()
+		tokensIn += in
+		tokensOut += out
+	}()
 	if maxTurns <= 0 {
 		// Cross-source queries (docs + Gmail + Calendar + WhatsApp
 		// history) routinely need 8-10 tool calls before the model has
