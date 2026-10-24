@@ -57,19 +57,31 @@ func llmIdempotencyBase(ctx context.Context) string {
 // LLM call.
 //
 //   - When a run-scoped base is present in ctx, the key is
-//     hex(sha256(base | provider)). The SAME base across a rate-limit backoff
-//     retry to the SAME provider yields the SAME key (the provider dedups);
+//     hex(sha256(base | provider | payloadHash)). The SAME base AND request body
+//     across a rate-limit backoff retry to the SAME provider yields the SAME key
+//     (the provider dedups); a different body (another step/turn/sample) differs;
 //     a failover to a DIFFERENT provider yields a different key (a genuinely
 //     new request, not a duplicate of the first provider's).
 //   - Otherwise (ad-hoc completion, no run) the key is a deterministic hash of
 //     the request payload — hex(sha256(provider | model | messages)). Two
 //     byte-identical requests collapse to one key; distinct requests don't.
 //
+// NOTE: sampling params (temperature etc.) are not part of the hash; the signature
+// carries only model+messages.
+//
 // Returns "" only when there is neither a base nor a payload to hash, in which
 // case the caller omits the header.
 func llmIdempotencyKey(ctx context.Context, provider, model string, messages []map[string]any) string {
 	if base := llmIdempotencyBase(ctx); base != "" {
-		sum := sha256.Sum256([]byte(base + "|" + provider))
+		// The base is per-run, so on its own every step/turn/sample of a run
+		// would collide on one key and the provider would replay the first
+		// response. Mix in the request body: a retry of the SAME request still
+		// dedups, a different request gets a different key.
+		parts := []string{base, provider}
+		if payload := llmPayloadIdempotencyKey(provider, model, messages); payload != "" {
+			parts = append(parts, payload)
+		}
+		sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 		return hex.EncodeToString(sum[:])
 	}
 	return llmPayloadIdempotencyKey(provider, model, messages)

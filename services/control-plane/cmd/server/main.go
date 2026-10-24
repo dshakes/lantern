@@ -449,7 +449,7 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/connectors/{id}", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.UninstallConnector))
 
 	// Surface endpoints.
-	httpMux.HandleFunc("POST /v1/surfaces", surfaceHandler.ConfigureSurface)
+	httpMux.HandleFunc("POST /v1/surfaces", authHandler.WithScope(handlers.ScopeSettingsWrite, surfaceHandler.ConfigureSurface))
 	httpMux.HandleFunc("GET /v1/surfaces", surfaceHandler.ListSurfaces)
 	// WhatsApp-specific routes are registered before the generic /{id}
 	// matchers so they're not shadowed.
@@ -507,14 +507,14 @@ func main() {
 	// configured (dev accepts unverified + warns); ephemeral JSON replies.
 	slackCommandHandler := handlers.NewSlackCommandHandler(srv)
 	httpMux.HandleFunc("POST /v1/surfaces/slack/command", slackCommandHandler.HandleCommand)
-	httpMux.HandleFunc("PUT /v1/surfaces/{id}", surfaceHandler.UpdateSurface)
-	httpMux.HandleFunc("DELETE /v1/surfaces/{id}", surfaceHandler.RemoveSurface)
-	httpMux.HandleFunc("POST /v1/surfaces/{id}/test", surfaceHandler.TestSurface)
+	httpMux.HandleFunc("PUT /v1/surfaces/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, surfaceHandler.UpdateSurface))
+	httpMux.HandleFunc("DELETE /v1/surfaces/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, surfaceHandler.RemoveSurface))
+	httpMux.HandleFunc("POST /v1/surfaces/{id}/test", authHandler.WithScope(handlers.ScopeSettingsWrite, surfaceHandler.TestSurface))
 
 	// API key endpoints.
-	httpMux.HandleFunc("POST /v1/api-keys", apiKeyHandler.CreateApiKey)
+	httpMux.HandleFunc("POST /v1/api-keys", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.CreateApiKey))
 	httpMux.HandleFunc("GET /v1/api-keys", apiKeyHandler.ListApiKeys)
-	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", apiKeyHandler.RevokeApiKey)
+	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.RevokeApiKey))
 
 	// LLM proxy / completions endpoint.
 	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
@@ -543,9 +543,9 @@ func main() {
 	httpMux.HandleFunc("POST /v1/deployments", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.CreateDeployment))
 	httpMux.HandleFunc("GET /v1/deployments", deploymentHandler.ListDeployments)
 	httpMux.HandleFunc("GET /v1/deployments/{id}", deploymentHandler.GetDeployment)
-	httpMux.HandleFunc("POST /v1/data-planes", deploymentHandler.RegisterDataPlane)
+	httpMux.HandleFunc("POST /v1/data-planes", authHandler.WithScope(handlers.ScopeAdmin, deploymentHandler.RegisterDataPlane))
 	httpMux.HandleFunc("GET /v1/data-planes", deploymentHandler.ListDataPlanes)
-	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", deploymentHandler.RemoveDataPlane)
+	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", authHandler.WithScope(handlers.ScopeAdmin, deploymentHandler.RemoveDataPlane))
 
 	// Cloud deploy endpoints (Gap 5: Managed Hosting).
 	httpMux.HandleFunc("POST /v1/agents/{name}/deploy", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.DeployAgent))
@@ -598,7 +598,7 @@ func main() {
 	// Propose: autonomous read + LLM compose → stored proposal (no side-effect).
 	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
 	httpMux.HandleFunc("POST /v1/cross-app/propose", crossAppHandler.Propose)
-	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", crossAppHandler.ExecuteAction)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.ExecuteAction))
 
 	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF — ADR 0017).
 	// Read: autonomous web read; dispatch 503 in increment 1 (no runtime yet).
@@ -606,7 +606,7 @@ func main() {
 	// Execute: SOLE browser write path; owner confirm required.
 	httpMux.HandleFunc("POST /v1/browser/read", browserHandler.Read)
 	httpMux.HandleFunc("POST /v1/browser/propose", browserHandler.Propose)
-	httpMux.HandleFunc("POST /v1/browser/commitments/{id}/execute", browserHandler.Execute)
+	httpMux.HandleFunc("POST /v1/browser/commitments/{id}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, browserHandler.Execute))
 
 	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
 	httpMux.HandleFunc("POST /v1/domain-records", domainRecordHandler.CreateDomainRecord)
@@ -637,14 +637,14 @@ func main() {
 
 	// Marketplace — publish, fork, star agents.
 	httpMux.HandleFunc("GET /v1/marketplace", marketplaceHandler.List)
-	httpMux.HandleFunc("POST /v1/marketplace/publish", marketplaceHandler.Publish)
+	httpMux.HandleFunc("POST /v1/marketplace/publish", authHandler.WithScope(handlers.ScopeAgentsWrite, marketplaceHandler.Publish))
 	httpMux.HandleFunc("GET /v1/marketplace/{slug}", marketplaceHandler.Get)
-	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}", marketplaceHandler.Unpublish)
-	httpMux.HandleFunc("POST /v1/marketplace/{slug}/fork", marketplaceHandler.Fork)
+	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}", authHandler.WithScope(handlers.ScopeAgentsWrite, marketplaceHandler.Unpublish))
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/fork", authHandler.WithScope(handlers.ScopeAgentsWrite, marketplaceHandler.Fork))
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", marketplaceHandler.Star)
 	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", marketplaceHandler.Star)
 	// W11c: cross-tenant invocations with HMAC-signed settlement.
-	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", marketplaceHandler.Invoke)
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, marketplaceHandler.Invoke))
 	httpMux.HandleFunc("GET /v1/marketplace/invocations", marketplaceHandler.ListInvocations)
 
 	// W11a: takeover handshake. Workflow approval nodes pause on these,
@@ -653,9 +653,9 @@ func main() {
 	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler, restHandler)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", takeoverHandler.Request)
 	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
-	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", takeoverHandler.Grant)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Grant))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", takeoverHandler.Answer)
-	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", takeoverHandler.Release)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Release))
 
 	// Agent templates — one-click create-agent + budget + schedule for
 	// curated use cases (Inbox Concierge, Morning Brief). Borrows the
@@ -668,9 +668,9 @@ func main() {
 	// W11d: voice channel. Phone-number management + provider webhooks
 	// (Twilio today; LiveKit / Vapi pluggable via VoiceProvider).
 	voiceHandler := handlers.NewVoiceHandler(srv, authHandler)
-	httpMux.HandleFunc("POST /v1/voice/numbers", voiceHandler.CreateNumber)
+	httpMux.HandleFunc("POST /v1/voice/numbers", authHandler.WithScope(handlers.ScopeSettingsWrite, voiceHandler.CreateNumber))
 	httpMux.HandleFunc("GET /v1/voice/numbers", voiceHandler.ListNumbers)
-	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", voiceHandler.DeleteNumber)
+	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, voiceHandler.DeleteNumber))
 	httpMux.HandleFunc("GET /v1/voice/calls", voiceHandler.ListCalls)
 	httpMux.HandleFunc("POST /v1/voice/calls/status/{provider}", voiceHandler.CallStatus)
 	httpMux.HandleFunc("POST /v1/voice/token", voiceHandler.MintToken)
@@ -684,25 +684,25 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/agents/{name}/mcp-servers/{slug}", authHandler.WithScope(handlers.ScopeAgentsWrite, mcpHandler.DetachFromAgent))
 
 	// Eval suites + runs + baselines (foundation for lantern test --against=last-green).
-	httpMux.HandleFunc("POST /v1/eval-suites", evalHandler.UpsertSuite)
+	httpMux.HandleFunc("POST /v1/eval-suites", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.UpsertSuite))
 	httpMux.HandleFunc("GET /v1/eval-suites", evalHandler.ListSuites)
 	httpMux.HandleFunc("GET /v1/eval-suites/{id}", evalHandler.GetSuite)
-	httpMux.HandleFunc("DELETE /v1/eval-suites/{id}", evalHandler.DeleteSuite)
-	httpMux.HandleFunc("POST /v1/eval-runs", evalHandler.RecordRun)
+	httpMux.HandleFunc("DELETE /v1/eval-suites/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.DeleteSuite))
+	httpMux.HandleFunc("POST /v1/eval-runs", authHandler.WithScope(handlers.ScopeRunsWrite, evalHandler.RecordRun))
 	httpMux.HandleFunc("GET /v1/eval-runs", evalHandler.ListRuns)
 	httpMux.HandleFunc("GET /v1/eval-runs/{id}", evalHandler.GetRun)
-	httpMux.HandleFunc("POST /v1/eval-baselines", evalHandler.SetBaseline)
+	httpMux.HandleFunc("POST /v1/eval-baselines", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.SetBaseline))
 	httpMux.HandleFunc("GET /v1/eval-baselines", evalHandler.GetBaseline)
 	// Eval observability (read-only): failure clustering + score/pass-rate trends.
 	httpMux.HandleFunc("GET /v1/eval-observability/failures", evalHandler.GetFailureClusters)
 	httpMux.HandleFunc("GET /v1/eval-observability/trends", evalHandler.GetTrends)
 
 	// A/B experiments with auto-promotion.
-	httpMux.HandleFunc("POST /v1/experiments", experimentHandler.Create)
+	httpMux.HandleFunc("POST /v1/experiments", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Create))
 	httpMux.HandleFunc("GET /v1/experiments", experimentHandler.List)
 	httpMux.HandleFunc("GET /v1/experiments/{id}", experimentHandler.Get)
-	httpMux.HandleFunc("POST /v1/experiments/{id}/record", experimentHandler.RecordOutcome)
-	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", experimentHandler.Conclude)
+	httpMux.HandleFunc("POST /v1/experiments/{id}/record", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.RecordOutcome))
+	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Conclude))
 
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
 	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", receiptHandler.IssueReceipt)
@@ -761,7 +761,7 @@ func main() {
 	errandHandler := handlers.NewErrandHandler(srv, authHandler, llmProxyHandler)
 	httpMux.HandleFunc("POST /v1/errands", errandHandler.Propose)
 	httpMux.HandleFunc("GET /v1/errands", errandHandler.List)
-	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", errandHandler.ConfirmAndCall)
+	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.ConfirmAndCall))
 	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", errandHandler.OptOut)
 	// ErrandTurn: Twilio <Gather> callback — unauthenticated by JWT,
 	// authenticated by X-Twilio-Signature (see ErrandTurn handler).
@@ -955,6 +955,22 @@ func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, messa
 	return false, ""
 }
 
+// insecureFlagsDecision reports dev-only escape hatches that must never be on
+// in prod: Twilio webhook signature verification disabled, and the local
+// claude-code CLI provider enabled. Returns "" when nothing is wrong.
+func insecureFlagsDecision(isProd bool, twilioWebhookAuth, useClaudeCode string) (fatal bool, message string) {
+	if !isProd {
+		return false, ""
+	}
+	if strings.EqualFold(twilioWebhookAuth, "off") {
+		return true, "LANTERN_TWILIO_WEBHOOK_AUTH=off is not allowed in production — Twilio webhooks would be accepted unsigned; unset it"
+	}
+	if useClaudeCode == "1" {
+		return true, "LANTERN_USE_CLAUDE_CODE=1 is not allowed in production — it shells out to a local CLI; unset it"
+	}
+	return false, ""
+}
+
 // runStartupGuards enforces fail-closed security checks before the server
 // starts accepting traffic.
 //
@@ -1020,6 +1036,10 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
 		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
+
+	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH"), os.Getenv("LANTERN_USE_CLAUDE_CODE")); fatal {
+		logger.Fatal(msg)
 	}
 
 	// R1 — Runtime scheduler address (W12 microVM path).

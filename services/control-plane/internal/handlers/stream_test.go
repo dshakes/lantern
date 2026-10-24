@@ -538,3 +538,47 @@ func TestCompleteNonStream_JSONResponseShape(t *testing.T) {
 		t.Errorf("tokens: in=%d out=%d, want in=100 out=50", cr.TokensIn, cr.TokensOut)
 	}
 }
+
+// Prompt caching: both Anthropic streaming paths must send `system` as a
+// cache_control block array, not a plain string.
+func TestAnthropicStreaming_SystemUsesPromptCache(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(h *LlmProxyHandler) error
+	}{
+		{"callLLMStreamingMessages", func(h *LlmProxyHandler) error {
+			_, _, _, err := h.callLLMStreamingMessages(context.Background(), "anthropic", "claude-sonnet-4-20250514", "k",
+				[]map[string]any{{"role": "system", "content": "You help."}, {"role": "user", "content": "yo"}}, nil)
+			return err
+		}},
+		{"callLLMStreamingNoTools", func(h *LlmProxyHandler) error {
+			_, _, _, err := h.callLLMStreamingNoTools(context.Background(), "anthropic", "claude-sonnet-4-20250514", "k",
+				"You help.", "yo", nil)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]any
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, anthropicSSEBody([]string{"ok"}, 1, 1))
+			}))
+			defer ts.Close()
+			h := newStreamHandler(&http.Client{Transport: routeToServer(ts)})
+			if err := tc.call(h); err != nil {
+				t.Fatal(err)
+			}
+			blocks, ok := body["system"].([]any)
+			if !ok || len(blocks) != 1 {
+				t.Fatalf("system must be a 1-block array, got %#v", body["system"])
+			}
+			blk, _ := blocks[0].(map[string]any)
+			cc, _ := blk["cache_control"].(map[string]any)
+			if blk["text"] != "You help." || cc["type"] != "ephemeral" {
+				t.Fatalf("system block missing text/cache_control: %#v", blk)
+			}
+		})
+	}
+}
