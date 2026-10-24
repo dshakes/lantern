@@ -150,7 +150,12 @@ func main() {
 		managerDialer = dialer.NewLogOnlyDialer(logger)
 		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
 	} else {
-		managerDialer = dialer.NewGRPCDialer(logger)
+		// The manager requires the service token and, in prod, mTLS.
+		mgrCreds, err := dialer.ManagerTransportCreds(dialer.IsProd())
+		if err != nil {
+			logger.Fatal("runtime-manager dial credentials", zap.Error(err))
+		}
+		managerDialer = dialer.NewGRPCDialer(logger, mgrCreds, cfg.ServiceToken)
 		logger.Info("using gRPC manager dialer")
 	}
 	defer managerDialer.Close()

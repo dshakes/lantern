@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,6 +151,9 @@ func newVmCommand() *cobra.Command {
 	cmd.AddCommand(newVmGetCommand())
 	cmd.AddCommand(newVmLogsCommand())
 	cmd.AddCommand(newVmStopCommand())
+	cmd.AddCommand(newVmPauseCommand())
+	cmd.AddCommand(newVmResumeCommand())
+	cmd.AddCommand(newVmForkCommand())
 	cmd.AddCommand(newVmExecCommand())
 	cmd.AddCommand(newVmClusterCommand())
 	cmd.AddCommand(newVmQuotaCommand())
@@ -353,6 +357,78 @@ func newVmStopCommand() *cobra.Command {
 	return cmd
 }
 
+// --- `lantern vm pause|resume|fork` (sandbox lifecycle) ----------------------
+
+func newVmPauseCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pause <vm-id>",
+		Short: "Snapshot + stop a running VM (frees its quota slot; resume later)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := apiPost("/v1/runtime/vms/"+url.PathEscape(args[0])+"/pause", nil)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%v  %v  (snapshot %v)\n", res["vmId"], res["state"], res["snapshotId"])
+			return nil
+		},
+	}
+}
+
+func newVmResumeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <vm-id>",
+		Short: "Restore a paused VM from its snapshot (same vm id)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := apiPost("/v1/runtime/vms/"+url.PathEscape(args[0])+"/resume", nil)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%v  %v  (snapshot %v)\n", res["vmId"], res["state"], res["snapshotId"])
+			return nil
+		},
+	}
+}
+
+func newVmForkCommand() *cobra.Command {
+	var count int
+	cmd := &cobra.Command{
+		Use:   "fork <vm-id>",
+		Short: "Spawn N copies of a running or paused VM from a snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if count < 1 || count > 10 {
+				return fmt.Errorf("--count must be between 1 and 10, got %d", count)
+			}
+			body, _ := json.Marshal(map[string]int{"count": count})
+			res, err := apiPost("/v1/runtime/vms/"+url.PathEscape(args[0])+"/fork", body)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "forked %v from snapshot %v\n", res["sourceVmId"], res["snapshotId"])
+			forks, _ := res["forks"].([]any)
+			failed := 0
+			for _, f := range forks {
+				m, _ := f.(map[string]any)
+				if e, _ := m["error"].(string); e != "" {
+					failed++
+					fmt.Fprintf(out, "  %v  %v  %s\n", m["vmId"], m["state"], e)
+					continue
+				}
+				fmt.Fprintf(out, "  %v  %v\n", m["vmId"], m["state"])
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d of %d forks failed", failed, len(forks))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&count, "count", 1, "number of forks (1..10)")
+	return cmd
+}
+
 // --- `lantern vm exec` -------------------------------------------------------
 //
 // Exec speaks the RuntimeManager.Exec gRPC bidi stream directly (the
@@ -447,8 +523,13 @@ Examples:
 }
 
 func runVmExec(cmd *cobra.Command, vmID, command string, argv []string, tty bool, managerAddr string) error {
-	conn, err := grpc.NewClient(managerAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	// The manager requires the shared service token when it has one set;
+	// operators exec'ing directly pass it via the same env var.
+	if tok := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"); tok != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(serviceTokenCreds(tok)))
+	}
+	conn, err := grpc.NewClient(managerAddr, opts...)
 	if err != nil {
 		return fmt.Errorf("dial runtime-manager %s: %w", managerAddr, err)
 	}
@@ -604,6 +685,15 @@ func newVmQuotaCommand() *cobra.Command {
 	cmd.AddCommand(setCmd)
 	return cmd
 }
+
+// serviceTokenCreds sends x-lantern-service-token on every manager RPC.
+type serviceTokenCreds string
+
+func (t serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"x-lantern-service-token": string(t)}, nil
+}
+
+func (serviceTokenCreds) RequireTransportSecurity() bool { return false }
 
 // --- shared HTTP helpers ---------------------------------------------------
 //

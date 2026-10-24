@@ -161,6 +161,11 @@ type recScheduler struct {
 	az           string
 	calls        []string // "schedule", "terminate", etc.
 	execNode     string   // node passed to the most recent Exec call
+	lifecycleErr error    // returned by Pause/Resume/Fork when set
+	forkRes      ForkResult
+	lastTenant   string // tenant passed to the most recent lifecycle call
+	// forkIdentities are the identities passed to the most recent Fork.
+	forkIdentities []ForkIdentity
 }
 
 func (r *recScheduler) Schedule(_ context.Context, _ map[string]any) (string, string, string, error) {
@@ -203,6 +208,30 @@ func (r *recScheduler) Cluster(_ context.Context) (map[string]any, error) {
 
 func (r *recScheduler) ListStates(_ context.Context, _ string) (map[string]VMStateInfo, error) {
 	return map[string]VMStateInfo{}, nil
+}
+
+func (r *recScheduler) Pause(_ context.Context, tenantID, vmID string) (string, error) {
+	r.calls, r.lastTenant = append(r.calls, "pause:"+vmID), tenantID
+	return "snap-" + vmID, r.lifecycleErr
+}
+
+func (r *recScheduler) Resume(_ context.Context, tenantID, vmID string) (string, error) {
+	r.calls, r.lastTenant = append(r.calls, "resume:"+vmID), tenantID
+	return "snap-" + vmID, r.lifecycleErr
+}
+
+func (r *recScheduler) Fork(_ context.Context, tenantID, vmID string, identities []ForkIdentity) (ForkResult, error) {
+	r.calls, r.lastTenant = append(r.calls, fmt.Sprintf("fork:%s:%d", vmID, len(identities))), tenantID
+	r.forkIdentities = identities
+	res := r.forkRes
+	// Mirror the scheduler: child i carries identities[i].
+	res.Forks = append([]ForkChildResult(nil), r.forkRes.Forks...)
+	for i := range res.Forks {
+		if i < len(identities) {
+			res.Forks[i].AgentInstanceID = identities[i].InstanceID
+		}
+	}
+	return res, r.lifecycleErr
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +323,7 @@ func TestVmStateString(t *testing.T) {
 		{"draining", func() string { return vmStateString(4) }},   // VM_STATE_DRAINING
 		{"terminated", func() string { return vmStateString(5) }}, // VM_STATE_TERMINATED
 		{"failed", func() string { return vmStateString(6) }},     // VM_STATE_FAILED
+		{"paused", func() string { return vmStateString(7) }},     // VM_STATE_PAUSED
 		{"pending", func() string { return vmStateString(99) }},   // unknown → default
 	}
 	for _, tc := range import_table {
@@ -549,6 +579,8 @@ func migrateRuntimeTables(t *testing.T, pool *pgxpool.Pool) {
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL DEFAULT FALSE`,
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS cc_tech TEXT`,
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS attestation JSONB`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS snapshot_id TEXT`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS parent_vm_id TEXT`,
 	)
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
