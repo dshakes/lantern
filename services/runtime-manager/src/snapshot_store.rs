@@ -83,11 +83,46 @@ pub struct SnapshotMeta {
     pub agent_version_id: String,
     /// The VM this snapshot belongs to.
     pub vm_id: String,
+    /// Owning tenant (ADR 0025). Restore is refused for any other tenant.
+    /// Empty on legacy/untenanted snapshots — which are never restorable.
+    #[serde(default)]
+    pub tenant_id: String,
 }
 
 /// Bytes to store. The caller supplies a map of `filename → bytes`; the store
 /// writes each file under the snapshot directory and derives sha256/size.
 pub type ArtifactMap = Vec<(String, Vec<u8>)>;
+
+/// Where an artifact's bytes come from.
+enum Source {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+}
+
+/// Streaming buffer for artifact copy/hash/upload (bounds RAM per snapshot).
+const STREAM_BUF_BYTES: usize = 1 << 20;
+
+/// Stream a local file to `key` via a multipart-capable buffered writer.
+async fn upload_file_streamed(
+    s3: &std::sync::Arc<dyn ObjectStore>,
+    key: &StorePath,
+    path: &std::path::Path,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("open {path:?} for upload"))?;
+    let mut reader = tokio::io::BufReader::with_capacity(STREAM_BUF_BYTES, file);
+    let mut writer = object_store::buffered::BufWriter::new(std::sync::Arc::clone(s3), key.clone());
+    tokio::io::copy_buf(&mut reader, &mut writer)
+        .await
+        .with_context(|| format!("upload {path:?}"))?;
+    writer
+        .shutdown()
+        .await
+        .with_context(|| format!("finish upload {path:?}"))?;
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // SnapshotStore
@@ -255,18 +290,56 @@ impl SnapshotStore {
     // put
     // -----------------------------------------------------------------------
 
-    /// Persist `artifacts` for `(agent_version_id, vm_id)` and return the
-    /// metadata.  The sha256 is computed over all artifact bytes, sorted by
-    /// filename.  After writing to the local filesystem, if the S3 tier is
-    /// configured the same files are uploaded to S3.  An S3 failure is
-    /// warn-logged but does NOT cause the `put` to fail (local write already
-    /// succeeded).  After writing, retention is enforced.
+    /// Persist in-memory `artifacts` for `(agent_version_id, vm_id)` with no
+    /// owning tenant. Test/fixture convenience: production snapshots go through
+    /// [`Self::put_files`], which streams from disk and records the tenant.
     pub async fn put(
         &self,
         agent_version_id: &str,
         vm_id: &str,
         artifacts: ArtifactMap,
     ) -> Result<SnapshotMeta> {
+        let sources = artifacts
+            .into_iter()
+            .map(|(name, bytes)| (name, Source::Bytes(bytes)))
+            .collect();
+        self.persist(agent_version_id, "", vm_id, sources).await
+    }
+
+    /// Persist on-disk artifacts `(filename, source path)` for
+    /// `(agent_version_id, vm_id)`, owned by `tenant_id` (ADR 0025).
+    ///
+    /// Streams each file through a fixed buffer (sha256 + local copy in one
+    /// pass, then a streamed S3 upload), so a multi-GiB guest memory file is
+    /// never held in RAM.
+    pub async fn put_files(
+        &self,
+        agent_version_id: &str,
+        tenant_id: &str,
+        vm_id: &str,
+        files: &[(&str, &std::path::Path)],
+    ) -> Result<SnapshotMeta> {
+        let sources = files
+            .iter()
+            .map(|(name, path)| (name.to_string(), Source::File(path.to_path_buf())))
+            .collect();
+        self.persist(agent_version_id, tenant_id, vm_id, sources)
+            .await
+    }
+
+    /// Shared write path. The sha256 is over all artifact bytes, sorted by
+    /// filename. After the local write, if the S3 tier is configured the same
+    /// files are uploaded (failure warn-logged, NOT fatal — the local write
+    /// already succeeded). Retention is enforced after every write.
+    async fn persist(
+        &self,
+        agent_version_id: &str,
+        tenant_id: &str,
+        vm_id: &str,
+        mut sources: Vec<(String, Source)>,
+    ) -> Result<SnapshotMeta> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
         let snapshot_id = uuid::Uuid::new_v4().to_string();
         let dir = self.snapshot_dir(agent_version_id, vm_id, &snapshot_id);
 
@@ -275,19 +348,50 @@ impl SnapshotStore {
             .with_context(|| format!("create snapshot dir {dir:?}"))?;
 
         // Sort artifacts by filename for deterministic sha256.
-        let mut sorted = artifacts;
-        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        sources.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut hasher = Sha256::new();
         let mut total_size: u64 = 0;
 
-        for (filename, bytes) in &sorted {
+        for (filename, source) in &sources {
             let path = dir.join(filename);
-            tokio::fs::write(&path, bytes)
-                .await
-                .with_context(|| format!("write artifact {path:?}"))?;
-            hasher.update(bytes);
-            total_size += bytes.len() as u64;
+            match source {
+                Source::Bytes(bytes) => {
+                    tokio::fs::write(&path, bytes)
+                        .await
+                        .with_context(|| format!("write artifact {path:?}"))?;
+                    hasher.update(bytes);
+                    total_size += bytes.len() as u64;
+                }
+                Source::File(src) => {
+                    let mut input = tokio::fs::File::open(src).await.with_context(|| {
+                        format!("snapshot: artifact file not readable — {src:?}")
+                    })?;
+                    let mut output = tokio::fs::File::create(&path)
+                        .await
+                        .with_context(|| format!("create artifact {path:?}"))?;
+                    let mut buf = vec![0u8; STREAM_BUF_BYTES];
+                    loop {
+                        let n = input
+                            .read(&mut buf)
+                            .await
+                            .with_context(|| format!("read artifact {src:?}"))?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                        output
+                            .write_all(&buf[..n])
+                            .await
+                            .with_context(|| format!("write artifact {path:?}"))?;
+                        total_size += n as u64;
+                    }
+                    output
+                        .flush()
+                        .await
+                        .with_context(|| format!("flush artifact {path:?}"))?;
+                }
+            }
         }
 
         let sha256 = hex::encode(hasher.finalize());
@@ -299,12 +403,13 @@ impl SnapshotStore {
             created_at: self.now(),
             agent_version_id: agent_version_id.to_string(),
             vm_id: vm_id.to_string(),
+            tenant_id: tenant_id.to_string(),
         };
 
         // Write the meta sidecar locally.
         let meta_path = dir.join("meta.json");
         let meta_json = serde_json::to_vec_pretty(&meta).context("serialize SnapshotMeta")?;
-        tokio::fs::write(&meta_path, meta_json.clone())
+        tokio::fs::write(&meta_path, &meta_json)
             .await
             .with_context(|| format!("write meta sidecar {meta_path:?}"))?;
 
@@ -317,21 +422,17 @@ impl SnapshotStore {
             "snapshot persisted"
         );
 
-        // S3 tier: best-effort upload.  Failures are warn-logged, not fatal.
+        // S3 tier: best-effort streamed upload from the local copy.
         if let Some(ref s3) = self.s3 {
             let prefix = format!("{S3_PREFIX}/{agent_version_id}/{vm_id}/{snapshot_id}");
 
-            // Upload each artifact.
-            for (filename, bytes) in &sorted {
+            for (filename, _) in &sources {
                 let key = StorePath::from(format!("{prefix}/{filename}").as_str());
-                if let Err(e) = s3
-                    .put(&key, bytes::Bytes::copy_from_slice(bytes).into())
-                    .await
-                {
+                if let Err(e) = upload_file_streamed(s3, &key, &dir.join(filename)).await {
                     tracing::warn!(
                         snapshot_id = %snapshot_id,
                         key = %key,
-                        error = %e,
+                        error = format!("{e:#}"),
                         "snapshot_store: S3 upload failed (non-fatal; local copy is safe)"
                     );
                 }
@@ -340,7 +441,7 @@ impl SnapshotStore {
             // Upload meta.json.
             let meta_key = StorePath::from(format!("{prefix}/meta.json").as_str());
             if let Err(e) = s3
-                .put(&meta_key, bytes::Bytes::copy_from_slice(&meta_json).into())
+                .put(&meta_key, bytes::Bytes::from(meta_json).into())
                 .await
             {
                 tracing::warn!(
@@ -362,6 +463,71 @@ impl SnapshotStore {
         self.enforce_retention(agent_version_id, vm_id).await;
 
         Ok(meta)
+    }
+
+    // -----------------------------------------------------------------------
+    // find (by id alone)
+    // -----------------------------------------------------------------------
+
+    /// Find a snapshot's metadata by id alone (a restore only carries the id).
+    ///
+    /// Walks the local `<root>/<av>/<vm>/<id>/meta.json` layout, then the S3
+    /// tier when configured. Ids are server-minted UUIDv4s; anything else
+    /// returns `None` without touching the filesystem (blocks path traversal
+    /// through a caller-supplied id).
+    pub async fn find(&self, snapshot_id: &str) -> Result<Option<SnapshotMeta>> {
+        if uuid::Uuid::parse_str(snapshot_id).is_err() {
+            return Ok(None);
+        }
+
+        let mut versions = match tokio::fs::read_dir(&self.root).await {
+            Ok(entries) => Some(entries),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e).with_context(|| format!("read {:?}", self.root)),
+        };
+        while let Some(rd) = versions.as_mut() {
+            let Some(version) = rd.next_entry().await? else {
+                break;
+            };
+            let Ok(mut vms) = tokio::fs::read_dir(version.path()).await else {
+                continue; // stray file at this level
+            };
+            while let Some(vm) = vms.next_entry().await? {
+                let meta_path = vm.path().join(snapshot_id).join("meta.json");
+                match tokio::fs::read(&meta_path).await {
+                    Ok(bytes) => {
+                        return serde_json::from_slice(&bytes)
+                            .map(Some)
+                            .with_context(|| format!("deserialize {meta_path:?}"));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e).with_context(|| format!("read {meta_path:?}")),
+                }
+            }
+        }
+
+        let Some(s3) = self.s3.as_ref() else {
+            return Ok(None);
+        };
+        use futures::TryStreamExt;
+        let suffix = format!("/{snapshot_id}/meta.json");
+        let prefix = StorePath::from(S3_PREFIX);
+        let mut listing = s3.list(Some(&prefix));
+        while let Some(obj) = listing.try_next().await.context("list S3 snapshots")? {
+            if obj.location.as_ref().ends_with(&suffix) {
+                let bytes = s3
+                    .get(&obj.location)
+                    .await
+                    .context("get S3 meta.json")?
+                    .bytes()
+                    .await
+                    .context("read S3 meta.json body")?;
+                return serde_json::from_slice(&bytes)
+                    .map(Some)
+                    .context("deserialize SnapshotMeta from S3");
+            }
+        }
+        Ok(None)
     }
 
     // -----------------------------------------------------------------------
@@ -983,5 +1149,129 @@ mod tests {
             got.agent_version_id, meta.agent_version_id,
             "agent_version_id must round-trip"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR 0025 — streamed put_files, tenant ownership, find-by-id
+    // -----------------------------------------------------------------------
+
+    async fn write_tmp(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let p = dir.join(name);
+        tokio::fs::write(&p, bytes).await.unwrap();
+        p
+    }
+
+    /// put_files streams larger-than-buffer files, records the tenant, and
+    /// produces the same sha256/size as the in-memory path over the same bytes.
+    #[tokio::test]
+    async fn put_files_streams_and_records_tenant() {
+        let src = tempfile::tempdir().unwrap();
+        let mem: Vec<u8> = (0..(STREAM_BUF_BYTES * 2 + 17)).map(|i| i as u8).collect();
+        let mem_path = write_tmp(src.path(), "mem-src", &mem).await;
+        let snap_path = write_tmp(src.path(), "snap-src", b"vmstate").await;
+
+        let root = tempfile::tempdir().unwrap();
+        let store = SnapshotStore::new(root.path());
+        let meta = store
+            .put_files(
+                "av-1",
+                "t-1",
+                "vm-1",
+                &[("snapshot", &snap_path), ("mem", &mem_path)],
+            )
+            .await
+            .unwrap();
+        assert_eq!(meta.tenant_id, "t-1");
+        assert_eq!(meta.size_bytes, (mem.len() + 7) as u64);
+
+        let reference = SnapshotStore::new(root.path().join("ref"))
+            .put(
+                "av-1",
+                "vm-1",
+                vec![
+                    ("snapshot".to_string(), b"vmstate".to_vec()),
+                    ("mem".to_string(), mem.clone()),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(meta.sha256, reference.sha256, "same bytes → same digest");
+
+        let stored = root.path().join("av-1/vm-1").join(&meta.id).join("mem");
+        assert_eq!(tokio::fs::read(stored).await.unwrap(), mem);
+    }
+
+    #[tokio::test]
+    async fn put_files_missing_artifact_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SnapshotStore::new(root.path());
+        let missing = root.path().join("nope");
+        let err = store
+            .put_files("av", "t", "vm", &[("mem", &missing)])
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("not readable"), "{err:#}");
+    }
+
+    #[tokio::test]
+    async fn find_by_id_local_and_rejects_non_uuid() {
+        let src = tempfile::tempdir().unwrap();
+        let mem = write_tmp(src.path(), "m", b"m").await;
+        let root = tempfile::tempdir().unwrap();
+        let store = SnapshotStore::new(root.path());
+        let meta = store
+            .put_files("av-9", "t-9", "vm-9", &[("mem", &mem)])
+            .await
+            .unwrap();
+
+        let found = store.find(&meta.id).await.unwrap().expect("found");
+        assert_eq!(found.tenant_id, "t-9");
+        assert_eq!(found.agent_version_id, "av-9");
+        assert!(
+            store
+                .find(&uuid::Uuid::new_v4().to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.find("../av-9").await.unwrap().is_none());
+        // Empty root is fine.
+        let empty = SnapshotStore::new(root.path().join("absent"));
+        assert!(empty.find(&meta.id).await.unwrap().is_none());
+    }
+
+    /// Streamed S3 upload lands the bytes, and find falls back to S3 once the
+    /// local copy is gone.
+    #[tokio::test]
+    async fn put_files_uploads_streamed_and_find_falls_back_to_s3() {
+        let s3: std::sync::Arc<dyn ObjectStore> =
+            std::sync::Arc::new(object_store::memory::InMemory::new());
+        let src = tempfile::tempdir().unwrap();
+        let mem: Vec<u8> = vec![7u8; STREAM_BUF_BYTES + 3];
+        let mem_path = write_tmp(src.path(), "m", &mem).await;
+        let root = tempfile::tempdir().unwrap();
+        let store = SnapshotStore::with_s3(root.path(), std::sync::Arc::clone(&s3), "bucket");
+
+        let meta = store
+            .put_files("av-s3", "t-s3", "vm-s3", &[("mem", &mem_path)])
+            .await
+            .unwrap();
+        let key = StorePath::from(format!("{S3_PREFIX}/av-s3/vm-s3/{}/mem", meta.id).as_str());
+        let uploaded = s3.get(&key).await.unwrap().bytes().await.unwrap();
+        assert_eq!(uploaded.as_ref(), mem.as_slice());
+
+        tokio::fs::remove_dir_all(root.path().join("av-s3"))
+            .await
+            .unwrap();
+        let found = store.find(&meta.id).await.unwrap().expect("found in S3");
+        assert_eq!(found.tenant_id, "t-s3");
+    }
+
+    /// Legacy meta.json without tenant_id deserializes as untenanted.
+    #[test]
+    fn legacy_meta_without_tenant_is_untenanted() {
+        let json = r#"{"id":"x","sha256":"s","size_bytes":1,"created_at":"2026-01-01T00:00:00Z","agent_version_id":"a","vm_id":"v"}"#;
+        let meta: SnapshotMeta = serde_json::from_str(json).unwrap();
+        assert!(meta.tenant_id.is_empty());
     }
 }
