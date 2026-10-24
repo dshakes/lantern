@@ -66,6 +66,9 @@ pub const SPAWN_CONTRACT_FILE: &str = "spawn.json";
 /// Harness env var for the workload uid (secrets-socket peer auth). The
 /// manager owns this value; a caller-supplied one is dropped.
 pub const ENV_WORKLOAD_UID: &str = "LANTERN_WORKLOAD_UID";
+/// The guest's environment class. Manager-owned: `schedule`/`restore` replace
+/// any caller value with the manager's own before a backend sees the request.
+pub const ENV_LANTERN_ENV: &str = "LANTERN_ENV";
 const DEFAULT_WORKLOAD_UID: u32 = 1000;
 
 /// The manager → harness spawn contract (`spawn.json`).
@@ -101,6 +104,11 @@ pub struct SpawnContract {
     /// re-identifies. Lives only on the 0600 cert image.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exec_token: String,
+    /// The manager's `LANTERN_ENV` (prod/staging/dev). A typed field so the
+    /// harness never takes its environment class from the free-form `env`
+    /// map. Empty = manager has none (dev).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lantern_env: String,
 }
 
 /// One declared secret in `spawn.json` (matches the harness `SecretRef`).
@@ -135,10 +143,11 @@ impl SpawnContract {
             env: req
                 .env
                 .iter()
-                .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID)
+                .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID && k.as_str() != ENV_LANTERN_ENV)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             egress_rules: req.egress_rules.clone(),
+            lantern_env: req.env.get(ENV_LANTERN_ENV).cloned().unwrap_or_default(),
             workload_uid,
             workload_gid,
             vm_id: String::new(),

@@ -55,6 +55,10 @@ controlPlane:
   env:
     LISTEN_ADDR: ":50051"
     LOG_LEVEL: "debug"
+    # values.yaml defaults to "production" (secure by default). Kind/dev has no
+    # scheduler, TLS material or prod secrets, so opt out of the prod-only
+    # startup guards here; they would otherwise refuse to boot.
+    LANTERN_ENV: "development"
 
 modelRouter:
   replicas: 1
@@ -72,6 +76,8 @@ workflowEngine:
   replicas: 1
   image:
     name: lantern-workflow-engine
+  env:
+    LANTERN_ENV: "development"   # see controlPlane.env.LANTERN_ENV
   resources:
     requests:
       cpu: 50m

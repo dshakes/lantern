@@ -88,7 +88,10 @@ func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, te
 	// dispatchSpawn timeout; past that the spawn has failed, not lagged.
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		_, _, exit, err := c.Exec(ctx, node, vmID, "/bin/sh", []string{"-c", "true"})
+		// Per-attempt timeout: a hung exec stream must not outlive the 60s bound.
+		actx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, _, exit, err := c.Exec(actx, node, vmID, "/bin/sh", []string{"-c", "true"})
+		cancel()
 		if err == nil && exit == 0 {
 			return vmID, node
 		}

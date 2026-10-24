@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -262,5 +263,120 @@ func TestRunScheduleKey_AttemptAware(t *testing.T) {
 	// manifest round-tripped through JSON carries float64.
 	if got := runScheduleKey("r", map[string]any{"attempt": float64(2)}); got != "run:r:2" {
 		t.Errorf("re-drive key = %q, want run:r:2 (must not reuse the crashed VM)", got)
+	}
+}
+
+// lostOnceScheduler models the ambiguous-response case: the first Schedule
+// reaches the scheduler (which spawns the VM with that attempt's env) but the
+// reply is lost; the retry with the same key gets the cached VM back.
+type lostOnceScheduler struct {
+	recScheduler
+	bootEnv map[string]any // env the VM actually booted with (first call)
+	keys    []any
+}
+
+func (s *lostOnceScheduler) Schedule(_ context.Context, spec map[string]any) (string, string, string, error) {
+	s.keys = append(s.keys, spec["idempotency_key"])
+	if s.bootEnv == nil {
+		s.bootEnv = spec["env"].(map[string]any)
+		return "", "", "", errors.New("deadline exceeded")
+	}
+	return "vm-replayed", "n", "az", nil
+}
+
+// An idempotent replay must persist the identity the VM booted with, or the
+// VM's token can never authenticate secret vending.
+func TestScheduleAgentSpec_ReplayKeepsBootIdentity(t *testing.T) {
+	pool := openTestPool(t)
+	tenantID := uuid.NewString()
+	seedTestTenant(t, pool, tenantID)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM runtime_vms WHERE tenant_id=$1`, tenantID) })
+	sched := &lostOnceScheduler{}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+	ctx := middleware.InjectTenantID(context.Background(), tenantID)
+	spec := agentSpecDTO{ImageDigest: "sha256:abc", IdempotencyKey: "k-" + uuid.NewString()}
+
+	if _, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, "", spec); err == nil {
+		t.Fatal("first attempt should surface the lost response")
+	}
+	vmID, _, _, instanceID, _, err := h.scheduleAgentSpec(ctx, tenantID, "", spec)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if sched.keys[0] != sched.keys[1] {
+		t.Fatalf("retry used a different idempotency key: %v", sched.keys)
+	}
+	bootID := sched.bootEnv["LANTERN_AGENT_INSTANCE_ID"]
+	var rowID string
+	if err := pool.QueryRow(context.Background(), `SELECT agent_instance_id FROM runtime_vms WHERE vm_id=$1`, vmID).Scan(&rowID); err != nil {
+		t.Fatal(err)
+	}
+	if rowID != bootID || instanceID != bootID {
+		t.Errorf("row agent_instance_id=%q returned=%q, VM booted with %q", rowID, instanceID, bootID)
+	}
+	// The token the VM booted with names the persisted instance id.
+	claims, err := h.identity.Verify(sched.bootEnv["LANTERN_AGENT_INSTANCE_TOKEN"].(string))
+	if err != nil || claims.AgentInstanceID != rowID {
+		t.Errorf("boot token claims %v (err %v) do not match row %q", claims, err, rowID)
+	}
+}
+
+// Both schedule paths must carry manifest/body sandbox policy (egress_rules,
+// secrets, limits) to the scheduler, in snake_case and camelCase alike.
+func TestSchedulePaths_HonorEgressSecretsLimits(t *testing.T) {
+	pool := openTestPool(t)
+	tenantID := uuid.NewString()
+	seedTestTenant(t, pool, tenantID)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM runtime_vms WHERE tenant_id=$1`, tenantID) })
+
+	snake := `{"image_digest":"sha256:abc","isolation_class":"microvm",
+		"limits":{"max_steps":4},
+		"egress_rules":[{"pattern":"*.example.com","http_methods":["GET"],"rate_bps":100}],
+		"secrets":[{"env_name":"API_KEY","secret_uri":"lantern.secret://t/k"}]}`
+	camel := `{"imageDigest":"sha256:abc","isolation":"microvm",
+		"limits":{"maxSteps":4},
+		"egressRules":[{"pattern":"*.example.com","httpMethods":["GET"],"rateBps":100}],
+		"secrets":[{"envName":"API_KEY","secretUri":"lantern.secret://t/k"}]}`
+	check := func(t *testing.T, spec map[string]any) {
+		t.Helper()
+		a := agentSpecFromMap(spec)
+		if len(a.EgressRules) != 1 || a.EgressRules[0].Pattern != "*.example.com" || a.EgressRules[0].RateBps != 100 ||
+			len(a.EgressRules[0].HttpMethods) != 1 {
+			t.Errorf("egress rules lost: %v", a.EgressRules)
+		}
+		if len(a.Secrets) != 1 || a.Secrets[0].EnvName != "API_KEY" || a.Secrets[0].SecretUri != "lantern.secret://t/k" {
+			t.Errorf("secrets lost: %v", a.Secrets)
+		}
+		if a.Limits.GetMaxSteps() != 4 {
+			t.Errorf("limits lost: %v", a.Limits)
+		}
+	}
+	tok := mintTestToken(t, tenantID, "00000000-0000-0000-0000-0000000000c1", "owner")
+	for name, body := range map[string]string{"snake": snake, "camel": camel} {
+		t.Run("http_"+name, func(t *testing.T) {
+			sched := &specCapScheduler{}
+			h := newTestRuntimeHandlerWithPool(t, pool, sched)
+			req := httptest.NewRequest(http.MethodPost, "/v1/runtime/schedule", strings.NewReader(body))
+			req.Header.Set("Authorization", bearerHeader(tok))
+			w := httptest.NewRecorder()
+			h.Schedule(w, req)
+			if w.Code != http.StatusOK && w.Code != http.StatusCreated {
+				t.Fatalf("schedule: %d %s", w.Code, w.Body)
+			}
+			check(t, sched.spec)
+		})
+		t.Run("run_"+name, func(t *testing.T) {
+			var manifest map[string]any
+			if err := json.Unmarshal([]byte(body), &manifest); err != nil {
+				t.Fatal(err)
+			}
+			sched := &specCapScheduler{}
+			h := newTestRuntimeHandlerWithPool(t, pool, sched)
+			if _, err := h.ScheduleRunInMicroVM(middleware.InjectTenantID(context.Background(), tenantID),
+				tenantID, "", uuid.NewString(), "sha256:abc", manifest); err != nil {
+				t.Fatalf("ScheduleRunInMicroVM: %v", err)
+			}
+			check(t, sched.spec)
+		})
 	}
 }

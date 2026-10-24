@@ -847,7 +847,7 @@ func main() {
 
 	httpErrCh := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP health server starting", zap.String("addr", ":8080"))
+		logger.Info("HTTP health server starting", zap.String("addr", httpServer.Addr))
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			httpErrCh <- err
 		}

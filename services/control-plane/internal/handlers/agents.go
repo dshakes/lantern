@@ -55,6 +55,9 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
+	if req.GetName() == TenantBudgetAgent {
+		return nil, status.Error(codes.InvalidArgument, "agent name \"*\" is reserved")
+	}
 
 	labelsJSON, err := json.Marshal(req.GetLabels())
 	if err != nil {

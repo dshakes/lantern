@@ -103,6 +103,11 @@ type ClusterStore interface {
 
 	CreateVM(v *VM)
 	UpdateVMState(vmID string, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) bool
+	// TransitionVMState is UpdateVMState guarded by compare-and-set: it applies
+	// only while the VM is still in (from, fromReason) and reports whether it
+	// did. Two racing resolvers of the same intermediate state (a lifecycle RPC
+	// and inventory reconciliation) use it so exactly one releases the slot.
+	TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool
 	GetVM(vmID string) (*VM, bool)
 	ListVMs(tenantID string, filter func(*VM) bool) []*VM
 	DeleteVM(vmID string) bool
@@ -303,6 +308,25 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 	if !ok {
 		return false
 	}
+	s.applyVMStateLocked(v, state, reason, usage, at)
+	return true
+}
+
+func (s *InMemoryStore) TransitionVMState(vmID string, from lanternv1.VmState, fromReason string, to lanternv1.VmState, reason string, at time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.vms[vmID]
+	if !ok || v.State != from || v.Reason != fromReason {
+		return false
+	}
+	s.applyVMStateLocked(v, to, reason, nil, at)
+	return true
+}
+
+// applyVMStateLocked moves v to state, keeping node occupancy in step. Must be
+// called under mu.
+func (s *InMemoryStore) applyVMStateLocked(v *VM, state lanternv1.VmState, reason string, usage *lanternv1.ResourceUsage, at time.Time) {
+	vmID := v.Handle.VmId
 	// Node occupancy is decremented on the NON-TERMINAL → TERMINAL edge.
 	// Previously only DeleteVM decremented, so a VM that reached TERMINATED
 	// or FAILED without being deleted kept occupying its node forever — the
@@ -328,7 +352,6 @@ func (s *InMemoryStore) UpdateVMState(vmID string, state lanternv1.VmState, reas
 		v.Usage = usage
 	}
 	v.LastEventAt = at
-	return true
 }
 
 // isTerminalVMState reports whether a VM has finished for good.
