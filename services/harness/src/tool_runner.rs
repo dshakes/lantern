@@ -20,17 +20,30 @@
 // Built-in tools
 // --------------
 //   shell_exec  args: { command: string, timeout_sec?: number }
-//               Runs `/bin/sh -c <command>`, returns stdout/stderr/exit_code.
+//               Runs `/bin/sh -c <command>` AS THE WORKLOAD UID, returns
+//               stdout/stderr/exit_code. Each stream capped at 1 MiB.
 //
 //   http_fetch  args: { url: string, method?: string, headers?: object, body?: string }
 //               HTTP request THROUGH the egress proxy at 127.0.0.1:3128 so the
 //               egress allowlist applies. Response body capped at 1 MiB.
-//               Unknown tool → {"ok":false,"error":"unknown tool: <name>"}.
+//
+//   read_file   args: { path: string, max_bytes?: number }
+//   write_file  args: { path: string, content: string, mode?: number|"0644" }
+//   list_dir    args: { path: string }
+//               Confined to the workspace root (LANTERN_WORKSPACE, default
+//               /workspace); `..`/symlink escapes rejected. Written files are
+//               chowned to the workload uid.
+//
+// Every captured output is capped at TOOL_OUTPUT_MAX_BYTES; a truncated value
+// ends with TRUNCATED_MARKER and the result carries `"truncated": true`.
+// Unknown tool → {"ok":false,"error":"unknown tool: <name>"}.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::mpsc;
 use tonic::Status;
 
@@ -198,6 +211,20 @@ async fn dispatch(env: ToolEnvelope) -> ToolResult {
     match env.tool.as_str() {
         "shell_exec" => shell_exec(env.args, timeout).await,
         "http_fetch" => http_fetch(env.args, timeout).await,
+        "read_file" | "write_file" | "list_dir" => {
+            let root = workspace_root();
+            let tool = env.tool;
+            let args = env.args;
+            // Blocking fs syscalls stay off the executor.
+            let task = tokio::task::spawn_blocking(move || fs_tool(&tool, &args, &root));
+            match tokio::time::timeout(timeout, task).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => ToolResult::err(format!("fs tool panicked: {e}")),
+                Err(_) => {
+                    ToolResult::err(format!("fs tool timed out after {}s", timeout.as_secs()))
+                }
+            }
+        }
         other => ToolResult::err(format!("unknown tool: {other}")),
     }
 }
@@ -206,7 +233,48 @@ async fn dispatch(env: ToolEnvelope) -> ToolResult {
 // shell_exec
 // ---------------------------------------------------------------------------
 
-/// Run `/bin/sh -c <command>`, capture stdout/stderr/exit_code.
+/// Every captured tool output (shell stdout/stderr, HTTP body, file content)
+/// is capped at this many bytes (1 MiB).
+const TOOL_OUTPUT_MAX_BYTES: usize = 1 << 20;
+
+/// Appended to a value that was cut at the cap.
+const TRUNCATED_MARKER: &str = "\n<truncated: output exceeded the cap>";
+
+/// Lossy-decode `bytes`, appending the marker when it was cut.
+fn capped_text(bytes: &[u8], truncated: bool) -> String {
+    let mut s = String::from_utf8_lossy(bytes).into_owned();
+    if truncated {
+        s.push_str(TRUNCATED_MARKER);
+    }
+    s
+}
+
+/// Read `r` to EOF keeping at most `cap` bytes; the rest is drained and
+/// discarded (so the writer never blocks on a full pipe). Returns
+/// `(kept, truncated)`. Memory is bounded by `cap` regardless of input size.
+async fn read_capped<R: AsyncRead + Unpin>(
+    mut r: R,
+    cap: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut kept = Vec::new();
+    let mut chunk = vec![0u8; 8 * 1024];
+    let mut truncated = false;
+    loop {
+        let n = r.read(&mut chunk).await?;
+        if n == 0 {
+            return Ok((kept, truncated));
+        }
+        let room = cap.saturating_sub(kept.len());
+        if n > room {
+            truncated = true;
+        }
+        kept.extend_from_slice(&chunk[..n.min(room)]);
+    }
+}
+
+/// Run `/bin/sh -c <command>` as the workload uid, capture capped
+/// stdout/stderr and the exit code. The whole run (including output
+/// draining) is bounded by `timeout`; on expiry the child is killed.
 /// Args: `{ command: string }`.
 async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
     let command = match args.get("command").and_then(|v| v.as_str()) {
@@ -214,16 +282,32 @@ async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
         _ => return ToolResult::err("shell_exec: args.command (string) is required"),
     };
 
+    let mut cmd = tokio::process::Command::new("/bin/sh");
+    cmd.arg("-c")
+        .arg(&command)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    crate::supervisor::as_workload(&mut cmd);
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return ToolResult::err(format!("shell_exec: spawn failed: {e}")),
+    };
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return ToolResult::err("shell_exec: child stdio unavailable");
+    };
+
+    // Dropping `child` on timeout kills the shell (kill_on_drop). A
+    // backgrounded grandchild holding the pipes cannot stall us past the
+    // deadline either: the whole future is abandoned.
     let run = tokio::time::timeout(timeout, async {
-        tokio::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(&command)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .output()
-            .await
+        let (out, err) = tokio::join!(
+            read_capped(stdout, TOOL_OUTPUT_MAX_BYTES),
+            read_capped(stderr, TOOL_OUTPUT_MAX_BYTES)
+        );
+        (out, err, child.wait().await)
     })
     .await;
 
@@ -232,21 +316,24 @@ async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
             "shell_exec: timed out after {}s",
             timeout.as_secs()
         )),
-        Ok(Err(e)) => ToolResult::err(format!("shell_exec: spawn failed: {e}")),
-        Ok(Ok(out)) => ToolResult::ok(serde_json::json!({
-            "stdout": String::from_utf8_lossy(&out.stdout).into_owned(),
-            "stderr": String::from_utf8_lossy(&out.stderr).into_owned(),
-            "exit_code": out.status.code().unwrap_or(-1),
-        })),
+        Ok((Ok((out, out_trunc)), Ok((err, err_trunc)), Ok(status))) => {
+            ToolResult::ok(serde_json::json!({
+                "stdout": capped_text(&out, out_trunc),
+                "stderr": capped_text(&err, err_trunc),
+                "exit_code": status.code().unwrap_or(-1),
+                "truncated": out_trunc || err_trunc,
+            }))
+        }
+        Ok((out, err, status)) => {
+            let e = out.err().or(err.err()).or(status.err());
+            ToolResult::err(format!("shell_exec: io error: {e:?}"))
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // http_fetch
 // ---------------------------------------------------------------------------
-
-/// Maximum response body size (1 MiB). Bodies exceeding this are truncated.
-const HTTP_FETCH_MAX_BODY: usize = 1 << 20;
 
 /// Make an HTTP request through the harness egress proxy at 127.0.0.1:3128.
 /// All connections route through the proxy regardless of the harness UID (the
@@ -311,25 +398,347 @@ async fn http_fetch(args: serde_json::Value, timeout: Duration) -> ToolResult {
         })
         .collect();
 
-    let bytes = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return ToolResult::err(format!("http_fetch: reading body failed: {e}")),
-    };
-
-    let body_str = if bytes.len() > HTTP_FETCH_MAX_BODY {
-        format!(
-            "<truncated: response body exceeded {} bytes>",
-            HTTP_FETCH_MAX_BODY
-        )
-    } else {
-        String::from_utf8_lossy(&bytes).into_owned()
-    };
+    // Stream the body and stop at the cap — never buffer an arbitrarily large
+    // (attacker-sized) response first and check afterwards.
+    let mut resp = resp;
+    let mut body: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = TOOL_OUTPUT_MAX_BYTES - body.len();
+                if chunk.len() > room {
+                    body.extend_from_slice(&chunk[..room]);
+                    truncated = true;
+                    break; // dropping `resp` aborts the transfer
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => return ToolResult::err(format!("http_fetch: reading body failed: {e}")),
+        }
+    }
 
     ToolResult::ok(serde_json::json!({
         "status": status,
         "headers": resp_headers,
-        "body": body_str,
+        "body": capped_text(&body, truncated),
+        "truncated": truncated,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// read_file / write_file / list_dir — confined to the workspace root
+// ---------------------------------------------------------------------------
+
+/// Max entries `list_dir` returns.
+const LIST_DIR_MAX_ENTRIES: usize = 10_000;
+
+fn workspace_root() -> PathBuf {
+    std::env::var_os("LANTERN_WORKSPACE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/workspace"))
+}
+
+/// Resolve `requested` (absolute, or relative to `root`) to a canonical path
+/// that is `root` or beneath it. Canonicalization resolves every `..` and
+/// symlink, so an escape by either is caught by the component-wise prefix
+/// check. Returns `(canonical_root, canonical_path)`.
+///
+/// With `must_exist = false` (writes) the final component may not exist yet:
+/// the PARENT is canonicalized and checked, and the leaf must be a plain name.
+///
+/// This check alone is check-then-open: a workload could swap a parent dir for
+/// a symlink after it. `open_confined` closes that window on Linux.
+fn resolve_in_workspace(
+    root: &Path,
+    requested: &str,
+    must_exist: bool,
+) -> Result<(PathBuf, PathBuf), String> {
+    if requested.is_empty() {
+        return Err("path is required".into());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("workspace root {root:?} unavailable: {e}"))?;
+    let joined = root.join(requested);
+    let resolved = if must_exist {
+        joined
+            .canonicalize()
+            .map_err(|e| format!("{requested}: {e}"))?
+    } else {
+        let name = match joined.file_name() {
+            Some(n) if Path::new(n) != Path::new("..") => n.to_owned(),
+            _ => return Err(format!("{requested}: not a file path")),
+        };
+        let parent = joined
+            .parent()
+            .ok_or_else(|| format!("{requested}: no parent directory"))?
+            .canonicalize()
+            .map_err(|e| format!("{requested}: parent: {e}"))?;
+        parent.join(name)
+    };
+    if resolved.starts_with(&root) {
+        Ok((root, resolved))
+    } else {
+        Err(format!("{requested}: outside the workspace root"))
+    }
+}
+
+/// Plain `open(2)` of an already-validated path. `O_NOFOLLOW` covers the leaf;
+/// parents are trusted from the preceding canonicalization.
+fn open_path(path: &Path, flags: i32, mode: u32) -> std::io::Result<std::fs::File> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: valid NUL-terminated path; the returned fd is owned below.
+    let fd = unsafe { libc::open(c.as_ptr(), flags | libc::O_CLOEXEC, mode as libc::c_uint) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor nobody else owns.
+    Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+}
+
+/// Open `path` (canonical, inside canonical `root`) so the KERNEL re-checks
+/// containment at open time: openat2 relative to a root fd with
+/// RESOLVE_BENEATH (no escape above the root) + RESOLVE_NO_SYMLINKS. The path
+/// is canonical, so it legitimately contains no symlink — any symlink seen now
+/// was planted after the check, and the open fails (ELOOP) instead of
+/// following it out of the workspace. Kernels without openat2 (< 5.6, ENOSYS)
+/// fall back to `open_path`.
+#[cfg(target_os = "linux")]
+fn open_confined(
+    root: &Path,
+    path: &Path,
+    flags: i32,
+    mode: u32,
+) -> std::io::Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let rel = path
+        .strip_prefix(root)
+        .map_err(|_| std::io::Error::other("path outside the workspace root"))?;
+    let rel = if rel.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        rel
+    };
+    let root_c = std::ffi::CString::new(root.as_os_str().as_bytes())?;
+    let rel_c = std::ffi::CString::new(rel.as_os_str().as_bytes())?;
+    // SAFETY: valid NUL-terminated path; fd ownership taken immediately.
+    let root_fd = unsafe {
+        libc::open(
+            root_c.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if root_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fresh descriptor, owned here.
+    let root_fd = unsafe { OwnedFd::from_raw_fd(root_fd) };
+
+    // SAFETY: open_how is plain integers (and #[non_exhaustive], so it cannot
+    // be built with a literal); all-zero is a valid value.
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (flags | libc::O_CLOEXEC) as u64;
+    // The kernel rejects a non-zero mode without O_CREAT.
+    how.mode = if flags & libc::O_CREAT != 0 {
+        mode as u64
+    } else {
+        0
+    };
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS | libc::RESOLVE_NO_MAGICLINKS;
+    // SAFETY: arguments match openat2(2): dirfd, path, &open_how, its size.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root_fd.as_raw_fd(),
+            rel_c.as_ptr(),
+            &how as *const libc::open_how,
+            std::mem::size_of::<libc::open_how>(),
+        )
+    };
+    if fd >= 0 {
+        // SAFETY: fresh descriptor returned by the kernel, owned here.
+        return Ok(std::fs::File::from(unsafe {
+            OwnedFd::from_raw_fd(fd as i32)
+        }));
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::ENOSYS) {
+        // ponytail: pre-5.6 kernel keeps the check-then-open window.
+        return open_path(path, flags, mode);
+    }
+    Err(err)
+}
+
+/// Non-Linux (dev hosts): no openat2; the validated path is opened directly.
+#[cfg(not(target_os = "linux"))]
+fn open_confined(
+    _root: &Path,
+    path: &Path,
+    flags: i32,
+    mode: u32,
+) -> std::io::Result<std::fs::File> {
+    open_path(path, flags, mode)
+}
+
+/// Flags shared by read and write: never follow a final-component symlink,
+/// never block on a FIFO the workload planted.
+const FS_OPEN_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_NONBLOCK;
+
+/// Reject anything that is not a single-link regular file. A hard link in the
+/// workspace to e.g. /etc/shadow would otherwise pass the path check (hard
+/// links have no path to canonicalize) while the harness reads/writes it as
+/// root.
+fn check_regular_file(f: &std::fs::File, requested: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = f.metadata().map_err(|e| format!("{requested}: {e}"))?;
+    if !m.is_file() {
+        return Err(format!("{requested}: not a regular file"));
+    }
+    if m.nlink() > 1 {
+        return Err(format!("{requested}: refusing a hard-linked file"));
+    }
+    Ok(())
+}
+
+fn fs_tool(tool: &str, args: &serde_json::Value, root: &Path) -> ToolResult {
+    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let result = match tool {
+        "read_file" => read_file(args, path, root),
+        "write_file" => write_file(args, path, root),
+        _ => list_dir(path, root),
+    };
+    result.unwrap_or_else(|e| ToolResult::err(format!("{tool}: {e}")))
+}
+
+fn read_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolResult, String> {
+    use std::io::Read;
+    let max = args
+        .get("max_bytes")
+        .and_then(|v| v.as_u64())
+        .map_or(TOOL_OUTPUT_MAX_BYTES, |m| {
+            (m as usize).min(TOOL_OUTPUT_MAX_BYTES)
+        });
+    let (root, target) = resolve_in_workspace(root, path, true)?;
+    let f = open_confined(&root, &target, libc::O_RDONLY | FS_OPEN_FLAGS, 0)
+        .map_err(|e| format!("{path}: {e}"))?;
+    check_regular_file(&f, path)?;
+    let mut buf = Vec::new();
+    // One extra byte tells "exactly max" apart from "more than max".
+    f.take(max as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("{path}: {e}"))?;
+    let truncated = buf.len() > max;
+    buf.truncate(max);
+    Ok(ToolResult::ok(serde_json::json!({
+        "content": capped_text(&buf, truncated),
+        "truncated": truncated,
+    })))
+}
+
+/// `mode` as a JSON number (decimal mode bits) or an octal string ("0644").
+/// Only permission bits are honoured — never setuid/setgid/sticky.
+fn parse_mode(v: Option<&serde_json::Value>) -> Result<u32, String> {
+    let raw = match v {
+        None | Some(serde_json::Value::Null) => return Ok(0o644),
+        Some(serde_json::Value::Number(n)) => n.as_u64().and_then(|n| u32::try_from(n).ok()),
+        Some(serde_json::Value::String(s)) => {
+            u32::from_str_radix(s.trim_start_matches("0o"), 8).ok()
+        }
+        _ => None,
+    };
+    raw.map(|m| m & 0o777)
+        .ok_or_else(|| "mode must be a number or an octal string".into())
+}
+
+fn write_file(args: &serde_json::Value, path: &str, root: &Path) -> Result<ToolResult, String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let content = args
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or("args.content (string) is required")?;
+    if content.len() > TOOL_OUTPUT_MAX_BYTES {
+        return Err(format!("content exceeds {TOOL_OUTPUT_MAX_BYTES} bytes"));
+    }
+    let mode = parse_mode(args.get("mode"))?;
+    let (root, target) = resolve_in_workspace(root, path, false)?;
+    // No O_TRUNC: truncate only after the file is vetted.
+    let mut f = open_confined(
+        &root,
+        &target,
+        libc::O_WRONLY | libc::O_CREAT | FS_OPEN_FLAGS,
+        mode,
+    )
+    .map_err(|e| format!("{path}: {e}"))?;
+    check_regular_file(&f, path)?;
+    f.set_len(0).map_err(|e| format!("{path}: {e}"))?;
+    f.write_all(content.as_bytes())
+        .map_err(|e| format!("{path}: {e}"))?;
+    // `mode` at create is umask-filtered and ignored for an existing file.
+    f.set_permissions(std::fs::Permissions::from_mode(mode))
+        .map_err(|e| format!("{path}: {e}"))?;
+    if let Some(id) = crate::supervisor::workload_identity() {
+        std::os::unix::fs::fchown(&f, Some(id.uid), Some(id.gid))
+            .map_err(|e| format!("{path}: chown: {e}"))?;
+    }
+    Ok(ToolResult::ok(
+        serde_json::json!({ "bytes_written": content.len() }),
+    ))
+}
+
+fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
+    let (root, target) = resolve_in_workspace(root, path, true)?;
+    // Open confined, then list THAT directory through its fd, so a swap after
+    // the check cannot redirect the listing.
+    let dir = open_confined(
+        &root,
+        &target,
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        0,
+    )
+    .map_err(|e| format!("{path}: {e}"))?;
+    let rd = {
+        #[cfg(target_os = "linux")]
+        let listed = {
+            use std::os::fd::AsRawFd;
+            std::path::PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()))
+        };
+        #[cfg(not(target_os = "linux"))]
+        let listed = target.clone();
+        std::fs::read_dir(&listed).map_err(|e| format!("{path}: {e}"))?
+    };
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    for entry in rd {
+        if entries.len() == LIST_DIR_MAX_ENTRIES {
+            truncated = true;
+            break;
+        }
+        let Ok(entry) = entry else { continue };
+        // DirEntry metadata does not follow symlinks — a link is reported as
+        // a link, never as what it points at.
+        let (kind, size) = match entry.metadata() {
+            Ok(m) if m.is_symlink() => ("symlink", 0),
+            Ok(m) if m.is_dir() => ("dir", 0),
+            Ok(m) if m.is_file() => ("file", m.len()),
+            _ => ("other", 0),
+        };
+        entries.push(serde_json::json!({
+            "name": entry.file_name().to_string_lossy(),
+            "type": kind,
+            "size": size,
+        }));
+    }
+    drop(dir);
+    Ok(ToolResult::ok(serde_json::json!({
+        "entries": entries,
+        "truncated": truncated,
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +825,243 @@ mod tests {
             res.error.as_deref().unwrap_or("").contains("url"),
             "error must mention the missing field"
         );
+    }
+
+    #[tokio::test]
+    async fn shell_exec_caps_output_with_marker() {
+        // 1 MiB + 1000 bytes: must come back at exactly the cap + marker.
+        let res = dispatch(env(
+            "shell_exec",
+            serde_json::json!({"command": "head -c 1049576 /dev/zero | tr '\\0' a"}),
+        ))
+        .await;
+        assert!(res.ok, "{:?}", res.error);
+        let r = res.result.unwrap();
+        let out = r["stdout"].as_str().unwrap();
+        assert!(out.ends_with(TRUNCATED_MARKER));
+        assert_eq!(out.len(), TOOL_OUTPUT_MAX_BYTES + TRUNCATED_MARKER.len());
+        assert_eq!(r["truncated"], true);
+        assert_eq!(
+            r["exit_code"], 0,
+            "draining past the cap lets the child finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_exec_enforces_timeout() {
+        let mut e = env("shell_exec", serde_json::json!({"command": "sleep 5"}));
+        e.timeout_sec = 1;
+        let started = Instant::now();
+        let res = dispatch(e).await;
+        assert!(!res.ok);
+        assert!(res.error.unwrap().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[tokio::test]
+    async fn read_capped_bounds_memory_and_flags_truncation() {
+        let data = [7u8; 100];
+        let (kept, trunc) = read_capped(&data[..], 10).await.unwrap();
+        assert_eq!((kept.len(), trunc), (10, true));
+        let (kept, trunc) = read_capped(&data[..], 100).await.unwrap();
+        assert_eq!(
+            (kept.len(), trunc),
+            (100, false),
+            "exactly-at-cap is not truncated"
+        );
+    }
+
+    // --- fs tools ---
+
+    /// A fresh workspace root plus a sibling "outside" dir holding a secret.
+    fn sandbox(tag: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("lantern-ws-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        std::fs::create_dir_all(ws.join("sub")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(base.join("outside/secret"), "s3cret").unwrap();
+        std::fs::write(ws.join("sub/hello.txt"), "hello world").unwrap();
+        (base, ws)
+    }
+
+    #[test]
+    fn fs_tools_read_write_list_inside_root() {
+        let (base, ws) = sandbox("ok");
+        let r = fs_tool(
+            "read_file",
+            &serde_json::json!({"path": "sub/hello.txt"}),
+            &ws,
+        );
+        assert!(r.ok, "{:?}", r.error);
+        assert_eq!(r.result.as_ref().unwrap()["content"], "hello world");
+
+        let r = fs_tool(
+            "read_file",
+            &serde_json::json!({"path": "sub/hello.txt", "max_bytes": 5}),
+            &ws,
+        );
+        let v = r.result.unwrap();
+        assert_eq!(v["content"], format!("hello{TRUNCATED_MARKER}"));
+        assert_eq!(v["truncated"], true);
+
+        let abs = ws.join("sub/new.txt");
+        let r = fs_tool(
+            "write_file",
+            &serde_json::json!({"path": abs.to_str().unwrap(), "content": "hi", "mode": "0600"}),
+            &ws,
+        );
+        assert!(r.ok, "{:?}", r.error);
+        assert_eq!(std::fs::read_to_string(&abs).unwrap(), "hi");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let m = std::fs::metadata(&abs).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(m, 0o600);
+        }
+
+        let r = fs_tool("list_dir", &serde_json::json!({"path": "sub"}), &ws);
+        let v = r.result.unwrap();
+        let mut names: Vec<&str> = v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["hello.txt", "new.txt"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fs_tools_reject_dotdot_traversal() {
+        let (base, ws) = sandbox("dotdot");
+        for (tool, args) in [
+            (
+                "read_file",
+                serde_json::json!({"path": "../outside/secret"}),
+            ),
+            (
+                "read_file",
+                serde_json::json!({"path": "sub/../../outside/secret"}),
+            ),
+            (
+                "write_file",
+                serde_json::json!({"path": "../outside/pwn", "content": "x"}),
+            ),
+            (
+                "write_file",
+                serde_json::json!({"path": "sub/..", "content": "x"}),
+            ),
+            ("list_dir", serde_json::json!({"path": ".."})),
+            ("read_file", serde_json::json!({"path": "/etc/passwd"})),
+            ("read_file", serde_json::json!({"path": ""})),
+        ] {
+            let r = fs_tool(tool, &args, &ws);
+            assert!(!r.ok, "{tool} {args} must be rejected");
+        }
+        assert!(!base.join("outside/pwn").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fs_tools_reject_symlink_escape() {
+        let (base, ws) = sandbox("symlink");
+        std::os::unix::fs::symlink(base.join("outside/secret"), ws.join("leak")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), ws.join("outdir")).unwrap();
+
+        let r = fs_tool("read_file", &serde_json::json!({"path": "leak"}), &ws);
+        assert!(!r.ok, "file symlink out of the root must be rejected");
+        let r = fs_tool(
+            "read_file",
+            &serde_json::json!({"path": "outdir/secret"}),
+            &ws,
+        );
+        assert!(!r.ok, "dir symlink out of the root must be rejected");
+        let r = fs_tool("list_dir", &serde_json::json!({"path": "outdir"}), &ws);
+        assert!(!r.ok);
+        // Writing THROUGH a leaf symlink must not clobber its target.
+        let r = fs_tool(
+            "write_file",
+            &serde_json::json!({"path": "leak", "content": "pwned"}),
+            &ws,
+        );
+        assert!(!r.ok, "write through a symlink must be rejected");
+        let r = fs_tool(
+            "write_file",
+            &serde_json::json!({"path": "outdir/new", "content": "pwned"}),
+            &ws,
+        );
+        assert!(!r.ok);
+        assert_eq!(
+            std::fs::read_to_string(base.join("outside/secret")).unwrap(),
+            "s3cret"
+        );
+        assert!(!base.join("outside/new").exists());
+
+        // An in-root symlink to an in-root file is fine.
+        std::os::unix::fs::symlink(ws.join("sub/hello.txt"), ws.join("alias")).unwrap();
+        let r = fs_tool("read_file", &serde_json::json!({"path": "alias"}), &ws);
+        assert!(r.ok, "{:?}", r.error);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The parent-dir TOCTOU: the path is validated, THEN a parent is swapped
+    /// for a symlink out of the root. openat2 must refuse the open.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_confined_refuses_a_parent_swapped_after_the_check() {
+        let (base, ws) = sandbox("toctou");
+        std::fs::write(base.join("outside/hello.txt"), "outside").unwrap();
+        let (root, target) = resolve_in_workspace(&ws, "sub/hello.txt", true).unwrap();
+        std::fs::rename(ws.join("sub"), ws.join("sub_old")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), ws.join("sub")).unwrap();
+
+        // Precondition: the plain open really would land outside the root.
+        let mut escaped = String::new();
+        std::io::Read::read_to_string(
+            &mut open_path(&target, libc::O_RDONLY | FS_OPEN_FLAGS, 0).unwrap(),
+            &mut escaped,
+        )
+        .unwrap();
+        assert_eq!(escaped, "outside");
+
+        let r = open_confined(&root, &target, libc::O_RDONLY | FS_OPEN_FLAGS, 0);
+        assert!(r.is_err(), "swapped parent must not be followed");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fs_tools_reject_hard_links() {
+        let (base, ws) = sandbox("hardlink");
+        std::fs::hard_link(base.join("outside/secret"), ws.join("hl")).unwrap();
+        let r = fs_tool("read_file", &serde_json::json!({"path": "hl"}), &ws);
+        assert!(!r.ok);
+        let r = fs_tool(
+            "write_file",
+            &serde_json::json!({"path": "hl", "content": "x"}),
+            &ws,
+        );
+        assert!(!r.ok);
+        assert_eq!(
+            std::fs::read_to_string(base.join("outside/secret")).unwrap(),
+            "s3cret"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_file_caps_content_and_validates_mode() {
+        let (base, ws) = sandbox("wcap");
+        let big = "a".repeat(TOOL_OUTPUT_MAX_BYTES + 1);
+        let r = fs_tool(
+            "write_file",
+            &serde_json::json!({"path": "big", "content": big}),
+            &ws,
+        );
+        assert!(!r.ok);
+        assert_eq!(parse_mode(Some(&serde_json::json!(0o4755))).unwrap(), 0o755);
+        assert!(parse_mode(Some(&serde_json::json!("rwx"))).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // --- ToolResult serialisation round-trip ---

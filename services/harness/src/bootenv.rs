@@ -37,6 +37,146 @@ const CERT_DEVICE_CANDIDATES: [&str; 3] = ["/dev/vdb", "/dev/vdc", "/dev/vdd"];
 #[cfg(target_os = "linux")]
 const CERT_FILES: [&str; 3] = ["tls.crt", "tls.key", "manager-ca.crt"];
 
+/// Spawn contract the manager writes at the root of the cert drive.
+#[cfg(target_os = "linux")]
+const SPAWN_FILE: &str = "spawn.json";
+
+/// Harness-only (0700) home for the mTLS material once copied off the drive.
+///
+/// The drive's file modes are whatever the host-side image builder produced,
+/// and the workload now runs as an unprivileged uid that may well match the
+/// host uid that owns them. Copying into a root-owned 0700 dir and unmounting
+/// the drive makes "the workload cannot read tls.key (or spawn.json's env)"
+/// true by construction instead of by image-builder convention.
+#[cfg(target_os = "linux")]
+const PRIVATE_DIR: &str = "/run/lantern/harness";
+
+/// The manager→harness spawn contract (`spawn.json` on the cert drive).
+///
+/// Exists because the kernel command line cannot carry it: args split on
+/// whitespace and quotes are stripped, so `python main.py` or a JSON egress
+/// list arrived mangled. Every field is optional; unknown fields are ignored
+/// so the manager can add fields ahead of a harness release.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct SpawnContract {
+    pub version: u32,
+    pub workload_cmd: Option<Vec<String>>,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub egress_rules: Option<Vec<crate::proto::EgressRule>>,
+    pub workload_uid: Option<u32>,
+    pub workload_gid: Option<u32>,
+}
+
+pub fn parse_spawn_contract(bytes: &[u8]) -> serde_json::Result<SpawnContract> {
+    serde_json::from_slice(bytes)
+}
+
+/// The environment a contract publishes, one entry per key. A free-form
+/// `env` entry is dropped when a typed field sets the same key, so it can never
+/// override the uid/argv/egress the manager set explicitly.
+pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, String)>> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    if let Some(argv) = c.workload_cmd.as_ref().filter(|a| !a.is_empty()) {
+        // ARGV is authoritative (see main.rs::parse_env); CMD is kept for
+        // logs and older readers.
+        pairs.push(("LANTERN_WORKLOAD_ARGV".into(), serde_json::to_string(argv)?));
+        pairs.push(("LANTERN_WORKLOAD_CMD".into(), argv.join(" ")));
+    }
+    if let Some(rules) = &c.egress_rules {
+        pairs.push(("LANTERN_EGRESS_RULES".into(), serde_json::to_string(rules)?));
+    }
+    if let Some(uid) = c.workload_uid {
+        pairs.push(("LANTERN_WORKLOAD_UID".into(), uid.to_string()));
+    }
+    if let Some(gid) = c.workload_gid {
+        pairs.push(("LANTERN_WORKLOAD_GID".into(), gid.to_string()));
+    }
+    let typed = pairs.len();
+    for (k, v) in &c.env {
+        if !pairs[..typed].iter().any(|(t, _)| t == k) {
+            pairs.push((k.clone(), v.clone()));
+        }
+    }
+    Ok(pairs)
+}
+
+/// Turn the raw `spawn.json` read into env pairs, applying the malformed-file
+/// policy: prod refuses to boot (a half-understood contract must not run a
+/// workload with cmdline-derived — i.e. mangled — argv/egress/uid); dev warns
+/// and falls back to the cmdline.
+pub fn resolve_spawn_contract(
+    raw: std::io::Result<Option<Vec<u8>>>,
+    prod: bool,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let parsed = raw
+        .map_err(anyhow::Error::from)
+        .and_then(|bytes| match bytes {
+            None => Ok(None),
+            Some(b) => {
+                let c = parse_spawn_contract(&b)?;
+                Ok(Some(contract_env_pairs(&c)?))
+            }
+        });
+    match parsed {
+        Ok(None) => Ok(Vec::new()),
+        Ok(Some(pairs)) => {
+            // Names only — `env` values may be sensitive.
+            let names: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
+            tracing::info!(vars = ?names, "bootenv: applied spawn.json contract");
+            Ok(pairs)
+        }
+        Err(e) if prod => Err(e.context(
+            "spawn.json is present but unreadable/malformed; refusing to start the workload \
+             in production",
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "bootenv: spawn.json malformed — falling back to boot-args (dev)");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Boot-args pairs with the spawn contract layered on top: any key the
+/// contract sets is never taken from the (lossy) command line.
+pub fn layer_boot_env(
+    cmdline: Vec<(String, String)>,
+    contract: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = cmdline
+        .into_iter()
+        .filter(|(k, _)| !contract.iter().any(|(c, _)| c == k))
+        .collect();
+    out.extend(contract);
+    out
+}
+
+/// Copy the drive's cert files into `dst` (created/forced 0700, files 0600)
+/// and return the copies' paths in `CERT_FILES` order.
+#[cfg(any(target_os = "linux", test))]
+fn stash_private(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    names: &[&str],
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dst)?;
+    // Pre-existing dir: force the mode, never trust it.
+    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o700))?;
+    names
+        .iter()
+        .map(|name| {
+            let to = dst.join(name);
+            std::fs::copy(src.join(name), &to)?;
+            std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
+            Ok(to)
+        })
+        .collect()
+}
+
 /// Set when this process mounted procfs itself, so `bootstrap` can report it
 /// once tracing exists — `ensure_procfs` may run before the subscriber does.
 #[cfg(target_os = "linux")]
@@ -85,17 +225,24 @@ pub fn preinit_log_filter() {
 /// Order matters: the cert drive is mounted BEFORE boot-args are translated, so
 /// the in-guest TLS paths are already published and the boot-args' host paths
 /// (which never resolve in the guest) are correctly ignored.
-pub fn bootstrap() {
+///
+/// Errors only when `spawn.json` is malformed in production — the caller must
+/// then refuse to start the workload.
+pub fn bootstrap() -> anyhow::Result<()> {
     ensure_procfs();
     #[cfg(target_os = "linux")]
     if PROCFS_MOUNTED.load(std::sync::atomic::Ordering::Relaxed) {
         tracing::debug!("bootenv: mounted /proc");
     }
     report_entropy_source();
-    mount_cert_drive();
-    hydrate_env_from_cmdline();
+    let spawn = mount_cert_drive();
+    // Read LANTERN_ENV before the contract is applied: whether a malformed
+    // contract is fatal cannot depend on that same contract.
+    let contract = resolve_spawn_contract(spawn, crate::tls::is_prod_env())?;
+    hydrate_env_from_cmdline(contract);
     assemble_declared_secrets();
     pin_manager_hostname();
+    Ok(())
 }
 
 /// Rebuild `LANTERN_DECLARED_SECRETS` from the per-secret boot-args keys.
@@ -275,20 +422,24 @@ fn ensure_procfs() {}
 /// Mounted `MS_RDONLY` (plus nosuid/nodev/noexec) to preserve the read-only
 /// property the manager relies on. Best-effort: any failure leaves the TLS env
 /// unset, which degrades to the plaintext channel rather than refusing to boot.
+///
+/// Returns the raw `spawn.json` from the drive root (`Ok(None)` when there is
+/// no drive or no file). The drive is UNMOUNTED before returning, after its
+/// cert material is copied into the harness-only `PRIVATE_DIR` — see there.
 #[cfg(target_os = "linux")]
-fn mount_cert_drive() {
+fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
     // Already resolvable — a real environment was injected (docker/K8s), or
     // this ran once already. Never re-mount over working material.
     if std::env::var_os("LANTERN_VM_TLS_CERT")
         .map(|p| std::path::Path::new(&p).exists())
         .unwrap_or(false)
     {
-        return;
+        return Ok(None);
     }
 
     if let Err(e) = std::fs::create_dir_all(CERT_MOUNT) {
         tracing::warn!(error = %e, dir = CERT_MOUNT, "certs: cannot create cert mount point");
-        return;
+        return Ok(None);
     }
 
     for device in CERT_DEVICE_CANDIDATES {
@@ -303,18 +454,45 @@ fn mount_cert_drive() {
             .map(|name| format!("{CERT_MOUNT}/{name}"))
             .collect();
         if paths.iter().all(|p| std::path::Path::new(p).exists()) {
-            // SAFETY: single-threaded startup — see the contract on `main`.
-            unsafe {
-                std::env::set_var("LANTERN_VM_TLS_CERT", &paths[0]);
-                std::env::set_var("LANTERN_VM_TLS_KEY", &paths[1]);
-                std::env::set_var("LANTERN_MANAGER_TLS_CA", &paths[2]);
+            let spawn = match std::fs::read(format!("{CERT_MOUNT}/{SPAWN_FILE}")) {
+                Ok(b) => Ok(Some(b)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            };
+            match stash_private(
+                std::path::Path::new(CERT_MOUNT),
+                std::path::Path::new(PRIVATE_DIR),
+                &CERT_FILES,
+            ) {
+                Ok(private) => {
+                    // SAFETY: single-threaded startup — see the contract on `main`.
+                    unsafe {
+                        std::env::set_var("LANTERN_VM_TLS_CERT", &private[0]);
+                        std::env::set_var("LANTERN_VM_TLS_KEY", &private[1]);
+                        std::env::set_var("LANTERN_MANAGER_TLS_CA", &private[2]);
+                    }
+                    tracing::info!(
+                        device,
+                        private_dir = PRIVATE_DIR,
+                        "certs: per-VM cert drive copied to harness-only dir — \
+                         harness→manager channel is mTLS"
+                    );
+                }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "certs: cannot stash cert material — harness→manager channel will be PLAINTEXT"
+                ),
             }
-            tracing::info!(
-                device,
-                mount = CERT_MOUNT,
-                "certs: mounted per-VM cert drive (read-only) — harness→manager channel is mTLS"
-            );
-            return;
+            // Nothing on the drive may stay reachable by the workload uid.
+            if !umount(CERT_MOUNT) {
+                tracing::error!(
+                    mount = CERT_MOUNT,
+                    error = %std::io::Error::last_os_error(),
+                    "certs: SECURITY could not unmount the cert drive — its files remain \
+                     subject to the image's file modes"
+                );
+            }
+            return spawn;
         }
 
         // Wrong volume: leave nothing mounted behind for the next candidate.
@@ -325,10 +503,13 @@ fn mount_cert_drive() {
         candidates = ?CERT_DEVICE_CANDIDATES,
         "certs: no per-VM cert drive found — harness→manager channel will be PLAINTEXT"
     );
+    Ok(None)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn mount_cert_drive() {}
+fn mount_cert_drive() -> std::io::Result<Option<Vec<u8>>> {
+    Ok(None)
+}
 
 /// Mount `device` at `target` as read-only ext4. Returns whether it succeeded.
 #[cfg(target_os = "linux")]
@@ -356,10 +537,10 @@ fn mount_ro_ext4(device: &str, target: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn umount(target: &str) {
-    if let Ok(t) = std::ffi::CString::new(target) {
-        unsafe { libc::umount(t.as_ptr()) };
-    }
+fn umount(target: &str) -> bool {
+    std::ffi::CString::new(target)
+        .map(|t| unsafe { libc::umount(t.as_ptr()) } == 0)
+        .unwrap_or(false)
 }
 
 /// Map one boot-arg key to the environment variable the harness reads.
@@ -406,18 +587,19 @@ pub fn env_from_cmdline(cmdline: &str) -> Vec<(String, String)> {
 /// Values are never logged — `lantern.env.*` carries caller-supplied data that
 /// may be sensitive (invariant: secrets never appear in logs). Only the names
 /// that were set are traced.
-pub fn hydrate_env_from_cmdline() {
+///
+/// `contract` (from `spawn.json`) takes precedence over boot-args for every
+/// key it sets.
+pub fn hydrate_env_from_cmdline(contract: Vec<(String, String)>) {
     ensure_procfs();
 
-    let Ok(cmdline) = std::fs::read_to_string(CMDLINE_PATH) else {
-        // No procfs (non-Linux, or a container without /proc): nothing to do.
-        return;
-    };
+    // No procfs (non-Linux, or a container without /proc): the contract alone.
+    let cmdline = std::fs::read_to_string(CMDLINE_PATH).unwrap_or_default();
 
     let mut applied: Vec<String> = Vec::new();
     let mut unresolved: Vec<String> = Vec::new();
 
-    for (name, value) in env_from_cmdline(&cmdline) {
+    for (name, value) in layer_boot_env(env_from_cmdline(&cmdline), contract) {
         // An explicitly-provided environment always wins over boot-args.
         if std::env::var_os(&name).is_some() {
             continue;
@@ -539,6 +721,143 @@ mod tests {
         // in the VM, so a panic here is an unbootable guest.
         let got = env_from_cmdline("quiet lantern.env.= lantern.vm_id=vm-1 \n");
         assert_eq!(got, vec![("LANTERN_VM_ID".to_string(), "vm-1".to_string())]);
+    }
+
+    #[test]
+    fn spawn_contract_parses_full_schema_and_ignores_unknown_fields() {
+        let c = parse_spawn_contract(
+            br#"{"version":1,"workload_cmd":["python","main.py"],"env":{"K":"V"},
+                "egress_rules":[{"pattern":"api.example.com","http_methods":["GET"],"rate_bps":0}],
+                "workload_uid":1000,"workload_gid":1001,"future_field":{"x":1}}"#,
+        )
+        .expect("valid contract");
+        let pairs = contract_env_pairs(&c).expect("encodable");
+        let get = |k: &str| pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        // Spaces survive — the whole point of the file.
+        assert_eq!(
+            get("LANTERN_WORKLOAD_ARGV").as_deref(),
+            Some(r#"["python","main.py"]"#)
+        );
+        assert_eq!(
+            get("LANTERN_WORKLOAD_CMD").as_deref(),
+            Some("python main.py")
+        );
+        assert_eq!(get("K").as_deref(), Some("V"));
+        assert_eq!(get("LANTERN_WORKLOAD_UID").as_deref(), Some("1000"));
+        assert_eq!(get("LANTERN_WORKLOAD_GID").as_deref(), Some("1001"));
+        let rules: Vec<crate::proto::EgressRule> =
+            serde_json::from_str(&get("LANTERN_EGRESS_RULES").unwrap_or_default())
+                .expect("egress JSON round-trips");
+        assert_eq!(rules[0].pattern, "api.example.com");
+        assert_eq!(rules[0].http_methods, vec!["GET".to_string()]);
+    }
+
+    #[test]
+    fn spawn_contract_all_fields_optional() {
+        let c = parse_spawn_contract(b"{}").expect("empty object is valid");
+        assert!(contract_env_pairs(&c).expect("encodable").is_empty());
+        // A partial egress rule takes defaults rather than failing the file.
+        let c = parse_spawn_contract(br#"{"egress_rules":[{"pattern":"x"}]}"#).expect("partial");
+        assert_eq!(c.egress_rules.map(|r| r[0].rate_bps), Some(0));
+    }
+
+    #[test]
+    fn typed_contract_fields_beat_free_form_env() {
+        // A user-supplied `env` entry must not override the manager's uid.
+        let c =
+            parse_spawn_contract(br#"{"env":{"LANTERN_WORKLOAD_UID":"0"},"workload_uid":1000}"#)
+                .expect("valid");
+        let pairs = contract_env_pairs(&c).expect("encodable");
+        let uids: Vec<&str> = pairs
+            .iter()
+            .filter(|(k, _)| k == "LANTERN_WORKLOAD_UID")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        // One entry per key (hydration keeps the first value it sees).
+        assert_eq!(uids, vec!["1000"]);
+    }
+
+    #[test]
+    fn spawn_contract_takes_precedence_over_cmdline() {
+        let cmdline = env_from_cmdline(
+            "lantern.vm_id=vm-1 lantern.workload_cmd=python \
+             lantern.env.LANTERN_WORKLOAD_UID=0 lantern.env.KEEP=1",
+        );
+        let c =
+            parse_spawn_contract(br#"{"workload_cmd":["python","main.py"],"workload_uid":1000}"#)
+                .expect("valid");
+        let got = layer_boot_env(cmdline, contract_env_pairs(&c).expect("encodable"));
+        let all = |k: &str| -> Vec<&str> {
+            got.iter()
+                .filter(|(n, _)| n == k)
+                .map(|(_, v)| v.as_str())
+                .collect()
+        };
+        // Exactly one value per contract key, and it is the contract's.
+        assert_eq!(all("LANTERN_WORKLOAD_CMD"), vec!["python main.py"]);
+        assert_eq!(all("LANTERN_WORKLOAD_UID"), vec!["1000"]);
+        // Keys the contract does not set still come from boot-args.
+        assert_eq!(all("LANTERN_VM_ID"), vec!["vm-1"]);
+        assert_eq!(all("KEEP"), vec!["1"]);
+    }
+
+    #[test]
+    fn malformed_spawn_contract_is_fatal_in_prod_and_ignored_in_dev() {
+        let bad = || Ok(Some(b"{\"workload_cmd\": \"python main.py\"}".to_vec()));
+        assert!(resolve_spawn_contract(bad(), true).is_err());
+        assert!(
+            resolve_spawn_contract(bad(), false)
+                .expect("dev falls back")
+                .is_empty()
+        );
+
+        let garbage = || Ok(Some(b"not json".to_vec()));
+        assert!(resolve_spawn_contract(garbage(), true).is_err());
+
+        let unreadable = || Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(resolve_spawn_contract(unreadable(), true).is_err());
+        assert!(
+            resolve_spawn_contract(unreadable(), false)
+                .expect("dev")
+                .is_empty()
+        );
+
+        // Absent file is the normal cmdline path, prod or not.
+        assert!(
+            resolve_spawn_contract(Ok(None), true)
+                .expect("absent")
+                .is_empty()
+        );
+        let ok = resolve_spawn_contract(Ok(Some(br#"{"workload_uid":7}"#.to_vec())), true)
+            .expect("valid in prod");
+        assert_eq!(ok, vec![("LANTERN_WORKLOAD_UID".into(), "7".into())]);
+    }
+
+    #[test]
+    fn cert_material_is_stashed_harness_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("lantern-stash-{}", std::process::id()));
+        let src = base.join("drive");
+        let dst = base.join("private");
+        std::fs::create_dir_all(&src).expect("mk src");
+        for n in ["tls.crt", "tls.key", "manager-ca.crt"] {
+            std::fs::write(src.join(n), n).expect("write");
+            std::fs::set_permissions(src.join(n), std::fs::Permissions::from_mode(0o644))
+                .expect("chmod");
+        }
+        // A pre-existing, too-open dir must be tightened, not trusted.
+        std::fs::create_dir_all(&dst).expect("mk dst");
+        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let out =
+            stash_private(&src, &dst, &["tls.crt", "tls.key", "manager-ca.crt"]).expect("stash");
+        let mode =
+            |p: &std::path::Path| std::fs::metadata(p).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode(&dst), 0o700);
+        assert_eq!(out[1], dst.join("tls.key"));
+        assert_eq!(mode(&out[1]), 0o600);
+        assert_eq!(std::fs::read_to_string(&out[1]).expect("read"), "tls.key");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

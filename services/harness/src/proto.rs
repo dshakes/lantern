@@ -41,6 +41,7 @@ pub struct ResourceUsage {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EgressRule {
     pub pattern: String,
     pub http_methods: Vec<String>,
