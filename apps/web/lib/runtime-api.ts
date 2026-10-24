@@ -36,6 +36,17 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/** Non-2xx API response. `status` lets callers map 402/409 to friendly copy. */
+export class HttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
 function purgeTokenAndRedirect() {
   if (typeof window === "undefined") return;
   try {
@@ -79,7 +90,7 @@ async function request<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+    throw new HttpError(res.status, `API ${res.status}: ${text || res.statusText}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
