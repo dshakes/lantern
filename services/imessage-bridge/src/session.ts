@@ -3066,7 +3066,9 @@ export class IMessageSession {
             isOwnerChat: (!!ownerEnv && norm(r.handle) === norm(ownerEnv)) || this.isSelfChat(r.chatRowid, r.handle),
           }));
           const ev = imessageEvidence(rows, { nameFor: (h) => this.contactNames.get(h) || h });
-          return [...ev.selfChat, ...ev.threads, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
+          // Owner-authored evidence ONLY. Contact threads are inbound text — a contact
+          // saying "looks like you sent the deck" must never close the owner's commitment.
+          return [...ev.selfChat, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
         },
         llmCall: async (p) => (await this.agent.respondTo("owner::commit-judge", p, undefined, { withTools: false })) ?? "",
         send: (t) => this.send(target, t),

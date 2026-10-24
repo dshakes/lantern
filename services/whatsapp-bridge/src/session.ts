@@ -10861,7 +10861,9 @@ export class WhatsAppSession {
           const ev = existsSync(this.historyFile)
             ? waHistoryEvidence(readFileSync(this.historyFile, "utf8"), { sinceMs: now - 3 * 86_400_000, ownerJid: process.env.LANTERN_WA_OWNER_JID })
             : { selfChat: [] as string[], threads: [] as string[] };
-          return [...ev.selfChat, ...ev.threads, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
+          // Owner-authored evidence ONLY. Contact threads are inbound text — a contact
+          // saying "looks like you sent the deck" must never close the owner's commitment.
+          return [...ev.selfChat, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
         },
         llmCall: async (p) => (await this.agent.respondTo("owner::commit-judge", p, "", { withTools: false })) ?? "",
         send: (t) => this.sendSelf(t),

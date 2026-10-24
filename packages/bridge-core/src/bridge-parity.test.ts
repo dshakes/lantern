@@ -57,3 +57,12 @@ for (const [mod, why] of Object.entries(IMESSAGE_ONLY)) {
     assert.ok(!WA.includes(probe), `WhatsApp now uses ${mod}: remove it from IMESSAGE_ONLY`);
   });
 }
+
+// Commitment auto-close may only cite owner-authored evidence. Contact threads are
+// inbound text: a contact claiming "you sent the deck" must not close the owner's
+// commitment (prompt-injection into the ledger).
+test("commitment auto-close never cites inbound contact threads (both bridges)", () => {
+  for (const [name, src] of [["iMessage", IM], ["WhatsApp", WA]] as const) {
+    assert.ok(!/\.\.\.ev\.threads/.test(src), `${name} feeds contact threads into commitment evidence`);
+  }
+});
