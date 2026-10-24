@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -204,3 +205,99 @@ func TestSchedule_NoIdempotencyKey_CreatesTwoVMs(t *testing.T) {
 // Helper: expose a VmHandle with a fixed CreatedAt for test assertions
 // ---------------------------------------------------------------------------
 var _ = timestamppb.Now // ensure import used
+
+// spawnFailDialer fails every Spawn but stops fine.
+type spawnFailDialer struct{ okDialer }
+
+func (spawnFailDialer) Spawn(_ context.Context, _ string, _ *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+	return nil, errors.New("manager down")
+}
+
+func TestSchedule_SpawnFailure_ReleasesQuotaExactlyOnce(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	svc := newService(store, spawnFailDialer{})
+	ctx := ctxWithTenant("t1")
+
+	h, err := svc.Schedule(ctx, scheduleReq("sha256:abc", ""))
+	if err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for store.TenantLiveVMs("t1") != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := store.TenantLiveVMs("t1"); got != 0 {
+		t.Fatalf("quota after failed spawn = %d, want 0 (slot leaked)", got)
+	}
+
+	// A second tenant VM keeps its slot; cleaning up the FAILED VM must not
+	// double-decrement.
+	store.IncrTenantVMs("t1", 1)
+	if _, err := svc.Terminate(ctx, &lanternv1.TerminateRequest{VmId: h.VmId, Reason: "cleanup"}); err != nil {
+		t.Fatalf("Terminate failed VM: %v", err)
+	}
+	if got := store.TenantLiveVMs("t1"); got != 1 {
+		t.Errorf("quota after terminating FAILED vm = %d, want 1 (double decrement)", got)
+	}
+}
+
+func TestSchedule_IdempotencyKey_TenantScoped(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	svc := newService(store, okDialer{})
+
+	a1, err := svc.Schedule(ctxWithTenant("tA"), scheduleReq("sha256:abc", "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := svc.Schedule(ctxWithTenant("tA"), scheduleReq("sha256:abc", "k1"))
+	if err != nil || a2.VmId != a1.VmId {
+		t.Fatalf("same tenant retry: got %v (%v), want vm %s", a2, err, a1.VmId)
+	}
+	b, err := svc.Schedule(ctxWithTenant("tB"), scheduleReq("sha256:abc", "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.VmId == a1.VmId {
+		t.Fatal("tenant B received tenant A's VM via shared idempotency key")
+	}
+	// Unauthenticated (no tenant) must not read the cache either.
+	if _, err := svc.Schedule(context.Background(), scheduleReq("sha256:abc", "k1")); err == nil {
+		t.Fatal("schedule without tenant succeeded; idempotency cache read before auth")
+	}
+}
+
+func TestSchedule_IdempotencyKey_ConcurrentCreatesOneVM(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	svc := newService(store, okDialer{})
+
+	const n = 20
+	ids := make(chan string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := svc.Schedule(ctxWithTenant("t1"), scheduleReq("sha256:abc", "same"))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			ids <- h.VmId
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	seen := map[string]bool{}
+	for id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("concurrent same-key schedules created %d VMs, want 1", len(seen))
+	}
+	if got := store.TenantLiveVMs("t1"); got != 1 {
+		t.Errorf("quota = %d, want 1", got)
+	}
+}

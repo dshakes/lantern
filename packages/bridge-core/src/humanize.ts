@@ -338,16 +338,28 @@ export function looksLikeRejection(text: string): boolean {
 //   - "none": don't consume. On the DRAIN path (confirmOnly) a non-confirm must
 //     flow to the LLM, and a doc-relay can't be replaced with free text.
 //   - "replace": (live only) send the owner's typed words to the contact instead.
+//
+// MIN_REPLACE_DWELL_MS guards "replace": the owner's self-chat is also a general
+// chat channel (business notes, SLA digests, unrelated commentary), and a draft
+// can be staged mid-conversation. A freeform message that lands within this
+// window of the draft's issuedAt cannot plausibly be a considered reply to a
+// draft the owner hasn't had time to read yet — treat it as unrelated instead
+// of blasting it to the draft's contact. Real one-shot deliberate reject/approve
+// wording is unaffected (checked above this gate).
+export const MIN_REPLACE_DWELL_MS = 3000;
+
 export function classifyPendingReply(
   text: string,
   pending: { kind?: string },
   confirmOnly: boolean,
+  elapsedMs = Infinity,
 ): "approve" | "reject" | "replace" | "none" {
   const t = (text || "").trim().toLowerCase();
   const bareSend = t.length <= 40 && /^(send|sent|deliver|send it|send that|send now|send them|fire it|do it)[.!]*$/.test(t);
   if (bareSend || looksLikeConfirmation(text)) return "approve";
   if (looksLikeRejection(text)) return "reject";
   if (confirmOnly || pending.kind === "doc-relay") return "none";
+  if (elapsedMs < MIN_REPLACE_DWELL_MS) return "none";
   return "replace";
 }
 
