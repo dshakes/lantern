@@ -271,7 +271,7 @@ impl Supervisor {
             // Emit an audit event for the exec.
             self.manager
                 .enqueue_report(HarnessReport::Audit(AuditEvent {
-                    vm_id: self.manager.vm_id.clone(),
+                    vm_id: self.manager.vm_id(),
                     action: "exec".into(),
                     at_unix_ms: now_unix_ms(),
                     attrs: [
