@@ -100,10 +100,21 @@ const MANAGER_CMDLINE_KEYS: [&str; 3] = [
     "LANTERN_ENV",
 ];
 
-/// Whether a free-form (caller-supplied) env key may be applied: anything
-/// outside the `LANTERN_` namespace, or an allowlisted caller key.
+/// Identity keys the MANAGER stamps into the free-form env from the request's
+/// authenticated typed fields, after stripping any caller-supplied value
+/// (runtime-manager `service::own_workload_env`). Accepted on the env channel
+/// (`spawn.json` `env` / `lantern.env.*`) because that is how the manager
+/// sends them; the harness itself never reads them — they are for the
+/// workload SDK.
+const MANAGER_IDENTITY_KEYS: [&str; 2] = ["LANTERN_TENANT_ID", "LANTERN_AGENT_VERSION_ID"];
+
+/// Whether a free-form env key may be applied: anything outside the
+/// `LANTERN_` namespace, an allowlisted caller key, or a manager-stamped
+/// identity key.
 fn caller_key_allowed(key: &str) -> bool {
-    !key.starts_with("LANTERN_") || CALLER_LANTERN_KEYS.contains(&key)
+    !key.starts_with("LANTERN_")
+        || CALLER_LANTERN_KEYS.contains(&key)
+        || MANAGER_IDENTITY_KEYS.contains(&key)
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -943,7 +954,8 @@ mod tests {
                 "LANTERN_ENV":"dev","LANTERN_EGRESS_FAIL_CLOSED":"0",
                 "LANTERN_NO_PROXY":"*","LANTERN_EGRESS_RULES":"[]",
                 "LANTERN_WORKLOAD_UID":"0","LANTERN_AGENT_INSTANCE_ID":"inst",
-                "LANTERN_AGENT_INSTANCE_TOKEN":"tok","FOO":"bar"}}"#,
+                "LANTERN_AGENT_INSTANCE_TOKEN":"tok","FOO":"bar",
+                "LANTERN_TENANT_ID":"t-auth","LANTERN_AGENT_VERSION_ID":"av-1"}}"#,
         )
         .unwrap();
         let pairs = contract_env_pairs(&contract).unwrap();
@@ -966,13 +978,17 @@ mod tests {
         assert_eq!(get("LANTERN_AGENT_INSTANCE_ID"), ["inst"]);
         assert_eq!(get("LANTERN_AGENT_INSTANCE_TOKEN"), ["tok"]);
         assert_eq!(get("FOO"), ["bar"]);
+        // Manager-stamped identity (the manager strips any caller value first).
+        assert_eq!(get("LANTERN_TENANT_ID"), ["t-auth"]);
+        assert_eq!(get("LANTERN_AGENT_VERSION_ID"), ["av-1"]);
 
         // Boot-args: same rule; the manager's own keys still apply.
         let cmd = env_from_cmdline(
             "lantern.env.LANTERN_EGRESS_FAIL_CLOSED=0 lantern.env.LANTERN_NO_PROXY=* \
              lantern.env.LANTERN_HARNESS_EXEC_TOKEN=x lantern.env.LANTERN_MANAGER_ADDR=10.0.0.1:50054 \
              lantern.env.LANTERN_ENV=prod lantern.env.LANTERN_WORKLOAD_UID=1000 \
-             lantern.env.LANTERN_AGENT_INSTANCE_ID=inst lantern.env.FOO=bar",
+             lantern.env.LANTERN_AGENT_INSTANCE_ID=inst lantern.env.FOO=bar \
+             lantern.env.LANTERN_TENANT_ID=t-auth",
         );
         let names: Vec<&str> = cmd.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
@@ -982,7 +998,8 @@ mod tests {
                 "LANTERN_ENV",
                 "LANTERN_WORKLOAD_UID",
                 "LANTERN_AGENT_INSTANCE_ID",
-                "FOO"
+                "FOO",
+                "LANTERN_TENANT_ID"
             ]
         );
 

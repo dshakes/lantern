@@ -224,12 +224,22 @@ prod fail-closed guard, or `LANTERN_EGRESS_FAIL_CLOSED` / `LANTERN_NO_PROXY`.
   (`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN`,
   `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`). It logs the dropped names, never
   values, then stamps its own `LANTERN_ENV`, which it also writes as the typed
-  `spawn.json` field `lantern_env`.
+  `spawn.json` field `lantern_env`. The order is sanitize first, then inject.
+  After sanitizing, the manager also stamps the workload identity from the
+  request's authenticated typed fields: `LANTERN_TENANT_ID` from `tenant_id`,
+  and `LANTERN_AGENT_VERSION_ID` from `agent_version_id` (schedule only;
+  `RestoreRequest` has no such field). A forged caller value is replaced, and
+  the real one is never stripped. Anything the manager adds after the choke
+  point (trace parent, typed spawn.json fields) is likewise added after the
+  sanitizer runs.
 - **Harness**: ignores `LANTERN_*` keys in the `spawn.json` `env` map unless
-  they are allowlisted. `LANTERN_ENV` comes from the typed field. From
-  `lantern.env.*` boot-args it accepts only the manager's own keys
-  (`LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`, `LANTERN_ENV`) plus the
-  allowlist.
+  they are allowlisted (`CALLER_LANTERN_KEYS` plus the manager-stamped identity
+  keys `LANTERN_TENANT_ID` / `LANTERN_AGENT_VERSION_ID`). `LANTERN_ENV` comes
+  from the typed field. From `lantern.env.*` boot-args it accepts only the
+  manager's own keys (`LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`,
+  `LANTERN_ENV`) plus that same allowlist. The two identity keys are also on
+  the supervisor's workload-visible list, because the workload SDK reads
+  `LANTERN_TENANT_ID`.
 - Residual risk: an older manager that does not filter can still pass a caller
   `lantern.env.LANTERN_ENV` through boot-args. Upgrade the manager.
 
