@@ -6,7 +6,7 @@ const NOW = Date.parse("2026-07-01T12:00:00");
 
 // ── checkCalendarConflict (real-calendar double-book guard) ──
 const existing: CalendarEventRead[] = [
-  { calendar: "Home", title: "Dentist", start: new Date("2026-07-02T10:00:00"), end: new Date("2026-07-02T11:00:00") },
+  { calendar: "Home", title: "Dentist", start: new Date("2026-07-02T10:00:00"), end: new Date("2026-07-02T11:00:00"), allDay: false },
 ];
 
 test("rejects an event overlapping an existing one", () => {
@@ -28,7 +28,7 @@ test("allows an adjacent event that only touches the boundary", () => {
 
 test("no-end existing event is treated as a 30-min block", () => {
   const openEnded: CalendarEventRead[] = [
-    { calendar: "Home", title: "Call", start: new Date("2026-07-02T09:00:00"), end: null },
+    { calendar: "Home", title: "Call", start: new Date("2026-07-02T09:00:00"), end: null, allDay: false },
   ];
   assert.equal(checkCalendarConflict({ title: "X", start: "2026-07-02T09:15:00" }, openEnded).conflict, true);
   assert.equal(checkCalendarConflict({ title: "X", start: "2026-07-02T09:45:00" }, openEnded).conflict, false);
