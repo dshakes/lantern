@@ -43,6 +43,7 @@ export default function RuntimePage() {
       <IsolationTiers />
       <IsolationMatrix />
       <DurableExecution />
+      <SandboxLifecycle />
       <Tracing />
       <Governance />
       <RuntimeCodeStory />
@@ -64,6 +65,7 @@ function Nav() {
         <nav className="hidden md:flex items-center gap-1 text-sm text-[#9898a8]">
           <a href="#tiers" className="nav-pill px-3 py-1.5 rounded-md">Isolation</a>
           <a href="#durable" className="nav-pill px-3 py-1.5 rounded-md">Durability</a>
+          <a href="#sandbox" className="nav-pill px-3 py-1.5 rounded-md">Sandboxes</a>
           <a href="#governance" className="nav-pill px-3 py-1.5 rounded-md">Governance</a>
           <a href={GH_URL} className="nav-pill px-3 py-1.5 rounded-md">GitHub</a>
           <a href={DOCS_URL} className="nav-pill px-3 py-1.5 rounded-md">Docs</a>
@@ -350,6 +352,58 @@ function DurableExecution() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Sandbox lifecycle (pause / resume / fork) ─────────────────────────────
+function SandboxLifecycle() {
+  return (
+    <section id="sandbox" className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        <div className="code-window rounded-xl border border-white/5 p-5 font-mono text-[12px] text-[#cbd5e1] order-2 lg:order-1">
+          <div className="flex flex-col gap-3">
+            <div className="rounded-md border border-white/5 bg-[#0a0a0f] p-4">
+              <div className="text-[#55556a] mb-2">your VPC · microVM sandbox</div>
+              <div className="flex flex-col gap-1">
+                <span><span className="text-emerald-400">$</span> lantern vm pause vm-3f9a</span>
+                <span><span className="text-emerald-400">$</span> lantern vm resume vm-3f9a</span>
+                <span><span className="text-emerald-400">$</span> lantern vm fork vm-3f9a --count 3</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-teal-300/80 text-[11px]">
+              <GitBranch className="w-3.5 h-3.5" />
+              <span>one snapshot</span>
+              <div className="flex-1 beam-line" />
+              <span>3 independent VMs</span>
+            </div>
+            <div className="rounded-md border border-teal-400/20 bg-teal-400/5 p-4">
+              <div className="text-teal-300 mb-2">each fork gets its own</div>
+              <div className="flex flex-col gap-1">
+                <span><span className="text-teal-300/80">identity</span> vm_id · cert · agent token</span>
+                <span><span className="text-teal-300/80">exec</span> fresh per-incarnation token</span>
+                <span><span className="text-teal-300/80">egress</span> allowlist, deny by default</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="order-1 lg:order-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-teal-400/20 bg-teal-400/5 text-xs text-teal-300 mb-4">
+            <GitBranch className="w-3 h-3" /> Sandbox lifecycle
+          </div>
+          <h3 className="text-3xl md:text-4xl font-bold tracking-tight">
+            Pause it. Resume it. Fork it.
+          </h3>
+          <p className="mt-4 text-[#9898a8] leading-relaxed">
+            MicroVM sandboxes are stateful. Snapshot a warmed-up VM, free its concurrency slot, bring it back later under the same id — or fork it into several copies to try different approaches from the same state. It all runs in your own VPC.
+          </p>
+          <ul className="mt-6 space-y-2 text-sm text-[#cbd5e1]">
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> A restored VM is a new identity — fresh cert and exec token, never the source&apos;s</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> Snapshots are tenant-owned; another tenant&apos;s restore returns not-found</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> Egress allowlist and secret vending apply to every fork; runs still yield signed receipts</li>
+          </ul>
         </div>
       </div>
     </section>

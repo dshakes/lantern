@@ -133,6 +133,9 @@ lantern vm list [--state running]
 lantern vm get <vm-id>
 lantern vm logs <vm-id>          # SSE log stream from the harness
 lantern vm stop <vm-id> [--grace 30]
+lantern vm pause <vm-id>            # snapshot + stop, frees the quota slot
+lantern vm resume <vm-id>           # restore under the same vm id
+lantern vm fork <vm-id> --count 3   # N independent copies (1..10)
 lantern vm exec <vm-id> -- ls /tmp   # exec into a running VM (debug)
 lantern vm quota                 # current quota + today's usage
 lantern vm cluster               # node load + warm-pool capacity (owner only)`}</code>
