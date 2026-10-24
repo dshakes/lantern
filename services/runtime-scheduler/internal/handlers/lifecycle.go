@@ -105,7 +105,10 @@ func (s *SchedulerService) Pause(ctx context.Context, req *lanternv1.PauseReques
 		return nil, status.Errorf(codes.FailedPrecondition, "vm %q is %s; only a RUNNING vm can be paused", vmID, vm.State)
 	}
 
-	node, _ := s.Store.GetNode(vm.NodeName)
+	node, ok := s.Store.GetNode(vm.NodeName)
+	if !ok {
+		return nil, status.Errorf(codes.Unavailable, "pause %s: node %q is not registered", vmID, vm.NodeName)
+	}
 	snap, err := s.Dialer.Snapshot(ctx, node.Address, &lanternv1.SnapshotRequest{VmId: vmID})
 	if err != nil {
 		// No synthetic id here (unlike Snapshot): pausing onto a snapshot that

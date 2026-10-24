@@ -140,6 +140,7 @@ modelRouter:
       memory: 512Mi
   env:
     LOG_LEVEL: "info"
+    LANTERN_ENV: "staging"
 
 runtimeManager:
   replicas: 1

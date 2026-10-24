@@ -174,6 +174,7 @@ func webSearchViaAnthropic(ctx context.Context, apiKey, prompt string) (any, err
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "anthropic", bodyBytes))
 
 	resp, err := webSearchHTTPClient.Do(req)
 	if err != nil {
@@ -240,6 +241,7 @@ func webSearchViaOpenAI(ctx context.Context, apiKey, prompt string) (any, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setLLMIdempotencyHeader(req, llmBodyIdempotencyKey(ctx, "openai", bodyBytes))
 
 	resp, err := webSearchHTTPClient.Do(req)
 	if err != nil {

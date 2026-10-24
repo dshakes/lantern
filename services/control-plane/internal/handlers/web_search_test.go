@@ -201,3 +201,37 @@ func TestCallLLMWithTools_ToolSpendStaysOnAccumulator(t *testing.T) {
 		t.Errorf("accumulator = %d/%d $%v", in, out, cost)
 	}
 }
+
+// Invariant #8: both web_search provider requests carry an Idempotency-Key
+// derived from the exact body sent, so a retry of the same search dedups.
+func TestExecuteWebSearchTool_SetsIdempotencyKey(t *testing.T) {
+	for _, anthropic := range []bool{true, false} {
+		name := map[bool]string{true: "anthropic", false: "openai"}[anthropic]
+		t.Run(name, func(t *testing.T) {
+			if anthropic {
+				t.Setenv("ANTHROPIC_API_KEY", "k")
+			} else {
+				t.Setenv("ANTHROPIC_API_KEY", "")
+				t.Setenv("OPENAI_API_KEY", "k")
+			}
+			var gotKey string
+			var gotBody []byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotKey = r.Header.Get("Idempotency-Key")
+				gotBody, _ = io.ReadAll(r.Body)
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"x"}],"choices":[{"message":{"content":"x"}}]}`))
+			}))
+			defer srv.Close()
+			oa, oo := anthropicWebSearchURL, openaiWebSearchURL
+			anthropicWebSearchURL, openaiWebSearchURL = srv.URL, srv.URL
+			defer func() { anthropicWebSearchURL, openaiWebSearchURL = oa, oo }()
+
+			if _, err := executeWebSearchTool(context.Background(), nil, "t1", map[string]any{"query": "q"}); err != nil {
+				t.Fatal(err)
+			}
+			if want := llmBodyIdempotencyKey(context.Background(), name, gotBody); gotKey == "" || gotKey != want {
+				t.Fatalf("Idempotency-Key = %q, want %q", gotKey, want)
+			}
+		})
+	}
+}

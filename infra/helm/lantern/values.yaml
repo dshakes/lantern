@@ -64,6 +64,8 @@ modelRouter:
   service:
     type: ClusterIP
     port: 50053
+  env:
+    LANTERN_ENV: "production"
   resources:
     requests:
       cpu: 200m
@@ -97,6 +99,8 @@ runtimeManager:
   service:
     type: ClusterIP
     port: 50054
+  env:
+    LANTERN_ENV: "production"
   resources:
     requests:
       cpu: 500m
