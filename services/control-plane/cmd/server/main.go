@@ -21,7 +21,6 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -309,7 +308,12 @@ func main() {
 	// increment 1 behavior until the runtime image ships (increment 2).
 	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
 	if rmAddr := os.Getenv("LANTERN_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
-		rmConn, rmErr := grpc.NewClient(rmAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Same creds as every manager dial: service token + mTLS when configured.
+		rmOpts, rmErr := handlers.ManagerDialOptions(os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"))
+		var rmConn *grpc.ClientConn
+		if rmErr == nil {
+			rmConn, rmErr = grpc.NewClient(rmAddr, rmOpts...)
+		}
 		if rmErr != nil {
 			logger.Warn("browser-skill: failed to dial runtime manager",
 				zap.String("addr", rmAddr),
@@ -779,6 +783,9 @@ func main() {
 	httpMux.HandleFunc("GET /v1/runtime/vms/{id}/logs", runtimeHandler.StreamLogs)
 	httpMux.HandleFunc("DELETE /v1/runtime/vms/{id}", runtimeHandler.TerminateVM)
 	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/exec", runtimeHandler.ExecVM)
+	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/pause", runtimeHandler.PauseVM)
+	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/resume", runtimeHandler.ResumeVM)
+	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/fork", runtimeHandler.ForkVM)
 	httpMux.HandleFunc("GET /v1/runtime/cluster", runtimeHandler.Cluster)
 	httpMux.HandleFunc("GET /v1/runtime/quota", runtimeHandler.GetQuota)
 	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)
@@ -1052,6 +1059,12 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 	if !prod && os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR") == "" {
 		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
+	}
+
+	// Runtime-manager dial credentials (logs/exec proxy + browser skill). The
+	// manager forces mTLS in prod; refuse to start rather than fail every dial.
+	if _, err := handlers.ManagerTransportCreds(prod); err != nil {
+		logger.Fatal("runtime-manager client TLS", zap.Error(err))
 	}
 }
 

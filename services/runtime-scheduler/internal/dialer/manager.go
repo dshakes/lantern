@@ -10,6 +10,8 @@ package dialer
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
@@ -59,6 +62,66 @@ func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal 
 	}
 	return false, ""
 }
+
+// ManagerTransportCreds resolves the transport credentials for dialing a
+// runtime-manager. The manager forces mTLS in prod (it verifies client certs
+// against its CA), so:
+//
+//   - LANTERN_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
+//     that CA; LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
+//     client certificate.
+//   - unset in dev → insecure (plaintext), so `make dev` works.
+//   - unset in prod, client cert missing in prod, half-set cert/key, or an
+//     unreadable file → error. The caller treats it as fatal at startup.
+func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
+	caPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CA"))
+	certPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_KEY"))
+	if (certPath == "") != (keyPath == "") {
+		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
+	}
+	if caPath == "" {
+		if isProd {
+			return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set LANTERN_RUNTIME_MANAGER_TLS_CA plus LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
+		}
+		return insecure.NewCredentials(), nil
+	}
+	if isProd && certPath == "" {
+		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read LANTERN_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
+	}
+	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	if certPath != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load runtime-manager client cert/key (%s, %s): %w", certPath, keyPath, err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return credentials.NewTLS(cfg), nil
+}
+
+// serviceTokenCreds attaches the shared service token as
+// x-lantern-service-token on every RPC (the manager requires it when
+// LANTERN_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
+type serviceTokenCreds struct{ token string }
+
+func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	if c.token == "" {
+		return nil, nil
+	}
+	return map[string]string{"x-lantern-service-token": c.token}, nil
+}
+
+// RequireTransportSecurity is false so the token also rides dev plaintext links.
+func (serviceTokenCreds) RequireTransportSecurity() bool { return false }
 
 // defaultManagerPort is the runtime-manager's default gRPC listen port.
 // See services/runtime-manager/src/config.rs.
@@ -152,21 +215,29 @@ func (d *LogOnlyDialer) Close() {}
 //  3. If nodeAddr already contains a ':' (has a port), use as-is.
 //  4. Otherwise append the default runtime-manager port (:50054).
 //
-// Transport is insecure (cleartext). TLS is out of scope for this wedge —
-// the scheduler<->manager link is expected to be on a private network or
-// service mesh that terminates TLS at the sidecar.
+// Transport is TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set (see
+// ManagerTransportCreds), cleartext otherwise (dev only). Every RPC carries
+// the shared service token.
 type GRPCDialer struct {
 	logger *zap.Logger
+	creds  credentials.TransportCredentials
+	token  string
 
 	mu    sync.RWMutex
 	conns map[string]*grpc.ClientConn // keyed by both raw nodeAddr and resolved target
 }
 
 // NewGRPCDialer returns a dialer with no eager connections; conns are
-// established on the first Spawn/Stop call per node.
-func NewGRPCDialer(logger *zap.Logger) *GRPCDialer {
+// established on the first Spawn/Stop call per node. creds nil means insecure
+// (tests); serviceToken is attached as x-lantern-service-token on every RPC.
+func NewGRPCDialer(logger *zap.Logger, creds credentials.TransportCredentials, serviceToken string) *GRPCDialer {
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
 	return &GRPCDialer{
 		logger: logger.Named("manager_dialer"),
+		creds:  creds,
+		token:  serviceToken,
 		conns:  make(map[string]*grpc.ClientConn),
 	}
 }
@@ -236,7 +307,8 @@ func (d *GRPCDialer) connFor(nodeAddr string) (*grpc.ClientConn, error) {
 	}
 
 	conn, err := grpc.NewClient(target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(d.creds),
+		grpc.WithPerRPCCredentials(serviceTokenCreds{token: d.token}),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {
