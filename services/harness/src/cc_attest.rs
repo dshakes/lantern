@@ -189,7 +189,7 @@ pub async fn run(manager: &ManagerClient) {
     );
 
     let frame = build_frame(
-        &manager.vm_id,
+        &manager.vm_id(),
         &cc_tech,
         &runtime_class,
         measurement.as_deref(),

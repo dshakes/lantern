@@ -508,6 +508,40 @@ pub fn authorize_vm_cert(vm_id: &str, peer_cert_der: Option<&[u8]>) -> Result<()
     }
 }
 
+/// SHA-256 (hex) of a cert's DER — the identity pin recorded per VM incarnation.
+#[must_use]
+pub fn cert_der_sha256(der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    Sha256::digest(der)
+        .iter()
+        .fold(String::with_capacity(64), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
+/// SHA-256 (hex) of the first cert in a PEM bundle; `None` if unparseable.
+#[must_use]
+pub fn cert_pem_sha256(pem: &str) -> Option<String> {
+    let der = rustls_pemfile::certs(&mut std::io::Cursor::new(pem.as_bytes()))
+        .next()?
+        .ok()?;
+    Some(cert_der_sha256(der.as_ref()))
+}
+
+/// Whether the presented cert is the one issued for the VM's CURRENT
+/// incarnation. `pin = None` (backend issues no certs) accepts anything the CN
+/// check already accepted; `Some(pin)` requires the exact cert, so a stale cert
+/// restored out of a snapshot — same CN, earlier incarnation — is refused.
+#[must_use]
+pub fn cert_matches_pin(pin: Option<&str>, peer_cert_der: Option<&[u8]>) -> bool {
+    match pin {
+        None => true,
+        Some(p) => peer_cert_der.is_some_and(|der| cert_der_sha256(der) == p),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -516,6 +550,30 @@ pub fn authorize_vm_cert(vm_id: &str, peer_cert_der: Option<&[u8]>) -> Result<()
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn pin_accepts_only_the_current_incarnations_cert() {
+        let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("ca");
+        let (ca_pem, ca_key) = (ca.cert.pem(), ca.key_pair.serialize_pem());
+        let old = generate_vm_client_cert("vm-x", &ca_pem, &ca_key).expect("old");
+        let new = generate_vm_client_cert("vm-x", &ca_pem, &ca_key).expect("new");
+        let der = |pem: &str| {
+            rustls_pemfile::certs(&mut Cursor::new(pem.as_bytes()))
+                .next()
+                .expect("one cert")
+                .expect("pem")
+                .to_vec()
+        };
+        let (old_der, new_der) = (der(&old.cert_pem), der(&new.cert_pem));
+        let pin = cert_pem_sha256(&new.cert_pem).expect("pin");
+        // Same CN on both: the CN check alone cannot tell them apart.
+        assert!(verify_client_cert_vm_id("vm-x", &old_der).is_ok());
+        assert!(cert_matches_pin(Some(&pin), Some(&new_der)));
+        assert!(!cert_matches_pin(Some(&pin), Some(&old_der)), "stale cert");
+        assert!(!cert_matches_pin(Some(&pin), None), "no cert");
+        assert!(cert_matches_pin(None, Some(&old_der)), "unpinned backend");
+        assert!(cert_pem_sha256("not a pem").is_none());
+    }
 
     // ---------------------------------------------------------------------------
     // Test cert helpers

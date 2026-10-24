@@ -26,6 +26,15 @@ pub struct HandleInfo {
     /// `AgentSpec.agent_version_id` at spawn — recorded on snapshots so the
     /// store keys them by the real version, not "unknown" (ADR 0025).
     pub agent_version_id: String,
+    /// SHA-256 (hex) of the client cert the manager issued for THIS incarnation
+    /// of the VM. When set, harness RPCs must present exactly this cert — a
+    /// cert from an earlier incarnation (e.g. one frozen into a snapshot) is
+    /// refused even though its CN matches. `None` = backend issues no certs.
+    pub cert_sha256: Option<String>,
+    /// Bearer token the in-guest exec server accepts for THIS incarnation
+    /// (minted per spawn/restore; never logged). The manager's exec client
+    /// sends it; a superseded incarnation's token is rejected by the guest.
+    pub exec_token: Option<String>,
 }
 
 /// Thread-safe registry of all active sandbox handles.
@@ -241,6 +250,8 @@ mod tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
+            cert_sha256: None,
+            exec_token: None,
         }
     }
 
@@ -486,6 +497,8 @@ mod change_notify_tests {
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
             agent_version_id: String::new(),
+            cert_sha256: None,
+            exec_token: None,
         }
     }
 

@@ -308,7 +308,7 @@ impl SecretCache {
             }
             self.manager
                 .enqueue_report(HarnessReport::Audit(AuditEvent {
-                    vm_id: self.manager.vm_id.clone(),
+                    vm_id: self.manager.vm_id(),
                     action: "secret_access_denied".into(),
                     at_unix_ms: now_unix_ms(),
                     attrs,
@@ -373,7 +373,7 @@ impl SecretCache {
         let resp = self
             .manager
             .vend_secret(VendSecretRequest {
-                vm_id: self.manager.vm_id.clone(),
+                vm_id: self.manager.vm_id(),
                 secret_uri: secret_ref.secret_uri.clone(),
                 ttl_secs: DEFAULT_TTL_SECS,
             })
@@ -396,7 +396,7 @@ impl SecretCache {
         );
         self.manager
             .enqueue_report(HarnessReport::Audit(AuditEvent {
-                vm_id: self.manager.vm_id.clone(),
+                vm_id: self.manager.vm_id(),
                 action: "secret_vend".into(),
                 at_unix_ms: now_unix_ms(),
                 attrs,
@@ -404,6 +404,17 @@ impl SecretCache {
             .await;
 
         Ok(entry)
+    }
+
+    /// Re-identify: drop every cached value (vended to the PREVIOUS identity —
+    /// the manager no longer honours it) and adopt the new declared list.
+    /// Workloads re-vend on demand under the new identity.
+    pub fn reset(&self, declared: Vec<SecretRef>) {
+        self.inner.clear();
+        self.declared.clear();
+        for s in declared {
+            self.declared.insert(s.env_name.clone(), s);
+        }
     }
 
     /// Background refresh sweep — keeps active secrets ahead of expiry.

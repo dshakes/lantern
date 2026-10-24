@@ -195,6 +195,12 @@ pub struct ScheduleRequest {
     /// store instead of cold-booting (ownership-checked; ADR 0025).
     #[serde(default)]
     pub restore_snapshot_id: String,
+    /// The scheduler-issued wire vm_id (`SpawnRequest.handle.vm_id`). Non-empty
+    /// → identity-bearing backends (Firecracker) boot under exactly this id, so
+    /// the cert CN/SAN, the harness `vm_id` and the registry key all agree.
+    /// Empty → the backend mints its own id (legacy / warm-pool path).
+    #[serde(default)]
+    pub vm_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -302,6 +308,15 @@ pub struct RestoreRequest {
     pub input: serde_json::Value,
     pub env: std::collections::HashMap<String, String>,
     pub secrets: Vec<SecretRef>,
+    /// Wire vm_id the restored VM must identify as (see `ScheduleRequest::vm_id`).
+    /// A restore re-issues identity: the guest is re-keyed to this id, never
+    /// left running as the snapshot's source VM.
+    #[serde(default)]
+    pub vm_id: String,
+    /// The restoring request's egress allowlist (it, not the snapshot's,
+    /// becomes the guest's contract).
+    #[serde(default)]
+    pub egress_rules: Vec<EgressRule>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -182,6 +182,28 @@ pub trait RuntimeBackend: Send + Sync {
         );
     }
 
+    /// SHA-256 (hex) of the per-VM client cert issued for `handle_id`'s current
+    /// incarnation, if this backend issues guest certs. The registry pins it so
+    /// a superseded cert (e.g. one restored from a snapshot) cannot act as the
+    /// VM. Default `None`: backends without guest certs pin nothing.
+    fn identity_pin(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
+    /// The in-guest exec server's bearer token for `handle_id`'s current
+    /// incarnation, when this backend mints one. Default `None`.
+    fn exec_token(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
+    /// Whether restoring a snapshot while its SOURCE VM still runs on this
+    /// node would collide on host resources the snapshot pins (bare
+    /// Firecracker: the source's vsock UDS and cert image paths). The service
+    /// then refuses the restore instead of colliding. Default `false`.
+    fn restore_needs_stopped_source(&self) -> bool {
+        false
+    }
+
     /// What the backend can say about a handle's liveness.
     ///
     /// The distinction that matters is `Starting` vs `Exited`. A workload can
