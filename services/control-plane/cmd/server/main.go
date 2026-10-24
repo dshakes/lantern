@@ -638,6 +638,9 @@ func main() {
 	httpMux.HandleFunc("GET /v1/agents/{name}/budget", budgetHandler.GetBudget)
 	httpMux.HandleFunc("DELETE /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.DeleteBudget))
 	httpMux.HandleFunc("GET /v1/budgets", budgetHandler.ListBudgets)
+	httpMux.HandleFunc("PUT /v1/budgets/tenant", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.UpsertTenantBudget))
+	httpMux.HandleFunc("GET /v1/budgets/tenant", budgetHandler.GetTenantBudget)
+	httpMux.HandleFunc("DELETE /v1/budgets/tenant", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.DeleteTenantBudget))
 
 	// Marketplace — publish, fork, star agents.
 	httpMux.HandleFunc("GET /v1/marketplace", marketplaceHandler.List)
