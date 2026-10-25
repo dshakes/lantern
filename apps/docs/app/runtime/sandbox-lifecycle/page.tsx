@@ -1,0 +1,113 @@
+import Link from "next/link";
+import { Concept } from "../../_components/Concept";
+
+export default function RuntimeSandboxLifecyclePage() {
+  return (
+    <>
+      <h1>Sandbox Lifecycle</h1>
+      <p>
+        MicroVM-tier sandboxes are stateful. A running VM can be{" "}
+        <strong>paused</strong> (snapshot + stop, freeing its quota slot),{" "}
+        <strong>resumed</strong> under the same <code>vm_id</code>, or{" "}
+        <strong>forked</strong> into N independent copies. Command output can
+        be streamed over SSE as it is produced.
+      </p>
+
+      <Concept>
+        Pause is &quot;save game&quot;: the VM&apos;s memory and disk are
+        snapshotted and the machine stops costing you a concurrency slot.
+        Resume loads the save into the same VM id. Fork loads the same save
+        into several new VMs at once — handy for trying N approaches from one
+        warmed-up state.
+      </Concept>
+
+      <h2 id="rest">REST</h2>
+      <pre><code>{`# Pause: snapshot + stop. Frees the quota slot.
+POST /v1/runtime/vms/{id}/pause
+→ { "vmId": "...", "snapshotId": "...", "state": "paused" }
+
+# Resume: same vm id. 402 if quota is exhausted, 409 if the VM is not paused.
+POST /v1/runtime/vms/{id}/resume
+→ { "vmId": "...", "snapshotId": "...", "state": "running" }
+
+# Fork: count 1..10. Each fork gets its own vm_id, cert and agent identity.
+POST /v1/runtime/vms/{id}/fork
+{ "count": 3 }
+→ { "sourceVmId": "...", "snapshotId": "...",
+    "forks": [ { "vmId": "...", "state": "running" },
+               { "vmId": "...", "state": "failed", "error": "..." } ] }`}</code></pre>
+      <p>
+        <code>GET /v1/runtime/vms/&#123;id&#125;</code> additionally returns{" "}
+        <code>snapshotId</code> and <code>parentVmId</code> (set on forks), and{" "}
+        <code>state</code> may be <code>paused</code>. Forking a{" "}
+        <em>running</em> VM requires Firecracker ≥ 1.12 with the jailer.
+        Snapshots are owned by the tenant that created them; restoring another
+        tenant&apos;s snapshot returns <code>NOT_FOUND</code> (
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0025-sandbox-spawn-contract-and-manager-authz.md">ADR 0025</a>
+        ). A restored VM re-identifies with a fresh identity rather than
+        reusing the source VM&apos;s.
+      </p>
+
+      <h2 id="streaming-exec">Streaming exec</h2>
+      <p>
+        <code>POST /v1/runtime/vms/&#123;id&#125;/exec</code> buffers output by
+        default. Send <code>Accept: text/event-stream</code> to receive{" "}
+        <code>stdout</code>, <code>stderr</code>, then <code>exit</code>{" "}
+        events (or <code>error</code>) as they happen. Exec is execve-style:{" "}
+        <code>command</code> is the executable, <code>argv</code> its
+        arguments — pass <code>/bin/sh</code> with <code>[&quot;-c&quot;, …]</code>{" "}
+        for a shell line.
+      </p>
+
+      <h2 id="sdk">SDKs</h2>
+      <h3>TypeScript</h3>
+      <pre><code>{`const { snapshotId } = await client.runtime.pause(vmId);
+await client.runtime.resume(vmId);                       // same vm id
+
+const { forks } = await client.runtime.fork(vmId, { count: 3 });
+for (const f of forks) if (f.error) console.warn(f.vmId, f.error);
+
+for await (const ev of client.runtime.execStream(vmId, {
+  command: "/bin/sh",
+  argv: ["-c", "pip install -q requests && python job.py"],
+})) {
+  if (ev.type === "exit") console.log("exit", ev.exitCode);
+  else process.stdout.write(ev.data);                    // stdout | stderr
+}`}</code></pre>
+
+      <h3>Python</h3>
+      <pre><code>{`await client.runtime.pause(vm_id)
+await client.runtime.resume(vm_id)
+
+result = await client.runtime.fork(vm_id, count=3)
+for f in result.forks:
+    if f.error:
+        print(f.vm_id, f.error)
+
+async for ev in client.runtime.exec_stream(vm_id, "/bin/sh", ["-c", "python job.py"]):
+    if ev.type == "exit":
+        print("exit", ev.exit_code)
+    else:
+        print(ev.data, end="")`}</code></pre>
+
+      <h3>CLI and Go</h3>
+      <p>
+        The Go SDK exposes <code>PauseVM</code>, <code>ResumeVM</code> and{" "}
+        <code>ForkVM</code>.
+      </p>
+      <pre><code>{`lantern vm pause <id>
+lantern vm resume <id>
+lantern vm fork <id> --count 3`}</code></pre>
+      <p>
+        The dashboard VM detail page (<code>/runtime/&#123;vm&#125;</code>) has
+        Pause, Resume and Fork actions.
+      </p>
+
+      <p>
+        Related: <Link href="/runtime/isolation">Isolation tiers</Link>,{" "}
+        <Link href="/runtime/durable-execution">Durable execution</Link>,{" "}
+        <Link href="/cli">CLI reference</Link>.
+      </p>
+    </>
+  );
+}

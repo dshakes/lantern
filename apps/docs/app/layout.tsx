@@ -80,7 +80,10 @@ const sections: NavSection[] = [
     { href: "/runtime/sessions-and-memory", label: "Sessions & Memory", icon: Brain, subs: [
       { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
     ]},
-    { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
+    { href: "/runtime/sandbox-lifecycle", label: "Sandbox Lifecycle", icon: BarChart3, subs: [
+{ href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
+]},
+{ href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
       { href: "/runtime/observability#span-attrs", label: "Span attributes" }, { href: "/runtime/observability#otel-metrics", label: "lantern.run.* metrics" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "VM metrics" },
     ]},
     { href: "/runtime/identity", label: "Identity & Secrets", icon: Code, subs: [

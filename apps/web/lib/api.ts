@@ -341,7 +341,7 @@ function parseAskLanternAction(raw: string): AskLanternAction | null {
   const summary = typeof o.summary === "string" ? o.summary.trim() : "";
 
   if (o.kind === "navigate") {
-    let path = typeof o.path === "string" ? o.path.trim() : "";
+    const path = typeof o.path === "string" ? o.path.trim() : "";
     // Only allow same-origin in-app routes; reject anything else.
     if (!path.startsWith("/") || path.startsWith("//")) return null;
     return { kind: "navigate", path, summary: summary || "Navigating" };
