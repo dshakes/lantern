@@ -1,0 +1,5 @@
+# Context is the repo root; ship only what the harness build reads.
+*
+!packages/proto
+!services/harness
+services/harness/target
