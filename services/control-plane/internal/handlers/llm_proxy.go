@@ -1741,7 +1741,8 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 			}
 			writeData(evt)
 		}
-		text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
+		toolCtx, toolSpend := withToolUsage(ctx)
+		text, _, tin, tout, err := h.callLLMWithTools(toolCtx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
 		if err != nil {
 			writeSSEEvent(w, flusher, "message_error", map[string]any{
 				"turnId": turnID,
@@ -1749,7 +1750,8 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 			})
 			return
 		}
-		costUsd := estimateCost(provider, model, int(tin), int(tout))
+		// Fold web_search spend in at its own model (same as the run/session loops).
+		tin, tout, costUsd := toolSpend.addTo(provider, model, tin, tout)
 		if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, req.AgentName, tin, tout, costUsd, nil); recErr != nil {
 			h.logger().Warn("completions: RecordUsage failed (stream)",
 				zap.String("tenant_id", tenantID),
@@ -1778,12 +1780,13 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 	}
 
 	// Non-streaming: assemble + return JSON.
-	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, maxToolTurnsEnv())
+	toolCtx, toolSpend := withToolUsage(ctx)
+	text, _, tin, tout, err := h.callLLMWithTools(toolCtx, provider, model, apiKey, msgs, tools, dispatch, nil, maxToolTurnsEnv())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	costUsd := estimateCost(provider, model, int(tin), int(tout))
+	tin, tout, costUsd := toolSpend.addTo(provider, model, tin, tout)
 	if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, req.AgentName, tin, tout, costUsd, nil); recErr != nil {
 		h.logger().Warn("completions: RecordUsage failed (non-stream)",
 			zap.String("tenant_id", tenantID),
