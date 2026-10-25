@@ -82,10 +82,21 @@ func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, te
 		}
 	})
 
-	// Spawn is dispatched asynchronously; give the workload a moment to be
-	// registered and running before exec'ing into it.
-	time.Sleep(3 * time.Second)
-	return vmID, node
+	// Spawn is dispatched asynchronously, so poll until the manager can exec
+	// into the workload. A fixed sleep raced a cold Docker start on a fresh CI
+	// runner (>3s for the first container). Bound = the scheduler's 60s
+	// dispatchSpawn timeout; past that the spawn has failed, not lagged.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		_, _, exit, err := c.Exec(ctx, node, vmID, "/bin/sh", []string{"-c", "true"})
+		if err == nil && exit == 0 {
+			return vmID, node
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("vm %s never became exec-able within 60s: exit=%d err=%v", vmID, exit, err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func newE2EClient(t *testing.T, schedAddr string) *grpcSchedulerClient {

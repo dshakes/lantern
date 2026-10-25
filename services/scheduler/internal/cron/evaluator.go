@@ -9,11 +9,11 @@ import (
 
 // Schedule represents a parsed cron expression.
 type Schedule struct {
-	Minutes    []int // 0-59
-	Hours      []int // 0-23
+	Minutes     []int // 0-59
+	Hours       []int // 0-23
 	DaysOfMonth []int // 1-31
-	Months     []int // 1-12
-	DaysOfWeek []int // 0-6 (Sunday=0)
+	Months      []int // 1-12
+	DaysOfWeek  []int // 0-6 (Sunday=0)
 }
 
 // Parse parses a standard 5-field cron expression.
