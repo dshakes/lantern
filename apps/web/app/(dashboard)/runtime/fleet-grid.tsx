@@ -26,7 +26,7 @@ import { StateDot, STATE_STYLES, IsolationBadge, Sparkline } from "./cockpit-ui"
 type SortKey = "name" | "state" | "cost" | "cpu" | "age" | "heartbeat";
 type SortDir = "asc" | "desc";
 
-const STATE_ORDER: VmState[] = ["running", "spawning", "pending", "draining", "failed", "terminated"];
+const STATE_ORDER: VmState[] = ["running", "paused", "spawning", "pending", "draining", "failed", "terminated"];
 
 function heartbeatTone(iso?: string | null): { dot: string; label: string } {
   if (!iso) return { dot: "bg-zinc-600", label: "—" };

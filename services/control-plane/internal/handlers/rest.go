@@ -245,6 +245,10 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	if body.Name == TenantBudgetAgent {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `agent name "*" is reserved`})
+		return
+	}
 
 	agent, err := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
 		Name:        body.Name,
