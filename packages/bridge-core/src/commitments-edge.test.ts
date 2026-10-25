@@ -24,19 +24,19 @@ describe("detectOutboundPromise", () => {
   });
 
   test("captures 'I will call you tomorrow'", () => {
-    assert.equal(detectOutboundPromise("I will call you tomorrow").title, "call you tomorrow");
+    assert.equal(detectOutboundPromise("I will call you tomorrow")?.title, "call you tomorrow");
   });
 
   test("captures 'I'm going to forward the email'", () => {
-    assert.equal(detectOutboundPromise("I'm going to forward the email").title, "forward the email");
+    assert.equal(detectOutboundPromise("I'm going to forward the email")?.title, "forward the email");
   });
 
   test("captures 'I'll get back to you on that'", () => {
-    assert.equal(detectOutboundPromise("ok i'll get back to you on that").title, "get back to you on that");
+    assert.equal(detectOutboundPromise("ok i'll get back to you on that")?.title, "get back to you on that");
   });
 
   test("urgency now on 'I'll call you right now'", () => {
-    assert.equal(detectOutboundPromise("i'll call you right now").urgency, "now");
+    assert.equal(detectOutboundPromise("i'll call you right now")?.urgency, "now");
   });
 
   // negatives — hedges and non-promises must NOT be captured (false promise =
@@ -416,8 +416,9 @@ describe("detectOwnerCompletion (3rd completion path)", () => {
   test("matches a natural-language completion to the open item id", async () => {
     const r = await detectOwnerCompletion("just grabbed the groceries", OPEN, async () =>
       '{"done":[0],"ack":"nice, crossed off groceries"}');
-    assert.deepEqual(r?.doneIds, ["c1"]);
-    assert.match(r?.ack ?? "", /groceries/);
+    assert.ok(r && "doneIds" in r, "expected a completion, not a disambiguation");
+    assert.deepEqual(r.doneIds, ["c1"]);
+    assert.match(r.ack, /groceries/);
   });
   test("pre-filter: no completion cue → null (no LLM call)", async () => {
     let called = false;

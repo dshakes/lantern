@@ -55,6 +55,7 @@ const BOT_SELF_PREFIXES: string[] = [
   "🛠",                    // skill forge: proposals, lists, acks, skill output
   "🧭 ",                   // relationship inference FYI: "🧭 I think Ravi is your cousin …"
   "🗂",                    // action-plan: multi-action plan preview, acks, results
+  "✅ closed:",            // commitment ledger: follow-through FYI
   "✅ skill live",         // skill forge: activation ack
   "couldn't add it",      // confirm-before-book: createCalendarEvent failed
   "(couldn't attach",

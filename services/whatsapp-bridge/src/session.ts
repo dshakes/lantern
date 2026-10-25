@@ -179,6 +179,8 @@ import {
   formatStyleLessonsBlock,
 } from "@lantern/bridge-core/dislike-consolidator";
 import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
+import { appendSentLog, noteDraftMeta } from "@lantern/bridge-core/sent-log";
+import { waHistoryEvidence } from "@lantern/bridge-core/world-model";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -187,6 +189,7 @@ import {
   renderNudge,
   resolveReply,
   CommitmentsClient,
+  runCommitmentJudgment,
   type Commitment,
   type PendingCommitmentNudge,
 } from "@lantern/bridge-core/commitments-edge";
@@ -3612,6 +3615,9 @@ export class WhatsAppSession {
       },
       "outbound sent",
     );
+    if (this.stateDir && text && !isBotSelfMessage(text) && !this.isOwnerChat(jid)) {
+      void appendSentLog(this.stateDir, { channel: "whatsapp", to: jid, text });
+    }
     // Return the sent message id so callers can retry-track the reply
     // (👎 / 🔁 on a contact-facing reply needs the GUID → reply-meta).
     return sent?.key?.id ?? undefined;
@@ -9868,6 +9874,8 @@ export class WhatsAppSession {
     if (!opts.isGroup) this.maybeCaptureOutboundPromise(from, draft);
 
     // MEDIUM-confidence audit ping for non-group sends.
+    // Quality loop: remember the final tier + voice delta so the send boundary can log them.
+    noteDraftMeta(from, { tier: tier.tier, voiceDelta: scoreVoice(botTellCtx.voiceModel, draft)?.delta });
     if (tier.tier === "MEDIUM" && !opts.isGroup) {
       try {
         await this.sendSelf(`🟡 MEDIUM-confidence reply sent to ${opts.senderName ?? from.split("@")[0]}\n\nThey: ${text.slice(0, 200)}\n\nYou: ${draft.slice(0, 300)}`);
@@ -10837,10 +10845,44 @@ export class WhatsAppSession {
     await this.sendMessage(jid, parts.join("\n"));
   }
 
+  private commitJudgeInFlight = false;
+
+  /** Closes open commitments the owner's own recent messages/actions show are done (≤ once / ~6h; cadence persisted in commitment-ledger.json). */
+  private async maybeJudgeCommitments(): Promise<void> {
+    if ((process.env.LANTERN_COMMITMENT_LEDGER || "1") === "0" || this.commitJudgeInFlight) return;
+    this.commitJudgeInFlight = true;
+    try {
+      const now = Date.now();
+      await runCommitmentJudgment({
+        client: this.commitments,
+        stateFile: join(this.stateDir, "commitment-ledger.json"),
+        now,
+        gatherEvidence: () => {
+          const ev = existsSync(this.historyFile)
+            ? waHistoryEvidence(readFileSync(this.historyFile, "utf8"), { sinceMs: now - 3 * 86_400_000, ownerJid: process.env.LANTERN_WA_OWNER_JID })
+            : { selfChat: [] as string[], threads: [] as string[] };
+          // Owner-authored evidence ONLY. Contact threads are inbound text — a contact
+          // saying "looks like you sent the deck" must never close the owner's commitment.
+          return [...ev.selfChat, ...recentActions({ nowMs: now }).map((a) => `action: ${a.summary}`)];
+        },
+        llmCall: async (p) => (await this.agent.respondTo("owner::commit-judge", p, "", { withTools: false })) ?? "",
+        send: (t) => this.sendSelf(t),
+        log: (m, x) => this.logger.info(x ?? {}, m),
+      });
+    } finally {
+      this.commitJudgeInFlight = false;
+    }
+  }
+
   private async runNudgeTick(): Promise<void> {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
       if (this.killSwitch) return;
+      // COMMITMENT LEDGER follow-through: owner-side loop, ABOVE the pause gate
+      // so mute doesn't kill it (mute = don't SEND to contacts; self-chat is the
+      // owner). Quiet hours / "quiet Nh" still defer it (the FYI would ping).
+      const ownerQuiet = isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+      if (!ownerQuiet && this.socket && this.connected && this.ownJid()) void this.maybeJudgeCommitments();
       if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       // Only fire when paired + connected so sendSelf can land.
       if (!this.socket || !this.connected || !this.ownJid()) return;
