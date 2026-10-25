@@ -73,6 +73,14 @@ var migrations = []string{
 		bytes              BIGINT      NOT NULL DEFAULT 0,
 		created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`,
+
+	// ------------------------------------------------------------------
+	// Sandbox lifecycle (pause / resume / fork). Add-only: snapshot_id is
+	// the snapshot a VM was paused into or forked from; parent_vm_id is a
+	// fork's source. PAUSED is just another value of `state`.
+	// ------------------------------------------------------------------
+	`ALTER TABLE sched_vms ADD COLUMN IF NOT EXISTS snapshot_id  TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sched_vms ADD COLUMN IF NOT EXISTS parent_vm_id TEXT NOT NULL DEFAULT ''`,
 }
 
 // Migrate runs all CREATE TABLE IF NOT EXISTS statements for the scheduler

@@ -107,7 +107,8 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 	// doesn't resurrect as a live, quota-consuming entry on the next boot.
 	rows, err := s.pool.Query(ctx, `
 		SELECT vm_id, tenant_id, node_name, state, reason,
-		       spec, availability_zone, created_at, last_event_at, last_heartbeat_at
+		       spec, availability_zone, created_at, last_event_at, last_heartbeat_at,
+		       snapshot_id, parent_vm_id
 		FROM sched_vms
 		WHERE state NOT IN ($1, $2)`,
 		int32(lanternv1.VmState_VM_STATE_TERMINATED),
@@ -120,7 +121,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 
 	count := 0
 	for rows.Next() {
-		var vmID, tenantID, nodeName, reason, az string
+		var vmID, tenantID, nodeName, reason, az, snapshotID, parentVMID string
 		var stateInt int32
 		var specJSON []byte
 		var createdAt, lastEventAt time.Time
@@ -129,6 +130,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		if err := rows.Scan(
 			&vmID, &tenantID, &nodeName, &stateInt, &reason,
 			&specJSON, &az, &createdAt, &lastEventAt, &lastHeartbeatAt,
+			&snapshotID, &parentVMID,
 		); err != nil {
 			return fmt.Errorf("scan sched_vms row: %w", err)
 		}
@@ -149,12 +151,17 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 			NodeName:    nodeName,
 			Reason:      reason,
 			LastEventAt: lastEventAt,
+			SnapshotID:  snapshotID,
+			ParentVMID:  parentVMID,
 		}
 		if lastHeartbeatAt != nil {
 			vm.LastHeartbeat = *lastHeartbeatAt
 		}
 		s.mem.CreateVM(vm)
-		s.mem.IncrTenantVMs(tenantID, 1)
+		// A PAUSED VM released its concurrent-VM slot when it was paused.
+		if vm.State != lanternv1.VmState_VM_STATE_PAUSED {
+			s.mem.IncrTenantVMs(tenantID, 1)
+		}
 		count++
 	}
 	if err := rows.Err(); err != nil {
@@ -275,9 +282,12 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sched_vms
 			(vm_id, tenant_id, node_name, state, reason,
-			 spec, availability_zone, last_event_at, last_heartbeat_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			 spec, availability_zone, last_event_at, last_heartbeat_at,
+			 snapshot_id, parent_vm_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (vm_id) DO UPDATE SET
+			snapshot_id       = EXCLUDED.snapshot_id,
+			parent_vm_id      = EXCLUDED.parent_vm_id,
 			state             = EXCLUDED.state,
 			reason            = EXCLUDED.reason,
 			spec              = EXCLUDED.spec,
@@ -287,6 +297,7 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 			updated_at        = now()`,
 		v.Handle.VmId, v.TenantID, v.NodeName, int32(v.State), v.Reason,
 		specJSON, az, v.LastEventAt, lhAt,
+		v.SnapshotID, v.ParentVMID,
 	)
 	if err != nil {
 		s.logger.Warn("sched_vms insert failed",
@@ -315,7 +326,25 @@ func (s *WriteThroughStore) UpdateVMState(vmID string, state lanternv1.VmState, 
 	return true
 }
 
-// DeleteVM removes from memory and from Postgres.
+// SetVMSnapshot records the pause snapshot in memory then Postgres.
+func (s *WriteThroughStore) SetVMSnapshot(vmID, snapshotID string) bool {
+	if !s.mem.SetVMSnapshot(vmID, snapshotID) {
+		return false
+	}
+	if s.pool == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE sched_vms SET snapshot_id=$1, updated_at=now() WHERE vm_id=$2`, snapshotID, vmID,
+	); err != nil {
+		s.logger.Warn("sched_vms snapshot update failed",
+			zap.String("vm_id", vmID), zap.Error(err))
+	}
+	return true
+}
+
 // MarkVMsSeenOnNode is in-memory only. It records liveness confirmation from
 // the current heartbeat, which is inherently transient — after a restart the
 // dispatch grace correctly applies again, since this scheduler has not itself
@@ -324,6 +353,7 @@ func (s *WriteThroughStore) MarkVMsSeenOnNode(nodeName string, vmIDs []string, a
 	s.mem.MarkVMsSeenOnNode(nodeName, vmIDs, at)
 }
 
+// DeleteVM removes from memory and from Postgres.
 func (s *WriteThroughStore) DeleteVM(vmID string) bool {
 	ok := s.mem.DeleteVM(vmID)
 	if !ok {

@@ -45,6 +45,7 @@ enum VmState {
   VM_STATE_DRAINING    = 4;   // graceful shutdown initiated
   VM_STATE_TERMINATED  = 5;   // resources released
   VM_STATE_FAILED      = 6;   // spawn or health failure; reason in StatusEvent
+  VM_STATE_PAUSED      = 7;   // snapshotted + stopped; holds no quota slot; resumable
 }
 
 enum NetworkPolicy {
@@ -197,6 +198,17 @@ service RuntimeScheduler {
 
   // Cluster health / capacity for dashboards.
   rpc Cluster (ClusterRequest) returns (ClusterResponse);
+
+  // Sandbox lifecycle (Wave 2). All three are built on the manager's
+  // Snapshot / Spawn(restore_snapshot_id) / Stop RPCs.
+  //
+  // Pause snapshots a RUNNING VM, stops it, and releases its concurrent-VM
+  // quota slot. Idempotent: pausing a PAUSED VM returns the same snapshot.
+  rpc Pause (PauseRequest) returns (PauseResponse);
+  // Resume re-spawns a PAUSED VM under the SAME vm_id from its snapshot.
+  rpc Resume (ResumeRequest) returns (ResumeResponse);
+  // Fork spawns `count` new VMs from a snapshot of a RUNNING or PAUSED VM.
+  rpc Fork (ForkRequest) returns (ForkResponse);
 }
 
 message ScheduleRequest {
@@ -235,8 +247,65 @@ message ListResponse {
     // e.g. a spec asking for an isolation class the node cannot provide
     // was accepted with 201 and then failed silently.
     string reason             = 6;
+    // Snapshot the VM was paused into or forked from ("" = none).
+    string snapshot_id        = 7;
+    // Source VM this VM was forked from ("" = not a fork).
+    string parent_vm_id       = 8;
   }
   repeated Item items         = 1;
+}
+
+message PauseRequest {
+  string vm_id          = 1;
+}
+
+message PauseResponse {
+  string  vm_id         = 1;
+  string  snapshot_id   = 2;
+  VmState state         = 3;
+}
+
+message ResumeRequest {
+  string vm_id          = 1;
+}
+
+message ResumeResponse {
+  string  vm_id         = 1;
+  string  snapshot_id   = 2;
+  VmState state         = 3;
+  string  node          = 4;
+}
+
+message ForkRequest {
+  string vm_id          = 1;
+  // Number of forks, 1..10.
+  int32  count          = 2;
+  // One FRESH agent identity per child (len == count), minted by the
+  // control-plane. Children never inherit the source's identity: the
+  // scheduler strips LANTERN_AGENT_INSTANCE_ID/TOKEN from the copied env and
+  // injects these instead. SECRET (token) — never logged.
+  repeated ForkIdentity identities = 3;
+}
+
+message ForkIdentity {
+  string agent_instance_id    = 1;
+  string agent_instance_token = 2;
+}
+
+message ForkChild {
+  string  vm_id         = 1;
+  VmState state         = 2;
+  // Non-empty when this child failed to spawn (its quota slot was released).
+  string  error         = 3;
+  string  node          = 4;
+  // The child's own agent identity (from ForkRequest.identities[i]).
+  string  agent_instance_id = 5;
+}
+
+message ForkResponse {
+  string source_vm_id          = 1;
+  string snapshot_id           = 2;
+  repeated ForkChild forks     = 3;
 }
 
 message TerminateRequest {

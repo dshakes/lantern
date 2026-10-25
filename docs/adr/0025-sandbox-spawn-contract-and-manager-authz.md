@@ -246,3 +246,15 @@ failed.
   ownership gates the restore.
 - The guest re-addressing ioctls and the default-route swap are compiled and
   unit-adjacent only. They are not exercised on a real guest kernel.
+
+## Follow-ups
+
+- **Snapshot reclamation.** The manager has no snapshot-delete RPC, so Wave 2
+  pause/resume/fork snapshots are never reclaimed. Terminating a PAUSED VM, or
+  the last fork child that references a snapshot, leaves the snapshot on its
+  node. The scheduler logs `snapshot orphaned` at info with `snapshot_id`,
+  `vm_id`, `node` and `tenant_id`, and does not try to delete it. Needed: an
+  add-only `RuntimeManager.DeleteSnapshot(snapshot_id)` with the same
+  owner-tenant check as restore. The scheduler calls it best-effort when the
+  last reference goes away. A running fork source does not hold its fork
+  snapshot id, so only the children count as references.
