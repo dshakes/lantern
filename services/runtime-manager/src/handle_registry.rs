@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use tokio::sync::Notify;
 
 use crate::proto::{IsolationClass, ResourceLimits};
@@ -23,6 +23,9 @@ pub struct HandleInfo {
     /// asserts.  Set from the manager's own spawn record; never trust the
     /// caller to provide this.
     pub declared_secret_uris: Vec<String>,
+    /// `AgentSpec.agent_version_id` at spawn — recorded on snapshots so the
+    /// store keys them by the real version, not "unknown" (ADR 0025).
+    pub agent_version_id: String,
 }
 
 /// Thread-safe registry of all active sandbox handles.
@@ -31,6 +34,10 @@ pub struct HandleInfo {
 /// queries by handle ID or tenant.
 pub struct HandleRegistry {
     handles: DashMap<String, HandleInfo>,
+    /// Wire vm_ids with a Spawn in flight (reserved before boot, released
+    /// after the rekey or on failure) — closes the check-then-boot race where
+    /// two concurrent Spawns for one vm_id both boot a VM (invariant #8).
+    reserved: DashSet<String>,
     /// Signalled whenever the set of live handles changes.
     ///
     /// The heartbeat publishes this registry as the node's VM inventory, and
@@ -49,6 +56,7 @@ impl HandleRegistry {
     pub fn new() -> Self {
         Self {
             handles: DashMap::new(),
+            reserved: DashSet::new(),
             change: OnceLock::new(),
         }
     }
@@ -116,6 +124,19 @@ impl HandleRegistry {
         } else {
             false
         }
+    }
+
+    /// Reserve `vm_id` for an in-flight Spawn. `None` when another Spawn
+    /// already holds it. The reservation is released when the guard drops, so
+    /// callers must keep it alive until the handle is registered under
+    /// `vm_id` (or the spawn has failed).
+    pub fn reserve(&self, vm_id: &str) -> Option<Reservation<'_>> {
+        self.reserved
+            .insert(vm_id.to_string())
+            .then(|| Reservation {
+                registry: self,
+                vm_id: vm_id.to_string(),
+            })
     }
 
     /// Remove a handle from the registry, returning its info if it existed.
@@ -186,6 +207,19 @@ impl HandleRegistry {
     }
 }
 
+/// RAII guard for [`HandleRegistry::reserve`]; releases the vm_id on drop.
+#[must_use = "dropping the reservation releases the vm_id immediately"]
+pub struct Reservation<'a> {
+    registry: &'a HandleRegistry,
+    vm_id: String,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        self.registry.reserved.remove(&self.vm_id);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -206,7 +240,39 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
+            agent_version_id: String::new(),
         }
+    }
+
+    #[test]
+    fn reserve_is_exclusive_until_dropped() {
+        let reg = HandleRegistry::new();
+        let held = reg.reserve("vm-1").expect("first reservation");
+        assert!(reg.reserve("vm-1").is_none(), "second must be refused");
+        assert!(reg.reserve("vm-2").is_some(), "other ids unaffected");
+        drop(held);
+        assert!(reg.reserve("vm-1").is_some(), "released on drop");
+    }
+
+    #[test]
+    fn reserve_under_contention_admits_exactly_one() {
+        let reg = Arc::new(HandleRegistry::new());
+        let wins = std::sync::atomic::AtomicUsize::new(0);
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|s| {
+            for _ in 0..16 {
+                s.spawn(|| {
+                    barrier.wait();
+                    if let Some(r) = reg.reserve("vm-race") {
+                        wins.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        // Hold until every thread has tried.
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        drop(r);
+                    }
+                });
+            }
+        });
+        assert_eq!(wins.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -419,6 +485,7 @@ mod change_notify_tests {
             resource_limits: ResourceLimits::default(),
             node_name: "node-1".to_string(),
             declared_secret_uris: vec![],
+            agent_version_id: String::new(),
         }
     }
 

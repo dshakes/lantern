@@ -136,7 +136,7 @@ impl NetworkPolicyClass {
 /// peers natively (domain allowlisting is enforced in-VM by the harness), so
 /// domain patterns are preserved here but only CIDR patterns become `ipBlock`
 /// peers; domains rely on the DNS-allow rule plus the harness allowlist.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct EgressRule {
     pub pattern: String,
     #[serde(default)]
@@ -187,6 +187,14 @@ pub struct ScheduleRequest {
     /// Also upgrades any weaker trust class to HOSTILE-tier isolation (audited).
     #[serde(default)]
     pub confidential: bool,
+    /// `AgentSpec.agent_version_id` — recorded on the handle so snapshots are
+    /// keyed by the real version (ADR 0025).
+    #[serde(default)]
+    pub agent_version_id: String,
+    /// `AgentSpec.restore_snapshot_id`. Non-empty → restore from the snapshot
+    /// store instead of cold-booting (ownership-checked; ADR 0025).
+    #[serde(default)]
+    pub restore_snapshot_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

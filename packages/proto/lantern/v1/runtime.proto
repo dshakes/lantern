@@ -391,6 +391,10 @@ message ExecToolRequest {
   // Derived from (run_id, step_id, attempt) — the manager de-duplicates a
   // retried tool side-effect against this key (invariant #8).
   string idempotency_key = 7;
+  // Owning tenant of the run (from the engine's run record). The manager
+  // compares it to the VM's spawn-time tenant; mismatch → NOT_FOUND (no
+  // existence leak). Required in prod (ADR 0025).
+  string tenant_id = 8;
 }
 
 message ExecToolResponse {

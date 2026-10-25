@@ -827,6 +827,8 @@ mod tests {
             network_policy: crate::proto::NetworkPolicyClass::None,
             egress_rules: vec![],
             confidential: false,
+            agent_version_id: String::new(),
+            restore_snapshot_id: String::new(),
         }
     }
 
