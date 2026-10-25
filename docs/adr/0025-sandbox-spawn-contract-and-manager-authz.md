@@ -106,8 +106,11 @@ whether the VM exists. An empty value in dev is allowed for rollout. The
 The scheduler-issued vm_id is **reserved** before booting and released after
 the registry rekey or on failure. A concurrent duplicate Spawn gets `ABORTED`
 and should retry. The retry then hits the registry and receives the original
-handle. Before this change, two concurrent Spawns could both pass the registry
-check and boot two VMs.
+handle — only when its `tenant_id` and `run_id` match the registered VM's. A
+duplicate vm_id from any other owner gets `ALREADY_EXISTS` ("vm_id … is not
+available", no owner details), never another tenant's handle. Before this
+change, two concurrent Spawns could both pass the registry check and boot two
+VMs.
 
 ## Consequences
 
@@ -209,6 +212,37 @@ exec clients (Exec and ExecTool) send it as `authorization: Bearer`. Before
 this change the manager sent no token, so prod exec, which requires a token,
 could never authenticate.
 
+### Harness configuration is manager-owned
+
+Caller env reaches the harness's own process environment (spawn.json `env`,
+`lantern.env.*` boot-args, container env). Before this change a caller could
+therefore set harness config, for example `LANTERN_ENV=dev` to turn off every
+prod fail-closed guard, or `LANTERN_EGRESS_FAIL_CLOSED` / `LANTERN_NO_PROXY`.
+
+- **Manager** (`schedule` and `restore`, the single choke point for every
+  backend): drops each caller `LANTERN_*` key except `CALLER_LANTERN_KEYS`
+  (`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN`,
+  `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`). It logs the dropped names, never
+  values, then stamps its own `LANTERN_ENV`, which it also writes as the typed
+  `spawn.json` field `lantern_env`. The order is sanitize first, then inject.
+  After sanitizing, the manager also stamps the workload identity from the
+  request's authenticated typed fields: `LANTERN_TENANT_ID` from `tenant_id`,
+  and `LANTERN_AGENT_VERSION_ID` from `agent_version_id` (schedule only;
+  `RestoreRequest` has no such field). A forged caller value is replaced, and
+  the real one is never stripped. Anything the manager adds after the choke
+  point (trace parent, typed spawn.json fields) is likewise added after the
+  sanitizer runs.
+- **Harness**: ignores `LANTERN_*` keys in the `spawn.json` `env` map unless
+  they are allowlisted (`CALLER_LANTERN_KEYS` plus the manager-stamped identity
+  keys `LANTERN_TENANT_ID` / `LANTERN_AGENT_VERSION_ID`). `LANTERN_ENV` comes
+  from the typed field. From `lantern.env.*` boot-args it accepts only the
+  manager's own keys (`LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`,
+  `LANTERN_ENV`) plus that same allowlist. The two identity keys are also on
+  the supervisor's workload-visible list, because the workload SDK reads
+  `LANTERN_TENANT_ID`.
+- Residual risk: an older manager that does not filter can still pass a caller
+  `lantern.env.LANTERN_ENV` through boot-args. Upgrade the manager.
+
 ### Bare-mode fork of a running source fails closed
 
 A bare (non-jailed) restore reuses the snapshot's host paths verbatim,
@@ -216,8 +250,12 @@ including the source VM's vsock UDS and `certs.img`. So when the snapshot's
 source vm is still registered on this node and the backend reports
 `restore_needs_stopped_source()` (bare Firecracker), the restore returns
 `FAILED_PRECONDITION` with the message "fork of a running VM requires the
-jailer". A resume is unaffected, because its source was stopped first. Jailed
-restores give each VM its own paths and are allowed.
+jailer". A bare restore under a vm_id OTHER than the snapshot's source is also
+refused ("fork requires the jailer"), even with the source stopped: the
+snapshot's device state pins the source's absolute vsock UDS path, so the guest
+would be unreachable on the new vm_id's socket. So bare mode supports
+pause → resume (same vm_id) only; forks need the jailer, whose restores give
+each VM its own paths.
 
 ### Snapshot id for pause → resume/fork
 
@@ -237,9 +275,9 @@ failed.
 - `PATCH /drives` between load and resume is assumed allowed. The guest must
   observe the new backing file; it unmounts the drive after every read, which
   drops its page cache, and also fadvises.
-- The vmstate's drive and vsock paths must resolve at load. A bare fork of a
-  *live* source is refused (see above). A bare fork of a stopped source still
-  needs the source's `certs.img` on disk. Jailed mode stages the **base**
+- The vmstate's drive and vsock paths must resolve at load. Every bare fork is
+  refused (see above); a bare resume still needs the source's `certs.img` on
+  disk. Jailed mode stages the **base**
   rootfs, not the source VM's disk state (ADR 0007 Tier 2).
 - Fork of a live source: until the fork re-identifies (≤ ~1 s), it holds the
   source's still-valid cert and IP. Exposure is same-tenant only, because

@@ -98,9 +98,14 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 
 /// `LANTERN_*` keys a workload child may see: identity/locator values the
 /// workload SDK reads, none of them secret.
-const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 11] = [
+const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 14] = [
+    // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
+    "LANTERN_RESUME",
     "LANTERN_VM_ID",
     "LANTERN_RUN_ID",
+    // Manager-stamped from the authenticated spawn (the SDK reads the tenant).
+    "LANTERN_TENANT_ID",
+    "LANTERN_AGENT_VERSION_ID",
     "LANTERN_ENV",
     "LANTERN_SECRETS_SOCKET",
     "LANTERN_OTLP_SOCKET",
@@ -340,6 +345,21 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn workload_sees_resume_marker() {
+        let env = workload_env_from(
+            [("LANTERN_RESUME", "1"), ("LANTERN_EGRESS_FAIL_CLOSED", "0")]
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into())),
+        );
+        let keys: Vec<_> = env
+            .iter()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        assert!(keys.contains(&"LANTERN_RESUME".to_string()));
+        assert!(!keys.contains(&"LANTERN_EGRESS_FAIL_CLOSED".to_string()));
+    }
+
+    #[test]
     fn proxy_env_sets_all_three_proxy_vars_both_cases() {
         let pairs = proxy_env_pairs("127.0.0.1:3128");
         let map: HashMap<_, _> = pairs.into_iter().collect();
@@ -454,6 +474,8 @@ mod tests {
             "OPENAI_BASE_URL",
             "LANTERN_SECRETS_SOCKET",
             "LANTERN_VM_ID",
+            "LANTERN_TENANT_ID",
+            "LANTERN_AGENT_VERSION_ID",
         ] {
             assert!(workload_may_see(k), "{k} must reach the workload");
         }

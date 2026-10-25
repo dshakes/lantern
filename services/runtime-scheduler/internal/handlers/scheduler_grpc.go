@@ -397,6 +397,13 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	paused := vm.State == lanternv1.VmState_VM_STATE_PAUSED
 	quotaAlreadyFreed := vm.State == lanternv1.VmState_VM_STATE_FAILED || paused
 
+	// An empty address would fall through to the default manager — another
+	// node's, in a multi-node cluster. A PAUSED VM needs no Stop, so no node.
+	node, nodeOK := s.Store.GetNode(vm.NodeName)
+	if !nodeOK && !paused {
+		return nil, status.Errorf(codes.Unavailable, "terminate %s: node %q is not registered", req.VmId, vm.NodeName)
+	}
+
 	// Mark draining + emit event.
 	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_DRAINING, req.Reason, nil, time.Now().UTC())
 	s.emit(tenantID, &lanternv1.StatusEvent{
@@ -409,7 +416,6 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	// Forward to manager. An unreachable manager means the VM is still
 	// running — do NOT free the quota slot or mark TERMINATED; leave the VM
 	// in DRAINING so the caller can retry and the quota is not fabricated.
-	node, _ := s.Store.GetNode(vm.NodeName)
 	// A PAUSED VM has nothing running to stop (its snapshot stays on the node).
 	if _, err := s.stopUnlessPaused(ctx, paused, node.Address, &lanternv1.StopRequest{
 		VmId:   req.VmId,
@@ -489,8 +495,12 @@ func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.Snapshot
 		return nil, status.Errorf(codes.PermissionDenied, "vm %q does not belong to caller", req.VmId)
 	}
 
-	// Resolve the node address.
-	node, _ := s.Store.GetNode(vm.NodeName)
+	// Resolve the node address. Never dial "" — the dialer maps it to the
+	// default manager, which may be a different node's.
+	node, ok := s.Store.GetNode(vm.NodeName)
+	if !ok {
+		return nil, status.Errorf(codes.Unavailable, "snapshot %s: node %q is not registered", req.VmId, vm.NodeName)
+	}
 
 	// Forward to the manager. On error (e.g. Unimplemented), synthesise a
 	// local snapshot ID so callers can still track the intent.

@@ -180,11 +180,14 @@ func TestDL_TamperedTokenIs404(t *testing.T) {
 	h := newDLHandlerForTest(t)
 	mux := dlMux(h)
 	path := stage(t, mux, "x.txt", "hello")
-	// flip the last char of the signature
-	tampered := path[:len(path)-1] + "A"
-	if tampered == path {
-		tampered = path[:len(path)-1] + "B"
+	// Flip a char in the MIDDLE of the token: the last base64url char can
+	// carry only padding bits, so changing it may decode to the same bytes.
+	i := len(path) - 8
+	c := byte('A')
+	if path[i] == 'A' {
+		c = 'B'
 	}
+	tampered := path[:i] + string(c) + path[i+1:]
 	req := httptest.NewRequest("GET", tampered, nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

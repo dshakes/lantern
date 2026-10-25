@@ -125,6 +125,7 @@ modelRouter:
       memory: 512Mi
   env:
     LOG_LEVEL: "info"
+    LANTERN_ENV: "production"
 
 runtimeManager:
   replicas: 1

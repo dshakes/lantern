@@ -405,11 +405,16 @@ fn gethostname_kata() -> String {
 mod tests {
     use super::*;
 
+    /// Both env tests mutate KATA_RUNTIME_NAME; cargo runs tests in parallel,
+    /// so without this lock one test's remove_var races the other's set_var.
+    static KATA_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Verify that the Kata runtime name defaults to `kata-runtime` when
     /// KATA_RUNTIME_NAME is not set. This test manipulates the environment
     /// variable, so it must not run concurrently with other env-reading tests.
     #[test]
     fn default_runtime_name_is_kata_runtime() {
+        let _g = KATA_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Remove the env var to exercise the default path.
         let saved = std::env::var("KATA_RUNTIME_NAME").ok();
         // SAFETY: single-threaded test; no concurrent env access.
@@ -429,6 +434,7 @@ mod tests {
     /// Verify that KATA_RUNTIME_NAME override is respected.
     #[test]
     fn custom_runtime_name_from_env() {
+        let _g = KATA_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var("KATA_RUNTIME_NAME").ok();
         // SAFETY: single-threaded test; no concurrent env access.
         unsafe { std::env::set_var("KATA_RUNTIME_NAME", "kata-clh") };

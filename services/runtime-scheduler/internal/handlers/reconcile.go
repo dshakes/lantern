@@ -106,8 +106,20 @@ func ReconcileNodeInventory(
 		if !v.InventorySeenAt.After(born) && born.Add(reconcileGrace).After(now) {
 			continue // not confirmed since (re)spawn, still inside the dispatch window
 		}
-		if store.UpdateVMState(id, lanternv1.VmState_VM_STATE_TERMINATED,
-			"reconciled: node no longer reports this VM as live", nil, now) {
+		// A VM caught mid-Pause/mid-Resume (live, or left by a scheduler crash)
+		// that the node is not running is PAUSED — its snapshot is intact — not
+		// TERMINATED. CAS so the racing lifecycle RPC cannot release twice.
+		if (v.State == lanternv1.VmState_VM_STATE_DRAINING && v.Reason == ReasonPausing) ||
+			(v.State == lanternv1.VmState_VM_STATE_SPAWNING && v.Reason == ReasonResuming) {
+			if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_PAUSED,
+				"reconciled: not running on node after interrupted pause/resume", now) {
+				store.IncrTenantVMs(v.TenantID, -1)
+			}
+			continue
+		}
+		// CAS on the observed state: a racing Terminate must not release twice.
+		if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_TERMINATED,
+			"reconciled: node no longer reports this VM as live", now) {
 			store.IncrTenantVMs(v.TenantID, -1)
 			terminated = append(terminated, id)
 		}
