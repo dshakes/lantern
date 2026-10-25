@@ -29,6 +29,16 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern.fullname" . }}-config
                   key: LOG_LEVEL
+            # Fail-closed in prod-like LANTERN_ENV without the service token
+            # (callers present it as x-lantern-service-token). Without
+            # LANTERN_ENV the service assumes dev and accepts unauthenticated calls.
+            - name: LANTERN_ENV
+              value: {{ .Values.modelRouter.env.LANTERN_ENV | default "production" | quote }}
+            - name: LANTERN_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: grpc-service-token
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

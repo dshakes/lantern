@@ -674,3 +674,42 @@ func TestResume_RacingReconcileStopsSpawnedVM(t *testing.T) {
 		t.Errorf("Stop calls = %d, want 1 (the orphaned respawn)", len(d.stops))
 	}
 }
+
+// A VM whose node is not registered must not be dialed with an empty address:
+// the dialer treats "" as "use the default manager", which in a multi-node
+// cluster is some other node's manager. Each path fails before touching it.
+func TestLifecycle_UnregisteredNodeNeverDialed(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*handlers.SchedulerService) error
+	}{
+		{"pause", func(s *handlers.SchedulerService) error {
+			_, err := s.Pause(ctxWithTenant("t1"), &lanternv1.PauseRequest{VmId: "vm-1"})
+			return err
+		}},
+		{"snapshot", func(s *handlers.SchedulerService) error {
+			_, err := s.Snapshot(ctxWithTenant("t1"), &lanternv1.SnapshotRequest{VmId: "vm-1"})
+			return err
+		}},
+		{"terminate", func(s *handlers.SchedulerService) error {
+			_, err := s.Terminate(ctxWithTenant("t1"), &lanternv1.TerminateRequest{VmId: "vm-1"})
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := cluster.NewInMemoryStore() // node "n1" never registered
+			seedVM(store, "vm-1", "t1", lanternv1.VmState_VM_STATE_RUNNING, "")
+			d := &lifecycleDialer{}
+			svc := newService(store, d)
+
+			wantCode(t, tc.call(svc), codes.Unavailable)
+			if len(d.snaps)+len(d.stops) != 0 {
+				t.Errorf("manager dialed: snaps=%d stops=%d", len(d.snaps), len(d.stops))
+			}
+			if vm, _ := store.GetVM("vm-1"); vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+				t.Errorf("state = %v, want RUNNING", vm.State)
+			}
+		})
+	}
+}

@@ -64,6 +64,8 @@ modelRouter:
   replicas: 1
   image:
     name: lantern-model-router
+  env:
+    LANTERN_ENV: "development"   # see controlPlane.env.LANTERN_ENV
   resources:
     requests:
       cpu: 50m
@@ -90,6 +92,8 @@ runtimeManager:
   replicas: 0            # Not needed for local dev without microVMs
   image:
     name: lantern-runtime-manager
+  env:
+    LANTERN_ENV: "development"   # see controlPlane.env.LANTERN_ENV
 
 dashboard:
   replicas: 1

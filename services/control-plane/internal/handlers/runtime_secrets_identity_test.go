@@ -399,3 +399,49 @@ func TestResolveSecrets_BearerToken_NoBearer_SharedTokenPath(t *testing.T) {
 		t.Errorf("expected NULL agent_instance_id for no-Bearer request, got %q", *auditInstanceID)
 	}
 }
+
+// TestResolveSecrets_BearerToken_SharedInstanceID_BindsToVM covers two
+// runtime_vms rows sharing one agent_instance_id (an idempotency key replayed
+// after the scheduler's dedup TTL). Only the row whose vm_id is claimed in the
+// body may authenticate, and a claim naming a VM that isn't one of those rows
+// is rejected even though a live row with the instance id exists.
+func TestResolveSecrets_BearerToken_SharedInstanceID_BindsToVM(t *testing.T) {
+	pool := openTestPool(t)
+	migrateSecretsTables(t, pool)
+
+	tenantID := uniqueTenantID("sec-inst-shared")
+	seedTestTenant(t, pool, tenantID)
+	t.Cleanup(func() { cleanupSecretsData(t, pool, tenantID) })
+	insertLLMKey(t, pool, tenantID, "anthropic", "test-shared-key")
+
+	instanceID := agentidentity.InstanceIDForKey(tenantID, "reused-key")
+	_, tok, err := testIdentityIssuer(t).IssueForID(context.Background(), instanceID, tenantID, "", "")
+	if err != nil {
+		t.Fatalf("IssueForID: %v", err)
+	}
+	vmA := "vm-shared-a-" + instanceID[3:11]
+	vmB := "vm-shared-b-" + instanceID[3:11]
+	vmC := "vm-shared-c-" + instanceID[3:11]
+	insertRuntimeVMWithInstance(t, pool, tenantID, vmA, instanceID, "running")
+	insertRuntimeVMWithInstance(t, pool, tenantID, vmB, instanceID, "terminated")
+	insertRuntimeVM(t, pool, tenantID, vmC, "running") // live VM, different identity
+
+	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
+	h := newTestSecretsHandlerForIdentityWithPool(t, pool)
+
+	for _, tc := range []struct {
+		vm   string
+		want int
+	}{
+		{vmA, http.StatusOK},        // matching live row authenticates
+		{vmB, http.StatusForbidden}, // matching row is terminal — the live sibling must not stand in
+		{vmC, http.StatusForbidden}, // not a row of this instance id
+	} {
+		w := doResolveWithBearer(h, testRuntimeSecretToken, tok, resolveSecretsRequest{
+			TenantID: tenantID, VmID: tc.vm, Refs: []string{"lantern.secret/llm/anthropic"},
+		})
+		if w.Code != tc.want {
+			t.Errorf("vm %s: got %d want %d: %s", tc.vm, w.Code, tc.want, w.Body.String())
+		}
+	}
+}
