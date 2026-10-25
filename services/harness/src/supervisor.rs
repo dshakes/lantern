@@ -98,11 +98,14 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 
 /// `LANTERN_*` keys a workload child may see: identity/locator values the
 /// workload SDK reads, none of them secret.
-const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 12] = [
+const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 14] = [
     // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
     "LANTERN_RESUME",
     "LANTERN_VM_ID",
     "LANTERN_RUN_ID",
+    // Manager-stamped from the authenticated spawn (the SDK reads the tenant).
+    "LANTERN_TENANT_ID",
+    "LANTERN_AGENT_VERSION_ID",
     "LANTERN_ENV",
     "LANTERN_SECRETS_SOCKET",
     "LANTERN_OTLP_SOCKET",
@@ -471,6 +474,8 @@ mod tests {
             "OPENAI_BASE_URL",
             "LANTERN_SECRETS_SOCKET",
             "LANTERN_VM_ID",
+            "LANTERN_TENANT_ID",
+            "LANTERN_AGENT_VERSION_ID",
         ] {
             assert!(workload_may_see(k), "{k} must reach the workload");
         }

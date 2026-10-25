@@ -415,13 +415,19 @@ pub const CALLER_LANTERN_KEYS: [&str; 4] = [
 
 /// Make a request's env safe to hand to the harness: drop caller-supplied
 /// `LANTERN_*` keys outside [`CALLER_LANTERN_KEYS`] (names logged, never
-/// values) and stamp the manager's OWN `LANTERN_ENV`, so a caller cannot
-/// downgrade a prod guest to dev or switch off its egress/uid guards. Every
-/// backend gets its env through `schedule`/`restore`, so this is the one
-/// choke point.
+/// values), THEN stamp the manager-owned values — its own `LANTERN_ENV` and
+/// the identity taken from the request's authenticated typed fields
+/// (`LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`). Sanitize-then-inject, so
+/// a caller can neither downgrade a prod guest / switch off its egress/uid
+/// guards nor forge its identity, and the legitimate identity is never
+/// stripped. Every backend gets its env through `schedule`/`restore`, so this
+/// is the one choke point; anything the manager adds afterwards (trace parent,
+/// uid, typed spawn.json fields) is added after it.
 fn own_workload_env(
     env: &mut std::collections::HashMap<String, String>,
     manager_lantern_env: Option<&str>,
+    tenant_id: &str,
+    agent_version_id: &str,
 ) {
     let mut dropped: Vec<String> = env
         .keys()
@@ -442,6 +448,15 @@ fn own_workload_env(
     if let Some(v) = manager_lantern_env.filter(|v| !v.is_empty()) {
         env.insert("LANTERN_ENV".to_string(), v.to_string());
     }
+    if !tenant_id.is_empty() {
+        env.insert("LANTERN_TENANT_ID".to_string(), tenant_id.to_string());
+    }
+    if !agent_version_id.is_empty() {
+        env.insert(
+            "LANTERN_AGENT_VERSION_ID".to_string(),
+            agent_version_id.to_string(),
+        );
+    }
 }
 
 impl RuntimeManagerGrpc {
@@ -451,7 +466,12 @@ impl RuntimeManagerGrpc {
         request: Request<proto::ScheduleRequest>,
     ) -> Result<Response<proto::ScheduleResponse>, Status> {
         let mut req = request.into_inner();
-        own_workload_env(&mut req.env, std::env::var("LANTERN_ENV").ok().as_deref());
+        own_workload_env(
+            &mut req.env,
+            std::env::var("LANTERN_ENV").ok().as_deref(),
+            &req.tenant_id,
+            &req.agent_version_id,
+        );
 
         // Confidential-compute isolation floor: upgrade any weaker trust class to
         // HOSTILE-tier (upgrade only, audited). Mutate the request so build_job +
@@ -778,7 +798,14 @@ impl RuntimeManagerGrpc {
         request: Request<proto::RestoreRequest>,
     ) -> Result<Response<proto::RestoreResponse>, Status> {
         let mut req = request.into_inner();
-        own_workload_env(&mut req.env, std::env::var("LANTERN_ENV").ok().as_deref());
+        // RestoreRequest carries no agent version: a caller-supplied one is
+        // dropped, never trusted.
+        own_workload_env(
+            &mut req.env,
+            std::env::var("LANTERN_ENV").ok().as_deref(),
+            &req.tenant_id,
+            "",
+        );
 
         tracing::info!(
             snapshot_uri = %req.snapshot_uri,
@@ -1207,25 +1234,12 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
     }
 
     // Build env from caller-supplied env + labels (for backwards-compat).
-    // Strip any caller-supplied `LANTERN_TENANT_ID` first — the caller cannot
-    // be trusted to set this correctly and a shadowed value would let an
-    // attacker route the pod into a victim's namespace. Re-inject the
-    // authenticated value so the workload still sees its own tenant id.
+    // Caller `LANTERN_*` keys (incl. a forged LANTERN_TENANT_ID /
+    // LANTERN_AGENT_VERSION_ID) are stripped and the authenticated identity is
+    // stamped from the typed fields by `own_workload_env` in `schedule`.
     let mut env: std::collections::HashMap<String, String> = spec.env.clone();
     for (k, v) in &spec.labels {
         env.entry(k.clone()).or_insert_with(|| v.clone());
-    }
-    // Strip then re-inject — order matters: strip first so a caller-supplied
-    // value can never win even if it was present in the labels too.
-    env.remove("LANTERN_TENANT_ID");
-    env.insert("LANTERN_TENANT_ID".to_string(), spec.tenant_id.clone());
-    // Same for the agent version: it keys snapshots, so never caller-chosen.
-    env.remove("LANTERN_AGENT_VERSION_ID");
-    if !spec.agent_version_id.is_empty() {
-        env.insert(
-            "LANTERN_AGENT_VERSION_ID".to_string(),
-            spec.agent_version_id.clone(),
-        );
     }
 
     let secrets = spec
@@ -3754,7 +3768,7 @@ mod tests {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-        own_workload_env(&mut env, Some("prod"));
+        own_workload_env(&mut env, Some("prod"), "", "");
         let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
         keys.sort();
         assert_eq!(
@@ -3780,7 +3794,7 @@ mod tests {
         // A dev manager (no LANTERN_ENV) never inherits the caller's value.
         let mut env: HashMap<String, String> =
             [("LANTERN_ENV".to_string(), "prod-ish".to_string())].into();
-        own_workload_env(&mut env, None);
+        own_workload_env(&mut env, None, "", "");
         assert!(env.is_empty());
     }
 
@@ -3808,6 +3822,35 @@ mod tests {
         assert!(!seen.contains_key("LANTERN_EGRESS_FAIL_CLOSED"));
         assert_ne!(seen.get("LANTERN_ENV").map(String::as_str), Some("dev"));
         assert_eq!(seen["LANTERN_AGENT_INSTANCE_ID"], "inst");
+    }
+
+    /// Regression: the sanitizer must not strip the identity the MANAGER
+    /// injects. A forged caller LANTERN_TENANT_ID ends as the authenticated
+    /// tenant (not stripped, not the forged value) and the authenticated
+    /// LANTERN_AGENT_VERSION_ID survives to the backend.
+    #[tokio::test]
+    async fn spawn_keeps_authenticated_identity_through_the_sanitizer() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let stub = Arc::new(IdentityStub::default());
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        let mut req = make_spawn_request_with_handle(
+            "t-auth",
+            "r",
+            "vm-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        );
+        let spec = req.spec.as_mut().unwrap();
+        spec.agent_version_id = "av-real".into();
+        spec.env.insert("LANTERN_TENANT_ID".into(), "evil".into());
+        spec.env
+            .insert("LANTERN_AGENT_VERSION_ID".into(), "av-forged".into());
+        svc.spawn(Request::new(req)).await.expect("spawn");
+        let seen = stub.scheduled.lock().unwrap()[0].env.clone();
+        assert_eq!(seen["LANTERN_TENANT_ID"], "t-auth");
+        assert_eq!(seen["LANTERN_AGENT_VERSION_ID"], "av-real");
     }
 
     /// A duplicate vm_id from a DIFFERENT tenant (or run) must not get the
@@ -3928,7 +3971,14 @@ mod tests {
         env.insert("MY_VAR".to_string(), "hello".to_string());
 
         let req = make_spawn_request("legit", env);
-        let sched = spawn_to_schedule(&req).expect("valid tenant_id should succeed");
+        let mut sched = spawn_to_schedule(&req).expect("valid tenant_id should succeed");
+        // What `schedule` does with it.
+        own_workload_env(
+            &mut sched.env,
+            None,
+            &sched.tenant_id,
+            &sched.agent_version_id,
+        );
 
         assert_eq!(
             sched.env.get("LANTERN_TENANT_ID").map(String::as_str),
@@ -4610,9 +4660,10 @@ mod tests {
             spec.agent_version_id = "av-real".to_string();
             spec.restore_snapshot_id = "snap-1".to_string();
         }
-        let internal = spawn_to_schedule(&req).unwrap();
+        let mut internal = spawn_to_schedule(&req).unwrap();
         assert_eq!(internal.agent_version_id, "av-real");
         assert_eq!(internal.restore_snapshot_id, "snap-1");
+        own_workload_env(&mut internal.env, None, "t", &internal.agent_version_id);
         assert_eq!(internal.env["LANTERN_AGENT_VERSION_ID"], "av-real");
 
         let mut req = make_spawn_request(
@@ -4622,7 +4673,8 @@ mod tests {
         if let Some(spec) = req.spec.as_mut() {
             spec.agent_version_id = String::new();
         }
-        let internal = spawn_to_schedule(&req).unwrap();
+        let mut internal = spawn_to_schedule(&req).unwrap();
+        own_workload_env(&mut internal.env, None, "t", &internal.agent_version_id);
         assert!(!internal.env.contains_key("LANTERN_AGENT_VERSION_ID"));
     }
 
