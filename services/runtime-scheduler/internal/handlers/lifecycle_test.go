@@ -259,7 +259,8 @@ func TestFork(t *testing.T) {
 		{"partial failure releases failed slots", lanternv1.VmState_VM_STATE_RUNNING, 3, 20, &lifecycleDialer{spawnFailAt: map[int]bool{1: true}}, codes.OK, 2, 1, 3, 1},
 		{"quota is all-or-nothing, checked before any snapshot", lanternv1.VmState_VM_STATE_RUNNING, 3, 3, &lifecycleDialer{}, codes.ResourceExhausted, 0, 0, 1, 0},
 		{"count 0 rejected", lanternv1.VmState_VM_STATE_RUNNING, 0, 20, &lifecycleDialer{}, codes.InvalidArgument, 0, 0, 1, 0},
-		{"count 11 rejected", lanternv1.VmState_VM_STATE_RUNNING, 11, 20, &lifecycleDialer{}, codes.InvalidArgument, 0, 0, 1, 0},
+		{"count 11 rejected", lanternv1.VmState_VM_STATE_RUNNING, 11, 20, &lifecycleDialer{}, codes.OK, 11, 0, 12, 1},
+		{"count over cap rejected", lanternv1.VmState_VM_STATE_RUNNING, 1001, 2000, &lifecycleDialer{}, codes.InvalidArgument, 0, 0, 1, 0},
 		{"failed source rejected", lanternv1.VmState_VM_STATE_FAILED, 1, 20, &lifecycleDialer{}, codes.FailedPrecondition, 0, 0, 1, 0},
 		{"snapshot failure", lanternv1.VmState_VM_STATE_RUNNING, 1, 20, &lifecycleDialer{snapErr: errors.New("boom")}, codes.Unavailable, 0, 0, 1, 1},
 	}
@@ -417,6 +418,14 @@ func TestFork_ChildrenGetOwnIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Build a map from spawned identity → ForkChild so the check is order-agnostic.
+	// With parallel spawning, d.spawns order is non-deterministic, but every spawned
+	// identity must appear in exactly one ForkChild in resp.Forks.
+	forkByID := make(map[string]*lanternv1.ForkChild, len(resp.Forks))
+	for _, fc := range resp.Forks {
+		forkByID[fc.AgentInstanceId] = fc
+	}
+
 	seenIDs, seenToks := map[string]bool{}, map[string]bool{}
 	for i, sp := range d.spawns {
 		id, tok := sp.Spec.Env["LANTERN_AGENT_INSTANCE_ID"], sp.Spec.Env["LANTERN_AGENT_INSTANCE_TOKEN"]
@@ -430,8 +439,10 @@ func TestFork_ChildrenGetOwnIdentity(t *testing.T) {
 		if sp.Spec.Env["KEEP"] != "me" {
 			t.Error("non-identity env must be inherited")
 		}
-		if resp.Forks[i].AgentInstanceId != id {
-			t.Errorf("ForkChild.agent_instance_id = %q, spawned with %q", resp.Forks[i].AgentInstanceId, id)
+		// Every spawned identity must have a matching ForkChild entry.
+		// (Order-agnostic: parallel spawns arrive in non-deterministic order.)
+		if _, ok := forkByID[id]; !ok {
+			t.Errorf("spawn identity %q has no matching ForkChild in resp.Forks", id)
 		}
 	}
 	if src, _ := store.GetVM("vm-src"); src.Spec.Env["LANTERN_AGENT_INSTANCE_TOKEN"] != "tok-src" {

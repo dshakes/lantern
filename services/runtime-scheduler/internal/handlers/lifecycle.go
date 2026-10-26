@@ -15,6 +15,8 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,8 +33,48 @@ import (
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 )
 
-// maxForkCount bounds a single Fork call.
-const maxForkCount = 10
+// defaultMaxForkCount is the default upper bound for a single Fork call.
+// Override with LANTERN_MAX_FORK_COUNT (ceiling: maxForkCountCeiling).
+const (
+	defaultMaxForkCount    = 100
+	maxForkCountCeiling    = 1000
+	defaultForkConcurrency = 16
+)
+
+// maxForkCount returns the configured per-call fork limit.
+// LANTERN_MAX_FORK_COUNT (default 100, ceiling 1000).
+func maxForkCount() int {
+	if v := envInt("LANTERN_MAX_FORK_COUNT", defaultMaxForkCount); v > 0 {
+		if v > maxForkCountCeiling {
+			return maxForkCountCeiling
+		}
+		return v
+	}
+	return defaultMaxForkCount
+}
+
+// forkConcurrency returns the maximum number of fork spawns to issue in
+// parallel within a single Fork call.
+// LANTERN_FORK_CONCURRENCY (default 16).
+func forkConcurrency() int {
+	if v := envInt("LANTERN_FORK_CONCURRENCY", defaultForkConcurrency); v > 0 {
+		return v
+	}
+	return defaultForkConcurrency
+}
+
+// envInt reads an integer environment variable, returning def on missing/invalid.
+func envInt(key string, def int) int {
+	s, ok := os.LookupEnv(key)
+	if !ok || s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
 
 // Crash-safe transitions. A VM mid-Pause is persisted as DRAINING+ReasonPausing
 // and mid-Resume as SPAWNING+ReasonResuming — both states loadVMs counts as
@@ -230,8 +272,9 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 		return nil, err
 	}
 	count := int(req.GetCount())
-	if count < 1 || count > maxForkCount {
-		return nil, status.Errorf(codes.InvalidArgument, "count must be 1..%d, got %d", maxForkCount, count)
+	max := maxForkCount()
+	if count < 1 || count > max {
+		return nil, status.Errorf(codes.InvalidArgument, "count must be 1..%d, got %d", max, count)
 	}
 	// Each child gets its OWN identity; inheriting the source's would let N
 	// sandboxes act as one agent instance. Fail closed without them.
@@ -287,19 +330,22 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 		}
 	}
 
-	resp := &lanternv1.ForkResponse{SourceVmId: srcID, SnapshotId: snapID}
-	// ponytail: children spawn sequentially (≤10 × restore latency); go
-	// parallel if fork latency becomes the complaint.
+	// Pre-allocate handles and VM records sequentially so each child has a
+	// stable index before any goroutine runs.  The handles array is indexed by
+	// child slot so goroutines can write results[i] without a mutex.
+	handles := make([]*lanternv1.VmHandle, count)
+	children := make([]*cluster.VM, count)
+	results := make([]*lanternv1.ForkChild, count)
 	for i := 0; i < count; i++ {
-		handle := &lanternv1.VmHandle{
+		handles[i] = &lanternv1.VmHandle{
 			VmId:             "vm-" + uuid.NewString(),
 			Node:             src.NodeName,
 			AvailabilityZone: node.AvailabilityZone,
 			CreatedAt:        timestamppb.Now(),
 		}
 		ident := req.GetIdentities()[i]
-		child := &cluster.VM{
-			Handle:      handle,
+		children[i] = &cluster.VM{
+			Handle:      handles[i],
 			Spec:        withIdentity(src.Spec, ident),
 			State:       lanternv1.VmState_VM_STATE_SPAWNING,
 			TenantID:    tenantID,
@@ -308,28 +354,50 @@ func (s *SchedulerService) Fork(ctx context.Context, req *lanternv1.ForkRequest)
 			SnapshotID:  snapID,
 			ParentVMID:  srcID,
 		}
-		s.Store.CreateVM(child)
-
-		out := &lanternv1.ForkChild{VmId: handle.VmId, Node: src.NodeName, AgentInstanceId: ident.GetAgentInstanceId()}
-		if err := s.spawnFromSnapshot(ctx, node.Address, child, handle, snapID); err != nil {
-			s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
-			s.Store.IncrTenantVMs(tenantID, -1)
-			out.State, out.Error = lanternv1.VmState_VM_STATE_FAILED, err.Error()
-			s.emit(tenantID, &lanternv1.StatusEvent{
-				VmId: handle.VmId, State: lanternv1.VmState_VM_STATE_FAILED, At: timestamppb.Now(), Reason: err.Error(),
-			})
-		} else {
-			s.Store.UpdateVMState(handle.VmId, lanternv1.VmState_VM_STATE_RUNNING, "forked from "+srcID, nil, time.Now().UTC())
-			if s.Metrics != nil {
-				s.Metrics.ActiveVMs.Inc()
-			}
-			out.State = lanternv1.VmState_VM_STATE_RUNNING
-			s.emit(tenantID, &lanternv1.StatusEvent{
-				VmId: handle.VmId, State: lanternv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "forked from " + srcID,
-			})
+		s.Store.CreateVM(children[i])
+		results[i] = &lanternv1.ForkChild{
+			VmId:            handles[i].VmId,
+			Node:            src.NodeName,
+			AgentInstanceId: req.GetIdentities()[i].GetAgentInstanceId(),
 		}
-		resp.Forks = append(resp.Forks, out)
 	}
+
+	// Fan out spawns with bounded concurrency.
+	// Each goroutine writes to results[i] (its own slot) — no mutex needed on
+	// the slice itself.  Store/Metrics/emit calls are all goroutine-safe.
+	concurrency := forkConcurrency()
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		i := i // capture for goroutine
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			vmID := handles[i].VmId
+			if err := s.spawnFromSnapshot(ctx, node.Address, children[i], handles[i], snapID); err != nil {
+				s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_FAILED, err.Error(), nil, time.Now().UTC())
+				s.Store.IncrTenantVMs(tenantID, -1)
+				results[i].State = lanternv1.VmState_VM_STATE_FAILED
+				results[i].Error = err.Error()
+				s.emit(tenantID, &lanternv1.StatusEvent{
+					VmId: vmID, State: lanternv1.VmState_VM_STATE_FAILED, At: timestamppb.Now(), Reason: err.Error(),
+				})
+			} else {
+				s.Store.UpdateVMState(vmID, lanternv1.VmState_VM_STATE_RUNNING, "forked from "+srcID, nil, time.Now().UTC())
+				if s.Metrics != nil {
+					s.Metrics.ActiveVMs.Inc()
+				}
+				results[i].State = lanternv1.VmState_VM_STATE_RUNNING
+				s.emit(tenantID, &lanternv1.StatusEvent{
+					VmId: vmID, State: lanternv1.VmState_VM_STATE_RUNNING, At: timestamppb.Now(), Reason: "forked from " + srcID,
+				})
+			}
+		}()
+	}
+	wg.Wait()
+
+	resp := &lanternv1.ForkResponse{SourceVmId: srcID, SnapshotId: snapID, Forks: results}
 	s.Logger.Info("vm forked", zap.String("vm_id", srcID), zap.String("snapshot_id", snapID), zap.Int("count", count))
 	return resp, nil
 }
