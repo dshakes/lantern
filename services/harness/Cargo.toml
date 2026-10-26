@@ -37,6 +37,11 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 anyhow = "1"
 dashmap = "6"
+# Broker egress mode (ADR 0026): the manager control channel rides a custom
+# vsock connector (tower::service_fn + hyper_util TokioIo). Both are already in
+# the lock as tonic dependencies — promoted to direct deps, no new crate.
+tower = { version = "0.4", features = ["util"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 # mTLS client: harness presents a per-VM client cert to the manager
 # `logging` is a rustls DEFAULT feature that default-features = false dropped.
 # Without it rustls cannot report why it rejects a certificate chain, which left
