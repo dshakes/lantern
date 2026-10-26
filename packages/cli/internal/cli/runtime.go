@@ -412,23 +412,34 @@ func newVmCatCommand() *cobra.Command {
 	}
 }
 
+// vmFileMaxBytes mirrors the control-plane's PUT /files/content body cap.
+const vmFileMaxBytes = 1 << 20
+
 func newVmPutCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "put <vm-id> <local-file|-> <path>",
 		Short: "Write a local text file (or stdin with -) to the VM's /workspace (max 1 MiB)",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var data []byte
-			var err error
-			if args[1] == "-" {
-				data, err = io.ReadAll(cmd.InOrStdin())
-			} else {
-				data, err = os.ReadFile(args[1])
+			var src io.Reader = cmd.InOrStdin()
+			if args[1] != "-" {
+				f, err := os.Open(args[1])
+				if err != nil {
+					return fmt.Errorf("read %s: %w", args[1], err)
+				}
+				defer f.Close()
+				src = f
 			}
+			// Read at most limit+1 so oversized input fails fast instead of
+			// buffering an arbitrarily large file/stdin the server would reject.
+			data, err := io.ReadAll(io.LimitReader(src, vmFileMaxBytes+1))
 			if err != nil {
 				return fmt.Errorf("read %s: %w", args[1], err)
 			}
-			if _, err := apiRaw(http.MethodPut, vmFilesPath(args[0], "/content", args[2]), data); err != nil {
+			if len(data) > vmFileMaxBytes {
+				return fmt.Errorf("%s is larger than the 1 MiB file API limit", args[1])
+			}
+			if _, err := apiRawTyped(http.MethodPut, vmFilesPath(args[0], "/content", args[2]), data, "text/plain; charset=utf-8"); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "wrote %d bytes to %s\n", len(data), args[2])
@@ -807,6 +818,11 @@ func apiAuthHeader() string {
 }
 
 func apiRaw(method, path string, body []byte) ([]byte, error) {
+	return apiRawTyped(method, path, body, "application/json")
+}
+
+// apiRawTyped is apiRaw with an explicit Content-Type (file uploads send raw text).
+func apiRawTyped(method, path string, body []byte, contentType string) ([]byte, error) {
 	req, err := http.NewRequest(method, apiBase()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -815,7 +831,7 @@ func apiRaw(method, path string, body []byte) ([]byte, error) {
 		req.Header.Set("Authorization", auth)
 	}
 	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	cli := &http.Client{Timeout: 30 * time.Second}
 	resp, err := cli.Do(req)
