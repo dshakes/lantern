@@ -199,9 +199,17 @@ owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
    State becomes `paused`; `snapshotId` is recorded on the VM.
 2. `resume` — claims a quota slot (402 if none; 409 if the VM is not `paused`),
    restores the snapshot under the same `vm_id`, and the harness re-identifies.
-3. `fork {count 1..10}` — restores the snapshot `count` times; each fork gets a
-   new `vm_id`, cert and agent identity, with `parentVmId` pointing at the source.
-   Forking a running VM requires Firecracker ≥ 1.12 + jailer. Per-fork failures
+3. `fork {count 1..LANTERN_MAX_FORK_COUNT}` — restores the snapshot `count` times
+   (default cap 100, hard ceiling 1000); each fork gets a new `vm_id`, cert and
+   agent identity, with `parentVmId` pointing at the source.  Fork spawns fan out
+   with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16) so N=100
+   forks saturate the node's restore pipeline without unbounded goroutine
+   explosion.  The memory snapshot file is hard-linked (not byte-copied) into
+   every fork's jail: Firecracker maps it `MAP_PRIVATE`, so all forks share the
+   same inode's pages via the host page cache until a guest write triggers
+   copy-on-write — O(1) disk I/O per fork instead of O(mem_size × N).  Falls back
+   silently to a full byte-copy on EXDEV (cross-device) or if `chmod 0444` fails.
+   Forking a running VM requires Firecracker ≥ 1.12 + jailer.  Per-fork failures
    come back in `forks[].error`; they do not fail the whole call.
 
 Re-identification matters because a restored guest otherwise resumes with the

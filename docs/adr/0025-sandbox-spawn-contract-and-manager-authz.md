@@ -296,3 +296,91 @@ failed.
   owner-tenant check as restore. The scheduler calls it best-effort when the
   last reference goes away. A running fork source does not hold its fork
   snapshot id, so only the children count as references.
+
+---
+
+## Addendum: shared-memory fork restore and snapshot refcounting (feat/fork-scale)
+
+### Problem
+
+Prior to this addendum, `fork N` performed `N` full byte-copies of the guest
+memory file (`LANTERN_VM_MEM_GiB` × N GiB of I/O per fork call), because
+`restore_after_tap` ran `plan_jailed_snapshot_staging` which puts both the
+vmstate and the mem artifact in the `copies` list. For N=100 forks on a 1 GiB
+VM this is 100 GiB of sequential writes before any guest boots.
+
+### Decision
+
+Use Firecracker's already-default `mem_backend { backend_type: "File" }` path
+together with POSIX `MAP_PRIVATE` semantics and hard links to share the host
+page cache across fork jails:
+
+1. **Snapshot store marks the mem artifact immutable.** After `persist()` writes
+   all artifacts to the store directory, the `mem` file is `chmod 0444`
+   (best-effort; failure is warn-logged and the fork path falls back to a full
+   copy).
+
+2. **Fork staging hard-links mem; copies vmstate.** A new pure function
+   `plan_jailed_fork_staging` returns a `JailedSnapshotStaging` where `mem` is
+   in the `links` field and `vmstate` is in the `copies` field. The `vmstate`
+   must be copied because Firecracker writes back to it during and after load.
+   The `mem` file is never written by Firecracker when loaded `MAP_PRIVATE`; it
+   is safe to share.
+
+3. **`stage_jailed_snapshot` executes hard-link or falls back to copy on EXDEV.**
+   `std::fs::hard_link(src, dest)` fails with `EXDEV` when the snapshot store
+   and the jail chroot are on different filesystems (e.g. separate block
+   devices). On `EXDEV` the code falls back silently to a byte-copy. This means
+   the optimization is a best-effort performance improvement, never a correctness
+   requirement.
+
+4. **Hard-linked files are never chowned.** `chown(2)` on any one hard link
+   mutates the shared inode's ownership for every holder. The `owned_paths()`
+   method on `JailedSnapshotStaging` intentionally excludes `links`; the
+   staging executor chowns only `dirs` and `copies`. The snapshot store ensures
+   the source `mem` file is `0444` (world-readable) so the jail uid can read it
+   without ownership transfer.
+
+5. **`restore_with_identity` selects the path.** When the snapshot URI uses the
+   `store://` scheme, the manager calls `make_mem_readonly` on the mem artifact.
+   On success it calls `record_fork_staging(vm_id, snapshot_id)` and passes
+   `shared_mem = true` to `restore_after_tap`, which chooses
+   `plan_jailed_fork_staging`. On failure it warn-logs and uses
+   `plan_jailed_snapshot_staging` (full copy). `fc://` URIs (arbitrary host
+   paths with unknown ownership) always use the copy path.
+
+### Refcount lifecycle
+
+`FirecrackerBackend` maintains two in-process maps (behind `Arc<Mutex<…>>`):
+
+- `fork_snap_source: HashMap<vm_id, snapshot_id>` — which snapshot a fork VM
+  was restored from.
+- `fork_snap_refs: HashMap<snapshot_id, u32>` — how many fork VMs currently
+  hold a hard link to that snapshot's mem file.
+
+`record_fork_staging(vm_id, snap_id)` is called before `stage_jailed_snapshot`
+(before the jail directory exists), so the refcount covers the entire VM
+lifetime. `release_fork_staging(vm_id)` is called from `cancel()` after
+`remove_dir_all` on the jail directory (the hard link is gone before the
+refcount decrements).
+
+The refcount is informational in this implementation: it tracks live hard-link
+holders but does not gate store-side deletion (the snapshot-delete RPC is the
+Follow-up item above). When the count reaches zero the snapshot's mem inode is
+automatically reclaimed by the OS because all hard links have been removed from
+the jail directories (the store directory was already cleaned up by
+`enforce_retention`). There is no orphan inode risk.
+
+### Consequences
+
+- **O(1) disk I/O per fork** (metadata ops only) when hard-linking succeeds,
+  versus O(mem_size × N) for the copy path.
+- **Zero extra RSS per fork at boot**: MAP_PRIVATE shares pages via the host
+  page cache until a guest write triggers copy-on-write.
+- **Fallback is invisible to callers.** EXDEV, chmod failure, or an `fc://`
+  URI silently reverts to the copy path. Per-fork error fields in
+  `ForkResponse.Forks` report spawn failures, not staging path choice.
+- **`LANTERN_MAX_FORK_COUNT`** (default 100, ceiling 1000) controls the maximum
+  forks per call. Quota is reserved all-or-nothing up front.
+- **`LANTERN_FORK_CONCURRENCY`** (default 16) bounds goroutine fan-out in the
+  scheduler so N=100 does not spawn 100 simultaneous restore goroutines.
