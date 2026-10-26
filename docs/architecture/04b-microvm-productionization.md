@@ -226,13 +226,11 @@ PAUSED (not TERMINATED) via `ReconcileNodeInventory`. The quota slot is released
 PAUSED. Idle costs nothing.
 
 **Transparent auto-resume.** Exec, ExecTool, and file-API requests (`/files`,
-`/files/content`) to an auto-suspended VM (state=`paused`, `idle_timeout_secs > 0`)
-transparently resume it before serving the request. A concurrent second request
-that arrives while the resume is in flight gets a `FailedPrecondition` from the
-scheduler (the VM is no longer PAUSED), which the control-plane treats as "already
-running" — no double-resume. A manually-paused VM (state=`paused`,
-`idle_timeout_secs = 0`) is NOT auto-resumed; callers get 409 so the operator
-retains explicit control. Quota exhaustion during auto-resume returns 402.
+`/files/content`) to a VM with `idle_timeout_secs > 0` first ask the scheduler to
+resume it (the scheduler is authoritative — the idle sweeper does not update the
+control-plane's shadow row). `FailedPrecondition` means it is already running, so
+concurrent requests never double-resume; quota exhaustion → 402. A VM paused by an
+operator (`POST /pause`) is never auto-resumed → 409.
 
 ## Diagrams
 

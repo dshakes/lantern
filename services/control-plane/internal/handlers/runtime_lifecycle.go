@@ -260,25 +260,31 @@ func (h *RuntimeHandler) ensureVMRunning(w http.ResponseWriter, ctx context.Cont
 		return false
 	}
 
-	if state != "paused" {
-		return true // running (or transitional) — let the operation proceed
-	}
-	if idleTimeoutSecs <= 0 {
-		// Manually paused; do not auto-resume.
+	// The shadow row only becomes "paused" through PauseVM (an operator /
+	// API pause) — the scheduler's idle sweeper pauses WITHOUT touching it.
+	// So "paused" here means manual: never auto-resume, whatever the timeout.
+	if state == "paused" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error":  "conflict",
 			"reason": "vm is paused; resume it first",
 		})
 		return false
 	}
+	if idleTimeoutSecs <= 0 {
+		return true // never auto-suspended — let the operation proceed
+	}
 
-	// VM was auto-suspended — resume it transparently.
+	// Idle-suspend eligible: the scheduler (authoritative) may have
+	// auto-paused it while the shadow still says running. Ask it to resume;
+	// FailedPrecondition means it is already running.
+	// ponytail: one extra RPC per call for idle-enabled VMs; a scheduler
+	// GetVM / state push to the shadow avoids it if it shows up in latency.
 	snap, err := h.scheduler.Resume(ctx, tenantID, vmID)
 	if err != nil {
 		switch status.Code(err) {
 		case grpccodes.FailedPrecondition:
-			// A concurrent request already resumed it (CAS at the scheduler won).
-			h.setVMState(ctx, tenantID, vmID, "running", "")
+			// Already running (never suspended, or a concurrent request's
+			// resume won the scheduler CAS).
 			return true
 		case grpccodes.ResourceExhausted:
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{

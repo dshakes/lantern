@@ -414,9 +414,15 @@ non-zero `LastActivityAt` older than the timeout it calls `tryIdlePause`:
 5. Release quota slot via `IncrTenantVMs(-1)` on the PAUSED edge.
 
 **Auto-resume.** Control-plane `ensureVMRunning` (called from `fileTarget` and
-`ExecVM`) reads `state + idle_timeout_secs` from `runtime_vms`. PAUSED +
-`idle_timeout_secs > 0` → `scheduler.Resume()`; PAUSED + `idle_timeout_secs == 0`
-→ 409 (do not auto-resume manually-paused VMs). `FailedPrecondition` from Resume =
-concurrent request already won the CAS — treat as running.
+`ExecVM`) reads `state + idle_timeout_secs` from the `runtime_vms` shadow row. The
+idle sweeper pauses at the scheduler WITHOUT touching that row, so the shadow's
+`paused` only ever comes from an operator/API `PauseVM` → 409, never auto-resumed
+(whatever the timeout). `idle_timeout_secs == 0` → proceed. Otherwise the VM may
+have been auto-suspended behind a stale `running` shadow, so the control-plane
+calls `scheduler.Resume()`; `FailedPrecondition` = already running (never
+suspended, or a concurrent request won the CAS) → proceed. One extra RPC per call
+for idle-enabled VMs; a scheduler `GetVM` / state push would remove it. Known
+limitation: `GET /v1/runtime/vms` shows an auto-suspended VM as `running` until
+its next request resumes it.
 
 **DB.** Migration 0022: `ALTER TABLE runtime_vms ADD COLUMN idle_timeout_secs INT NOT NULL DEFAULT 0`.
