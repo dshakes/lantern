@@ -1039,14 +1039,17 @@ loopback + `169.254.169.254` direct).
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
 | `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
+| `GET`    | `/v1/runtime/vms/{id}/files`      | List a dir under `/workspace` (`?path=`, default root) → `{path, entries:[{name,type,size}], truncated}`. Via `RuntimeManager.ExecTool` → harness `list_dir` (confined to `/workspace`, workload fsuid); VM ownership checked (404 cross-tenant), `tenant_id` stamped on the RPC. `runtime:read` |
+| `GET`    | `/v1/runtime/vms/{id}/files/content` | `?path=` → raw UTF-8 text (harness `read_file`, 1 MiB cap; cut reads set `X-Lantern-Truncated: true`). Tool error → 400 (path escape) / 404 (missing); `UNAVAILABLE` (non-Firecracker / no harness) → 503. `runtime:read` |
+| `PUT`    | `/v1/runtime/vms/{id}/files/content` | `?path=`, body = file bytes (UTF-8, >1 MiB → 413) → `{path, bytesWritten}` (harness `write_file`). Idempotency key = sha256(vm_id, path, body). Contents never logged. `runtime:admin` (same as exec) |
 | `GET`    | `/v1/runtime/cluster`            | Owner-only. Node load + warm-pool capacity                                                              |
 | `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
 
 CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork [--count N]`) and dashboard pages
-(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{pause,resume,fork,execStream}`,
-Python `client.runtime.{pause,resume,fork,exec_stream}`, Go `PauseVM`/`ResumeVM`/`ForkVM`. End-to-end demo
+(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{pause,resume,fork,execStream,listFiles,readFile,writeFile}`,
+Python `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,write_file}`, Go `PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile`; CLI `lantern vm ls|cat|put`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Wiring env vars (set on control-plane + scheduler):**

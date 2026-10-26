@@ -193,3 +193,48 @@ func TestVMLifecycle(t *testing.T) {
 		t.Fatalf("ForkVM result = %+v", f)
 	}
 }
+
+func TestVMFiles(t *testing.T) {
+	var gotMethod, gotPath, gotQuery, gotBody, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery, gotCT = r.Method, r.URL.Path, r.URL.Query().Get("path"), r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		switch {
+		case r.URL.Path == "/v1/runtime/vms/vm-1/files":
+			w.Write([]byte(`{"path":".","entries":[{"name":"a.txt","type":"file","size":2}],"truncated":false}`))
+		case r.Method == http.MethodGet && gotQuery == "missing":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"no such file"}`))
+		case r.Method == http.MethodGet:
+			w.Header().Set("X-Lantern-Truncated", "true")
+			w.Write([]byte("héllo"))
+		default:
+			w.Write([]byte(`{"path":"a b.txt","bytesWritten":2}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	ctx := context.Background()
+
+	l, err := c.ListFiles(ctx, "vm-1", "")
+	if err != nil || gotPath != "/v1/runtime/vms/vm-1/files" || len(l.Entries) != 1 || l.Entries[0].Name != "a.txt" {
+		t.Fatalf("ListFiles = %+v, %v (%s)", l, err, gotPath)
+	}
+
+	f, err := c.ReadFile(ctx, "vm-1", "dir/a b.txt")
+	if err != nil || gotPath != "/v1/runtime/vms/vm-1/files/content" || gotQuery != "dir/a b.txt" || f.Content != "héllo" || !f.Truncated {
+		t.Fatalf("ReadFile = %+v, %v (%s ?path=%s)", f, err, gotPath, gotQuery)
+	}
+
+	_, err = c.ReadFile(ctx, "vm-1", "missing")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+		t.Fatalf("ReadFile missing err = %v, want 404 APIError", err)
+	}
+
+	n, err := c.WriteFile(ctx, "vm-1", "a b.txt", []byte("hi"))
+	if err != nil || n != 2 || gotMethod != http.MethodPut || gotBody != "hi" || gotCT != "text/plain; charset=utf-8" || gotQuery != "a b.txt" {
+		t.Fatalf("WriteFile = %d, %v (%s %q %q)", n, err, gotMethod, gotBody, gotCT)
+	}
+}

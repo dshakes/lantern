@@ -59,6 +59,20 @@ POST /v1/runtime/vms/{id}/fork
         for a shell line.
       </p>
 
+      <h2 id="files">Files</h2>
+      <p>
+        Read and write files under the VM&apos;s <code>/workspace</code>. These
+        run through the in-guest harness tool runner, so paths are confined to{" "}
+        <code>/workspace</code> (escapes return 400) and files are accessed as
+        the workload user. Content is UTF-8 text, at most 1 MiB (writes above
+        return 413; larger reads are cut and flagged with{" "}
+        <code>X-Lantern-Truncated: true</code>). Firecracker VMs only; other
+        backends return 503.
+      </p>
+      <pre><code>{`GET /v1/runtime/vms/{id}/files?path=src          # → { path, entries: [{name, type, size}], truncated }
+GET /v1/runtime/vms/{id}/files/content?path=a.txt  # → raw text
+PUT /v1/runtime/vms/{id}/files/content?path=a.txt  # body = file bytes → { path, bytesWritten }`}</code></pre>
+
       <h2 id="sdk">SDKs</h2>
       <h3>TypeScript</h3>
       <pre><code>{`const { snapshotId } = await client.runtime.pause(vmId);
@@ -66,6 +80,10 @@ await client.runtime.resume(vmId);                       // same vm id
 
 const { forks } = await client.runtime.fork(vmId, { count: 3 });
 for (const f of forks) if (f.error) console.warn(f.vmId, f.error);
+
+await client.runtime.writeFile(vmId, "job.py", "print('hi')");
+const { content } = await client.runtime.readFile(vmId, "job.py");
+const { entries } = await client.runtime.listFiles(vmId);
 
 for await (const ev of client.runtime.execStream(vmId, {
   command: "/bin/sh",
@@ -84,6 +102,10 @@ for f in result.forks:
     if f.error:
         print(f.vm_id, f.error)
 
+await client.runtime.write_file(vm_id, "job.py", "print('hi')")
+text = (await client.runtime.read_file(vm_id, "job.py"))["content"]
+listing = await client.runtime.list_files(vm_id)
+
 async for ev in client.runtime.exec_stream(vm_id, "/bin/sh", ["-c", "python job.py"]):
     if ev.type == "exit":
         print("exit", ev.exit_code)
@@ -92,12 +114,16 @@ async for ev in client.runtime.exec_stream(vm_id, "/bin/sh", ["-c", "python job.
 
       <h3>CLI and Go</h3>
       <p>
-        The Go SDK exposes <code>PauseVM</code>, <code>ResumeVM</code> and{" "}
-        <code>ForkVM</code>.
+        The Go SDK exposes <code>PauseVM</code>, <code>ResumeVM</code>,{" "}
+        <code>ForkVM</code>, <code>ListFiles</code>, <code>ReadFile</code> and{" "}
+        <code>WriteFile</code>.
       </p>
       <pre><code>{`lantern vm pause <id>
 lantern vm resume <id>
-lantern vm fork <id> --count 3`}</code></pre>
+lantern vm fork <id> --count 3
+lantern vm ls <id> [path]
+lantern vm cat <id> <path>
+lantern vm put <id> <local-file|-> <path>`}</code></pre>
       <p>
         The dashboard VM detail page (<code>/runtime/&#123;vm&#125;</code>) has
         Pause, Resume and Fork actions.
