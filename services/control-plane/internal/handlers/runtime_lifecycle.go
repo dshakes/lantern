@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -30,8 +32,28 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 )
 
-// maxForkCount mirrors the scheduler's per-call fork ceiling.
-const maxForkCount = 10
+// maxForkCountDefault and maxForkCountCeiling mirror the scheduler's defaults.
+// LANTERN_MAX_FORK_COUNT (default 100, ceiling 1000).
+const (
+	maxForkCountDefault = 100
+	maxForkCountCeiling = 1000
+)
+
+// maxForkCount returns the configured per-call fork limit for this process.
+func maxForkCount() int {
+	s := os.Getenv("LANTERN_MAX_FORK_COUNT")
+	if s == "" {
+		return maxForkCountDefault
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return maxForkCountDefault
+	}
+	if n > maxForkCountCeiling {
+		return maxForkCountCeiling
+	}
+	return n
+}
 
 // ForkChildResult is one child of a Fork call.
 type ForkChildResult struct {
@@ -247,12 +269,10 @@ func (h *RuntimeHandler) ResumeVM(w http.ResponseWriter, r *http.Request) {
 }
 
 // ForkVM handles POST /v1/runtime/vms/{id}/fork with body {"count":N}
-// (default 1, 1..10).
+// (default 1, 1..LANTERN_MAX_FORK_COUNT).
 func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
-	claims, ctx, vmID, ok := h.lifecycleTarget(w, r)
-	if !ok {
-		return
-	}
+	// Validate count before the DB lookup — auth is still required but the
+	// range check is pure and cheap.
 	body := struct {
 		Count *int `json:"count"`
 	}{}
@@ -264,8 +284,14 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	if body.Count != nil {
 		count = *body.Count
 	}
-	if count < 1 || count > maxForkCount {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "count must be between 1 and 10"})
+	max := maxForkCount()
+	if count < 1 || count > max {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("count must be between 1 and %d", max)})
+		return
+	}
+
+	claims, ctx, vmID, ok := h.lifecycleTarget(w, r)
+	if !ok {
 		return
 	}
 	if !h.quotaGate(ctx, w, claims, vmID, "fork", count) {
