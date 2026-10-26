@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -2440,7 +2442,20 @@ type agentSpecRequest struct {
 }
 
 // GenerateAgentSpec handles POST /v1/agents/generate-spec.
-// It takes a natural-language description and generates a structured agent spec via LLM.
+//
+// It turns a plain-language goal into a structured agent spec via LLM
+// reasoning and returns the PARSED spec object (not the raw completion
+// envelope — the CLI and the onboarding flow both consume fields like
+// name/systemPrompt/firstInput directly; returning the completion wrapper
+// silently forced every caller onto its static fallback).
+//
+// The call goes through callLLMWithFailover (via CompleteInternalWithUsage)
+// with the capability-addressed "auto" model, so it inherits the tenant's
+// provider chain, the model-router seam, and failover (invariants #6/#8).
+//
+// Errors: 400 {code:"no_provider"} when the tenant has no LLM key; 502
+// {code:"llm_failed"|"bad_spec"} when the model call fails or returns
+// something that is not a usable spec.
 func (h *LlmProxyHandler) GenerateAgentSpec(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, err := h.contextWithTenant(r)
 	if err != nil {
@@ -2449,35 +2464,61 @@ func (h *LlmProxyHandler) GenerateAgentSpec(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req agentSpecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-
 	if strings.TrimSpace(req.Description) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "description is required"})
 		return
 	}
 
-	h.logger().Info("generating agent spec",
-		zap.String("tenant_id", tenantID),
-		zap.String("description", req.Description),
-	)
-
-	// Inject the tenant's ACTUALLY installed connectors so the spec never
-	// references a connector the tenant hasn't set up.
-	installedConnectors := h.tenantInstalledConnectors(ctx, tenantID)
-	installedConnectorsLine := "none installed"
-	if len(installedConnectors) > 0 {
-		installedConnectorsLine = strings.Join(installedConnectors, ", ")
+	spec, err := h.generateAgentSpec(ctx, tenantID, req.Description)
+	if err != nil {
+		writeLLMAssistError(w, err)
+		return
 	}
+	writeJSON(w, http.StatusOK, spec)
+}
 
-	systemPrompt := `You are Lantern's agent architect. Given a user's description, generate a structured agent specification.
+// errNoLLMProvider means the tenant has no usable LLM key (DB or env).
+var errNoLLMProvider = errors.New("no LLM provider API key configured — add one in Settings > LLM Providers")
+
+// errBadSpec means the model answered but not with a usable spec.
+var errBadSpec = errors.New("the model did not return a usable agent spec — try rephrasing the goal")
+
+// hasAnyLLMProvider reports whether at least one completion provider is usable.
+func (h *LlmProxyHandler) hasAnyLLMProvider(ctx context.Context, tenantID string) bool {
+	return h.providerAvailable(ctx, tenantID, "anthropic") || h.providerAvailable(ctx, tenantID, "openai")
+}
+
+// writeLLMAssistError maps spec-generation / onboarding-explain errors to a
+// typed response the dashboard + CLI turn into a one-click fix.
+func writeLLMAssistError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNoLLMProvider):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "code": "no_provider"})
+	case errors.Is(err, errBadSpec):
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "bad_spec"})
+	default:
+		// Never echo the raw provider error body — it can carry request
+		// detail. The message stays actionable without it.
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": "the model call failed — check your provider key in Settings > LLM Providers",
+			"code":  "llm_failed",
+		})
+	}
+}
+
+const agentSpecSystemPrompt = `You are Lantern's agent architect. Given a user's goal, design an agent for it.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {
   "name": "kebab-case-name",
   "description": "One sentence description",
+  "systemPrompt": "The full instruction the agent runs with: role, what to do with its input, output format, and limits. 3-8 sentences.",
+  "firstInput": { "prompt": "A realistic first task for this agent that proves it works" },
+  "rationale": "1-2 plain sentences, addressed to the user, explaining why this design fits their goal",
   "model": "auto",
   "steps": [
     { "name": "step-name", "type": "llm", "description": "What this step does", "config": {} }
@@ -2492,62 +2533,77 @@ Output ONLY valid JSON with this exact structure (no markdown, no backticks, no 
 
 Valid step types: llm, tool, connector, condition, loop, approval
 Valid tools: web-search, python-exec, fs-read, fs-write, browser, code-interpreter
-Installed connectors for this tenant (ONLY reference connectors from this list; do not invent connectors not installed): ` + installedConnectorsLine + `
+Installed connectors for this tenant (ONLY reference connectors from this list; do not invent connectors not installed): %s
 Valid surfaces: whatsapp, slack, discord, telegram, twilio, email, webchat
 Valid trigger types: manual, schedule, webhook, surface
-Valid isolation levels: trusted, standard, untrusted
+Valid isolation levels: trusted, standard, untrusted (use untrusted when the agent runs code or browses)
 Valid models: auto, reasoning-large, reasoning-small, chat-large, chat-small, code-large
 
-Generate a thoughtful, well-structured agent with appropriate steps for the task described. Use descriptive step names in kebab-case.`
+Use descriptive kebab-case step names. Keep firstInput runnable with no external setup.`
 
-	completionReq := &completionRequest{
-		Model: "auto",
-		Messages: []completionMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: req.Description},
-		},
-		Stream: false,
+// generateAgentSpec runs the LLM spec design and returns a validated spec map.
+func (h *LlmProxyHandler) generateAgentSpec(ctx context.Context, tenantID, description string) (map[string]any, error) {
+	if !h.hasAnyLLMProvider(ctx, tenantID) {
+		return nil, errNoLLMProvider
 	}
-
-	provider, model := h.resolveModelForTenant(ctx, tenantID, completionReq.Model)
-
-	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
+	installed := "none installed"
+	if h.srv.Pool != nil {
+		if c := h.tenantInstalledConnectors(ctx, tenantID); len(c) > 0 {
+			installed = strings.Join(c, ", ")
+		}
+	}
+	h.logger().Info("generating agent spec", zap.String("tenant_id", tenantID))
+	text, _, _, _, err := h.CompleteInternalWithUsage(ctx, tenantID, fmt.Sprintf(agentSpecSystemPrompt, installed), description)
 	if err != nil {
-		altProvider := "anthropic"
-		if provider == "anthropic" {
-			altProvider = "openai"
-		}
-		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
-		if altErr != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers.",
-			})
-			return
-		}
-		provider = altProvider
-		apiKey = altKey
-		if provider == "openai" {
-			model = "gpt-4o"
-		} else {
-			model = sonnetModel()
-		}
+		h.logger().Warn("agent spec generation failed", zap.String("tenant_id", tenantID), zap.Error(err))
+		return nil, fmt.Errorf("generate spec: %w", err)
 	}
+	return parseAgentSpec(text, description)
+}
 
-	h.logger().Info("proxying spec generation",
-		zap.String("tenant_id", tenantID),
-		zap.String("provider", provider),
-		zap.String("model", model),
-	)
+// specCapabilityModels are the only model values a spec may carry —
+// capability names, never a vendor model (invariant #6).
+var specCapabilityModels = map[string]bool{
+	"auto": true, "reasoning-large": true, "reasoning-small": true,
+	"chat-large": true, "chat-small": true, "code-large": true,
+}
 
-	// Use the existing proxy infrastructure to call the LLM, but capture the response.
-	switch provider {
-	case "openai":
-		h.proxyOpenAI(w, ctx, apiKey, model, completionReq)
-	case "anthropic":
-		h.proxyAnthropic(w, ctx, apiKey, model, completionReq)
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported provider"})
+var nonKebab = regexp.MustCompile(`[^a-z0-9]+`)
+
+// parseAgentSpec extracts and normalizes the spec JSON from model text.
+// Pure: unit-tested without an LLM.
+func parseAgentSpec(text, description string) (map[string]any, error) {
+	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
+	if start < 0 || end <= start {
+		return nil, errBadSpec
 	}
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(text[start:end+1]), &spec); err != nil {
+		return nil, errBadSpec
+	}
+	name, _ := spec["name"].(string)
+	name = strings.Trim(nonKebab.ReplaceAllString(strings.ToLower(name), "-"), "-")
+	if len(name) > 48 {
+		name = strings.TrimRight(name[:48], "-")
+	}
+	if name == "" {
+		return nil, errBadSpec
+	}
+	spec["name"] = name
+	if d, _ := spec["description"].(string); strings.TrimSpace(d) == "" {
+		spec["description"] = strings.TrimSpace(description)
+	}
+	if sp, _ := spec["systemPrompt"].(string); strings.TrimSpace(sp) == "" {
+		spec["systemPrompt"] = "You are an agent built for this goal: " + strings.TrimSpace(description) +
+			"\nDo the task described in your input, be concise, and say plainly when you cannot do something."
+	}
+	if m, _ := spec["model"].(string); !specCapabilityModels[m] {
+		spec["model"] = "auto"
+	}
+	if fi, ok := spec["firstInput"].(map[string]any); !ok || len(fi) == 0 {
+		spec["firstInput"] = map[string]any{"prompt": "Introduce yourself in two sentences and show one example of the task you were built for."}
+	}
+	return spec, nil
 }
 
 // agentCodeRequest is the request body for POST /v1/agents/generate-code.
