@@ -195,6 +195,10 @@ build_rootfs() {
     "${mnt}/dev" \
     "${mnt}/workspace"
 
+  # /workspace is the workload's writable directory; chmod 1777 so any uid
+  # (including the harness workload uid, default 1000) can write there.
+  sudo chmod 1777 "${mnt}/workspace" "${mnt}/tmp"
+
   # Install the harness as both the documented path and as PID 1 init.
   sudo cp "${HARNESS_BIN}" "${mnt}/usr/local/bin/lantern-harness"
   sudo cp "${HARNESS_BIN}" "${mnt}/sbin/init"

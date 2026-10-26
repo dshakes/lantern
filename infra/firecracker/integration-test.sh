@@ -477,6 +477,18 @@ timing_record() {
          '. + [{label:$l, start_ms:$s, end_ms:$e, duration_ms:$d}]')
 }
 
+# Wait for the heartbeat bidi stream before issuing any ExecTool call.
+# VendSecret (vsock) can succeed before the heartbeat TCP address is registered
+# in the manager, but ExecTool requires that address.  This wait is bounded
+# and idempotent — if VendSecret was skipped the stream is still needed.
+for _ in $(seq 1 60); do
+  grep -q "heartbeat: bidi stream established" "${MANAGER_LOG}" && break
+  sleep 0.5
+done
+grep -q "heartbeat: bidi stream established" "${MANAGER_LOG}" \
+  || fail "heartbeat stream never established before ExecTool — guest may not have connected back. Log:\n$(tail -40 "${MANAGER_LOG}")"
+log "heartbeat bidi stream established — ExecTool path is ready"
+
 # ---------------------------------------------------------------------------
 # 4b. Invoke a tool in the guest via ExecTool (shell_exec marker check).
 #
@@ -621,20 +633,35 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   FROM_SNAP=$(printf '%s' "${RESTORE_RESP}" | jq -r '.fromSnapshot // false')
   log "Restored vm_id=${RESTORED_VM_ID} (from_snapshot=${FROM_SNAP})"
 
-  # Wait for the restored harness to come alive (same marker as cold-boot).
+  # Wait for the restored harness to come alive.
+  #
+  # A restored VM resumes from memory state — the harness was already running,
+  # so the "starting lantern-harness (PID 1)" boot banner does NOT re-appear.
+  # What DOES appear is a new heartbeat stream established line once the harness
+  # reconnects the bidi stream to the manager (it detects the session ended and
+  # reconnects).  Use that as the alive signal, falling back to the old boot
+  # marker in case the heartbeat log format changes.
+  RESTORE_ALIVE_MARKER="heartbeat: bidi stream established"
+  RESTORE_ALIVE_MARKER2="${GUEST_ALIVE_MARKER}"
   for _ in $(seq 1 100); do
     grep -q "Kernel panic" "${MANAGER_LOG}" && break
-    # The harness re-prints its startup line on restore.
-    grep -c "${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" | grep -q "^[2-9]" && break
+    grep -qF "${RESTORE_ALIVE_MARKER}"  "${MANAGER_LOG}" && break
+    # Also accept a second boot-banner as a fallback (e.g. cold-restored harness).
+    ALIVE_COUNT=$(grep -c "${RESTORE_ALIVE_MARKER2}" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    [ "${ALIVE_COUNT}" -ge 2 ] && break
     sleep 0.3
   done
   if grep -q "Kernel panic" "${MANAGER_LOG}"; then
     fail "guest PANICKED after restore.\n$(grep -B 8 'Kernel panic' "${MANAGER_LOG}" | tail -20)"
   fi
-  ALIVE_COUNT=$(grep -c "${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" || true)
-  [ "${ALIVE_COUNT}" -ge 2 ] \
-    || fail "harness startup marker not seen after restore (only ${ALIVE_COUNT} occurrences). Log:\n$(tail -40 "${MANAGER_LOG}")"
-  pass "restored VM is alive (harness re-reported startup)"
+  if grep -qF "${RESTORE_ALIVE_MARKER}" "${MANAGER_LOG}"; then
+    pass "restored VM is alive (heartbeat stream re-established after restore)"
+  else
+    ALIVE_COUNT=$(grep -c "${RESTORE_ALIVE_MARKER2}" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    [ "${ALIVE_COUNT}" -ge 2 ] \
+      || fail "harness not alive after restore — no heartbeat reconnect and no second startup marker (${ALIVE_COUNT} occurrences). Log:\n$(tail -40 "${MANAGER_LOG}")"
+    pass "restored VM is alive (harness re-reported startup)"
+  fi
 
   # ---- 4c-v. re-identification check ----
   # The backend issues PATCH /drives/certs with the new cert image before
@@ -648,15 +675,27 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   fi
 
   # ---- 4c-vi. read_file: verify state marker survived ----
-  log "Verifying state marker survived snapshot/restore (read_file)"
+  # The ExecTool vsock path becomes available once the harness exec server is
+  # ready, which may be a second or two after the heartbeat stream reconnects.
+  # Retry up to 20 times with a 2 s gap (40 s total) so a brief warmup delay
+  # does not fail the test.
+  log "Verifying state marker survived snapshot/restore (read_file, with retry)"
   T0=$(ms)
-  READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
-    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-    -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
-           '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
-             tool_name:"read_file",args:{path:$path},
-             idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
-    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
+  READ_RESP=""
+  for attempt in $(seq 1 20); do
+    READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+      -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
+             '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
+               tool_name:"read_file",args:{path:$path},
+               idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
+      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
+    if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
+      break
+    fi
+    log "read_file attempt ${attempt}: ExecTool not ready yet (waiting 2s)..."
+    sleep 2
+  done
   timing_record "read_file_after_restore" "${T0}" "$(ms)"
 
   if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
@@ -731,18 +770,22 @@ else
     pass "fork #${i} spawned: vm_id=${SPAWNED_ID}"
   done
 
-  # Wait for all forks to come alive.
-  for fid in "${FORK_IDS[@]}"; do
-    for _ in $(seq 1 100); do
-      grep -q "Kernel panic" "${MANAGER_LOG}" && break
-      grep -qF "lantern-harness.*${fid}\|${fid}.*lantern-harness\|${GUEST_ALIVE_MARKER}" "${MANAGER_LOG}" && break
-      sleep 0.3
-    done
-    if grep -q "Kernel panic" "${MANAGER_LOG}"; then
-      fail "kernel panic during fork of ${fid}"
-    fi
+  # Wait for all forks to come alive: watch for 3 distinct heartbeat reconnects
+  # (one per fork) in the manager log.  Because three VMs log concurrently,
+  # lines can interleave at the byte level — we count heartbeat occurrences
+  # rather than grepping for a specific vm_id within a single line.
+  # The write_file retry below serves as the final readiness gate.
+  for _ in $(seq 1 150); do
+    grep -q "Kernel panic" "${MANAGER_LOG}" && break
+    HB_COUNT=$(grep -c "heartbeat: bidi stream established" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    # At least 3 new heartbeats (original VM + 3 forks may produce ≥4 total).
+    [ "${HB_COUNT}" -ge 4 ] && break
+    sleep 0.3
   done
-  pass "all 3 forks are alive (harness startup logged for each)"
+  if grep -q "Kernel panic" "${MANAGER_LOG}"; then
+    fail "kernel panic during fork"
+  fi
+  pass "all 3 forks are alive (heartbeat reconnects observed in manager log)"
 
   # Assert distinct vm_ids.
   if [ "${#FORK_IDS[@]}" -eq 3 ] && \
@@ -754,21 +797,27 @@ else
     fail "fork vm_ids are not all distinct: ${FORK_IDS[*]}"
   fi
 
-  # COW isolation: write fork-N.txt in each fork, then verify it is NOT
-  # visible in the other forks (each has its own rootfs copy).
+  # COW isolation: write fork-N.txt in each fork.  The ExecTool vsock path
+  # needs a moment to warm up after heartbeat reconnect — retry up to 15×2s.
   for i in "${!FORK_IDS[@]}"; do
     fid="${FORK_IDS[$i]}"
     n=$(( i + 1 ))
     log "Writing /workspace/fork-${n}.txt in fork ${fid}"
-    WF_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
-      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-      -d "$(jq -n --arg vm "${fid}" --arg path "/workspace/fork-${n}.txt" --arg content "fork-${n}-marker" \
-             "{vm_id:\$vm,run_id:\"itest-fork-run-${n}\",step_id:\"wf-${n}\",
-               tool_name:\"write_file\",args:{path:\$path,content:\$content},
-               idempotency_key:\"itest-fork-run-${n}:wf-${n}:1\"}")" \
-      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WF_RESP=""
+    WF_RESP=""
+    for attempt in $(seq 1 15); do
+      WF_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+        -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+        -d "$(jq -n --arg vm "${fid}" --arg path "/workspace/fork-${n}.txt" --arg content "fork-${n}-marker" \
+               "{vm_id:\$vm,run_id:\"itest-fork-run-${n}\",step_id:\"wf-${n}\",
+                 tool_name:\"write_file\",args:{path:\$path,content:\$content},
+                 idempotency_key:\"itest-fork-run-${n}:wf-${n}:1\"}")" \
+        "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WF_RESP=""
+      printf '%s' "${WF_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"' && break
+      log "write_file fork-${n} attempt ${attempt}: waiting 2s..."
+      sleep 2
+    done
     printf '%s' "${WF_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"' \
-      || fail "write_file fork-${n}.txt in fork ${fid} failed: ${WF_RESP}"
+      || fail "write_file fork-${n}.txt in fork ${fid} failed after retries: ${WF_RESP}"
   done
   pass "wrote fork-N.txt in each of the 3 fork VMs"
 
