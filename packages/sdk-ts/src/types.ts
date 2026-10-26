@@ -695,6 +695,28 @@ export interface ForecastResult {
 
 export type VmState = "pending" | "starting" | "running" | "paused" | "draining" | "terminated" | "failed" | (string & {});
 
+/** Spec for scheduling a microVM headless workload. */
+export interface VmScheduleSpec {
+  imageDigest: string;
+  /** Isolation class ("microvm", "kata", "docker", etc.). */
+  isolation?: string;
+  /** Resource limits. */
+  limits?: { vcpu?: string; memory?: string; timeoutSecs?: number };
+  /** Agent version id to record on the shadow row. */
+  agentVersionId?: string;
+  /** Run id to associate with this VM. */
+  runId?: string;
+  /** Env vars to inject into the workload. */
+  env?: Record<string, string>;
+  /** Auto-suspend the VM after this many seconds of inactivity. 0 = never. */
+  idleTimeoutSecs?: number;
+  /** Caller-supplied idempotency key; server mints one when absent. */
+  idempotencyKey?: string;
+  /** Whether to route through confidential-compute (SEV-SNP/TDX). */
+  confidential?: boolean;
+  [key: string]: unknown;
+}
+
 export interface RuntimeVm {
   vmId: string;
   state: VmState;
@@ -702,6 +724,8 @@ export interface RuntimeVm {
   snapshotId?: string;
   /** Set on VMs created by fork(). */
   parentVmId?: string;
+  /** Auto-suspend timeout in seconds. 0 = never auto-suspend. */
+  idleTimeoutSecs?: number;
   [key: string]: unknown;
 }
 

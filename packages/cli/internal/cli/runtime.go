@@ -41,8 +41,9 @@ import (
 
 func newRunCommand() *cobra.Command {
 	var (
-		inputJSON string
-		follow    bool
+		inputJSON       string
+		follow          bool
+		idleTimeoutSecs int32
 	)
 
 	cmd := &cobra.Command{
@@ -87,6 +88,10 @@ Examples:
 					return fmt.Errorf("--input must be valid JSON: %w", err)
 				}
 				spec["stdin_input"] = parsed
+			}
+			if idleTimeoutSecs > 0 {
+				// CLI flag wins over any value already in the spec file.
+				spec["idle_timeout_secs"] = idleTimeoutSecs
 			}
 
 			body, _ := json.Marshal(spec)
@@ -136,6 +141,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&inputJSON, "input", "", `JSON payload piped to the workload's stdin (e.g. '{"name":"X"}')`)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream logs in real-time after scheduling")
+	cmd.Flags().Int32Var(&idleTimeoutSecs, "idle-timeout", 0, "Auto-suspend the VM after N seconds of inactivity (0 = never)")
 	return cmd
 }
 
