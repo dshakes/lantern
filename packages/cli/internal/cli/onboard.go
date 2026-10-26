@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,7 +183,23 @@ type onboardConfig struct {
 	apiKey      string        // --api-key flag (bypasses interactive prompt)
 	yes         bool          // --yes: accept all defaults non-interactively
 	description string        // --description: seed the agent generation prompt
+	forceTTY    bool          // tests: treat stdin as a terminal
 }
+
+// isTTY reports whether prompts may be shown.
+func (c *onboardConfig) isTTY() bool {
+	return c.forceTTY || term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+func (c *onboardConfig) lineReader() onboardReader {
+	if c.reader != nil {
+		return c.reader
+	}
+	return termReader{}
+}
+
+// errOnboardDeclined: the user said no to the proposed agent. Not a failure.
+var errOnboardDeclined = errors.New("onboard: proposal declined")
 
 // defaultAgentDescription is used when --yes is set with no --description.
 const defaultAgentDescription = "A helpful general-purpose AI assistant that can answer questions, summarize text, and help with everyday tasks."
@@ -228,12 +245,15 @@ stack to a working AI agent in under a minute.
 Each step performs a real action against the REST API on :8080 and stops
 loudly if something is wrong — no silent failures, no mocked output.
 
-The agent is created agentically: lantern prompts for a one-line description,
-calls the generate-spec + generate-code endpoints, and creates a customised
-agent rather than a generic placeholder.
+The agent is created agentically: on a terminal, lantern asks what you want
+the agent to do, has the control plane design it (generate-spec, LLM
+reasoning via the model router), shows the proposal, and creates it once you
+confirm. The first run uses the design's own first task. If the design call
+fails, lantern says why and falls back to a general quickstart agent.
 
 Flags --provider and --api-key bypass the interactive provider prompt.
-Flag --yes skips the description prompt (uses a sensible default).`,
+Flag --yes (or a non-terminal stdin) never prompts: CI mode, with
+--description seeding the design.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg := &onboardConfig{
@@ -297,15 +317,21 @@ func runOnboard(cfg *onboardConfig) error {
 	}
 
 	// ── Step 4: Agent (agentic creation) ────────────────────────────────────
-	agentName, agentCreated, err := onboardEnsureAgent(cfg, client)
+	agentName, _, firstInput, err := onboardEnsureAgent(cfg, client)
+	if errors.Is(err, errOnboardDeclined) {
+		fmt.Fprintln(os.Stderr, "   Nothing was created. Run `lantern onboard` again and describe it differently.")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	_ = agentCreated
+	if firstInput == nil {
+		firstInput = quickstartRunInput
+	}
 
 	// ── Step 5: Run + SSE event stream ──────────────────────────────────────
 	fmt.Fprint(os.Stderr, "5. First run ... ")
-	run, err := client.CreateRun(agentName, quickstartRunInput, false)
+	run, err := client.CreateRun(agentName, firstInput, false)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
 		return fmt.Errorf("onboard: POST /v1/runs: %w", err)
@@ -398,63 +424,67 @@ func runOnboard(cfg *onboardConfig) error {
 	return nil
 }
 
-// onboardEnsureAgent handles step 4: prompt for description, call generate-spec,
-// then create the agent. Falls back to the static quickstart on any error.
-// Returns (agentName, created, error).
-func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string, bool, error) {
-	fmt.Fprint(os.Stderr, "4. Agent ... ")
+// onboardEnsureAgent handles step 4, the agentic part: ask what the agent
+// should do, have the control plane design it (POST /v1/agents/generate-spec,
+// LLM reasoning through the model router), show the proposal, confirm on a
+// TTY, then create it. Deterministic floor: when the design call fails, the
+// reason is printed and the static quickstart agent is used instead.
+// --yes / non-TTY never prompts (CI mode).
+//
+// Returns (agentName, created, firstRunInput, error). firstRunInput is nil
+// when the quickstart floor was used.
+func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string, bool, json.RawMessage, error) {
+	interactive := !cfg.yes && cfg.isTTY()
 
-	// Get description — from flag, --yes default, or interactive prompt.
 	description := cfg.description
 	if description == "" {
-		if cfg.yes {
-			description = defaultAgentDescription
-		} else {
-			isTTY := term.IsTerminal(int(os.Stdin.Fd()))
-			if isTTY {
-				reader := cfg.reader
-				if reader == nil {
-					reader = termReader{}
-				}
-				fmt.Fprintln(os.Stderr, colorDim+"  (enter a one-line description for your agent, or press Enter for default)"+colorReset)
-				fmt.Fprint(os.Stderr, "  Description: ")
-				line, err := reader.ReadLine()
-				if err == nil && strings.TrimSpace(line) != "" {
-					description = strings.TrimSpace(line)
-				} else {
-					description = defaultAgentDescription
-				}
-			} else {
-				description = defaultAgentDescription
+		description = defaultAgentDescription
+		if interactive {
+			fmt.Fprintln(os.Stderr, "4. Agent")
+			fmt.Fprintln(os.Stderr, "   What do you want your agent to do? "+colorDim+"(one or two sentences; Enter for a general assistant)"+colorReset)
+			fmt.Fprint(os.Stderr, "   > ")
+			if line, err := cfg.lineReader().ReadLine(); err == nil && strings.TrimSpace(line) != "" {
+				description = strings.TrimSpace(line)
 			}
 		}
 	}
+	if !interactive || cfg.description != "" {
+		fmt.Fprint(os.Stderr, "4. Agent ... ")
+	} else {
+		fmt.Fprint(os.Stderr, "   designing ... ")
+	}
 
-	// Try the agentic path: generate-spec → create agent.
 	spec, specErr := client.GenerateSpec(description)
 	if specErr == nil && spec != nil && spec.Name != "" {
-		// Check if the generated agent already exists.
-		agentName := spec.Name
-		if _, err := client.GetAgent(agentName); err == nil {
-			fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (reusing existing)%s\n",
-				colorGreen, colorReset, colorDim, agentName, colorReset)
-			return agentName, false, nil
+		fmt.Fprintf(os.Stderr, "%s✓%s\n", colorGreen, colorReset)
+		printSpecProposal(spec)
+		if _, err := client.GetAgent(spec.Name); err == nil {
+			fmt.Fprintf(os.Stderr, "   %s%s already exists — reusing it%s\n", colorDim, spec.Name, colorReset)
+			return spec.Name, false, specFirstInput(spec), nil
+		}
+		if interactive {
+			fmt.Fprint(os.Stderr, "   Create it? [Y/n] ")
+			ans, _ := cfg.lineReader().ReadLine()
+			if a := strings.ToLower(strings.TrimSpace(ans)); a == "n" || a == "no" {
+				return "", false, nil, errOnboardDeclined
+			}
 		}
 		systemPrompt := spec.SystemPrompt
 		if systemPrompt == "" {
 			systemPrompt = quickstartSystemPrompt
 		}
-		if _, cerr := client.CreateAgentWithSystemPrompt(agentName, spec.Description, systemPrompt); cerr != nil {
-			// Fall through to static quickstart.
-			fmt.Fprintf(os.Stderr, "%s! create failed (%v), using quickstart%s\n", colorYellow, cerr, colorReset)
+		if _, cerr := client.CreateAgentWithSystemPrompt(spec.Name, spec.Description, systemPrompt); cerr != nil {
+			fmt.Fprintf(os.Stderr, "   %s! create failed (%v), using quickstart%s\n", colorYellow, cerr, colorReset)
 		} else {
-			fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (from generate-spec)%s\n",
-				colorGreen, colorReset, colorDim, agentName, colorReset)
-			return agentName, true, nil
+			fmt.Fprintf(os.Stderr, "   %s✓%s created %s\n", colorGreen, colorReset, spec.Name)
+			return spec.Name, true, specFirstInput(spec), nil
 		}
+	} else if specErr != nil {
+		// Say why — a silent fallback hid that this path never worked.
+		fmt.Fprintf(os.Stderr, "%s! agent design unavailable (%v) — using the quickstart agent%s\n   ", colorYellow, specErr, colorReset)
 	}
 
-	// Static fallback: quickstart-assistant.
+	// Deterministic floor: quickstart-assistant.
 	if _, err := client.GetAgent(quickstartAgentName); err != nil {
 		if _, cerr := client.CreateAgentWithSystemPrompt(
 			quickstartAgentName,
@@ -462,7 +492,7 @@ func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string
 			quickstartSystemPrompt,
 		); cerr != nil {
 			fmt.Fprintln(os.Stderr, colorRed+"✗"+colorReset)
-			return "", false, fmt.Errorf("onboard: create agent %q: %w", quickstartAgentName, cerr)
+			return "", false, nil, fmt.Errorf("onboard: create agent %q: %w", quickstartAgentName, cerr)
 		}
 		fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (quickstart fallback, created)%s\n",
 			colorGreen, colorReset, colorDim, quickstartAgentName, colorReset)
@@ -470,7 +500,37 @@ func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string
 		fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (reusing existing)%s\n",
 			colorGreen, colorReset, colorDim, quickstartAgentName, colorReset)
 	}
-	return quickstartAgentName, false, nil
+	return quickstartAgentName, false, nil, nil
+}
+
+// printSpecProposal shows the designed agent so the user knows what will be created.
+func printSpecProposal(spec *internal.GenerateSpecResult) {
+	fmt.Fprintf(os.Stderr, "\n   Proposed agent: %s%s%s\n", colorCyan, spec.Name, colorReset)
+	if spec.Description != "" {
+		fmt.Fprintf(os.Stderr, "   %s\n", spec.Description)
+	}
+	if spec.Rationale != "" {
+		fmt.Fprintf(os.Stderr, "   %sWhy: %s%s\n", colorDim, spec.Rationale, colorReset)
+	}
+	for i, s := range spec.Steps {
+		fmt.Fprintf(os.Stderr, "     %d. %s — %s\n", i+1, s.Name, s.Description)
+	}
+	if p, ok := spec.FirstInput["prompt"].(string); ok && p != "" {
+		fmt.Fprintf(os.Stderr, "   First task: %q\n", p)
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
+// specFirstInput is the spec's suggested first run input, or nil.
+func specFirstInput(spec *internal.GenerateSpecResult) json.RawMessage {
+	if len(spec.FirstInput) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(spec.FirstInput)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // onboardHealth probes /healthz with a short timeout.
@@ -543,18 +603,31 @@ func onboardEnsureProvider(cfg *onboardConfig, client *internal.RESTClient, rest
 	}
 
 	if len(providers) > 0 {
-		fmt.Fprintf(os.Stderr, "%s✓%s  %s%s%s\n",
-			colorGreen, colorReset, colorDim, providerNames(providers), colorReset)
-		return nil
+		// A saved key is not a working key: make a real test call before the
+		// agent and its first run depend on it.
+		var lastErr error
+		for _, p := range providers {
+			name, _ := p["provider"].(string)
+			if name == "" {
+				continue
+			}
+			if lastErr = testProvider(restURL, token, name); lastErr == nil {
+				fmt.Fprintf(os.Stderr, "%s✓%s  %s%s (test call ok)%s\n",
+					colorGreen, colorReset, colorDim, name, colorReset)
+				return nil
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%s✗  %s saved, but the test call failed: %v%s\n",
+			colorYellow, providerNames(providers), lastErr, colorReset)
+	} else {
+		// No providers — need to configure one. Close the pending line first.
+		fmt.Fprintln(os.Stderr, colorYellow+"✗  none configured"+colorReset)
 	}
-
-	// No providers — need to configure one. Close the pending line first.
-	fmt.Fprintln(os.Stderr, colorYellow+"✗  none configured"+colorReset)
 
 	provider := cfg.provider
 	apiKey := cfg.apiKey
 
-	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	isTTY := cfg.isTTY()
 	hasFlags := provider != "" && apiKey != ""
 
 	if !hasFlags && !isTTY {
@@ -565,7 +638,7 @@ func onboardEnsureProvider(cfg *onboardConfig, client *internal.RESTClient, rest
 		fmt.Fprintln(os.Stderr, `  curl -s -X POST http://localhost:8080/v1/settings/llm-providers \`)
 		fmt.Fprintln(os.Stderr, `    -H 'Authorization: Bearer <token>' \`)
 		fmt.Fprintln(os.Stderr, `    -H 'Content-Type: application/json' \`)
-		fmt.Fprintln(os.Stderr, `    -d '{"provider":"openai","api_key":"sk-..."}'`)
+		fmt.Fprintln(os.Stderr, `    -d '{"provider":"openai","apiKey":"sk-..."}'`)
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Or run again with flags:")
 		fmt.Fprintln(os.Stderr, `  lantern onboard --provider openai --api-key sk-...`)
@@ -656,7 +729,7 @@ func fetchProviders(client *internal.RESTClient) ([]map[string]any, error) {
 func configureProvider(client *internal.RESTClient, provider, apiKey string) error {
 	body := map[string]string{
 		"provider": provider,
-		"api_key":  apiKey,
+		"apiKey":   apiKey,
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -713,6 +786,9 @@ func testProvider(restURL, token, provider string) error {
 	if jsonErr := json.Unmarshal(body, &testResp); jsonErr == nil {
 		if testResp.Error != "" {
 			return fmt.Errorf("provider test reported error: %s", testResp.Error)
+		}
+		if !testResp.Success && !testResp.OK {
+			return fmt.Errorf("provider test did not report success: %s", strings.TrimSpace(testResp.Message+" "+string(body)))
 		}
 	}
 	return nil
