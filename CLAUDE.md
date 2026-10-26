@@ -1020,13 +1020,35 @@ controls, all fail-safe:
   `egress_preflight`) are logged locally at WARN *before* any forward attempt
   and preserved across a transient manager outage (never dropped on a full
   buffer); routine observability frames stay best-effort.
+- **Broker egress mode (ADR 0026, opt-in `LANTERN_EGRESS_MODE=broker` on the
+  manager; default `guest` = everything above).** Firecracker cold boots get
+  **no NIC at all** (no TAP, no `ip=`) — the strongest isolation: egress only
+  over vsock. The harness replaces the in-guest proxy with a byte forwarder
+  `127.0.0.1:3128` → vsock `CID 2:3128` (workloads keep `HTTP(S)_PROXY`), and its
+  gRPC control channel rides vsock `:50054`, relayed by the manager to its own
+  listener (mTLS end-to-end). The manager's per-VM broker
+  (`runtime-manager/src/egress_broker.rs`, on `<vsock_uds>_3128`) enforces the
+  rules (matcher parity pinned by `services/testdata/egress_match_cases.json`
+  — change both sides together), dials upstream from the host, audits
+  `egress`/`egress_inject`, and **injects credentials**: `EgressRule.inject`
+  (`{header, secret_uri, value_prefix}`) is resolved via the manager's
+  `SecretResolver` at request time and replaces the workload's placeholder
+  header. HTTPS is TLS-terminated **only** for injecting hosts, via a per-VM
+  name-constrained ephemeral CA whose cert ships in `spawn.json`
+  (`egress_ca_pem`); everything else is an opaque tunnel. The secret value never
+  enters the guest, logs, or audits; `inject` specs are stripped from
+  `spawn.json`. Limits: exec/ExecTool/file API are unavailable on broker VMs
+  (needs host-initiated vsock), restore/fork stay guest mode, Go stubs don't yet
+  carry `inject`.
 
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
 egress at spawn), `LANTERN_EGRESS_FAIL_CLOSED=1` (refuse to boot without
 iptables REDIRECT when egress declared — implied and non-overridable in
 prod), `LANTERN_NO_PROXY` (override the injected `NO_PROXY`; defaults keep
-loopback + `169.254.169.254` direct).
+loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
+`LANTERN_EGRESS_MODE=broker`, `LANTERN_EGRESS_CA_PEM`,
+`LANTERN_EGRESS_VSOCK_PORT`, `LANTERN_MANAGER_VSOCK_PORT`.
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
