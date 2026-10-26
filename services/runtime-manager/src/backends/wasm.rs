@@ -19,7 +19,7 @@
 //!
 //! # WASI dialect
 //!
-//! Uses WASIp1 (`wasi_snapshot_preview1`) via `wasmtime_wasi::p1` so that
+//! Uses WASIp1 (`wasi_snapshot_preview1`) via `wasmtime_wasi::preview1` so that
 //! plain `wasm32-wasi` binaries compiled with the standard Rust target work
 //! without any component-model tooling.
 //!
@@ -73,8 +73,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 use wasmtime::{Config as WasmConfig, Engine, Linker, Module, Store, StoreLimitsBuilder};
 use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi::p1::{WasiP1Ctx, add_to_linker_async};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::preview1::{WasiP1Ctx, add_to_linker_async};
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
@@ -132,9 +132,12 @@ impl WasmBackend {
     ///
     /// Configures a Wasmtime `Engine` with:
     /// - `epoch_interruption(true)` — epoch-based timeout enforcement
+    /// - `async_support(true)` — required on the 36.x LTS line for
+    ///   `add_to_linker_async` / `instantiate_async` (implicit from 46 on)
     pub fn new() -> Result<Self> {
         let mut cfg = WasmConfig::new();
         cfg.epoch_interruption(true);
+        cfg.async_support(true);
 
         let engine = Engine::new(&cfg)
             .map_err(|e| anyhow::anyhow!("failed to create Wasmtime engine: {e}"))?;

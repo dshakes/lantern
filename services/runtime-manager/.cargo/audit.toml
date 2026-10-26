@@ -43,6 +43,20 @@
 # time shim; on native targets (our only deployment target) it delegates directly
 # to std::time. "Unmaintained" carries no known vulnerability. Drop when backoff
 # is removed from the dependency graph (see RUSTSEC-2025-0012 above).
+#
+# RUSTSEC-2024-0449: unsafe-libyaml 0.2.11 — marked UNMAINTAINED.
+# Pulled TRANSITIVELY by serde_yaml 0.9 (itself deprecated) -> kube-client 0.97.0.
+# The advisory lists no patched version. We never parse untrusted YAML through it
+# (kube only uses it for kubeconfig loading). No known vulnerability, only
+# maintenance risk. Drop when kube moves off serde_yaml.
+#
+# RUSTSEC-2025-0057: fxhash 0.2.1 — marked UNMAINTAINED.
+# Pulled TRANSITIVELY by fxprof-processed-profile -> wasmtime 36.0.19 (the default
+# `profiling` feature). The advisory lists no patched version. fxhash is a
+# non-cryptographic hasher used only by the opt-in profiler output path, which we
+# never enable. No known vulnerability. Drop when wasmtime replaces it, or when we
+# move off the 36.x LTS line (blocked on the rust-toolchain 1.94 pin; wasmtime
+# >=48 needs rustc 1.95).
 
 [advisories]
 ignore = [
@@ -52,4 +66,6 @@ ignore = [
     "RUSTSEC-2025-0134", # rustls-pemfile unmaintained; transitive via kube-client+tonic; needs major-version bumps
     "RUSTSEC-2025-0012", # backoff unmaintained; transitive via kube-runtime; no released fix upstream
     "RUSTSEC-2024-0384", # instant unmaintained; transitive via backoff->kube-runtime; same upstream blocker
+    "RUSTSEC-2024-0449", # unsafe-libyaml unmaintained; transitive via serde_yaml->kube-client; no patched version
+    "RUSTSEC-2025-0057", # fxhash unmaintained; transitive via wasmtime profiling; no patched version
 ]
