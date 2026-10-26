@@ -14,6 +14,7 @@
 
 #![allow(clippy::needless_return)]
 
+mod activity;
 mod bootenv;
 mod cc_attest;
 mod egress;
@@ -38,6 +39,7 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
+use crate::activity::ActivityTracker;
 use crate::egress::EgressPolicy;
 use crate::heartbeat::Heartbeat;
 use crate::manager_client::ManagerClient;
@@ -258,13 +260,18 @@ async fn run() -> Result<()> {
         });
     }
 
+    // Activity tracker — shared between exec server, supervisor, and heartbeat.
+    // Counts running exec/workload children so the scheduler can detect idle VMs.
+    let activity = ActivityTracker::new();
+
     // 4b. In-guest exec server — serves RuntimeHarness.Exec so the manager
     //     can dial back for `lantern vm exec`. Failure is tolerated: the
     //     workload always runs even if exec is unavailable.
     {
         let m = manager.clone();
+        let act = activity.clone();
         tokio::spawn(async move {
-            if let Err(e) = exec::run(m).await {
+            if let Err(e) = exec::run(m, act).await {
                 tracing::error!(error = %e, "exec: server exited");
             }
         });
@@ -282,7 +289,7 @@ async fn run() -> Result<()> {
 
     // 6. Supervisor — spawn workload, hand stdio to log forwarder.
     let (stdio_tx, stdio_rx) = mpsc::channel(4);
-    let supervisor = Supervisor::new(env.workload_cmd.clone(), manager.clone())
+    let supervisor = Supervisor::new(env.workload_cmd.clone(), manager.clone(), activity.clone())
         .with_proxy_env(egress_configured);
     let supervisor_handles = supervisor.handles();
 
@@ -302,6 +309,7 @@ async fn run() -> Result<()> {
         let hb = Heartbeat::new(
             manager.clone(),
             supervisor_handles.clone(),
+            activity.clone(),
             Arc::clone(&egress_policy),
             control_tx.clone(),
         );

@@ -19,6 +19,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender as MpscSender;
 
+use crate::activity::ActivityTracker;
 use crate::egress::EgressPolicy;
 use crate::manager_client::ManagerClient;
 use crate::proto::{HeartbeatRequest, ResourceUsage, now_unix_ms};
@@ -32,6 +33,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 pub struct Heartbeat {
     manager: ManagerClient,
     supervisor: SupervisorHandles,
+    activity: ActivityTracker,
     egress: Arc<EgressPolicy>,
     control_tx: MpscSender<ControlSignal>,
     usage: Arc<Mutex<ResourceUsage>>,
@@ -41,12 +43,14 @@ impl Heartbeat {
     pub fn new(
         manager: ManagerClient,
         supervisor: SupervisorHandles,
+        activity: ActivityTracker,
         egress: Arc<EgressPolicy>,
         control_tx: MpscSender<ControlSignal>,
     ) -> Self {
         Self {
             manager,
             supervisor,
+            activity,
             egress,
             control_tx,
             usage: Arc::new(Mutex::new(ResourceUsage::default())),
@@ -84,6 +88,7 @@ impl Heartbeat {
                     let send_handle = {
                         let manager = self.manager.clone();
                         let supervisor = self.supervisor.clone();
+                        let activity = self.activity.clone();
                         let usage = Arc::clone(&self.usage);
                         let req_tx = req_tx.clone();
                         tokio::spawn(async move {
@@ -97,6 +102,8 @@ impl Heartbeat {
                                     usage: snap,
                                     worker_pid: supervisor.worker_pid.load(Ordering::SeqCst),
                                     restart_count: supervisor.restart_count.load(Ordering::SeqCst),
+                                    has_active_exec: activity.has_active_exec(),
+                                    last_activity_unix_ms: activity.last_activity_unix_ms(),
                                 };
                                 if req_tx.send(req).await.is_err() {
                                     tracing::warn!("heartbeat: send channel closed");
