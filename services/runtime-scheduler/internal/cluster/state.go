@@ -89,6 +89,12 @@ type VM struct {
 	// Inventory confirmations from before it say nothing about the new
 	// incarnation, so reconciliation grants it the dispatch grace again.
 	RespawnedAt time.Time
+	// IdleTimeoutSecs is the spec's auto-suspend timeout. 0 = never auto-suspend.
+	// Copied from AgentSpec.IdleTimeoutSecs at create time.
+	IdleTimeoutSecs int32
+	// LastActivityAt is when the harness last reported an active exec/workload
+	// child. Zero means still active or no heartbeat received yet.
+	LastActivityAt time.Time
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -118,6 +124,13 @@ type ClusterStore interface {
 
 	// SetVMSnapshot records the snapshot a VM was paused into.
 	SetVMSnapshot(vmID, snapshotID string) bool
+
+	// UpdateVMActivity records the latest idle-suspend activity signal from a
+	// heartbeat. hasActiveExec true = at least one child is running (VM is NOT
+	// idle). lastActivityUnixMs is the unix-ms of the last child exit (0 = still
+	// active or never ran). workerPid is included for logging; at is the heartbeat
+	// receive time.
+	UpdateVMActivity(vmID string, hasActiveExec bool, lastActivityUnixMs int64, workerPid int32, at time.Time) bool
 
 	IncrTenantVMs(tenantID string, delta int)
 	TenantLiveVMs(tenantID string) int
@@ -274,6 +287,10 @@ func (s *InMemoryStore) MarkDrainingIfStale(now time.Time, deadline time.Duratio
 func (s *InMemoryStore) CreateVM(v *VM) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Populate idle timeout from spec if not already set by caller.
+	if v.IdleTimeoutSecs == 0 && v.Spec != nil {
+		v.IdleTimeoutSecs = v.Spec.GetIdleTimeoutSecs()
+	}
 	s.vms[v.Handle.VmId] = v
 	// A PAUSED VM (reloaded from the DB) occupies no node capacity.
 	if !occupiesNode(v.State) {
@@ -373,6 +390,34 @@ func (s *InMemoryStore) SetVMSnapshot(vmID, snapshotID string) bool {
 		return false
 	}
 	v.SnapshotID = snapshotID
+	return true
+}
+
+func (s *InMemoryStore) UpdateVMActivity(vmID string, hasActiveExec bool, lastActivityUnixMs int64, _ int32, at time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.vms[vmID]
+	if !ok {
+		return false
+	}
+	if hasActiveExec {
+		// Child is running — clear the idle timestamp so we don't measure
+		// from before the current active period.
+		v.LastActivityAt = time.Time{}
+	} else if lastActivityUnixMs > 0 {
+		// Child just exited — stamp the activity time from the harness clock.
+		// Use the later of the harness-reported time and any existing stamp so
+		// a delayed or reordered heartbeat never moves the clock backward.
+		reported := time.UnixMilli(lastActivityUnixMs).UTC()
+		if reported.After(v.LastActivityAt) {
+			v.LastActivityAt = reported
+		}
+	} else if v.LastActivityAt.IsZero() {
+		// has_active_exec=false and last_activity=0 means "never ran" — treat
+		// the heartbeat receive time as the idle start so a VM that never had
+		// a workload is still eligible for auto-suspend.
+		v.LastActivityAt = at
+	}
 	return true
 }
 

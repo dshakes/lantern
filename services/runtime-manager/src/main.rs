@@ -172,6 +172,8 @@ async fn main() -> anyhow::Result<()> {
     // cache with the manager service so VendSecret sees every VM registered by
     // Spawn and Stats for Firecracker VMs reads from the heartbeat cache.
     let harness_service = grpc_service.harness_service(mtls_enabled);
+    // Grab the activity cache before grpc_service is consumed by the server builder.
+    let activity_cache = grpc_service.activity_cache();
 
     let listen_addr = config.listen_addr;
     // Per-call authz (ADR 0025): VM certs are refused and the shared service
@@ -194,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
         registry: Some(Arc::clone(&registry)),
         pool: Some(Arc::clone(&pool_for_heartbeat)),
         wake: Some(inventory_changed),
+        activity: Some(activity_cache),
     });
 
     tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");

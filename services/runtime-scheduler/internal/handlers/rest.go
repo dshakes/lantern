@@ -205,6 +205,15 @@ type heartbeatBody struct {
 	// reconcile — without the flag, a rolling upgrade from an older manager
 	// would mass-terminate every live VM on that node.
 	ReportsInventory bool `json:"reports_inventory"`
+	// VmActivity carries per-VM idle-suspend signals from harness heartbeats.
+	// Absent/empty means no activity data (treat as active — conservative).
+	VmActivity map[string]vmActivityEntry `json:"vm_activity,omitempty"`
+}
+
+// vmActivityEntry mirrors scheduler_heartbeat::VmActivityEntry in the manager.
+type vmActivityEntry struct {
+	HasActiveExec      bool  `json:"has_active_exec"`
+	LastActivityUnixMs int64 `json:"last_activity_unix_ms"`
 }
 
 // POST /v1/nodes/heartbeat
@@ -249,9 +258,15 @@ func (h *RESTHandler) NodeHeartbeat(w http.ResponseWriter, r *http.Request, expe
 		h.Metrics.Nodes.Set(float64(len(h.Store.ListNodes())))
 	}
 
+	// Update per-VM activity signals for the idle sweeper.
+	now := time.Now().UTC()
+	for vmID, act := range body.VmActivity {
+		h.Store.UpdateVMActivity(vmID, act.HasActiveExec, act.LastActivityUnixMs, 0, now)
+	}
+
 	// Settle our view of this node against what it actually has running.
 	if terminated := ReconcileNodeInventory(
-		h.Store, body.Name, body.VMs, body.ReportsInventory, time.Now().UTC(),
+		h.Store, body.Name, body.VMs, body.ReportsInventory, now,
 	); len(terminated) > 0 {
 		h.Logger.Info("reconciled VMs the node no longer reports as live",
 			zap.String("node", body.Name),
