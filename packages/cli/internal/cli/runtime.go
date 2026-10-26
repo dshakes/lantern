@@ -516,7 +516,7 @@ func newVmForkCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&count, "count", 1, "number of forks (1..10)")
+	cmd.Flags().IntVar(&count, "count", 1, "number of forks (1..server cap, default 100)")
 	return cmd
 }
 

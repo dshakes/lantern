@@ -188,7 +188,7 @@ func TestLifecycle_DB(t *testing.T) {
 	})
 
 	t.Run("fork validates count", func(t *testing.T) {
-		for _, body := range []string{`{"count":0}`, `{"count":11}`, `{"count":"x"}`, `not json`} {
+		for _, body := range []string{`{"count":0}`, `{"count":101}`, `{"count":"x"}`, `not json`} {
 			if w := doLifecycle(h, tok, "fork", vm, body); w.Code != http.StatusBadRequest {
 				t.Errorf("fork %s: %d, want 400", body, w.Code)
 			}

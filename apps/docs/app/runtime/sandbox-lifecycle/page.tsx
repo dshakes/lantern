@@ -30,7 +30,7 @@ POST /v1/runtime/vms/{id}/pause
 POST /v1/runtime/vms/{id}/resume
 → { "vmId": "...", "snapshotId": "...", "state": "running" }
 
-# Fork: count 1..10. Each fork gets its own vm_id, cert and agent identity.
+# Fork: count 1..100 by default (LANTERN_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
 POST /v1/runtime/vms/{id}/fork
 { "count": 3 }
 → { "sourceVmId": "...", "snapshotId": "...",
