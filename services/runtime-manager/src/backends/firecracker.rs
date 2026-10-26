@@ -2159,13 +2159,34 @@ pub struct JailedSnapshotStaging {
     /// `stage_jailed_artifacts` set (API socket dir, vsock dir, snapshot
     /// dirs) plus the restore staging dir.
     pub dirs: Vec<String>,
-    /// `(host_source, host-visible destination under the chroot)` copies.
+    /// `(host_source, host-visible destination under the chroot)` files staged
+    /// by full byte copy.  Their destinations are chowned to the jail uid/gid.
     pub copies: Vec<(String, String)>,
+    /// `(host_source, host-visible destination under the chroot)` files staged
+    /// by hard-link (MAP_PRIVATE CoW via the host page cache, O(1) disk usage).
+    ///
+    /// Falls back to a full copy on `EXDEV` (source and destination are on
+    /// different devices, cross-filesystem hard-links are not allowed).
+    ///
+    /// Hard-linked destinations are **NOT** returned by `owned_paths()` and
+    /// must **not** be chowned to the jail uid/gid: `chown(2)` on a hard link
+    /// mutates the shared inode's ownership, which would break every other
+    /// Firecracker process that has mapped that inode.  The source file MUST
+    /// already be readable to the jail uid/gid without ownership — use
+    /// `make_mem_readonly` (0444) so the world-readable bits apply.
+    ///
+    /// Multiple jails that link the same source inode share pages via the
+    /// host page cache until they write to them (`MAP_PRIVATE` copy-on-write),
+    /// so forking 100 VMs from one snapshot costs one read-only mmap per VM
+    /// rather than 100 × the guest RAM in byte copies.
+    pub links: Vec<(String, String)>,
 }
 
 impl JailedSnapshotStaging {
     /// Every path that must be chowned to the jail uid/gid after staging:
-    /// all created directories plus every copied artifact.
+    /// all created directories plus every **copied** artifact.
+    ///
+    /// Hard-linked files are intentionally excluded — see `links` field doc.
     #[must_use]
     pub fn owned_paths(&self) -> Vec<&str> {
         self.dirs
@@ -2212,16 +2233,93 @@ pub fn plan_jailed_snapshot_staging(
                 format!("{root}{JAILED_SNAPSHOT_MEM}"),
             ),
         ],
+        links: vec![],
     }
 }
 
-/// Execute a [`JailedSnapshotStaging`] plan: create the directories, copy the
-/// artifacts, chown everything to the jail uid/gid.
+/// Compute the staging plan for restoring a fork's snapshot into a fresh jail.
 ///
-/// Artifacts are **copied** (not hard-linked) for the same reason as the boot
-/// path: chowning a hard link would mutate the snapshot store's canonical
-/// copy.  The mem file can be large (the guest's RAM) — this copy is the same
-/// deliberate restore-latency tradeoff the boot path makes for rootfs.
+/// Like [`plan_jailed_snapshot_staging`] but the **memory** artifact is placed
+/// in `links` (hard-link / MAP_PRIVATE CoW) instead of `copies`.  The vmstate
+/// file is still copied — it is written back to by Firecracker (it is not
+/// MAP_PRIVATE) and is small (≤ a few hundred KiB), so sharing it would
+/// corrupt the snapshot on write-back.
+///
+/// The caller MUST call `make_mem_readonly` on `host_mem_path` before staging
+/// so that the jail uid/gid can read it without ownership — hard-linked
+/// destinations are excluded from `owned_paths()` and are never chowned.
+///
+/// Pure — unit-tested on any platform.
+#[must_use]
+pub fn plan_jailed_fork_staging(
+    chroot_root: &str,
+    new_vm_id: &str,
+    host_vmstate_path: &str,
+    host_mem_path: &str,
+) -> JailedSnapshotStaging {
+    let root = chroot_root.trim_end_matches('/');
+    JailedSnapshotStaging {
+        dirs: vec![
+            root.to_string(),
+            format!("{root}/run"),
+            format!("{root}/run/lantern"),
+            format!("{root}/run/lantern/vsock"),
+            format!("{root}/run/lantern/snapshots"),
+            format!("{root}/run/lantern/snapshots/{new_vm_id}"),
+            format!("{root}{JAILED_SNAPSHOT_DIR}"),
+        ],
+        copies: vec![(
+            host_vmstate_path.to_string(),
+            format!("{root}{JAILED_SNAPSHOT_VMSTATE}"),
+        )],
+        links: vec![(
+            host_mem_path.to_string(),
+            format!("{root}{JAILED_SNAPSHOT_MEM}"),
+        )],
+    }
+}
+
+/// Mark a memory snapshot file read-only (0444) so that every jail that
+/// hard-links it can map it without being its owner.
+///
+/// Called once on the **source** mem file before the first fork is staged.
+/// Idempotent — calling it again on an already-0444 file is harmless.
+///
+/// Returns `Ok(())` on non-Unix (no-op for unit tests running on macOS).
+pub fn make_mem_readonly(path: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .with_context(|| format!("stat mem file {}", path.display()))?
+            .permissions();
+        perms.set_mode(0o444);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("chmod 0444 {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path; // no-op on non-Unix platforms
+    }
+    Ok(())
+}
+
+/// Execute a [`JailedSnapshotStaging`] plan: create the directories, copy (or
+/// hard-link) the artifacts, chown directories and copied files to the jail
+/// uid/gid.
+///
+/// **Copies** (`plan.copies`): full byte copy, chowned afterwards.  Used for
+/// vmstate, certs, and rootfs — artifacts that Firecracker writes back to or
+/// that need private ownership.
+///
+/// **Links** (`plan.links`): hard-link from source inode into the jail, then
+/// fall back to a full copy on `EXDEV` (cross-device / cross-filesystem).
+/// Hard-linked files are **not** chowned — `chown(2)` would mutate the
+/// shared inode's ownership across every jail that links the same file.
+/// The source MUST be 0444 (world-readable) before staging; see
+/// `make_mem_readonly`.  Multiple jails that link the same mem file share
+/// pages via the host page cache until a write triggers MAP_PRIVATE CoW,
+/// so N fork restores cost O(1) disk I/O for the mem file instead of O(N).
 ///
 /// LINUX-RUNTIME-ONLY (jailed live path): only reached when jailing is
 /// enabled, behind the Linux availability gate.  The plan construction is
@@ -2237,6 +2335,31 @@ async fn stage_jailed_snapshot(plan: &JailedSnapshotStaging, jailer: &JailerConf
         tokio::fs::copy(src, dest)
             .await
             .with_context(|| format!("stage snapshot artifact {src} into jail at {dest}"))?;
+    }
+    // Hard-link the mem file (O(1) disk I/O, shared pages via host page cache).
+    // Fall back to a full copy on EXDEV (source and destination on different
+    // filesystems — cross-device hard links are not allowed by the kernel).
+    for (src, dest) in &plan.links {
+        let link_err = std::fs::hard_link(src, dest).err();
+        if let Some(e) = link_err {
+            #[cfg(unix)]
+            let is_exdev = e.raw_os_error() == Some(libc::EXDEV);
+            #[cfg(not(unix))]
+            let is_exdev = false;
+            if is_exdev {
+                tracing::debug!(
+                    src = src.as_str(),
+                    dest = dest.as_str(),
+                    "hard_link EXDEV — falling back to copy for fork mem staging"
+                );
+                tokio::fs::copy(src, dest).await.with_context(|| {
+                    format!("EXDEV copy fallback: stage fork mem {src} into jail at {dest}")
+                })?;
+            } else {
+                return Err(e)
+                    .with_context(|| format!("hard_link fork mem {src} into jail at {dest}"));
+            }
+        }
     }
     #[cfg(unix)]
     for path in plan.owned_paths() {
@@ -2521,6 +2644,20 @@ pub struct FirecrackerBackend {
     /// records both in the registry (`identity_pin` / `exec_token`).
     // ponytail: std Mutex, held for one map op — never across an await.
     incarnations: Arc<Mutex<HashMap<String, Incarnation>>>,
+    /// snapshot_id → live fork count using its mem file as shared backing.
+    ///
+    /// Incremented before a fork's jail is set up, decremented in `cancel()`.
+    /// When the count drops to 0, the snapshot **may** be eligible for normal
+    /// `SnapshotStore` retention (it is not actively deleted here — the store's
+    /// `enforce_retention` will clean it up on its next pass).  The filesystem
+    /// hard-links in the jail dirs keep the inode alive until every jail dir is
+    /// removed, so the snapshot store's `remove_dir_all` only deletes its own
+    /// directory listing — the inode remains as long as any hard link exists.
+    // ponytail: std Mutex, held for one map op, never across an await.
+    fork_snap_refs: Arc<Mutex<HashMap<String, u32>>>,
+    /// vm_id → snapshot_id that was forked from, for decrement in `cancel()`.
+    // ponytail: std Mutex, held for one map op, never across an await.
+    fork_snap_source: Arc<Mutex<HashMap<String, String>>>,
 }
 
 /// Per-incarnation credentials minted at spawn/restore. Not `Debug`: the exec
@@ -2578,6 +2715,8 @@ impl FirecrackerBackend {
             jailer,
             processes: ProcessTable::new(),
             incarnations: Arc::default(),
+            fork_snap_refs: Arc::default(),
+            fork_snap_source: Arc::default(),
         }
     }
 
@@ -2598,6 +2737,73 @@ impl FirecrackerBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(vm_id)
             .cloned()
+    }
+
+    /// Record that `vm_id` was forked from `snapshot_id` and increment the
+    /// snapshot's live fork reference count.  Called just before
+    /// `stage_jailed_snapshot` so the count covers the entire lifecycle of the
+    /// jail, not just the running phase.
+    fn record_fork_staging(&self, vm_id: &str, snapshot_id: &str) {
+        {
+            let mut src = self
+                .fork_snap_source
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            src.insert(vm_id.to_string(), snapshot_id.to_string());
+        }
+        {
+            let mut refs = self
+                .fork_snap_refs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *refs.entry(snapshot_id.to_string()).or_insert(0) += 1;
+        }
+        tracing::debug!(
+            vm_id,
+            snapshot_id,
+            "fork: recorded shared-mem staging for snapshot"
+        );
+    }
+
+    /// Decrement the fork reference count for the snapshot that `vm_id` was
+    /// forked from, if any.  Called from `cancel()` after the jail directory
+    /// is removed so the count reflects live hard-link holders.
+    ///
+    /// When the count reaches 0, the entry is removed from the map.  The
+    /// snapshot artifacts in the store may still be retained by
+    /// `SnapshotStore::enforce_retention` — this counter gates any future
+    /// store-side deletion logic; for now it is informational.
+    fn release_fork_staging(&self, vm_id: &str) {
+        let snapshot_id = {
+            let mut src = self
+                .fork_snap_source
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            src.remove(vm_id)
+        };
+        if let Some(snap_id) = snapshot_id {
+            let mut refs = self
+                .fork_snap_refs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let count = refs.entry(snap_id.clone()).or_insert(0);
+            if *count <= 1 {
+                refs.remove(&snap_id);
+                tracing::debug!(
+                    vm_id,
+                    snapshot_id = %snap_id,
+                    "fork: last reference to snapshot released"
+                );
+            } else {
+                *count -= 1;
+                tracing::debug!(
+                    vm_id,
+                    snapshot_id = %snap_id,
+                    remaining = *count,
+                    "fork: released shared-mem staging reference"
+                );
+            }
+        }
     }
 
     /// Issue this VM's cert + pack its cert image (blocking I/O off the
@@ -2853,22 +3059,55 @@ impl FirecrackerBackend {
             .to_string();
 
         // Step 1: resolve the snapshot artifacts to host file paths.
-        let (host_vmstate, host_mem) = match parse_snapshot_source(snapshot_uri) {
-            SnapshotSource::HostPath {
-                vmstate_path,
-                mem_path,
-            } => (vmstate_path, mem_path),
-            SnapshotSource::Store { snapshot_id } => {
-                let s3 = snapshot_s3_from_env();
-                let (v, m) =
-                    resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
-                        .await?;
-                (v.display().to_string(), m.display().to_string())
-            }
-        };
+        //
+        // For store:// URIs we also mark the mem file read-only (0444) so that
+        // every jail that hard-links it can mmap it without ownership, and we
+        // track the live reference so we know when the shared inode has no more
+        // jail hard-link holders.
+        let (host_vmstate, host_mem, snapshot_id_for_refcount) =
+            match parse_snapshot_source(snapshot_uri) {
+                SnapshotSource::HostPath {
+                    vmstate_path,
+                    mem_path,
+                } => (vmstate_path, mem_path, None),
+                SnapshotSource::Store { snapshot_id } => {
+                    let s3 = snapshot_s3_from_env();
+                    let (v, m) =
+                        resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
+                            .await?;
+                    // Mark the canonical mem file immutable before hard-linking
+                    // it into jail dirs.  Idempotent — already-0444 is fine.
+                    if let Err(e) = make_mem_readonly(&m) {
+                        tracing::warn!(
+                            snapshot_id = %snapshot_id,
+                            mem = ?m,
+                            error = %e,
+                            "could not mark mem file read-only; falling back to copy staging"
+                        );
+                        (v.display().to_string(), m.display().to_string(), None)
+                    } else {
+                        let snap_id = snapshot_id.clone();
+                        (
+                            v.display().to_string(),
+                            m.display().to_string(),
+                            Some(snap_id),
+                        )
+                    }
+                }
+            };
 
         // Step 2: this VM's own identity + contract.
         let vm_id = resolve_vm_id(&req.vm_id)?;
+
+        // Record the fork staging reference BEFORE provisioning identity so
+        // that if provisioning or restore fails, `cancel()` can release it.
+        // (The vm_id is not in any registry yet, but the refcount is harmless
+        // until a matching `cancel()` clears it.)
+        let shared_mem = snapshot_id_for_refcount.is_some();
+        if let Some(ref snap_id) = snapshot_id_for_refcount {
+            self.record_fork_staging(&vm_id, snap_id);
+        }
+
         let cfg = VmConfig::from_schedule_with_id(
             &restore_schedule_view(req, &vm_id),
             &self.kernel_image_path,
@@ -2880,6 +3119,7 @@ impl FirecrackerBackend {
             run_id = %req.run_id,
             snapshot_uri,
             jailed = self.jailer.is_some(),
+            shared_mem,
             "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
         self.provision_identity(&cfg).await?;
@@ -2892,7 +3132,7 @@ impl FirecrackerBackend {
         )
         .await?;
         if let Err(e) = self
-            .restore_after_tap(&cfg, &binary, &host_vmstate, &host_mem)
+            .restore_after_tap(&cfg, &binary, &host_vmstate, &host_mem, shared_mem)
             .await
         {
             if let Err(te) = teardown_tap_device(&cfg.tap_dev).await {
@@ -2900,11 +3140,15 @@ impl FirecrackerBackend {
             }
             self.processes.kill(&vm_id).ok();
             self.set_incarnation(&vm_id, None);
+            // Release the refcount we recorded above — the jail was never set up.
+            if snapshot_id_for_refcount.is_some() {
+                self.release_fork_staging(&vm_id);
+            }
             return Err(e);
         }
 
         let restore_ms = start.elapsed().as_secs_f64() * 1000.0;
-        tracing::info!(vm_id = %vm_id, restore_ms, "Firecracker: microVM restored under its own identity");
+        tracing::info!(vm_id = %vm_id, restore_ms, shared_mem, "Firecracker: microVM restored under its own identity");
         Ok(Handle {
             id: vm_id,
             node_name: "firecracker-local".to_string(),
@@ -2912,18 +3156,33 @@ impl FirecrackerBackend {
         })
     }
 
+    /// `shared_mem`: when `true` the mem file is staged via hard-link (MAP_PRIVATE
+    /// CoW, O(1) disk I/O, shared pages via the host page cache).  The caller
+    /// guarantees the mem file is already 0444 (`make_mem_readonly`) before
+    /// passing `true`.  When `false` (bare / fc:// path) the mem file is copied.
     async fn restore_after_tap(
         &self,
         cfg: &VmConfig,
         binary: &str,
         host_vmstate: &str,
         host_mem: &str,
+        shared_mem: bool,
     ) -> Result<()> {
         let (socket_path, certs_path) = match &self.jailer {
             Some(jailer) => {
                 let chroot_root = jailer.chroot_root(binary, &cfg.vm_id);
-                let mut plan =
-                    plan_jailed_snapshot_staging(&chroot_root, &cfg.vm_id, host_vmstate, host_mem);
+                let mut plan = if shared_mem {
+                    // Shared-memory path: hard-link the (read-only) mem file
+                    // from the snapshot store into the jail.  Pages are shared
+                    // across all fork jails via the host page cache until a
+                    // guest write triggers MAP_PRIVATE copy-on-write — zero
+                    // extra mem-file I/O per fork.
+                    plan_jailed_fork_staging(&chroot_root, &cfg.vm_id, host_vmstate, host_mem)
+                } else {
+                    // Copy path: used for fc:// URIs (bare / unknown file
+                    // ownership) and when read-only marking failed.
+                    plan_jailed_snapshot_staging(&chroot_root, &cfg.vm_id, host_vmstate, host_mem)
+                };
                 // The snapshot names its drives by in-jail basename; staging
                 // THIS VM's cert image there means the load already resolves
                 // the new identity (the PATCH below makes it explicit).
@@ -3098,6 +3357,11 @@ impl RuntimeBackend for FirecrackerBackend {
         // Jailed VMs leave a per-VM chroot with copied artifacts (rootfs can
         // be hundreds of MB) — reclaim the disk.  Best-effort: a failure here
         // must not turn a successful teardown into an error.
+        //
+        // The jail dir removal MUST happen before `release_fork_staging` so the
+        // refcount reflects live hard-link holders: `remove_dir_all` unlinks the
+        // hard-linked mem file inside the jail, then the decrement tells us
+        // whether ANY other jail still holds a link to the snapshot inode.
         if let (Some(jailer), Some(bin)) = (&self.jailer, self.binary_path.as_deref()) {
             let jail_dir = jailer.jail_dir(bin, handle_id);
             if let Err(e) = tokio::fs::remove_dir_all(&jail_dir).await {
@@ -3109,6 +3373,10 @@ impl RuntimeBackend for FirecrackerBackend {
                 );
             }
         }
+
+        // Decrement the shared-mem reference count for any snapshot this VM
+        // was forked from.  No-op if this was a regular cold-boot or fc:// restore.
+        self.release_fork_staging(handle_id);
 
         Ok(())
     }
@@ -5078,6 +5346,166 @@ mod tests {
             plan.dirs.len() + plan.copies.len(),
             "ownership set is exactly the staged paths"
         );
+    }
+
+    // ----- fork staging plan -----
+
+    /// `plan_jailed_fork_staging` puts the mem file in `links`, not `copies`,
+    /// so it is hard-linked (MAP_PRIVATE CoW) instead of byte-copied.
+    #[test]
+    fn fork_staging_puts_mem_in_links_not_copies() {
+        let plan = plan_jailed_fork_staging(
+            "/srv/jailer/firecracker/vm-fork/root",
+            "vm-fork",
+            "/store/av/vm-src/snap-1/snapshot",
+            "/store/av/vm-src/snap-1/mem",
+        );
+        // vmstate is in copies (Firecracker writes back to it — must be private)
+        assert_eq!(
+            plan.copies,
+            vec![(
+                "/store/av/vm-src/snap-1/snapshot".to_string(),
+                "/srv/jailer/firecracker/vm-fork/root/snapshot/vmstate".to_string(),
+            )]
+        );
+        // mem is in links (read-only MAP_PRIVATE share via hard-link)
+        assert_eq!(
+            plan.links,
+            vec![(
+                "/store/av/vm-src/snap-1/mem".to_string(),
+                "/srv/jailer/firecracker/vm-fork/root/snapshot/mem".to_string(),
+            )]
+        );
+    }
+
+    /// Directories are identical between the copy and fork paths (same jail
+    /// structure).
+    #[test]
+    fn fork_staging_dirs_match_snapshot_staging_dirs() {
+        let chroot = "/srv/jailer/firecracker/vm-cmp/root";
+        let copy_plan = plan_jailed_snapshot_staging(chroot, "vm-cmp", "/s/snapshot", "/s/mem");
+        let fork_plan = plan_jailed_fork_staging(chroot, "vm-cmp", "/s/snapshot", "/s/mem");
+        assert_eq!(copy_plan.dirs, fork_plan.dirs);
+    }
+
+    /// `owned_paths()` does NOT include hard-linked files: chowning them would
+    /// mutate the shared inode's ownership and break every other fork jail.
+    #[test]
+    fn fork_staging_owned_paths_excludes_links() {
+        let plan = plan_jailed_fork_staging(
+            "/srv/jailer/firecracker/vm-own/root",
+            "vm-own",
+            "/store/snapshot",
+            "/store/mem",
+        );
+        let owned: std::collections::HashSet<&str> = plan.owned_paths().into_iter().collect();
+        // dirs + copies are in owned_paths
+        for dir in &plan.dirs {
+            assert!(
+                owned.contains(dir.as_str()),
+                "dir {dir} must be in owned_paths"
+            );
+        }
+        for (_, dest) in &plan.copies {
+            assert!(
+                owned.contains(dest.as_str()),
+                "copy dest must be in owned_paths"
+            );
+        }
+        // links are NOT in owned_paths
+        for (_, dest) in &plan.links {
+            assert!(
+                !owned.contains(dest.as_str()),
+                "link dest {dest} must NOT be in owned_paths (would mutate shared inode)"
+            );
+        }
+        assert_eq!(
+            owned.len(),
+            plan.dirs.len() + plan.copies.len(),
+            "owned_paths is exactly dirs + copies, not links"
+        );
+    }
+
+    /// The backward-compat invariant: `plan_jailed_snapshot_staging` still
+    /// returns an empty `links` field so existing tests and code that only
+    /// access `.copies` are not affected.
+    #[test]
+    fn snapshot_staging_has_empty_links_for_backward_compat() {
+        let plan =
+            plan_jailed_snapshot_staging("/srv/j/fc/vm/root", "vm-1", "/s/vmstate", "/s/mem");
+        assert!(
+            plan.links.is_empty(),
+            "plan_jailed_snapshot_staging must have no links — backward compat"
+        );
+    }
+
+    /// `make_mem_readonly` is a no-op (returns Ok) on non-Unix platforms
+    /// (e.g. macOS in CI): the path need not exist.
+    #[test]
+    fn make_mem_readonly_noop_on_nonexistent_path_nix() {
+        // On non-Unix this is always Ok(()); on Unix it will fail with
+        // a stat error, which is fine — the real path tested on Linux
+        // integration CI.  We test the Ok variant on a temp file.
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("mem");
+        std::fs::write(&p, b"fake mem content").unwrap();
+        assert!(make_mem_readonly(&p).is_ok());
+        // File must still be readable after chmod.
+        let content = std::fs::read(&p).unwrap();
+        assert_eq!(content, b"fake mem content");
+    }
+
+    // ----- fork_snap_refs + fork_snap_source bookkeeping -----
+
+    #[test]
+    fn fork_snap_refs_record_and_release() {
+        let backend = FirecrackerBackend::new();
+        backend.record_fork_staging("vm-a", "snap-x");
+        backend.record_fork_staging("vm-b", "snap-x");
+        backend.record_fork_staging("vm-c", "snap-y");
+
+        {
+            let refs = backend.fork_snap_refs.lock().unwrap();
+            assert_eq!(*refs.get("snap-x").unwrap(), 2, "snap-x should have 2 refs");
+            assert_eq!(*refs.get("snap-y").unwrap(), 1);
+        }
+
+        backend.release_fork_staging("vm-a");
+        {
+            let refs = backend.fork_snap_refs.lock().unwrap();
+            assert_eq!(*refs.get("snap-x").unwrap(), 1, "snap-x after one release");
+        }
+
+        backend.release_fork_staging("vm-b");
+        {
+            let refs = backend.fork_snap_refs.lock().unwrap();
+            assert!(!refs.contains_key("snap-x"), "snap-x entry removed at 0");
+        }
+
+        // Double-release is a no-op (vm-b has no source entry after first release)
+        backend.release_fork_staging("vm-b");
+        {
+            let refs = backend.fork_snap_refs.lock().unwrap();
+            assert!(
+                !refs.contains_key("snap-x"),
+                "still gone after double release"
+            );
+        }
+
+        // vm-c / snap-y still live
+        {
+            let refs = backend.fork_snap_refs.lock().unwrap();
+            assert_eq!(*refs.get("snap-y").unwrap(), 1);
+        }
+    }
+
+    #[test]
+    fn release_for_non_fork_vm_is_noop() {
+        let backend = FirecrackerBackend::new();
+        // A VM that was never record_fork_staging'd (cold-boot, fc:// restore)
+        backend.release_fork_staging("vm-cold");
+        let refs = backend.fork_snap_refs.lock().unwrap();
+        assert!(refs.is_empty(), "no refs for a cold-boot VM");
     }
 
     #[test]
