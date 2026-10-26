@@ -1,760 +1,1142 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+// Agentic onboarding: the user describes a goal in plain language and the
+// onboarding agent takes them to a created agent with a real first run (and
+// an optional sandbox run), explaining as it goes.
+//
+// - Intelligence: the agent design (POST /v1/agents/generate-spec) and the
+//   run explanation (POST /v1/onboarding/explain) are LLM reasoning through
+//   the control-plane's capability-addressed path. The deterministic floor
+//   is onboarding-logic.ts: gating, error → fix mapping, and a labelled
+//   basic design when the LLM design fails.
+// - Honesty: every step advances only on a real 2xx / terminal status.
+// - Resume: facts are persisted server-side (GET/PUT /v1/onboarding) and the
+//   resume point is derived from them (resumeStep), never from localStorage.
+
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowRight,
-  Check,
-  Code,
-  Wand2,
-  Workflow,
-  MessageSquare,
-  Calendar,
-  ShieldCheck,
-  Eye,
-  EyeOff,
-  Loader2,
-  Play,
-  Sparkles,
-  AlertTriangle,
-  XCircle,
-} from "lucide-react";
+import Link from "next/link";
+import { Bot, Box, Eye, EyeOff, FlaskConical, Gauge, MessageSquare, Play, RotateCcw } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { runtimeApi } from "@/lib/runtime-api";
 import { useToast } from "@/components/toast";
+import { PageHeader } from "@/components/page-header";
+import { Button, LinkButton } from "@/components/button";
+import { Skeleton } from "@/components/skeleton";
+import { Modal } from "@/components/modal";
 import {
-  decideProviderSave,
+  STEPS,
+  canEnter,
   decideAgentCreate,
+  decideProviderSave,
   decideRunDisplay,
+  decideSandbox,
+  describeEvent,
+  firstRunInput,
   isTerminalRunStatus,
+  normalizeAgentName,
+  parseApiError,
+  parseSSE,
+  resumeStep,
+  runOutputText,
+  starterSpec,
+  suggestFix,
+  validateSpec,
+  type AgentSpecDraft,
+  type FixSuggestion,
+  type JournalEvent,
+  type OnboardingState,
   type RunDisplay,
+  type SandboxDisplay,
+  type Step,
 } from "./onboarding-logic";
+import { AgentMessage, FixCard, Notice, ProgressRail, StepCard, UserMessage, ui } from "./parts";
 
-// ---------------------------------------------------------------------------
-// Templates (same 6 as the create modal)
-// ---------------------------------------------------------------------------
+type Provider = "openai" | "anthropic";
 
-const templates = [
-  {
-    id: "blank",
-    name: "Blank agent",
-    desc: "Start from scratch",
-    icon: Code,
-    defaultInput: '{\n  "task": "Hello world"\n}',
-  },
-  {
-    id: "research",
-    name: "Research agent",
-    desc: "Web search and synthesis",
-    icon: Wand2,
-    defaultInput: '{\n  "query": "Latest advances in quantum computing 2026",\n  "depth": "comprehensive"\n}',
-  },
-  {
-    id: "connector",
-    name: "Connector agent",
-    desc: "Integrates with external services",
-    icon: Workflow,
-    defaultInput: '{\n  "source": "slack",\n  "action": "send_message",\n  "channel": "#general"\n}',
-  },
-  {
-    id: "chatbot",
-    name: "Conversational agent",
-    desc: "WhatsApp, Slack, or web chat",
-    icon: MessageSquare,
-    defaultInput: '{\n  "message": "What can you help me with?",\n  "channel": "web"\n}',
-  },
-  {
-    id: "scheduled",
-    name: "Scheduled pipeline",
-    desc: "Runs on a cron schedule",
-    icon: Calendar,
-    defaultInput: '{\n  "source": "s3://data/input.csv",\n  "destination": "warehouse.daily"\n}',
-  },
-  {
-    id: "approval",
-    name: "Human-in-the-loop",
-    desc: "Approval gates and review flows",
-    icon: ShieldCheck,
-    defaultInput: '{\n  "document": "proposal-v3.pdf",\n  "approvers": ["alice@acme.dev", "bob@acme.dev"]\n}',
-  },
+const GOAL_EXAMPLES = [
+  "Turn my rough meeting notes into a short summary with action items",
+  "Answer customer questions about our pricing page",
+  "Draft a friendly reply to an email I paste in",
 ];
 
-// ---------------------------------------------------------------------------
-// Step indicator
-// ---------------------------------------------------------------------------
+// The smallest runnable demo workload (examples/headless-agents/01-hello).
+const SANDBOX_SPEC = {
+  imageDigest: "lantern/demos/hello:latest",
+  isolation: "untrusted",
+  limits: { vcpu: "100m", memory: "64Mi", timeout_secs: 30 },
+  env: { LANTERN_ONBOARDING: "1" },
+};
 
-function StepIndicator({ current, total }: { current: number; total: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      {Array.from({ length: total }, (_, i) => (
-        <div
-          key={i}
-          className={clsx(
-            "h-2 rounded-full transition-all duration-300",
-            i === current ? "w-8 bg-lantern-500" : i < current ? "w-2 bg-lantern-500/50" : "w-2 bg-zinc-700"
-          )}
-        />
-      ))}
-    </div>
-  );
+interface Failure {
+  step: Step;
+  fix: FixSuggestion;
 }
 
-// ---------------------------------------------------------------------------
-// Inline error banner — surfaces a REAL backend failure near the step that
-// produced it. Never auto-dismisses; the user must fix the underlying cause.
-// ---------------------------------------------------------------------------
-
-function InlineError({ message }: { message: string }) {
-  return (
-    <div
-      role="alert"
-      className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5"
-    >
-      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-      <p className="text-xs text-red-300">{message}</p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Onboarding page
-// ---------------------------------------------------------------------------
-
-// sessionStorage key for wizard resume state. Deliberately excludes the raw
-// provider key inputs (openaiKey/anthropicKey) — those are secrets and
-// already persisted server-side once saved; only the resumable step/agent
-// state is cached here.
-const WIZARD_STATE_KEY = "lantern_onboarding_wizard";
-
-interface WizardState {
-  step: number;
-  agentName: string;
-  selectedTemplate: string;
-  agentCreated: boolean;
-}
-
-function loadWizardState(): WizardState | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = sessionStorage.getItem(WIZARD_STATE_KEY);
-    return raw ? (JSON.parse(raw) as WizardState) : null;
-  } catch {
-    return null;
-  }
-}
+const stepPos = (s: Step) => STEPS.findIndex((x) => x.id === s);
 
 export default function OnboardingPage() {
   const router = useRouter();
   const toast = useToast();
-  const [step, setStep] = useState(() => loadWizardState()?.step ?? 0);
 
-  // Step 2: LLM provider
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [anthropicKey, setAnthropicKey] = useState("");
-  const [showOpenai, setShowOpenai] = useState(false);
-  const [showAnthropic, setShowAnthropic] = useState(false);
-  const [testingProvider, setTestingProvider] = useState<string | null>(null);
-  const [providerStatus, setProviderStatus] = useState<Record<string, "untested" | "ok" | "error">>({
-    openai: "untested",
-    anthropic: "untested",
-  });
-  // Real, surfaced provider errors (the message the backend / test returned).
-  const [providerError, setProviderError] = useState<Record<string, string | null>>({
-    openai: null,
-    anthropic: null,
-  });
-  const [savingProviders, setSavingProviders] = useState(false);
-  // Honest "skip" acknowledgement — the bot will NOT run without a key.
-  const [skipAck, setSkipAck] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [doc, setDoc] = useState<OnboardingState>({});
+  const [step, setStep] = useState<Step>("goal");
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
-  // Step 3: Create agent
-  const [selectedTemplate, setSelectedTemplate] = useState(() => loadWizardState()?.selectedTemplate ?? "research");
-  const [agentName, setAgentName] = useState(() => loadWizardState()?.agentName ?? "my-first-agent");
-  const [creatingAgent, setCreatingAgent] = useState(false);
-  // Set ONLY on a real 2xx from createAgent — gates the success banner.
-  const [agentCreated, setAgentCreated] = useState(() => loadWizardState()?.agentCreated ?? false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  // Provider gate — re-verified with a real call every session, never persisted.
+  const [providerVerified, setProviderVerified] = useState<string | null>(null);
+  const [keyFormOpen, setKeyFormOpen] = useState(false);
+  const [retrySpecAfterKey, setRetrySpecAfterKey] = useState(false);
 
-  // Persist resumable wizard state so a reload after Step 2 (agent already
-  // created) doesn't restart at Step 0 and re-attempt the create call.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      sessionStorage.setItem(
-        WIZARD_STATE_KEY,
-        JSON.stringify({ step, agentName, selectedTemplate, agentCreated }),
-      );
-    } catch {
-      // sessionStorage unavailable — wizard just won't resume across reload
-    }
-  }, [step, agentName, selectedTemplate, agentCreated]);
-
-  // Step 4: Run it
-  const [inputJson, setInputJson] = useState("");
-  const [running, setRunning] = useState(false);
-  // The real run outcome (terminal status / output) or the real error.
+  // Run + sandbox.
+  const [runLines, setRunLines] = useState<string[]>([]);
   const [runDisplay, setRunDisplay] = useState<RunDisplay | null>(null);
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [sandbox, setSandbox] = useState<SandboxDisplay | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
-  // Update input JSON when template changes
-  useEffect(() => {
-    const tmpl = templates.find((t) => t.id === selectedTemplate);
-    if (tmpl) setInputJson(tmpl.defaultInput);
-  }, [selectedTemplate]);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Provider test — saves the key, then asks the backend to round-trip a
-  // noop completion. Marks "ok" only on a real success; on any failure it
-  // surfaces the REAL error (thrown request, or the /test failure reason)
-  // both inline and as a toast. Returns true only on a genuine success so
-  // callers can gate on it.
-  const handleTestProvider = useCallback(
-    async (provider: "openai" | "anthropic"): Promise<boolean> => {
-      const key = provider === "openai" ? openaiKey : anthropicKey;
-      if (!key.trim()) return false;
-      setTestingProvider(provider);
-      setProviderError((prev) => ({ ...prev, [provider]: null }));
+  // ---- persistence ---------------------------------------------------------
 
-      let saveError: unknown | null = null;
-      let testResult: Awaited<ReturnType<typeof api.testLlmProvider>> | null = null;
+  const persist = useCallback(
+    async (next: OnboardingState) => {
+      setDoc(next);
       try {
-        await api.saveLlmProvider(provider, key);
-        testResult = await api.testLlmProvider(provider);
+        const body: OnboardingState = { ...next };
+        delete body.updatedAt;
+        await api.saveOnboarding(body);
       } catch (err) {
-        saveError = err;
-      } finally {
-        setTestingProvider(null);
+        // The flow still works this session; say plainly that resume won't.
+        toast.warning(`Progress not saved, so a reload starts over: ${parseApiError(err).message}`);
       }
-
-      const outcome = decideProviderSave(saveError, testResult);
-      if (outcome.ok) {
-        setProviderStatus((prev) => ({ ...prev, [provider]: "ok" }));
-        setProviderError((prev) => ({ ...prev, [provider]: null }));
-        return true;
-      }
-      setProviderStatus((prev) => ({ ...prev, [provider]: "error" }));
-      setProviderError((prev) => ({ ...prev, [provider]: outcome.error }));
-      toast.error(`${provider}: ${outcome.error}`);
-      return false;
     },
-    [openaiKey, anthropicKey, toast]
+    [toast],
   );
 
-  // Create the user's first agent against the real backend. Returns true ONLY
-  // on a real 2xx. On failure it surfaces the real error inline + via toast and
-  // does NOT mark the agent created — the caller must not advance.
-  const handleCreateAgent = async (): Promise<boolean> => {
-    if (!agentName.trim()) return false;
-    setCreatingAgent(true);
-    setCreateError(null);
-    const tmpl = templates.find((t) => t.id === selectedTemplate);
+  const goTo = useCallback((s: Step) => {
+    setFailure(null);
+    setStep(s);
+  }, []);
 
-    let createError: unknown | null = null;
+  // Move focus to the new step's card so keyboard / screen-reader users follow.
+  useEffect(() => {
+    if (!loading) headingRef.current?.focus();
+  }, [step, loading, keyFormOpen]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // ---- load + resume -------------------------------------------------------
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = (await api.getOnboarding()) ?? {};
+        if (cancelled) return;
+        setDoc(saved);
+        setStep(resumeStep(saved));
+      } catch (err) {
+        if (!cancelled) setFailure({ step: "goal", fix: suggestFix(parseApiError(err), "goal") });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ---- goal → spec (LLM design) -------------------------------------------
+
+  const designAgent = useCallback(
+    async (goal: string, base: OnboardingState) => {
+      setBusy("design");
+      setFailure(null);
+      try {
+        const spec = await api.generateSpecFromGoal(goal);
+        await persist({ ...base, goal, spec, specApproved: false, step: "spec" });
+        goTo("spec");
+      } catch (err) {
+        const fix = suggestFix(parseApiError(err), "goal");
+        setFailure({ step: "goal", fix });
+        setRetrySpecAfterKey(fix.fix.action === "add_key");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [persist, goTo],
+  );
+
+  const submitGoal = async (goal: string) => {
+    const base: OnboardingState = { goal, step: "goal" };
+    await persist(base);
+    await designAgent(goal, base);
+  };
+
+  // ---- spec → provider ------------------------------------------------------
+
+  const approveSpec = async (spec: AgentSpecDraft) => {
+    const problem = validateSpec(spec);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    await persist({ ...doc, spec, specApproved: true, agentName: spec.name, step: "provider" });
+    // Close any key form left open from the design step so a saved key gets
+    // its real test call first.
+    setKeyFormOpen(false);
+    goTo("provider");
+  };
+
+  // ---- provider gate (real test call) --------------------------------------
+
+  const verifyExistingProviders = useCallback(async () => {
+    setBusy("provider");
+    setFailure(null);
+    try {
+      const providers = (await api.listLlmProviders()).filter((p) => !p.status || p.status === "active");
+      if (providers.length === 0) {
+        setKeyFormOpen(true);
+        return;
+      }
+      let lastError = "";
+      for (const p of providers) {
+        const result = await api
+          .testLlmProvider(p.provider)
+          .catch((e: unknown) => ({ success: false, error: parseApiError(e).message }));
+        const outcome = decideProviderSave(null, result);
+        if (outcome.ok) {
+          setProviderVerified(p.provider);
+          return;
+        }
+        lastError = outcome.error;
+      }
+      setFailure({ step: "provider", fix: suggestFix({ message: lastError }, "provider") });
+      setKeyFormOpen(true);
+    } catch (err) {
+      setFailure({ step: "provider", fix: suggestFix(parseApiError(err), "provider") });
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step === "provider" && !providerVerified && !keyFormOpen && !failure) void verifyExistingProviders();
+  }, [step, providerVerified, keyFormOpen, failure, verifyExistingProviders]);
+
+  const saveAndTestKey = async (provider: Provider, key: string): Promise<boolean> => {
+    setBusy("key");
+    let saveError: unknown = null;
+    let testResult: Awaited<ReturnType<typeof api.testLlmProvider>> | null = null;
+    try {
+      await api.saveLlmProvider(provider, key);
+      testResult = await api.testLlmProvider(provider);
+    } catch (err) {
+      saveError = err;
+    } finally {
+      setBusy(null);
+    }
+    const outcome = decideProviderSave(saveError, testResult);
+    if (!outcome.ok) {
+      const f = saveError ? parseApiError(saveError) : { message: outcome.error };
+      setFailure({ step, fix: suggestFix(f, "provider") });
+      return false;
+    }
+    setFailure(null);
+    setProviderVerified(provider);
+    setKeyFormOpen(false);
+    toast.success(`${provider === "openai" ? "OpenAI" : "Anthropic"} key works`);
+    if (retrySpecAfterKey && doc.goal) {
+      setRetrySpecAfterKey(false);
+      void designAgent(doc.goal, doc);
+    }
+    return true;
+  };
+
+  // ---- create ---------------------------------------------------------------
+
+  const createAgent = async () => {
+    const spec = doc.spec;
+    if (!spec || !canEnter("create", doc, !!providerVerified)) return;
+    setBusy("create");
+    setFailure(null);
+    let createError: unknown = null;
     try {
       await api.createAgent({
-        name: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
-        description: tmpl?.desc ?? "Created from onboarding",
-        template: selectedTemplate,
+        name: spec.name,
+        description: spec.description,
+        systemPrompt: spec.systemPrompt,
+        model: spec.model || "auto",
       });
     } catch (err) {
       createError = err;
     } finally {
-      setCreatingAgent(false);
+      setBusy(null);
     }
-
     const outcome = decideAgentCreate(createError);
-    if (outcome.ok) {
-      setAgentCreated(true);
-      return true;
+    if (!outcome.ok) {
+      setFailure({ step: "create", fix: suggestFix(parseApiError(createError), "create") });
+      return;
     }
-    setAgentCreated(false);
-    setCreateError(outcome.error);
-    toast.error(outcome.error);
-    return false;
+    await persist({ ...doc, agentCreated: true, agentName: spec.name, step: "run" });
+    toast.success(`Created ${spec.name}`);
+    goTo("run");
   };
 
-  // Kick off a REAL run, poll it to a terminal status, and render the actual
-  // result (output) or the real error. We never claim success blindly, and we
-  // only mark onboarding complete + navigate once the user has seen a real
-  // terminal outcome.
-  const handleRun = async () => {
-    setRunning(true);
-    setRunDisplay(null);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(inputJson);
-    } catch {
-      parsed = { input: inputJson };
-    }
+  // ---- first run (live SSE) -------------------------------------------------
 
-    let display: RunDisplay;
-    try {
-      const created = await api.createRun({
-        agentName: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
-        input: parsed,
-      });
-      // Poll the run to terminal (bounded). Render whatever it actually does.
-      let run = created;
-      const deadline = Date.now() + 60_000;
-      while (!isTerminalRunStatus(run.status) && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 1500));
-        run = await api.getRun(run.id);
+  const explain = useCallback(
+    async (output: string, error: string) => {
+      try {
+        const r = await api.explainOnboardingRun({ goal: doc.goal, agentName: doc.agentName, output, error });
+        setExplanation(r.explanation);
+      } catch {
+        setExplanation(null); // the deterministic copy stands in
       }
-      display = decideRunDisplay(run, null);
+    },
+    [doc.goal, doc.agentName],
+  );
+
+  const streamRun = async (runId: string) => {
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const deadline = setTimeout(() => ac.abort(), 120_000);
+    try {
+      const res = await api.openRunEventStream(runId, ac.signal);
+      const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      const seen = new Set<number>();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const { frames, rest } = parseSSE(buf + value);
+        buf = rest;
+        for (const fr of frames) {
+          try {
+            const ev = JSON.parse(fr.data) as JournalEvent;
+            if (seen.has(ev.seq)) continue;
+            seen.add(ev.seq);
+            const line = describeEvent(ev);
+            if (line) setRunLines((l) => [...l, line]);
+          } catch {
+            /* malformed frame — skip */
+          }
+        }
+      }
+    } catch {
+      // Stream unavailable or timed out — the poll below still finds the truth.
+    } finally {
+      clearTimeout(deadline);
+    }
+    let run = await api.getRun(runId);
+    const until = Date.now() + 60_000;
+    while (!isTerminalRunStatus(run.status) && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 1500));
+      run = await api.getRun(runId);
+    }
+    return run;
+  };
+
+  const startRun = async (input: unknown) => {
+    if (!doc.agentName) return;
+    setBusy("run");
+    setFailure(null);
+    setRunLines([]);
+    setRunDisplay(null);
+    setExplanation(null);
+    let display: RunDisplay;
+    let runId = "";
+    let base = doc;
+    try {
+      const created = await api.createRun({ agentName: doc.agentName, input });
+      runId = created.id;
+      base = { ...doc, runId, runStatus: created.status, step: "run" };
+      await persist(base);
+      display = decideRunDisplay(await streamRun(created.id), null);
     } catch (err) {
       display = decideRunDisplay(null, err);
     }
-
     setRunDisplay(display);
-    setRunning(false);
-
+    setBusy(null);
     if (display.kind === "succeeded") {
-      // Cosmetic-only flag: whether the welcome wizard reappears. Does NOT
-      // affect whether anything actually runs.
-      if (typeof window !== "undefined") {
-        localStorage.setItem("lantern_onboarding_complete", "true");
-        try { sessionStorage.removeItem(WIZARD_STATE_KEY); } catch {}
-      }
-      toast.success("Run succeeded — taking you to your agents");
-      router.push("/agents");
+      await persist({ ...base, runStatus: "succeeded", step: "sandbox" });
+      void explain(runOutputText(display.output), "");
     } else if (display.kind === "failed") {
-      toast.error(display.error);
-    } else {
-      toast.info("Run is still in progress — check the Runs page for the result.");
+      if (runId) await persist({ ...base, runStatus: "failed" });
+      setFailure({ step: "run", fix: suggestFix(parseApiError(new Error(display.error)), "run") });
+      void explain("", display.error);
     }
   };
 
-  // Persist provider keys on continue. Saving here as well as in Test catches
-  // the "user typed a key but didn't click Test" case. On any failure we
-  // surface the REAL error and stay on this step — we never silently advance
-  // with a key that never persisted.
-  const handleProviderContinue = async () => {
-    // Nothing entered → this is the explicit "skip" path; handled by its own
-    // button. If we got here with no key, just advance (nothing to save).
-    if (!openaiKey.trim() && !anthropicKey.trim()) {
-      setStep(2);
+  // ---- sandbox (optional) ---------------------------------------------------
+
+  const runSandbox = async () => {
+    setBusy("sandbox");
+    let result: SandboxDisplay;
+    let vmId = "";
+    try {
+      const sched = await runtimeApi.post<{ vmId: string; stub?: boolean; warning?: string }>(
+        "/v1/runtime/schedule",
+        SANDBOX_SPEC,
+      );
+      vmId = sched.vmId;
+      let exec: { stdout?: string; stderr?: string; exitCode?: number } | null = null;
+      if (!sched.stub) {
+        exec = await runtimeApi.post(`/v1/runtime/vms/${encodeURIComponent(vmId)}/exec`, {
+          command: "/bin/sh",
+          argv: ["-c", "echo 'hello from your Lantern sandbox' && uname -sr"],
+        });
+      }
+      result = decideSandbox(sched, exec, null);
+    } catch (err) {
+      result = decideSandbox(null, null, err);
+    }
+    // Never leave a VM (or a synthesized stub row) holding quota.
+    if (vmId) await runtimeApi.del(`/v1/runtime/vms/${encodeURIComponent(vmId)}`).catch(() => {});
+    setSandbox(result);
+    setBusy(null);
+    await persist({ ...doc, sandbox: result.kind, vmId: vmId || undefined, step: "sandbox" });
+  };
+
+  const skipSandbox = async () => {
+    await persist({ ...doc, sandbox: "skipped", step: "done" });
+    goTo("done");
+  };
+
+  // ---- finish / reset -------------------------------------------------------
+
+  const finish = async () => {
+    await persist({ ...doc, step: "done", completedAt: new Date().toISOString() });
+    try {
+      localStorage.setItem("lantern_onboarding_complete", "true");
+    } catch {
+      /* cosmetic flag only */
+    }
+    router.push(doc.agentName ? `/agents/${encodeURIComponent(doc.agentName)}` : "/agents");
+  };
+
+  const startOver = async () => {
+    setConfirmReset(false);
+    abortRef.current?.abort();
+    try {
+      await api.resetOnboarding();
+    } catch (err) {
+      toast.error(parseApiError(err).message);
       return;
     }
-
-    setSavingProviders(true);
-    let ok = true;
-    if (openaiKey.trim()) ok = (await handleTestProvider("openai")) && ok;
-    if (anthropicKey.trim()) ok = (await handleTestProvider("anthropic")) && ok;
-    setSavingProviders(false);
-
-    // handleTestProvider already surfaced inline errors + a toast for any
-    // failure. Only advance when every entered key actually saved + tested ok.
-    if (ok) setStep(2);
+    setDoc({});
+    setProviderVerified(null);
+    setKeyFormOpen(false);
+    setRetrySpecAfterKey(false);
+    setRunLines([]);
+    setRunDisplay(null);
+    setExplanation(null);
+    setSandbox(null);
+    goTo("goal");
   };
 
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-surface-0">
-      {/* Background grid */}
-      <div className="fixed inset-0 grid-bg opacity-50" />
+  // ---- one-click fixes ------------------------------------------------------
 
-      {/* Glow behind card */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[500px] w-[500px] rounded-full bg-lantern-500/5 blur-[120px]" />
+  const applyFix = (f: Failure) => {
+    switch (f.fix.fix.action) {
+      case "add_key":
+        setFailure(null);
+        setKeyFormOpen(true);
+        return;
+      case "rephrase":
+        setFailure(null);
+        setDoc((d) => ({ ...d, goal: undefined }));
+        return;
+      case "rename_agent":
+        void persist({ ...doc, specApproved: false, step: "spec" });
+        goTo("spec");
+        return;
+      case "open_budgets":
+        router.push("/budgets");
+        return;
+      case "login":
+        router.push("/login?next=/onboarding");
+        return;
+      case "check_api":
+      case "retry":
+        setFailure(null);
+        if (f.step === "goal" && doc.goal) void designAgent(doc.goal, doc);
+        if (f.step === "create") void createAgent();
+        if (f.step === "run") void startRun(firstRunInput(doc.spec));
+        // provider: clearing the failure re-triggers verification.
+        return;
+    }
+  };
 
-      <div className="relative z-10 w-full max-w-xl px-4">
-        {/* Progress */}
-        <div className="mb-8 flex justify-center">
-          <StepIndicator current={step} total={4} />
+  // ---- render ---------------------------------------------------------------
+
+  if (loading) {
+    return (
+      <Shell step="goal" blocked={false} onReset={() => {}}>
+        <div className="space-y-4" aria-busy="true" aria-label="Loading your progress">
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-28 w-full" />
         </div>
+      </Shell>
+    );
+  }
 
-        {/* ----------------------------------------------------------------
-            Step 0: Welcome
-        ---------------------------------------------------------------- */}
-        {step === 0 && (
-          <div className="text-center">
-            {/* Logo */}
-            <div className="mb-6 flex justify-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-xl shadow-lantern-500/30">
-                <span className="text-2xl font-bold text-white leading-none">L</span>
-              </div>
-            </div>
+  const reached = (s: Step) => stepPos(s) <= stepPos(step);
 
-            <h1 className="mb-3 text-3xl font-bold tracking-tight text-zinc-100">
-              Welcome to Lantern
-            </h1>
-            <p className="mx-auto mb-8 max-w-md text-base text-zinc-400">
-              The serverless platform for production AI agents. Durable execution, microVM isolation, multi-LLM routing — all in one place.
-            </p>
-
-            <button
-              onClick={() => setStep(1)}
-              className="inline-flex items-center gap-2 rounded-xl bg-lantern-500 px-6 py-3 text-base font-medium text-white transition-all hover:bg-lantern-400 hover:shadow-lg hover:shadow-lantern-500/20"
+  const fixFor = (s: Step) =>
+    failure?.step === s ? (
+      <FixCard
+        failure={failure.fix}
+        onFix={() => applyFix(failure)}
+        busy={busy !== null}
+        secondary={
+          s === "goal" && doc.goal && failure.fix.fix.action !== "check_api" ? (
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                const spec = starterSpec(doc.goal!);
+                await persist({ ...doc, spec, specApproved: false, step: "spec" });
+                goTo("spec");
+              }}
             >
-              Get Started
-              <ArrowRight className="h-4 w-4" />
-            </button>
+              Use a basic design instead
+            </Button>
+          ) : undefined
+        }
+      />
+    ) : null;
 
-            <p className="mt-4 text-xs text-zinc-600">
-              Takes about 2 minutes to set up
-            </p>
-          </div>
+  const keyCard = keyFormOpen ? (
+    <StepCard ref={headingRef} title="Add a model key">
+      <KeyForm busy={busy === "key"} onSubmit={saveAndTestKey} />
+    </StepCard>
+  ) : null;
+
+  const runOutcome = runDisplay && runDisplay.kind !== "pending";
+
+  return (
+    <Shell step={step} blocked={!!failure} onReset={() => setConfirmReset(true)}>
+      <div className="space-y-5">
+        <AgentMessage>
+          <p>
+            I&apos;ll set up your first agent with you. Tell me what you want it to do, in your own words. I&apos;ll design
+            it, check your model key, create it, and run it so you see real output.
+          </p>
+        </AgentMessage>
+
+        {/* goal */}
+        {doc.goal ? (
+          <UserMessage>{doc.goal}</UserMessage>
+        ) : (
+          step === "goal" && <GoalCard ref={keyFormOpen ? undefined : headingRef} busy={busy === "design"} onSubmit={submitGoal} />
+        )}
+        {step === "goal" && doc.goal && (
+          <>
+            {busy === "design" && <AgentMessage busy>Designing an agent for that.</AgentMessage>}
+            {fixFor("goal")}
+            {keyCard}
+          </>
         )}
 
-        {/* ----------------------------------------------------------------
-            Step 1: Configure LLM Provider
-        ---------------------------------------------------------------- */}
-        {step === 1 && (
-          <div className="rounded-2xl border border-zinc-800 bg-surface-1 p-8 shadow-2xl">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
-                <Sparkles className="h-5 w-5 text-lantern-400" />
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-zinc-100">
-                  Configure LLM Provider
-                </h2>
-                <p className="text-sm text-zinc-500">
-                  Add at least one LLM provider to get started.
-                </p>
-              </div>
-            </div>
+        {/* spec */}
+        {reached("spec") && doc.spec && (
+          <>
+            <AgentMessage>
+              <p>
+                {doc.spec.rationale ||
+                  `Here's a design for “${doc.spec.name}”. Check the instructions and the first task, edit anything, then approve.`}
+              </p>
+            </AgentMessage>
+            {step === "spec" ? (
+              <SpecCard ref={headingRef} spec={doc.spec} onApprove={approveSpec} />
+            ) : (
+              <UserMessage>Approved {doc.spec.name}</UserMessage>
+            )}
+          </>
+        )}
 
-            <div className="space-y-4">
-              {/* OpenAI */}
-              <div className="rounded-xl border border-zinc-800 bg-surface-2 p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-3">
-                      <span className="text-xs font-bold text-emerald-400">AI</span>
+        {/* provider */}
+        {reached("provider") && doc.specApproved && (
+          <>
+            <AgentMessage busy={busy === "provider"}>
+              <p>
+                Before creating it, I&apos;ll make a real test call to your model provider so the first run doesn&apos;t
+                fail on a bad key.
+              </p>
+            </AgentMessage>
+            {step === "provider" && (
+              <>
+                {fixFor("provider")}
+                {keyCard}
+                {providerVerified && (
+                  <StepCard ref={headingRef} title="Model key verified">
+                    <Notice tone="ok">Your {providerVerified === "openai" ? "OpenAI" : "Anthropic"} key answered a test call.</Notice>
+                    <div className="mt-4 flex justify-end">
+                      <Button variant="primary" size="lg" onClick={() => goTo("create")}>
+                        Continue
+                      </Button>
                     </div>
-                    <span className="text-sm font-medium text-zinc-200">OpenAI</span>
-                  </div>
-                  {providerStatus.openai === "ok" && (
-                    <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
-                      <Check className="h-3 w-3" /> Connected
-                    </span>
-                  )}
-                  {providerStatus.openai === "error" && (
-                    <span className="text-xs text-red-400">Failed</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={showOpenai ? "text" : "password"}
-                      value={openaiKey}
-                      onChange={(e) => {
-                        setOpenaiKey(e.target.value);
-                        setProviderStatus((p) => ({ ...p, openai: "untested" }));
-                        setProviderError((p) => ({ ...p, openai: null }));
-                      }}
-                      placeholder="sk-..."
-                      className="w-full rounded-lg border border-zinc-700 bg-surface-3 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 font-mono"
-                    />
-                    <button
-                      onClick={() => setShowOpenai(!showOpenai)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 transition-colors hover:text-zinc-300"
-                    >
-                      {showOpenai ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => void handleTestProvider("openai")}
-                    disabled={!openaiKey.trim() || testingProvider === "openai"}
-                    className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {testingProvider === "openai" ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      "Test"
-                    )}
-                  </button>
-                </div>
-                {providerError.openai && <InlineError message={providerError.openai} />}
-              </div>
-
-              {/* Anthropic */}
-              <div className="rounded-xl border border-zinc-800 bg-surface-2 p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-3">
-                      <span className="text-xs font-bold text-orange-400">A</span>
-                    </div>
-                    <span className="text-sm font-medium text-zinc-200">Anthropic</span>
-                  </div>
-                  {providerStatus.anthropic === "ok" && (
-                    <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
-                      <Check className="h-3 w-3" /> Connected
-                    </span>
-                  )}
-                  {providerStatus.anthropic === "error" && (
-                    <span className="text-xs text-red-400">Failed</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={showAnthropic ? "text" : "password"}
-                      value={anthropicKey}
-                      onChange={(e) => {
-                        setAnthropicKey(e.target.value);
-                        setProviderStatus((p) => ({ ...p, anthropic: "untested" }));
-                        setProviderError((p) => ({ ...p, anthropic: null }));
-                      }}
-                      placeholder="sk-ant-..."
-                      className="w-full rounded-lg border border-zinc-700 bg-surface-3 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 font-mono"
-                    />
-                    <button
-                      onClick={() => setShowAnthropic(!showAnthropic)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 transition-colors hover:text-zinc-300"
-                    >
-                      {showAnthropic ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => void handleTestProvider("anthropic")}
-                    disabled={!anthropicKey.trim() || testingProvider === "anthropic"}
-                    className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {testingProvider === "anthropic" ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      "Test"
-                    )}
-                  </button>
-                </div>
-                {providerError.anthropic && <InlineError message={providerError.anthropic} />}
-              </div>
-            </div>
-
-            {/* Honest skip: the bot will NOT run without a provider key. We
-                make the user acknowledge that, and we never later claim
-                success on their behalf. */}
-            {skipAck && (
-              <div className="mt-5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                <p className="text-xs text-amber-300">
-                  Heads up: without an LLM provider key, your agent can be
-                  created but <span className="font-medium">runs will fail</span> —
-                  there is no model to call. Add a key here or later in Settings,
-                  then come back to run it. Click skip again to continue anyway.
-                </p>
-              </div>
-            )}
-
-            <div className="mt-6 flex items-center justify-between">
-              <button
-                onClick={() => {
-                  // Honest skip — no demo-mode flag, no fabricated success.
-                  // First click warns; second click proceeds.
-                  if (!skipAck) {
-                    setSkipAck(true);
-                    return;
-                  }
-                  setStep(2);
-                }}
-                className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
-              >
-                {skipAck ? "Skip anyway — I'll add a key later" : "Skip for now"}
-              </button>
-              <button
-                onClick={handleProviderContinue}
-                disabled={savingProviders || testingProvider !== null}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {savingProviders ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Testing...
-                  </>
-                ) : (
-                  <>
-                    {openaiKey || anthropicKey ? "Test & Continue" : "Continue"}
-                    <ArrowRight className="h-4 w-4" />
-                  </>
+                  </StepCard>
                 )}
-              </button>
-            </div>
-          </div>
+              </>
+            )}
+            {stepPos(step) > stepPos("provider") && providerVerified && <UserMessage>Key verified ({providerVerified})</UserMessage>}
+          </>
         )}
 
-        {/* ----------------------------------------------------------------
-            Step 2: Create your first agent
-        ---------------------------------------------------------------- */}
-        {step === 2 && (
-          <div className="rounded-2xl border border-zinc-800 bg-surface-1 p-8 shadow-2xl">
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold text-zinc-100">
-                Create your first agent
-              </h2>
-              <p className="mt-1 text-sm text-zinc-500">
-                Pick a template to start with. You can customize everything later.
+        {/* create */}
+        {step === "create" && doc.spec && (
+          <>
+            <StepCard ref={headingRef} title={`Create ${doc.spec.name}`}>
+              <p className={ui.muted}>
+                This saves the agent to your workspace with the instructions you approved. Its model is addressed by
+                capability (<span className={ui.mono}>{doc.spec.model || "auto"}</span>), so Lantern routes it to a
+                provider you have.
               </p>
-            </div>
-
-            {/* Template grid */}
-            <div className="mb-5 grid grid-cols-2 gap-2">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setSelectedTemplate(t.id)}
-                  className={clsx(
-                    "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all",
-                    selectedTemplate === t.id
-                      ? "border-lantern-500 bg-lantern-500/10 text-zinc-100"
-                      : "border-zinc-800 bg-surface-2 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-                  )}
-                >
-                  <t.icon className="h-4 w-4 shrink-0" />
-                  <div>
-                    <div className="text-xs font-medium">{t.name}</div>
-                    <div className="text-[11px] text-zinc-500">{t.desc}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Agent name */}
-            <div className="mb-6">
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Agent name
-              </label>
-              <input
-                type="text"
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-                placeholder="my-agent"
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
-              />
-              <p className="mt-1 text-xs text-zinc-600">
-                Lowercase, hyphens only. e.g. research-agent
-              </p>
-            </div>
-
-            {createError && <InlineError message={createError} />}
-
-            <div className="mt-6 flex items-center justify-between">
-              <button
-                onClick={() => setStep(1)}
-                className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
-              >
-                Back
-              </button>
-              <button
-                onClick={async () => {
-                  // Advance ONLY on a real 2xx. On failure handleCreateAgent
-                  // surfaces the real error inline + toast and we stay here.
-                  const ok = await handleCreateAgent();
-                  if (ok) setStep(3);
-                }}
-                disabled={!agentName.trim() || creatingAgent}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {creatingAgent ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    Create Agent
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+              <div className="mt-4 flex justify-end">
+                <Button variant="primary" size="lg" icon={<Bot className="h-4 w-4" />} loading={busy === "create"} onClick={createAgent}>
+                  Create agent
+                </Button>
+              </div>
+            </StepCard>
+            {fixFor("create")}
+          </>
         )}
+        {doc.agentCreated && <UserMessage>Created {doc.agentName}</UserMessage>}
 
-        {/* ----------------------------------------------------------------
-            Step 3: Run it
-        ---------------------------------------------------------------- */}
-        {step === 3 && (
-          <div className="rounded-2xl border border-zinc-800 bg-surface-1 p-8 shadow-2xl">
-            <div className="mb-6">
-              {/* Success banner — gated on a REAL 2xx create. We never claim
-                  the agent was created unless the backend confirmed it. */}
-              {agentCreated && (
-                <div className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                  <Check className="h-5 w-5 text-emerald-400" />
-                  <div>
-                    <p className="text-sm font-medium text-emerald-400">
-                      Agent created
-                    </p>
-                    <p className="text-xs text-emerald-400/70">
-                      <span className="font-mono">{agentName}</span> was created using the{" "}
-                      {templates.find((t) => t.id === selectedTemplate)?.name} template.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <h2 className="text-lg font-semibold text-zinc-100">
-                Run your agent
-              </h2>
-              <p className="mt-1 text-sm text-zinc-500">
-                Try it out with some sample input. You can edit the JSON below.
-              </p>
-            </div>
-
-            {/* Input JSON editor */}
-            <div className="mb-6">
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Input JSON
-              </label>
-              <textarea
-                value={inputJson}
-                onChange={(e) => setInputJson(e.target.value)}
-                rows={6}
-                spellCheck={false}
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 resize-none"
-              />
-            </div>
-
-            {/* Real run outcome — the ACTUAL terminal result of the run, or
-                the real error. Never an unconditional "success". */}
-            {runDisplay?.kind === "succeeded" && (
-              <div className="mb-6">
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-400">
-                  <Check className="h-4 w-4" /> Run succeeded
-                </div>
-                <pre className="max-h-48 overflow-auto rounded-lg border border-zinc-800 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-300">
-                  {typeof runDisplay.output === "string"
-                    ? runDisplay.output
-                    : JSON.stringify(runDisplay.output, null, 2)}
-                </pre>
+        {/* run */}
+        {reached("run") && doc.agentCreated && (
+          <>
+            <AgentMessage>
+              <p>Now the first run. I&apos;ll stream each step as it happens.</p>
+            </AgentMessage>
+            <RunCard
+              ref={step === "run" ? headingRef : undefined}
+              spec={doc.spec}
+              active={step === "run"}
+              busy={busy === "run"}
+              lines={runLines}
+              display={runDisplay}
+              runId={doc.runId}
+              priorStatus={doc.runStatus}
+              onRun={startRun}
+            />
+            {step === "run" && fixFor("run")}
+            {runOutcome && (
+              <div aria-live="polite">
+                <AgentMessage>
+                  <p>
+                    {explanation ??
+                      (runDisplay.kind === "succeeded"
+                        ? "Your agent ran and returned the output above. Next, you can check it runs inside an isolated sandbox."
+                        : "The run failed. The reason is above; fix it and run again.")}
+                  </p>
+                </AgentMessage>
               </div>
             )}
-            {runDisplay?.kind === "failed" && (
-              <InlineError message={`Run failed: ${runDisplay.error}`} />
-            )}
-            {runDisplay?.kind === "pending" && (
-              <div className="mb-6 flex items-center gap-2 text-xs text-zinc-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Run is still in progress — check the Runs page for the final result.
-              </div>
-            )}
-
-            <div className="mt-6 flex items-center justify-between">
-              <button
-                onClick={() => setStep(2)}
-                className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
-              >
-                Back
-              </button>
-              <button
-                onClick={handleRun}
-                disabled={running}
-                className="inline-flex items-center gap-2 rounded-xl bg-lantern-500 px-6 py-3 text-sm font-medium text-white transition-all hover:bg-lantern-400 hover:shadow-lg hover:shadow-lantern-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {running ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Starting run...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Run your agent
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+          </>
         )}
+
+        {/* sandbox */}
+        {reached("sandbox") && doc.runStatus === "succeeded" && (
+          <>
+            <AgentMessage>
+              <p>
+                Optional: start a microVM, run one command inside it, and shut it down. This is how Lantern isolates
+                agents that run code or browse.
+              </p>
+            </AgentMessage>
+            {step === "sandbox" && !sandbox ? (
+              <StepCard ref={headingRef} title="Sandbox run">
+                <p className={ui.muted}>Uses the small demo image and a 30-second limit.</p>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  <Button variant="ghost" onClick={skipSandbox} disabled={busy === "sandbox"}>
+                    Skip
+                  </Button>
+                  <Button variant="primary" size="lg" icon={<Box className="h-4 w-4" />} loading={busy === "sandbox"} onClick={runSandbox}>
+                    Run in a sandbox
+                  </Button>
+                </div>
+              </StepCard>
+            ) : (
+              <SandboxResult display={sandbox} saved={doc.sandbox} active={step === "sandbox"} onContinue={() => goTo("done")} />
+            )}
+          </>
+        )}
+
+        {/* done */}
+        {step === "done" && <NextSteps ref={headingRef} agentName={doc.agentName} onFinish={finish} />}
+      </div>
+
+      <Modal
+        open={confirmReset}
+        onClose={() => setConfirmReset(false)}
+        title="Start over?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmReset(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={startOver}>
+              Start over
+            </Button>
+          </>
+        }
+      >
+        <p className={ui.muted}>This clears your onboarding progress. Agents you already created stay in your workspace.</p>
+      </Modal>
+    </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Layout shell
+// ---------------------------------------------------------------------------
+
+function Shell({ step, blocked, onReset, children }: { step: Step; blocked: boolean; onReset: () => void; children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-surface-0">
+      <PageHeader
+        title="Set up your first agent"
+        description="Describe what you want. Lantern designs, creates and runs it with you."
+        secondaryAction={
+          <Button variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={onReset}>
+            Start over
+          </Button>
+        }
+        action={
+          <LinkButton href="/agents" variant="secondary">
+            Skip to dashboard
+          </LinkButton>
+        }
+      />
+      <div className="mx-auto grid max-w-5xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-12 lg:py-10">
+        <aside className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-surface-0 px-4 py-3 sm:-mx-6 sm:px-6 lg:top-10 lg:mx-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0">
+          <ProgressRail current={step} blocked={blocked} />
+        </aside>
+        <main className="min-w-0 max-w-2xl pb-24">{children}</main>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step cards
+// ---------------------------------------------------------------------------
+
+function GoalCard({
+  ref,
+  busy,
+  onSubmit,
+}: {
+  ref?: Ref<HTMLHeadingElement>;
+  busy: boolean;
+  onSubmit: (goal: string) => void;
+}) {
+  const [goal, setGoal] = useState("");
+  const ok = goal.trim().length >= 8;
+  const send = () => {
+    if (ok && !busy) onSubmit(goal.trim());
+  };
+  return (
+    <StepCard ref={ref} title="What should your agent do?">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+      >
+        <label htmlFor="onb-goal" className="sr-only">
+          Describe your agent&apos;s job
+        </label>
+        <textarea
+          id="onb-goal"
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+          }}
+          rows={3}
+          maxLength={2000}
+          placeholder="e.g. Turn my rough meeting notes into a short summary with action items"
+          className={clsx(ui.field, "resize-y")}
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {GOAL_EXAMPLES.map((g) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGoal(g)}
+              className="rounded-full border border-zinc-700 px-2.5 py-1 text-left text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+            >
+              {g}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="hidden text-xs text-zinc-500 sm:block">⌘/Ctrl + Enter to send</p>
+          <Button type="submit" variant="primary" size="lg" disabled={!ok} loading={busy} className="ml-auto">
+            Design my agent
+          </Button>
+        </div>
+      </form>
+    </StepCard>
+  );
+}
+
+function SpecCard({
+  ref,
+  spec,
+  onApprove,
+}: {
+  ref?: Ref<HTMLHeadingElement>;
+  spec: AgentSpecDraft;
+  onApprove: (s: AgentSpecDraft) => void;
+}) {
+  const [name, setName] = useState(spec.name);
+  const [description, setDescription] = useState(spec.description);
+  const [prompt, setPrompt] = useState(spec.systemPrompt);
+  const [task, setTask] = useState(String((spec.firstInput as { prompt?: unknown } | undefined)?.prompt ?? ""));
+  const steps = spec.steps ?? [];
+  return (
+    <StepCard ref={ref} title="Proposed agent">
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="onb-name" className={ui.label}>
+              Name
+            </label>
+            <input
+              id="onb-name"
+              value={name}
+              onChange={(e) => setName(normalizeAgentName(e.target.value))}
+              className={clsx(ui.field, "font-mono")}
+            />
+          </div>
+          <div>
+            <label htmlFor="onb-desc" className={ui.label}>
+              Description
+            </label>
+            <input id="onb-desc" value={description} onChange={(e) => setDescription(e.target.value)} className={ui.field} />
+          </div>
+        </div>
+        <div>
+          <label htmlFor="onb-prompt" className={ui.label}>
+            Instructions
+          </label>
+          <textarea
+            id="onb-prompt"
+            rows={6}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className={clsx(ui.field, "resize-y leading-relaxed")}
+          />
+        </div>
+        <div>
+          <label htmlFor="onb-task" className={ui.label}>
+            First task to run
+          </label>
+          <textarea id="onb-task" rows={2} value={task} onChange={(e) => setTask(e.target.value)} className={clsx(ui.field, "resize-y")} />
+        </div>
+        {steps.length > 0 && (
+          <div>
+            <p className={ui.label}>Steps</p>
+            <ol className="space-y-1.5">
+              {steps.map((s, i) => (
+                <li key={`${s.name}-${i}`} className="flex gap-2 text-sm">
+                  <span className="w-5 shrink-0 text-right text-zinc-500">{i + 1}.</span>
+                  <span className="min-w-0">
+                    <span className={clsx(ui.mono, "text-zinc-50")}>{s.name}</span>
+                    <span className="text-zinc-400">: {s.description}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        <p className="text-xs text-zinc-500">
+          Model <span className={ui.mono}>{spec.model || "auto"}</span>
+          {spec.isolation ? (
+            <>
+              , isolation <span className={ui.mono}>{spec.isolation}</span>
+            </>
+          ) : null}
+        </p>
+        <div className="flex justify-end">
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={() =>
+              onApprove({
+                ...spec,
+                name,
+                description,
+                systemPrompt: prompt,
+                firstInput: task.trim() ? { ...(spec.firstInput ?? {}), prompt: task.trim() } : spec.firstInput,
+              })
+            }
+          >
+            Approve design
+          </Button>
+        </div>
+      </div>
+    </StepCard>
+  );
+}
+
+function KeyForm({ busy, onSubmit }: { busy: boolean; onSubmit: (p: Provider, key: string) => Promise<boolean> }) {
+  const [provider, setProvider] = useState<Provider>("anthropic");
+  const [key, setKey] = useState("");
+  const [show, setShow] = useState(false);
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (key.trim() && (await onSubmit(provider, key.trim()))) setKey("");
+      }}
+      className="space-y-3"
+    >
+      <fieldset>
+        <legend className={ui.label}>Provider</legend>
+        <div className="inline-flex rounded-lg border border-zinc-700 p-0.5">
+          {(["anthropic", "openai"] as const).map((p) => (
+            <label
+              key={p}
+              className={clsx(
+                "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium focus-within:ring-2 focus-within:ring-lantern-500/40",
+                provider === p ? "bg-surface-3 text-zinc-50" : "text-zinc-400 hover:text-zinc-50",
+              )}
+            >
+              <input type="radio" name="onb-provider" value={p} checked={provider === p} onChange={() => setProvider(p)} className="sr-only" />
+              {p === "openai" ? "OpenAI" : "Anthropic"}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div>
+        <label htmlFor="onb-key" className={ui.label}>
+          API key
+        </label>
+        <div className="relative">
+          <input
+            id="onb-key"
+            type={show ? "text" : "password"}
+            autoComplete="off"
+            spellCheck={false}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder={provider === "openai" ? "sk-…" : "sk-ant-…"}
+            className={clsx(ui.field, "pr-10 font-mono")}
+          />
+          <button
+            type="button"
+            onClick={() => setShow(!show)}
+            aria-label={show ? "Hide key" : "Show key"}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+          >
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs text-zinc-500">Stored encrypted for your workspace. I&apos;ll send one small test request.</p>
+      </div>
+      <div className="flex justify-end">
+        <Button type="submit" variant="primary" size="lg" disabled={!key.trim()} loading={busy}>
+          Test key
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function RunCard({
+  ref,
+  spec,
+  active,
+  busy,
+  lines,
+  display,
+  runId,
+  priorStatus,
+  onRun,
+}: {
+  ref?: Ref<HTMLHeadingElement>;
+  spec?: AgentSpecDraft;
+  active: boolean;
+  busy: boolean;
+  lines: string[];
+  display: RunDisplay | null;
+  runId?: string;
+  priorStatus?: string;
+  onRun: (input: unknown) => void;
+}) {
+  const [input, setInput] = useState(() => JSON.stringify(firstRunInput(spec), null, 2));
+  const [inputError, setInputError] = useState<string | null>(null);
+  return (
+    <StepCard ref={ref} title="First run">
+      {active && (
+        <>
+          <label htmlFor="onb-input" className={ui.label}>
+            Input
+          </label>
+          <textarea
+            id="onb-input"
+            rows={4}
+            spellCheck={false}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setInputError(null);
+            }}
+            className={clsx(ui.field, "resize-y font-mono text-xs")}
+          />
+          {inputError && <p className={clsx("mt-1 text-xs", ui.bad)}>{inputError}</p>}
+        </>
+      )}
+      {(lines.length > 0 || busy) && (
+        <ol
+          aria-label="Run events"
+          aria-live="polite"
+          className="mt-3 space-y-1 rounded-lg border border-zinc-800 bg-surface-2 p-3 font-mono text-xs text-zinc-300"
+        >
+          {lines.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+          {busy && <li className="text-zinc-500 motion-safe:animate-pulse">Waiting for events</li>}
+        </ol>
+      )}
+      {display?.kind === "succeeded" && (
+        <div className="mt-3">
+          <Notice tone="ok">Run succeeded</Notice>
+          <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-2 p-3 text-sm text-zinc-50">
+            {runOutputText(display.output) || "(no output)"}
+          </pre>
+        </div>
+      )}
+      {display?.kind === "pending" && <p className={clsx("mt-3", ui.muted)}>The run is still going. Its result will be on the Runs page.</p>}
+      {!display && !active && priorStatus === "succeeded" && <Notice tone="ok">First run succeeded.</Notice>}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+        {runId ? (
+          <Link href={`/runs/${encodeURIComponent(runId)}`} className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-50 hover:underline">
+            Open run details
+          </Link>
+        ) : (
+          <span />
+        )}
+        {active && (
+          <Button
+            variant="primary"
+            size="lg"
+            icon={<Play className="h-4 w-4" />}
+            loading={busy}
+            onClick={() => {
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(input);
+              } catch {
+                setInputError("Input must be valid JSON.");
+                return;
+              }
+              onRun(parsed);
+            }}
+          >
+            {display?.kind === "failed" || priorStatus === "failed" ? "Run again" : "Run it"}
+          </Button>
+        )}
+      </div>
+    </StepCard>
+  );
+}
+
+function SandboxResult({
+  display,
+  saved,
+  active,
+  onContinue,
+}: {
+  display: SandboxDisplay | null;
+  saved?: string;
+  active: boolean;
+  onContinue: () => void;
+}) {
+  if (!display) {
+    return <UserMessage>{saved === "skipped" ? "Skipped the sandbox" : `Sandbox: ${saved ?? "skipped"}`}</UserMessage>;
+  }
+  return (
+    <div className="ml-0 space-y-3 sm:ml-10" aria-live="polite">
+      {display.kind === "ran" && (
+        <>
+          <Notice tone="ok">Ran in microVM {display.vmId}, then shut it down.</Notice>
+          <pre className="overflow-auto rounded-lg border border-zinc-800 bg-surface-2 p-3 font-mono text-xs text-zinc-50">{display.stdout}</pre>
+        </>
+      )}
+      {display.kind === "unavailable" && (
+        <Notice tone="off">
+          <p className="font-medium text-zinc-50">Sandbox unavailable on this stack</p>
+          <p className="mt-1 text-zinc-400">{display.reason}</p>
+          <p className="mt-1 text-zinc-400">
+            Nothing ran. Run <span className={ui.mono}>lantern doctor</span> to see what the runtime needs (scheduler,
+            runtime manager, KVM).
+          </p>
+        </Notice>
+      )}
+      {display.kind === "failed" && <Notice tone="warn">Sandbox run failed: {display.error}</Notice>}
+      {active && (
+        <div className="flex justify-end">
+          <Button variant="primary" onClick={onContinue}>
+            Continue
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NextSteps({ ref, agentName, onFinish }: { ref?: Ref<HTMLHeadingElement>; agentName?: string; onFinish: () => void }) {
+  const items = [
+    { href: "/surfaces", icon: MessageSquare, title: "Connect a channel", text: "Put the agent on Slack, WhatsApp, or a web chat." },
+    { href: "/budgets", icon: Gauge, title: "Set a budget", text: "Cap spend per run and per day before real traffic." },
+    { href: "/eval-suites", icon: FlaskConical, title: "Add an eval", text: "Pin expected answers so changes can't regress it." },
+  ];
+  return (
+    <>
+      <AgentMessage>
+        <p>
+          {agentName ? (
+            <>
+              <span className={ui.mono}>{agentName}</span> is live in your workspace.{" "}
+            </>
+          ) : null}
+          Here&apos;s what most teams do next.
+        </p>
+      </AgentMessage>
+      <StepCard ref={ref} title="Next steps">
+        <ul className="grid gap-2 sm:grid-cols-3">
+          {items.map((it) => (
+            <li key={it.title}>
+              <Link
+                href={it.href}
+                className="flex h-full flex-col gap-1 rounded-lg border border-zinc-800 bg-surface-2 p-3 transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+              >
+                <it.icon className="h-4 w-4 text-lantern-300" aria-hidden />
+                <span className="text-sm font-medium text-zinc-50">{it.title}</span>
+                <span className="text-xs text-zinc-400">{it.text}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex justify-end">
+          <Button variant="primary" size="lg" onClick={onFinish}>
+            {agentName ? "Open my agent" : "Go to the dashboard"}
+          </Button>
+        </div>
+      </StepCard>
+    </>
   );
 }

@@ -23,11 +23,22 @@ export interface User {
   role: "owner" | "admin" | "member" | "viewer";
 }
 
+// Onboarding document + spec shapes live with the pure flow logic.
+export type {
+  AgentSpecDraft as OnboardingSpec,
+  OnboardingState as OnboardingDoc,
+} from "@/app/onboarding/onboarding-logic";
+import type {
+  AgentSpecDraft as OnboardingSpec,
+  OnboardingState as OnboardingDoc,
+} from "@/app/onboarding/onboarding-logic";
+
 export interface CreateAgentInput {
   name: string;
   description: string;
   template?: string;
   model?: string;
+  systemPrompt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1349,6 +1360,58 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     return this.request(`/v1/settings/llm-providers/${encodeURIComponent(provider)}/test`, {
       method: "POST",
     });
+  }
+
+  // ---- Agentic onboarding -----------------------------------------------------
+
+  /** Server-side spec design (POST /v1/agents/generate-spec) — returns the parsed spec. */
+  async generateSpecFromGoal(description: string): Promise<OnboardingSpec> {
+    return this.request("/v1/agents/generate-spec", {
+      method: "POST",
+      body: JSON.stringify({ description }),
+    });
+  }
+
+  async getOnboarding(): Promise<OnboardingDoc> {
+    return this.request("/v1/onboarding");
+  }
+
+  async saveOnboarding(doc: OnboardingDoc): Promise<OnboardingDoc> {
+    return this.request("/v1/onboarding", { method: "PUT", body: JSON.stringify(doc) });
+  }
+
+  async resetOnboarding(): Promise<void> {
+    await this.request("/v1/onboarding", { method: "DELETE" });
+  }
+
+  /** The onboarding agent's plain-language read of a run (LLM; may throw). */
+  async explainOnboardingRun(body: {
+    goal?: string;
+    agentName?: string;
+    output?: string;
+    error?: string;
+  }): Promise<{ explanation: string }> {
+    return this.request("/v1/onboarding/explain", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /**
+   * Open the run's SSE stream with the bearer token in a header (not the URL).
+   * The server emits NAMED events (`event: <kind>`), which EventSource's
+   * onmessage never sees — callers read the body and parse frames.
+   */
+  async openRunEventStream(runId: string, signal: AbortSignal): Promise<Response> {
+    if (!this._token && typeof window !== "undefined") this.restoreToken();
+    const res = await fetch(`${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events`, {
+      headers: {
+        Accept: "text/event-stream",
+        ...(this._token ? { Authorization: `Bearer ${this._token}` } : {}),
+      },
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`API ${res.status}: ${await res.text().catch(() => res.statusText)}`);
+    }
+    return res;
   }
 
   // ---- Voice (W11d) -----------------------------------------------------------
