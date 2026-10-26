@@ -406,16 +406,20 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	// and secret binding).
 	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		for _, f := range res.Forks {
-			// The child inherits the source's placement, isolation and (redacted)
-			// spec; it is linked back via parent_vm_id + snapshot_id.
+			// The child inherits the source's placement, isolation, (redacted)
+			// spec and idle timeout (the scheduler copies the spec, so a fork can
+			// be auto-suspended and must be auto-resumable); it is linked back via
+			// parent_vm_id + snapshot_id.
 			if _, e := tx.Exec(ctx, `
 				INSERT INTO runtime_vms
 				  (vm_id, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
-				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id, created_at)
+				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id,
+				   idle_timeout_secs, created_at)
 				SELECT $1, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
 				       $2, NULLIF($3, ''),
 				       jsonb_set(spec, '{env,LANTERN_AGENT_INSTANCE_ID}', to_jsonb($7::text)),
-				       NULLIF($7, ''), confidential, vm_id, $4, now()
+				       NULLIF($7, ''), confidential, vm_id, $4,
+				       idle_timeout_secs, now()
 				FROM runtime_vms WHERE vm_id = $5 AND tenant_id = $6
 				ON CONFLICT (vm_id) DO NOTHING
 			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID, f.AgentInstanceID); e != nil {

@@ -197,6 +197,11 @@ func TestLifecycle_DB(t *testing.T) {
 	})
 
 	t.Run("fork inserts child rows incl. failed child", func(t *testing.T) {
+		// The source is idle-enabled: children must inherit it, or an
+		// auto-suspended fork could never be auto-resumed.
+		if _, err := pool.Exec(context.Background(), `UPDATE runtime_vms SET idle_timeout_secs = 90 WHERE vm_id = $1`, vm); err != nil {
+			t.Fatalf("set idle timeout: %v", err)
+		}
 		sched.forkRes = ForkResult{SnapshotID: "snap-f", Forks: []ForkChildResult{
 			{VMID: "vm-child-ok-" + tenant[:8], State: "running"},
 			{VMID: "vm-child-bad-" + tenant[:8], State: "failed", Error: "boot failed"},
@@ -220,6 +225,10 @@ func TestLifecycle_DB(t *testing.T) {
 		}
 		if st, _, _ := vmShadow(t, h, "vm-child-bad-"+tenant[:8]); st != "failed" {
 			t.Errorf("failed child state = %s", st)
+		}
+		var idle int32
+		if err := pool.QueryRow(context.Background(), `SELECT idle_timeout_secs FROM runtime_vms WHERE vm_id = $1`, "vm-child-ok-"+tenant[:8]).Scan(&idle); err != nil || idle != 90 {
+			t.Errorf("child idle_timeout_secs = %d (%v), want 90 inherited from the source", idle, err)
 		}
 	})
 
