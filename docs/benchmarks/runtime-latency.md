@@ -58,3 +58,56 @@ bash scripts/bench/runtime-latency.sh --iterations 10
 The script outputs JSON to stdout.  Pipe to `jq .` for formatted output.
 Results are also written as a markdown table to this file between the
 `<!-- results-start -->` / `<!-- results-end -->` markers.
+
+---
+
+## Lima / CI indicative results
+
+Indicative timing for the Firecracker lifecycle operations exercised by
+`infra/firecracker/integration-test.sh`.  Numbers are per-operation
+wall-clock milliseconds as measured by the test script and emitted to the
+`microvm-lifecycle-timing` CI artifact.
+
+**Environment:** Lima VM (`infra/lima/firecracker-dev.yaml`) on Apple Silicon
+M4 Max, macOS 15, nested KVM via Virtualization.framework. Guest: Ubuntu LTS,
+4 vCPU, 8 GiB RAM.  VM spec: 1 vCPU, 128 MiB RAM, musl harness as PID 1,
+aarch64 vmlinux-5.10.245.
+
+> **Status: PENDING first green Lima run.**  The table below will be updated
+> with real numbers from `lifecycle-timing.json` once the lifecycle test
+> completes end to end in the Lima guest.
+
+| step | duration_ms | notes |
+|------|------------:|-------|
+| `shell_exec` | — | ExecTool round-trip after heartbeat bidi stream established |
+| `write_file` | — | ExecTool write_file to /workspace |
+| `snapshot` | — | 128 MiB mem snapshot to disk |
+| `stop` | — | graceful SendCtrlAltDel + SIGKILL fallback |
+| `restore` | — | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
+| `read_file_after_restore` | — | ExecTool read_file from /workspace |
+| `fork_spawn_1` | — | same mem-load path as restore; per-VM rootfs copy included |
+| `fork_spawn_2` | — | |
+| `fork_spawn_3` | — | |
+| **total** | **—** | |
+
+### How to update this table
+
+Run the lifecycle test inside the Lima guest and copy the real numbers from
+`lifecycle-timing.md` into the table above:
+
+```bash
+# Inside the Lima guest after a successful run:
+cat /tmp/fc-timing/lifecycle-timing.md
+```
+
+### What the numbers mean
+
+| Operation | Firecracker mechanism | Latency driver |
+|-----------|----------------------|----------------|
+| cold boot | kernel decompress + initrd + PID 1 exec | vmlinux size, memory bus |
+| snapshot | `PUT /snapshot/create` — guest paused, mem written to file | memory size × disk throughput |
+| stop | `PUT /actions SendCtrlAltDel` + SIGKILL | guest ACPI handler / kernel shutdown |
+| restore (Spawn RPC) | `PUT /snapshot/load` + `PATCH /drives/{certs,rootfs}` + `PATCH /vm Resumed` | mem file read + page fault warm-up |
+| ExecTool ready | harness heartbeat TCP reconnect after resume | vsock re-establish + manager registration |
+| ExecTool operation | vsock gRPC (harness) → tool exec → result | vsock latency + tool work |
+| fork spawn | same as restore, new vm_id, per-VM rootfs copy | mem read + `cp` of rootfs file |

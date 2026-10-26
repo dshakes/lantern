@@ -343,6 +343,54 @@ Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__lantern_too
 
 This unblocks the microVM tier as a real step executor for the two-tier routing described in [ADR 0022](../adr/0022-two-tier-agent-runtime.md) and [09-agent-runtime.md](09-agent-runtime.md).
 
+## Lifecycle validation (CI + Lima)
+
+The full snapshot/stop/restore/fork cycle is exercised by
+`infra/firecracker/integration-test.sh`, which runs on every push via
+`.github/workflows/microvm-integration.yml` on a KVM-capable runner (Ubuntu
+with `/dev/kvm`).  On Apple Silicon M3+/macOS 15+ you can run the same test
+locally inside the Lima guest (`infra/lima/firecracker-dev.yaml`).
+
+### What is asserted end to end
+
+| Step | Assertion |
+|------|-----------|
+| Cold boot | harness starts as PID 1; no kernel panic |
+| ExecTool shell_exec | tool output returned from inside the guest |
+| write_file | state marker written to `/workspace` before snapshot |
+| Snapshot | `snapshot_id` returned; byte count > 0 |
+| Stop | no `firecracker` process for this vm_id remains after Stop |
+| Restore (Spawn + restore_snapshot_id) | harness re-prints startup log; from_snapshot=true |
+| Re-identification | PATCH /drives/certs logged before resume |
+| read_file | state marker content matches what was written |
+| Fork ×3 (jailer required) | 3 distinct vm_ids; each comes alive |
+| COW isolation | fork-1.txt written in fork-1 is NOT visible in fork-2 |
+| Fork teardown | no leaked firecracker processes after Stop ×3 |
+
+### COW isolation design
+
+Without the jailer each restored VM shares the same `rootfs.ext4` file on the
+host; the Linux page cache makes block-device writes visible across all VMs
+that loaded from the same snapshot.  The fix (`services/runtime-manager/src/
+backends/firecracker.rs`) copies the global image to
+`/run/lantern/rootfs/<vm_id>.ext4` during unjailed restores and issues a
+`PATCH /drives/rootfs` API call before `PATCH /vm Resumed`.  Jailed restores
+already get per-VM isolation through the chroot staging path.  The per-VM
+copy is removed by `cancel()` on teardown.
+
+### Timing artifact
+
+Every lifecycle step is bracketed with ms-precision timestamps.  The script
+writes `LIFECYCLE_TIMING_DIR/lifecycle-timing.{json,md}` and the CI job
+uploads it as the **microvm-lifecycle-timing** artifact.  See
+`docs/benchmarks/runtime-latency.md` for indicative numbers.
+
+### Re-running locally in Lima
+
+See `infra/lima/README.md` for the step-by-step guide.  The jailer binary is
+installed by the Lima provision script alongside `firecracker` from the same
+v1.15.1 tarball, so the fork test runs without any extra setup.
+
 ## See also
 
 - [`09-agent-runtime.md`](09-agent-runtime.md) — **definitive two-tier runtime reference** — durable execution, journal, retry, health sweep
