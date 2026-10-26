@@ -3140,7 +3140,18 @@ impl FirecrackerBackend {
             }
             self.processes.kill(&vm_id).ok();
             self.set_incarnation(&vm_id, None);
-            // Release the refcount we recorded above — the jail was never set up.
+            // restore_after_tap may have staged the jail (incl. the hard-linked
+            // mem file) before failing; a FAILED spawn never reaches cancel(),
+            // so reclaim it here, before releasing the refcount (same order as
+            // cancel()).
+            if let (Some(jailer), Some(bin)) = (&self.jailer, self.binary_path.as_deref()) {
+                let jail_dir = jailer.jail_dir(bin, &vm_id);
+                if let Err(re) = tokio::fs::remove_dir_all(&jail_dir).await
+                    && re.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(vm_id = %vm_id, jail_dir = %jail_dir, error = %re, "restore failed and jail cleanup ALSO failed (disk leak)");
+                }
+            }
             if snapshot_id_for_refcount.is_some() {
                 self.release_fork_staging(&vm_id);
             }
