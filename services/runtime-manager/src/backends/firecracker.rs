@@ -45,6 +45,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
+use crate::egress_broker::{
+    Broker, BrokerDeps, EGRESS_VSOCK_PORT, EgressMode, MANAGER_HOSTNAME, MANAGER_VSOCK_PORT,
+    MitmCa, Policy,
+};
 use crate::proto::{
     EgressRule, IsolationClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest,
     SnapshotRequest,
@@ -109,6 +113,26 @@ pub struct SpawnContract {
     /// map. Empty = manager has none (dev).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub lantern_env: String,
+    /// `"broker"` = this VM has no NIC; egress leaves over vsock to the
+    /// host-side broker (ADR 0026). Empty (omitted) = legacy in-guest proxy,
+    /// so a guest-mode `spawn.json` is byte-identical to before. Additive: the
+    /// harness ignores unknown fields, and an older harness on a broker VM has
+    /// no NIC to fall back to — it fails closed, never open.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub egress_mode: String,
+    /// PEM of the per-VM broker CA the guest must trust for hosts with a
+    /// credential-injection rule. Public cert only; the key stays on the host.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub egress_ca_pem: String,
+    /// Guest→host vsock ports (broker mode only; 0 = omitted).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vsock_egress_port: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vsock_manager_port: u32,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 /// One declared secret in `spawn.json` (matches the harness `SecretRef`).
@@ -146,7 +170,20 @@ impl SpawnContract {
                 .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID && k.as_str() != ENV_LANTERN_ENV)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-            egress_rules: req.egress_rules.clone(),
+            // Injection specs never go to the guest: it has no use for them,
+            // and even refs are kept host-side (ADR 0026).
+            egress_rules: req
+                .egress_rules
+                .iter()
+                .map(|r| EgressRule {
+                    inject: Vec::new(),
+                    ..r.clone()
+                })
+                .collect(),
+            egress_mode: String::new(),
+            egress_ca_pem: String::new(),
+            vsock_egress_port: 0,
+            vsock_manager_port: 0,
             lantern_env: req.env.get(ENV_LANTERN_ENV).cloned().unwrap_or_default(),
             workload_uid,
             workload_gid,
@@ -399,6 +436,8 @@ pub struct VmConfig {
     pub network: VmNetwork,
     /// Written as `spawn.json` at the cert-image root (ADR 0025).
     pub spawn_contract: SpawnContract,
+    /// Guest NIC + in-guest proxy, or no NIC + host broker (ADR 0026).
+    pub egress_mode: EgressMode,
 }
 
 /// Defaults injected when the ScheduleRequest does not set a limit.
@@ -415,12 +454,23 @@ impl VmConfig {
         kernel_image_path: &str,
         rootfs_path: &str,
     ) -> Result<Self> {
+        Self::from_schedule_in_mode(req, kernel_image_path, rootfs_path, EgressMode::Guest)
+    }
+
+    /// `from_schedule` for an explicit egress mode (the backend's).
+    pub fn from_schedule_in_mode(
+        req: &ScheduleRequest,
+        kernel_image_path: &str,
+        rootfs_path: &str,
+        mode: EgressMode,
+    ) -> Result<Self> {
         let vm_id = resolve_vm_id(&req.vm_id)?;
-        Ok(Self::from_schedule_with_id(
+        Ok(Self::from_schedule_with_mode(
             req,
             kernel_image_path,
             rootfs_path,
             &vm_id,
+            mode,
         ))
     }
 
@@ -430,6 +480,25 @@ impl VmConfig {
         kernel_image_path: &str,
         rootfs_path: &str,
         vm_id: &str,
+    ) -> Self {
+        Self::from_schedule_with_mode(
+            req,
+            kernel_image_path,
+            rootfs_path,
+            vm_id,
+            EgressMode::Guest,
+        )
+    }
+
+    /// The full builder. In [`EgressMode::Broker`] the guest gets no NIC: no
+    /// `ip=` boot arg, no `spawn.json` network, the manager dialled by name
+    /// over vsock, and the vsock ports published in `spawn.json`.
+    pub fn from_schedule_with_mode(
+        req: &ScheduleRequest,
+        kernel_image_path: &str,
+        rootfs_path: &str,
+        vm_id: &str,
+        egress_mode: EgressMode,
     ) -> Self {
         let vcpu_count = parse_cpu_limit(&req.limits.cpu).unwrap_or(DEFAULT_VCPU);
         let mem_size_mib = parse_mem_limit(&req.limits.memory).unwrap_or(DEFAULT_MEM_MIB);
@@ -465,7 +534,7 @@ impl VmConfig {
             netmask: network.netmask.clone(),
         });
 
-        let boot_args = build_boot_args(
+        let mut boot_args = build_boot_args(
             vm_id,
             &req.run_id,
             &tls_cert_path,
@@ -475,6 +544,13 @@ impl VmConfig {
             req,
             spawn_contract.workload_uid,
         );
+        if egress_mode == EgressMode::Broker {
+            boot_args = broker_boot_args(&boot_args);
+            spawn_contract.network = None;
+            spawn_contract.egress_mode = egress_mode.contract_value().to_string();
+            spawn_contract.vsock_egress_port = EGRESS_VSOCK_PORT;
+            spawn_contract.vsock_manager_port = MANAGER_VSOCK_PORT;
+        }
 
         VmConfig {
             vm_id: vm_id.to_string(),
@@ -494,6 +570,7 @@ impl VmConfig {
             certs_image_path: format!("/run/lantern/certs/{vm_id}/certs.img"),
             network,
             spawn_contract,
+            egress_mode,
         }
     }
 
@@ -546,12 +623,19 @@ impl VmConfig {
     }
 
     /// Produce the NetworkInterface body for PUT /network-interfaces/eth0.
-    pub fn network_interface(&self) -> NetworkInterface {
-        NetworkInterface {
+    /// `None` in broker mode: the guest gets NO network device at all — the
+    /// strongest isolation, egress only over vsock (ADR 0026).
+    pub fn network_interface(&self) -> Option<NetworkInterface> {
+        (self.egress_mode == EgressMode::Guest).then(|| NetworkInterface {
             iface_id: "eth0".to_string(),
             guest_mac: self.guest_mac.clone(),
             host_dev_name: self.tap_dev.clone(),
-        }
+        })
+    }
+
+    /// In-jail path Firecracker connects to for a guest-initiated vsock `port`.
+    pub fn vsock_port_path(&self, port: u32) -> String {
+        format!("{}_{port}", self.vsock_uds_path)
     }
 
     /// Produce the VsockDevice body for PUT /vsock.
@@ -798,6 +882,39 @@ pub fn build_boot_args(
          lantern.env.LANTERN_MANAGER_ADDR={manager_addr}{declared_secrets}{extra_env} \
          lantern.env.{ENV_WORKLOAD_UID}={workload_uid}"
     )
+}
+
+/// Where the vsock control relay reaches this manager's gRPC listener:
+/// `LISTEN_ADDR`, with an unspecified IP (the default `0.0.0.0`) mapped to
+/// loopback.
+fn manager_local_addr() -> std::net::SocketAddr {
+    let addr: std::net::SocketAddr = std::env::var("LISTEN_ADDR")
+        .ok()
+        .and_then(|a| a.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 50054)));
+    if addr.ip().is_unspecified() {
+        std::net::SocketAddr::from(([127, 0, 0, 1], addr.port()))
+    } else {
+        addr
+    }
+}
+
+/// Broker-mode boot args: drop the kernel `ip=` (there is no NIC to address)
+/// and point `LANTERN_MANAGER_ADDR` at the manager's NAME — the harness dials
+/// it over vsock, so the address only feeds the TLS server name.
+pub fn broker_boot_args(args: &str) -> String {
+    const KEY: &str = "lantern.env.LANTERN_MANAGER_ADDR=";
+    args.split_whitespace()
+        .filter(|t| !t.starts_with("ip="))
+        .map(|t| match t.strip_prefix(KEY) {
+            Some(addr) => {
+                let port = addr.rsplit_once(':').map_or("50054", |(_, p)| p);
+                format!("{KEY}{MANAGER_HOSTNAME}:{port}")
+            }
+            None => t.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Provision the per-VM client cert + manager CA onto the host filesystem under
@@ -2722,6 +2839,12 @@ pub struct FirecrackerBackend {
     /// vm_id → snapshot_id that was forked from, for decrement in `cancel()`.
     // ponytail: std Mutex, held for one map op, never across an await.
     fork_snap_source: Arc<Mutex<HashMap<String, String>>>,
+    /// `LANTERN_EGRESS_MODE` (ADR 0026), read once at construction.
+    egress_mode: EgressMode,
+    /// Resolver/audit/roots for broker mode; `None` until wired by `main`.
+    broker_deps: Option<BrokerDeps>,
+    /// vm_id -> the broker + control-relay listener tasks, aborted on cancel.
+    broker_tasks: Arc<Mutex<HashMap<String, Vec<tokio::task::AbortHandle>>>>,
 }
 
 /// Per-incarnation credentials minted at spawn/restore. Not `Debug`: the exec
@@ -2781,6 +2904,76 @@ impl FirecrackerBackend {
             incarnations: Arc::default(),
             fork_snap_refs: Arc::default(),
             fork_snap_source: Arc::default(),
+            egress_mode: EgressMode::from_env(),
+            broker_deps: None,
+            broker_tasks: Arc::default(),
+        }
+    }
+
+    /// Wire the host-side egress broker's dependencies (ADR 0026). Required
+    /// for `LANTERN_EGRESS_MODE=broker`; schedules fail closed without it.
+    #[must_use]
+    pub fn with_egress_broker(mut self, deps: BrokerDeps) -> Self {
+        self.broker_deps = Some(deps);
+        self
+    }
+
+    pub fn egress_mode(&self) -> EgressMode {
+        self.egress_mode
+    }
+
+    /// Bind this VM's host-side vsock listeners (egress broker + control
+    /// relay) and start serving them.
+    ///
+    /// Called right after `InstanceStart`: the guest kernel takes far longer
+    /// to boot than these binds, and the harness retries its control channel
+    /// regardless.
+    fn start_broker(
+        &self,
+        cfg: &VmConfig,
+        rules: &[EgressRule],
+        mitm: Option<Arc<MitmCa>>,
+    ) -> Result<()> {
+        let deps = self
+            .broker_deps
+            .as_ref()
+            .context("egress broker mode without broker deps wired")?;
+        let owner = self.jailer.as_ref().map(|j| (j.uid, j.gid));
+        let bind = |port| {
+            let path = self.host_vm_path(&cfg.vm_id, &cfg.vsock_port_path(port));
+            crate::egress_broker::bind_vsock_listener(Path::new(&path), owner)
+        };
+        let egress_listener = bind(EGRESS_VSOCK_PORT)?;
+        let control_listener = bind(MANAGER_VSOCK_PORT)?;
+        let broker = Arc::new(Broker::new(
+            &cfg.vm_id,
+            Policy::from_env(rules.to_vec()),
+            mitm,
+            deps,
+        )?);
+        let tasks = vec![
+            tokio::spawn(broker.serve(egress_listener)).abort_handle(),
+            tokio::spawn(crate::egress_broker::relay_to_tcp(
+                control_listener,
+                manager_local_addr(),
+            ))
+            .abort_handle(),
+        ];
+        self.broker_tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(cfg.vm_id.clone(), tasks);
+        Ok(())
+    }
+
+    fn stop_broker(&self, vm_id: &str) {
+        let tasks = self
+            .broker_tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(vm_id);
+        for t in tasks.into_iter().flatten() {
+            t.abort();
         }
     }
 
@@ -2963,6 +3156,11 @@ impl FirecrackerBackend {
             }
         }
 
+        // Broker mode: no NIC, so no TAP to create or leak (ADR 0026).
+        if cfg.egress_mode == EgressMode::Broker {
+            return self.boot_vm_after_tap(cfg, binary).await;
+        }
+
         // Step 1: TAP device.
         // LINUX-ONLY: requires CAP_NET_ADMIN / root.
         setup_tap_device(
@@ -3065,13 +3263,10 @@ impl FirecrackerBackend {
         // boot-args reference. LINUX-ONLY (block device attach on a live VM).
         unix_socket_put(sock, "/drives/certs", &api_cfg.cert_drive()).await?;
 
-        // Step 6: Network interface.
-        unix_socket_put(
-            sock,
-            "/network-interfaces/eth0",
-            &api_cfg.network_interface(),
-        )
-        .await?;
+        // Step 6: Network interface — omitted entirely in broker mode.
+        if let Some(nic) = api_cfg.network_interface() {
+            unix_socket_put(sock, "/network-interfaces/eth0", &nic).await?;
+        }
 
         // Step 7: Vsock.
         unix_socket_put(sock, "/vsock", &api_cfg.vsock_device()).await?;
@@ -3345,8 +3540,28 @@ impl RuntimeBackend for FirecrackerBackend {
         }
 
         let start = Instant::now();
-        let cfg = VmConfig::from_schedule(req, &self.kernel_image_path, &self.rootfs_path)?;
+        let mut cfg = VmConfig::from_schedule_in_mode(
+            req,
+            &self.kernel_image_path,
+            &self.rootfs_path,
+            self.egress_mode,
+        )?;
         let vm_id = cfg.vm_id.clone();
+
+        // Broker mode: refuse before anything boots if the broker cannot run,
+        // and mint the per-VM CA whose cert the guest must trust (ADR 0026).
+        let mitm = if cfg.egress_mode == EgressMode::Broker {
+            if self.broker_deps.is_none() {
+                bail!("LANTERN_EGRESS_MODE=broker but the egress broker is not wired");
+            }
+            let ca = MitmCa::for_rules(&vm_id, &req.egress_rules)?.map(Arc::new);
+            if let Some(ca) = &ca {
+                cfg.spawn_contract.egress_ca_pem = ca.ca_pem();
+            }
+            ca
+        } else {
+            None
+        };
 
         tracing::info!(
             vm_id = %vm_id,
@@ -3367,11 +3582,23 @@ impl RuntimeBackend for FirecrackerBackend {
             )));
         }
 
+        if cfg.egress_mode == EgressMode::Broker
+            && let Err(e) = self.start_broker(&cfg, &req.egress_rules, mitm)
+        {
+            // A broker-mode guest without its broker has no control channel
+            // and no egress: tear it down rather than leave it orphaned.
+            if let Err(ce) = self.cancel(&vm_id, "egress broker failed to start").await {
+                tracing::warn!(vm_id = %vm_id, error = %ce, "teardown after broker failure failed");
+            }
+            return Err(e.context(format!("start egress broker for {vm_id}")));
+        }
+
         let cold_start_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         tracing::info!(
             vm_id = %vm_id,
             cold_start_ms,
+            egress_mode = ?cfg.egress_mode,
             "Firecracker: microVM started"
         );
 
@@ -3456,6 +3683,8 @@ impl RuntimeBackend for FirecrackerBackend {
         // LINUX-ONLY: TAP cleanup.
         // The incarnation is over: its cert must never authenticate again.
         self.set_incarnation(handle_id, None);
+        // Broker mode: stop the egress broker + control relay (no-op otherwise).
+        self.stop_broker(handle_id);
         let tap_dev = tap_name(handle_id);
         teardown_tap_device(&tap_dev).await?;
 
@@ -4173,7 +4402,7 @@ mod tests {
         let vm_id = "aaaabbbbccccdddd0000111122223333";
         let req = minimal_schedule_req();
         let cfg = VmConfig::from_schedule_with_id(&req, "/k", "/r", vm_id);
-        let ni = cfg.network_interface();
+        let ni = cfg.network_interface().expect("guest mode has a NIC");
         assert_eq!(ni.iface_id, "eth0");
         assert_eq!(ni.host_dev_name, cfg.tap_dev);
         assert_eq!(ni.guest_mac, cfg.guest_mac);
@@ -4540,6 +4769,7 @@ mod tests {
             pattern: "*.openai.com".into(),
             http_methods: vec!["POST".into()],
             rate_bps: 1024,
+            ..Default::default()
         }];
         req
     }
@@ -6021,5 +6251,119 @@ mod tests {
         assert!(backend.restore_needs_stopped_source());
         backend.jailer = Some(jailer_with_defaults());
         assert!(!backend.restore_needs_stopped_source());
+    }
+
+    // ---- egress broker mode (ADR 0026) ----------------------------------
+
+    fn broker_req() -> ScheduleRequest {
+        let mut req = contract_req();
+        req.egress_rules
+            .push(crate::egress_broker::tests::inject_rule("api.openai.com"));
+        req
+    }
+
+    #[test]
+    fn broker_mode_has_no_network_device() {
+        let cfg = VmConfig::from_schedule_with_mode(
+            &broker_req(),
+            "/k",
+            "/r",
+            "aaaabbbbccccdddd0000111122223333",
+            EgressMode::Broker,
+        );
+        assert!(
+            cfg.network_interface().is_none(),
+            "broker VM must get no NIC"
+        );
+        assert!(
+            !cfg.boot_args
+                .split_whitespace()
+                .any(|t| t.starts_with("ip="))
+        );
+        assert!(
+            cfg.boot_args
+                .contains(&format!("LANTERN_MANAGER_ADDR={MANAGER_HOSTNAME}:")),
+            "{}",
+            cfg.boot_args
+        );
+        assert!(cfg.spawn_contract.network.is_none());
+        assert_eq!(
+            cfg.vsock_port_path(EGRESS_VSOCK_PORT),
+            "/run/lantern/vsock/aaaabbbbccccdddd0000111122223333.sock_3128"
+        );
+    }
+
+    #[test]
+    fn guest_mode_keeps_nic_and_contract_bytes() {
+        let cfg = VmConfig::from_schedule_with_id(
+            &broker_req(),
+            "/k",
+            "/r",
+            "aaaabbbbccccdddd0000111122223333",
+        );
+        assert!(cfg.network_interface().is_some());
+        assert!(cfg.boot_args.contains(" ip="));
+        let json = serde_json::to_string(&cfg.spawn_contract).unwrap();
+        for absent in ["egress_mode", "egress_ca_pem", "vsock_", "inject"] {
+            assert!(
+                !json.contains(absent),
+                "{absent} leaked into guest-mode spawn.json: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn broker_contract_fields_and_no_injection_refs_in_guest() {
+        let mut cfg = VmConfig::from_schedule_with_mode(
+            &broker_req(),
+            "/k",
+            "/r",
+            "aaaabbbbccccdddd0000111122223333",
+            EgressMode::Broker,
+        );
+        cfg.spawn_contract.egress_ca_pem = "-----BEGIN CERTIFICATE-----\nX\n".into();
+        let json = serde_json::to_string(&cfg.spawn_contract).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["egress_mode"], "broker");
+        assert_eq!(v["vsock_egress_port"], EGRESS_VSOCK_PORT);
+        assert_eq!(v["vsock_manager_port"], MANAGER_VSOCK_PORT);
+        assert!(
+            v["egress_ca_pem"]
+                .as_str()
+                .unwrap()
+                .starts_with("-----BEGIN")
+        );
+        // The rule is still declared (the guest sets proxy env from it) but its
+        // injection spec — even the secret ref — stays on the host.
+        assert!(json.contains("api.openai.com"));
+        assert!(!json.contains("inject"), "{json}");
+        assert!(!json.contains(crate::egress_broker::tests::SECRET_URI));
+        // Round-trips through the manager's own type.
+        let back: SpawnContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg.spawn_contract);
+    }
+
+    #[test]
+    fn broker_boot_args_rewrite() {
+        let args = "console=ttyS0 ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off \
+                    lantern.vm_id=v lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:50054 lantern.env.X=1";
+        assert_eq!(
+            broker_boot_args(args),
+            "console=ttyS0 lantern.vm_id=v \
+             lantern.env.LANTERN_MANAGER_ADDR=manager.lantern.internal:50054 lantern.env.X=1"
+        );
+    }
+
+    #[tokio::test]
+    async fn broker_mode_without_deps_fails_closed() {
+        let mut backend = FirecrackerBackend::new();
+        backend.available = true;
+        backend.egress_mode = EgressMode::Broker;
+        backend.broker_deps = None;
+        let err = backend.schedule(&broker_req()).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("egress broker is not wired"),
+            "{err:#}"
+        );
     }
 }

@@ -8,6 +8,7 @@ mod authz;
 mod backend;
 mod backends;
 mod config;
+mod egress_broker;
 mod handle_registry;
 mod otel;
 mod pool;
@@ -62,6 +63,17 @@ async fn main() -> anyhow::Result<()> {
         "starting lantern-runtime-manager"
     );
 
+    // Secret resolver — build() selects the relay (ADR 0008) when both
+    // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
+    // otherwise falls back to EnvSecretResolver (dev/CI default). Built before
+    // the backend: the Firecracker egress broker resolves injected credentials
+    // with it (ADR 0026).
+    let resolver: Arc<dyn SecretResolver> = crate::secret_resolver::build();
+
+    // Egress-broker audit events, drained into the report path once the
+    // registry (tenant/run lookup) exists below.
+    let (broker_audit_tx, broker_audit_rx) = tokio::sync::mpsc::channel(1024);
+
     // Create the appropriate backend.
     let backend: Arc<dyn RuntimeBackend> = match &config.runtime_backend {
         RuntimeBackendKind::Docker => Arc::new(DockerBackend::new(
@@ -106,7 +118,21 @@ async fn main() -> anyhow::Result<()> {
             // duplicate host routes. Safe to do here: this runs before any VM
             // is scheduled, and only DOWN devices (no live VMM) are removed.
             crate::backends::firecracker::reconcile_orphaned_taps().await;
-            Arc::new(FirecrackerBackend::new())
+            let fc = FirecrackerBackend::new();
+            let fc = if fc.egress_mode() == egress_broker::EgressMode::Broker {
+                // rustls-native-certs reads the system store (blocking I/O),
+                // once at startup.
+                let roots = tokio::task::spawn_blocking(egress_broker::native_roots).await?;
+                tracing::info!("firecracker: egress broker mode — guests get no NIC (ADR 0026)");
+                fc.with_egress_broker(egress_broker::BrokerDeps {
+                    resolver: Arc::clone(&resolver),
+                    audit: broker_audit_tx.clone(),
+                    upstream_roots: Arc::new(roots),
+                })
+            } else {
+                fc
+            };
+            Arc::new(fc)
         }
         RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
             &config.docker_socket,
@@ -127,11 +153,6 @@ async fn main() -> anyhow::Result<()> {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_default();
 
-    // Secret resolver — build() selects the relay (ADR 0008) when both
-    // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
-    // otherwise falls back to EnvSecretResolver (dev/CI default).
-    let resolver: Arc<dyn SecretResolver> = crate::secret_resolver::build();
-
     // Create the gRPC service with warm pool. `RuntimeManagerGrpc` is Clone
     // (its fields are all `Arc`-wrapped), which lets the generated tonic
     // server hold it by value while still sharing the underlying state.
@@ -146,6 +167,11 @@ async fn main() -> anyhow::Result<()> {
     let registry = Arc::clone(&grpc_service.registry);
     let pool_for_heartbeat = Arc::clone(&grpc_service.pool);
     reaper::spawn(Arc::clone(&registry), Arc::clone(&backend));
+    drop(broker_audit_tx);
+    tokio::spawn(report_forwarder::forward_broker_audits(
+        broker_audit_rx,
+        Arc::clone(&registry),
+    ));
 
     // Any change to live-handle membership (spawn, rekey, reap) wakes the
     // heartbeat, so the scheduler confirms a new VM and notices an exited one

@@ -1289,6 +1289,15 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
                 pattern: r.pattern.clone(),
                 http_methods: r.http_methods.clone(),
                 rate_bps: r.rate_bps,
+                inject: r
+                    .inject
+                    .iter()
+                    .map(|i| proto::CredentialInjection {
+                        header: i.header.clone(),
+                        secret_uri: i.secret_uri.clone(),
+                        value_prefix: i.value_prefix.clone(),
+                    })
+                    .collect(),
             })
             .collect(),
         // Confidential compute — set by the control-plane from the agent
@@ -2264,7 +2273,10 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                         );
 
                         // Record the dial-back address for exec forwarding.
-                        if let Some(ip) = peer_ip {
+                        // A loopback peer is the broker-mode vsock control
+                        // relay (ADR 0026), not a dialable guest address — a
+                        // broker VM has no NIC, so exec cannot dial back.
+                        if let Some(ip) = peer_ip.filter(|ip| !ip.is_loopback()) {
                             harness_addrs.insert(hb.vm_id.clone(), ip);
                         }
 
@@ -5148,6 +5160,7 @@ mod tests {
                     pattern: format!("{wire}.example.com"),
                     http_methods: vec![],
                     rate_bps: 0,
+                    ..Default::default()
                 }];
             }
             let resp = svc

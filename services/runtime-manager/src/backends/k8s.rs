@@ -1471,6 +1471,7 @@ mod tests {
             pattern: pattern.to_string(),
             http_methods: vec![],
             rate_bps: 0,
+            ..Default::default()
         }
     }
 
