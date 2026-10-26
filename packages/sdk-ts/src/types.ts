@@ -730,6 +730,31 @@ export interface VmForkResult {
   forks: VmForkEntry[];
 }
 
+/** One entry from `runtime.listFiles` (paths are relative to the VM's /workspace). */
+export interface VmFileEntry {
+  name: string;
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+}
+
+export interface VmFileList {
+  path: string;
+  entries: VmFileEntry[];
+  /** True when the directory had more entries than the harness returns (10k). */
+  truncated: boolean;
+}
+
+export interface VmFileContent {
+  content: string;
+  /** True when the file exceeded the 1 MiB cap and `content` was cut. */
+  truncated: boolean;
+}
+
+export interface VmWriteFileResult {
+  path: string;
+  bytesWritten: number;
+}
+
 export type ExecStreamEvent =
   | { type: "stdout" | "stderr"; data: string }
   | { type: "exit"; exitCode: number };

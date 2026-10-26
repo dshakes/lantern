@@ -1081,6 +1081,37 @@ class LanternClient:
             data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/fork", body={"count": count})
             return VmForkResult.model_validate(data)
 
+        async def list_files(self, vm_id: str, path: str | None = None) -> dict[str, Any]:
+            """List a directory under the VM's /workspace (default: the root).
+
+            Returns ``{path, entries: [{name, type, size}], truncated}``.
+            """
+            return await self._c._request("GET", f"/v1/runtime/vms/{vm_id}/files", params={"path": path})
+
+        async def read_file(self, vm_id: str, path: str) -> dict[str, Any]:
+            """Read a UTF-8 text file (≤ 1 MiB). Returns ``{content, truncated}``."""
+            client = await self._c._get_client()
+            resp = await client.get(
+                f"/v1/runtime/vms/{vm_id}/files/content", params={"path": path}, headers=self._c._headers()
+            )
+            if not resp.is_success:
+                raise LanternApiError(resp.status_code, resp.text)
+            return {"content": resp.text, "truncated": resp.headers.get("x-lantern-truncated") == "true"}
+
+        async def write_file(self, vm_id: str, path: str, content: str) -> dict[str, Any]:
+            """Create or overwrite a UTF-8 text file (≤ 1 MiB; 413 above). Returns ``{path, bytesWritten}``."""
+            client = await self._c._get_client()
+            headers = {**self._c._headers(), "Content-Type": "text/plain; charset=utf-8"}
+            resp = await client.put(
+                f"/v1/runtime/vms/{vm_id}/files/content",
+                params={"path": path},
+                headers=headers,
+                content=content.encode("utf-8"),
+            )
+            if not resp.is_success:
+                raise LanternApiError(resp.status_code, resp.text)
+            return resp.json()
+
     # ------------------------------------------------------------------
 
     class _Rehearsals:

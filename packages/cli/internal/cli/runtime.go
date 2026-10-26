@@ -155,6 +155,7 @@ func newVmCommand() *cobra.Command {
 	cmd.AddCommand(newVmResumeCommand())
 	cmd.AddCommand(newVmForkCommand())
 	cmd.AddCommand(newVmExecCommand())
+	cmd.AddCommand(newVmLsCommand(), newVmCatCommand(), newVmPutCommand())
 	cmd.AddCommand(newVmClusterCommand())
 	cmd.AddCommand(newVmQuotaCommand())
 	cmd.AddCommand(newVmValidateCommand())
@@ -355,6 +356,96 @@ func newVmStopCommand() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&graceSeconds, "grace", 30, "seconds to wait for graceful drain before SIGKILL")
 	return cmd
+}
+
+// --- `lantern vm ls|cat|put` (files under the VM's /workspace) ---------------
+
+func vmFilesPath(vmID, sub, path string) string {
+	return "/v1/runtime/vms/" + url.PathEscape(vmID) + "/files" + sub + "?path=" + url.QueryEscape(path)
+}
+
+func newVmLsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls <vm-id> [path]",
+		Short: "List a directory under the VM's /workspace",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := "."
+			if len(args) == 2 {
+				path = args[1]
+			}
+			raw, err := apiRaw(http.MethodGet, vmFilesPath(args[0], "", path), nil)
+			if err != nil {
+				return err
+			}
+			var res struct {
+				Entries []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+					Size int64  `json:"size"`
+				} `json:"entries"`
+			}
+			if err := json.Unmarshal(raw, &res); err != nil {
+				return fmt.Errorf("decode listing: %w", err)
+			}
+			for _, e := range res.Entries {
+				fmt.Fprintf(cmd.OutOrStdout(), "%-8s %10d  %s\n", e.Type, e.Size, e.Name)
+			}
+			return nil
+		},
+	}
+}
+
+func newVmCatCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cat <vm-id> <path>",
+		Short: "Print a text file from the VM's /workspace (capped at 1 MiB)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, err := apiRaw(http.MethodGet, vmFilesPath(args[0], "/content", args[1]), nil)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(raw)
+			return err
+		},
+	}
+}
+
+// vmFileMaxBytes mirrors the control-plane's PUT /files/content body cap.
+const vmFileMaxBytes = 1 << 20
+
+func newVmPutCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "put <vm-id> <local-file|-> <path>",
+		Short: "Write a local text file (or stdin with -) to the VM's /workspace (max 1 MiB)",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var src io.Reader = cmd.InOrStdin()
+			if args[1] != "-" {
+				f, err := os.Open(args[1])
+				if err != nil {
+					return fmt.Errorf("read %s: %w", args[1], err)
+				}
+				defer f.Close()
+				src = f
+			}
+			// Read at most limit+1 so oversized input fails fast instead of
+			// buffering an arbitrarily large file/stdin the server would reject.
+			data, err := io.ReadAll(io.LimitReader(src, vmFileMaxBytes+1))
+			if err != nil {
+				return fmt.Errorf("read %s: %w", args[1], err)
+			}
+			if len(data) > vmFileMaxBytes {
+				return fmt.Errorf("%s is larger than the 1 MiB file API limit", args[1])
+			}
+			if _, err := apiRawTyped(http.MethodPut, vmFilesPath(args[0], "/content", args[2]), data, "text/plain; charset=utf-8"); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %d bytes to %s\n", len(data), args[2])
+			return nil
+		},
+	}
 }
 
 // --- `lantern vm pause|resume|fork` (sandbox lifecycle) ----------------------
@@ -727,6 +818,11 @@ func apiAuthHeader() string {
 }
 
 func apiRaw(method, path string, body []byte) ([]byte, error) {
+	return apiRawTyped(method, path, body, "application/json")
+}
+
+// apiRawTyped is apiRaw with an explicit Content-Type (file uploads send raw text).
+func apiRawTyped(method, path string, body []byte, contentType string) ([]byte, error) {
 	req, err := http.NewRequest(method, apiBase()+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -735,7 +831,7 @@ func apiRaw(method, path string, body []byte) ([]byte, error) {
 		req.Header.Set("Authorization", auth)
 	}
 	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	cli := &http.Client{Timeout: 30 * time.Second}
 	resp, err := cli.Do(req)

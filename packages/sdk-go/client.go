@@ -771,6 +771,77 @@ func (c *Client) ForkVM(ctx context.Context, vmID string, count int) (*ForkResul
 	return &out, err
 }
 
+// ---------- Sandbox files (the VM's /workspace) ----------
+
+// FileEntry is one directory entry returned by ListFiles.
+type FileEntry struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "file" | "dir" | "symlink" | "other"
+	Size int64  `json:"size"`
+}
+
+// FileList is the response to ListFiles. Truncated is set when the directory
+// held more entries than the harness returns (10k).
+type FileList struct {
+	Path      string      `json:"path"`
+	Entries   []FileEntry `json:"entries"`
+	Truncated bool        `json:"truncated"`
+}
+
+// FileContent is the response to ReadFile. Truncated is set when the file
+// exceeded the 1 MiB cap and Content was cut.
+type FileContent struct {
+	Content   string
+	Truncated bool
+}
+
+// ListFiles lists a directory under the VM's /workspace ("" = the root).
+func (c *Client) ListFiles(ctx context.Context, vmID, path string) (*FileList, error) {
+	q := ""
+	if path != "" {
+		q = "?path=" + url.QueryEscape(path)
+	}
+	var out FileList
+	err := c.do(ctx, http.MethodGet, "/v1/runtime/vms/"+url.PathEscape(vmID)+"/files"+q, nil, &out)
+	return &out, err
+}
+
+// ReadFile reads a UTF-8 text file under the VM's /workspace.
+func (c *Client) ReadFile(ctx context.Context, vmID, path string) (*FileContent, error) {
+	res, err := c.send(ctx, http.MethodGet, filesContentPath(vmID, path), "application/json", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("lantern: read file body: %w", err)
+	}
+	return &FileContent{Content: string(b), Truncated: res.Header.Get("X-Lantern-Truncated") == "true"}, nil
+}
+
+// WriteFile creates or overwrites a file under the VM's /workspace. content
+// must be UTF-8 text of at most 1 MiB (the API returns 413 above that).
+// It returns the number of bytes written.
+func (c *Client) WriteFile(ctx context.Context, vmID, path string, content []byte) (int64, error) {
+	res, err := c.send(ctx, http.MethodPut, filesContentPath(vmID, path), "text/plain; charset=utf-8", content)
+	if err != nil {
+		return 0, err
+	}
+	defer res.Body.Close()
+	var out struct {
+		BytesWritten int64 `json:"bytesWritten"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("lantern: decode write response: %w", err)
+	}
+	return out.BytesWritten, nil
+}
+
+func filesContentPath(vmID, path string) string {
+	return "/v1/runtime/vms/" + url.PathEscape(vmID) + "/files/content?path=" + url.QueryEscape(path)
+}
+
 // ---------- internals ----------
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
@@ -782,13 +853,26 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		bodyBytes = buf
 	}
+	res, err := c.send(ctx, method, path, "application/json", bodyBytes)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(res.Body).Decode(out)
+}
 
+// send performs the request with retries and returns the (2xx/3xx) response;
+// the caller closes its body. A >= 400 status is returned as *APIError.
+func (c *Client) send(ctx context.Context, method, path, contentType string, bodyBytes []byte) (*http.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt < c.maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil, ctx.Err()
 			case <-time.After(retryBackoff(attempt - 1)):
 			}
 		}
@@ -799,9 +883,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 		if c.apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
@@ -820,16 +904,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if res.StatusCode >= 400 {
 			b, _ := io.ReadAll(res.Body)
 			res.Body.Close()
-			return &APIError{Status: res.StatusCode, Body: string(b)}
+			return nil, &APIError{Status: res.StatusCode, Body: string(b)}
 		}
-		if out == nil {
-			res.Body.Close()
-			return nil
-		}
-		defer res.Body.Close()
-		return json.NewDecoder(res.Body).Decode(out)
+		return res, nil
 	}
-	return lastErr
+	return nil, lastErr
 }
 
 func getenv(k, fallback string) string {

@@ -58,6 +58,42 @@ describe("runtime pause/resume/fork", () => {
   });
 });
 
+describe("runtime files", () => {
+  it("listFiles GETs with an encoded path", async () => {
+    const f = vi.fn().mockImplementation(async () => json({ path: "a b", entries: [{ name: "x", type: "file", size: 1 }], truncated: false }));
+    vi.stubGlobal("fetch", f);
+    const r = await client.runtime.listFiles("vm1", { path: "a b" });
+    expect(f.mock.calls[0][0]).toBe("http://x/v1/runtime/vms/vm1/files?path=a+b");
+    expect(r.entries[0].name).toBe("x");
+    await client.runtime.listFiles("vm1");
+    expect(f.mock.calls[1][0]).toBe("http://x/v1/runtime/vms/vm1/files");
+  });
+
+  it("readFile returns raw text and the truncation header", async () => {
+    const f = vi.fn().mockResolvedValue(new Response("héllo", { status: 200, headers: { "X-Lantern-Truncated": "true" } }));
+    vi.stubGlobal("fetch", f);
+    const r = await client.runtime.readFile("vm1", "dir/a.txt");
+    expect(f.mock.calls[0][0]).toBe("http://x/v1/runtime/vms/vm1/files/content?path=dir%2Fa.txt");
+    expect(r).toEqual({ content: "héllo", truncated: true });
+  });
+
+  it("readFile throws LanternApiError on 404", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 404 })));
+    await expect(client.runtime.readFile("vm1", "x")).rejects.toBeInstanceOf(LanternApiError);
+  });
+
+  it("writeFile PUTs the raw body as text/plain", async () => {
+    const f = vi.fn().mockResolvedValue(json({ path: "a.txt", bytesWritten: 2 }));
+    vi.stubGlobal("fetch", f);
+    const r = await client.runtime.writeFile("vm1", "a.txt", "hi");
+    const init = f.mock.calls[0][1];
+    expect(init.method).toBe("PUT");
+    expect(init.body).toBe("hi");
+    expect(init.headers["Content-Type"]).toBe("text/plain; charset=utf-8");
+    expect(r.bytesWritten).toBe(2);
+  });
+});
+
 describe("runtime.execStream", () => {
   it("parses SSE split across chunks and multibyte UTF-8 boundaries", async () => {
     const enc = new TextEncoder();

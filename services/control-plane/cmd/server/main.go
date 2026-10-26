@@ -789,6 +789,10 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/pause", runtimeHandler.PauseVM)
 	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/resume", runtimeHandler.ResumeVM)
 	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/fork", runtimeHandler.ForkVM)
+	// Sandbox file API over the harness tool runner (scope checked in-handler like the other runtime routes).
+	httpMux.HandleFunc("GET /v1/runtime/vms/{id}/files", runtimeHandler.ListFiles)
+	httpMux.HandleFunc("GET /v1/runtime/vms/{id}/files/content", runtimeHandler.ReadFile)
+	httpMux.HandleFunc("PUT /v1/runtime/vms/{id}/files/content", runtimeHandler.WriteFile)
 	httpMux.HandleFunc("GET /v1/runtime/cluster", runtimeHandler.Cluster)
 	httpMux.HandleFunc("GET /v1/runtime/quota", runtimeHandler.GetQuota)
 	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)

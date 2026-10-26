@@ -1,4 +1,4 @@
-"""Tests for client.runtime (pause/resume/fork/exec_stream). httpx MockTransport, no server."""
+"""Tests for client.runtime (pause/resume/fork/exec_stream/files). httpx MockTransport, no server."""
 
 from __future__ import annotations
 
@@ -90,3 +90,50 @@ async def test_exec_stream_error_event_and_http_error():
     with pytest.raises(LanternApiError) as ei:
         [e async for e in _client(t2).runtime.exec_stream("vm1", "ls")]
     assert ei.value.status == 409
+
+
+async def test_list_files():
+    t = _T(body={"path": "a b", "entries": [{"name": "x", "type": "file", "size": 1}], "truncated": False})
+    r = await _client(t).runtime.list_files("vm1", "a b")
+    assert t.requests[-1].url.path == "/v1/runtime/vms/vm1/files"
+    assert t.requests[-1].url.params["path"] == "a b"
+    assert r["entries"][0]["name"] == "x"
+
+
+class _Raw(httpx.AsyncBaseTransport):
+    def __init__(self, status: int, content: bytes, headers: dict[str, str] | None = None) -> None:
+        self.status, self.content, self.headers = status, content, headers or {}
+        self.requests: list[httpx.Request] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return httpx.Response(self.status, content=self.content, headers=self.headers)
+
+
+async def test_read_file_raw_text_and_truncation():
+    t = _Raw(200, "héllo".encode(), {"content-type": "text/plain; charset=utf-8", "X-Lantern-Truncated": "true"})
+    r = await _client(t).runtime.read_file("vm1", "dir/a.txt")  # type: ignore[arg-type]
+    assert t.requests[-1].url.path == "/v1/runtime/vms/vm1/files/content"
+    assert t.requests[-1].url.params["path"] == "dir/a.txt"
+    assert r == {"content": "héllo", "truncated": True}
+
+
+async def test_read_file_404_raises():
+    with pytest.raises(LanternApiError) as ei:
+        await _client(_Raw(404, b"nope")).runtime.read_file("vm1", "x")  # type: ignore[arg-type]
+    assert ei.value.status == 404
+
+
+async def test_write_file_puts_raw_body():
+    t = _T(body={"path": "a.txt", "bytesWritten": 2})
+    r = await _client(t).runtime.write_file("vm1", "a.txt", "hi")
+    req = t.requests[-1]
+    assert req.method == "PUT" and req.content == b"hi"
+    assert req.headers["content-type"] == "text/plain; charset=utf-8"
+    assert r["bytesWritten"] == 2
+
+
+async def test_write_file_413_raises():
+    with pytest.raises(LanternApiError) as ei:
+        await _client(_T(status=413, body={"error": "file exceeds 1 MiB"})).runtime.write_file("vm1", "a", "x")
+    assert ei.value.status == 413

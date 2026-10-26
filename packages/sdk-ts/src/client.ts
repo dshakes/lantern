@@ -26,8 +26,11 @@ import type {
   SessionStreamEvent,
   SignedReceipt,
   StreamEvent,
+  VmFileContent,
+  VmFileList,
   VmForkResult,
   VmPauseResult,
+  VmWriteFileResult,
   VmResumeResult,
   RuntimeVm,
 } from "./types.js";
@@ -178,6 +181,27 @@ export class LanternClient {
       this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/fork`, {
         method: "POST",
         body: JSON.stringify({ count: params.count ?? 1 }),
+      }),
+
+    /** List a directory under the VM's /workspace (default: the workspace root). */
+    listFiles: (id: string, params: { path?: string } = {}): Promise<VmFileList> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/files${this.qs(params)}`),
+
+    /** Read a UTF-8 text file (≤ 1 MiB; larger files come back cut with `truncated: true`). */
+    readFile: async (id: string, path: string): Promise<VmFileContent> => {
+      const res = await fetch(`${this.baseUrl}/v1/runtime/vms/${encodeURIComponent(id)}/files/content${this.qs({ path })}`, {
+        headers: this.headers(),
+      });
+      if (!res.ok) throw new LanternApiError(res.status, await res.text().catch(() => ""));
+      return { content: await res.text(), truncated: res.headers.get("X-Lantern-Truncated") === "true" };
+    },
+
+    /** Create or overwrite a UTF-8 text file (≤ 1 MiB; 413 above). */
+    writeFile: (id: string, path: string, content: string): Promise<VmWriteFileResult> =>
+      this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/files/content${this.qs({ path })}`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: content,
       }),
   };
 
