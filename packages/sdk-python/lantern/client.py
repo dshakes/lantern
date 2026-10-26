@@ -1022,9 +1022,7 @@ class LanternClient:
             client = await self._c._get_client()
             headers = {**self._c._headers(), "Accept": "text/event-stream"}
             body = json.dumps({"command": command, "argv": argv or []})
-            async with client.stream(
-                "POST", f"/v1/runtime/vms/{vm_id}/exec", headers=headers, content=body
-            ) as resp:
+            async with client.stream("POST", f"/v1/runtime/vms/{vm_id}/exec", headers=headers, content=body) as resp:
                 if not resp.is_success:
                     raw = await resp.aread()
                     raise LanternApiError(resp.status_code, raw.decode("utf-8", errors="replace"))
@@ -1077,7 +1075,7 @@ class LanternClient:
             return VmResumeResult.model_validate(data)
 
         async def fork(self, vm_id: str, *, count: int = 1) -> VmForkResult:
-            """Fork ``count`` (1..10) VMs from a snapshot. Per-fork failures are in ``forks[].error``."""
+            """Fork ``count`` (1..LANTERN_MAX_FORK_COUNT, default cap 100) VMs from a snapshot. Per-fork failures are in ``forks[].error``."""
             data = await self._c._request("POST", f"/v1/runtime/vms/{vm_id}/fork", body={"count": count})
             return VmForkResult.model_validate(data)
 
