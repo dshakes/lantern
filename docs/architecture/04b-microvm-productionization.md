@@ -216,6 +216,24 @@ Re-identification matters because a restored guest otherwise resumes with the
 source VM's cert and id. Status: unit- and contract-tested; not yet exercised on a
 Linux/KVM host (see [`GA-READINESS.md`](../GA-READINESS.md)).
 
+**Idle-suspend (auto-pause).** Set `idle_timeout_secs > 0` on the AgentSpec when
+scheduling. The scheduler's idle sweeper (10 s tick, leader-gated) monitors
+`VM.LastActivityAt` — stamped by the harness heartbeat when the workload's last
+child process exits — and auto-pauses any RUNNING VM idle longer than the
+threshold. The state machine is `RUNNING → DRAINING+idle-pausing → PAUSED`, using
+the same crash-safe CAS as operator Pause so a mid-auto-pause crash settles to
+PAUSED (not TERMINATED) via `ReconcileNodeInventory`. The quota slot is released on
+PAUSED. Idle costs nothing.
+
+**Transparent auto-resume.** Exec, ExecTool, and file-API requests (`/files`,
+`/files/content`) to an auto-suspended VM (state=`paused`, `idle_timeout_secs > 0`)
+transparently resume it before serving the request. A concurrent second request
+that arrives while the resume is in flight gets a `FailedPrecondition` from the
+scheduler (the VM is no longer PAUSED), which the control-plane treats as "already
+running" — no double-resume. A manually-paused VM (state=`paused`,
+`idle_timeout_secs = 0`) is NOT auto-resumed; callers get 409 so the operator
+retains explicit control. Quota exhaustion during auto-resume returns 402.
+
 ## Diagrams
 
 <img src="diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime, including the microVM trust chain: control-plane to runtime-scheduler to runtime-manager to Firecracker VM with harness PID 1" width="100%">

@@ -1030,11 +1030,11 @@ loopback + `169.254.169.254` direct).
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
+| `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets, `idleTimeoutSecs`). Returns `vm_id`. 402 if quota exceeded |
 | `GET`    | `/v1/runtime/vms`                | List VMs (`?state=running&limit=50`)                                                                    |
 | `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
 | `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
-| `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state |
+| `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state. **Auto-resume**: exec / ExecTool / file-API requests to a VM auto-suspended with `idleTimeoutSecs > 0` resume it transparently (409 for manually-paused VMs) |
 | `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
@@ -1047,9 +1047,11 @@ loopback + `169.254.169.254` direct).
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
 
+**Idle-suspend auto-pause (Google ACE model).** Set `idleTimeoutSecs > 0` on the schedule spec (REST `idleTimeoutSecs`, proto `idle_timeout_secs`, CLI `--idle-timeout N`). The scheduler's idle sweeper (10 s tick) auto-snapshots-and-stops any RUNNING VM idle longer than the threshold (`VM.LastActivityAt` stamped by the harness heartbeat); state transitions `RUNNING → DRAINING+idle-pausing → PAUSED` via the same crash-safe CAS as operator Pause. The quota slot is released. Exec, ExecTool, and file-API requests transparently resume an auto-suspended VM (409 is returned only for manually-paused VMs). A `FailedPrecondition` from Resume means a concurrent request already won the CAS — treated as running. `auto_resume` audit event on each transparent resume.
+
 CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork [--count N]`) and dashboard pages
-(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{pause,resume,fork,execStream,listFiles,readFile,writeFile}`,
-Python `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,write_file}`, Go `PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile`; CLI `lantern vm ls|cat|put`. End-to-end demo
+(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{schedule,pause,resume,fork,execStream,listFiles,readFile,writeFile}` (`VmScheduleSpec` for typed schedule with `idleTimeoutSecs`),
+Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `lantern run --idle-timeout N`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Wiring env vars (set on control-plane + scheduler):**

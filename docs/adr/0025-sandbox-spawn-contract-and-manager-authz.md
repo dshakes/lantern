@@ -384,3 +384,39 @@ the jail directories (the store directory was already cleaned up by
   forks per call. Quota is reserved all-or-nothing up front.
 - **`LANTERN_FORK_CONCURRENCY`** (default 16) bounds goroutine fan-out in the
   scheduler so N=100 does not spawn 100 simultaneous restore goroutines.
+
+
+## Addendum: idle-suspend (feat/idle-suspend)
+
+`AgentSpec` gains `idle_timeout_secs` (proto field 18; 0 = never auto-suspend).
+
+**How idle is detected.** The harness `ActivityTracker` (Rust `AtomicU32`
+active-child counter + `AtomicI64` last-activity timestamp) stamps the
+`HeartbeatRequest` fields `has_active_exec` and `last_activity_unix_ms` on every
+30-second heartbeat. The manager caches these in `ActivityCache`
+(`DashMap<vm_id, VmActivityEntry>`) and bundles them into its own 30-second node
+heartbeat to the scheduler as `vm_activity: map<string, VmActivityEntry>`. The
+scheduler's `UpdateVMActivity` on `InMemoryStore` uses the harness clock when
+`has_active_exec=false` (never moves backward — take-max), falls back to heartbeat
+receive-time for VMs that have never run, and clears `LastActivityAt` while a child
+is running.
+
+**Idle sweeper.** A goroutine in the scheduler ticks every 10 seconds (leader-gated
+via `Elector.IsLeader()`). For each RUNNING VM with `IdleTimeoutSecs > 0` and a
+non-zero `LastActivityAt` older than the timeout it calls `tryIdlePause`:
+1. Acquire per-VM lock (`lockVM`).
+2. Re-validate state under the lock (a concurrent Pause/Resume may have won).
+3. CAS `RUNNING → DRAINING+ReasonIdlePausing`.
+4. Async goroutine: Snapshot → SetVMSnapshot → Stop → CAS to PAUSED. Snapshot or
+   Stop failure restores to RUNNING. Reconcile handles a mid-pause crash (same as
+   operator Pause: `DRAINING+idle-pausing` settles to PAUSED when the node stops
+   reporting the VM).
+5. Release quota slot via `IncrTenantVMs(-1)` on the PAUSED edge.
+
+**Auto-resume.** Control-plane `ensureVMRunning` (called from `fileTarget` and
+`ExecVM`) reads `state + idle_timeout_secs` from `runtime_vms`. PAUSED +
+`idle_timeout_secs > 0` → `scheduler.Resume()`; PAUSED + `idle_timeout_secs == 0`
+→ 409 (do not auto-resume manually-paused VMs). `FailedPrecondition` from Resume =
+concurrent request already won the CAS — treat as running.
+
+**DB.** Migration 0022: `ALTER TABLE runtime_vms ADD COLUMN idle_timeout_secs INT NOT NULL DEFAULT 0`.
