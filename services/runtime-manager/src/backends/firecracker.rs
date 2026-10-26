@@ -2088,7 +2088,15 @@ pub fn build_snapshot_load_body(
 ///   2. `PATCH /drives/certs` → this VM's freshly issued cert image (new
 ///      CN/SAN = new vm_id, new key, its own `spawn.json`). Allowed between
 ///      load and resume.
-///   3. `PATCH /vm Resumed`.
+///   3. (unjailed only) `PATCH /drives/rootfs` → this VM's own private rootfs
+///      copy. In the jailed path the rootfs is already staged into the jail by
+///      `restore_after_tap`; this step is skipped there (`rootfs_override =
+///      None`). In bare (unjailed) mode we must redirect Firecracker to the
+///      per-VM copy or every restored VM would share the same backing file and
+///      each VM's block-device writes would be visible in every other (host
+///      page-cache is shared across all file-backed virtio-blk devices that
+///      open the same inode). See `stage_unjailed_rootfs`.
+///   4. `PATCH /vm Resumed`.
 ///
 /// The guest notices the cert drive changed (its ext4 UUID differs — every
 /// image is built fresh) and re-identifies; the manager's per-incarnation
@@ -2097,13 +2105,14 @@ pub fn plan_identity_restore(
     mut load: SnapshotLoadParams,
     tap_dev: &str,
     certs_image_path: &str,
+    rootfs_override: Option<&str>,
 ) -> Result<Vec<ApiCall>> {
     load.resume_vm = Some(false);
     load.network_overrides = Some(vec![NetworkOverride {
         iface_id: "eth0".to_string(),
         host_dev_name: tap_dev.to_string(),
     }]);
-    Ok(vec![
+    let mut calls = vec![
         ApiCall::new("PUT", "/snapshot/load", &load)?,
         ApiCall::new(
             "PATCH",
@@ -2113,14 +2122,69 @@ pub fn plan_identity_restore(
                 path_on_host: certs_image_path.to_string(),
             },
         )?,
-        ApiCall::new(
+    ];
+    if let Some(rootfs) = rootfs_override {
+        // Swap the rootfs to this VM's private copy before the guest runs a
+        // single instruction — same window as the cert swap above.
+        calls.push(ApiCall::new(
             "PATCH",
-            "/vm",
-            &VmState {
-                state: "Resumed".to_string(),
+            "/drives/rootfs",
+            &DrivePatch {
+                drive_id: "rootfs".to_string(),
+                path_on_host: rootfs.to_string(),
             },
-        )?,
-    ])
+        )?);
+    }
+    calls.push(ApiCall::new(
+        "PATCH",
+        "/vm",
+        &VmState {
+            state: "Resumed".to_string(),
+        },
+    )?);
+    Ok(calls)
+}
+
+/// Host path for the per-VM writable rootfs copy created during an unjailed
+/// restore.  Pure — no I/O.
+///
+/// `/run/lantern/rootfs/<vm_id>.ext4` sits outside the snapshot directory
+/// so it does not collide with `(snapshot, mem)` artifacts written by
+/// Firecracker's `PUT /snapshot/create`.  `cancel()` removes it on teardown.
+#[must_use]
+pub fn per_vm_rootfs_path(vm_id: &str) -> String {
+    format!("/run/lantern/rootfs/{vm_id}.ext4")
+}
+
+/// Copy the global (shared) rootfs to a per-VM writable path so that each
+/// unjailed restore gets its own ext4 image.
+///
+/// Without this, every restored VM opens the SAME `rootfs.ext4` file for
+/// read-write, and writes from one VM (via the host kernel's virtio-blk
+/// page-cache layer) are immediately visible to every other VM sharing that
+/// inode.  The isolation contract requires that writes after fork are private.
+///
+/// The copy is the same deliberate trade-off as the jailed path's
+/// `stage_jailed_artifacts`: restore latency scales with rootfs size.
+/// A 64 MiB image adds ~200 ms on a warm page cache.
+///
+/// LINUX-RUNTIME-ONLY (live path): only reached on bare Firecracker, behind
+/// the `restore_needs_stopped_source` gate.
+async fn stage_unjailed_rootfs(global_rootfs: &str, vm_id: &str) -> Result<String> {
+    const ROOTFS_DIR: &str = "/run/lantern/rootfs";
+    tokio::fs::create_dir_all(ROOTFS_DIR)
+        .await
+        .with_context(|| format!("create unjailed rootfs dir {ROOTFS_DIR}"))?;
+    let per_vm = per_vm_rootfs_path(vm_id);
+    tokio::fs::copy(global_rootfs, &per_vm)
+        .await
+        .with_context(|| format!("copy rootfs {global_rootfs} -> {per_vm}"))?;
+    tracing::debug!(
+        vm_id,
+        path = %per_vm,
+        "staged per-VM rootfs for unjailed restore (COW isolation)"
+    );
+    Ok(per_vm)
 }
 
 /// The `ScheduleRequest` view of a restore: what the restored VM's
@@ -3179,7 +3243,12 @@ impl FirecrackerBackend {
         host_mem: &str,
         shared_mem: bool,
     ) -> Result<()> {
-        let (socket_path, certs_path) = match &self.jailer {
+        // `socket_path` — where the manager connects to send FC API calls.
+        // `certs_path`  — the in-jail or host path the PATCH /drives/certs body carries.
+        // `per_vm_rootfs` — Some(path) for unjailed restores (each VM needs its
+        //                    own writable ext4 copy); None for jailed restores
+        //                    (the jail's staging already copied the rootfs in).
+        let (socket_path, certs_path, per_vm_rootfs) = match &self.jailer {
             Some(jailer) => {
                 let chroot_root = jailer.chroot_root(binary, &cfg.vm_id);
                 let mut plan = if shared_mem {
@@ -3204,9 +3273,12 @@ impl FirecrackerBackend {
                     ));
                 }
                 stage_jailed_snapshot(&plan, jailer).await?;
+                // Jailed path staged its own rootfs copy into the chroot; no
+                // extra PATCH /drives/rootfs needed.
                 (
                     jailer.host_api_socket_path(binary, &cfg.vm_id),
                     jail_artifact_path(&cfg.certs_image_path),
+                    None::<String>,
                 )
             }
             None => {
@@ -3217,7 +3289,16 @@ impl FirecrackerBackend {
                             .with_context(|| format!("create runtime dir {dir:?}"))?;
                     }
                 }
-                (cfg.socket_path.clone(), cfg.certs_image_path.clone())
+                // Give each unjailed restore its own rootfs copy so that
+                // block-device writes from this VM are not visible in any
+                // other VM that restores from the same snapshot.  See
+                // `stage_unjailed_rootfs` and `per_vm_rootfs_path`.
+                let per_vm = stage_unjailed_rootfs(&cfg.rootfs_path, &cfg.vm_id).await?;
+                (
+                    cfg.socket_path.clone(),
+                    cfg.certs_image_path.clone(),
+                    Some(per_vm),
+                )
             }
         };
 
@@ -3235,7 +3316,8 @@ impl FirecrackerBackend {
         }
 
         let load = build_snapshot_load_body(self.jailer.is_some(), host_vmstate, host_mem);
-        let plan = plan_identity_restore(load, &cfg.tap_dev, &certs_path)?;
+        let plan =
+            plan_identity_restore(load, &cfg.tap_dev, &certs_path, per_vm_rootfs.as_deref())?;
         run_api_plan(&socket_path, &plan)
             .await
             .context("failed to restore snapshot under a new identity")
@@ -3382,6 +3464,25 @@ impl RuntimeBackend for FirecrackerBackend {
                     error = %e,
                     "Firecracker: failed to remove jail dir (non-fatal; disk leak)"
                 );
+            }
+        } else {
+            // Unjailed restores each get a per-VM rootfs copy (see
+            // `stage_unjailed_rootfs`).  Reclaim the copy on teardown.
+            // Best-effort: never turn a successful cancel into an error.
+            let per_vm = per_vm_rootfs_path(handle_id);
+            match tokio::fs::remove_file(&per_vm).await {
+                Ok(()) => tracing::debug!(
+                    vm_id = handle_id,
+                    path = %per_vm,
+                    "Firecracker: removed unjailed per-VM rootfs"
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // already gone
+                Err(e) => tracing::warn!(
+                    vm_id = handle_id,
+                    path = %per_vm,
+                    error = %e,
+                    "Firecracker: failed to remove unjailed per-VM rootfs (non-fatal)"
+                ),
             }
         }
 
@@ -5789,7 +5890,7 @@ mod tests {
     #[test]
     fn identity_restore_plan_loads_paused_swaps_cert_drive_then_resumes() {
         let load = build_snapshot_load_body(true, "/h/vmstate", "/h/mem");
-        let plan = plan_identity_restore(load, "fc-0f1e2d3c", "/certs.img").unwrap();
+        let plan = plan_identity_restore(load, "fc-0f1e2d3c", "/certs.img", None).unwrap();
         let seq: Vec<(&str, &str)> = plan.iter().map(|c| (c.method, c.path.as_str())).collect();
         assert_eq!(
             seq,
@@ -5812,6 +5913,44 @@ mod tests {
             serde_json::json!({"drive_id":"certs","path_on_host":"/certs.img"})
         );
         assert_eq!(plan[2].body, serde_json::json!({"state":"Resumed"}));
+    }
+
+    #[test]
+    fn identity_restore_plan_with_rootfs_override_emits_four_steps() {
+        // Unjailed restores pass a per-VM rootfs path so each restored VM gets
+        // its own writable ext4 image (COW isolation without the jailer).
+        let load = build_snapshot_load_body(false, "/h/vmstate", "/h/mem");
+        let plan = plan_identity_restore(
+            load,
+            "fc-aabbccdd",
+            "/run/lantern/certs/fc-aabbccdd.img",
+            Some("/run/lantern/rootfs/fc-aabbccdd.ext4"),
+        )
+        .unwrap();
+        let seq: Vec<(&str, &str)> = plan.iter().map(|c| (c.method, c.path.as_str())).collect();
+        assert_eq!(
+            seq,
+            vec![
+                ("PUT", "/snapshot/load"),
+                ("PATCH", "/drives/certs"),
+                ("PATCH", "/drives/rootfs"),
+                ("PATCH", "/vm"),
+            ],
+            "rootfs override must appear between the cert swap and the resume"
+        );
+        assert_eq!(
+            plan[2].body,
+            serde_json::json!({"drive_id":"rootfs","path_on_host":"/run/lantern/rootfs/fc-aabbccdd.ext4"})
+        );
+        assert_eq!(plan[3].body, serde_json::json!({"state":"Resumed"}));
+    }
+
+    #[test]
+    fn per_vm_rootfs_path_is_deterministic() {
+        assert_eq!(
+            per_vm_rootfs_path("fc-aabb1122"),
+            "/run/lantern/rootfs/fc-aabb1122.ext4"
+        );
     }
 
     #[test]
