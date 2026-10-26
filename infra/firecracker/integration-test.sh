@@ -675,14 +675,17 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   fi
 
   # ---- 4c-vi. read_file: verify state marker survived ----
-  # The ExecTool vsock path becomes available once the harness exec server is
-  # ready, which may be a second or two after the heartbeat stream reconnects.
-  # Retry up to 20 times with a 2 s gap (40 s total) so a brief warmup delay
-  # does not fail the test.
+  # After Stop the manager evicts the stale harness_addrs entry, so the first
+  # ExecTool after restore returns UNAVAILABLE immediately rather than timing
+  # out after the 35 s tool deadline.  The harness re-establishes its heartbeat
+  # stream within ~0.5–5 s (reconnect backoff + first interval tick), at which
+  # point ExecTool succeeds.  Keep 6 retries × 2 s = 12 s max; the test should
+  # converge in 1–3 retries.  A regression to the old 35 s timeout path would
+  # fail here (the first attempt alone would exhaust the budget).
   log "Verifying state marker survived snapshot/restore (read_file, with retry)"
   T0=$(ms)
   READ_RESP=""
-  for attempt in $(seq 1 20); do
+  for attempt in $(seq 1 6); do
     READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
       -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
       -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
@@ -797,14 +800,16 @@ else
     fail "fork vm_ids are not all distinct: ${FORK_IDS[*]}"
   fi
 
-  # COW isolation: write fork-N.txt in each fork.  The ExecTool vsock path
-  # needs a moment to warm up after heartbeat reconnect — retry up to 15×2s.
+  # COW isolation: write fork-N.txt in each fork.  The ExecTool channel is
+  # ready once the heartbeat stream reconnects (~0.5–5 s) — retry up to 6×2s.
+  # Same regression guard as read_file_after_restore: a 35 s timeout would
+  # exhaust the budget on the first attempt.
   for i in "${!FORK_IDS[@]}"; do
     fid="${FORK_IDS[$i]}"
     n=$(( i + 1 ))
     log "Writing /workspace/fork-${n}.txt in fork ${fid}"
     WF_RESP=""
-    for attempt in $(seq 1 15); do
+    for attempt in $(seq 1 6); do
       WF_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
         -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
         -d "$(jq -n --arg vm "${fid}" --arg path "/workspace/fork-${n}.txt" --arg content "fork-${n}-marker" \

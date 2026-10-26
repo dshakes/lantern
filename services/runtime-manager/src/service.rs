@@ -1488,6 +1488,17 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 // terminated VMs do not accumulate as dead entries that inflate
                 // the node heartbeat's vm_activity map indefinitely.
                 self.activity_cache.remove(&req.vm_id);
+                // Evict the harness dial-back address.  Without this, a
+                // restore of the same vm_id would find the stale IP in
+                // harness_addrs and ExecTool would attempt to dial the
+                // (now-stopped) VM's exec port.  That dial times out after
+                // the full tool deadline (default 30 s + 5 s grace = 35 s)
+                // before returning UNAVAILABLE.  Removing the entry here
+                // makes the first ExecTool after restore return UNAVAILABLE
+                // immediately ("no heartbeat-derived guest address yet"), so
+                // the caller's retry loop converges as soon as the restored
+                // harness re-establishes its heartbeat stream (~0.5–5 s).
+                self.harness_addrs.remove(&req.vm_id);
                 Ok(Response::new(pb::StopResponse {
                     ok: true,
                     detail: format!("vm {} stopped", req.vm_id),
@@ -3559,6 +3570,57 @@ mod tests {
             }
             other => panic!("expected harness route, got {other:?}"),
         }
+    }
+
+    /// Stopping a VM must evict its entry from harness_addrs.
+    ///
+    /// Without this, a stop+restore cycle leaves the old IP in the map.
+    /// ExecTool would then dial the stopped VM's exec port, time out after
+    /// the full tool deadline (30 s + 5 s grace = 35 s), and report an error
+    /// instead of the fast "no heartbeat-derived guest address yet" UNAVAILABLE
+    /// that the caller's retry loop expects.
+    #[tokio::test]
+    async fn stop_evicts_harness_addr() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_backend_vm("firecracker", "vm-stop1", "handle-stop1");
+
+        // Simulate a heartbeat that registered the guest IP.
+        svc.harness_addrs.insert(
+            "vm-stop1".to_string(),
+            "192.168.127.99"
+                .parse::<std::net::IpAddr>()
+                .expect("test ip"),
+        );
+        assert!(
+            svc.harness_addrs.contains_key("vm-stop1"),
+            "pre-condition: harness_addrs must have the entry before Stop"
+        );
+
+        // Verify that route_exec resolves the address (pre-stop).
+        assert!(
+            svc.route_exec("vm-stop1").is_ok(),
+            "pre-condition: route_exec must succeed before Stop"
+        );
+
+        // Stop the VM.
+        let resp = svc
+            .stop(Request::new(pb::StopRequest {
+                vm_id: "vm-stop1".to_string(),
+                reason: "unit-test".to_string(),
+                grace: None,
+            }))
+            .await
+            .expect("Stop RPC must not error")
+            .into_inner();
+        assert!(resp.ok, "Stop must report ok=true; detail: {}", resp.detail);
+
+        // The harness_addrs entry must be gone after Stop.
+        assert!(
+            !svc.harness_addrs.contains_key("vm-stop1"),
+            "harness_addrs must be evicted after Stop so a restore gets a fresh \
+             heartbeat-derived address instead of timing out on the old stale IP"
+        );
     }
 
     // -----------------------------------------------------------------------
