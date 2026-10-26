@@ -163,14 +163,22 @@ jobs:
           # Rust musl target for the static harness binary.
           rustup target add x86_64-unknown-linux-musl
 
-          # Firecracker release binary onto PATH.
-          FC_VER="v1.10.1"
+          # Firecracker + jailer release binaries onto PATH.
+          # jailer is required for fork and per-VM rootfs isolation in production.
+          FC_VER="v1.15.1"
           arch="$(uname -m)"
           curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-${arch}.tgz" \
             | tar -xz -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/release-${FC_VER}-${arch}/firecracker-${FC_VER}-${arch}" \
             /usr/local/bin/firecracker
           firecracker --version
+          if [ -f "$RUNNER_TEMP/release-${FC_VER}-${arch}/jailer-${FC_VER}-${arch}" ]; then
+            sudo install "$RUNNER_TEMP/release-${FC_VER}-${arch}/jailer-${FC_VER}-${arch}" \
+              /usr/local/bin/jailer
+            jailer --version && echo "jailer installed"
+          else
+            echo "jailer not found in tarball — fork lifecycle test will be skipped"
+          fi
 
           # grpcurl for driving the manager's gRPC API in the test.
           GRPCURL_VER="1.9.1"
@@ -240,10 +248,25 @@ jobs:
           MANAGER_BIN="$PWD/services/runtime-manager/target/release/lantern-runtime-manager"
           [ -x "$MANAGER_BIN" ] || { echo "::error::no runtime-manager binary at $MANAGER_BIN"; exit 1; }
 
+          # Expose jailer path for the fork lifecycle test (conditional in the
+          # test script — skipped with [SKIP] when jailer is absent).
+          JAILER_BIN=""
+          command -v jailer >/dev/null 2>&1 && JAILER_BIN="$(command -v jailer)" || true
+
           # Firecracker + loop devices + TAP setup need root.
           sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,LANTERN_RUNTIME_BACKEND \
             MANAGER_BIN="$MANAGER_BIN" EXPECT_VENDSECRET=1 \
+            FIRECRACKER_JAILER_PATH="${JAILER_BIN}" \
+            LIFECYCLE_TIMING_DIR="$RUNNER_TEMP/lifecycle-timing" \
             bash infra/firecracker/integration-test.sh
+
+      - name: Upload lifecycle timing report
+        if: steps.kvm.outputs.present == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microvm-lifecycle-timing
+          path: ${{ runner.temp }}/lifecycle-timing/
+          if-no-files-found: warn
 
       - name: Skipped (no KVM on this runner)
         if: steps.kvm.outputs.present != 'true'

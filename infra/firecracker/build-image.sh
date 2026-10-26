@@ -100,7 +100,7 @@ fetch_kernel() {
   # `vmlinux-<series>.bin` (an older naming that no longer exists). Resolve the
   # newest patch for the requested series from the bucket listing so this does
   # not rot when upstream bumps the patch version.
-  local prefix="firecracker-ci/v1.10/${ARCH}"
+  local prefix="firecracker-ci/v1.15/${ARCH}"
   local host="https://s3.amazonaws.com/spec.ccfc.min"
   local key
   # Match the bare `vmlinux-<patch>` keys only — anchor on a trailing digit so
@@ -192,7 +192,8 @@ build_rootfs() {
     "${mnt}/tmp" \
     "${mnt}/proc" \
     "${mnt}/sys" \
-    "${mnt}/dev"
+    "${mnt}/dev" \
+    "${mnt}/workspace"
 
   # Install the harness as both the documented path and as PID 1 init.
   sudo cp "${HARNESS_BIN}" "${mnt}/usr/local/bin/lantern-harness"
