@@ -188,7 +188,7 @@ func TestLifecycle_DB(t *testing.T) {
 	})
 
 	t.Run("fork validates count", func(t *testing.T) {
-		for _, body := range []string{`{"count":0}`, `{"count":11}`, `{"count":"x"}`, `not json`} {
+		for _, body := range []string{`{"count":0}`, `{"count":101}`, `{"count":"x"}`, `not json`} {
 			if w := doLifecycle(h, tok, "fork", vm, body); w.Code != http.StatusBadRequest {
 				t.Errorf("fork %s: %d, want 400", body, w.Code)
 			}
@@ -392,6 +392,51 @@ func TestFork_InsertFailureTerminatesChildren(t *testing.T) {
 	_ = pool.QueryRow(context.Background(), `SELECT count(*) FROM runtime_vms WHERE parent_vm_id = $1`, src).Scan(&n)
 	if n != 0 {
 		t.Errorf("%d child rows persisted after a failed fork, want 0 (all-or-nothing)", n)
+	}
+}
+
+// TestMaxForkCount_env tests the env-configurable fork cap (no pool needed).
+func TestMaxForkCount_env(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("LANTERN_MAX_FORK_COUNT", "")
+		if got := maxForkCount(); got != maxForkCountDefault {
+			t.Errorf("unset: got %d, want default %d", got, maxForkCountDefault)
+		}
+	})
+	t.Run("custom value", func(t *testing.T) {
+		t.Setenv("LANTERN_MAX_FORK_COUNT", "42")
+		if got := maxForkCount(); got != 42 {
+			t.Errorf("custom 42: got %d", got)
+		}
+	})
+	t.Run("ceiling", func(t *testing.T) {
+		t.Setenv("LANTERN_MAX_FORK_COUNT", "99999")
+		if got := maxForkCount(); got != maxForkCountCeiling {
+			t.Errorf("over ceiling: got %d, want %d", got, maxForkCountCeiling)
+		}
+	})
+	t.Run("invalid defaults", func(t *testing.T) {
+		t.Setenv("LANTERN_MAX_FORK_COUNT", "banana")
+		if got := maxForkCount(); got != maxForkCountDefault {
+			t.Errorf("invalid: got %d, want default %d", got, maxForkCountDefault)
+		}
+	})
+}
+
+// TestForkVM_CountValidation verifies 400 at 0, default-max+1, ceiling+1.
+// Uses a no-DB handler (validation fires before the DB lookup).
+func TestForkVM_CountValidation(t *testing.T) {
+	h := newTestRuntimeHandler(t, &recScheduler{})
+	tok := mintTestToken(t, "00000000-0000-0000-0000-0000000000aa", "u1", "owner")
+	// default cap + 1 → 400
+	over := maxForkCount() + 1
+	w := doLifecycle(h, tok, "fork", "vm-any", fmt.Sprintf(`{"count":%d}`, over))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("count=%d: got %d, want 400", over, w.Code)
+	}
+	// count=0 → 400
+	if w := doLifecycle(h, tok, "fork", "vm-any", `{"count":0}`); w.Code != http.StatusBadRequest {
+		t.Errorf("count=0: got %d, want 400", w.Code)
 	}
 }
 

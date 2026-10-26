@@ -176,7 +176,7 @@ export class LanternClient {
     resume: (id: string): Promise<VmResumeResult> =>
       this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/resume`, { method: "POST" }),
 
-    /** Fork N (1..10, default 1) copies from a snapshot of the VM. Per-fork failures are in `forks[].error`. */
+    /** Fork N (1..LANTERN_MAX_FORK_COUNT, default 1, server default cap 100) copies from a snapshot of the VM. Per-fork failures are in `forks[].error`. */
     fork: (id: string, params: { count?: number } = {}): Promise<VmForkResult> =>
       this.fetch(`/v1/runtime/vms/${encodeURIComponent(id)}/fork`, {
         method: "POST",

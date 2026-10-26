@@ -396,6 +396,44 @@ impl SnapshotStore {
 
         let sha256 = hex::encode(hasher.finalize());
 
+        // Make the mem artifact read-only (0444) so it can be hard-linked into
+        // multiple Firecracker jail dirs for MAP_PRIVATE CoW fork restores
+        // without chown races.  Idempotent — already-0444 is fine.  Best-effort
+        // (non-fatal): a chmod failure is warn-logged but does not abort the
+        // snapshot.  The restore path falls back to a full copy when the mem
+        // file is not 0444 (the `shared_mem` flag is set only when
+        // `make_mem_readonly` succeeds before staging).
+        #[cfg(unix)]
+        {
+            let mem_path = dir.join("mem");
+            if mem_path.exists() {
+                use std::os::unix::fs::PermissionsExt;
+                match std::fs::metadata(&mem_path) {
+                    Ok(m) => {
+                        let mut perms = m.permissions();
+                        perms.set_mode(0o444);
+                        if let Err(e) = std::fs::set_permissions(&mem_path, perms) {
+                            tracing::warn!(
+                                snapshot_id = %snapshot_id,
+                                mem = ?mem_path,
+                                error = %e,
+                                "snapshot_store: could not mark mem artifact read-only \
+                                 (fork restores will fall back to copy)"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            snapshot_id = %snapshot_id,
+                            mem = ?mem_path,
+                            error = %e,
+                            "snapshot_store: could not stat mem artifact (non-fatal)"
+                        );
+                    }
+                }
+            }
+        }
+
         let meta = SnapshotMeta {
             id: snapshot_id.clone(),
             sha256,

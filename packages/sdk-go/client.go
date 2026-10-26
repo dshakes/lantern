@@ -762,7 +762,7 @@ func (c *Client) ResumeVM(ctx context.Context, vmID string) (*VMLifecycle, error
 	return &out, err
 }
 
-// ForkVM spawns count (1..10) new VMs from a snapshot of a running or paused
+// ForkVM spawns count (1..LANTERN_MAX_FORK_COUNT, default 100) new VMs from a snapshot of a running or paused
 // VM. A running source keeps running. Per-child failures are reported in
 // ForkResult.Forks rather than as an error.
 func (c *Client) ForkVM(ctx context.Context, vmID string, count int) (*ForkResult, error) {
