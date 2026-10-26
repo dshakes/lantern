@@ -636,6 +636,9 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 	if b, ok := spec["confidential"].(bool); ok {
 		a.Confidential = b
 	}
+	if v := int64Of(firstOf(spec, "idle_timeout_secs", "idleTimeoutSecs")); v != 0 {
+		a.IdleTimeoutSecs = int32(v)
+	}
 	if lims, ok := spec["limits"].(map[string]any); ok && len(lims) > 0 {
 		a.Limits = limitsFromMap(lims)
 	}
@@ -677,6 +680,11 @@ func applySpecMap(spec *agentSpecDTO, m map[string]any) {
 	}
 	if !spec.Confidential {
 		spec.Confidential, _ = m["confidential"].(bool)
+	}
+	if spec.IdleTimeoutSecs == 0 {
+		if v := int64Of(firstOf(m, "idleTimeoutSecs", "idle_timeout_secs")); v != 0 {
+			spec.IdleTimeoutSecs = int32(v)
+		}
 	}
 	if spec.Limits == nil {
 		spec.Limits, _ = m["limits"].(map[string]any)
@@ -890,6 +898,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		"egress_rules":        spec.EgressRules,
 		"secrets":             spec.Secrets,
 		"confidential":        spec.Confidential,
+		"idle_timeout_secs":   spec.IdleTimeoutSecs,
 		"tenant_id":           tenantID,
 	}
 	// Container exec controls — convert []string to []any so agentSpecFromMap's
@@ -951,10 +960,10 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	if wErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
 			INSERT INTO runtime_vms
-			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, confidential, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10, $11)
+			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, confidential, idle_timeout_secs, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10, $11, $12)
 			ON CONFLICT (vm_id) DO NOTHING
-		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, spec.Confidential, created)
+		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, spec.Confidential, spec.IdleTimeoutSecs, created)
 		return e
 	}); wErr != nil {
 		h.logger().Error("scheduleAgentSpec: insert runtime_vms failed", zap.Error(wErr))
@@ -1451,6 +1460,9 @@ type agentSpecDTO struct {
 	// callers derive it from run_id; REST callers may supply it (field or
 	// Idempotency-Key header); otherwise scheduleAgentSpec mints a fresh uuid.
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	// IdleTimeoutSecs auto-suspends the VM after this many seconds of
+	// inactivity (no running workload child in the harness). 0 = never auto-suspend.
+	IdleTimeoutSecs int32 `json:"idleTimeoutSecs,omitempty"`
 }
 
 type scheduleResponse struct {
@@ -2226,6 +2238,12 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 	}
 	if owner != tenantID {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
+	// Auto-resume: if this VM was auto-suspended (paused + idle_timeout_secs > 0),
+	// transparently resume it before exec.
+	if !h.ensureVMRunning(w, ctx, tenantID, vmID) {
 		return
 	}
 

@@ -180,6 +180,11 @@ func (h *RuntimeHandler) fileTarget(w http.ResponseWriter, r *http.Request, scop
 	if n != nil {
 		node = *n
 	}
+	// Auto-resume: if the VM was auto-suspended (paused + idle_timeout_secs > 0),
+	// transparently resume it before the caller invokes the file tool.
+	if !h.ensureVMRunning(w, ctx, claims.TenantID, vmID) {
+		return nil, nil, "", "", false
+	}
 	return ctx, claims, node, vmID, true
 }
 

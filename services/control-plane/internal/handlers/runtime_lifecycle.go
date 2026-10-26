@@ -233,6 +233,69 @@ func (h *RuntimeHandler) setVMState(ctx context.Context, tenantID, vmID, state, 
 	}
 }
 
+// ensureVMRunning transparently resumes a PAUSED VM that has idle_timeout_secs > 0
+// (i.e. was auto-suspended) before the caller proceeds with an exec or file-API
+// operation.
+//
+//   - RUNNING → return true immediately (no-op).
+//   - PAUSED + idle_timeout_secs > 0 → Resume; update runtime_vms; return true.
+//   - PAUSED + idle_timeout_secs == 0 → 409; the VM was manually paused (not
+//     auto-suspended); the caller must explicitly resume. Return false.
+//   - Resume returns FailedPrecondition → another concurrent request already
+//     resumed it; treat as RUNNING, return true.
+//   - Resume returns ResourceExhausted → 402 (tenant quota), return false.
+//   - Any other scheduler error → 502, return false.
+//
+// ctx must already carry the tenant_id.
+func (h *RuntimeHandler) ensureVMRunning(w http.ResponseWriter, ctx context.Context, tenantID, vmID string) bool {
+	var state string
+	var idleTimeoutSecs int32
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT state, idle_timeout_secs FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`,
+			vmID, tenantID,
+		).Scan(&state, &idleTimeoutSecs)
+	}); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
+		return false
+	}
+
+	if state != "paused" {
+		return true // running (or transitional) — let the operation proceed
+	}
+	if idleTimeoutSecs <= 0 {
+		// Manually paused; do not auto-resume.
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error":  "conflict",
+			"reason": "vm is paused; resume it first",
+		})
+		return false
+	}
+
+	// VM was auto-suspended — resume it transparently.
+	snap, err := h.scheduler.Resume(ctx, tenantID, vmID)
+	if err != nil {
+		switch status.Code(err) {
+		case grpccodes.FailedPrecondition:
+			// A concurrent request already resumed it (CAS at the scheduler won).
+			h.setVMState(ctx, tenantID, vmID, "running", "")
+			return true
+		case grpccodes.ResourceExhausted:
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{
+				"error":  "quota exceeded",
+				"reason": status.Convert(err).Message(),
+			})
+		default:
+			h.logger().Error("auto-resume failed", zap.String("vm_id", vmID), zap.Error(err))
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "auto-resume failed"})
+		}
+		return false
+	}
+	h.setVMState(ctx, tenantID, vmID, "running", snap)
+	h.auditRuntime(ctx, tenantID, vmID, "auto_resume", map[string]any{"snapshot_id": snap}, "", "")
+	return true
+}
+
 // PauseVM handles POST /v1/runtime/vms/{id}/pause.
 func (h *RuntimeHandler) PauseVM(w http.ResponseWriter, r *http.Request) {
 	claims, ctx, vmID, ok := h.lifecycleTarget(w, r)
