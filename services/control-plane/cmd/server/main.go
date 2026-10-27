@@ -43,6 +43,9 @@ func main() {
 
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+	// Packages that log via zap.L() (e.g. budget lookup errors) would
+	// otherwise write to the no-op global logger.
+	zap.ReplaceGlobals(logger)
 
 	// --- Startup security guards ---
 	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
