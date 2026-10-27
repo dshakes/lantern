@@ -37,7 +37,7 @@ The workflow-engine service (`:50052`) is a third, dormant implementation of dur
 ## Diagram: two-tier routing
 
 <p align="center">
-  <img src="diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime: run creation flows through the control plane and isolation gate, then branches left to the shared inline executor or right to the microVM stack (scheduler → manager → VM harness). Both tiers write to the shared journal_events table at the bottom." width="100%">
+  <img src="../assets/diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime: run creation flows through the control plane and isolation gate, then branches left to the shared inline executor or right to the microVM stack (scheduler → manager → VM harness). Both tiers write to the shared journal_events table at the bottom." width="100%">
 </p>
 
 The isolation gate in the centre reads `manifest.isolation` from the resolved agent version. The journal at the bottom is the shared durability substrate for both tiers — receipts, replay, and the run waterfall all read from it.
@@ -143,7 +143,7 @@ Every external side-effect carries a key derived from `(run_id, step_id, attempt
 ## Diagram: crash-resume loop
 
 <p align="center">
-  <img src="diagrams/durable-execution.svg" alt="Durable execution crash-resume loop: a run writes step_started to journal_events, then executes the step. On crash, the recovery sweep finds the orphan, wins a run_locks UPSERT, re-drives the run, and the CompletedStep hook skips nodes that already have a step_completed row. Execution resumes at the first incomplete node." width="100%">
+  <img src="../assets/diagrams/durable-execution.svg" alt="Durable execution crash-resume loop: a run writes step_started to journal_events, then executes the step. On crash, the recovery sweep finds the orphan, wins a run_locks UPSERT, re-drives the run, and the CompletedStep hook skips nodes that already have a step_completed row. Execution resumes at the first incomplete node." width="100%">
 </p>
 
 The CompletedStep check (step 7) is the key invariant: completed nodes are never re-invoked regardless of how many times the recovery sweep re-drives the run.
@@ -324,7 +324,7 @@ The microVM tier adds `vm_id`, `isolation_class`, and `agent_version` on schedul
 ## Diagram: end-to-end lifecycle
 
 <p align="center">
-  <img src="diagrams/e2e-journey.svg" alt="End-to-end Lantern agent lifecycle: Develop → Test → Deploy → Run → Observe → Improve, with a continuous improvement loop back to Develop. The journal_events table is the shared substrate underneath all stages." width="100%">
+  <img src="../assets/diagrams/e2e-journey.svg" alt="End-to-end Lantern agent lifecycle: Develop → Test → Deploy → Run → Observe → Improve, with a continuous improvement loop back to Develop. The journal_events table is the shared substrate underneath all stages." width="100%">
 </p>
 
 The loop back from Improve to Develop closes via eval baseline updates and rehearsals. Each stage is covered in the [self-service walkthrough](../guides/self-service-e2e.md).
