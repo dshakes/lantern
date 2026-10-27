@@ -57,16 +57,17 @@ type checkResult struct {
 func runDoctor(_ *cobra.Command, _ []string) error {
 	restURL := deriveRESTURL(flags.apiURL)
 
-	anyFailed := false
+	anyFailed, warnings := false, 0
 	printSection := func(title string, results []checkResult) {
 		fmt.Fprintf(os.Stderr, "\n%s%s%s\n", colorCyan, title, colorReset)
 		for _, r := range results {
 			icon := colorGreen + "✓" + colorReset
-			if !r.passed {
+			if !r.passed && r.hard {
 				icon = colorRed + "✗" + colorReset
-				if r.hard {
-					anyFailed = true
-				}
+				anyFailed = true
+			} else if !r.passed {
+				icon = colorYellow + "!" + colorReset
+				warnings++
 			} else if !r.hard {
 				icon = colorYellow + "~" + colorReset
 			}
@@ -114,6 +115,10 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	if anyFailed {
 		fmt.Fprintln(os.Stderr, colorRed+"doctor: one or more critical checks failed — see details above"+colorReset)
 		return fmt.Errorf("doctor: readiness checks failed")
+	}
+	if warnings > 0 {
+		fmt.Fprintf(os.Stderr, "%sdoctor: critical checks passed — %d warning(s) above (optional components)%s\n", colorYellow, warnings, colorReset)
+		return nil
 	}
 	fmt.Fprintln(os.Stderr, colorGreen+"doctor: all checks passed — stack is ready"+colorReset)
 	return nil
@@ -528,46 +533,24 @@ func checkSystemHealth(restURL, token string) []checkResult {
 		return nil // endpoint not yet wired — skip section silently
 	}
 
-	// health map is expected to have a "services" key with per-service state.
-	services, _ := health["services"].(map[string]any)
-	if len(services) == 0 {
-		// Flat format: treat every key as a service name with a status string.
-		results := make([]checkResult, 0, len(health))
-		for name, val := range health {
-			status := fmt.Sprintf("%v", val)
-			passed := strings.EqualFold(status, "ok") || strings.EqualFold(status, "healthy") || strings.EqualFold(status, "up")
-			results = append(results, checkResult{
-				label:  name,
-				passed: passed,
-				detail: status,
-				hard:   false,
-			})
+	// GET /v1/system/health returns {"services": [{name, addr, up, ...}]}
+	// (handlers.ServiceHealth in the control-plane's health_sweep.go).
+	list, _ := health["services"].([]any)
+	results := make([]checkResult, 0, len(list))
+	for _, item := range list {
+		svc, ok := item.(map[string]any)
+		if !ok {
+			continue
 		}
-		return results
-	}
-
-	results := make([]checkResult, 0, len(services))
-	for name, val := range services {
-		var status string
-		switch v := val.(type) {
-		case string:
-			status = v
-		case map[string]any:
-			if s, ok := v["status"].(string); ok {
-				status = s
-			} else {
-				status = fmt.Sprintf("%v", v)
-			}
-		default:
-			status = fmt.Sprintf("%v", v)
+		name, _ := svc["name"].(string)
+		addr, _ := svc["addr"].(string)
+		up, _ := svc["up"].(bool)
+		detail := addr
+		if !up {
+			fails, _ := svc["consecutiveFailures"].(float64)
+			detail = fmt.Sprintf("%s — down (%d failed probes)", addr, int(fails))
 		}
-		passed := strings.EqualFold(status, "ok") || strings.EqualFold(status, "healthy") || strings.EqualFold(status, "up")
-		results = append(results, checkResult{
-			label:  name,
-			passed: passed,
-			detail: status,
-			hard:   false,
-		})
+		results = append(results, checkResult{label: name, passed: up, detail: detail, hard: false})
 	}
 	return results
 }
