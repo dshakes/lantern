@@ -33,39 +33,40 @@ export default function RuntimeObservabilityPage() {
         <code>EnrichSpan</code> helper so they never drift between HTTP and gRPC
         code paths:
       </p>
-      <pre><code>{`lantern.tenant_id   # on every span, both tiers
+      <pre><code>{`lantern.tenant_id   # on every control-plane HTTP/gRPC span
 lantern.user_id
 lantern.run_id
 lantern.step_id     # per-step spans in the inline executor`}</code></pre>
       <p>
-        On the <strong>microVM tier</strong> the manager and harness additionally
-        stamp <code>vm_id</code>, <code>isolation_class</code>, and{" "}
-        <code>agent_instance_id</code> (the per-spawn Ed25519 identity — see{" "}
-        <Link href="/runtime/identity">Identity &amp; secrets</Link>). A{" "}
-        <Link href="/runtime/durable-execution">durable resume</Link> after a
-        crash re-joins the same <code>trace_id</code> — the full lifecycle is
-        one coherent timeline.
+        On the <strong>microVM tier</strong>, scheduler spans carry{" "}
+        <code>tenant_id</code> and <code>vm_id</code>; the per-VM isolation
+        class is recorded as a container/pod label, and the trace context
+        propagates through the manager into the harness (see{" "}
+        <Link href="/runtime/identity">Identity &amp; secrets</Link> for the
+        per-spawn identity). A{" "}
+        <Link href="/runtime/durable-execution">durable resume</Link> starts a
+        new trace tagged with the same <code>lantern.run_id</code>.
       </p>
 
       {/* Trace spine — simplified flat list */}
       <div style={{
-        background: "#0d0d12",
-        border: "1px solid #1e2235",
+        background: "var(--lx-surface)",
+        border: "1px solid var(--lx-line)",
         borderRadius: "12px",
         padding: "1.25rem 1.5rem",
         marginBottom: "1.5rem",
         fontFamily: "var(--font-mono)",
         fontSize: "0.72rem",
       }}>
-        <div style={{ color: "#71717a", marginBottom: "0.85rem", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        <div style={{ color: "var(--lx-ink-3)", marginBottom: "0.85rem", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
           Trace spine
         </div>
         {[
-          { label: "gateway.request", sub: "tenant_id", color: "#38bdf8", indent: 0 },
-          { label: "control-plane: run dispatch", sub: "run_id", color: "#f59e0b", indent: 1 },
-          { label: "model-router: route", sub: "step_id · model_used · tokens · cost_usd", color: "#8b5cf6", indent: 2 },
-          { label: "runtime-manager: spawn", sub: "vm_id · image · isolation_class", color: "#f59e0b", indent: 3 },
-          { label: "harness: step loop", sub: "step_id · tool_calls · reasoning_tokens · cache_tokens", color: "#34d399", indent: 4 },
+          { label: "gateway.request", sub: "tenant_id", color: "var(--lx-glass)", indent: 0 },
+          { label: "control-plane: run dispatch", sub: "run_id", color: "var(--lx-flame)", indent: 1 },
+          { label: "model-router: route", sub: "step_id · model_used · tokens · cost_usd", color: "var(--lx-glass)", indent: 2 },
+          { label: "runtime-scheduler: schedule", sub: "tenant_id · vm_id", color: "var(--lx-flame)", indent: 3 },
+          { label: "runtime-manager → harness", sub: "traceparent propagated", color: "var(--lx-patina)", indent: 4 },
         ].map((layer, i) => (
           <div key={i} style={{
             marginLeft: `${layer.indent * 1.1}rem`,
@@ -76,11 +77,11 @@ lantern.step_id     # per-step spans in the inline executor`}</code></pre>
             paddingBottom: "0.2rem",
           }}>
             <span style={{ color: layer.color, fontWeight: 600 }}>{layer.label}</span>
-            <span style={{ color: "#52525b", marginLeft: "0.5rem", fontSize: "0.65rem" }}>{layer.sub}</span>
+            <span style={{ color: "var(--lx-ink-3)", marginLeft: "0.5rem", fontSize: "0.65rem" }}>{layer.sub}</span>
           </div>
         ))}
-        <div style={{ marginTop: "0.75rem", color: "#52525b", fontSize: "0.65rem" }}>
-          W3C traceparent propagated at every boundary · durable resume re-joins the same trace_id
+        <div style={{ marginTop: "0.75rem", color: "var(--lx-ink-3)", fontSize: "0.65rem" }}>
+          W3C traceparent propagated at every boundary · a durable resume starts a new trace with the same lantern.run_id
         </div>
       </div>
 
@@ -100,7 +101,7 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
 
       <h2 id="span-attrs">OTel span attribute contract</h2>
       <p>
-        Every span emitted anywhere in the stack uses these keys, set via{" "}
+        Control-plane spans use the first four keys, set via{" "}
         <code>internal/middleware.EnrichSpan</code>. They are no-ops when
         telemetry is disabled.
       </p>
@@ -113,10 +114,7 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
           <tr><td>User</td><td><code>lantern.user_id</code></td><td>Same</td></tr>
           <tr><td>Run</td><td><code>lantern.run_id</code></td><td>Same + inline executor</td></tr>
           <tr><td>Step</td><td><code>lantern.step_id</code></td><td>Inline executor per step</td></tr>
-          <tr><td>Agent name</td><td><code>lantern.agent_name</code></td><td>Inline executor + model-router</td></tr>
-          <tr><td>VM ID (microVM)</td><td><code>vm_id</code></td><td>Scheduler / manager spans</td></tr>
-          <tr><td>Isolation class (microVM)</td><td><code>isolation_class</code></td><td>Manager spans</td></tr>
-          <tr><td>Agent version (microVM)</td><td><code>agent_version</code></td><td>Manager spans</td></tr>
+          <tr><td>VM ID (microVM)</td><td><code>vm_id</code></td><td>Scheduler spans</td></tr>
           <tr><td>Model used</td><td><code>model_used</code></td><td>Model-router completion span</td></tr>
           <tr><td>Cost USD</td><td><code>cost_usd</code></td><td>Model-router completion span</td></tr>
           <tr><td>Tokens in / out</td><td><code>tokens_in</code> / <code>tokens_out</code></td><td>Model-router completion span</td></tr>
@@ -139,32 +137,32 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
           <tr>
             <td><code>lantern.run.step.duration</code></td>
             <td>Histogram (ms)</td>
-            <td><code>agent_name</code>, <code>node_type</code>, <code>tier</code>, <code>outcome</code></td>
+            <td><code>lantern.agent_name</code>, <code>lantern.node_type</code>, <code>lantern.tier</code>, <code>lantern.outcome</code></td>
             <td>Wall-clock duration of one workflow step, including all retry backoff. <code>outcome</code> is <code>ok</code>, <code>failed</code>, or <code>retried</code>.</td>
           </tr>
           <tr>
             <td><code>lantern.run.step.retries</code></td>
             <td>Counter</td>
-            <td><code>agent_name</code>, <code>node_type</code>, <code>tier</code></td>
+            <td><code>lantern.agent_name</code>, <code>lantern.node_type</code>, <code>lantern.tier</code></td>
             <td>Extra attempts beyond the first. Only incremented when <code>retryCount &gt; 0</code>.</td>
           </tr>
           <tr>
             <td><code>lantern.run.replay.skips</code></td>
             <td>Counter</td>
-            <td><code>agent_name</code></td>
+            <td><code>lantern.agent_name</code></td>
             <td><code>CompletedStep</code> cache hits during crash-resume. Each hit means one node was skipped rather than re-executed.</td>
           </tr>
           <tr>
             <td><code>lantern.run.budget.blocks</code></td>
             <td>Counter</td>
-            <td><code>agent_name</code></td>
+            <td><code>lantern.agent_name</code></td>
             <td>Runs denied by the agent&apos;s hard-fail budget policy (HTTP 402).</td>
           </tr>
           <tr>
             <td><code>lantern.run.total</code></td>
             <td>Counter</td>
-            <td><code>agent_name</code>, <code>tier</code>, <code>status</code></td>
-            <td>Total runs dispatched through the inline executor. <code>tier</code> is <code>shared</code> or <code>microvm</code>; <code>status</code> is <code>succeeded</code> or <code>failed</code>.</td>
+            <td><code>lantern.agent_name</code>, <code>lantern.tier</code>, <code>lantern.status</code></td>
+            <td>Total runs dispatched through the inline executor. <code>lantern.tier</code> is currently always <code>shared</code>; <code>lantern.status</code> is <code>succeeded</code> or <code>failed</code> (workflow runs whose steps failed are counted as <code>succeeded</code>, a known gap).</td>
           </tr>
         </tbody>
       </table>
@@ -243,7 +241,7 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
         </tbody>
       </table>
 
-      <p>Eight operator runbooks cover every active alert plus the DB restore procedure, linked from each alert&apos;s <code>runbook:</code> annotation in <code>alerts.yml</code>. Grafana dashboards: <code>grafana/platform-overview.json</code> and <code>grafana/data-plane-runtime.json</code>.</p>
+      <p>Operator runbooks live in <code>docs/runbooks/</code> and are linked from each alert&apos;s <code>runbook:</code> annotation in <code>alerts.yml</code>. Grafana dashboards: <code>grafana/platform-overview.json</code> and <code>grafana/data-plane-runtime.json</code>.</p>
     </>
   );
 }

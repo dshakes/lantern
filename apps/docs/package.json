@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "mkdir -p public/media && cp ../../docs/media/lifecycle-kvm.gif ../../docs/media/egress-broker-kvm.gif public/media/",
     "dev": "next dev --turbopack --port 3002",
+    "prebuild": "mkdir -p public/media && cp ../../docs/media/lifecycle-kvm.gif ../../docs/media/egress-broker-kvm.gif public/media/",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

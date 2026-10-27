@@ -6,18 +6,20 @@ export default function SdkReferencePage() {
     <>
       <h1>SDK Reference</h1>
       <p>
-        Lantern ships a TypeScript SDK (<code>@lantern/sdk</code>) and a Python
-        SDK (<code>lantern</code>). Both cover the full management surface —
+        Three SDKs: TypeScript (<code>@lantern/sdk</code>), Python (
+        <code>lantern-sdk</code>, imported as <code>lantern</code>) and Go (
+        <code>github.com/dshakes/lantern/packages/sdk-go</code>). They cover
         agents, runs, sessions, connectors, budgets, evals, experiments,
-        marketplace, MCP, receipts, feedback, and rehearsals.
+        marketplace, MCP, receipts, feedback, rehearsals and sandbox VMs. The
+        TypeScript client has the most surface; the tables below list what each
+        one really exposes.
       </p>
 
       <Concept>
-        The SDK is the same Lantern API you&apos;ve seen in these docs, wrapped
-        in a typed library so you call <code>client.runs.create(...)</code>{" "}
-        from your own code instead of hand-writing HTTP requests. Everything
-        the dashboard can do, the SDK can do — use it to trigger agents from
-        your app, wire runs into your backend, or script bulk operations.
+        The SDKs wrap the <Link href="/api">REST API</Link> in typed methods, so
+        you call <code>client.runs.create(...)</code> instead of writing HTTP.
+        Use them to trigger agents from your app, wire runs into your backend,
+        or script bulk operations.
       </Concept>
 
       <h2 id="typescript">TypeScript SDK</h2>
@@ -33,32 +35,36 @@ export default function SdkReferencePage() {
 
 const client = new LanternClient({
   apiKey: process.env.LANTERN_API_KEY,   // hlx_live_...
-  baseUrl: process.env.LANTERN_API_URL,  // http://localhost:8080 for self-hosted
+  baseUrl: process.env.LANTERN_API_URL,  // e.g. http://localhost:8080
 });`}</code>
       </pre>
 
       <div className="callout callout-info">
-        <strong>Environment variables.</strong> The SDK reads{" "}
-        <code>LANTERN_API_KEY</code> and <code>LANTERN_API_URL</code>{" "}
-        automatically when no options are passed to the constructor.{" "}
-        <code>LANTERN_RUNTIME</code> selects the runtime tier for runs. There
-        is no <code>LANTERN_BASE_URL</code>.
+        <strong>Environment variables.</strong> With no constructor options the
+        SDK reads <code>LANTERN_API_KEY</code> and <code>LANTERN_API_URL</code>.
+        If <code>LANTERN_API_URL</code> is unset, the base URL defaults to{" "}
+        <code>https://api.lantern.run</code>, so set it for a self-hosted
+        control plane. (<code>LANTERN_RUNTIME=true</code> is a different
+        switch: the platform sets it inside a running agent to enable the
+        production sidecar.)
       </div>
 
       <h3>Creating and streaming a run</h3>
       <pre>
-        <code>{`// Create a run
-const run = await client.runs.create({
-  agentName: "research-agent",
+        <code>{`import type { Run } from "@lantern/sdk";
+
+// Create a run (create() returns an event stream instead when you pass stream: true)
+const run = (await client.runs.create({
+  agent: "research-agent",
   input: { topic: "quantum computing" },
-});
+})) as Run;
 
 console.log(run.id, run.status); // queued
 
 // Stream events for the run
-for await (const event of client.runs.stream(run.id)) {
-  console.log(event.kind, event.stepId, event.payload);
-  // kinds: step_started, step_completed, step_failed, step_retrying, step_waiting
+for await (const event of client.runs.events(run.id)) {
+  console.log(event.kind, event.stepId, event.data);
+  // kinds include step_started, step_completed, step_failed, tool_call, tool_result, llm_delta, log, approval, end
 }
 
 // Fetch final result
@@ -75,13 +81,13 @@ const session = await client.sessions.create({ agent: "my-agent" });
 for await (const chunk of client.sessions.streamMessage(session.id, {
   content: "What is the capital of France?",
 })) {
-  // chunk has: kind ("message_delta" | "message_completed" | "message_error")
-  if (chunk.kind === "message_delta") process.stdout.write(chunk.delta);
-  if (chunk.kind === "message_completed") console.log("\nDone:", chunk.usage);
+  // chunk.type is "delta" | "completed"; a server-side message_error throws MessageStreamError
+  if (chunk.type === "delta") process.stdout.write(chunk.delta);
+  if (chunk.type === "completed") console.log("\nDone:", chunk.usage);
 }
 
-// Non-streaming send
-const reply = await client.sessions.sendMessage(session.id, {
+// Non-streaming send: returns immediately; the reply arrives on sessions.events()
+await client.sessions.sendMessage(session.id, {
   content: "Follow-up question",
 });
 
@@ -91,28 +97,31 @@ await client.sessions.delete(session.id);`}</code>
 
       <h3>All namespaces</h3>
       <pre>
-        <code>{`client.agents          // create, get, list, delete, generateSpec, generateCode
-client.runs            // create, get, list, stream, forecast
-client.sessions        // create, get, list, sendMessage, streamMessage, stop, delete
-client.connectors      // install, list, execute, test, uninstall
+        <code>{`client.agents          // create, get, list, delete
+client.runs            // create, get, list, cancel, events, signal, forecast
+client.sessions        // create, get, list, sendMessage, streamMessage, events, stop, delete, close
+client.connectors      // list, get, execute, test, uninstall
 client.budgets         // upsert, get, list, delete
-client.experiments     // create, get, list, record, conclude
-client.evals           // createSuite, getSuite, listSuites, createRun, listRuns, setBaseline
+client.evalSuites      // upsert, list, get, delete
+client.evalRuns        // record, list
+client.evalBaselines   // set, get
+client.experiments     // create, list, get, recordOutcome, conclude
 client.marketplace     // list, get, publish, fork, star, unstar
 client.mcp             // listServers, getServer, attach, listAttachments, detach
 client.receipts        // issue, verify
-client.feedback        // submit, list, summary
-client.rehearsals      // create`}</code>
+client.feedback        // submit, listForRun, summaryForAgent
+client.rehearsals      // pull
+client.runtime         // schedule, list, get, terminate, exec, execStream, pause, resume, fork, listFiles, readFile, writeFile`}</code>
       </pre>
 
       <h3>Error handling</h3>
       <pre>
-        <code>{`import { LanternError, MessageStreamError } from "@lantern/sdk";
+        <code>{`import { LanternApiError, MessageStreamError } from "@lantern/sdk";
 
 try {
-  const run = await client.runs.create({ agentName: "my-agent", input: {} });
+  await client.runs.create({ agent: "my-agent", input: {} });
 } catch (err) {
-  if (err instanceof LanternError) {
+  if (err instanceof LanternApiError) {
     console.error(err.status, err.message);
   }
 }
@@ -130,31 +139,28 @@ try {
       </pre>
 
       <div className="callout callout-info">
-        <strong>No <code>@lantern/retry</code> package yet.</strong> The SDK
-        handles HTTP 429 / 503 retries internally with bounded exponential
-        backoff (<code>LANTERN_BRIDGE_RETRY_ATTEMPTS</code> /
-        <code>LANTERN_BRIDGE_RETRY_MAX_MS</code>). A standalone{" "}
-        <code>@lantern/retry</code> package is planned but does not exist — do
-        not import it.
+        <strong>Retries are built in.</strong> The TypeScript client retries HTTP
+        429, 503 and network errors up to 3 attempts with full-jitter backoff
+        (500 ms base, 4 s cap). It never retries other 4xx or 5xx. There is no
+        separate <code>@lantern/retry</code> package.
       </div>
 
       <p>
-        MicroVM sandboxes are managed under <code>client.runtime</code>{" "}
-        (<code>pause</code>, <code>resume</code>, <code>fork</code>,{" "}
-        <code>execStream</code>); Go has <code>PauseVM</code>/<code>ResumeVM</code>/
-        <code>ForkVM</code>. See{" "}
+        Sandbox VMs live under <code>client.runtime</code> in TypeScript and
+        Python; Go has <code>ScheduleVM</code>, <code>PauseVM</code>,{" "}
+        <code>ResumeVM</code>, <code>ForkVM</code>, <code>ListFiles</code>,{" "}
+        <code>ReadFile</code> and <code>WriteFile</code>. See{" "}
         <Link href="/runtime/sandbox-lifecycle">Sandbox Lifecycle</Link>.
       </p>
 
       <h2 id="python">Python SDK</h2>
 
       <div className="callout callout-warning">
-        <strong>Status.</strong> The Python SDK covers the full management
-        surface at parity with the TypeScript SDK. The agent runtime context (
-        <code>AgentContext</code>, durable <code>step()</code>, and{" "}
-        <code>ctx.llm</code>) raises <code>NotImplementedError</code>—that
-        wiring is a separate effort. Not yet published to PyPI; install from
-        the repo.
+        <strong>Status.</strong> The Python management client is usable today.
+        The in-agent runtime context (<code>ctx.llm</code>, <code>ctx.tools</code>,{" "}
+        <code>ctx.mem</code> and the rest) raises <code>NotImplementedError</code>;
+        write agent logic in TypeScript for now. Install from the repo; this
+        page does not claim a PyPI release.
       </div>
 
       <h3>Installation</h3>
@@ -169,53 +175,62 @@ try {
 client = LanternClient(
     api_key="hlx_live_your_key",   # or LANTERN_API_KEY env var
     base_url="http://localhost:8080",  # or LANTERN_API_URL env var
-)`}</code>
+)
+
+# Request methods are coroutines: call from async code, or asyncio.run(main())`}</code>
       </pre>
 
       <div className="callout callout-info">
-        <strong>Sync only.</strong> There is no <code>AsyncLanternClient</code>{" "}
-        — the Python SDK is synchronous. Use threads or a process pool if you
-        need concurrency.
+        <strong>Async.</strong> <code>LanternClient</code> is built on{" "}
+        <code>httpx.AsyncClient</code>: every request method is{" "}
+        <code>async def</code>; <code>runs.events</code>,{" "}
+        <code>sessions.stream_events</code> and{" "}
+        <code>runtime.exec_stream</code> return async iterators (
+        <code>async for</code>).
+        Use <code>async with LanternClient(...) as client</code> or call{" "}
+        <code>await client.close()</code>.
       </div>
 
       <h3>Creating a run</h3>
       <pre>
-        <code>{`run = client.runs.create(agent_name="research-agent", input={"topic": "AI safety"})
+        <code>{`run = await client.runs.create(agent="research-agent", input={"topic": "AI safety"})
 print(run.id, run.status)  # queued`}</code>
       </pre>
 
       <h3>All namespaces</h3>
       <pre>
         <code>{`client.agents          # create, get, list, delete
-client.runs            # create, get, list, forecast
-client.sessions        # create, get, list, send_message, stop, delete
-client.connectors      # install, list, execute, test, uninstall
-client.budgets         # upsert, get, list, delete
-client.evals           # create_suite, list_suites, create_run, set_baseline
-client.experiments     # create, record, conclude
-client.marketplace     # list, get, publish, fork, star
-client.mcp             # list_servers, attach, list_attachments, detach
+client.runs            # create, get, list, cancel, events, signal, forecast
+client.sessions        # create, get, list, send_message, stream_events, stop, delete, close
+client.connectors      # list, get, execute, list_actions
+client.budgets         # upsert, get, delete, list_all
+client.evals           # upsert_suite, list_suites, get_suite, delete_suite, record_run, list_runs, set_baseline, get_baseline
+client.experiments     # create, list, get, record_outcome, conclude
+client.marketplace     # list, get, publish, fork, star, unstar
+client.mcp             # list_servers, get_server, attach, detach, list_attachments
 client.receipts        # issue, verify
-client.feedback        # submit, list, summary
-client.rehearsals      # create`}</code>
+client.feedback        # submit, list_for_run, summary_for_agent
+client.rehearsals      # pull
+client.runtime         # schedule, list, get, terminate, exec, exec_stream, pause, resume, fork, list_files, read_file, write_file`}</code>
       </pre>
 
       <h3>Example: list agents</h3>
       <pre>
-        <code>{`agents = client.agents.list()
-for agent in agents:
+        <code>{`resp = await client.agents.list()
+for agent in resp.agents:
     print(agent.name, agent.current_version_id)`}</code>
       </pre>
 
       <h2 id="agent-runtime">Agent runtime (TypeScript)</h2>
       <p>
-        Inside an agent bundle, the runtime context gives you durable steps,
-        LLM calls, connector access, and more:
+        Inside an agent bundle, <code>ctx</code> gives you durable steps, LLM
+        calls, tools, memory and connectors. Each <code>step</code> is
+        journaled, so a crashed run resumes instead of restarting:
       </p>
       <pre>
         <code>{`import { agent, step } from "@lantern/sdk";
 
-export default agent({
+export default agent<{ query: string }>({
   name: "my-agent",
   model: "auto",
 
@@ -225,7 +240,7 @@ export default agent({
       return ctx.tools.web.search(input.query);
     });
 
-    // LLM call — routed by capability, never hardcoded to a vendor
+    // LLM call — addressed by capability; the model router picks the vendor model
     const summary = await step("summarize", async () => {
       return ctx.llm.complete({
         messages: [{ role: "user", content: \`Summarize: \${data}\` }],
@@ -241,10 +256,9 @@ export default agent({
       <div className="callout callout-info">
         <strong>Model capability strings.</strong> Use capability names like{" "}
         <code>auto</code>, <code>reasoning-large</code>,{" "}
-        <code>chat-small</code>, <code>vision-large</code> — never a specific
-        model like <code>gpt-4o</code> or <code>claude-3-opus</code>. The model
-        router resolves the best available model at runtime. See the{" "}
-        <a href="/models">Models</a> page for the full capability list.
+        <code>chat-small</code>, <code>vision-large</code>. Don&apos;t hardcode
+        a vendor model. The model router maps the capability to a concrete
+        model at call time. See <a href="/models">Models</a> for the full list.
       </div>
 
       <h3>Parallel fan-out</h3>
@@ -256,12 +270,12 @@ export default agent({
 
       <h3>Human approval</h3>
       <pre>
-        <code>{`const approved = await ctx.human.requestApproval({
-  message: "Send this email to 500 users?",
-  timeout: "30m",  // goroutine is released while waiting — no compute cost
+        <code>{`// Blocks until a human grants or denies.
+await ctx.approval.request({
+  reason: "Send this email to 500 users?",
+  expiresAt: "2026-12-01T00:00:00Z",
 });
-
-if (!approved) return { status: "cancelled" };`}</code>
+// Reaching this line means it was granted. Denial or timeout throws LanternError.`}</code>
       </pre>
     </>
   );

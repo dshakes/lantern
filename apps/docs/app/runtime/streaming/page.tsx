@@ -5,7 +5,7 @@ import { Concept } from "../../_components/Concept";
 export default function RuntimeStreamingPage() {
   return (
     <>
-      <h1>Token Streaming</h1>
+      <h1>Token streaming</h1>
       <p>
         Session replies are streamed token-by-token from the model provider
         through the control-plane to the client. The streaming contract is a
@@ -31,8 +31,8 @@ export default function RuntimeStreamingPage() {
       />
 
       <div className="callout callout-info">
-        <strong>Shared tier only.</strong> Sessions run on the shared tier
-        (inline executor). The streaming contract described here covers
+        <strong>Sessions only.</strong> Session turns run in the control
+        plane&apos;s session handler (not the run executor). The streaming contract described here covers
         interactive sessions. Headless microVM runs stream{" "}
         <code>step_started</code> / <code>step_completed</code> / {" "}
         <code>step_failed</code> events, not token deltas.

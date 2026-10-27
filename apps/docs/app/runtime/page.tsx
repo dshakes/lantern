@@ -3,17 +3,17 @@ import { ShieldCheck, Lock, Activity } from "lucide-react";
 import { Diagram } from "../_components/Diagram";
 import { Concept } from "../_components/Concept";
 import { RuntimeArchitectureMap } from "../_components/RuntimeArchitectureMap";
+import { Sequence } from "../_components/interactive/Sequence";
 
 // Tier comparison — reuses .prose table styles, no new CSS needed.
 function TierTable() {
   const rows: [string, string, string][] = [
     ["Declared as", '"shared" (default, or absent)', '"microvm"'],
     ["Executor", "Goroutine inside control-plane (executeRunInlineSync)", "Scheduler → manager → Firecracker / Kata / K8s Job"],
-    ["Isolation", "Same OS process — trust first-party code", "Separate kernel (gVisor) or hypervisor (Kata)"],
-    ["Latency to first token", "~50–200 ms", "~150 ms warm  /  ~1.5 s cold-boot"],
-    ["Egress", "Unrestricted (trusted code)", "Harness allowlist; deny-default; iptables REDIRECT required in prod"],
-    ["Crash resume", "30 s recovery sweep + CompletedStep journal replay", "VM lifecycle; recovery sweep re-schedules (≤ 3 attempts)"],
-    ["Secret delivery", "Resolved inline at step time, never logged", "Short-TTL JWT over vsock; args stripped from audit"],
+    ["Isolation", "Same OS process. First-party code only", "Firecracker or Kata microVM, or a gVisor / K8s Job pod (see Isolation classes)"],
+    ["Egress", "Not sandboxed (first-party code)", "Per-VM allowlist, deny by default. Default mode: in-guest proxy + iptables REDIRECT (required in prod). Opt-in broker mode (Firecracker only): no NIC, host-side allowlist over vsock"],
+    ["Crash resume", "Recovery sweep (default 30 s) + completed-step journal replay", "Recovery sweep re-schedules the VM; gives up after 3 attempts"],
+    ["Secret delivery", "Resolved inline at step time, never logged", "Default: short-TTL values vended to the workload over a peer-authenticated socket. Broker mode: credentials injected on the host, never enter the VM"],
     ["Use case", "Loop agents, bridge replies, dashboard runs, trusted workflows", "User-supplied code, exec tools, untrusted packages"],
     ["Downgrade safety", "N/A", "Never falls back to shared — failure is explicit (microvm_unavailable)"],
   ];
@@ -42,7 +42,7 @@ function TierTable() {
 export default function RuntimeOverviewPage() {
   return (
     <>
-      <h1>Agent Runtime</h1>
+      <h1>Agent runtime</h1>
       <p>
         Every Lantern run executes in one of two tiers — <strong>shared</strong>{" "}
         (inline executor inside the control-plane) or{" "}
@@ -117,8 +117,7 @@ export default function RuntimeOverviewPage() {
 
       <h2 id="shared">Shared tier</h2>
       <p>
-        The shared tier is a goroutine inside the control-plane. Every live
-        Lantern run today executes here: loop agents, bridge replies, dashboard
+        The shared tier is a goroutine inside the control-plane. Most runs execute here: loop agents, bridge replies, dashboard
         runs, cron-triggered runs, and sessions. It drives either the{" "}
         <strong>plain-LLM tool-use loop</strong> (for agents with no{" "}
         <code>workflow</code> JSONB) or the{" "}
@@ -144,11 +143,13 @@ export default function RuntimeOverviewPage() {
   egress_rules: [{ host: "api.openai.com" }]
   idempotent: true`}</code></pre>
       <p>
-        The in-guest tool runner (shipped 2026-07-23) gives the harness a typed
-        tool registry — <code>shell_exec</code> and <code>http_fetch</code> — so
-        workflow-graph agents can route to the microVM tier as a real step
-        executor.
+        The in-guest tool runner gives the harness a typed tool registry:
+        <code>shell_exec</code>, <code>http_fetch</code>, <code>read_file</code>,{" "}
+        <code>write_file</code> and <code>list_dir</code>. File tools are confined to{" "}
+        <code>/workspace</code>. Workflow-graph agents reach it through the engine&apos;s{" "}
+        <code>tool_call</code> step.
       </p>
+      <Sequence name="tool" />
 
       <h2 id="health-sweep">Service-health sweep</h2>
       <p>
@@ -176,8 +177,7 @@ export default function RuntimeOverviewPage() {
         Four things an operator cares about, and where each lives: work is
         never lost (checkpointing), crashed work restarts itself (recovery), a
         runaway tenant can&apos;t take the platform down (throttling), and you
-        can see all of it (monitoring). Everything below is shipped and
-        test-gated — the knobs are environment variables, the views are REST,
+        can see all of it (monitoring). The knobs are environment variables, the views are REST,
         CLI, and the dashboard.
       </Concept>
       <table>
@@ -203,11 +203,11 @@ export default function RuntimeOverviewPage() {
           <tr>
             <td><strong>Job monitoring</strong></td>
             <td>VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster + quota views</td>
-            <td><code>GET /v1/runtime/vms · /metrics · /cluster · /audit</code> · <code>lantern vm list|get|logs|stop|exec</code> · dashboard <code>/runtime</code></td>
+            <td><code>GET /v1/runtime/vms · /v1/runtime/metrics · /v1/runtime/cluster · /v1/runtime/audit</code> · <code>lantern vm list|get|logs|stop|exec</code> · dashboard <code>/runtime</code></td>
           </tr>
           <tr>
             <td><strong>Telemetry</strong></td>
-            <td>Five <code>lantern.run.*</code> OTel metrics · scheduler Prometheus scrape · alert rules + Grafana dashboards + 8 runbooks in <code>infra/monitoring/</code></td>
+            <td>Five <code>lantern.run.*</code> OTel metrics · scheduler Prometheus scrape · Prometheus alert rules and Grafana dashboards in <code>infra/monitoring/</code>, runbooks in <code>docs/runbooks/</code></td>
             <td>scheduler <code>:8085/metrics</code> · <Link href="/runtime/observability">Observability</Link></td>
           </tr>
           <tr>
@@ -233,7 +233,7 @@ export default function RuntimeOverviewPage() {
       <div className="card-grid">
         <Link href="/runtime/durable-execution" className="card">
           <div className="card-title">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" /> Durable by default
+            <ShieldCheck className="w-4 h-4 text-patina" /> Durable by default
           </div>
           <div className="card-desc">
             Every step is journaled. A crash-replay skips completed nodes and replays cached LLM outputs — no re-spent tokens, no double side-effects.
@@ -241,7 +241,7 @@ export default function RuntimeOverviewPage() {
         </Link>
         <Link href="/runtime/isolation" className="card">
           <div className="card-title">
-            <Lock className="w-4 h-4 text-sky-400" /> Isolation by manifest
+            <Lock className="w-4 h-4 text-glass" /> Isolation by manifest
           </div>
           <div className="card-desc">
             Isolation strength is declared in the agent version, not chosen by the caller. Fail-closed: untrusted workloads are refused without the hardened RuntimeClass, never silently downgraded.
@@ -249,7 +249,7 @@ export default function RuntimeOverviewPage() {
         </Link>
         <Link href="/runtime/observability" className="card">
           <div className="card-title">
-            <Activity className="w-4 h-4 text-lantern-400" /> One observability contract
+            <Activity className="w-4 h-4 text-flame" /> One observability contract
           </div>
           <div className="card-desc">
             One OTel trace per spawn, W3C traceparent end-to-end, five{" "}
@@ -263,7 +263,7 @@ export default function RuntimeOverviewPage() {
       <ul>
         <li><Link href="/runtime/quickstart"><strong>Headless agent quickstart</strong></Link> — write your first <code>agent.yaml</code> and run it end-to-end in ~15 minutes</li>
         <li><Link href="/runtime/isolation"><strong>Isolation classes</strong></Link> — the decision tree from <code>trusted</code> to <code>hostile</code>, and the fail-closed gate</li>
-        <li><Link href="/runtime/durable-execution"><strong>Durable execution</strong></Link> — exactly-once under crash: journal, replay, per-step retry, idempotency keys</li>
+        <li><Link href="/runtime/durable-execution"><strong>Durable execution</strong></Link> — crash-resume: journal, replay, per-step retry, idempotency keys</li>
         <li><Link href="/runtime/streaming"><strong>Token streaming</strong></Link> — <code>message_delta</code> / <code>message_completed</code> / <code>message_error</code> contract and the SDK async iterator</li>
         <li><Link href="/runtime/sessions-and-memory"><strong>Sessions &amp; memory</strong></Link> — interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory</li>
         <li><Link href="/runtime/sandbox-lifecycle"><strong>Sandbox lifecycle</strong></Link> — pause / resume / fork a microVM, streaming exec, with TS / Python / CLI examples</li>

@@ -6,31 +6,28 @@ export default function AgentsPage() {
     <>
       <h1>Agents</h1>
       <p>
-        Agents are the core unit of work in Lantern. An agent receives input,
-        works through a series of steps (LLM calls, tool invocations, API
-        requests), and produces output. This page covers how to create,
-        configure, test, run, and schedule agents.
+        An agent takes input, works through steps (LLM calls, tool calls, API
+        requests) and returns output. Every step is journaled, so a crashed
+        run resumes where it stopped. This page covers creating, configuring,
+        testing, running and scheduling agents.
       </p>
 
       <Concept>
-        Think of an agent as a job description for an AI: who it is, what
-        it&apos;s allowed to use, and how it should behave. Once defined, you
-        can run it on demand, on a schedule, or in response to a message or
-        webhook — and Lantern keeps a full record of everything it does. If the
-        machine running it crashes mid-task, the agent picks up where it left
-        off rather than starting over.
+        An agent is a job description for an AI: who it is, what it may use,
+        how it behaves. Run it on demand, on a schedule, or from a chat
+        message. Lantern records every step. If the process dies mid-task, the
+        run resumes from the journal instead of starting over.
       </Concept>
 
       <h2 id="create">Creating an agent</h2>
       <p>
-        There are three ways to create an agent from the dashboard:
+        Three ways to create an agent in the dashboard:
       </p>
 
       <h3>1. AI-assisted creation</h3>
       <p>
-        Describe what you want the agent to do in plain English. Lantern uses
-        an LLM to generate the agent configuration, system prompt, and tool
-        selection for you.
+        Describe what you want the agent to do in plain English. Lantern
+        drafts the configuration, system prompt and tool selection for you.
       </p>
       <p>
         Navigate to <strong>Agents &gt; New Agent</strong> and select{" "}
@@ -41,8 +38,7 @@ export default function AgentsPage() {
 triage them by severity, and post a summary to Slack every morning.`}</code>
       </pre>
       <p>
-        The AI will propose a name, system prompt, model capability, connected
-        tools, and a schedule. Review and adjust before creating.
+        You review and edit the draft before anything is created.
       </p>
 
       <h3>2. Manual creation</h3>
@@ -71,29 +67,29 @@ triage them by severity, and post a summary to Slack every morning.`}</code>
           access
         </li>
         <li>
-          <strong>Privacy level</strong> -- controls data handling (standard,
-          strict, paranoid)
+          <strong>Privacy level</strong> -- <code>standard</code> (encrypted at
+          rest), <code>private</code> (end-to-end encrypted) or{" "}
+          <code>audit</code> (full audit trail)
         </li>
       </ul>
 
       <h3>3. From a template</h3>
       <p>
-        Lantern ships with built-in templates for common use cases: research
-        agent, customer support, CI/CD guardian, and more. Select a template
-        and customize it.
+        Pick a template in the dashboard and edit it. The CLI scaffolds from
+        seven starters: <code>basic</code>, <code>research</code>,{" "}
+        <code>tool-use</code>, <code>connector</code>, <code>personal</code>,{" "}
+        <code>scheduled</code> and <code>approval</code>.
       </p>
       <pre>
-        <code>{`# From the CLI:
-lantern init my-agent --template research`}</code>
+        <code>{`lantern init my-agent --template research`}</code>
       </pre>
 
       <h2>Configuring an agent</h2>
 
       <h3 id="instructions">Instructions and system prompt</h3>
       <p>
-        The system prompt is the most important configuration. It tells the LLM
-        what role to play, what tools it has access to, and how to behave. Write
-        clear, specific instructions:
+        The system prompt does most of the work. State the role, the steps and
+        the failure behavior:
       </p>
       <pre>
         <code>{`You are a research assistant. When given a topic:
@@ -107,17 +103,14 @@ say so rather than making things up.`}</code>
       </pre>
 
       <div className="callout callout-warning">
-        <strong>Warning:</strong> Avoid vague instructions like &quot;be
-        helpful&quot;. The more specific your system prompt, the more reliable
-        your agent will be in production.
+        <strong>Warning:</strong> &quot;Be helpful&quot; is not an instruction.
+        Specific steps and explicit failure behavior make agents reliable.
       </div>
 
       <h3>Model selection</h3>
       <p>
-        Lantern uses <strong>capability-based routing</strong> instead of
-        hardcoded model names. This means your agent code never references
-        &quot;gpt-4&quot; or &quot;claude-3&quot; directly. Instead, you specify what
-        kind of capability you need:
+        Agents ask for a <strong>capability</strong>, not a vendor model. The
+        model router maps it to a concrete model at call time:
       </p>
       <ul>
         <li>
@@ -125,12 +118,11 @@ say so rather than making things up.`}</code>
           step based on complexity and cost
         </li>
         <li>
-          <code>&quot;reasoning-large&quot;</code> -- a powerful reasoning model
-          (maps to Opus, GPT-5, etc.)
+          <code>&quot;reasoning-large&quot;</code> -- a large reasoning model
         </li>
         <li>
-          <code>&quot;reasoning-small&quot;</code> -- a fast, cheap model for
-          simple tasks (maps to Haiku, GPT-4o-mini, etc.)
+          <code>&quot;reasoning-small&quot;</code> -- a small, cheaper reasoning
+          model
         </li>
         <li>
           <code>&quot;code-large&quot;</code> / <code>&quot;code-small&quot;</code> -- optimized
@@ -148,20 +140,19 @@ say so rather than making things up.`}</code>
 
       <h2 id="testing">Testing an agent</h2>
       <p>
-        Every agent has a <strong>Playground</strong> tab in the dashboard. The
-        playground lets you:
+        Every agent has a <strong>Chat</strong> tab in the dashboard (next to
+        Build, Runs, Schedule and Settings). It lets you:
       </p>
       <ul>
         <li>Send test inputs and see streaming output in real time</li>
         <li>Inspect each step as it executes (timing, model used, tokens)</li>
-        <li>Adjust the system prompt and re-run immediately</li>
-        <li>View the full event stream and step trace</li>
+        <li>View the full event stream and step trace on the Runs tab</li>
       </ul>
       <p>
-        You can also run agents from the CLI for scripted testing:
+        From the CLI:
       </p>
       <pre>
-        <code>{`lantern run my-agent \\
+        <code>{`lantern runs create --agent my-agent \\
   --input '{"topic": "quantum computing"}' \\
   --stream`}</code>
       </pre>
@@ -170,10 +161,10 @@ say so rather than making things up.`}</code>
       <p>Agents can be triggered in several ways:</p>
       <ul>
         <li>
-          <strong>Dashboard playground</strong> -- manual runs for testing
+          <strong>Dashboard</strong> -- manual runs for testing
         </li>
         <li>
-          <strong>CLI</strong> -- <code>lantern run &lt;agent&gt;</code>
+          <strong>CLI</strong> -- <code>lantern runs create --agent &lt;name&gt;</code>
         </li>
         <li>
           <strong>REST API</strong> -- <code>POST /v1/runs</code> (with <code>agentName</code> in the body)
@@ -182,20 +173,15 @@ say so rather than making things up.`}</code>
           <strong>Schedule</strong> -- cron-based recurring runs
         </li>
         <li>
-          <strong>Surfaces</strong> -- triggered by messages on WhatsApp, Slack,
-          etc.
-        </li>
-        <li>
-          <strong>Webhooks</strong> -- triggered by external events (GitHub push,
-          Stripe event, etc.)
+          <strong>Surfaces</strong> -- triggered by messages on WhatsApp,
+          Slack, Telegram or webchat
         </li>
       </ul>
 
       <h2 id="visual">Scheduling agents</h2>
       <p>
-        You can schedule agents to run on a cron expression. See the{" "}
-        <Link href="/scheduling">Scheduling</Link> page for details on cron syntax,
-        AI-assisted scheduling, and email delivery of results.
+        Run an agent on a cron expression. See{" "}
+        <Link href="/scheduling">Scheduling</Link>.
       </p>
 
       <h2>Agent lifecycle</h2>
@@ -220,9 +206,9 @@ say so rather than making things up.`}</code>
         </li>
       </ol>
       <p>
-        Because Lantern uses durable execution, a run that crashes mid-step
-        will automatically resume from the last completed step when the
-        infrastructure recovers.
+        A run that crashes mid-step is picked up by the recovery sweep (every
+        30 s by default, <code>LANTERN_RECOVERY_INTERVAL</code>). Workflow
+        steps that already completed are skipped, not re-run.
       </p>
 
       <div className="callout callout-info">

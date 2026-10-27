@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 
-// Diagram inlines one of the repo's hand-built architecture SVGs at build time
+// Diagram inlines one of the repo's architecture SVGs (docs/assets/diagrams, the
+// single source shared with the README) at build time
 // (server component, static export). Inlining avoids basePath/asset-loading
 // issues entirely and lets CSS scale the SVG responsively (.diagram svg).
 //
@@ -11,12 +12,8 @@ import path from "path";
 // touched; external hrefs ("https://...") are unchanged.
 export function Diagram({ name, caption }: { name: string; caption?: string }) {
   const basePath = process.env.PAGES_BASE_PATH ?? "";
-  let svg = "";
-  try {
-    svg = fs.readFileSync(path.join(process.cwd(), "diagrams", `${name}.svg`), "utf8");
-  } catch {
-    return null;
-  }
+  // A missing diagram fails the static build instead of rendering an empty figure.
+  let svg = fs.readFileSync(path.join(process.cwd(), "..", "..", "docs", "assets", "diagrams", `${name}.svg`), "utf8");
   if (basePath) {
     svg = svg.replace(/href="\//g, `href="${basePath}/`);
   }

@@ -13,15 +13,15 @@ type Brand = { path?: string; color: string; lucide?: LucideIcon };
 const BRANDS: Record<string, Brand> = {
   WhatsApp: { path: siWhatsapp.path, color: "#25D366" },
   iMessage: { path: siImessage.path, color: "#34DA50" },
-  Slack: { path: SLACK_PATH, color: "#e4e4e7" },
+  Slack: { path: SLACK_PATH, color: "var(--lx-ink)" },
   Discord: { path: siDiscord.path, color: "#5865F2" },
   Telegram: { path: siTelegram.path, color: "#26A5E4" },
-  Voice: { lucide: Phone, color: "#f59e0b" },
-  "Web Chat": { lucide: MessageCircle, color: "#38bdf8" },
-  GitHub: { path: siGithub.path, color: "#e4e4e7" },
+  Voice: { lucide: Phone, color: "var(--lx-flame)" },
+  "Web Chat": { lucide: MessageCircle, color: "var(--lx-glass)" },
+  GitHub: { path: siGithub.path, color: "var(--lx-ink)" },
   Gmail: { path: siGmail.path, color: "#EA4335" },
   Google: { path: siGoogle.path, color: "#4285F4" },
-  Notion: { path: siNotion.path, color: "#e4e4e7" },
+  Notion: { path: siNotion.path, color: "var(--lx-ink)" },
   Linear: { path: siLinear.path, color: "#5E6AD2" },
 };
 

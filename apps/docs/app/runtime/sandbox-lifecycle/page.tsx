@@ -1,25 +1,60 @@
 import Link from "next/link";
 import { Concept } from "../../_components/Concept";
+import { Diagram } from "../../_components/Diagram";
+import { Recording } from "../../_components/Recording";
+import { LifecycleMachine } from "../../_components/interactive/LifecycleMachine";
+import { Sequence } from "../../_components/interactive/Sequence";
 
 export default function RuntimeSandboxLifecyclePage() {
   return (
     <>
-      <h1>Sandbox Lifecycle</h1>
+      <h1>Sandbox lifecycle</h1>
       <p>
-        MicroVM-tier sandboxes are stateful. A running VM can be{" "}
-        <strong>paused</strong> (snapshot + stop, freeing its quota slot),{" "}
-        <strong>resumed</strong> under the same <code>vm_id</code>, or{" "}
-        <strong>forked</strong> into N independent copies. Command output can
-        be streamed over SSE as it is produced.
+        MicroVM sandboxes are stateful. A running VM suspends itself when idle and wakes on the next request; you can
+        also <strong>pause</strong> it (snapshot, quota slot freed), <strong>resume</strong> it under the same{" "}
+        <code>vm_id</code>, or <strong>fork</strong> it into independent copies. Command output streams over SSE as it
+        is produced.
       </p>
 
       <Concept>
-        Pause is &quot;save game&quot;: the VM&apos;s memory and disk are
-        snapshotted and the machine stops costing you a concurrency slot.
-        Resume loads the save into the same VM id. Fork loads the same save
-        into several new VMs at once — handy for trying N approaches from one
-        warmed-up state.
+        Pause is &quot;save game&quot;: the VM&apos;s memory and disk are snapshotted and the machine stops holding a
+        concurrency slot. Resume loads the save into the same VM id. Fork loads the same save into several new VMs at
+        once, for trying N approaches from one warmed-up state.
       </Concept>
+
+      <h2 id="states">States</h2>
+      <Diagram
+        name="sandbox-lifecycle"
+        caption="scheduled → running ⇄ suspended (idle) · running ⇄ paused · running → forks · terminated"
+      />
+      <LifecycleMachine />
+      <Sequence name="lifecycle" />
+
+      <h2 id="idle">Idle suspend</h2>
+      <p>
+        Set <code>idleTimeoutSecs</code> on the schedule request (<code>--idle-timeout N</code> on the CLI; 0 or unset
+        = never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its
+        compute and quota slot released; the scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to ~40 s. The next exec or file request (REST, CLI
+        or SDK) resumes it transparently: the caller sees a slower first response (~4 s for the in-guest exec channel
+        to re-establish), not an error. A VM paused by an operator (<code>POST /pause</code>) is never auto-resumed.
+        The snapshot stays in storage while suspended. Lifecycle latency numbers (Lima nested-virt, Apple M4 Max,
+        aarch64 — indicative, not bare metal):{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/benchmarks/runtime-latency.md">
+          docs/benchmarks/runtime-latency.md
+        </a>
+        .
+      </p>
+
+      <Concept>
+        Forks share the parent snapshot&apos;s memory copy-on-write, so N forks cost one snapshot plus whatever each
+        child writes. The per-call cap defaults to 100 and is set with <code>LANTERN_MAX_FORK_COUNT</code> (ceiling 1000).
+      </Concept>
+
+      <Recording
+        name="lifecycle-kvm"
+        alt="Terminal recording, recorded on Lima nested KVM: the real-Firecracker lifecycle e2e test passes — boot, ExecTool, snapshot, stop, restore with state intact, fork ×3, copy-on-write isolation, shared snapshot-memory inode, clean teardown, then the per-step timing table."
+        caption="infra/firecracker/integration-test.sh on real Firecracker 1.15.1 + jailer, recorded on Lima nested KVM (aarch64). Unedited output, filtered to PASS lines and the timing table."
+      />
 
       <h2 id="rest">REST</h2>
       <pre><code>{`# Pause: snapshot + stop. Frees the quota slot.
@@ -39,8 +74,9 @@ POST /v1/runtime/vms/{id}/fork
       <p>
         <code>GET /v1/runtime/vms/&#123;id&#125;</code> additionally returns{" "}
         <code>snapshotId</code> and <code>parentVmId</code> (set on forks), and{" "}
-        <code>state</code> may be <code>paused</code>. Forking a{" "}
-        <em>running</em> VM requires Firecracker ≥ 1.12 with the jailer.
+        <code>state</code> may be <code>paused</code>. Restoring a snapshot onto a fresh TAP (resume, idle
+        wake, fork; not broker mode) uses snapshot-load <code>network_overrides</code>, which needs
+        Firecracker ≥ 1.12 with the jailer (tested on 1.15).
         Snapshots are owned by the tenant that created them; restoring another
         tenant&apos;s snapshot returns <code>NOT_FOUND</code> (
         <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0025-sandbox-spawn-contract-and-manager-authz.md">ADR 0025</a>

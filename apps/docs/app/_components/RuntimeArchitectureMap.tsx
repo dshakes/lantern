@@ -64,7 +64,7 @@ export function RuntimeArchitectureMap() {
       {/* Top edge — how a run arrives */}
       <div className="harness-edge">
         <div className="harness-edge-label">
-          <ArrowDownToLine className="h-3.5 w-3.5 text-sky-300" />
+          <ArrowDownToLine className="h-3.5 w-3.5 text-glass" />
           Entry points · every one becomes the same kind of run
         </div>
         <div className="harness-edge-cells">
@@ -154,7 +154,7 @@ export function RuntimeArchitectureMap() {
       {/* Fail-closed rail — applies across every layer */}
       <Link href="/security" className="harness-rail">
         <div className="harness-rail-head">
-          <ShieldCheck className="h-4 w-4 text-rose-300" />
+          <ShieldCheck className="h-4 w-4 text-signal" />
           <span>Fail-closed by design</span>
           <span className="harness-rail-sub">when a guarantee can&apos;t be met, the run fails loudly — never downgrades silently</span>
         </div>

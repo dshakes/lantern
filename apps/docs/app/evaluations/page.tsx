@@ -5,27 +5,26 @@ export default function EvaluationsPage() {
     <>
       <h1>Evaluations</h1>
       <p>
-        Lantern has a built-in evaluation system for testing agents against
-        declarative test cases, gating CI on regressions, running A/B
-        experiments, and collecting human feedback — all from the same API the
-        dashboard uses.
+        Test agents against fixed cases, fail CI on regressions, split traffic
+        between versions, and collect human feedback. All of it is on the same
+        REST API the dashboard uses.
       </p>
 
       <Concept>
-        How do you know your agent is actually good — and stays good after you
-        change its prompt? Evaluations are the answer: a set of example
-        questions with known-good answers that you run against the agent like a
-        test suite. Pin today&apos;s score as your baseline, and if a future
-        change makes the agent worse, Lantern blocks it in CI before your users
-        ever see the regression. A/B experiments and thumbs-up/down feedback
-        feed the same loop.
+        Change a prompt and the agent may get worse. An eval suite is a set of
+        inputs with expected results. Run it like a test suite, pin today&apos;s
+        score as the baseline, and the API answers 422 when a later run scores
+        lower, so CI fails before users see it.
       </Concept>
 
       <h2 id="eval-suites">Eval suites</h2>
       <p>
-        An eval suite is a named collection of test cases for an agent. Each
-        case defines an input and expected output (or a scoring function).
-        Suites are upserted by <code>(tenant, agent, name)</code>.
+        A suite is a named list of cases for one agent. A case has a{" "}
+        <code>name</code>, an <code>input</code> string, and an{" "}
+        <code>expected</code> string and/or an <code>assert</code> object
+        (e.g. <code>{`{"contains":"1945"}`}</code>, or <code>{`{"grounded":true}`}</code>{" "}
+        to fail outputs that claim actions nothing backed). Suites are upserted by{" "}
+        <code>(tenant, agent, name)</code>.
       </p>
 
       <h3>Create or update a suite</h3>
@@ -36,10 +35,10 @@ export default function EvaluationsPage() {
   "name": "factual-accuracy",
   "cases": [
     {
-      "id": "case-1",
-      "input": { "question": "What year did WWII end?" },
-      "expectedOutput": "1945",
-      "scoreThreshold": 0.9
+      "name": "case-1",
+      "input": "What year did WWII end?",
+      "expected": "1945",
+      "assert": { "contains": "1945" }
     }
   ]
 }
@@ -58,32 +57,32 @@ DELETE /v1/eval-suites/{id}        — delete suite`}</code>
 
       <h2 id="eval-runs">Recording a run + CI gate</h2>
       <p>
-        After running your agent against a suite&apos;s cases, post the results.
-        If the score has regressed vs. the branch baseline, the API returns{" "}
-        <strong>HTTP 422</strong> — wire this into your CI pipeline to block
-        merges on regression.
+        Run the agent on each case yourself (or use <code>lantern test</code>),
+        then post the per-case results. The server computes the score (mean of
+        case scores) and compares it with the branch baseline. A regression
+        returns <strong>HTTP 422</strong>, which fails a CI step.
       </p>
 
       <pre>
         <code>{`POST /v1/eval-runs
 {
   "suiteId": "suite-uuid",
-  "agentName": "research-agent",
   "agentVersion": "v2",
   "commitSha": "abc1234",
   "branch": "main",
-  "passed": 9,
-  "score": 0.91,
-  "casesResult": [
-    { "id": "case-1", "passed": true, "score": 0.95, "actual": "1945" }
+  "durationMs": 4200,
+  "totalCostUsd": 0.12,
+  "caseResults": [
+    { "name": "case-1", "passed": true, "score": 0.95, "actual": "1945" }
   ]
 }
 
-Response: 200 OK — passed baseline check
-{ "id": "run-uuid", "score": 0.91, "passed": 9, "regressed": false }
+Response: 200 OK — no regression
+{ "id": "run-uuid", "passed": true, "score": 0.95, "casesTotal": 1,
+  "casesPassed": 1, "regressed": false, "baselineScore": 0.94 }
 
 Response: 422 Unprocessable Entity — regressed vs. baseline
-{ "error": "score 0.91 is below baseline 0.94 on branch main", "regressed": true }`}</code>
+{ "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94, ... }`}</code>
       </pre>
 
       <h3>Other eval-run endpoints</h3>
@@ -93,8 +92,9 @@ Response: 422 Unprocessable Entity — regressed vs. baseline
 
       <h2 id="baselines">Baselines</h2>
       <p>
-        Pin a specific eval run as the baseline for an agent + branch. Future
-        runs on that branch are compared against it.
+        Pin an eval run as the baseline for an agent and branch. Later runs on
+        that branch are compared against it. From the CLI:{" "}
+        <code>lantern test --agent a --suite s --set-baseline</code>.
       </p>
       <pre>
         <code>{`POST /v1/eval-baselines
@@ -155,10 +155,11 @@ Response:
 
       <h2 id="experiments">A/B experiments</h2>
       <p>
-        Run two agent versions side by side with deterministic traffic
-        splitting (FNV-1a hash on a caller-supplied bucketing key). Record
-        per-request outcomes and let Lantern auto-promote the winner when it
-        has a statistically significant lift.
+        Split traffic between two agent versions. The split is deterministic
+        (FNV-1a hash of the run ID), so a run always lands on the same variant.
+        Record a score per run; with <code>autoPromote</code> on, Lantern
+        promotes the winner once both arms have enough runs and one leads by
+        more than 0.02. This is a fixed margin, not a significance test.
       </p>
 
       <h3>Create an experiment</h3>
@@ -166,10 +167,12 @@ Response:
         <code>{`POST /v1/experiments
 {
   "agentName": "research-agent",
+  "name": "prompt-v2-test",
   "variantAVersion": "v1",
   "variantBVersion": "v2",
-  "trafficSplitB": 0.2,     // 20% to variant B
-  "autoPromote": true       // auto-flip to B if lift > 2%
+  "trafficSplitB": 20,        // percent of traffic to B (0-100)
+  "autoPromote": true,        // promote the leader at +0.02 score
+  "minRunsToPromote": 100     // per arm; default 100
 }
 
 Response: 201 Created
@@ -180,35 +183,35 @@ Response: 201 Created
       <pre>
         <code>{`POST /v1/experiments/{id}/record
 {
-  "bucketingKey": "user-123",  // determines which variant this caller gets
-  "score": 0.95                // 0–1; your metric (e.g. task success rate)
+  "variant": "b",   // "a" | "b"
+  "score": 0.95     // 0-1; the stored score is a running mean per variant
 }
 
 // Auto-promotion fires when:
-// - variant B score - variant A score > 0.02
-// - both arms have ≥ minRunsPerArm samples`}</code>
+// - both arms have >= minRunsToPromote runs
+// - one arm's mean score beats the other by more than 0.02`}</code>
       </pre>
 
       <h3>Conclude manually</h3>
       <pre>
         <code>{`POST /v1/experiments/{id}/conclude
 {
-  "winner": "b",     // "a" | "b" | null (inconclusive)
-  "promote": true    // flip agent's currentVersionId to the winner
+  "winner": "b",     // "a" | "b" | "tie"
+  "promote": true    // flip the agent's current version to the winner
 }`}</code>
       </pre>
 
       <h3>Other experiment endpoints</h3>
       <pre>
         <code>{`GET /v1/experiments         — list (bare array)
-GET /v1/experiments/{id}    — get with current a_score / b_score`}</code>
+GET /v1/experiments/{id}    — get with aScore / bScore and run counts`}</code>
       </pre>
 
       <h2 id="feedback">Human feedback (RLHF)</h2>
       <p>
         Collect thumbs-up / thumbs-down reactions on individual runs. Score is
-        1–5; 4–5 is positive, 1–2 is negative. Negative runs feed the
-        rehearsal queue automatically.
+        1–5; 4–5 is positive, 1–2 is negative. Runs scored 2 or
+        lower are pulled in by rehearsals.
       </p>
 
       <pre>
@@ -221,25 +224,29 @@ GET /v1/experiments/{id}    — get with current a_score / b_score`}</code>
 
 GET /v1/runs/{id}/feedback                   — per-run history (bare array)
 GET /v1/agents/{name}/feedback               — aggregate summary
-  → { avgScore, thumbsUp, thumbsDown, trend7d: [...] }`}</code>
+  → { totalFeedback, avgScore, thumbsUp, thumbsDown, last7DaysAvgScore, ... }`}</code>
       </pre>
 
       <h2 id="rehearsals">Rehearsals</h2>
       <p>
-        Replay past failed or low-scoring runs as synthetic test cases against
-        a candidate version before you flip production traffic. Uses the same
-        CI-gate baseline machinery as eval runs.
+        Pull past failed or low-scored runs (feedback score of 2 or lower) as
+        synthetic test cases, then replay them against a candidate version
+        before you flip traffic. The endpoint returns the cases;{" "}
+        <code>lantern test --rehearse</code> runs them.
       </p>
 
       <pre>
         <code>{`POST /v1/runs/rehearse
 {
   "agentName": "research-agent",
-  "candidateVersion": "v3",
-  "window": "7d",   // look-back window for source runs
-  "limit": 20,      // max synthetic cases to generate
-  "maxScore": 2     // only pull runs with feedback score ≤ this
-}`}</code>
+  "window": "7d",            // look-back (default 7d)
+  "limit": 20,               // default 25, max 200
+  "includeFailures": true,   // status=failed runs (default true)
+  "includeLowScore": true    // feedback score <= 2 (default true)
+}
+
+Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
+  "expectedOutput", ... }], "count", "reason"? }`}</code>
       </pre>
 
       <h2 id="otel">OTel traces</h2>

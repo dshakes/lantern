@@ -18,7 +18,7 @@ export function Toc() {
       const els = Array.from(
         document.querySelectorAll<HTMLElement>("article h2[id], article h3[id]")
       );
-      setHeads(els.map((h) => ({ id: h.id, text: h.textContent ?? "", level: h.tagName === "H3" ? 3 : 2 })));
+      setHeads(els.map((h) => ({ id: h.id, text: (h.textContent ?? "").replace(/#$/, "").trim(), level: h.tagName === "H3" ? 3 : 2 })));
 
       const obs = new IntersectionObserver(
         (entries) => {

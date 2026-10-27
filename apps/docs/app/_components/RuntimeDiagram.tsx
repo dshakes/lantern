@@ -9,7 +9,7 @@ export function RuntimeDiagram() {
     <div className="sys">
       <div className="sys-actors single">
         <div className="sys-actor">
-          <Terminal className="h-4 w-4 text-lantern-300" />
+          <Terminal className="h-4 w-4 text-flame" />
           <div>
             <div className="sys-actor-name">lantern run agent.yaml</div>
             <div className="sys-actor-sub">submit the spec — image · isolation · limits · egress · secrets</div>
