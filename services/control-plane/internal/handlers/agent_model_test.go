@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -362,5 +363,132 @@ func TestWorkflowAIStep_AgentModel(t *testing.T) {
 				t.Errorf("ai-step model: got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidAgentModel(t *testing.T) {
+	tests := []struct {
+		model string
+		ok    bool
+	}{
+		{"", true}, {"auto", true}, {"fast", true}, {"cheap", true}, {"reasoning-small", true},
+		{"chat-edge", true}, {"gpt-4o-mini", true}, {"o3-mini", true}, {"claude-haiku-4-5-20251001", true},
+		{"tts", false}, {"embed-large", false}, {"gemini-pro", false}, {"Claude-Opus", false},
+		{"sk-ant-api03-secretsecret", false}, {"claude-" + string(bytes.Repeat([]byte("x"), 100)), false},
+		{"gpt 4o; drop table", false},
+	}
+	for _, tc := range tests {
+		err := validAgentModel(tc.model)
+		if (err == nil) != tc.ok {
+			t.Errorf("validAgentModel(%q): err=%v, want ok=%v", tc.model, err, tc.ok)
+		}
+		if err != nil && tc.model != "" && bytes.Contains([]byte(err.Error()), []byte(tc.model)) {
+			t.Errorf("validAgentModel(%q): error echoes the input", tc.model)
+		}
+	}
+}
+
+// TestAgentModel_CreateValidates: POST /v1/agents persists a valid model and
+// rejects an invalid one with 400 without echoing it.
+func TestAgentModel_CreateValidates(t *testing.T) {
+	pool := openTestPool(t)
+	h := newTwoTierRESTHandler(t, pool)
+	tok := mintTestToken(t, recoveryTestDevTenantID, "00000000-0000-0000-0000-000000000002", "owner")
+	post := func(body map[string]any) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/v1/agents", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		w := httptest.NewRecorder()
+		h.CreateAgent(w, req)
+		return w
+	}
+	name := fmt.Sprintf("agent-model-create-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM agents WHERE tenant_id = $1 AND name = $2`, recoveryTestDevTenantID, name)
+	})
+
+	const secretish = "sk-ant-api03-not-a-model"
+	if w := post(map[string]any{"name": name, "model": secretish}); w.Code != http.StatusBadRequest || bytes.Contains(w.Body.Bytes(), []byte(secretish)) {
+		t.Fatalf("invalid model: HTTP %d body %s — want 400 without the value echoed", w.Code, w.Body.String())
+	}
+	w := post(map[string]any{"name": name, "model": "fast"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: HTTP %d %s", w.Code, w.Body.String())
+	}
+	var stored string
+	_ = pool.QueryRow(context.Background(), `SELECT COALESCE(model, '') FROM agents WHERE tenant_id = $1 AND name = $2`, recoveryTestDevTenantID, name).Scan(&stored)
+	if stored != "fast" {
+		t.Errorf("stored model: got %q, want fast", stored)
+	}
+}
+
+// TestTemplateApply_PersistsPromptLabelsModel is the regression test for the
+// template-create UPDATE (templates.go), which wrote the then-missing
+// agents.model column and so silently dropped system_prompt and labels too.
+func TestTemplateApply_PersistsPromptLabelsModel(t *testing.T) {
+	pool := openTestPool(t)
+	rest := newTwoTierRESTHandler(t, pool)
+	th := NewTemplateHandler(rest, rest.auth)
+	tpl := templates["lantern-guide"]
+	name := fmt.Sprintf("agent-model-tpl-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM schedules WHERE tenant_id = $1 AND agent_name = $2`, recoveryTestDevTenantID, name)
+		_, _ = pool.Exec(bg, `DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`, recoveryTestDevTenantID, name)
+		_, _ = pool.Exec(bg, `DELETE FROM agents WHERE tenant_id = $1 AND name = $2`, recoveryTestDevTenantID, name)
+	})
+
+	b, _ := json.Marshal(map[string]any{"templateId": tpl.ID, "name": name})
+	req := httptest.NewRequest(http.MethodPost, "/v1/agents/from-template", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+mintTestToken(t, recoveryTestDevTenantID, "00000000-0000-0000-0000-000000000002", "owner"))
+	w := httptest.NewRecorder()
+	th.Apply(w, req)
+	if w.Code >= 300 {
+		t.Fatalf("apply: HTTP %d %s", w.Code, w.Body.String())
+	}
+	assertAgentRestoredFromTemplate(t, pool, name, tpl)
+}
+
+// TestInlineRun_BackfillPersistsPromptLabelsModel is the regression test for
+// the executor's lazy back-fill UPDATE, which failed the same way.
+func TestInlineRun_BackfillPersistsPromptLabelsModel(t *testing.T) {
+	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+	h, srv := newChaosHandler(t)
+	tpl := templates["lantern-guide"]
+	f := insertDRFixture(t, srv.Pool, fmt.Sprintf("agent-model-backfill-%d", time.Now().UnixNano()), "queued")
+	if _, err := srv.Pool.Exec(context.Background(),
+		`UPDATE agents SET labels = jsonb_build_object('lantern.template', $1::text) WHERE id = $2`, tpl.ID, f.agentID); err != nil {
+		t.Fatalf("seed labels: %v", err)
+	}
+	h.llmProxy = NewLlmProxyHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	h.llmProxy.httpClient = &http.Client{Transport: &stubRoundTripper{responses: []func(*http.Request) (*http.Response, error){okByProvider("done")}}}
+
+	var name string
+	_ = srv.Pool.QueryRow(context.Background(), `SELECT name FROM agents WHERE id = $1`, f.agentID).Scan(&name)
+	if _, _, err := h.executeRunInlineSync(tenantCtx(recoveryTestDevTenantID), f.runID, recoveryTestDevTenantID, name, map[string]any{"message": "hi"}); err != nil {
+		t.Fatalf("executeRunInlineSync: %v", err)
+	}
+	assertAgentRestoredFromTemplate(t, srv.Pool, name, tpl)
+}
+
+func assertAgentRestoredFromTemplate(t *testing.T, pool interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, name string, tpl templateDef) {
+	t.Helper()
+	var prompt, model, labelTemplate string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(system_prompt, ''), COALESCE(model, ''), COALESCE(labels->>'lantern.template', '')
+		FROM agents WHERE tenant_id = $1 AND name = $2`, recoveryTestDevTenantID, name).Scan(&prompt, &model, &labelTemplate); err != nil {
+		t.Fatalf("read agent: %v", err)
+	}
+	if prompt != tpl.SystemPrompt {
+		t.Errorf("system_prompt not persisted (got %d chars, want %d)", len(prompt), len(tpl.SystemPrompt))
+	}
+	if model != tpl.Model {
+		t.Errorf("model: got %q, want %q", model, tpl.Model)
+	}
+	if labelTemplate != tpl.ID {
+		t.Errorf("labels lantern.template: got %q, want %q", labelTemplate, tpl.ID)
 	}
 }
