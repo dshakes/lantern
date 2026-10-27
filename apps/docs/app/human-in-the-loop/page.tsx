@@ -5,32 +5,29 @@ export default function HumanInTheLoopPage() {
     <>
       <h1>Human-in-the-loop</h1>
       <p>
-        Lantern has two mechanisms for inserting humans into agent workflows:{" "}
-        <strong>approval nodes</strong> (structured workflow gates) and the{" "}
-        <strong>confidence gate</strong> (automatic diversion of low-confidence
-        steps). Both use the same takeover API to record the human decision and
-        resume the workflow.
+        Two ways to put a person in a workflow:{" "}
+        <strong>approval nodes</strong> you place yourself, and the{" "}
+        <strong>confidence gate</strong> (off by default), which diverts
+        low-confidence steps to a person. Both record the decision through the
+        takeover API.
       </p>
 
       <Concept>
-        Some actions are too consequential to let an AI take alone — sending an
-        email to 500 customers, issuing a refund, deleting records. Human-in-
-        the-loop means the agent stops at those moments and asks a person
-        first. You can place the checkpoint yourself (an approval step in the
-        workflow), or let Lantern add one automatically whenever the agent
-        seems unsure of what it&apos;s about to do. While waiting for your
-        answer, the run costs nothing — it&apos;s parked, not spinning.
+        Some actions should not run unattended: mailing 500 customers, issuing
+        a refund, deleting records. The run stops there and asks a person.
+        Place the checkpoint yourself, or let the confidence gate add one when
+        the agent seems unsure. While it waits, the run is parked and holds no
+        worker.
       </Concept>
 
       <h2 id="approval">Approval workflow nodes</h2>
       <p>
         In the visual workflow editor, an <code>approval</code> node pauses
-        execution until a human acts. Under the hood this uses
-        park-without-compute: the run transitions to{" "}
-        <code>status: &apos;waiting&apos;</code>, the goroutine is released (no
-        compute cost while waiting), and a{" "}
-        <code>takeover_requests</code> row is created. The request expires after{" "}
-        <strong>30 minutes</strong> if no action is taken.
+        execution until a human acts. The run moves to{" "}
+        <code>status: &apos;waiting&apos;</code>, the executing goroutine exits,
+        and a <code>takeover_requests</code> row is created. The request
+        expires after <strong>30 minutes</strong> by default (pass{" "}
+        <code>timeoutMinutes</code>, max 1440).
       </p>
 
       <h3>Takeover API</h3>
@@ -38,41 +35,43 @@ export default function HumanInTheLoopPage() {
         <code>{`# Create a pending takeover row (done by the workflow node automatically,
 # or manually by an operator)
 POST /v1/runs/{id}/takeover/request
-{ "reason": "About to send email to 500 users" }
+{ "reason": "About to send email to 500 users", "stepId": "send", "timeoutMinutes": 60 }
 → { "id": "tk-uuid", "status": "pending", "expiresAt": "..." }
 
 # List takeover requests for a run
 GET /v1/runs/{id}/takeover
 → [{ "id": "tk-uuid", "status": "pending", "reason": "...", "expiresAt": "..." }]
 
-# Operator approves (optionally including an SDP offer for WebRTC takeover)
+# Operator approves (optional notes; optional SDP offer for WebRTC takeover)
 POST /v1/runs/{id}/takeover/{tkId}/grant
-{ "sdpOffer": "v=0\r\n..." }   # optional
+{ "notes": "ok to send", "sdpOffer": "v=0\r\n..." }
 
 # Browser-side SDP answer (for live WebRTC session)
 POST /v1/runs/{id}/takeover/{tkId}/answer
 { "sdpAnswer": "v=0\r\n..." }
 
-# Release — workflow resumes from the approval node
-POST /v1/runs/{id}/takeover/{tkId}/release
-→ run transitions back to "running", goroutine resumes`}</code>
+# Release — the run is re-queued and resumes from the approval node
+POST /v1/runs/{id}/takeover/{tkId}/release`}</code>
       </pre>
 
       <div className="callout callout-info">
-        <strong>Park-without-compute.</strong> While the run is in{" "}
-        <code>waiting</code> status the goroutine is parked — no CPU or memory
-        is consumed. This means long approval waits (hours or days) cost nothing.
-        The workflow resumes from the exact node it paused at.
+        <strong>Parked, not spinning.</strong> A run in <code>waiting</code>{" "}
+        status holds no goroutine, so a long wait costs no compute. On release
+        the interpreter replays the graph and skips every step already
+        completed in the journal, resuming at the approval node. The SDP
+        fields exist for live WebRTC takeover, but the microVM video stream
+        is not wired yet; the grant, release and resume path is. A paused
+        child run fails its parent step; nested approvals do not work yet.
       </div>
 
       <h2 id="confidence-gate">Confidence gate</h2>
       <p>
-        Enable the confidence gate with{" "}
-        <code>LANTERN_CONFIDENCE_GATE=1</code>. Before a side-effecting node
-        executes, the interpreter evaluates a confidence score. If the score
-        falls below the threshold (<code>LANTERN_CONFIDENCE_GATE_THRESHOLD</code>,
-        default 0.75), the step is diverted to human approval instead of
-        auto-executing.
+        Off by default. Set <code>LANTERN_CONFIDENCE_GATE=1</code> to turn it
+        on. Before a side-effecting node runs, the interpreter scores it. Below
+        the threshold (<code>LANTERN_CONFIDENCE_GATE_THRESHOLD</code>, default
+        0.75) the step goes to human approval instead of executing. If no
+        approval handler is wired, the step auto-approves so unattended
+        workflows still finish.
       </p>
 
       <h3>Gated node types</h3>
@@ -103,7 +102,7 @@ POST /v1/runs/{id}/takeover/{tkId}/release
         </thead>
         <tbody>
           <tr>
-            <td><code>verbalization_heuristic</code> (default)</td>
+            <td><code>verbalization</code> (default)</td>
             <td>
               Scans prior step text for self-reported confidence ("Confidence:
               85%"). Falls back to 0.9 when none found.
@@ -114,7 +113,7 @@ POST /v1/runs/{id}/takeover/{tkId}/release
             </td>
           </tr>
           <tr>
-            <td><code>self_consistency</code></td>
+            <td><code>self-consistency</code></td>
             <td>
               Re-poses the pending action to the model{" "}
               <code>LANTERN_CONFIDENCE_SAMPLES</code> times (default 5) as a
@@ -131,13 +130,13 @@ POST /v1/runs/{id}/takeover/{tkId}/release
 
       <h3>Outcome calibration</h3>
       <p>
-        Enable with <code>LANTERN_CONFIDENCE_CALIBRATE=1</code>. Wraps the
+        Off by default; <code>LANTERN_CONFIDENCE_CALIBRATE=1</code> enables it. Wraps the
         base estimator and lowers its score by the realized{" "}
         <strong>regret rate</strong> — the fraction of auto-executed steps of
         that type later thumbs-downed (feedback score ≤ 2) or ending in a
         failed run:{" "}
         <code>adjusted = base × (1 − regret)</code>. Action types that have
-        burned the owner get gated harder over time. Fail-safe: any error or
+        gone wrong get gated harder over time. Fail-safe: any error or
         fewer than 3 samples → regret 0 → base unchanged.
       </p>
 
@@ -145,8 +144,8 @@ POST /v1/runs/{id}/takeover/{tkId}/release
       <p>
         Every gated step emits a <code>confidence_evaluated</code> journal event
         with <code>{"{ score, threshold, decision (\"execute\" | \"divert\"), node_type, estimator }"}</code>.
-        Diverted steps emit <code>step_completed</code> after approval or{" "}
-        <code>step_failed</code> after denial.
+        A diverted step emits <code>step_completed</code> once approved, or{" "}
+        <code>step_failed</code> if denied.
       </p>
 
       <h3>Env vars</h3>

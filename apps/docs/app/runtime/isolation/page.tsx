@@ -63,7 +63,7 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
           <tr>
             <td><code>untrusted</code></td>
             <td><code>gvisor</code> + egress-deny</td>
-            <td>Loads internet packages (PyPI/npm), drives a browser, or runs LLM-generated code. Adds an egress allowlist and seccomp deny-default.</td>
+            <td>Loads internet packages (PyPI/npm), drives a browser, or runs LLM-generated code. Adds an egress allowlist (a NetworkPolicy fence); pods run with the <code>RuntimeDefault</code> seccomp profile.</td>
           </tr>
           <tr>
             <td><code>hostile</code></td>
@@ -86,8 +86,7 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
       <h2 id="defaults">Defaults &amp; forced classes</h2>
       <ul>
         <li>An <strong>unset</strong> class resolves to <code>standard</code>.</li>
-        <li>Marketplace bundles and LLM-generated bundles are <strong>forced to <code>untrusted</code></strong> — they cannot opt down.</li>
-        <li><code>trusted</code> requires the signing key; a bundle without it cannot claim <code>trusted</code>.</li>
+        <li>Per ADR 0002, marketplace and LLM-generated bundles are to be forced to <code>untrusted</code>, and <code>trusted</code> is to require the signing key. This is policy, not yet enforced at schedule time: a request for <code>trusted</code> is honoured as sent.</li>
       </ul>
 
       <h2 id="fail-closed">The fail-closed gate</h2>
@@ -101,9 +100,10 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
         <li>A node that lacks the required hardened RuntimeClass <strong>fails closed</strong> — the run is refused. It is never downgraded to <code>runc</code>.</li>
       </ul>
       <p>
-        The requirement is enforced in two places: the manager (which builds
-        the pod spec) and the scheduler&apos;s node-capability filter (which only
-        places onto nodes advertising the needed RuntimeClass).
+        The requirement is enforced in two places: the manager, which refuses
+        the spawn when the RuntimeClass is not configured, and a pod
+        nodeSelector (<code>lantern.dev/runtimeclass</code>) that only matches
+        nodes labelled as having the handler.
       </p>
 
       <div className="callout callout-danger">
@@ -137,6 +137,15 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
       <p>
         Egress enforcement and secret vending for untrusted workloads are
         covered in <Link href="/runtime/identity">Identity &amp; secrets</Link>.
+      </p>
+      <h2 id="firecracker">Firecracker backend and broker mode</h2>
+      <p>
+        Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM
+        has a NIC and the harness enforces the egress allowlist inside the guest. Set{" "}
+        <code>LANTERN_EGRESS_MODE=broker</code> on the manager (opt-in, Firecracker only) and the VM gets no network
+        device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects
+        credentials. Kata and Kubernetes backends do not support broker mode. See{" "}
+        <Link href="/runtime/egress">Egress and credentials</Link>.
       </p>
     </>
   );

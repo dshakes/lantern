@@ -8,8 +8,7 @@ export default function RuntimeIdentityPage() {
       <p>
         Every headless agent spawn gets its own cryptographic identity, and
         secrets are vended to it at execution time over a mutually-authenticated
-        channel — never baked into the image, never sitting in an environment
-        variable on disk. The two are linked: the per-instance identity is what
+        channel — never baked into the image or the spec. The two are linked: the per-instance identity is what
         authenticates the secret-vending call.
       </p>
 
@@ -69,10 +68,8 @@ export default function RuntimeIdentityPage() {
       <h2 id="ref-form">The <code>lantern.secret/...</code> ref form</h2>
       <p>
         In the spec you reference a secret, you do not embed it. The runtime
-        resolves the reference at execution time and hands the value to the
-        workload — typically at a path like{" "}
-        <code>/run/lantern/secrets/&lt;NAME&gt;</code> — so the raw value never
-        appears in the image, the environment, logs, traces, or run state. From
+        resolves the reference at execution time, so the raw value never
+        appears in the image, logs, traces, or run state. From
         demo 02:
       </p>
       <pre><code>{`secrets:
@@ -92,6 +89,15 @@ export default function RuntimeIdentityPage() {
         <code>untrusted</code> with an egress allowlist, so a compromised
         dependency can&apos;t exfiltrate the vended value to an arbitrary host.
       </div>
+
+      <h2 id="broker">Broker mode: credentials never enter the VM</h2>
+      <p>
+        Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid.
+        The opt-in <strong>broker mode</strong> (<code>LANTERN_EGRESS_MODE=broker</code>, Firecracker only) closes
+        that gap for outbound API calls: the VM has no network device, and the host broker resolves the{" "}
+        <code>lantern.secret</code> ref and injects the header on the way out. The workload never holds the value. See{" "}
+        <Link href="/runtime/egress">Egress and credentials</Link>.
+      </p>
 
       <h2 id="takeaway">What you get</h2>
       <ul>

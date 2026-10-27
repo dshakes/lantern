@@ -6,32 +6,29 @@ export default function SchedulingPage() {
     <>
       <h1>Scheduling</h1>
       <p>
-        Schedules are a first-class resource in Lantern — separate from agents,
-        so one agent can have many schedules with different inputs and timezones.
-        They are managed through <code>/v1/schedules</code>.
+        Run an agent on a cron expression. Schedules are their own resource, so
+        one agent can have many, each with its own input and timezone. Manage
+        them at <code>/v1/schedules</code>.
       </p>
 
       <Concept>
-        A schedule makes an agent run itself — &quot;every weekday at 9am,
-        summarize my inbox&quot; — with no one clicking a button. The
-        &quot;cron expression&quot; below is just the standard shorthand for
-        describing when: five fields for minute, hour, day, month, and weekday.
-        You can attach several schedules to one agent, each with its own input
-        and its own timezone, and every scheduled run shows up in the dashboard
-        like any other.
+        &quot;Every weekday at 9am, summarize my inbox,&quot; with nobody
+        clicking a button. A cron expression is five fields: minute, hour, day
+        of month, month, weekday. Scheduled runs appear in the dashboard like
+        any other run.
       </Concept>
 
       <h2 id="cron">Cron expressions</h2>
       <p>
-        Schedules use standard 5-field cron syntax (minute, hour, day-of-month,
-        month, day-of-week):
+        Five fields: minute, hour, day of month, month, day of week. Each field
+        accepts <code>*</code>, lists, ranges and <code>*/N</code> steps:
       </p>
       <pre>
         <code>{`# ┌─── minute (0-59)
 # │ ┌─── hour (0-23)
 # │ │ ┌─── day of month (1-31)
 # │ │ │ ┌─── month (1-12)
-# │ │ │ │ ┌─── day of week (0-6, Sun=0)
+# │ │ │ │ ┌─── day of week (0-7, Sun=0 or 7)
 # │ │ │ │ │
 # * * * * *
 
@@ -41,11 +38,12 @@ export default function SchedulingPage() {
       </pre>
 
       <div className="callout callout-warning">
-        <strong>DOM + DOW footgun.</strong> When both day-of-month and
-        day-of-week are non-wildcard (e.g. <code>0 9 1-7 * 1</code>), standard
-        cron fires on <em>either</em> condition — not only on days that satisfy
-        both. To target the first Monday of a month reliably, use a workflow
-        with a conditional node, not a cron expression.
+        <strong>Day-of-month and day-of-week are ANDed.</strong> Classic Vixie
+        cron fires on <em>either</em> when both are set. Lantern requires both
+        to match, so <code>0 9 1-7 * 1</code> fires on the first Monday of the
+        month. If you port a crontab that relied on the OR behavior, rewrite
+        it as two schedules. The search for the next fire time gives up after
+        two years.
       </div>
 
       <h2 id="api">Schedule API</h2>
@@ -59,7 +57,8 @@ Content-Type: application/json
   "agentName": "research-agent",
   "cronExpr": "0 9 * * 1-5",
   "timezone": "America/New_York",
-  "config": { "input": { "mode": "daily-digest" } },
+  "inputTemplate": { "mode": "daily-digest" },
+  "deliveryEmail": "me@example.com",   // optional: email the result
   "enabled": true
 }
 
@@ -68,7 +67,8 @@ Response: 201 Created
   "id": "sched-uuid",
   "agentName": "research-agent",
   "cronExpr": "0 9 * * 1-5",
-  "timezone": "America/New_York",
+  "inputTemplate": { "mode": "daily-digest" },
+  "deliveryEmail": "me@example.com",
   "enabled": true,
   "nextFireAt": "2026-07-28T13:00:00Z"
 }`}</code>
@@ -89,7 +89,7 @@ Response: 200 OK — bare array
         <code>{`PUT /v1/schedules/{id}
 Content-Type: application/json
 
-{ "enabled": false }   // pause the schedule`}</code>
+{ "enabled": false }   // pause. Also accepts cronExpr, deliveryEmail, timezone`}</code>
       </pre>
 
       <h3>Delete a schedule</h3>
@@ -101,22 +101,22 @@ Response: 204 No Content`}</code>
 
       <h2 id="timezone">Timezone handling</h2>
       <p>
-        Each schedule carries an optional <code>timezone</code> field (IANA,
-        e.g. <code>America/New_York</code>). When set, cron matching fires at
-        the schedule&apos;s local time; DST transitions are handled
-        automatically. Without a per-schedule timezone, the deployment-wide
-        <code>LANTERN_DEFAULT_TIMEZONE</code> applies; both unset means UTC.
+        <code>timezone</code> is an optional IANA name (an invalid one returns
+        400). Cron then matches the schedule&apos;s local time. Resolution
+        order: the schedule&apos;s zone, then{" "}
+        <code>LANTERN_DEFAULT_TIMEZONE</code>, then UTC. With neither set,{" "}
+        <code>0 9 * * *</code> fires at 09:00 UTC.
       </p>
       <p>
-        The same timezone logic governs the budget-enforcement day boundary:
-        <code>max_cost_usd_per_day</code> rolls at local midnight, not UTC.
+        The deployment default (not a per-schedule zone) also sets the{" "}
+        <Link href="/budgets">budget</Link> day boundary: daily limits roll at
+        local midnight in that zone.
       </p>
 
       <div className="callout callout-info">
-        <strong>Surfaces trigger runs too.</strong> Incoming messages on a
-        WhatsApp, Slack, or webchat surface trigger a run (via{" "}
-        <code>POST /v1/runs</code> under the hood) — they are not schedules but
-        follow the same run lifecycle. See{" "}
+        <strong>Surfaces trigger runs too.</strong> Inbound messages on a
+        channel start runs. They are not schedules but follow the same run
+        lifecycle. See{" "}
         <Link href="/surfaces">Surfaces</Link>.
       </div>
     </>

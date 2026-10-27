@@ -22,11 +22,11 @@ export function SystemDiagram() {
     <div className="sys">
       <div className="sys-actors">
         <Link href="/quickstart" className="sys-actor">
-          <Code2 className="h-4 w-4 text-lantern-300" />
+          <Code2 className="h-4 w-4 text-flame" />
           <div><div className="sys-actor-name">Developers</div><div className="sys-actor-sub">SDK · CLI · REST · dashboard</div></div>
         </Link>
         <Link href="/surfaces" className="sys-actor">
-          <MessagesSquare className="h-4 w-4 text-sky-300" />
+          <MessagesSquare className="h-4 w-4 text-glass" />
           <div><div className="sys-actor-name">End users</div><div className="sys-actor-sub">WhatsApp · Slack · Telegram · Web · Voice</div></div>
         </Link>
       </div>
@@ -65,11 +65,11 @@ export function SystemDiagram() {
 
       <div className="sys-actors">
         <Link href="/models" className="sys-actor">
-          <Boxes className="h-4 w-4 text-emerald-300" />
+          <Boxes className="h-4 w-4 text-patina" />
           <div><div className="sys-actor-name">LLM providers</div><div className="sys-actor-sub">OpenAI · Anthropic · local</div></div>
         </Link>
         <Link href="/connectors" className="sys-actor">
-          <Database className="h-4 w-4 text-amber-300" />
+          <Database className="h-4 w-4 text-flame" />
           <div><div className="sys-actor-name">Your APIs &amp; data</div><div className="sys-actor-sub">17 connectors · in your network</div></div>
         </Link>
       </div>

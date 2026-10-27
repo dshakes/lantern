@@ -145,7 +145,7 @@ curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" \\
   -d '{"description":"Turn meeting notes into action items"}' | tee spec.json
 
 # 3. Create it (the instruction field is systemPrompt)
-jq '{name, description, systemPrompt, model}' spec.json | \\
+jq '{name, description, systemPrompt}' spec.json | \\
   curl -s -X POST localhost:8080/v1/agents -H "$H" -d @-
 
 # 4. Run it with the suggested first task, then stream events (named SSE events)

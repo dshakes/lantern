@@ -5,20 +5,20 @@ export default function BudgetsPage() {
     <>
       <h1>Budgets</h1>
       <p>
-        Budgets are policy-as-code per-agent limits. When a run would exceed a
-        hard-fail limit, Lantern returns <strong>HTTP 402</strong> before
-        execution begins. Soft budgets log and continue. Use{" "}
-        <code>POST /v1/runs/forecast</code> to check whether a run would exceed
-        budget before submitting it.
+        Per-agent spend and rate limits, set as policy. With{" "}
+        <code>hardFail: true</code>, a run, session message or completion gets{" "}
+        <strong>HTTP 402</strong> before the model is called once the agent&apos;s
+        daily cost cap or runs-per-day cap (or the tenant-wide daily cost cap) is
+        already reached. With <code>false</code>, the breach is logged and the
+        call proceeds. The per-run cost cap is checked by{" "}
+        <code>POST /v1/runs/forecast</code>. A budget lookup error does not block
+        the request.
       </p>
 
       <Concept>
-        AI agents spend real money with every model call — and a buggy loop can
-        burn through a month&apos;s budget in an afternoon. A budget is a
-        spending cap you set per agent: dollars per day, dollars per run, or
-        even &quot;this agent may only send 10 emails a day&quot;. With hard-fail
-        on, Lantern refuses to start a run that would blow the cap — the money
-        is never spent, rather than flagged after the fact.
+        A buggy loop can burn a month of model spend in an afternoon. Set a cap
+        per agent: dollars per day or runs per day. With hard-fail on, the
+        next run is refused before it calls a model, not flagged afterward.
       </Concept>
 
       <h2 id="policy">Setting a budget</h2>
@@ -32,14 +32,15 @@ Content-Type: application/json
   "maxTokensPerDay": 500000,
   "maxRunsPerDay": 100,
   "toolLimits": {
-    "gmail.send": 10,
-    "github.createIssue": 5
+    "slack.post": 100,
+    "github.create_issue": 25
   },
-  "hardFail": true
+  "hardFail": true,
+  "notifyAtPct": 80
 }
 
 Response: 200 OK
-{ "agentName": "research-agent", "maxCostUsdPerDay": 5.00, ... }`}</code>
+{ "status": "saved" }`}</code>
       </pre>
 
       <p>Field reference:</p>
@@ -60,12 +61,12 @@ Response: 200 OK
           <tr>
             <td><code>maxCostUsdPerRun</code></td>
             <td>number</td>
-            <td>Max USD spend for a single run</td>
+            <td>Max estimated USD for a single run. Checked by <code>POST /v1/runs/forecast</code>; run creation does not estimate cost, so it does not trip this cap</td>
           </tr>
           <tr>
             <td><code>maxTokensPerDay</code></td>
             <td>integer</td>
-            <td>Max total tokens (in + out) per day</td>
+            <td>Max total tokens (in + out) per day. Stored, not enforced yet (feeds a post-run <code>anomaly_detected</code> event only)</td>
           </tr>
           <tr>
             <td><code>maxRunsPerDay</code></td>
@@ -75,15 +76,15 @@ Response: 200 OK
           <tr>
             <td><code>toolLimits</code></td>
             <td>object</td>
-            <td>Per-tool call-count limits per day (key = connector action)</td>
+            <td>Per-tool call-count limits per day, keyed <code>connector.action</code>. Stored, not enforced yet</td>
           </tr>
           <tr>
             <td><code>hardFail</code></td>
             <td>boolean</td>
             <td>
-              When <code>true</code>, a limit breach returns HTTP 402 and blocks
-              the run. When <code>false</code>, the breach is logged but the run
-              proceeds.
+              When <code>true</code>, a reached daily cost or runs-per-day cap
+              returns HTTP 402 and blocks the run. When <code>false</code>, the
+              breach is logged but the run proceeds.
             </td>
           </tr>
         </tbody>
@@ -92,9 +93,9 @@ Response: 200 OK
       <div className="callout callout-info">
         <strong>Day boundary.</strong> The daily rollup resets at local
         midnight using <code>LANTERN_DEFAULT_TIMEZONE</code> (deployment-wide
-        IANA zone; defaults to UTC when unset). A schedule with{" "}
-        <code>timezone: "America/New_York"</code> rolls at New York midnight, not
-        UTC.
+        IANA zone; defaults to UTC when unset). A schedule&apos;s own{" "}
+        <code>timezone</code> affects only when its cron fires, not the budget
+        day.
       </div>
 
       <h2 id="get">Reading a budget</h2>
@@ -113,13 +114,29 @@ Response: 200 OK — bare array of all tenant budgets
       <pre>
         <code>{`DELETE /v1/agents/{name}/budget
 
-Response: 204 No Content`}</code>
+Response: 200 OK
+{ "status": "removed" }`}</code>
       </pre>
+
+      <h3>Tenant-wide cap</h3>
+      <p>
+        One daily cap across all agents, including agentless{" "}
+        <code>/v1/completions</code> calls: <code>PUT</code>,{" "}
+        <code>GET</code> and <code>DELETE</code> on{" "}
+        <code>/v1/budgets/tenant</code> with{" "}
+        <code>{`{ "maxCostUsdPerDay": 50, "hardFail": true }`}</code>. It is
+        stored under the reserved agent name <code>*</code> and hidden from{" "}
+        <code>GET /v1/budgets</code>.
+      </p>
 
       <h2 id="forecast">Pre-run cost forecast</h2>
       <p>
-        Before submitting a run, call the forecast endpoint to estimate cost and
-        check whether it would breach a budget:
+        The forecast estimates tokens and cost from the agent&apos;s run
+        history and checks the result against its budget. It returns{" "}
+        <strong>402</strong> instead of 200 when it would breach a hard-fail
+        budget. Cost checks only apply once the agent has history (the
+        response carries a <code>calibrated</code> flag); the runs-per-day
+        check always applies.
       </p>
       <pre>
         <code>{`POST /v1/runs/forecast
@@ -127,7 +144,7 @@ Content-Type: application/json
 
 {
   "agentName": "research-agent",
-  "input": { "topic": "quantum computing" }
+  "input": "quantum computing"
 }
 
 Response: 200 OK
@@ -144,8 +161,8 @@ Response: 200 OK
 {
   "estimatedCostUsd": 1.20,
   "wouldExceedBudget": true,
-  "blockReason": "would exceed maxCostUsdPerRun (1.00)"
-}`}</code>
+  "blockReason": "per-run cost $1.2000 exceeds limit $1.0000"
+}   // HTTP 402 when hardFail is true`}</code>
       </pre>
 
       <h2 id="voice">Budget gating on voice calls</h2>

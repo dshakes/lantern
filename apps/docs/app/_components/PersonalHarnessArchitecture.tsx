@@ -62,7 +62,7 @@ export function PersonalHarnessArchitecture() {
       {/* Top edge — surfaces (ingress / egress) */}
       <div className="harness-edge">
         <div className="harness-edge-label">
-          <MessagesSquare className="h-3.5 w-3.5 text-sky-300" />
+          <MessagesSquare className="h-3.5 w-3.5 text-glass" />
           Surfaces · ingress &amp; egress
         </div>
         <div className="harness-edge-cells">
@@ -156,7 +156,7 @@ export function PersonalHarnessArchitecture() {
       {/* Safety & Privacy — full-width band, applies across every layer */}
       <Link href="#safety" className="harness-rail">
         <div className="harness-rail-head">
-          <ShieldCheck className="h-4 w-4 text-rose-300" />
+          <ShieldCheck className="h-4 w-4 text-signal" />
           <span>Safety &amp; Privacy</span>
           <span className="harness-rail-sub">applies across every layer</span>
         </div>

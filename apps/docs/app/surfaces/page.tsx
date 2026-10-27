@@ -7,17 +7,15 @@ export default function SurfacesPage() {
     <>
       <h1>Surfaces</h1>
       <p>
-        Surfaces are the communication channels through which users interact
-        with agents. Lantern supports 7 built-in surfaces, all two-way —
-        agents reply in the same channel you messaged from.
+        A surface is a channel where people talk to an agent. Seven are wired:
+        WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat.
+        Replies go back on the channel the message came from.
       </p>
 
       <Concept>
-        A surface is where people talk to your agent. Rather than making
-        everyone visit a dashboard, you put the agent where the conversation
-        already happens — WhatsApp, Slack, a phone call, a chat widget on your
-        site. Same agent, same memory, same guardrails on every channel; the
-        surface only changes the doorway.
+        Put the agent where the conversation already happens instead of asking
+        people to open a dashboard. Same agent and guardrails on every channel;
+        only the doorway changes.
       </Concept>
 
       <BrandGrid items={[
@@ -34,19 +32,17 @@ export default function SurfacesPage() {
 
       <h3 id="whatsapp">WhatsApp</h3>
       <p>
-        Lantern supports two modes for WhatsApp:
+        Two paths:
       </p>
       <ul>
         <li>
-          <strong>Personal (via bridge)</strong> -- connects to your personal
-          WhatsApp account using the multi-device bridge. Messages to your
-          agent appear as regular WhatsApp conversations. No WhatsApp Business
-          account required.
+          <strong>Personal (bridge)</strong> -- a Baileys-based bridge pairs
+          with your own WhatsApp account by QR code. No Business account
+          needed. Self-hosted only.
         </li>
         <li>
-          <strong>Business API</strong> -- for teams and companies that need
-          a dedicated phone number and the official WhatsApp Business Cloud
-          API. Supports templates, rich messages, and higher throughput.
+          <strong>Business Cloud API</strong> -- the surface gateway has a
+          WhatsApp Cloud API adapter for a dedicated business number.
         </li>
       </ul>
       <p>
@@ -54,7 +50,7 @@ export default function SurfacesPage() {
       </p>
       <ol>
         <li>
-          Navigate to <strong>Settings &gt; Surfaces &gt; WhatsApp</strong>
+          Open <strong>Channels</strong> (<code>/surfaces</code>) and choose WhatsApp
         </li>
         <li>
           Select <strong>Personal (bridge)</strong>
@@ -64,53 +60,36 @@ export default function SurfacesPage() {
       </ol>
 
       <div className="callout callout-info">
-        <strong>Note:</strong> The WhatsApp bridge service runs as a sidecar
-        and maintains a persistent connection. Start it locally with{" "}
-        <code>make run-whatsapp-bridge</code>.
+        <strong>Note:</strong> The bridge is a separate long-running process
+        (port 3100). Start it with <code>make run-whatsapp-bridge</code>, or{" "}
+        <code>lantern dev</code>, which starts it by default.
       </div>
 
       <h4>Bridge tenant env var</h4>
       <p>
-        Set <code>LANTERN_TENANT_ID</code> to the tenant UUID the bridge should
-        operate under. The fallback <code>LANTERN_DEFAULT_TENANT_ID</code> is
-        still accepted for backwards compatibility, but{" "}
-        <code>LANTERN_TENANT_ID</code> is the canonical name going forward. Both
-        the iMessage bridge and the <code>bridge-core</code> shared library
-        read the same variable in this order.
+        Set <code>LANTERN_TENANT_ID</code> to the tenant UUID the bridge runs
+        under. <code>LANTERN_DEFAULT_TENANT_ID</code> is still read as a
+        fallback. The iMessage bridge and <code>bridge-core</code> resolve it
+        in that order. The macOS iMessage bridge is covered in{" "}
+        <Link href="/personal">Personal assistant</Link>.
       </p>
 
       <h3 id="slack">Slack</h3>
       <p>
-        Create a Slack app and connect it to Lantern:
-      </p>
-      <ol>
-        <li>
-          Navigate to <strong>Settings &gt; Surfaces &gt; Slack</strong>
-        </li>
-        <li>
-          Click <strong>Connect to Slack</strong> and authorize the Lantern bot
-          in your workspace
-        </li>
-        <li>
-          Choose which channels the agent should listen to, or enable DM mode
-        </li>
-      </ol>
-      <p>
-        Agents respond in threads by default. Mention <code>@lantern</code> in
-        a channel or send a direct message to trigger a run.
+        The surface gateway (<code>services/surface-gateway</code>) has a Slack
+        adapter for events and bot messages, and the control plane serves a
+        slash-command endpoint at <code>POST /v1/surfaces/slack/command</code>.
+        In production, unsigned slash commands are refused unless{" "}
+        <code>SLACK_SIGNING_SECRET</code> is set. Configure the surface under{" "}
+        <strong>Channels</strong> (<code>POST /v1/surfaces</code> with a{" "}
+        <code>surfaceId</code> and <code>displayName</code>).
       </p>
 
       <h3 id="discord">Discord</h3>
       <p>
-        Similar to Slack, add the Lantern bot to your Discord server:
+        A Discord adapter ships in the surface gateway. Configure it under{" "}
+        <strong>Channels</strong> with your bot credentials.
       </p>
-      <ol>
-        <li>
-          Navigate to <strong>Settings &gt; Surfaces &gt; Discord</strong>
-        </li>
-        <li>Click the invite link to add the bot to your server</li>
-        <li>Configure which channels the agent monitors</li>
-      </ol>
 
       <h3 id="telegram">Telegram</h3>
       <p>
@@ -121,12 +100,9 @@ export default function SurfacesPage() {
           Create a bot via <code>@BotFather</code> on Telegram
         </li>
         <li>
-          Copy the bot token to{" "}
-          <strong>Settings &gt; Surfaces &gt; Telegram</strong>
+          Add the bot token under <strong>Channels</strong>
         </li>
-        <li>
-          Assign the surface to an agent
-        </li>
+        <li>Assign the surface to an agent</li>
       </ol>
 
       <h3 id="twilio">Voice (Twilio + LiveKit)</h3>
@@ -227,44 +203,25 @@ export default function SurfacesPage() {
         </tbody>
       </table>
 
-      <h3>Email</h3>
-      <p>
-        Agents can receive and send emails. Configure an email surface with:
-      </p>
-      <ol>
-        <li>A dedicated email address (e.g., agent@yourdomain.com)</li>
-        <li>IMAP/SMTP credentials or a connected Gmail connector</li>
-      </ol>
-      <p>
-        Incoming emails trigger the agent; the response is sent as a reply to
-        the same thread.
-      </p>
-
       <h3 id="webchat">Web Chat</h3>
       <p>
         Embed a chat widget on any website:
       </p>
       <pre>
-        <code>{`<!-- widget.js is served from the same origin as the control-plane -->
-<script src="http://localhost:8080/widget.js"
+        <code>{`<!-- widget.js is served by the dashboard app; copy the exact snippet from /embed -->
+<script src="http://localhost:3001/widget.js"
+  data-api-key="YOUR_SCOPED_API_KEY"
   data-agent="your-agent-name"
-  data-tenant="your-tenant-id">
-</script>`}</code>
+  data-api-base="http://localhost:8080"
+  data-theme="dark"
+  data-position="bottom-right"
+  async defer></script>`}</code>
       </pre>
       <p>
-        The widget renders a chat interface that streams agent responses in
-        real time.
-      </p>
-
-      <h3>CLI</h3>
-      <p>
-        Interact with agents directly from your terminal:
-      </p>
-      <pre>
-        <code>{`lantern chat my-agent`}</code>
-      </pre>
-      <p>
-        This opens an interactive session with streaming output.
+        The widget uses the same <code>/v1/sessions</code> endpoints as the
+        dashboard and streams replies over SSE. The API key is visible in the
+        browser, so scope it to sessions and messages. The dashboard&apos;s{" "}
+        <code>/embed</code> page generates the snippet.
       </p>
 
       <h3>REST API</h3>
@@ -281,30 +238,28 @@ export default function SurfacesPage() {
 
       <h2>Assigning surfaces to agents</h2>
       <p>
-        Surfaces are configured at the account level and then assigned per
-        agent, similar to connectors:
+        Configure a surface once for the tenant, then point it at an agent:
       </p>
       <ol>
-        <li>Set up the surface in <strong>Settings &gt; Surfaces</strong></li>
+        <li>Set up the surface under <strong>Channels</strong></li>
         <li>
-          On the agent&apos;s <strong>Configuration</strong> tab, enable the
-          surfaces this agent should be reachable on
+          On the agent&apos;s page, open its <strong>Channels</strong> tab and
+          enable the surfaces it should answer on
         </li>
       </ol>
 
       <div className="callout callout-warning">
-        <strong>Warning:</strong> An agent can only respond on surfaces that
-        are explicitly assigned to it. If a user messages via WhatsApp but the
-        agent does not have WhatsApp enabled, the message will be silently
-        dropped.
+        <strong>Warning:</strong> An agent answers only on surfaces assigned to
+        it. A message on a channel the agent is not enabled for gets no
+        reply.
       </div>
 
       <h2>Two-way communication</h2>
       <p>
-        All surfaces are two-way. When a user sends a message:
+        When a user sends a message:
       </p>
       <ol>
-        <li>The surface gateway receives the message</li>
+        <li>The surface gateway (or a bridge) receives the message</li>
         <li>
           It routes to the correct agent based on the surface configuration
         </li>
@@ -316,9 +271,8 @@ export default function SurfacesPage() {
       </ol>
 
       <div className="callout callout-tip">
-        <strong>Tip:</strong> Agents can also proactively send messages on
-        surfaces -- for example, posting a daily summary to a Slack channel on
-        a schedule.
+        <strong>Tip:</strong> Pair a <Link href="/scheduling">schedule</Link>{" "}
+        with the Slack connector to post a daily summary.
       </div>
     </>
   );

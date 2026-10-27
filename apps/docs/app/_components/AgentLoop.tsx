@@ -20,18 +20,18 @@ export type AgentLoopProps = {
 };
 
 const COLORS: Record<Tone, { stroke: string; fill: string; text: string; border: string }> = {
-  sky:     { stroke: "#38bdf8", fill: "rgba(56,189,248,0.13)",   text: "#7dd3fc", border: "rgba(56,189,248,0.45)" },
-  amber:   { stroke: "#f59e0b", fill: "rgba(245,158,11,0.13)",   text: "#fcd34d", border: "rgba(245,158,11,0.50)" },
-  violet:  { stroke: "#a78bfa", fill: "rgba(167,139,250,0.13)",  text: "#c4b5fd", border: "rgba(167,139,250,0.45)" },
-  emerald: { stroke: "#34d399", fill: "rgba(52,211,153,0.13)",   text: "#6ee7b7", border: "rgba(52,211,153,0.45)" },
-  rose:    { stroke: "#fb7185", fill: "rgba(251,113,133,0.13)",  text: "#fda4af", border: "rgba(251,113,133,0.50)" },
+  sky:     { stroke: "var(--lx-glass)", fill: "color-mix(in srgb, var(--lx-glass) 13%, transparent)",   text: "var(--lx-glass)", border: "color-mix(in srgb, var(--lx-glass) 45%, transparent)" },
+  amber:   { stroke: "var(--lx-flame)", fill: "color-mix(in srgb, var(--lx-flame) 13%, transparent)",   text: "var(--lx-flame)", border: "color-mix(in srgb, var(--lx-flame) 50%, transparent)" },
+  violet:  { stroke: "var(--lx-glass)", fill: "color-mix(in srgb, var(--lx-glass) 13%, transparent)",  text: "var(--lx-glass)", border: "color-mix(in srgb, var(--lx-glass) 45%, transparent)" },
+  emerald: { stroke: "var(--lx-patina)", fill: "color-mix(in srgb, var(--lx-patina) 13%, transparent)",   text: "var(--lx-patina)", border: "color-mix(in srgb, var(--lx-patina) 45%, transparent)" },
+  rose:    { stroke: "var(--lx-signal)", fill: "color-mix(in srgb, var(--lx-signal) 13%, transparent)",  text: "var(--lx-signal)", border: "color-mix(in srgb, var(--lx-signal) 50%, transparent)" },
 };
 
 // ponytail: inline styles so no CSS change needed for the new badges
 const EXEC_BADGE: Record<ExecModel, { bg: string; color: string; label: string }> = {
-  scheduled: { bg: "rgba(56,189,248,0.15)",  color: "#7dd3fc", label: "scheduled"  },
-  bridge:    { bg: "rgba(167,139,250,0.15)", color: "#c4b5fd", label: "bridge loop" },
-  reactive:  { bg: "rgba(52,211,153,0.15)",  color: "#6ee7b7", label: "reactive"    },
+  scheduled: { bg: "color-mix(in srgb, var(--lx-glass) 15%, transparent)",  color: "var(--lx-glass)", label: "scheduled"  },
+  bridge:    { bg: "color-mix(in srgb, var(--lx-glass) 15%, transparent)", color: "var(--lx-glass)", label: "bridge loop" },
+  reactive:  { bg: "color-mix(in srgb, var(--lx-patina) 15%, transparent)",  color: "var(--lx-patina)", label: "reactive"    },
 };
 
 const NW  = 110; // node width
@@ -147,7 +147,7 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
         </g>
       </svg>
       {iface && (
-        <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "#71717a" }}>
+        <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "var(--lx-ink-3)" }}>
           {iface}
         </p>
       )}

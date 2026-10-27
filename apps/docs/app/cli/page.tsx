@@ -6,18 +6,15 @@ export default function CliPage() {
     <>
       <h1>CLI Reference</h1>
       <p>
-        The <code>lantern</code> CLI is a single static binary (Go + Cobra) that
-        covers the entire development lifecycle: local dev, agent iteration,
-        run inspection, headless VM management, and data-plane infra.
+        One static Go binary. It boots the local stack, scaffolds and runs
+        agents, gates CI on evals, drives sandbox VMs, and installs the data
+        plane in your cloud.
       </p>
 
       <Concept>
-        The CLI is Lantern in your terminal — one installed command,{" "}
-        <code>lantern</code>, that starts the local stack, creates and runs
-        agents, tails live output, and checks that everything is healthy. If
-        you&apos;re just getting started, you only need two of its commands:{" "}
-        <code>lantern dev</code> to boot everything and{" "}
-        <code>lantern onboard</code> to be walked through your first agent.
+        Starting out? Two commands cover it: <code>lantern dev</code> boots
+        the stack and <code>lantern onboard</code> walks you through your first
+        agent.
       </Concept>
 
       <h3>Install</h3>
@@ -33,7 +30,9 @@ lantern --version`}</code>
         First-run wizard: health check, sign-in, provider key (with a real test
         call), then the agentic part. It asks what you want the agent to do, the
         control plane designs it, you confirm, and the first run streams live. With{" "}
-        <code>--yes</code> or a non-terminal stdin it never prompts (CI). See{" "}
+        <code>--yes</code> or a non-terminal stdin it never prompts (CI). Flags:{" "}
+        <code>--provider</code> (openai|anthropic), <code>--api-key</code>,{" "}
+        <code>--description</code>. See{" "}
         <Link href="/quickstart#cli">Get started</Link>.
       </p>
       <pre>
@@ -44,9 +43,9 @@ lantern onboard --yes --provider anthropic --api-key "$KEY" \\
 
       <h2 id="doctor">doctor</h2>
       <p>
-        Runs a sequence of readiness checks against the local stack and prints
-        a pass/fail line for each one. Exits non-zero if any hard check fails.
-        Always run this before reporting a bug. The <em>Sandbox runtime</em>{" "}
+        Runs readiness checks against the local stack, one pass/fail line each.
+        Exits non-zero if any hard check fails. Run it before you report a
+        bug. The <em>Sandbox runtime</em>{" "}
         section, which never fails the run, reports whether the API uses a real
         scheduler or the stub, whether the scheduler and runtime manager are
         reachable, and whether KVM and Firecracker are present. Each failing
@@ -58,22 +57,27 @@ lantern onboard --yes --provider anthropic --api-key "$KEY" \\
 
       <h2 id="dev">dev</h2>
       <p>
-        Boots the full Lantern stack locally with hot reload: Postgres, Redis,
-        MinIO (via Docker), the control-plane API (host Go process), the
-        Next.js dashboard, and the WhatsApp bridge. All logs interleave into
-        one terminal.
+        Boots the local stack: Postgres, Redis and MinIO (Docker), the
+        control-plane API (host Go process), the Next.js dashboard, and the
+        WhatsApp and iMessage bridges (iMessage is skipped off macOS). Logs
+        interleave in one terminal. Flags: <code>--infra-only</code>,{" "}
+        <code>--with-whatsapp=false</code>, <code>--with-imessage=false</code>,{" "}
+        <code>--no-open</code>, <code>--dashboard-port</code> (3001),{" "}
+        <code>--api-port</code> (8080).
       </p>
       <pre>
         <code>{`lantern dev       # start everything
-lantern down      # stop infra containers
-lantern logs      # tail all infra logs
-lantern logs api  # tail a specific service`}</code>
+lantern dev down  # stop infra containers (--volumes also deletes data)
+lantern dev logs  # tail all infra logs
+lantern dev logs postgres  # tail one service`}</code>
       </pre>
 
       <h2 id="init">init</h2>
       <p>
         Scaffold a new agent directory with <code>agent.yaml</code> and starter
-        code.
+        code. Templates: <code>basic</code> (default), <code>research</code>,{" "}
+        <code>tool-use</code>, <code>connector</code>, <code>personal</code>,{" "}
+        <code>scheduled</code>, <code>approval</code>.
       </p>
       <pre>
         <code>{`lantern init my-agent
@@ -83,107 +87,120 @@ lantern init my-agent --template research`}</code>
       <h2 id="agents">agents</h2>
       <p>Manage agents. Aliased as <code>agent</code>.</p>
       <pre>
-        <code>{`lantern agents create --name my-agent --system-prompt "You are..."
+        <code>{`lantern agents create --name my-agent --description "Triage tickets" [--label team=support]
 lantern agents list
 lantern agents get my-agent
-lantern agents delete my-agent
+lantern agents delete my-agent [--force]
 
 # Development inner loop — watches the agent dir and re-publishes on change
-lantern agents dev my-agent [--dir ./my-agent] [--run '{"key":"val"}']`}</code>
+lantern agents dev my-agent [--dir ./my-agent] [--input '{"prompt":"hi"}'] [--eval] [--yes]`}</code>
       </pre>
 
       <p>
         <code>agents dev</code> is the agent development inner loop: it watches
         the local directory for changes to <code>agent.yaml</code> or code
-        files, re-publishes the agent version on each change, and streams run
-        events in the terminal.
+        files, re-publishes the agent version on each change, runs a smoke input
+        (<code>--input</code>), and streams the run events. <code>--eval</code>{" "}
+        also runs the agent&apos;s eval suite after each publish.
       </p>
 
       <h2 id="runs">runs</h2>
       <p>
-        Manage runs (invoke, inspect, cancel). Aliased as <code>run</code>.
+        Manage runs: create, list, inspect, cancel.
       </p>
       <pre>
         <code>{`lantern runs create --agent my-agent --input '{"topic":"AI"}' [--stream]
 lantern runs list [--agent my-agent] [--status succeeded]
 lantern runs get <run-id>
-lantern runs cancel <run-id>`}</code>
+lantern runs cancel <run-id> [--reason "..."]`}</code>
       </pre>
 
       <h2 id="logs">logs</h2>
-      <p>Tail logs for a run or a dev-stack service.</p>
+      <p>Stream a run&apos;s journal events. For dev-stack containers use <code>lantern dev logs</code>.</p>
       <pre>
-        <code>{`lantern logs <run-id>      # stream journal events for a run
-lantern logs api           # dev-stack: tail the API service
-lantern logs               # dev-stack: all services`}</code>
+        <code>{`lantern logs <run-id> [-f]   # journal events; -f keeps the stream open`}</code>
       </pre>
 
       <h2 id="test">test</h2>
       <p>
         Run an agent&apos;s eval suite and compare against the branch baseline.
-        Returns non-zero (and prints a regression summary) when the score drops
-        below the baseline — wire this into CI to gate merges.
+        Exits non-zero with a regression summary when the score drops below
+        the baseline. Wire it into CI to gate merges. <code>--set-baseline</code>{" "}
+        pins the run as the branch baseline. <code>--rehearse</code> replays
+        past failed or low-score production runs instead of a suite
+        (<code>--window</code>, default 7d).
       </p>
       <pre>
         <code>{`lantern test --agent my-agent --suite factual-accuracy
-lantern test --agent my-agent --suite factual-accuracy --against last-green`}</code>
+lantern test --agent my-agent --suite factual-accuracy --against last-green
+lantern test --agent my-agent --rehearse --window 24h`}</code>
       </pre>
 
       <h2 id="vm">vm</h2>
       <p>
-        Inspect and manage headless microVM agent runs. Aliased as{" "}
-        <code>vms</code> and <code>runtime</code>.
+        Schedule and manage headless sandbox VMs. <code>lantern run</code> takes a
+        spec file; <code>vm</code> (aliases <code>vms</code>,{" "}
+        <code>runtime</code>) manages what it started.
       </p>
       <pre>
         <code>{`# Schedule a headless agent from a spec file
-lantern run agent.yaml [--follow]
+lantern run agent.yaml [--input '{...}'] [--follow] [--idle-timeout 600]
 
 # VM subcommands
-lantern vm list [--state running]
+lantern vm list [--state running] [--limit 50]
 lantern vm get <vm-id>
 lantern vm logs <vm-id>          # SSE log stream from the harness
 lantern vm stop <vm-id> [--grace 30]
 lantern vm pause <vm-id>            # snapshot + stop, frees the quota slot
 lantern vm resume <vm-id>           # restore under the same vm id
-lantern vm fork <vm-id> --count 3   # N independent copies (default cap 100)
-lantern vm exec <vm-id> -- ls /tmp   # exec into a running VM (debug)
-lantern vm quota                 # current quota + today's usage
+lantern vm fork <vm-id> --count 3   # N copies; the server caps N (100 by default, LANTERN_MAX_FORK_COUNT, ceiling 1000)
+lantern vm exec <vm-id> -- ls /tmp   # exec into a running VM (-t/-i for a PTY)
+lantern vm ls <vm-id> [path]        # list /workspace
+lantern vm cat <vm-id> <path>       # print a file (1 MiB cap)
+lantern vm put <vm-id> ./f.txt /workspace/f.txt   # write a file (1 MiB cap)
+lantern vm quota get             # current quota + today's usage
+lantern vm quota set --max-concurrent 10 --max-cost 50   # owner only
 lantern vm cluster               # node load + warm-pool capacity (owner only)`}</code>
       </pre>
 
       <h2 id="deploy">deploy</h2>
       <p>
-        Reads <code>agent.yaml</code> from the current directory, builds the
-        agent bundle, uploads it, and deploys it to Lantern.
+        <strong>Simulated today.</strong> <code>lantern deploy</code> reads{" "}
+        <code>agent.yaml</code> and prints the pipeline steps, but the build and
+        upload are not wired to the backend and nothing ships; it says so on
+        every run. To run an agent for real, use <code>lantern run</code> or
+        the dashboard Deploy button.
       </p>
       <pre>
-        <code>{`lantern deploy [--env staging]`}</code>
+        <code>{`lantern deploy [--watch]   # --watch is not implemented`}</code>
       </pre>
 
       <h2 id="infra">infra</h2>
       <p>
-        Manage the data plane in your cloud infrastructure (EKS, GKE, AKS).
+        Generate and manage the data plane for AWS, GCP or Azure (EKS, GKE,
+        AKS) via Terraform.
       </p>
       <pre>
-        <code>{`lantern infra install   # generate Terraform config for the data plane
+        <code>{`lantern infra install --cloud aws [--region us-east-1] [--node-count 3] [--firecracker]
 lantern infra status    # show connection status
-lantern infra upgrade   # upgrade data plane components`}</code>
+lantern infra upgrade [--version latest]
+lantern infra uninstall [--force]   # tear down the data plane`}</code>
       </pre>
 
       <h2 id="auth">login / whoami / logout</h2>
       <pre>
-        <code>{`lantern login           # authenticate to the control plane
+        <code>{`lantern login [--email --password]   # authenticate to the control plane
 lantern whoami          # show current authenticated user
 lantern logout          # clear stored credentials`}</code>
       </pre>
 
       <h2 id="global">Global flags</h2>
       <pre>
-        <code>{`--api-url string    Control plane base URL (default: $LANTERN_API_URL or http://localhost:8080)
+        <code>{`--api-url string    Control plane address (default: $LANTERN_API_URL or localhost:50051, gRPC)
 --api-key string    API key (default: $LANTERN_API_KEY)
---json              Output JSON instead of human-readable text
---no-color          Disable ANSI colour output
--v, --verbose       Verbose logging`}</code>
+--tenant-id string  Tenant ID (default: $LANTERN_TENANT_ID)
+-o, --output string Output format: text or json (default text)
+--rest              Use REST instead of gRPC (or set LANTERN_USE_REST)`}</code>
       </pre>
     </>
   );

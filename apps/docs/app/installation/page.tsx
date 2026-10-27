@@ -6,7 +6,7 @@ export default function InstallationPage() {
     <>
       <h1>Installation</h1>
       <p>
-        Clone, start the stack, verify it&apos;s healthy — under two minutes.
+        Clone, start the stack, verify it&apos;s healthy.
       </p>
 
       <Concept>
@@ -28,8 +28,8 @@ export default function InstallationPage() {
             </thead>
             <tbody>
               <tr><td><strong>Docker Desktop</strong></td><td>v4.x+</td><td><code>brew install --cask docker</code></td></tr>
-              <tr><td><strong>Node.js</strong></td><td>v20+</td><td><code>brew install node</code></td></tr>
-              <tr><td><strong>Go</strong></td><td>v1.23+</td><td><code>brew install go</code></td></tr>
+              <tr><td><strong>Node.js</strong></td><td>v22+</td><td><code>brew install node</code></td></tr>
+              <tr><td><strong>Go</strong></td><td>v1.26+</td><td><code>brew install go</code></td></tr>
               <tr><td><strong>Git</strong></td><td>any</td><td><code>brew install git</code></td></tr>
             </tbody>
           </table>
@@ -47,7 +47,8 @@ cd lantern`}</code></pre>
         <div className="step">
           <h3>Start the stack</h3>
           <p>One command boots everything:</p>
-          <pre><code>{`lantern dev`}</code></pre>
+          <pre><code>{`(cd packages/cli && go install ./cmd/lantern)   # installs the lantern CLI
+lantern dev`}</code></pre>
           <p>Or run services individually for faster iteration:</p>
           <pre><code>{`# Terminal 1 — Postgres, Redis, MinIO
 make dev-infra
@@ -141,7 +142,7 @@ make dev-doctor   # probes every service and reports status`}</code></pre>
         </Link>
         <Link href="/deployment" className="card">
           <div className="card-title">Deployment</div>
-          <div className="card-desc">Production with Helm, Terraform, or Lantern Cloud.</div>
+          <div className="card-desc">Production with Helm or Terraform.</div>
         </Link>
       </div>
     </>

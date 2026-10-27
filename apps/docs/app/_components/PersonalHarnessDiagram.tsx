@@ -10,28 +10,28 @@ export function PersonalHarnessDiagram() {
     <div className="sys">
       <div className="sys-actors">
         <Link href="#signals" className="sys-actor">
-          <Car className="h-4 w-4 text-sky-300" />
+          <Car className="h-4 w-4 text-glass" />
           <div>
             <div className="sys-actor-name">Drive</div>
             <div className="sys-actor-sub">CarPlay / Bluetooth → driving</div>
           </div>
         </Link>
         <Link href="#signals" className="sys-actor">
-          <MapPin className="h-4 w-4 text-emerald-300" />
+          <MapPin className="h-4 w-4 text-patina" />
           <div>
             <div className="sys-actor-name">Place</div>
             <div className="sys-actor-sub">arrive/leave Home · Office · Gym · Airport</div>
           </div>
         </Link>
         <Link href="#signals" className="sys-actor">
-          <SlidersHorizontal className="h-4 w-4 text-lantern-300" />
+          <SlidersHorizontal className="h-4 w-4 text-flame" />
           <div>
             <div className="sys-actor-name">Status</div>
             <div className="sys-actor-sub">Action Button · NFC tag · Focus mode</div>
           </div>
         </Link>
         <Link href="#signals" className="sys-actor">
-          <Moon className="h-4 w-4 text-violet-300" />
+          <Moon className="h-4 w-4 text-glass" />
           <div>
             <div className="sys-actor-name">Rhythm</div>
             <div className="sys-actor-sub">Sleep/Wake · low battery · now-playing · health</div>
@@ -79,14 +79,14 @@ export function PersonalHarnessDiagram() {
 
       <div className="sys-actors">
         <Link href="#signals" className="sys-actor">
-          <User className="h-4 w-4 text-lantern-300" />
+          <User className="h-4 w-4 text-flame" />
           <div>
             <div className="sys-actor-name">You · self-chat</div>
             <div className="sys-actor-sub">&ldquo;where am I&rdquo; · &ldquo;what have I been doing&rdquo; · &ldquo;am I free at 3?&rdquo;</div>
           </div>
         </Link>
         <Link href="#reason" className="sys-actor">
-          <Users className="h-4 w-4 text-sky-300" />
+          <Users className="h-4 w-4 text-glass" />
           <div>
             <div className="sys-actor-name">Contacts · DM you</div>
             <div className="sys-actor-sub">&ldquo;is he around?&rdquo; · &ldquo;when&apos;s he free?&rdquo; · take a message</div>

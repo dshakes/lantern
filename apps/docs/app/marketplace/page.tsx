@@ -5,45 +5,41 @@ export default function MarketplacePage() {
     <>
       <h1>Marketplace &amp; A2A</h1>
       <p>
-        The Lantern Marketplace is a registry of public agents and MCP servers
-        that you can discover, preview, and deploy to your own tenant. Combined
-        with A2A Agent Cards, it enables cross-platform agent discovery and
-        interop.
+        Publish an agent, fork someone else&apos;s into your tenant, or call a
+        published agent without forking it. A2A agent cards make public agents
+        discoverable by other platforms.
       </p>
 
       <Concept>
-        The marketplace is an app store for agents. Instead of building from
-        scratch, browse what others have published, fork one into your own
-        workspace (your private copy — the author never sees your data), and
-        customize it. &quot;A2A&quot; is the emerging open standard that lets
-        agents discover and call each other across platforms — an agent card is
-        simply the public résumé an agent publishes so others know what it can
-        do.
+        Browse published agents and fork one into your workspace. The fork is
+        your private copy. A2A (Agent-to-Agent) is an open protocol for agents
+        to find and call each other; an agent card is the public description an
+        agent publishes.
       </Concept>
 
       <h2 id="what">What is the Marketplace</h2>
       <p>
-        The Marketplace is accessible from the dashboard sidebar under{" "}
-        <strong>Marketplace</strong>. It contains two sections:
+        In the dashboard, <strong>Marketplace</strong> sits under the
+        Workspace section. Two registries sit behind it:
       </p>
       <ul>
         <li>
-          <strong>Agent Marketplace</strong> -- community-published agents that
-          you can preview, fork, and customize. Each listing shows the
-          agent&apos;s description, connectors, model requirements, and average
-          cost per run.
+          <strong>Agent Marketplace</strong> -- published agents
+          (<code>/v1/marketplace</code>). Filter by category or search text;
+          star, fork, or unpublish your own. Listings carry a description,
+          tags, README, star and fork counts.
         </li>
         <li>
-          <strong>MCP Marketplace</strong> -- a registry of Model Context
-          Protocol servers you can add as connectors. Browse by category
-          (search, data, code, productivity) and install with a single click.
+          <strong>MCP Marketplace</strong> -- a curated registry of Model
+          Context Protocol servers (<code>/v1/mcp/servers</code>). Attach one
+          to an agent with{" "}
+          <code>POST /v1/agents/&#123;name&#125;/mcp-servers</code>.
         </li>
       </ul>
 
       <div className="callout callout-info">
-        <strong>Note:</strong> Marketplace content is tenant-isolated. When you
-        fork an agent, a private copy is created in your tenant. The original
-        author cannot see your data or runs.
+        <strong>Note:</strong> A fork is a copy in your tenant. The original
+        author does not see your data or runs.
       </div>
 
       <h2 id="a2a">A2A Agent Cards and visibility</h2>
@@ -53,7 +49,8 @@ export default function MarketplacePage() {
         discovery. Agents are <strong>private by default</strong> (
         <code>agents.is_public = false</code>). The card, the well-known
         directory, and A2A invoke only expose an agent to a non-owner when it
-        is explicitly made public.
+        is marked public. No REST endpoint sets the flag yet; today it is a
+        column on <code>agents</code> that an operator flips.
       </p>
 
       <h3>Visibility rules</h3>
@@ -81,114 +78,83 @@ GET /.well-known/agent.json          — lists only public agents`}</code>
 
       <h2 id="publishing">Publishing your agent</h2>
       <p>
-        To publish an agent to the Marketplace:
+        Publishing copies the agent&apos;s manifest into the public registry
+        under a slug. There is no review queue and no unlisted mode; a listing
+        is live as soon as the call returns.
       </p>
-      <ol>
-        <li>
-          Navigate to your agent&apos;s detail page in the dashboard.
-        </li>
-        <li>
-          Click <strong>Publish to Marketplace</strong> in the agent settings.
-        </li>
-        <li>
-          Fill in the listing metadata: category, tags, example inputs, and a
-          README describing what the agent does.
-        </li>
-        <li>
-          Choose a visibility level: <strong>Public</strong> (anyone can see
-          and fork) or <strong>Unlisted</strong> (only accessible via direct
-          link).
-        </li>
-        <li>
-          Submit for review. Published agents appear in the Marketplace within
-          minutes.
-        </li>
-      </ol>
+      <pre>
+        <code>{`POST /v1/marketplace/publish
+{
+  "agentName": "research-agent",
+  "description": "Cited research reports",
+  "category": "research",
+  "tags": ["research", "web"],
+  "readme": "..."
+}
+
+DELETE /v1/marketplace/{slug}     # unpublish`}</code>
+      </pre>
 
       <div className="callout callout-warning">
-        <strong>Warning:</strong> Publishing an agent makes its configuration,
-        system prompt, and instructions visible to other users. Secrets and API
-        keys are never included -- they are resolved at runtime from each
-        tenant&apos;s own secret store.
+        <strong>Warning:</strong> Anyone can read a published agent&apos;s
+        manifest, including its system prompt. Do not put secrets in a
+        manifest. Use <code>lantern.secret/...</code> refs, which each
+        tenant resolves from its own store at run time.
       </div>
 
       <h2 id="discovering">Discovering and forking agents</h2>
+      <pre>
+        <code>{`GET  /v1/marketplace?category=research&q=citations
+GET  /v1/marketplace/{slug}                 # manifest, card, README
+POST /v1/marketplace/{slug}/fork            { "newName": "my-copy" }
+POST /v1/marketplace/{slug}/star`}</code>
+      </pre>
       <p>
-        From the Marketplace page, you can:
-      </p>
-      <ul>
-        <li>
-          <strong>Browse</strong> agents by category (research, automation,
-          customer support, coding, data analysis)
-        </li>
-        <li>
-          <strong>Search</strong> by name, description, or tags
-        </li>
-        <li>
-          <strong>Preview</strong> an agent&apos;s configuration, connectors,
-          and sample outputs before forking
-        </li>
-        <li>
-          <strong>Fork</strong> an agent to create a private copy in your
-          tenant that you can customize
-        </li>
-      </ul>
-      <p>
-        Forked agents are fully independent. You can modify instructions,
-        swap models, add connectors, and redeploy without affecting the
-        original.
+        A fork is a normal agent in your tenant. Edit its prompt, swap models,
+        add connectors; the original is unaffected.
       </p>
 
       <h2 id="commerce">Cross-tenant invocation (commerce)</h2>
       <p>
-        Buyers can invoke a published marketplace agent without forking it.
-        The run executes on the <strong>seller&apos;s</strong> tenant (their LLM
-        keys, their budgets); the buyer receives the output plus an HMAC-signed
-        receipt verifiable via the same <code>/proof</code> endpoint as run
-        receipts.
+        A buyer can invoke a published agent without forking it. The run
+        executes in the <strong>seller&apos;s</strong> tenant, with their LLM
+        keys and budgets. The seller&apos;s hard-fail budget applies (HTTP
+        402), and the buyer&apos;s input is validated against the manifest&apos;s{" "}
+        <code>inputSchema</code> when one exists. The buyer gets the output and
+        an HMAC-SHA256 signed receipt.
       </p>
       <pre>
         <code>{`POST /v1/marketplace/{slug}/invoke
 { "input": { "topic": "..." } }
 
-Response:
-{
-  "output": { "summary": "..." },
-  "receipt": { "signature": "...", "payload": {...} }
-}
+Receipt fields: invocationId, buyerTenant, sellerTenant, marketplace,
+  agentName, runId, costUsd, issuedAt, signature, algorithm
 
-GET /v1/marketplace/invocations?role=buyer   — buyer-side history
-GET /v1/marketplace/invocations?role=seller  — seller-side history`}</code>
+GET /v1/marketplace/invocations?role=buyer    # buyer-side history
+GET /v1/marketplace/invocations?role=seller   # seller-side history`}</code>
       </pre>
 
       <h2 id="interop">Cross-platform interop</h2>
-      <p>
-        A2A Agent Cards enable interoperability beyond the Lantern ecosystem:
-      </p>
       <ul>
         <li>
-          <strong>Inbound</strong> -- external platforms can discover your
-          Lantern agent via its <code>/.well-known/agent.json</code> endpoint
-          and invoke it using the standard A2A protocol.
+          <strong>Discovery</strong> -- other platforms read{" "}
+          <code>/.well-known/agent.json</code> and{" "}
+          <code>/v1/agents/&#123;name&#125;/card</code>. Both are limited to
+          public agents (plus your own, when authenticated).
         </li>
         <li>
-          <strong>Outbound</strong> -- Lantern agents can call external A2A
-          agents using the <code>ctx.subagent()</code> API with a remote
-          agent URL. The runtime fetches the remote card, validates
-          compatibility, and routes the request.
+          <strong>Inbound call</strong> --{" "}
+          <code>POST /v1/agents/&#123;name&#125;/a2a/invoke</code> requires an
+          authenticated caller; it returns 401 without credentials.
         </li>
         <li>
-          <strong>Composition</strong> -- build multi-agent workflows that
-          span platforms. A Lantern orchestrator agent can delegate tasks to
-          agents running on other frameworks, and vice versa.
+          <strong>Outbound call</strong> -- inside a running agent,{" "}
+          <code>ctx.a2a(agentCardUrl).submit(&#123; input &#125;)</code> calls a
+          remote A2A agent through the runtime sidecar (production runtime
+          only). <code>ctx.subagent(name, input)</code> calls another Lantern
+          agent by name.
         </li>
       </ul>
-
-      <div className="callout callout-tip">
-        <strong>Tip:</strong> The <code>/.well-known/agent.json</code> endpoint
-        is compatible with any A2A-aware platform. External orchestrators can
-        discover and invoke your public Lantern agents without a Lantern account.
-      </div>
     </>
   );
 }

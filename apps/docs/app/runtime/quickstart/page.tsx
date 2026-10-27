@@ -88,14 +88,13 @@ spec:
       </p>
 
       <h2 id="run">3. Run it</h2>
-      <p>The CLI schedules the spec and tails the logs:</p>
+      <p>The CLI schedules the spec:</p>
       <pre><code>{`lantern run examples/headless-agents/01-hello/agent.yaml \\
   --input '{"name": "Ada"}'`}</code></pre>
-      <p>Or POST the spec directly to the control plane:</p>
-      <pre><code>{`curl -X POST http://localhost:8080/v1/runtime/schedule \\
-  -H "Authorization: Bearer $LANTERN_API_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d @examples/headless-agents/01-hello/spec.json`}</code></pre>
+      <p>
+        The CLI posts the parsed spec to <code>POST /v1/runtime/schedule</code>. Add <code>--follow</code> to stream logs
+        after scheduling.
+      </p>
       <p>
         The response carries a <code>vm_id</code>. If you are over your
         per-tenant quota the call returns <strong>HTTP 402</strong> instead of

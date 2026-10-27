@@ -1,17 +1,19 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
+import { Sequence } from "../../_components/interactive/Sequence";
 import { Concept } from "../../_components/Concept";
 
 export default function RuntimeDurableExecutionPage() {
   return (
     <>
-      <h1>Durable Execution</h1>
+      <h1>Durable execution</h1>
       <p>
         A crash mid-run does not lose work, re-spend tokens, or fire a side
-        effect twice. Both the shared tier (inline executor) and the microVM
-        tier guarantee exactly-once completion through the same mechanism: an
+        effect twice. The shared tier (inline executor) recovers through an
         event-sourced <code>journal_events</code> table and a{" "}
-        <code>CompletedStep</code> replay gate.
+        <code>CompletedStep</code> replay gate, with external deliveries
+        de-duplicated by idempotency key. MicroVM runs are re-scheduled by the
+        same recovery sweep (see <a href="#microvm-resume">below</a>).
       </p>
 
       <Concept>
@@ -29,15 +31,17 @@ export default function RuntimeDurableExecutionPage() {
         name="durable-execution"
         caption="Crash-resume: the recovery sweep wins a run_locks UPSERT, re-drives the run, and the CompletedStep hook skips nodes that already have a step_completed row."
       />
+      <Sequence name="run" />
 
       <h2 id="journal">Event-sourced journal</h2>
       <p>
         Every step transition is appended to <code>journal_events</code> before
         the next step begins. The journal — not in-memory state — is
         authoritative. On the shared tier the inline executor writes these
-        events directly; on the microVM tier the harness streams them to the
-        manager via the <code>RuntimeHarness.Report</code> RPC, which writes to
-        the same table.
+        events directly. On the microVM tier the control plane accepts{" "}
+        <code>step_event</code> reports on <code>/v1/runtime/report</code> and
+        writes them to the same table; the harness does not emit step events
+        yet.
       </p>
       <pre><code>{`run        step           journal events
 ────────────────────────────────────────────────
@@ -49,7 +53,9 @@ run_1      step_c         step_started   ◀── crash here
         Other event kinds you will see in the waterfall:{" "}
         <code>step_retrying</code> (between retry attempts),{" "}
         <code>step_waiting</code> (run parked at an approval node),{" "}
-        <code>anomaly_detected</code> (token budget breach),{" "}
+        <code>anomaly_detected</code> (<code>runaway_loop</code>,{" "}
+        <code>excessive_steps</code>, <code>retry_storm</code>,{" "}
+        <code>cost_spike</code> or <code>token_spike</code>),{" "}
         <code>confidence_evaluated</code> (confidence gate decision, when
         enabled), and <code>confidence_gate_bypassed</code> (gating is on but
         no handler is wired — step auto-approves).
@@ -101,10 +107,12 @@ run_1      step_c         step_started   ◀── crash here
         double-billing.
       </p>
       <p>
-        <strong>Connector and tool calls</strong> claim a{" "}
+        <strong>External deliveries</strong> (email, connector auth pages,
+        browser and cross-app actions) claim a{" "}
         <code>side_effect_receipts</code> row before dispatching. A re-drive
-        that reaches the same step finds the receipt and short-circuits without
-        re-invoking the connector.
+        that reaches the same delivery finds the receipt and short-circuits.
+        Workflow <code>connector</code> and <code>tool</code> nodes rely on the{" "}
+        <code>CompletedStep</code> skip instead.
       </p>
       <div className="callout callout-info">
         <strong>Steps must be idempotent by authorship.</strong> The
@@ -118,8 +126,9 @@ run_1      step_c         step_started   ◀── crash here
         Each in-flight run holds a lock row{" "}
         <code>(run_id, worker_id, expires_at)</code>. A background loop —{" "}
         <code>RunRecoveryLoop</code> — runs every 30 s (override:{" "}
-        <code>LANTERN_RECOVERY_INTERVAL</code>; set <code>"0"</code> or{" "}
-        <code>"off"</code> to disable). Each pass:
+        <code>LANTERN_RECOVERY_INTERVAL</code>, a Go duration; invalid or
+        &le;0 values fall back to 30 s, so the sweep cannot be disabled). Each
+        pass:
       </p>
       <div className="flow">
         <div className="flow-step">
@@ -162,12 +171,10 @@ run_1      step_c         step_started   ◀── crash here
 
       <h2 id="ha">Scheduler HA (microVM tier)</h2>
       <p>
-        On the microVM tier, the scheduler itself is not a single point of
-        failure. Placement state is durable, and a replacement scheduler picks
-        up pending and in-flight work. For VMs with{" "}
-        <code>idempotent: true</code> and a recent snapshot, the scheduler
-        issues a fresh <code>Spawn</code> on another node. Non-idempotent VMs
-        are marked failed and the caller is notified via the event stream.
+        Leader election keeps one active scheduler, and placement state is
+        durable. VMs lost with a node are reconciled to terminated; microVM runs
+        are retried by the control-plane recovery sweep (
+        <code>resumeMicroVMRun</code>, max 3 attempts).
       </p>
 
       <h2 id="retry">Per-step retry policy</h2>
@@ -225,20 +232,19 @@ run_1      step_c         step_started   ◀── crash here
       <pre><code>{`# environment injected into the re-scheduled VM
 LANTERN_RESUME=1`}</code></pre>
       <p>
-        The in-VM agent reads <code>LANTERN_RESUME</code> and consults the
-        journal <code>CompletedStep</code> cache to skip already-completed
-        nodes, then continues from the first incomplete node. The 3-attempt cap
-        is a hard constant (<code>maxMicroVMResumeAttempts = 3</code>) — on
-        exhaustion the run is permanently failed and the dashboard shows a{" "}
-        <code>step_failed</code> event with{" "}
-        <code>code: microvm_resume_exhausted</code>.
+        <code>LANTERN_RESUME=1</code> signals a re-drive; skipping completed
+        work is the workload&apos;s responsibility (no SDK helper reads it yet).
+        The 3-attempt cap is a hard constant (
+        <code>maxMicroVMResumeAttempts = 3</code>). On exhaustion the run is
+        marked <code>failed</code> and its <code>error</code> field carries{" "}
+        <code>{"{code: microvm_resume_exhausted, attempts}"}</code>.
       </p>
 
       <h2 id="takeaway">Why it matters</h2>
       <ul>
         <li><strong>No double-spend.</strong> LLM steps are replayed from the journal, never re-billed at the provider.</li>
-        <li><strong>No double-send.</strong> Idempotency keys and <code>side_effect_receipts</code> de-dup external side effects across retries.</li>
-        <li><strong>No babysitting.</strong> The 30s recovery sweep and the microVM scheduler HA recover crashed runs without intervention.</li>
+        <li><strong>No double-send.</strong> Idempotency keys and <code>side_effect_receipts</code> de-dup LLM calls and external deliveries across retries.</li>
+        <li><strong>No babysitting.</strong> The 30 s recovery sweep re-drives crashed shared-tier runs and re-schedules microVM runs (up to 3 attempts) without intervention.</li>
         <li><strong>Retry visibility.</strong> <code>step_retrying</code> events appear in the waterfall so you see exactly how many attempts a step took.</li>
       </ul>
       <p>

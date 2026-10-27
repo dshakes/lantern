@@ -11,15 +11,43 @@ import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download, Menu, X, Flame, Smartphone,
+  Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network,
 } from "lucide-react";
 
-// The Lantern brand mark — a warm amber "lantern glow".
+// The Lantern mark: a flame held inside glass (docs/brand).
 function LanternMark() {
   return (
-    <div className="relative flex h-7 w-7 items-center justify-center rounded-[9px] bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600 shadow-[0_0_16px_-3px_rgba(245,158,11,0.7)]">
-      <Flame className="h-4 w-4 text-amber-950" fill="currentColor" />
-    </div>
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
+      <path d="M9 3.5h6" stroke="var(--lx-ink-2)" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <rect x="5" y="6" width="14" height="15" rx="4" fill="none" stroke="var(--lx-glass)" strokeWidth="1.8" />
+      <path d="M12 9.2c1.9 2 3 3.6 3 5.4a3 3 0 0 1-6 0c0-1.2.6-2.1 1.4-2.9.1 1 .6 1.6 1.2 1.8-.4-1.4-.1-2.8.4-4.3Z" fill="var(--lx-flame)" />
+    </svg>
+  );
+}
+
+// Runs before paint so an explicit theme choice never flashes the other theme.
+const themeScript = `try{var t=localStorage.getItem("lantern-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+
+function ThemeToggle() {
+  const [dark, setDark] = useState<boolean | null>(null);
+  useEffect(() => {
+    const set = document.documentElement.dataset.theme;
+    setDark(set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches);
+  }, []);
+  return (
+    <button
+      type="button"
+      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+      onClick={() => {
+        const next = dark ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem("lantern-theme", next); } catch { /* storage blocked: this page view only */ }
+        setDark(!dark);
+      }}
+      className="rounded-md p-2 text-ink-2 hover:text-ink"
+    >
+      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
   );
 }
 
@@ -29,13 +57,16 @@ interface NavSection { label: string; items: NavItem[] }
 const sections: NavSection[] = [
   { label: "Overview", items: [
     { href: "/", label: "Getting Started", icon: BookOpen, subs: [
-      { href: "/#what", label: "What is Lantern?" }, { href: "/#who", label: "Who is it for?" }, { href: "/#concepts", label: "Core concepts" },
+      { href: "/#shape", label: "The shape of the system" }, { href: "/#features", label: "What the runtime gives you" }, { href: "/#reference", label: "Reference" },
     ]},
     { href: "/installation", label: "Installation", icon: Download, subs: [
       { href: "/installation#prerequisites", label: "Prerequisites" }, { href: "/installation#clone", label: "Clone" }, { href: "/installation#one-command", label: "One-command stack" }, { href: "/installation#credentials", label: "Dev credentials" }, { href: "/installation#ports", label: "Service ports" },
     ]},
     { href: "/quickstart", label: "Get started", icon: Rocket, subs: [
       { href: "/quickstart#prerequisites", label: "Before you start" }, { href: "/quickstart#dashboard", label: "In the dashboard" }, { href: "/quickstart#cli", label: "In the terminal" }, { href: "/quickstart#api", label: "The REST calls" }, { href: "/quickstart#next", label: "What's next" },
+    ]},
+    { href: "/architecture", label: "Architecture explorer", icon: Network, subs: [
+      { href: "/architecture#map", label: "System map" }, { href: "/architecture#sequences", label: "Sequences" }, { href: "/architecture#lifecycle", label: "Sandbox states" },
     ]},
     { href: "/stack", label: "The Stack", icon: Server, subs: [
       { href: "/stack#rule", label: "The rule" }, { href: "/stack#languages", label: "Languages" }, { href: "/stack#glossary", label: "What these things are" }, { href: "/stack#data", label: "Data stores" }, { href: "/stack#e2e", label: "End to end" }, { href: "/stack#invariants", label: "Invariants" }, { href: "/stack#tradeoffs", label: "What it costs" },
@@ -81,9 +112,12 @@ const sections: NavSection[] = [
       { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
     ]},
     { href: "/runtime/sandbox-lifecycle", label: "Sandbox Lifecycle", icon: BarChart3, subs: [
-{ href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
-]},
-{ href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
+      { href: "/runtime/sandbox-lifecycle#states", label: "States" }, { href: "/runtime/sandbox-lifecycle#idle", label: "Idle suspend" }, { href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
+    ]},
+    { href: "/runtime/egress", label: "Egress & Credentials", icon: Network, subs: [
+      { href: "/runtime/egress#flow", label: "The path out" }, { href: "/runtime/egress#allowlist", label: "Allowlist" }, { href: "/runtime/egress#credentials", label: "Credential injection" },
+    ]},
+    { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
       { href: "/runtime/observability#span-attrs", label: "Span attributes" }, { href: "/runtime/observability#otel-metrics", label: "lantern.run.* metrics" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "VM metrics" },
     ]},
     { href: "/runtime/identity", label: "Identity & Secrets", icon: Code, subs: [
@@ -128,12 +162,18 @@ const sections: NavSection[] = [
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // The most specific nav item wins, so /runtime/egress highlights Egress, not Overview.
+  const path = pathname.replace(/\/$/, "") || "/";
+  const wide = path === "/architecture";
+  const activeHref = sections.flatMap((s) => s.items.map((i) => i.href))
+    .filter((h) => path === h || (h !== "/" && path.startsWith(h + "/")))
+    .sort((a, b) => b.length - a.length)[0];
   const [open, setOpen] = useState(false);
   // Close the mobile drawer whenever the route changes.
   useEffect(() => { setOpen(false); }, [pathname]);
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <title>Lantern Docs</title>
         <meta name="description" content="Documentation for the Lantern AI agent platform." />
@@ -141,33 +181,35 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             and shrinks to unreadable. (App-Router client layouts don't get
             Next's auto-injected viewport, so we set it explicitly.) */}
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
       </head>
       <body className="antialiased">
         <CodeEnhancer />
         <HeadingAnchors />
         {/* Mobile top bar (hidden on lg+) */}
-        <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-800 bg-surface-0/95 px-4 backdrop-blur">
+        <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-line bg-bg/95 px-4 backdrop-blur">
           <Link href="/" className="flex items-center gap-2.5">
             <LanternMark />
-            <span className="text-sm font-semibold text-white">Lantern</span>
-            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">DOCS</span>
+            <span className="text-sm font-semibold text-ink">Lantern</span>
+            <span className="text-sm text-ink-3">Docs</span>
           </Link>
+          <div className="flex items-center"><ThemeToggle />
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? "Close menu" : "Open menu"}
-            className="-mr-2 rounded-lg p-2 text-zinc-300 hover:bg-surface-1"
+            className="-mr-2 rounded-lg p-2 text-ink-2 hover:bg-surface"
           >
             {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+          </button></div>
         </header>
 
         {/* Backdrop when the drawer is open on mobile */}
         {open && (
           <div
             onClick={() => setOpen(false)}
-            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+            className="fixed inset-0 z-40 bg-ink/40 lg:hidden"
             aria-hidden="true"
           />
         )}
@@ -176,17 +218,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Sidebar: a slide-in drawer on mobile, a fixed rail on lg+ */}
           <aside
             className={clsx(
-              "fixed top-0 left-0 z-50 flex h-screen w-72 max-w-[82vw] flex-col overflow-y-auto border-r border-zinc-800 bg-surface-0 transition-transform duration-200 ease-out lg:w-60 lg:translate-x-0",
+              "fixed top-0 left-0 z-50 flex h-screen w-72 max-w-[82vw] flex-col overflow-y-auto border-r border-line bg-bg transition-transform duration-200 ease-out lg:w-60 lg:translate-x-0",
               open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
             )}
           >
             {/* Logo */}
-            <div className="px-5 py-4 border-b border-zinc-800">
+            <div className="px-5 py-4 border-b border-line">
               <Link href="/" className="flex items-center gap-2.5">
                 <LanternMark />
                 <div>
-                  <span className="text-sm font-semibold text-white">Lantern</span>
-                  <span className="ml-1.5 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">DOCS</span>
+                  <span className="text-sm font-semibold text-ink">Lantern</span>
+                  <span className="ml-1.5 text-sm text-ink-3">Docs</span>
                 </div>
               </Link>
             </div>
@@ -195,18 +237,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav className="flex-1 px-3 py-4 space-y-5 overflow-y-auto">
               {sections.map((section) => (
                 <div key={section.label}>
-                  <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">{section.label}</p>
+                  <p className="px-2 mb-1.5 text-xs font-medium text-ink-3">{section.label}</p>
                   <div className="space-y-0.5">
                     {section.items.map((item) => {
-                      const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                      const isActive = item.href === activeHref;
                       return (
                         <div key={item.href}>
                           <Link href={item.href}
                             className={clsx(
                               "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors",
                               isActive
-                                ? "bg-lantern-500/10 text-lantern-400 font-medium"
-                                : "text-zinc-400 hover:bg-surface-1 hover:text-zinc-200"
+                                ? "bg-surface text-ink font-medium shadow-[inset_2px_0_0_var(--lx-flame)]"
+                                : "text-ink-2 hover:bg-surface hover:text-ink"
                             )}>
                             <item.icon className="w-4 h-4 shrink-0" />
                             {item.label}
@@ -220,20 +262,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
 
             {/* Footer */}
-            <div className="px-5 py-3 border-t border-zinc-800 space-y-2">
+            <div className="px-5 py-3 border-t border-line space-y-2">
               <a href="https://github.com/dshakes/lantern" target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                className="flex items-center gap-2 text-xs text-ink-2 hover:text-ink">
                 <ExternalLink className="h-3 w-3" /> GitHub
               </a>
-              <p className="text-[10px] text-zinc-700">Apache 2.0 · GA</p>
+              <div className="flex items-center justify-between"><p className="text-xs text-ink-3">Apache-2.0</p><ThemeToggle /></div>
             </div>
           </aside>
 
           {/* Main content + right-hand "On this page" rail */}
-          <main className="min-h-screen flex-1 lg:ml-60">
+          <main className="min-h-screen min-w-0 flex-1 lg:ml-60">
             <div className="mx-auto flex max-w-6xl gap-12 px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
-              <article className="prose w-full min-w-0 max-w-3xl">{children}</article>
-              <Toc />
+              {/* The architecture explorer needs the full width; its sections are in the sidebar. */}
+              <article className={clsx("prose w-full min-w-0", !wide && "max-w-3xl")}>{children}</article>
+              {!wide && <Toc />}
             </div>
           </main>
         </div>

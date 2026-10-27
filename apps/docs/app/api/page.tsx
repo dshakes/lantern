@@ -6,18 +6,17 @@ export default function ApiReferencePage() {
     <>
       <h1>API Reference</h1>
       <p>
-        The Lantern REST API is served on <code>:8080</code> (default for both
-        managed cloud and self-hosted). All endpoints under <code>/v1/</code>{" "}
-        require a Bearer API key. Auth and internal endpoints use separate
-        mechanisms described below.
+        The control plane serves REST on <code>:8080</code>. Every{" "}
+        <code>/v1/</code> endpoint takes a Bearer token: a dashboard JWT or an
+        API key.
       </p>
 
       <Concept>
-        Everything in Lantern — the dashboard, the CLI, the SDKs — talks to
-        this one HTTP API. This page is the raw reference for when you want to
-        call it directly with <code>curl</code> or your own code. If you&apos;d
-        rather not hand-write requests, the <Link href="/sdk">SDKs</Link> wrap
-        all of these endpoints in typed methods.
+        The dashboard, CLI and SDKs all call this API. Use this page to call
+        it with <code>curl</code>. The <Link href="/sdk">SDKs</Link> wrap the
+        same endpoints in typed methods. This page covers the core
+        resources; the full route list is in{" "}
+        <code>services/control-plane/cmd/server/main.go</code>.
       </Concept>
 
       <h2 id="auth">Authentication</h2>
@@ -29,10 +28,12 @@ export default function ApiReferencePage() {
         <code>{`Authorization: Bearer hlx_live_your_api_key_here`}</code>
       </pre>
       <p>
-        Keys are created under <strong>Settings &gt; API Keys</strong> in the
-        dashboard and carry optional scopes (
-        <code>agents:read</code>, <code>runs:execute</code>, etc.). Keys begin
-        with the prefix <code>hlx_live_</code>.
+        Create keys under <strong>Settings &gt; API Keys</strong>. Keys start
+        with <code>hlx_live_</code> and carry scopes (<code>read</code>,{" "}
+        <code>write</code>, <code>admin</code>, or fine-grained ones such as{" "}
+        <code>agents:write</code> and <code>runs:execute</code>). Scope
+        enforcement is off by default; set <code>LANTERN_AUTHZ_ENFORCE=1</code>{" "}
+        and a key missing the required scope gets <code>403</code>.
       </p>
 
       <div className="callout callout-info">
@@ -96,7 +97,9 @@ Response: 201 Created
       <pre>
         <code>{`DELETE /v1/agents/{name}
 
-Response: 204 No Content`}</code>
+Response: 204 No Content
+
+PATCH  /v1/agents/{name}   — update`}</code>
       </pre>
 
       <h2 id="runs">Runs</h2>
@@ -213,6 +216,14 @@ data: {"seq":4,"kind":"step_completed","stepId":"search-0","runId":"550e...","at
         The final run state is on <code>GET /v1/runs/{"{id}"}</code>.
       </div>
 
+      <h3>Other run endpoints</h3>
+      <pre>
+        <code>{`POST   /v1/runs/{id}/cancel     — cancel a run
+DELETE /v1/runs/{id}            — delete a run
+POST   /v1/runs/{id}/receipt    — issue a signed receipt
+POST   /v1/runs/{id}/feedback   — score 1-5, optional comment`}</code>
+      </pre>
+
       <h3>Forecast cost before running</h3>
       <pre>
         <code>{`POST /v1/runs/forecast
@@ -232,8 +243,8 @@ Response: 200 OK
 
       <h2 id="sessions">Sessions</h2>
       <p>
-        Sessions are interactive multi-turn conversations. Each session can run
-        in a dedicated microVM (warm-path ~150 ms).
+        Sessions are interactive multi-turn conversations. Send messages and
+        stream the reply as it generates.
       </p>
 
       <h3>Create session</h3>
@@ -270,7 +281,9 @@ event: message_delta
 data: {"sessionId":"...","turnId":"...","seq":2,"delta":"is."}
 
 event: message_completed
-data: {"turnId":"...","text":"Paris.","usage":{"tokensIn":12,"tokensOut":4,"costUsd":0.00001}}`}</code>
+data: {"turnId":"...","text":"Paris.","usage":{"tokensIn":12,"tokensOut":4,"costUsd":0.00001}}
+
+A failed turn emits message_error.`}</code>
       </pre>
 
       <h3>Other session endpoints</h3>
@@ -408,10 +421,9 @@ POST /v1/settings/llm-providers/{provider}/test  — test the key`}</code>
       </ul>
 
       <div className="callout callout-info">
-        <strong>No rate-limit plans or X-RateLimit headers.</strong> Budget
-        enforcement (cost/day, cost/run, tokens/day, runs/day) is handled per
-        agent via the{" "}
-        <a href="/budgets">Budgets</a> API—not by tier-based rate limits.
+        <strong>No rate-limit tiers or X-RateLimit headers.</strong> Spend and
+        run limits are per-agent (cost/day and runs/day enforced; cost/run checked at forecast; tokens/day stored, not enforced){" "}
+        <a href="/budgets">budgets</a>.
       </div>
     </>
   );

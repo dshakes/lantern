@@ -5,23 +5,19 @@ export default function StackPage() {
     <>
       <h1>The Stack</h1>
       <p>
-        Lantern is a polyglot monorepo <strong>on purpose</strong>. Four
-        languages, three data stores, one contract format. This page is the
-        honest answer to &ldquo;why is there Rust <em>and</em> Go in here?&rdquo;
-        — what each piece is, what job it holds, and why that job went to that
-        tool instead of the obvious one.
+        Four languages, three data stores, one contract format. This page
+        answers &ldquo;why is there Rust <em>and</em> Go in here?&rdquo;: what
+        each piece does and why it went to that tool.
       </p>
 
       <Concept>
-        A platform that runs other people&apos;s agents has three very different
-        jobs. It has to <strong>coordinate</strong> (who owns what, what ran
-        when, who gets billed) — that wants a language with great database and
-        cluster libraries. It has to <strong>be fast on every single request</strong>{" "}
-        (routing tokens, holding sandboxes open) — that wants a language with no
-        garbage-collector pauses. And it has to{" "}
-        <strong>be pleasant to build against</strong> — that wants the language
-        the AI ecosystem already lives in. No single language is best at all
-        three, so we stopped pretending and picked the right one per layer.
+        Running other people&apos;s agents is three jobs. <strong>Coordinate</strong>{" "}
+        (who owns what, what ran, who is billed): Go, for its database and
+        cluster libraries. <strong>Stay fast on every request</strong> (route
+        tokens, hold sandboxes): Rust, with no garbage-collector pauses.{" "}
+        <strong>Be easy to build against</strong>: TypeScript, where the AI
+        ecosystem lives. One language does not win all three, so each layer
+        gets its own.
       </Concept>
 
       <h2 id="rule">The rule</h2>
@@ -35,9 +31,8 @@ export default function StackPage() {
         >
           ADR 0001
         </a>
-        ) — the bar is deliberately high, because every extra language is a
-        second CI matrix, a second set of security advisories, and a second
-        thing a new hire has to learn.
+        ) . The bar is high: each language adds a CI matrix, a set of security
+        advisories and something new hires must learn.
       </p>
 
       <h2 id="languages">Languages, and the job each one holds</h2>
@@ -166,9 +161,9 @@ export default function StackPage() {
             </td>
             <td>
               A very small, very fast virtual machine built by AWS to run Lambda.
-              Boots in about a tenth of a second and gives untrusted code its own
-              kernel, so escaping it means breaking the hardware boundary, not
-              just a container.
+              Firecracker&apos;s own documentation cites boot in about 125 ms.
+              Untrusted code gets its own kernel, so escaping means breaking the
+              hardware virtualization boundary, not just a container.
             </td>
           </tr>
           <tr>
@@ -187,8 +182,8 @@ export default function StackPage() {
             </td>
             <td>
               Containers that are secretly full virtual machines. Broader
-              compatibility than Firecracker, slower to start — used for hostile
-              input.
+              compatibility than Firecracker; one of the isolation backends the
+              runtime manager can use for untrusted and hostile workloads.
             </td>
           </tr>
           <tr>
@@ -207,10 +202,9 @@ export default function StackPage() {
               <strong>Control plane / data plane</strong>
             </td>
             <td>
-              The split between the part that <em>decides</em> (our SaaS: who
-              owns what, what should run) and the part that{" "}
-              <em>executes</em> (your cloud account: the actual agent code and
-              your data). Your data never has to leave your infrastructure.
+              The split between the part that <em>decides</em> (tenants, runs,
+              budgets) and the part that <em>executes</em> (the data plane in
+              your cloud account, where agent code and data live).
             </td>
           </tr>
           <tr>
@@ -238,9 +232,10 @@ export default function StackPage() {
             </td>
             <td>
               A Postgres feature that filters rows by tenant inside the database
-              itself. Tenant isolation survives an application bug, because the
-              database refuses to return the other tenant&apos;s rows regardless
-              of what the query asked for.
+              itself. When enforcement is on
+              (<code>LANTERN_RLS_ENFORCE=1</code>, off by default), tenant
+              isolation survives an application bug: the database refuses to
+              return another tenant&apos;s rows.
             </td>
           </tr>
         </tbody>
@@ -301,37 +296,29 @@ export default function StackPage() {
         </tbody>
       </table>
 
-      <h2 id="e2e">End to end: one run, all the way through</h2>
+      <h2 id="e2e">End to end: one sandbox run</h2>
       <p>
-        This is what actually happens between{" "}
-        <code>lantern run agent.yaml</code> and a result. Every hop below is a
-        real process boundary.
+        What happens between <code>lantern run agent.yaml</code> and a result.
+        Every hop is a process boundary. (Workflow runs go through the
+        workflow engine and, with <code>LANTERN_USE_MODEL_ROUTER=1</code>, the
+        model router; see the notes under the diagram.)
       </p>
       <pre>
         <code>{`  you ──▶ CLI / SDK / dashboard                          (Go · TypeScript)
            │  REST or gRPC, bearer token
            ▼
   1  CONTROL PLANE                                      (Go, :8080 / :50051)
-           │  authenticate, resolve tenant, check budget + quota,
-           │  write the run row, mint a per-instance identity
+           │  authenticate, resolve tenant, check budget + quota
            ▼
-  2  WORKFLOW ENGINE                                     (Go, :50052)
-           │  the only thing allowed to mutate run state.
-           │  each step is journaled, so a crash resumes instead of restarting
-           ├──────────────▶ 3  MODEL ROUTER              (Rust, :50053)
-           │                     picks a real vendor model from a capability
-           │                     name like "reasoning-large", handles failover,
-           │                     meters tokens and cost
-           ▼
-  4  RUNTIME SCHEDULER                                   (Go, :50055)
+  2  RUNTIME SCHEDULER                                   (Go, :50055)
            │  picks a node: warm pool, region, fair share, cost, health
            ▼
-  5  RUNTIME MANAGER                                     (Rust, :50054)
+  3  RUNTIME MANAGER                                     (Rust, :50054)
            │  spawns the workload in the isolation class the spec declared
            │  (Firecracker · Kata · K8s Job · Wasmtime · Docker)
            ▼
-  6  HARNESS — PID 1 inside the sandbox                  (Rust)
-           │  vends short-lived secrets, enforces the egress allowlist,
+  4  HARNESS — PID 1 inside the sandbox                  (Rust)
+           │  enforces the egress allowlist, vends short-lived secrets,
            │  streams logs, heartbeats, and cost back up
            ▼
      your agent code runs
@@ -342,6 +329,16 @@ export default function StackPage() {
                                   └──▶ journal_events (Postgres)
                                        the durable record: replay, receipts, audit`}</code>
       </pre>
+
+      <p>
+        <strong>Workflow runs</strong> add the workflow engine (Go,{" "}
+        <code>:50052</code>), the only writer of run state, which journals each
+        step so a crash resumes instead of restarting. The{" "}
+        <strong>model router</strong> (Rust, <code>:50053</code>) maps a
+        capability like <code>reasoning-large</code> to a vendor model, with
+        failover and metering. The control plane&apos;s inline path calls
+        providers directly unless the router cutover is on.
+      </p>
 
       <h2 id="invariants">The rules that hold it together</h2>
       <p>
@@ -370,30 +367,29 @@ export default function StackPage() {
         </li>
         <li>
           <strong>Untrusted code gets a microVM.</strong> Never a bare
-          container. If the cluster cannot provide the declared isolation, the
-          workload is refused rather than quietly downgraded.
+          container. If the node cannot provide isolation for an untrusted or
+          hostile workload, the manager refuses it instead of downgrading.
         </li>
         <li>
           <strong>Models are named by capability, not vendor.</strong> Your code
-          says <code>reasoning-large</code>; the router decides it is a specific
-          vendor model today and something better next month.
+          says <code>reasoning-large</code>; the router resolves it to a vendor
+          model, so a swap needs no code change.
         </li>
         <li>
           <strong>Multi-tenant by default.</strong> Every row carries a tenant,
-          every call carries a tenant, and Postgres row-level security enforces
-          it below the application.
+          every call carries a tenant, and Postgres row-level security backs it
+          below the application once <code>LANTERN_RLS_ENFORCE=1</code> is set.
         </li>
         <li>
           <strong>Secrets never appear in logs, traces, or run state.</strong>{" "}
-          Only a reference travels; the harness resolves it at the moment of
-          use.
+          Only a <code>lantern.secret/...</code> reference travels; it is resolved
+          at the moment of use.
         </li>
       </ul>
 
       <h2 id="tradeoffs">What this costs us</h2>
       <p>
-        Being honest about the bill, because a stack page that only lists
-        benefits is marketing:
+        The bill:
       </p>
       <ul>
         <li>

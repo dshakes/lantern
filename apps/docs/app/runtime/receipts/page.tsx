@@ -4,7 +4,7 @@ import { Concept } from "../../_components/Concept";
 export default function RuntimeReceiptsPage() {
   return (
     <>
-      <h1>Verifiable Receipts</h1>
+      <h1>Verifiable receipts</h1>
       <p>
         When a headless agent finishes, you can ask the runtime for a{" "}
         <strong>signed receipt</strong> — tamper-evident, offline-verifiable
@@ -35,7 +35,8 @@ export default function RuntimeReceiptsPage() {
 
       <h2 id="payload">Payload fields</h2>
       <p>
-        The <strong>Ed25519</strong> signature covers the canonical JSON of a{" "}
+        The signature (<strong>Ed25519</strong> when{" "}
+        <code>LANTERN_RECEIPT_ED25519_SEED</code> is set) covers the canonical JSON of a{" "}
         <code>receiptPayload</code> struct with these fields (alphabetically
         sorted keys, compact JSON, no whitespace):
       </p>
@@ -45,13 +46,13 @@ export default function RuntimeReceiptsPage() {
         <li><code>costUsd</code> — accumulated cost for the run</li>
         <li><code>issuedAt</code> — RFC3339 timestamp</li>
         <li><code>journalHash</code> — SHA-256 of the ordered <code>journal_events</code> rows</li>
-        <li><code>model</code> — omitted when blank</li>
-        <li><code>provider</code> — omitted when blank</li>
+        <li><code>model</code> / <code>provider</code> — reserved; currently always omitted</li>
         <li><code>runId</code> — always present</li>
-        <li><code>status</code> — <code>succeeded</code> or <code>failed</code></li>
+        <li><code>status</code> — the run&apos;s status at issuance (e.g. <code>succeeded</code>, <code>failed</code>, <code>cancelled</code>; issuing on a non-terminal run is not refused)</li>
         <li><code>tenantId</code> — always present</li>
         <li><code>tokensIn</code> / <code>tokensOut</code> — prompt and completion token counts</li>
         <li><code>version</code> — schema version (currently <code>1</code>)</li>
+        <li><code>confidentialCompute</code> — present only for confidential runs (<code>attested: false</code>: the launch measurement is recorded, not verified)</li>
       </ul>
       <p>
         The canonical JSON is produced by a three-step round-trip: marshal the
@@ -69,22 +70,29 @@ export default function RuntimeReceiptsPage() {
         hash. It is persisted alongside the run, so it can be retrieved and
         re-verified later.
       </p>
+      <p>
+        Verify with <code>POST /v1/runs/receipts/verify</code> (no auth required). If{" "}
+        <code>LANTERN_RECEIPT_ED25519_SEED</code> is unset, the control plane falls back to an HMAC-SHA256 signature for
+        dev. Set the seed in any real deployment.
+      </p>
 
       <h2 id="verify">Verifying offline</h2>
       <p>
         Verification needs no privileged access. The signing key&apos;s
-        algorithm and fingerprint are published at a well-known endpoint, so an
+        algorithm, fingerprint and (for Ed25519) public key are published at a
+        well-known endpoint, so an
         external party can verify a receipt without calling back into your
         control plane:
       </p>
       <pre><code>{`GET /.well-known/lantern-receipts`}</code></pre>
       <p>
-        Anyone holding a receipt and the published key fingerprint can confirm:
+        Anyone holding an Ed25519 receipt and the public key published there
+        can confirm the receipt was signed by this deployment&apos;s key.
+        Matching the journal hash against the run&apos;s actual event log (i.e.
+        nothing was altered after the fact) additionally requires the run&apos;s
+        journal export. An HMAC-SHA256 receipt can only be checked by the
+        deployment that holds the secret.
       </p>
-      <ul>
-        <li>the receipt was signed by this deployment&apos;s key, and</li>
-        <li>the journal hash inside it matches the run&apos;s actual event log — i.e. nothing was altered after the fact.</li>
-      </ul>
 
       <div className="callout callout-info">
         <strong>Note:</strong> A receipt is signed over the{" "}

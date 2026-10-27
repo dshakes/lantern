@@ -1,28 +1,38 @@
+import Link from "next/link";
 import { Concept } from "../_components/Concept";
+import { Diagram } from "../_components/Diagram";
 
 export default function SecurityPage() {
   return (
     <>
       <h1>Security</h1>
       <p>
-        Lantern is designed for production workloads that handle sensitive data.
-        Security is not an add-on -- it is built into every layer of the
-        architecture, from the microVM runtime to the model router.
+        Each hop between the caller, the
+        control plane, the data-plane host and the microVM is a trust boundary with its own credential, and untrusted
+        code sits behind all of them.
+      </p>
+
+      <Diagram
+        name="trust-boundaries"
+        caption="Four zones and the credential that crosses each boundary. See Egress and credentials for the path out of the VM."
+      />
+      <p>
+        How a sandbox reaches the network, and why it never holds a credential in broker mode:{" "}
+        <Link href="/runtime/egress">Egress and credentials</Link>.
       </p>
 
       <Concept>
         Three questions this page answers. Can one customer&apos;s agent ever
         see another customer&apos;s data? (No — every record is fenced by
         tenant, enforced down to the database row.) What happens if an agent
-        runs malicious code? (It&apos;s trapped in its own micro virtual
-        machine with no network access beyond an explicit allowlist.) Can you
-        prove what an agent did? (Yes — every run ends with a
-        cryptographically signed receipt anyone can verify.) Everything below
-        is labeled shipped or planned — no vaporware.
+        runs malicious code? (It runs inside a microVM, with egress limited to a per-sandbox allowlist:
+        structurally in broker mode, where the VM has no network device, and in default mode when the image
+        installs the iptables REDIRECT rule.) Can you prove what an agent did? (Yes. You can issue a signed receipt for any completed
+        run; with an Ed25519 seed configured, anyone can verify it.) Everything below is labeled shipped or planned.
       </Concept>
 
       <div className="callout callout-warning">
-        <strong>Status note (2026-06-23):</strong> The controls described below
+        <strong>Status note:</strong> The controls described below
         reflect what is shipped and what is planned. Items marked
         <em> (planned)</em> are designed and documented but not yet implemented.
         Do not rely on planned features for compliance decisions.
@@ -31,21 +41,21 @@ export default function SecurityPage() {
       <h2 id="what-is-shipped">What is shipped today</h2>
       <ul>
         <li><strong>AES-256-GCM encryption at rest</strong> for connector credentials and LLM provider keys. Active only when <code>LANTERN_CREDENTIAL_KEY</code> is set — when unset, these columns are stored as plaintext pass-through, so set the key in any real deployment.</li>
-        <li><strong>HttpOnly JWT cookies</strong> -- dashboard auth tokens are issued server-side and never exposed to client-side JavaScript.</li>
+        <li><strong>HttpOnly session cookie</strong> -- dashboard auth uses an HttpOnly session cookie; the JWT is also kept in <code>localStorage</code> for client-side API calls.</li>
         <li><strong>Row-Level Security (RLS)</strong> policies on every tenant-scoped table (<code>USING</code> + <code>WITH CHECK</code>), guarded by a catalog gate-test — a new tenant table without RLS (or an explicit exemption) fails CI. Enforcement is staged per-environment via <code>LANTERN_RLS_ENFORCE=1</code>; the handler cutover is complete and <code>make rls-validate</code> proves the policies end-to-end against a live database.</li>
-        <li><strong>gRPC service-token auth</strong> on all three trust-boundary ports -- control-plane <code>:50051</code>, workflow-engine <code>:50052</code>, and runtime-scheduler <code>:50055</code>. Constant-time check, runs before tenant extraction, fail-closed in production.</li>
+        <li><strong>gRPC service-token auth</strong> on every internal gRPC port -- control-plane <code>:50051</code>, workflow-engine <code>:50052</code>, model-router <code>:50053</code>, runtime-manager <code>:50054</code> and runtime-scheduler <code>:50055</code>. Constant-time check, runs before tenant extraction, fail-closed in production.</li>
         <li><strong>Runtime report binding</strong> -- step events and exit reports from a microVM are bound to that VM&apos;s own run: a report carrying another run&apos;s <code>run_id</code> is rejected with 403, so a compromised harness cannot spoof another tenant&apos;s audit or log stream.</li>
-        <li><strong>Ed25519-signed run receipts</strong> -- a SHA-256 of the run&apos;s full <code>journal_events</code> stream is signed (HMAC-SHA256 fallback when <code>LANTERN_RECEIPT_ED25519_SEED</code> is unset) and verifiable with no Lantern account at <code>/proof</code> and <code>/.well-known/lantern-receipts</code>.</li>
+        <li><strong>Signed run receipts</strong> -- issued on request for a completed run (<code>POST /v1/runs/&#123;id&#125;/receipt</code>); a SHA-256 of the run&apos;s full <code>journal_events</code> stream is signed with Ed25519 when <code>LANTERN_RECEIPT_ED25519_SEED</code> is set (verifiable with no Lantern account at <code>/proof</code> against the key at <code>/.well-known/lantern-receipts</code>), HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).</li>
         <li><strong>Per-endpoint API-key scopes</strong> -- mutating endpoints are annotated with required scopes (<code>agents:write</code>, <code>runs:execute</code>, …). Enforcement is flag-gated via <code>LANTERN_AUTHZ_ENFORCE</code> and default-OFF today; when off, missing scopes are logged, not rejected.</li>
-        <li><strong>Fail-closed token gates</strong> -- the gateway&apos;s API-key introspection endpoint and the personal <code>/v1/signals</code> endpoint both refuse (403/401) when their shared token env is unset, and validate with constant-time compares when set.</li>
+        <li><strong>Fail-closed token gates</strong> -- the gateway&apos;s API-key introspection endpoint refuses (403) in production when <code>LANTERN_GRPC_SERVICE_TOKEN</code> is unset (dev allows it with a warning); the personal <code>/v1/signals</code> endpoint refuses (401) whenever <code>LANTERN_SIGNAL_TOKEN</code> is unset. Both validate with constant-time compares when set.</li>
         <li><strong>A2A tenant isolation</strong> -- <code>GetAgentCard</code> / <code>InvokeAgent</code> gate on <code>is_public OR caller-tenant</code>; private agents return 404 to cross-tenant callers.</li>
         <li><strong>Bridge retry + surface-gateway tenant resolution</strong> -- the surface gateway resolves a real Lantern <code>LANTERN_TENANT_ID</code> instead of using platform IDs; unknown installs are rejected.</li>
         <li><strong>LLM idempotency keys</strong> on all provider calls -- derived from <code>(run_id, step_id, attempt)</code>, reused across same-provider retries.</li>
         <li><strong>Dependency vuln gate</strong> -- <code>govulncheck</code>, <code>cargo-audit</code>, and <code>npm audit</code> run on every CI build.</li>
-        <li><strong>OTel traces with tenant_id</strong> -- every HTTP request and gRPC call carries a span enriched with <code>tenant_id</code>, <code>run_id</code>, and <code>step_id</code>.</li>
+        <li><strong>OTel traces with tenant_id</strong> -- every control-plane HTTP request and gRPC call carries a span enriched with <code>tenant_id</code>, <code>run_id</code>, and <code>step_id</code>.</li>
       </ul>
 
-      <h2 id="privacy">Privacy levels <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h2>
+      <h2 id="privacy">Privacy levels <em style={{color: "var(--lx-flame)", fontSize: "0.85em"}}>(planned)</em></h2>
       <p>
         The following privacy levels are part of the architecture design and are
         not yet implemented. They are documented here for reference.
@@ -74,79 +84,41 @@ export default function SecurityPage() {
         connector once the feature ships.
       </div>
 
-      <h2 id="guardrails">Guardrails <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(partial)</em></h2>
+      <h2 id="guardrails">Runtime controls</h2>
       <p>
-        Guardrails are rules that constrain what an agent can do. They are
-        enforced at the runtime level, not by the LLM -- so they cannot be
-        bypassed by prompt injection.
-      </p>
-
-      <h3>Built-in guardrails</h3>
-      <ul>
-        <li>
-          <strong>Output validation</strong> -- verify that agent outputs
-          conform to a schema before delivery
-        </li>
-        <li>
-          <strong>Domain restrictions</strong> -- limit which external URLs
-          the agent can access
-        </li>
-        <li>
-          <strong>Token limits</strong> -- cap the maximum tokens per step
-          and per run
-        </li>
-        <li>
-          <strong>Cost limits</strong> -- set a maximum dollar amount per run
-          to prevent runaway costs
-        </li>
-        <li>
-          <strong>Human-in-the-loop</strong> -- require human approval before
-          executing certain actions (sending emails, creating issues, etc.)
-        </li>
-      </ul>
-
-      <h3>Configuring guardrails</h3>
-      <p>
-        Guardrails are configured in the agent&apos;s{" "}
-        <strong>Security</strong> tab:
-      </p>
-      <pre>
-        <code>{`{
-  "guardrails": {
-    "max_tokens_per_step": 4096,
-    "max_cost_per_run": 1.00,
-    "allowed_domains": ["*.github.com", "*.google.com"],
-    "require_approval": ["gmail.send", "github.createIssue"],
-    "block_pii": true
-  }
-}`}</code>
-      </pre>
-
-      <h2>PII blocking <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h2>
-      <p>
-        When <code>block_pii</code> is enabled, Lantern automatically detects
-        and redacts personally identifiable information in agent inputs and
-        outputs:
+        These constraints are enforced by the platform, outside the model, so a prompt injection cannot talk its way
+        past them.
       </p>
       <ul>
-        <li>Email addresses</li>
-        <li>Phone numbers</li>
-        <li>Social Security numbers</li>
-        <li>Credit card numbers</li>
-        <li>Physical addresses</li>
-        <li>IP addresses</li>
+        <li>
+          <strong>Budgets</strong>: per-agent caps on cost per day and runs per day, and a tenant-wide daily cost cap.
+          A hard-fail budget returns HTTP 402 before the run starts. The per-run cost cap is checked at forecast time;
+          tokens/day and per-tool limits are stored, not enforced yet.
+        </li>
+        <li>
+          <strong>Egress allowlist</strong>: declared per spawn. In broker mode anything not on the allowlist is denied
+          structurally (there is no network device). In default mode the allowlist binds only when the VM host/image
+          installs the iptables REDIRECT rule. See{" "}
+          <Link href="/runtime/egress">Egress and credentials</Link>.
+        </li>
+        <li>
+          <strong>Human approval</strong>: workflow <code>approval</code> nodes block on a takeover request until an
+          operator grants it. Nested approvals inside child runs fail today rather than wait.
+        </li>
+        <li>
+          <strong>Confidence gate</strong>: low-confidence tool and connector steps divert to approval. Off by default
+          (<code>LANTERN_CONFIDENCE_GATE</code>).
+        </li>
       </ul>
       <p>
-        PII detection runs inside the microVM before data is logged or stored.
-        Redacted values are replaced with tokens like{" "}
-        <code>[EMAIL_REDACTED]</code> in logs and traces.
+        The dashboard also has output filters (blocked topics and similar). These run in the browser on displayed
+        output. They are a convenience, not a security control.
       </p>
 
-      <div className="callout callout-warning">
-        <strong>Warning:</strong> PII blocking is a defense-in-depth measure,
-        not a guarantee. For regulated industries, combine PII blocking with
-        the &quot;paranoid&quot; privacy level and your own compliance controls.
-      </div>
+      <h2>PII redaction <em style={{color: "var(--lx-flame)", fontSize: "0.85em"}}>(planned)</em></h2>
+      <p>
+        Automatic PII detection and redaction in agent inputs, outputs and traces is not implemented. Do not rely on it.
+      </p>
 
       <h2 id="encryption">Data encryption</h2>
 
@@ -162,8 +134,7 @@ export default function SecurityPage() {
           responsibility of the host.
         </li>
         <li>
-          S3/MinIO objects (agent bundles, snapshots) use server-side
-          encryption at the storage layer.
+          S3/MinIO objects (agent bundles, snapshots): encryption is a bucket setting you configure on your storage. Lantern does not set it.
         </li>
       </ul>
 
@@ -181,21 +152,21 @@ export default function SecurityPage() {
           planned stronger follow-up and is not yet implemented.
         </li>
         <li>
-          In-VM secret vending uses kernel-attested peer auth (
+          Default egress mode: in-VM secret vending uses kernel-attested peer auth (
           <code>SO_PEERCRED</code>) on the Unix domain socket — only the
           expected workload uid may receive secrets, and the harness refuses any
           other peer at the kernel level.
         </li>
       </ul>
 
-      <h3>Bring your own key (BYOK) <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h3>
+      <h3>Bring your own key (BYOK) <em style={{color: "var(--lx-flame)", fontSize: "0.85em"}}>(planned)</em></h3>
       <p>
         Enterprise customers will be able to provide their own encryption keys via AWS KMS,
         Google Cloud KMS, or Azure Key Vault. This feature is on the roadmap and not yet
         available.
       </p>
 
-      <h2 id="audit">Audit logging <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(partial)</em></h2>
+      <h2 id="audit">Audit logging <em style={{color: "var(--lx-flame)", fontSize: "0.85em"}}>(partial)</em></h2>
       <p>
         Run-level events are recorded in <code>journal_events</code> (the run event journal).
         A full immutable audit log covering secret access, role changes, and
@@ -203,7 +174,7 @@ export default function SecurityPage() {
       </p>
       <ul>
         <li>Run start, completion, and failure (via <code>journal_events</code>)</li>
-        <li>A2A agent card access (tenant-scoped, cross-tenant denials logged)</li>
+        <li>A2A agent card access (tenant-scoped; cross-tenant requests return 404)</li>
       </ul>
       <p>
         SIEM export via webhook or S3 is planned but not yet available.
@@ -223,8 +194,7 @@ export default function SecurityPage() {
       <p>All isolation tiers provide:</p>
       <ul>
         <li>
-          <strong>Process isolation</strong> -- each run has its own kernel,
-          filesystem, and network namespace
+          <strong>Process isolation</strong> -- separate filesystem and network namespace per run; microVM classes add their own guest kernel
         </li>
         <li>
           <strong>seccomp filtering</strong> -- syscall restriction is a
@@ -232,10 +202,7 @@ export default function SecurityPage() {
           Lantern-shipped profile
         </li>
         <li>
-          <strong>Egress control</strong> -- an allowlist CONNECT proxy
-          restricts outbound domains. Enforcement is fail-closed in production
-          and requires the VM host/image to install the iptables REDIRECT rule;
-          proxy env-var injection alone is advisory
+          <strong>Egress control</strong> -- default mode: an in-guest allowlist CONNECT proxy, fail-closed in production, which needs the iptables REDIRECT rule on the VM host/image (proxy env vars alone are advisory). Opt-in broker mode (<code>LANTERN_EGRESS_MODE=broker</code>, Firecracker only): the VM has no network device and a host broker enforces the allowlist and injects credentials, so they never enter the VM
         </li>
         <li>
           <strong>Resource limits</strong> -- CPU, memory, and disk are capped
@@ -254,7 +221,7 @@ export default function SecurityPage() {
       <p>
         Secrets (API keys, OAuth tokens, credentials) are referenced via the{" "}
         <code>lantern.secret/...</code> form and resolved at execution time by
-        the runtime secret resolver inside the sandbox; stored credentials are
+        the runtime-manager&apos;s secret resolver (via the control-plane relay); stored credentials are
         AES-256-GCM encrypted when <code>LANTERN_CREDENTIAL_KEY</code> is
         configured. Resolved values never appear in:
       </p>

@@ -4,7 +4,7 @@ import { Concept } from "../../_components/Concept";
 export default function RuntimeSessionsAndMemoryPage() {
   return (
     <>
-      <h1>Sessions &amp; Memory</h1>
+      <h1>Sessions and memory</h1>
       <p>
         Sessions are interactive, multi-turn conversations with an agent.
         Memory distillates are the long-term memory layer: durable facts and
@@ -24,9 +24,10 @@ export default function RuntimeSessionsAndMemoryPage() {
 
       <h2 id="sessions">Sessions</h2>
       <p>
-        Every session runs on the <strong>shared tier</strong> (inline executor).
-        Each message turn triggers one inline run using the plain-LLM tool-use
-        loop. Sessions maintain a <code>messages</code> JSONB column on the{" "}
+        Session turns run in the control plane&apos;s session handler, not the run
+        executor. Each message turn calls the provider-failover chain directly:
+        streaming when no tools are attached, otherwise a non-streaming tool loop
+        of up to 5 rounds. No run row is created. Sessions maintain a <code>messages</code> JSONB column on the{" "}
         <code>sessions</code> table; the full history is passed as context on
         each turn.
       </p>
@@ -41,7 +42,7 @@ POST /v1/sessions
 POST /v1/sessions/sess_abc123/messages
 { "content": "What can you help me with?" }
 
-# Stop the session (cancels any in-flight turn)
+# Stop the session (marks it stopped and terminates its microVM; a turn already in flight still completes)
 POST /v1/sessions/sess_abc123/stop
 
 # Delete
@@ -59,22 +60,20 @@ DELETE /v1/sessions/sess_abc123`}</code></pre>
 
       <h3 id="durability">Durability</h3>
       <p>
-        The same durability primitives that apply to headless runs apply to
-        sessions. Each turn&apos;s LLM call carries an idempotency key derived
-        from <code>sha256("runID|stepID|attempt")</code>. The result is journaled in{" "}
-        <code>journal_events</code>. If the control-plane crashes mid-turn, the
-        recovery sweep re-drives the run; the{" "}
-        <code>checkCachedLLMStep</code> cache returns the prior response so the
-        LLM is not re-called.
+        Session turns are not journaled. A control-plane crash mid-turn loses
+        that turn; resend the message. Provider requests still carry an{" "}
+        <code>Idempotency-Key</code> header derived from the request body. For
+        crash-resume from the journal, use a run (see{" "}
+        <Link href="/runtime/durable-execution">Durable execution</Link>).
       </p>
 
       <h3 id="sdk-sessions">SDK</h3>
       <pre><code>{`const client = new LanternClient({ apiKey: "..." });
 
 // Create
-const session = await client.sessions.create({ agentName: "my-agent" });
+const session = await client.sessions.create({ agent: "my-agent" });
 
-// Send (waits for the full response)
+// Send (returns immediately; the reply arrives on sessions.events())
 await client.sessions.sendMessage(session.id, { content: "Hello" });
 
 // Send + stream tokens
@@ -92,9 +91,10 @@ await client.sessions.delete(session.id);`}</code></pre>
         When an agent declares <code>isolation: "microvm"</code>, sessions
         optionally reuse a single long-lived VM across all turns
         (<em>session-scoped microVMs</em>, ADR 0022). The VM is spawned on the
-        first turn and kept alive between turns so subsequent messages pay only
-        warm-path latency (~150ms) rather than a cold boot (~1.5s) per turn.
-        The VM is terminated when the session is deleted or stopped.
+        first turn and kept alive between turns, so later messages skip the
+        per-turn VM boot. The VM is terminated when the session is deleted or
+        stopped, or reaped after <code>LANTERN_SESSION_VM_IDLE_TTL</code>{" "}
+        (default 30 minutes) of inactivity.
       </p>
 
       <h2 id="memory">Memory distillates</h2>
@@ -135,14 +135,15 @@ await client.sessions.delete(session.id);`}</code></pre>
 
       <h3 id="distillate-schema">Distillate shape</h3>
       <pre><code>{`{
-  "id":         "mem_abc123",
-  "topic":      "preferred communication style",
-  "content":    "Prefers short, direct replies. No bullet lists.",
-  "confidence": 0.87,
-  "personHint": "Shekhar",
-  "sourceKind": "session",
-  "createdAt":  "2026-07-23T10:00:00Z",
-  "updatedAt":  "2026-07-23T18:00:00Z"
+  "id":          "mem_abc123",
+  "person_id":   "per_abc123",            // omitted when not tied to a person
+  "topic":       "preferred communication style",
+  "content":     "Prefers short, direct replies. No bullet lists.",
+  "confidence":  0.87,
+  "source_kind": "session",
+  "source_ref":  "sess_abc123",           // omitted when empty
+  "created_at":  "2026-07-23T10:00:00Z",
+  "updated_at":  "2026-07-23T18:00:00Z"
 }`}</code></pre>
 
       <h3 id="distillate-endpoints">Endpoints</h3>
