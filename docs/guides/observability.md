@@ -1,14 +1,16 @@
 # Observability
 
-Every agent spawn produces **one correlated trace** that crosses the full stack:
-control-plane → scheduler → manager → in-VM harness. Every span carries the same
-correlation tuple so you can query by any dimension.
+**What:** every agent spawn produces one correlated OTel trace across control-plane, scheduler, manager and in-VM harness.
+**Why:** invariant #9 - a service that cannot be traced is broken; you filter by `run_id`, not by guesswork.
+**Try it:** `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 && make run-api-runtime`, run an agent, search your backend for its `run_id`.
 
 ## The correlation tuple
 
 ```text
 (tenant_id, run_id, step_id, agent_instance_id, trace_id)
 ```
+
+On control-plane spans the keys are namespaced `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id` (stamped by `internal/middleware.EnrichSpan`).
 
 Every span, log line, journal event, and audit row carries this tuple. To find
 everything about a run: query your trace backend by `run_id`. To find all runs for
@@ -23,7 +25,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   # Jaeger / Tempo / Ho
 make run-api-runtime
 ```
 
-When the env var is unset, all OTel calls are **no-ops** — no collector dependency
+When neither `OTEL_EXPORTER_OTLP_ENDPOINT` nor `LANTERN_OTEL_ENABLED=1` is set, all OTel calls are **no-ops** — no collector dependency
 in dev, no latency cost in production unless you opt in.
 
 The Rust services (runtime-manager, harness) follow the same pattern: they extract
@@ -39,16 +41,16 @@ Emitted when `POST /v1/runtime/schedule` is processed.
 
 | Attribute | Value |
 |---|---|
-| `tenant_id` | caller's tenant |
-| `run_id` | the run being scheduled |
-| `agent_version_id` | version of the agent bundle |
-| `agent_instance_id` | per-instance ID minted at this spawn |
-| `isolation_class` | `trusted` / `standard` / `untrusted` / `hostile` / ... |
-| `vm_id` | the `runtime_vms` row ID |
+| `lantern.tenant_id` | caller's tenant |
+| `lantern.run_id` | the run being scheduled |
+| `lantern.agent_version_id` | version of the agent bundle |
+| `lantern.isolation_class` | `trusted` / `standard` / `untrusted` / `hostile` / ... |
+
+The per-instance id and `vm_id` are stored on the `runtime_vms` row (`agent_instance_id`) and in audit events.
 
 ### LLM path: GenAI semconv spans
 
-Every LLM call through the model router emits a span following [OTel GenAI semantic
+Every LLM call through the control-plane LLM proxy (`llm_proxy.go`) emits a span following [OTel GenAI semantic
 conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/):
 
 | Attribute | Value |
@@ -58,8 +60,8 @@ conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/):
 | `gen_ai.operation.name` | `chat` |
 | `gen_ai.usage.input_tokens` | prompt tokens |
 | `gen_ai.usage.output_tokens` | completion tokens |
-| `gen_ai.usage.input_tokens_cache_read` | Anthropic cache-read tokens |
-| `gen_ai.usage.input_tokens_cache_creation` | Anthropic cache-write tokens |
+| `lantern.usage.cache_read_tokens` | Anthropic cache-read tokens |
+| `lantern.usage.cache_write_tokens` | Anthropic cache-write tokens |
 | `gen_ai.usage.reasoning_tokens` | OpenAI o-series reasoning tokens |
 | `lantern.cost_usd` | estimated cost for this call |
 
@@ -68,15 +70,14 @@ payload so they appear in the run waterfall and roll up into `agent_usage_daily`
 
 ### Loop and retry anomaly events
 
-When the engine detects a looping or excessively-retrying agent, it emits an
+When the run executor detects a looping or excessively-retrying agent, it emits an
 `anomaly_detected` journal event mid-run (not just at run end). These events:
 
 - Are deduped per `(run_id, anomaly_kind)` so the same anomaly fires once.
 - Appear in the dashboard run waterfall as a warning marker.
 - Are queryable via `GET /v1/runs/<id>/events` (SSE stream) as they land.
 
-Anomaly kinds: `loop_detected` (same step started more than N times in a window),
-`retry_storm` (per-step retry count exceeds threshold).
+Anomaly kinds (`internal/workflow/anomaly.go`): `runaway_loop`, `excessive_steps` (cumulative node visits near the limit), `retry_storm` (per-step retry count exceeds threshold).
 
 ## `GET /v1/runtime/metrics`
 
@@ -134,19 +135,19 @@ Aggregate quota usage is at `GET /v1/runtime/quota`.
 In Jaeger:
 
 ```text
-service=lantern-control-plane run_id=<run_id>
+service=lantern-control-plane lantern.run_id=<run_id>
 ```
 
 In Grafana Tempo (TraceQL):
 
 ```text
-{ .run_id = "<run_id>" }
+{ span.lantern.run_id = "<run_id>" }
 ```
 
 In Honeycomb:
 
 ```text
-WHERE run_id = "<run_id>"
+WHERE lantern.run_id = "<run_id>"
 GROUP BY name
 ORDER BY timestamp ASC
 ```

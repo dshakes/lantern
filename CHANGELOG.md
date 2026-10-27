@@ -9,7 +9,58 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+The sandbox runtime release: credentials kept out of the VM, idle VMs that
+suspend themselves, copy-on-write forks, and the full lifecycle tested on real
+KVM.
+
 ### Added
+- **Host egress broker** (opt-in, `LANTERN_EGRESS_MODE=broker`, Firecracker;
+  ADR 0026, #299) — broker-mode VMs get no network device; egress and the
+  harness control channel run over vsock to a per-VM broker on the host, which
+  enforces the allowlist and injects credentials from `lantern.secret/...` refs
+  (`egress[].inject`, exact hostnames only) so the secret never enters the VM.
+  HTTPS is terminated only for injected hosts, with a per-VM CA scoped to them.
+  Validated live on KVM (`infra/firecracker/broker-e2e.sh`).
+- **Idle auto-suspend + transparent auto-resume** (#296) — `idleTimeoutSecs` on
+  schedule / `lantern run --idle-timeout`; idle VMs are snapshotted and stopped
+  through the crash-safe pause path (quota slot freed) and resumed on the next
+  exec or file request (REST, CLI or SDK).
+- **Shared-memory copy-on-write forks** (#295) — forks hard-link one read-only
+  snapshot memory file (`MAP_PRIVATE`); fork cap configurable
+  (`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000).
+- **Sandbox file API** (#294) — list/read/write files under `/workspace` via
+  REST, TS/Python/Go SDKs and `lantern vm ls|cat|put`.
+- **Agentic onboarding** (#297) — conversational `/onboarding` flow (LLM-designed
+  agent spec, real provider check, streamed first run, sandbox try-out,
+  resumable) and interactive `lantern onboard`; `lantern doctor` checks the
+  sandbox runtime.
+- **Real-KVM lifecycle e2e** (#298) — snapshot → restore → fork ×3 (jailed, with
+  an inode check proving shared memory) in Lima and GitHub's KVM runners, with
+  per-step timings in `docs/benchmarks/runtime-latency.md`.
+- **New brand, README, landing site, docs site and diagrams** — 28 diagrams in
+  one visual system, animated landing hero and lifecycle walkthrough.
+- GA hardening stack (#276–#292): pause/resume/fork, per-call runtime-manager
+  authz and service token, re-identification on restore, per-fork identity,
+  manager-owned harness config, tenant-wide budget cap, tool-spend metering,
+  body-hashed LLM idempotency keys.
+
+### Fixed
+- Harness reaper raced tokio's pidfd wait (`ECHILD` from `shell_exec` after
+  restore); stale sockets broke same-vm_id restore; first exec after restore
+  waited out a dead address (37 s → ~4 s); unjailed restores shared one rootfs.
+- Manager secret relay sent the node's env tenant/vm_id instead of the VM's
+  (empty scope on multi-tenant nodes) — now the VM's, empty fails closed.
+- Onboarding: generate-spec returned the raw completion envelope; CLI sent
+  `api_key` instead of `apiKey`; saved keys were never tested.
+
+### Security
+- wasmtime moved to the 36.x LTS line (20 guest-can-panic-host advisories,
+  #293); wasmtime's unused `cache` feature dropped to remove zstd
+  (RUSTSEC-2026-0395/0396/0400); h2/quinn-proto/rustls/webpki/zod bumps.
+
+### Earlier unreleased work
 - **Interactive TTY exec** — `lantern vm exec <vm> -it -- <cmd>` allocates a real
   PTY in the guest (harness `openpty` + controlling terminal + winsize) and
   streams it bidirectionally; the CLI enters raw mode (no-op on non-terminal

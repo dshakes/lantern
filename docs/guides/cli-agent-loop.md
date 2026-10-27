@@ -1,7 +1,7 @@
 # CLI Agent Loop
 
-The Lantern CLI ships three commands designed to take you from a cold start to an
-active agent development loop without leaving the terminal.
+**What:** three CLI commands that take you from a cold start to a working agent loop.
+**Why:** no dashboard clicking, no hand-written curl. **Try it:** `lantern dev && lantern onboard --yes`.
 
 ---
 
@@ -35,13 +35,12 @@ each idempotent, each loud on failure.
 ```bash
 lantern onboard                         # interactive
 lantern onboard --yes                   # non-interactive, all defaults
-lantern onboard --description "A Slack bot that summarises daily standups"
-lantern onboard --provider openai --api-key sk-...   # configure provider too
+lantern onboard --provider openai --api-key sk-...   # configure provider too (here --api-key is the PROVIDER key)
 ```
 
 ### What step 4 does
 
-`onboard` prompts for a one-line description, calls `POST /v1/agents/generate-spec`
+`onboard` prompts for a one-line description (interactive only; `--yes` takes the default), calls `POST /v1/agents/generate-spec`
 to produce a name + system prompt, then calls `POST /v1/agents` to create the agent.
 If `generate-spec` is unavailable the command falls back to a static
 `quickstart-assistant` so onboarding never fails on a newer spec endpoint.
@@ -158,4 +157,4 @@ Pass `--yes` to skip the confirmation prompt (useful in CI).
 | `LANTERN_API_URL` | `localhost:50051` | gRPC address (REST is derived as `:8080`) |
 | `LANTERN_API_KEY` | — | API key (falls back to `~/.lantern/credentials.json`) |
 
-All three commands inherit the global `--api-url` / `--api-key` flags.
+`--api-url` / `--api-key` are global flags (env: `LANTERN_API_URL`, `LANTERN_API_KEY`; the `lantern run` / `lantern vm` commands also honor `LANTERN_API_TOKEN`). Exception: on `onboard`, `--api-key` is the LLM provider key, not your Lantern key.

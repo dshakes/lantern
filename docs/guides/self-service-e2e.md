@@ -1,6 +1,8 @@
 # Self-service agent journey: develop → deploy → observe
 
-A copy-pasteable walkthrough of the full Lantern agent lifecycle. Every command here is tested against the code; where something is optional or flag-gated, it says so.
+**What:** the full agent lifecycle, develop, test, deploy, run, observe, improve, as copy-pasteable commands.
+**Why:** eval gating (HTTP 422), hard budgets (HTTP 402) and signed receipts are the parts that make an agent safe to ship.
+**Try it:** `lantern doctor`, then step 1. Optional or flag-gated steps say so.
 
 **Prerequisites:** a running stack (`make dev` or `lantern dev`) and the `lantern` CLI installed:
 
@@ -18,8 +20,8 @@ Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credential
 ### 1. Create an agent
 
 ```bash
-# Via the CLI (scaffolds agent.yaml interactively)
-lantern init
+# Via the CLI (scaffolds an agent directory)
+lantern init triage
 
 # Or directly via REST
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
@@ -258,7 +260,7 @@ Set `LANTERN_OTEL_ENABLED=1` + `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:431
 ```bash
 curl -s -X POST "http://localhost:8080/v1/runs/$RUN_ID/receipt" \
   -H "Authorization: Bearer $TOKEN" | jq .
-# → {"runId":"...","signature":"...","payload":{...},"issuedAt":"..."}
+# → {"payload":{...},"signature":"...","algorithm":"Ed25519"}
 ```
 
 The receipt is Ed25519-signed over the SHA-256 of the run's `journal_events` stream. Verify offline:
@@ -267,12 +269,12 @@ The receipt is Ed25519-signed over the SHA-256 of the run's `journal_events` str
 curl -s http://localhost:8080/v1/runs/receipts/verify \
   -H 'Content-Type: application/json' \
   -d @- <<'EOF'
-{"signature": "...", "payload": {...}}
+{"payload": {...}, "signature": "...", "algorithm": "Ed25519"}
 EOF
 # No auth required.
 ```
 
-The signing key fingerprint is published at `http://localhost:8080/.well-known/lantern-receipts`.
+The signing algorithm and key fingerprint are published at `http://localhost:8080/.well-known/lantern-receipts`.
 
 ---
 

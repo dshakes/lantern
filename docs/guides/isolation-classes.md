@@ -1,8 +1,10 @@
 # Isolation Classes
 
 Lantern expresses isolation as a **RuntimeClass tier on a Kubernetes pod** — not as
-five separate backends. You declare the class in `agent.yaml`; the runtime-manager
+five separate backends. You declare the class in `agent.yaml` (`spec.isolation`, lowercase: `trusted`, `standard`, ...); the runtime-manager
 selects the corresponding `runtimeClassName` and security context automatically.
+**Why it matters:** invariant #5 - untrusted code never runs in a bare pod.
+**Try it:** `lantern run examples/headless-agents/02-web-scraper/agent.yaml` (uses `untrusted`).
 
 See [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md) for the full
 decision and security argument. See [ADR 0002](../adr/0002-runtime-class-per-workload.md)
@@ -52,7 +54,7 @@ Isolation is **fail-closed by design**, enforced at two points:
    schedule `UNTRUSTED` or `HOSTILE` unless the node advertises the required
    hardened RuntimeClass (`gvisor` or `kata-qemu`/`kata-fc`).
 
-2. **`build_job`** — a second gate applies the correct `runtimeClassName` to the
+2. **`build_job`** (`services/runtime-manager/src/backends/k8s.rs`) — a second gate applies the correct `runtimeClassName` to the
    pod spec; an empty or wrong class aborts the spawn before the pod is created.
 
 **The invariant:** an `UNTRUSTED` or `HOSTILE` workload will never silently
@@ -93,8 +95,8 @@ allowlist and emit an audit event on each denial.
 
 ## Cluster-side opt-in hardening
 
-The Helm chart in `infra/k8s/` provides opt-in cluster-side policies (all off by
-default; enable per-environment in Helm values):
+The data-plane Helm chart (`infra/helm/lantern-data-plane/`) provides opt-in cluster-side policies (all off by
+default; enable per-environment in Helm values). Raw validation manifests live in `infra/k8s/manifests/`.
 
 - **Kyverno tenant baseline** — PSA `restricted` + default-deny NetworkPolicy +
   per-`lantern-t-*` namespace ResourceQuota and LimitRange.
