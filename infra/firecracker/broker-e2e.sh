@@ -156,6 +156,22 @@ CTRL=$(curl -s -m 15 -o /dev/null -w '%{http_code}' -H 'Authorization: Basic pla
 pass "control: placeholder-only request from the host gets 404 (so the 200 above came from injection)"
 pass "HTTPS to ${INJECT_HOST}: broker injected the credential, upstream authenticated (guest saw only 'placeholder')"
 
+# (4b) H1: plain-HTTP to the injecting host (here :443) must be refused
+# before any credential is attached (cleartext on the wire).
+OUT=$(tool http_fetch "$(jq -n --arg u "http://${INJECT_HOST}:443/hidden-basic-auth/user/passwd" '{url:$u}')")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-lantern-reason"] | test("plain-HTTP"))' >/dev/null \
+  || fail "plain-HTTP :443 request to an injecting host was not refused:\n${OUT}"
+pass "H1: plain-HTTP to ${INJECT_HOST}:443 refused (403) — no cleartext credential"
+
+# (4c) M1: a terminated injected request whose Host names another host is
+# refused before the secret is resolved.
+OUT=$(tool http_fetch "$(jq -n --arg u "https://${INJECT_HOST}/hidden-basic-auth/user/passwd" '{url:$u, headers:{Host:"evil.example"}}')")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and (.result.headers["x-lantern-reason"] | test("Host header not bound"))' >/dev/null \
+  || fail "mismatched Host on a terminated injected request was not refused:\n${OUT}"
+pass "M1: injected request with Host: evil.example refused (403) before the secret was resolved"
+
 # (5) non-allowlisted host denied.
 OUT=$(tool http_fetch '{"url":"https://example.com/"}')
 printf '%s\n' "${OUT}" | jq -c . >&2

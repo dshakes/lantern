@@ -53,6 +53,26 @@ pub const MANAGER_HOSTNAME: &str = "manager.lantern.internal";
 /// guest is untrusted; an unbounded `read_line` would let it grow host memory.
 const MAX_HEAD_BYTES: u64 = 64 * 1024;
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound on every guest- or upstream-paced handshake step: request head,
+/// guest TLS accept, DNS + upstream TLS. A slow-loris guest cannot pin a
+/// connection slot past this.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A spliced connection with no bytes in EITHER direction for this long is
+/// closed (frees the per-VM slot).
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Concurrent connections per VM, per listener (egress broker and the
+/// control relay each have their own budget).
+pub const MAX_CONNS_PER_VM: usize = 128;
+/// Leaf server configs cached per VM. With exact-host-only injection rules
+/// there is one leaf per injecting rule; past this, leaves are minted fresh.
+const MAX_LEAVES: usize = 16;
+/// Deny audits a VM may push into the shared audit channel: burst, then a
+/// sustained rate. Excess denies are still logged locally (L5).
+const DENY_AUDIT_BURST: f64 = 20.0;
+const DENY_AUDIT_PER_SEC: f64 = 5.0;
+/// Opt-in for injecting credentials into plain-HTTP requests (cleartext on
+/// the wire). Even then only to port 80.
+pub const ENV_PLAIN_INJECT: &str = "LANTERN_EGRESS_PLAIN_INJECT";
 
 // ---------------------------------------------------------------------------
 // Mode
@@ -135,11 +155,18 @@ pub fn is_private_or_metadata(addr: IpAddr) -> bool {
                 || o[0] == 0
                 || (o[0] & 0xf0) == 240
                 || (o[0] & 0xf0) == 224
+                // 192.0.0.0/24 IETF protocol assignments
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                // 198.18.0.0/15 benchmarking
+                || (o[0] == 198 && (o[1] & 0xfe) == 18)
         }
         IpAddr::V6(v6) => {
+            let seg = v6.segments();
             v6.is_loopback()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (seg[0] & 0xfe00) == 0xfc00
+                || (seg[0] & 0xffc0) == 0xfe80
+                // NAT64 64:ff9b::/96 (well-known) and 64:ff9b:1::/48 (local)
+                || (seg[0] == 0x64 && seg[1] == 0xff9b && (seg[2] == 1 || seg[2..6] == [0, 0, 0, 0]))
                 || v6
                     .to_ipv4()
                     .is_some_and(|v4| is_private_or_metadata(IpAddr::V4(v4)))
@@ -244,23 +271,109 @@ impl Head {
         Some((parts.next()?, parts.next()?))
     }
 
-    /// Host for a plain-HTTP request: absolute-form URI, else `Host:`.
-    fn plain_http_authority(&self) -> Option<&str> {
-        let (_, target) = self.method_target()?;
-        if let Some(after) = target.strip_prefix("http://") {
-            let authority = after.split('/').next().unwrap_or("");
-            if !authority.is_empty() {
-                return Some(authority);
-            }
-        }
-        self.headers.iter().find_map(|h| {
-            let (name, value) = h.split_once(':')?;
-            name.trim()
-                .eq_ignore_ascii_case("host")
-                .then(|| value.trim())
-                .filter(|v| !v.is_empty())
-        })
+    /// Every `Host:` header value (trimmed).
+    fn host_headers(&self) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter_map(|h| {
+                let (name, value) = h.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("host")
+                    .then(|| value.trim())
+            })
+            .collect()
     }
+
+    /// Authority a plain-HTTP proxy request targets: the absolute-form
+    /// `http://` authority (scheme case-insensitive), else the single `Host:`.
+    /// Any other scheme, more than one `Host:`, or a malformed target is an
+    /// error — never a silent fall-back to a guest-chosen header.
+    fn plain_http_authority(&self) -> Result<&str, &'static str> {
+        let (_, target) = self.method_target().ok_or("bad request")?;
+        let hosts = self.host_headers();
+        if hosts.len() > 1 {
+            return Err("multiple Host headers");
+        }
+        match target_form(target) {
+            Target::Absolute { scheme, authority } if scheme.eq_ignore_ascii_case("http") => {
+                Ok(authority)
+            }
+            Target::Absolute { .. } => Err("unsupported request-target scheme"),
+            Target::Origin => hosts
+                .first()
+                .copied()
+                .filter(|h| !h.is_empty())
+                .ok_or("missing-host"),
+            Target::Other => Err("bad request target"),
+        }
+    }
+}
+
+/// The request-target forms the broker distinguishes.
+#[derive(Debug, PartialEq, Eq)]
+enum Target<'a> {
+    /// `/path?query`
+    Origin,
+    /// `scheme://authority/...`
+    Absolute { scheme: &'a str, authority: &'a str },
+    /// asterisk-form, authority-form, or garbage.
+    Other,
+}
+
+fn target_form(target: &str) -> Target<'_> {
+    if target.starts_with('/') {
+        return Target::Origin;
+    }
+    let Some((scheme, rest)) = target.split_once("://") else {
+        return Target::Other;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if scheme.is_empty() || authority.is_empty() {
+        return Target::Other;
+    }
+    Target::Absolute { scheme, authority }
+}
+
+/// M1: the request must name exactly the host the policy approved, so a
+/// credential can never ride a request addressed elsewhere (another vhost on
+/// the same IP, a different absolute-form authority, a duplicated `Host:`).
+/// Target: origin-form, or absolute-form with `scheme` and authority
+/// `host[:port]`. `Host:` exactly one equal to `host[:port]` — required when
+/// `require_host` (injecting rules), else at most one and matching.
+fn bound_to_host(
+    head: &Head,
+    host: &str,
+    scheme: &str,
+    port: u16,
+    require_host: bool,
+) -> Result<(), &'static str> {
+    let matches = |a: &str| {
+        let a = a.trim();
+        a.eq_ignore_ascii_case(host)
+            || a.eq_ignore_ascii_case(&format!("{host}:{port}"))
+            || a.eq_ignore_ascii_case(&format!("[{host}]"))
+            || a.eq_ignore_ascii_case(&format!("[{host}]:{port}"))
+    };
+    let (_, target) = head.method_target().ok_or("bad request")?;
+    match target_form(target) {
+        Target::Origin => {}
+        Target::Absolute {
+            scheme: s,
+            authority,
+        } if s.eq_ignore_ascii_case(scheme) && matches(authority) => {}
+        _ => return Err("request target not bound to the approved host"),
+    }
+    match head.host_headers().as_slice() {
+        [h] if matches(h) => Ok(()),
+        [] if !require_host => Ok(()),
+        _ => Err("Host header not bound to the approved host"),
+    }
+}
+
+/// L1: methods never allowed to carry an injected credential (TRACE echoes
+/// request headers back; CONNECT inside the tunnel would re-target it).
+fn method_forbidden_for_injection(method: &str) -> bool {
+    method.eq_ignore_ascii_case("TRACE") || method.eq_ignore_ascii_case("CONNECT")
 }
 
 /// Read one request head, bounded by [`MAX_HEAD_BYTES`]. `Ok(None)` on a
@@ -362,10 +475,16 @@ impl MitmCa {
     pub fn for_rules(vm_id: &str, rules: &[EgressRule]) -> Result<Option<Self>> {
         let mut permitted = Vec::new();
         for rule in rules.iter().filter(|r| terminates_tls(r)) {
-            let dns = rule.pattern.strip_prefix("*.").unwrap_or(&rule.pattern);
-            if dns.is_empty() || dns.parse::<IpAddr>().is_ok() || dns.contains('/') {
+            // M2: exact hostnames only. A wildcard would let the CA (and the
+            // credential) cover every subdomain, including attacker-chosen ones.
+            let dns = rule.pattern.as_str();
+            if dns.is_empty()
+                || dns.contains('*')
+                || dns.parse::<IpAddr>().is_ok()
+                || dns.contains('/')
+            {
                 bail!(
-                    "egress rule '{}' injects credentials but is not a hostname pattern",
+                    "egress rule '{}' injects credentials but is not an exact hostname",
                     rule.pattern
                 );
             }
@@ -451,7 +570,9 @@ impl MitmCa {
         // The broker parses HTTP/1.1 heads; never negotiate h2.
         cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
         let cfg = Arc::new(cfg);
-        leaves.insert(host.to_string(), Arc::clone(&cfg));
+        if leaves.len() < MAX_LEAVES {
+            leaves.insert(host.to_string(), Arc::clone(&cfg));
+        }
         Ok(cfg)
     }
 }
@@ -497,6 +618,14 @@ pub struct Broker {
     mitm: Option<Arc<MitmCa>>,
     upstream_tls: Arc<rustls::ClientConfig>,
     audit: mpsc::Sender<pb::AuditEvent>,
+    /// M3: per-VM concurrent connection budget on the egress listener.
+    conns: Arc<tokio::sync::Semaphore>,
+    handshake_timeout: Duration,
+    idle_timeout: Duration,
+    /// H1: `LANTERN_EGRESS_PLAIN_INJECT=1` (port 80 only even then).
+    plain_inject: bool,
+    /// L5: token bucket for deny audits into the shared channel.
+    deny_bucket: Mutex<(f64, Instant)>,
     /// Test seam: dial this address for every allowed host, skipping DNS and
     /// the private-range check (test servers live on loopback).
     #[cfg(test)]
@@ -524,9 +653,32 @@ impl Broker {
             mitm,
             upstream_tls: Arc::new(tls),
             audit: deps.audit.clone(),
+            conns: Arc::new(tokio::sync::Semaphore::new(MAX_CONNS_PER_VM)),
+            handshake_timeout: HANDSHAKE_TIMEOUT,
+            idle_timeout: IDLE_TIMEOUT,
+            plain_inject: std::env::var(ENV_PLAIN_INJECT).is_ok_and(|v| v.trim() == "1"),
+            deny_bucket: Mutex::new((DENY_AUDIT_BURST, Instant::now())),
             #[cfg(test)]
             test_upstream: None,
         })
+    }
+
+    /// L5: take one deny-audit token (refilled at `DENY_AUDIT_PER_SEC`).
+    fn take_deny_token(&self) -> bool {
+        let mut b = self
+            .deny_bucket
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = Instant::now();
+        b.0 = (b.0 + now.duration_since(b.1).as_secs_f64() * DENY_AUDIT_PER_SEC)
+            .min(DENY_AUDIT_BURST);
+        b.1 = now;
+        if b.0 >= 1.0 {
+            b.0 -= 1.0;
+            true
+        } else {
+            false
+        }
     }
 
     /// Accept guest connections forever, one task each.
@@ -534,8 +686,16 @@ impl Broker {
         loop {
             match listener.accept().await {
                 Ok((conn, _)) => {
+                    // M3: a VM may hold at most MAX_CONNS_PER_VM connections;
+                    // beyond that new ones are closed immediately.
+                    let Ok(permit) = Arc::clone(&self.conns).try_acquire_owned() else {
+                        drop(conn);
+                        self.audit_decision("-", 0, Err("per-VM connection limit"), "-");
+                        continue;
+                    };
                     let broker = Arc::clone(&self);
                     tokio::spawn(async move {
+                        let _permit = permit;
                         if let Err(e) = broker.serve_conn(conn).await {
                             tracing::debug!(error = %e, "egress broker: connection ended with error");
                         }
@@ -555,7 +715,11 @@ impl Broker {
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
         let mut reader = BufReader::new(stream);
-        let Some(head) = read_head(&mut reader).await? else {
+        let Ok(head) = tokio::time::timeout(self.handshake_timeout, read_head(&mut reader)).await
+        else {
+            return Ok(()); // M3: slow/silent guest — drop it
+        };
+        let Some(head) = head? else {
             return Ok(());
         };
         let Some((method, target)) = head.method_target() else {
@@ -597,6 +761,16 @@ impl Broker {
             }
             _ => None,
         };
+        let rate = rule.rate_bps.max(0) as u64;
+        if let Some(ca) = mitm {
+            // M3: nothing is dialled for an injecting rule until the guest has
+            // completed TLS and its inner request head passed authorisation.
+            self.audit_decision(&host, port, Ok(()), "terminate");
+            client
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await?;
+            return self.terminate(client, &host, port, rule, &ca).await;
+        }
         let upstream = match self.dial(&host, port).await {
             Ok(s) => s,
             Err(reason) => {
@@ -605,20 +779,11 @@ impl Broker {
                 return Ok(());
             }
         };
-        let tls_mode = if terminate {
-            "terminate"
-        } else {
-            "passthrough"
-        };
-        self.audit_decision(&host, port, Ok(()), tls_mode);
+        self.audit_decision(&host, port, Ok(()), "passthrough");
         client
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .await?;
-        let rate = rule.rate_bps.max(0) as u64;
-        match mitm {
-            Some(ca) => self.terminate(client, upstream, &host, rule, &ca).await,
-            None => splice(client, upstream, rate).await,
-        }
+        splice(client, upstream, rate, self.idle_timeout).await
     }
 
     /// TLS-terminate the workload's tunnel for an injecting rule, inject the
@@ -626,8 +791,8 @@ impl Broker {
     async fn terminate<S>(
         &self,
         client: BufReader<S>,
-        upstream: TcpStream,
         host: &str,
+        port: u16,
         rule: &EgressRule,
         ca: &MitmCa,
     ) -> Result<()>
@@ -637,42 +802,90 @@ impl Broker {
         let cfg = ca.server_config(host)?;
         // `client` is the BufReader: any ClientHello bytes already buffered
         // past the CONNECT head are read first, so nothing is lost.
-        let tls = tokio_rustls::TlsAcceptor::from(cfg)
-            .accept(client)
-            .await
-            .context("egress broker: TLS accept from guest")?;
+        let tls = tokio::time::timeout(
+            self.handshake_timeout,
+            tokio_rustls::TlsAcceptor::from(cfg).accept(client),
+        )
+        .await
+        .context("egress broker: guest TLS accept timed out")?
+        .context("egress broker: TLS accept from guest")?;
         let mut inner = BufReader::new(tls);
-        let Some(head) = read_head(&mut inner).await? else {
+        let Ok(head) = tokio::time::timeout(self.handshake_timeout, read_head(&mut inner)).await
+        else {
+            return Ok(());
+        };
+        let Some(head) = head? else {
             return Ok(());
         };
         let method = head.method_target().map(|(m, _)| m).unwrap_or("");
+        // M1 + L1, BEFORE the secret is resolved or anything is dialled.
+        if let Err(reason) = self.injection_preflight(&head, host, "https", port, method) {
+            respond(&mut inner, "403 Forbidden", reason).await;
+            return Ok(());
+        }
         let Some(creds) = self
             .authorize_and_resolve(&mut inner, host, rule, method)
             .await
         else {
             return Ok(());
         };
+        let upstream = match self.dial(host, port).await {
+            Ok(s) => s,
+            Err(reason) => {
+                self.audit_decision(host, port, Err(reason), "terminate");
+                respond(&mut inner, "502 Bad Gateway", reason).await;
+                return Ok(());
+            }
+        };
         let server_name =
             ServerName::try_from(host.to_string()).context("egress broker: invalid SNI host")?;
-        let mut up = tokio_rustls::TlsConnector::from(Arc::clone(&self.upstream_tls))
-            .connect(server_name, upstream)
-            .await
-            .context("egress broker: upstream TLS handshake")?;
+        let mut up = tokio::time::timeout(
+            self.handshake_timeout,
+            tokio_rustls::TlsConnector::from(Arc::clone(&self.upstream_tls))
+                .connect(server_name, upstream),
+        )
+        .await
+        .context("egress broker: upstream TLS handshake timed out")?
+        .context("egress broker: upstream TLS handshake")?;
         let out = rewrite_head(&head, &creds);
         drop(creds);
         up.write_all(&out).await?;
         drop(out);
         self.audit_inject(host, method, rule);
-        splice(inner, up, rule.rate_bps.max(0) as u64).await
+        splice(inner, up, rule.rate_bps.max(0) as u64, self.idle_timeout).await
+    }
+
+    /// Host binding (M1) + forbidden methods (L1) for a request that would
+    /// carry an injected credential. Audits the deny; the caller answers 403.
+    fn injection_preflight(
+        &self,
+        head: &Head,
+        host: &str,
+        scheme: &str,
+        port: u16,
+        method: &str,
+    ) -> Result<(), &'static str> {
+        let verdict = if method_forbidden_for_injection(method) {
+            Err("method never carries an injected credential")
+        } else {
+            bound_to_host(head, host, scheme, port, true)
+        };
+        if let Err(reason) = verdict {
+            self.audit_inject_deny(host, method, reason);
+        }
+        verdict
     }
 
     async fn handle_plain<S>(&self, mut client: BufReader<S>, head: Head) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send,
     {
-        let Some(authority) = head.plain_http_authority() else {
-            respond(&mut client, "400 Bad Request", "missing-host").await;
-            return Ok(());
+        let authority = match head.plain_http_authority() {
+            Ok(a) => a,
+            Err(reason) => {
+                respond(&mut client, "400 Bad Request", reason).await;
+                return Ok(());
+            }
         };
         let (host, port) = parse_host_port(authority)
             .unwrap_or_else(|| (authority.trim_matches(['[', ']']).to_string(), 80));
@@ -686,6 +899,13 @@ impl Broker {
         };
         let method = head.method_target().map(|(m, _)| m).unwrap_or("");
         let creds = if rule.inject.is_empty() {
+            // The forwarded Host must name the approved host too (no vhost
+            // hop past the allowlist on a shared IP).
+            if let Err(reason) = bound_to_host(&head, &host, "http", port, false) {
+                self.audit_decision(&host, port, Err(reason), "plain");
+                respond(&mut client, "403 Forbidden", reason).await;
+                return Ok(());
+            }
             if !method_allowed(rule, method) {
                 self.audit_decision(&host, port, Err("method-not-allowed"), "plain");
                 respond(&mut client, "403 Forbidden", "method-not-allowed").await;
@@ -693,6 +913,19 @@ impl Broker {
             }
             Vec::new()
         } else {
+            // H1: a credential in a plain-HTTP request crosses the network in
+            // cleartext. Refused unless explicitly enabled, and then only to
+            // port 80 — never e.g. `http://host:443/`.
+            if !(self.plain_inject && port == 80) {
+                let reason = "plain-HTTP credential injection refused";
+                self.audit_inject_deny(&host, method, reason);
+                respond(&mut client, "403 Forbidden", reason).await;
+                return Ok(());
+            }
+            if let Err(reason) = self.injection_preflight(&head, &host, "http", port, method) {
+                respond(&mut client, "403 Forbidden", reason).await;
+                return Ok(());
+            }
             match self
                 .authorize_and_resolve(&mut client, &host, rule, method)
                 .await
@@ -718,7 +951,13 @@ impl Broker {
         if injected {
             self.audit_inject(&host, method, rule);
         }
-        splice(client, upstream, rule.rate_bps.max(0) as u64).await
+        splice(
+            client,
+            upstream,
+            rule.rate_bps.max(0) as u64,
+            self.idle_timeout,
+        )
+        .await
     }
 
     /// Method check + secret resolution for an injecting rule. On failure the
@@ -790,10 +1029,14 @@ impl Broker {
                 .await
                 .map_err(|_| "upstream connect failed");
         }
-        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-            .await
-            .map_err(|_| "DNS resolution failed")?
-            .collect();
+        let addrs: Vec<SocketAddr> = tokio::time::timeout(
+            self.handshake_timeout,
+            tokio::net::lookup_host((host, port)),
+        )
+        .await
+        .map_err(|_| "DNS resolution timed out")?
+        .map_err(|_| "DNS resolution failed")?
+        .collect();
         if addrs.iter().any(|a| is_private_or_metadata(a.ip())) {
             return Err("hostname resolves to private/metadata IP");
         }
@@ -811,6 +1054,13 @@ impl Broker {
         // Local record FIRST: a full channel or a dead forwarder must never
         // make a security decision vanish.
         tracing::info!(target: "lantern_audit", vm_id = %self.vm_id, action, attrs = ?attrs, "egress broker audit");
+        // L5: one VM spraying denied requests must not crowd every other VM's
+        // audits out of the shared channel. Allows always go through.
+        let deny = attrs.get("decision").is_some_and(|d| d == "deny");
+        if deny && !self.take_deny_token() {
+            tracing::debug!(target: "lantern_audit", vm_id = %self.vm_id, action, "egress broker: deny audit rate-limited (kept in local log)");
+            return;
+        }
         let ev = pb::AuditEvent {
             vm_id: self.vm_id.clone(),
             action: action.to_string(),
@@ -870,52 +1120,101 @@ impl Broker {
 // ---------------------------------------------------------------------------
 
 /// Bidirectional copy; `rate_bps > 0` throttles each direction separately
-/// (burst = one second of traffic, same as the in-guest proxy).
-async fn splice<A, B>(a: A, b: B, rate_bps: u64) -> Result<()>
+/// (burst = one second of traffic, same as the in-guest proxy). Closed when
+/// neither direction moved a byte for `idle` (M3).
+async fn splice<A, B>(a: A, b: B, rate_bps: u64, idle: Duration) -> Result<()>
 where
     A: AsyncRead + AsyncWrite + Unpin,
     B: AsyncRead + AsyncWrite + Unpin,
 {
-    let (mut a, mut b) = (a, b);
-    if rate_bps == 0 {
-        let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
-        return Ok(());
-    }
+    let start = Instant::now();
+    let last = std::sync::atomic::AtomicU64::new(0);
     let (ar, aw) = tokio::io::split(a);
     let (br, bw) = tokio::io::split(b);
-    let _ = tokio::join!(
-        throttled_copy(ar, bw, rate_bps),
-        throttled_copy(br, aw, rate_bps)
-    );
+    let copies = async {
+        tokio::join!(
+            throttled_copy(ar, bw, rate_bps, start, &last),
+            throttled_copy(br, aw, rate_bps, start, &last)
+        )
+    };
+    let watchdog = async {
+        loop {
+            tokio::time::sleep(idle / 4).await;
+            let quiet = start.elapsed().as_millis() as u64
+                - last.load(std::sync::atomic::Ordering::Relaxed);
+            if quiet >= idle.as_millis() as u64 {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        _ = copies => {}
+        () = watchdog => tracing::debug!("egress broker: idle connection closed"),
+    }
     Ok(())
 }
 
-async fn throttled_copy<R, W>(mut r: R, mut w: W, rate_bps: u64) -> std::io::Result<()>
+/// One direction of `splice`; `rate_bps == 0` = unthrottled. Stamps `last`
+/// (ms since `start`) on every chunk for the idle watchdog.
+async fn throttled_copy<R, W>(
+    mut r: R,
+    mut w: W,
+    rate_bps: u64,
+    start: Instant,
+    last: &std::sync::atomic::AtomicU64,
+) -> std::io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let burst = rate_bps as f64;
     let mut tokens = burst;
-    let mut last = Instant::now();
+    let mut last_refill = Instant::now();
     let mut buf = vec![0u8; 16 * 1024];
     loop {
         let n = r.read(&mut buf).await?;
         if n == 0 {
             return w.shutdown().await;
         }
+        last.store(
+            start.elapsed().as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        if rate_bps == 0 {
+            w.write_all(&buf[..n]).await?;
+            continue;
+        }
         let now = Instant::now();
-        tokens = (tokens + now.duration_since(last).as_secs_f64() * burst).min(burst);
-        last = now;
+        tokens = (tokens + now.duration_since(last_refill).as_secs_f64() * burst).min(burst);
+        last_refill = now;
         if tokens < n as f64 {
             tokio::time::sleep(Duration::from_secs_f64((n as f64 - tokens) / burst)).await;
             tokens = 0.0;
-            last = Instant::now();
+            last_refill = Instant::now();
         } else {
             tokens -= n as f64;
         }
         w.write_all(&buf[..n]).await?;
     }
+}
+
+/// L3: in production, broker mode must resolve credentials through the
+/// control-plane relay (tenant-bound, audited) — never the dev
+/// `EnvSecretResolver` fallback.
+pub fn check_broker_resolver(
+    mode: EgressMode,
+    lantern_env: Option<&str>,
+    relay_configured: bool,
+) -> Result<()> {
+    let prod = lantern_env.is_some_and(|e| matches!(e.trim(), "prod" | "production" | "staging"));
+    if mode == EgressMode::Broker && prod && !relay_configured {
+        bail!(
+            "LANTERN_EGRESS_MODE=broker in production requires the control-plane secret relay \
+             (LANTERN_CONTROL_PLANE_URL + LANTERN_RUNTIME_SECRET_TOKEN); refusing to fall back \
+             to the env resolver"
+        );
+    }
+    Ok(())
 }
 
 /// Bind the host side of a guest-initiated vsock port (`<uds>_<port>`).
@@ -934,12 +1233,23 @@ pub fn bind_vsock_listener(path: &Path, owner: Option<(u32, u32)>) -> Result<Uni
 
 /// Relay guest control-channel connections to the manager's own gRPC
 /// listener. A dumb byte pipe: the harness's mTLS session runs through it.
-pub async fn relay_to_tcp(listener: UnixListener, target: SocketAddr) {
+pub async fn relay_to_tcp(listener: UnixListener, target: SocketAddr, max_conns: usize) {
+    // M3: the guest controls how many connections it opens; bound them.
+    let slots = Arc::new(tokio::sync::Semaphore::new(max_conns));
     loop {
         match listener.accept().await {
             Ok((mut conn, _)) => {
+                let Ok(permit) = Arc::clone(&slots).try_acquire_owned() else {
+                    tracing::warn!(%target, "vsock control relay: per-VM connection limit reached");
+                    drop(conn);
+                    continue;
+                };
                 tokio::spawn(async move {
-                    match TcpStream::connect(target).await {
+                    let _permit = permit;
+                    match tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(target))
+                        .await
+                        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+                    {
                         Ok(mut up) => {
                             let _ = tokio::io::copy_bidirectional(&mut conn, &mut up).await;
                         }
@@ -1085,6 +1395,94 @@ mod e2e {
             UnixStream::connect(uds.clone())
         }));
         addr
+    }
+
+    /// CONNECT + TLS (trusting `trust`) through `b`, then send `inner` raw;
+    /// returns whatever plaintext came back.
+    async fn tunnel_request(
+        b: &Broker,
+        host: &str,
+        trust: rustls::pki_types::CertificateDer<'static>,
+        inner: &str,
+    ) -> String {
+        let (mut guest, hostside) = tokio::io::duplex(64 * 1024);
+        let host = host.to_string();
+        let inner = inner.to_string();
+        let client = async move {
+            guest
+                .write_all(format!("CONNECT {host}:443 HTTP/1.1\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut resp = Vec::new();
+            while !resp.ends_with(b"\r\n\r\n") {
+                let mut c = [0u8; 1];
+                if guest.read(&mut c).await.unwrap_or(0) == 0 {
+                    return String::from_utf8_lossy(&resp).to_string();
+                }
+                resp.push(c[0]);
+            }
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(trust).unwrap();
+            let cfg = rustls::ClientConfig::builder_with_provider(ring_provider())
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            let mut tls = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+                .connect(ServerName::try_from(host).unwrap(), guest)
+                .await
+                .unwrap();
+            tls.write_all(inner.as_bytes()).await.unwrap();
+            let mut out = Vec::new();
+            let _ = tls.read_to_end(&mut out).await;
+            String::from_utf8_lossy(&out).to_string()
+        };
+        let (_, out) = tokio::join!(b.serve_conn(hostside), client);
+        out
+    }
+
+    /// M1 + L1 on the terminate path: each request is refused with 403
+    /// BEFORE the secret is resolved and before anything is dialled.
+    #[tokio::test]
+    async fn m1_l1_terminate_path_refuses_unbound_requests_before_resolving() {
+        let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = up.local_addr().unwrap();
+        let rec = Arc::new(super::tests::ScopeRecorder(std::sync::Mutex::new(
+            Vec::new(),
+        )));
+        let (tx, _rx) = mpsc::channel(64);
+        let deps = BrokerDeps {
+            resolver: rec.clone(),
+            audit: tx,
+            upstream_roots: Arc::new(rustls::RootCertStore::empty()),
+        };
+        let rules = vec![inject_rule("api.openai.com")];
+        let mitm = MitmCa::for_rules("vm", &rules).unwrap().map(Arc::new);
+        let mut b = Broker::new("vm", "t", Policy::new(rules, vec![443]), mitm, &deps).unwrap();
+        b.test_upstream = Some(addr);
+        let trust = mitm_ca(&b);
+        for inner in [
+            "GET https://evil.com/ HTTP/1.1\r\nHost: api.openai.com\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: evil.com\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: api.openai.com\r\nHost: evil.com\r\n\r\n",
+            "GET / HTTP/1.1\r\n\r\n",
+            "GET http://api.openai.com/ HTTP/1.1\r\nHost: api.openai.com\r\n\r\n",
+            "TRACE / HTTP/1.1\r\nHost: api.openai.com\r\n\r\n",
+            "CONNECT evil.com:443 HTTP/1.1\r\nHost: api.openai.com\r\n\r\n",
+        ] {
+            let out = tunnel_request(&b, "api.openai.com", trust.clone(), inner).await;
+            assert!(out.starts_with("HTTP/1.1 403"), "{inner:?} -> {out}");
+        }
+        assert!(
+            rec.0.lock().unwrap().is_empty(),
+            "secret resolved for a refused request"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), up.accept())
+                .await
+                .is_err(),
+            "upstream dialled for a refused request"
+        );
     }
 
     #[tokio::test]
@@ -1316,15 +1714,18 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_none()
         );
-        let ca = MitmCa::for_rules("vm", &[rule("a.com"), inject_rule("*.openai.com")])
+        let ca = MitmCa::for_rules("vm", &[rule("a.com"), inject_rule("api.openai.com")])
             .unwrap()
             .unwrap();
         assert!(ca.ca_pem().starts_with("-----BEGIN CERTIFICATE-----"));
     }
 
     #[test]
-    fn ca_refuses_injection_on_ip_or_bad_header() {
+    fn ca_refuses_injection_on_ip_wildcard_or_bad_header() {
         assert!(MitmCa::for_rules("vm", &[inject_rule("8.8.8.8")]).is_err());
+        // M2: exact hostnames only — a wildcard would cover attacker subdomains.
+        assert!(MitmCa::for_rules("vm", &[inject_rule("*.openai.com")]).is_err());
+        assert!(MitmCa::for_rules("vm", &[inject_rule("*")]).is_err());
         let mut bad = inject_rule("api.x.com");
         bad.inject[0].header = "X-Bad\r\nEvil".into();
         assert!(MitmCa::for_rules("vm", &[bad]).is_err());
@@ -1426,12 +1827,13 @@ pub(crate) mod tests {
         r.inject[0].secret_uri = "lantern.secret://tenant/t1/key/MISSING".into();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (b, mut rx) = broker(
+        let (mut b, mut rx) = broker(
             vec![r],
             vec![80],
             rustls::RootCertStore::empty(),
             Some(addr),
         );
+        b.plain_inject = true;
         let out = roundtrip(
             &b,
             "GET http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\r\n",
@@ -1469,12 +1871,13 @@ pub(crate) mod tests {
                 .unwrap();
             head
         });
-        let (b, mut rx) = broker(
+        let (mut b, mut rx) = broker(
             vec![inject_rule("api.x.com")],
             vec![80],
             rustls::RootCertStore::empty(),
             Some(addr),
         );
+        b.plain_inject = true;
         let out = roundtrip(
             &b,
             "GET http://api.x.com/v1 HTTP/1.1\r\nHost: api.x.com\r\nAuthorization: Bearer placeholder\r\n\r\n",
@@ -1501,7 +1904,7 @@ pub(crate) mod tests {
     }
 
     /// Records the scope each resolution was made under.
-    struct ScopeRecorder(std::sync::Mutex<Vec<(String, String)>>);
+    pub(crate) struct ScopeRecorder(pub(crate) std::sync::Mutex<Vec<(String, String)>>);
 
     #[async_trait::async_trait]
     impl SecretResolver for ScopeRecorder {
@@ -1558,6 +1961,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         b.test_upstream = Some(addr);
+        b.plain_inject = true;
         let out = roundtrip(
             &b,
             "GET http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\r\n",
@@ -1568,6 +1972,242 @@ pub(crate) mod tests {
             *rec.0.lock().unwrap(),
             vec![("tenant-owner".to_string(), "vm-7".to_string())]
         );
+    }
+
+    // ---- security review hardening (H1, M1, M3, L1, L3, L5) -----------------
+
+    /// A TCP listener that must never be dialled; returns (addr, listener).
+    async fn never_dialled() -> (SocketAddr, tokio::net::TcpListener) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        (l.local_addr().unwrap(), l)
+    }
+
+    async fn assert_not_dialled(l: &tokio::net::TcpListener) {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), l.accept())
+                .await
+                .is_err(),
+            "upstream must not be dialled"
+        );
+    }
+
+    #[tokio::test]
+    async fn h1_plain_http_injection_refused_on_443_and_by_default() {
+        let (addr, up) = never_dialled().await;
+        for (opt_in, port, ports) in [
+            (false, 443, vec![443]),
+            (true, 443, vec![443]),
+            (false, 80, vec![80]),
+        ] {
+            let (mut b, mut rx) = broker(
+                vec![inject_rule("api.x.com")],
+                ports,
+                rustls::RootCertStore::empty(),
+                Some(addr),
+            );
+            b.plain_inject = opt_in;
+            let out = roundtrip(
+                &b,
+                &format!("GET http://api.x.com:{port}/ HTTP/1.1\r\nHost: api.x.com:{port}\r\n\r\n"),
+            )
+            .await;
+            assert!(
+                out.starts_with("HTTP/1.1 403"),
+                "opt_in={opt_in} port={port}: {out}"
+            );
+            assert!(
+                out.contains("plain-HTTP credential injection refused"),
+                "{out}"
+            );
+            let ev = rx.try_recv().unwrap();
+            assert_eq!(
+                (ev.action.as_str(), ev.attrs["decision"].as_str()),
+                ("egress_inject", "deny")
+            );
+        }
+        assert_not_dialled(&up).await;
+    }
+
+    #[tokio::test]
+    async fn m1_plain_path_host_binding_and_forms() {
+        let (addr, up) = never_dialled().await;
+        let (b, _rx) = broker(
+            vec![rule("api.x.com")],
+            vec![80],
+            rustls::RootCertStore::empty(),
+            Some(addr),
+        );
+        for (req, want) in [
+            // Host header names a different vhost than the approved authority.
+            (
+                "GET http://api.x.com/ HTTP/1.1\r\nHost: evil.com\r\n\r\n",
+                "403",
+            ),
+            // Duplicate Host headers.
+            (
+                "GET / HTTP/1.1\r\nHost: api.x.com\r\nHost: evil.com\r\n\r\n",
+                "400",
+            ),
+            // https:// absolute-form is not a plain-HTTP request.
+            (
+                "GET https://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\r\n",
+                "400",
+            ),
+            // Uppercase scheme: parsed as the authority, not a Host fall-back.
+            (
+                "GET HTTP://evil.com/ HTTP/1.1\r\nHost: api.x.com\r\n\r\n",
+                "403",
+            ),
+        ] {
+            let out = roundtrip(&b, req).await;
+            assert!(
+                out.starts_with(&format!("HTTP/1.1 {want}")),
+                "{req:?} -> {out}"
+            );
+        }
+        assert_not_dialled(&up).await;
+    }
+
+    #[test]
+    fn m1_bound_to_host_cases() {
+        let head = |line: &str, hosts: &[&str]| Head {
+            line: format!("{line}\r\n"),
+            headers: hosts.iter().map(|h| format!("Host: {h}\r\n")).collect(),
+        };
+        let ok = |h: &Head| bound_to_host(h, "api.x.com", "https", 443, true).is_ok();
+        assert!(ok(&head("GET /v1 HTTP/1.1", &["api.x.com"])));
+        assert!(ok(&head("GET /v1 HTTP/1.1", &["API.X.COM:443"])));
+        assert!(ok(&head(
+            "GET https://api.x.com/v1 HTTP/1.1",
+            &["api.x.com"]
+        )));
+        assert!(ok(&head(
+            "GET HTTPS://api.x.com:443/v1 HTTP/1.1",
+            &["api.x.com"]
+        )));
+        assert!(!ok(&head("GET https://evil.com/ HTTP/1.1", &["api.x.com"])));
+        assert!(!ok(&head("GET http://api.x.com/ HTTP/1.1", &["api.x.com"])));
+        assert!(!ok(&head("GET /v1 HTTP/1.1", &["evil.com"])));
+        assert!(!ok(&head("GET /v1 HTTP/1.1", &["api.x.com:8443"])));
+        assert!(!ok(&head("GET /v1 HTTP/1.1", &["api.x.com", "api.x.com"])));
+        assert!(!ok(&head("GET /v1 HTTP/1.1", &[])));
+        assert!(!ok(&head("OPTIONS * HTTP/1.1", &["api.x.com"])));
+        assert!(!ok(&head("GET api.x.com:443 HTTP/1.1", &["api.x.com"])));
+    }
+
+    #[tokio::test]
+    async fn l3_prod_broker_requires_relay() {
+        assert!(check_broker_resolver(EgressMode::Broker, Some("production"), false).is_err());
+        assert!(check_broker_resolver(EgressMode::Broker, Some("staging"), false).is_err());
+        assert!(check_broker_resolver(EgressMode::Broker, Some("prod"), true).is_ok());
+        assert!(check_broker_resolver(EgressMode::Broker, None, false).is_ok());
+        assert!(check_broker_resolver(EgressMode::Guest, Some("prod"), false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn l5_deny_audits_are_rate_limited_per_vm() {
+        let (tx, mut rx) = mpsc::channel(1024);
+        let resolver = HashMapSecretResolver::new(HashMap::new());
+        let d = BrokerDeps {
+            resolver: Arc::new(resolver),
+            audit: tx,
+            upstream_roots: Arc::new(rustls::RootCertStore::empty()),
+        };
+        let b = Broker::new("vm-noisy", "t", Policy::new(vec![], vec![443]), None, &d).unwrap();
+        for _ in 0..200 {
+            b.audit_decision("evil.com", 443, Err("no rules configured"), "connect");
+        }
+        b.audit_decision("ok.com", 443, Ok(()), "passthrough");
+        let mut denies = 0;
+        let mut allows = 0;
+        while let Ok(ev) = rx.try_recv() {
+            match ev.attrs["decision"].as_str() {
+                "deny" => denies += 1,
+                _ => allows += 1,
+            }
+        }
+        assert!((20..=22).contains(&denies), "denies forwarded: {denies}");
+        assert_eq!(allows, 1, "allows are never rate-limited");
+    }
+
+    #[tokio::test]
+    async fn m3_silent_guest_is_dropped_after_handshake_timeout() {
+        let (mut b, _rx) = broker(
+            vec![rule("api.x.com")],
+            vec![443],
+            rustls::RootCertStore::empty(),
+            None,
+        );
+        b.handshake_timeout = Duration::from_millis(100);
+        let (_guest, host) = tokio::io::duplex(1024);
+        let started = Instant::now();
+        tokio::time::timeout(Duration::from_secs(2), b.serve_conn(host))
+            .await
+            .expect("serve_conn must give up on a silent guest")
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn m3_splice_closes_idle_connection() {
+        let (a, _a_peer) = tokio::io::duplex(1024);
+        let (c, _c_peer) = tokio::io::duplex(1024);
+        let started = Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            splice(a, c, 0, Duration::from_millis(100)),
+        )
+        .await
+        .expect("idle splice must close")
+        .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn m3_per_vm_connection_limit_on_broker_and_relay() {
+        use tokio::net::UnixStream;
+        let dir = tempfile::tempdir().unwrap();
+
+        // Broker: 2 slots held by silent guests; the 3rd is closed at once.
+        let (mut b, _rx) = broker(
+            vec![rule("api.x.com")],
+            vec![443],
+            rustls::RootCertStore::empty(),
+            None,
+        );
+        b.conns = Arc::new(tokio::sync::Semaphore::new(2));
+        b.handshake_timeout = Duration::from_secs(30);
+        let path = dir.path().join("vm.sock_3128");
+        let l = bind_vsock_listener(&path, None).unwrap();
+        tokio::spawn(Arc::new(b).serve(l));
+        let _held1 = UnixStream::connect(&path).await.unwrap();
+        let _held2 = UnixStream::connect(&path).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut third = UnixStream::connect(&path).await.unwrap();
+        let mut buf = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(1), third.read(&mut buf))
+            .await
+            .expect("over-limit connection must be closed, not parked")
+            .unwrap_or(0);
+        assert_eq!(n, 0);
+
+        // Relay: limit 1.
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let taddr = target.local_addr().unwrap();
+        let rpath = dir.path().join("vm.sock_50054");
+        let rl = bind_vsock_listener(&rpath, None).unwrap();
+        tokio::spawn(relay_to_tcp(rl, taddr, 1));
+        let _r1 = UnixStream::connect(&rpath).await.unwrap();
+        let _accepted = tokio::time::timeout(Duration::from_secs(1), target.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut r2 = UnixStream::connect(&rpath).await.unwrap();
+        let n = tokio::time::timeout(Duration::from_secs(1), r2.read(&mut buf))
+            .await
+            .expect("relay over-limit connection must be closed")
+            .unwrap_or(0);
+        assert_eq!(n, 0);
     }
 
     pub(crate) mod capture {

@@ -31,7 +31,16 @@
     { "ip": "fe80::1", "private": true },
     { "ip": "::ffff:10.0.0.1", "private": true },
     { "ip": "::ffff:8.8.8.8", "private": false },
-    { "ip": "2606:4700::1111", "private": false }
+    { "ip": "2606:4700::1111", "private": false },
+    { "ip": "192.0.0.8", "private": true },
+    { "ip": "192.0.1.1", "private": false },
+    { "ip": "198.18.0.1", "private": true },
+    { "ip": "198.19.255.254", "private": true },
+    { "ip": "198.20.0.1", "private": false },
+    { "ip": "64:ff9b::808:808", "private": true },
+    { "ip": "64:ff9b::a00:1", "private": true },
+    { "ip": "64:ff9b:1::1", "private": true },
+    { "ip": "64:ff9b:2::1", "private": false }
   ],
   "host_port_cases": [
     { "target": "api.openai.com:443", "host": "api.openai.com", "port": 443 },

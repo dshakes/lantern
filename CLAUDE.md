@@ -1043,7 +1043,12 @@ controls, all fail-safe:
   a mismatch is refused). Injected refs resolve via `resolve_scoped` with the
   VM's registry tenant — the control-plane relay binds them to that tenant.
   Schedule accepts `egress[].inject {header, secretRef, valuePrefix}` (400 on a
-  non-`lantern.secret/` ref). Live check: `infra/firecracker/broker-e2e.sh`.
+  non-`lantern.secret/` ref). Hardened per review: plain-HTTP injection 403 unless
+  `LANTERN_EGRESS_PLAIN_INJECT=1` + port 80; injected requests must be bound to
+  the exact approved host (target authority + exactly one `Host:`); injecting
+  rules are exact hostnames; 128 conns/VM, 10 s handshake, 300 s idle; prod
+  broker mode refuses to start without the relay. Live check:
+  `infra/firecracker/broker-e2e.sh`.
 
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared

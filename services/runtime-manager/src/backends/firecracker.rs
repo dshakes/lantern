@@ -3008,6 +3008,7 @@ impl FirecrackerBackend {
             tokio::spawn(crate::egress_broker::relay_to_tcp(
                 control_listener,
                 manager_local_addr(),
+                crate::egress_broker::MAX_CONNS_PER_VM,
             ))
             .abort_handle(),
         ];

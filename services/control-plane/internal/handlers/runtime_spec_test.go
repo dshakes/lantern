@@ -413,10 +413,10 @@ func TestValidateEgressInject(t *testing.T) {
 		return []map[string]any{{"pattern": pattern, "inject": []any{inj}}}
 	}
 	ok := map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"}
-	if err := validateEgressInject(rule("api.openai.com", ok)); err != nil {
+	if err := validateEgressInject(rule("api.openai.com", ok), nil); err != nil {
 		t.Fatalf("valid inject rejected: %v", err)
 	}
-	if err := validateEgressInject([]map[string]any{{"pattern": "x.com"}}); err != nil {
+	if err := validateEgressInject([]map[string]any{{"pattern": "x.com"}}, nil); err != nil {
 		t.Fatalf("rule without inject rejected: %v", err)
 	}
 	const raw = "sk-live-RAWSECRET"
@@ -427,9 +427,11 @@ func TestValidateEgressInject(t *testing.T) {
 		"crlf prefix":      rule("api.openai.com", map[string]any{"header": "A", "secretRef": "lantern.secret/llm/openai", "valuePrefix": "x\r\n"}),
 		"ip pattern":       rule("8.8.8.8", ok),
 		"cidr pattern":     rule("10.0.0.0/8", ok),
+		"wildcard pattern": rule("*.openai.com", ok),
+		"bare wildcard":    rule("*", ok),
 	}
 	for name, rules := range bad {
-		err := validateEgressInject(rules)
+		err := validateEgressInject(rules, nil)
 		if err == nil {
 			t.Errorf("%s: want error", name)
 			continue
@@ -437,5 +439,28 @@ func TestValidateEgressInject(t *testing.T) {
 		if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "lantern.secret/llm") {
 			t.Errorf("%s: error echoes the ref: %v", name, err)
 		}
+	}
+}
+
+// L2: the same ref in `secrets` and `egress[].inject` would vend the value
+// injection exists to keep out of the VM.
+func TestValidateEgressInject_RefAlsoInSecretsRejected(t *testing.T) {
+	rules := []map[string]any{{"pattern": "api.openai.com", "inject": []any{
+		map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"},
+	}}}
+	for _, secrets := range [][]map[string]any{
+		{{"env_name": "K", "secret_uri": "lantern.secret/llm/openai"}},
+		{{"envName": "K", "secretUri": "lantern.secret/llm/openai"}},
+	} {
+		err := validateEgressInject(rules, secrets)
+		if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
+			t.Fatalf("want overlap rejection, got %v", err)
+		}
+		if strings.Contains(err.Error(), "lantern.secret/") {
+			t.Fatalf("error echoes the ref: %v", err)
+		}
+	}
+	if err := validateEgressInject(rules, []map[string]any{{"secret_uri": "lantern.secret/llm/anthropic"}}); err != nil {
+		t.Fatalf("distinct ref rejected: %v", err)
 	}
 }

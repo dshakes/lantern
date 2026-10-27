@@ -119,6 +119,15 @@ async fn main() -> anyhow::Result<()> {
             // is scheduled, and only DOWN devices (no live VMM) are removed.
             crate::backends::firecracker::reconcile_orphaned_taps().await;
             let fc = FirecrackerBackend::new();
+            // L3: production broker mode must use the tenant-bound relay.
+            egress_broker::check_broker_resolver(
+                fc.egress_mode(),
+                std::env::var("LANTERN_ENV").ok().as_deref(),
+                matches!(
+                    crate::secret_resolver::RelaySecretResolver::from_env_or_err(),
+                    Ok(Some(_))
+                ),
+            )?;
             let fc = if fc.egress_mode() == egress_broker::EgressMode::Broker {
                 // rustls-native-certs reads the system store (blocking I/O),
                 // once at startup.

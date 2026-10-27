@@ -159,6 +159,10 @@ pub fn is_private_or_metadata(addr: IpAddr) -> bool {
             || (o[0] & 0xf0) == 240
             // 224.0.0.0/4 multicast
             || (o[0] & 0xf0) == 224
+            // 192.0.0.0/24 IETF protocol assignments
+            || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+            // 198.18.0.0/15 benchmarking
+            || (o[0] == 198 && (o[1] & 0xfe) == 18)
         }
         IpAddr::V6(v6) => {
             // ::1 loopback
@@ -167,6 +171,10 @@ pub fn is_private_or_metadata(addr: IpAddr) -> bool {
             || (v6.segments()[0] & 0xfe00) == 0xfc00
             // fe80::/10 link-local
             || (v6.segments()[0] & 0xffc0) == 0xfe80
+            // NAT64 64:ff9b::/96 (well-known) and 64:ff9b:1::/48 (local)
+            || (v6.segments()[0] == 0x64
+                && v6.segments()[1] == 0xff9b
+                && (v6.segments()[2] == 1 || v6.segments()[2..6] == [0, 0, 0, 0]))
             // ::ffff:0:0/96 IPv4-mapped — re-check the embedded IPv4 part
             || v6.to_ipv4().map(|v4| is_private_or_metadata(IpAddr::V4(v4))).unwrap_or(false)
         }
@@ -964,7 +972,7 @@ pub async fn run_broker_forwarder() -> anyhow::Result<()> {
 }
 
 /// System CA bundles to extend with the broker CA (first one found wins).
-const SYSTEM_CA_BUNDLES: [&str; 3] = [
+pub const SYSTEM_CA_BUNDLES: [&str; 3] = [
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/certs/ca-bundle.crt",
     "/etc/ssl/cert.pem",
@@ -1007,12 +1015,13 @@ pub fn install_broker_ca(
 }
 
 /// `install_broker_ca` against `/run/lantern` and the real system bundles.
+/// Where the broker CA lives in the guest (re-written on re-identify, so
+/// long-lived readers like `http_fetch` read it from here, not the boot env).
+pub const BROKER_CA_DIR: &str = "/run/lantern";
+pub const BROKER_CA_FILE: &str = "/run/lantern/egress-ca.crt";
+
 pub fn install_broker_ca_default(pem: &str) -> std::io::Result<Vec<(String, String)>> {
-    install_broker_ca(
-        std::path::Path::new("/run/lantern"),
-        pem,
-        &SYSTEM_CA_BUNDLES,
-    )
+    install_broker_ca(std::path::Path::new(BROKER_CA_DIR), pem, &SYSTEM_CA_BUNDLES)
 }
 
 // ---------------------------------------------------------------------------

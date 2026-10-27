@@ -122,10 +122,65 @@ channel).
   - The harness `http_fetch` tool trusts the broker CA.
 - **Live verification:** `infra/firecracker/broker-e2e.sh` (Linux/KVM).
 
+## Hardening (security review of PR #299)
+
+- **Plain-HTTP injection is off by default (H1).** A request matching an
+  injecting rule over plain HTTP gets 403. It is allowed only with
+  `LANTERN_EGRESS_PLAIN_INJECT=1`, and only to port 80, so `http://host:443/`
+  can never carry a credential in cleartext.
+- **The request must be addressed to the approved host (M1).** On both the
+  terminated and the plain path, before any secret is resolved or anything is
+  dialled, the request must have:
+  - an origin-form target, or an absolute-form target with the right scheme and
+    authority `host[:port]`;
+  - exactly one `Host:` header, equal to `host[:port]`.
+
+  Plain requests without injection are held to the same binding (at most one
+  `Host:`, which must match), so a guest cannot reach another vhost on an
+  allow-listed IP. The plain path parses the scheme case-insensitively, rejects
+  `https://` absolute-form (400), and rejects duplicate `Host:` headers (400).
+- **Injecting rules are exact hostnames only (M2).** Wildcards, IPs and CIDRs
+  are refused both by the control-plane (400) and by `MitmCa::for_rules`.
+- **Resource bounds (M3).**
+  - At most `MAX_CONNS_PER_VM` = 128 concurrent connections per VM, separately
+    on the egress listener and the control relay; extra connections are closed
+    immediately.
+  - A 10 s limit on each of: reading the request head, the guest TLS accept, DNS,
+    upstream connect, and the upstream TLS handshake.
+  - A connection with no traffic in either direction for 300 s is closed.
+  - On the terminated path the upstream is dialled only after the guest
+    handshake and the authorisation of its inner request head.
+  - The leaf-certificate cache is capped at 16 entries.
+- **TRACE, and CONNECT inside a tunnel, are always refused** on injecting rules
+  (L1).
+- **A ref listed in both `secrets` and `egress[].inject` is rejected (400)**
+  (L2). Otherwise the value injection keeps out of the VM would be vended into it.
+- **Production refuses to start broker mode without the relay resolver** (L3).
+  There is no silent `EnvSecretResolver` fallback.
+- **More reserved ranges are treated as private (L4):** NAT64 `64:ff9b::/96`
+  and `64:ff9b:1::/48`, `192.0.0.0/24`, `198.18.0.0/15`. Added to the shared
+  fixture and both matchers.
+- **Deny audits are rate-limited per VM (L5):** a burst of 20, then 5 per
+  second into the shared audit channel. Every deny is still logged locally;
+  allows are never limited.
+- **Any guest uid can reach vsock port 50054 (L6).** In broker mode every
+  process in the guest, including the workload uid, can connect to `CID 2:50054`
+  and reach the manager's gRPC listener through the relay. That is safe in
+  production only because that listener requires mTLS with the per-VM client
+  certificate, whose key is in harness-only 0700 storage, plus the
+  cert↔vm_id binding and the per-incarnation pin. The workload cannot present
+  the VM's identity, and `RuntimeManager` methods additionally require the
+  service token. A dev manager running without mTLS accepts anything from any
+  guest uid, so **dev deployments must not run untrusted guests in broker mode.**
+- **CA rotation on resume/fork:** re-identify re-installs the new
+  incarnation's CA into the files the workload and `http_fetch` trust.
+  `http_fetch` reads the installed file, not the boot environment.
+
 ## Consequences / limitations
 
-- **Plain-HTTP injection sends the secret in cleartext** over the internet. This is only
-  possible when an operator opens port 80 in `LANTERN_EGRESS_ALLOWED_PORTS`.
+- **Plain-HTTP injection, when enabled, sends the secret in cleartext.** It requires
+  `LANTERN_EGRESS_PLAIN_INJECT=1`, port 80 opened in `LANTERN_EGRESS_ALLOWED_PORTS`,
+  and a request to port 80.
 - **h2 is not negotiated** on terminated connections. ALPN is pinned to http/1.1, which
   costs one reconnect per injected request.
 - **Egress mode is node-wide** (`LANTERN_EGRESS_MODE`), not per-spec. Restore is refused

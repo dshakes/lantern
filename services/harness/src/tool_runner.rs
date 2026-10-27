@@ -853,9 +853,14 @@ fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
 
 /// The broker CA from `LANTERN_EGRESS_CA_PEM`, in broker mode only.
 fn broker_ca_cert() -> Option<reqwest::Certificate> {
+    // The installed file first: re-identify (resume/fork) rewrites it with
+    // the new incarnation's CA; the boot env would still hold the old one.
+    let pem = std::fs::read_to_string(crate::egress::BROKER_CA_FILE)
+        .ok()
+        .or_else(|| std::env::var("LANTERN_EGRESS_CA_PEM").ok());
     broker_ca_from(
         std::env::var("LANTERN_EGRESS_MODE").ok().as_deref(),
-        std::env::var("LANTERN_EGRESS_CA_PEM").ok().as_deref(),
+        pem.as_deref(),
     )
 }
 
