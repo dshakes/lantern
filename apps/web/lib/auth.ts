@@ -21,7 +21,12 @@ export interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   isDemoMode: boolean;
-  signup: (email: string, password: string, name: string) => Promise<void>;
+  signup: (
+    email: string,
+    password: string,
+    name: string,
+    extra?: { inviteCode?: string; captchaToken?: string },
+  ) => Promise<{ verificationRequired: boolean }>;
   login: (email: string, password: string) => Promise<void>;
   loginDemo: () => void;
   logout: () => void;
@@ -97,11 +102,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const signup = useCallback(async (email: string, password: string, name: string) => {
-    const result = await api.signup(email, password, name);
+  const signup = useCallback(async (
+    email: string,
+    password: string,
+    name: string,
+    extra?: { inviteCode?: string; captchaToken?: string },
+  ) => {
+    const result = await api.signup(email, password, name, extra);
+    if (!result.token || !result.user) {
+      // Prod: account created, no session until the email is verified.
+      return { verificationRequired: true };
+    }
     setToken(result.token);
     setUser(result.user);
     setIsDemoMode(false);
+    return { verificationRequired: false };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {

@@ -10,6 +10,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use crate::backend::RuntimeBackend;
+use crate::backends::firecracker::SNAPSHOT_ROOTFS_ARTIFACT;
 use crate::handle_registry::{HandleInfo, HandleRegistry};
 use crate::otel;
 use crate::pool::{PoolConfig, WarmPool};
@@ -846,21 +847,33 @@ impl RuntimeManagerGrpc {
         };
         let (snapshot_file, mem_file) =
             snapshot_artifact_paths(&backend_info.snapshot_uri, &req.handle_id);
-        let files: [(&str, &std::path::Path); 2] =
-            [("snapshot", &snapshot_file), ("mem", &mem_file)];
+        // The VM's disk, captured by the backend while paused with the memory
+        // (Firecracker writes it as a `rootfs` sibling). Restore stages from it.
+        let disk_file = snapshot_file.with_file_name(SNAPSHOT_ROOTFS_ARTIFACT);
+        let has_disk = tokio::fs::try_exists(&disk_file).await.unwrap_or(false);
+        let mut files: Vec<(&str, &std::path::Path)> =
+            vec![("snapshot", &snapshot_file), ("mem", &mem_file)];
+        if has_disk {
+            files.push((SNAPSHOT_ROOTFS_ARTIFACT, &disk_file));
+        }
 
-        let meta = self
+        let persisted = self
             .snapshot_store
             .put_files(agent_version_id, &owner.tenant_id, vm_id, &files)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    vm_id = %vm_id,
-                    error = format!("{e:#}"),
-                    "snapshot_store: put failed"
-                );
-                Status::internal(format!("snapshot store error: {e:#}"))
-            })?;
+            .await;
+        // The store now owns its own copy; the transient one (rootfs-sized, on
+        // tmpfs for bare VMs) is dropped either way.
+        if has_disk && let Err(e) = tokio::fs::remove_file(&disk_file).await {
+            tracing::warn!(vm_id = %vm_id, path = ?disk_file, error = %e, "could not remove transient disk capture");
+        }
+        let meta = persisted.map_err(|e| {
+            tracing::error!(
+                vm_id = %vm_id,
+                error = format!("{e:#}"),
+                "snapshot_store: put failed"
+            );
+            Status::internal(format!("snapshot store error: {e:#}"))
+        })?;
 
         tracing::info!(
             snapshot_id = %meta.id,
@@ -5049,6 +5062,105 @@ mod tests {
             .await
             .expect_err("docker cannot restore from the store");
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    /// Backend whose snapshot writes `{snapshot,mem,rootfs}` like Firecracker.
+    struct DiskSnapStub {
+        dir: std::path::PathBuf,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for DiskSnapStub {
+        async fn schedule(
+            &self,
+            _req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            Ok(crate::backend::Handle {
+                id: "h-disk".to_string(),
+                node_name: "stub-node".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            for (name, body) in [("snapshot", "vmstate"), ("mem", "mem"), ("rootfs", "disk")] {
+                tokio::fs::write(self.dir.join(name), body).await?;
+            }
+            Ok(crate::backend::SnapshotInfo {
+                snapshot_uri: format!("fc://{}", self.dir.join("snapshot").display()),
+                size_bytes: 0,
+            })
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            _req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            anyhow::bail!("not used")
+        }
+        fn name(&self) -> &'static str {
+            "firecracker"
+        }
+        fn satisfies_isolation(&self, _class: proto::IsolationClass) -> bool {
+            true
+        }
+    }
+
+    /// WP2: the VM disk the backend captured is persisted as a `rootfs`
+    /// artifact, and the transient (rootfs-sized) capture is removed.
+    #[tokio::test]
+    async fn snapshot_persists_captured_disk_and_drops_transient_copy() {
+        use pb::runtime_manager_server::RuntimeManager;
+        let tmp = tempfile::tempdir().unwrap();
+        let fc_dir = tmp.path().join("fc");
+        tokio::fs::create_dir_all(&fc_dir).await.unwrap();
+        let store = crate::snapshot_store::SnapshotStore::new(tmp.path().join("store"));
+        let svc = RuntimeManagerGrpc::new(
+            Arc::new(DiskSnapStub {
+                dir: fc_dir.clone(),
+            }),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store.clone());
+        let vm_id = svc
+            .spawn(Request::new(make_spawn_request("t-disk", HashMap::new())))
+            .await
+            .unwrap()
+            .into_inner()
+            .handle
+            .unwrap()
+            .vm_id;
+
+        let resp = RuntimeManager::snapshot(
+            &svc,
+            Request::new(pb::SnapshotRequest {
+                vm_id,
+                id_hint: String::new(),
+                keep_running: true,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+
+        let meta = store.find(&resp.snapshot_id).await.unwrap().unwrap();
+        assert_eq!(meta.artifacts, ["mem", "rootfs", "snapshot"]);
+        assert!(
+            !fc_dir.join("rootfs").exists(),
+            "transient disk capture must be removed once the store has it"
+        );
     }
 
     /// Snapshot requires a registered vm (the owner record); no fallback to a

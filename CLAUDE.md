@@ -365,6 +365,28 @@ a zone is configured; before this it fired at 09:00 UTC). The same
 `max_cost_usd_per_day` rolls at the deployment's local midnight, not UTC. Env:
 `LANTERN_DEFAULT_TIMEZONE` (deployment-wide IANA; unset → UTC, a no-op).
 
+### Webhook triggers (ADR 0028)
+
+| Method   | Path                           | Description                                                                 |
+| -------- | ------------------------------ | --------------------------------------------------------------------------- |
+| `POST`   | `/v1/agents/{name}/triggers`   | Create `{provider, secret?, inputTemplate?}`; generated secret returned once |
+| `GET`    | `/v1/agents/{name}/triggers`   | List (never includes secrets)                                               |
+| `GET`/`PATCH`/`DELETE` | `/v1/triggers/{id}` | Get / `{enabled?, secret?, inputTemplate? (null clears)}` / delete. Cross-tenant → 404 |
+| `POST`   | `/v1/hooks/{id}`               | **Public.** Signed delivery → run (`trigger_kind=webhook`) via `CreateRun`  |
+
+`internal/handlers/triggers.go`; tables `agent_triggers` + `agent_trigger_deliveries`
+(migration 0024, RLS). Providers: `generic` (`X-Lantern-Signature: t=,v1=` over
+`<t>.<body>`, ±5 min), `github` (`X-Hub-Signature-256`), `sentry`
+(`Sentry-Hook-Signature`), `pagerduty` (`X-PagerDuty-Signature: v1=`). HMAC-SHA256,
+constant-time. Unknown/disabled/agent-gone → 404, bad signature → 401, >1 MiB → 413,
+per-trigger rate limit (after verification) → 429, budget → 402. Dedup on the delivery
+id AND a hash of the signed bytes (GitHub/Sentry/PagerDuty don't sign their delivery
+id): duplicate → `200 {"duplicate":true}`, no second run; a failed run creation frees
+the delivery so the provider's retry works. Secret encrypted via `internal/secrets`.
+Mutators carry `agents:write`. Env: `LANTERN_HOOK_RATE_PER_MIN` (default 60),
+`LANTERN_HOOK_BURST` (default 10). SDKs `triggers.*` / `CreateTrigger…`; CLI
+`lantern hooks`; dashboard `/agents/[name]/triggers`.
+
 ### Completions (LLM proxy)
 
 | Method | Path              | Description                                     |

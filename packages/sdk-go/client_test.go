@@ -119,6 +119,61 @@ func TestDeleteBudget_CallsDeleteMethod(t *testing.T) {
 	}
 }
 
+func TestTriggers_WireContract(t *testing.T) {
+	type call struct{ method, path, body string }
+	var got []call
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, call{r.Method, r.URL.Path, strings.TrimSpace(string(b))})
+		switch {
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/triggers"):
+			w.Write([]byte(`[{"id":"t1","provider":"github","hookPath":"/v1/hooks/t1"}]`))
+		default:
+			w.Write([]byte(`{"id":"t1","provider":"github","hookPath":"/v1/hooks/t1","secret":"whsec_x"}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(WithBaseURL(srv.URL))
+	ctx := context.Background()
+
+	tr, err := c.CreateTrigger(ctx, "triage", TriggerCreate{Provider: "github"})
+	if err != nil || tr.Secret != "whsec_x" || tr.HookPath != "/v1/hooks/t1" {
+		t.Fatalf("CreateTrigger = %+v, %v", tr, err)
+	}
+	list, err := c.ListTriggers(ctx, "triage")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListTriggers = %+v, %v", list, err)
+	}
+	if _, err := c.GetTrigger(ctx, "t1"); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, err := c.UpdateTrigger(ctx, "t1", TriggerUpdate{Enabled: &off, InputTemplate: json.RawMessage("null")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteTrigger(ctx, "t1"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []call{
+		{http.MethodPost, "/v1/agents/triage/triggers", `{"provider":"github"}`},
+		{http.MethodGet, "/v1/agents/triage/triggers", ""},
+		{http.MethodGet, "/v1/triggers/t1", ""},
+		{http.MethodPatch, "/v1/triggers/t1", `{"enabled":false,"inputTemplate":null}`},
+		{http.MethodDelete, "/v1/triggers/t1", ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("calls = %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("call %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestListEvalSuites_FiltersAndReturns(t *testing.T) {
 	cases := []struct {
 		name      string

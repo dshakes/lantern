@@ -348,7 +348,10 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 				zap.String("agent", agentName),
 				zap.String("reason", budgetResult.Reason),
 			)
-			const errContent = "sorry — this agent has reached its usage limit for today"
+			errContent := "sorry — this agent has reached its usage limit for today"
+			if budgetResult.Unavailable {
+				errContent = "sorry — I can't check this agent's usage limit right now, try again shortly"
+			}
 			h.appendAssistantMessageWithTools(ctx, sessionID, errContent, nil)
 			h.publishEvent(sessionID, "agent.message", map[string]string{
 				"content":   errContent,

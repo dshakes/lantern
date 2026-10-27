@@ -1,4 +1,4 @@
-.PHONY: help dev build test check-launchd-env deploy-local test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -197,9 +197,22 @@ test-ts: ## Run TypeScript tests
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v
 
-test-e2e: ## Run live-stack e2e suites (needs `make dev-infra` + control-plane on :8080; skips green when down) — see e2e/README.md
+test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_SKIP=1 to skip instead). Set LANTERN_E2E_API_URL or LANTERN_API_URL to target a non-default stack — see e2e/README.md
+	$(MAKE) e2e-lint
 	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
-	cd e2e/quickstart && go test -tags e2e -count=1 -v ./...
+	cd e2e/quickstart && go test -tags e2e -count=1 -p 1 -v ./...
+
+test-e2e-llm: ## Alias for test-e2e (real-LLM e2e suite under §0 spend caps)
+	$(MAKE) test-e2e
+
+e2e-clean: ## Delete all e2e-* agents from the dev tenant (manual recovery after interrupted runs)
+	cd e2e/internal/e2ekit && go run ./cmd/sweep
+
+e2e-lint: ## Grep-check that /v1/budgets/tenant is never called from e2e/ (§0 invariant)
+	@if grep -rn '"/v1/budgets/tenant' e2e/ 2>/dev/null; then \
+	  echo "ERROR: e2e/ must never call /v1/budgets/tenant (§0 spend policy)"; exit 1; \
+	fi
+	@echo "e2e-lint OK: no call to /v1/budgets/tenant in e2e/"
 
 smoke-dataplane: ## Live two-process proof: boots the real control-plane + data-plane-agent binaries and routes a run to the plane over the tunnel
 	@bash scripts/e2e-dataplane-smoke.sh

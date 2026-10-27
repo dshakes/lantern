@@ -580,20 +580,24 @@ class LanternAPI {
 
   // ---- Auth ---------------------------------------------------------------
 
+  /** In production the control plane answers 202 {verificationRequired}
+   *  with no token: the account exists but can't sign in until the emailed
+   *  link is clicked (ADR 0027). */
   async signup(
     email: string,
     password: string,
     name: string,
-  ): Promise<{ token: string; user: User }> {
+    extra: { inviteCode?: string; captchaToken?: string } = {},
+  ): Promise<{ token?: string; user?: User; verificationRequired?: boolean }> {
     try {
-      const data = await this.request<{ token: string; user: User }>(
+      const data = await this.request<{ token?: string; user?: User; verificationRequired?: boolean }>(
         "/auth/signup",
         {
           method: "POST",
-          body: JSON.stringify({ email, password, name }),
+          body: JSON.stringify({ email, password, name, ...extra }),
         },
       );
-      this.setToken(data.token);
+      if (data.token) this.setToken(data.token);
       return data;
     } catch (err) {
       console.warn(
@@ -619,6 +623,10 @@ class LanternAPI {
       this.setToken(data.token);
       return data;
     } catch (err) {
+      // 403 email_unverified (prod): say so instead of "invalid credentials".
+      if (err instanceof Error && err.message.includes("email_unverified")) {
+        throw new Error("Verify your email first. Check your inbox for the link, or request a new one.");
+      }
       notifySimulated("login", err);
       // Demo-mode fallback: only ever mint a local demo token when demo mode
       // is explicitly enabled at build time (NEXT_PUBLIC_DEMO_MODE=1). Off by
@@ -639,6 +647,36 @@ class LanternAPI {
 
   async getMe(): Promise<User> {
     return this.request<User>("/auth/me");
+  }
+
+  // ---- Account lifecycle (ADR 0027) ----------------------------------------
+
+  async verifyEmail(token: string): Promise<void> {
+    await this.request("/auth/verify", { method: "POST", body: JSON.stringify({ token }) });
+  }
+
+  /** Same response whether or not the email has an account. */
+  async resendVerification(email: string): Promise<void> {
+    await this.request("/auth/verify/resend", { method: "POST", body: JSON.stringify({ email }) });
+  }
+
+  /** Same response whether or not the email has an account. */
+  async forgotPassword(email: string): Promise<void> {
+    await this.request("/auth/forgot", { method: "POST", body: JSON.stringify({ email }) });
+  }
+
+  async resetPassword(token: string, password: string): Promise<void> {
+    await this.request("/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) });
+  }
+
+  /** Owner-only JSON export of every row the tenant owns (credentials redacted). */
+  async exportTenant(tenantId: string): Promise<unknown> {
+    return this.request(`/v1/tenants/${encodeURIComponent(tenantId)}/export`);
+  }
+
+  /** Owner-only, irreversible: deletes the tenant and all its data. */
+  async deleteTenant(tenantId: string): Promise<void> {
+    await this.request(`/v1/tenants/${encodeURIComponent(tenantId)}`, { method: "DELETE" });
   }
 
   async oauthStart(provider: string): Promise<{ redirect_url: string }> {
@@ -1975,6 +2013,41 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     return this.request<Budget[]>(`/v1/budgets`);
   }
 
+  // ---- Webhook triggers (ADR 0028) -----------------------------------------
+
+  async listTriggers(agentName: string): Promise<Trigger[]> {
+    return this.request<Trigger[]>(`/v1/agents/${encodeURIComponent(agentName)}/triggers`);
+  }
+
+  async createTrigger(
+    agentName: string,
+    body: { provider: TriggerProvider; secret?: string; inputTemplate?: Record<string, unknown> },
+  ): Promise<Trigger> {
+    return this.request<Trigger>(`/v1/agents/${encodeURIComponent(agentName)}/triggers`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateTrigger(
+    id: string,
+    body: { enabled?: boolean; secret?: string; inputTemplate?: Record<string, unknown> | null },
+  ): Promise<Trigger> {
+    return this.request<Trigger>(`/v1/triggers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteTrigger(id: string): Promise<void> {
+    return this.request<void>(`/v1/triggers/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  /** Absolute URL a provider should POST deliveries to. */
+  hookUrl(hookPath: string): string {
+    return `${this.baseUrl}${hookPath}`;
+  }
+
   // ---- Forecast (pre-run cost) ---------------------------------------------
 
   async forecastRun(body: {
@@ -2328,6 +2401,21 @@ export interface MarketplaceAgent {
   starred: boolean;
   publishedAt: string;
   author: string;
+}
+
+export type TriggerProvider = "generic" | "github" | "sentry" | "pagerduty";
+
+export interface Trigger {
+  id: string;
+  agentName: string;
+  provider: TriggerProvider;
+  enabled: boolean;
+  inputTemplate?: Record<string, unknown>;
+  hookPath: string;
+  lastDeliveryAt?: string;
+  createdAt: string;
+  /** Only on create, only when the server generated it. */
+  secret?: string;
 }
 
 export interface Budget {

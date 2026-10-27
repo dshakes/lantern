@@ -121,6 +121,45 @@ class TestSessionDelete:
 
 
 # ---------------------------------------------------------------------------
+# Triggers (inbound webhooks)
+# ---------------------------------------------------------------------------
+
+
+class TestTriggers:
+    async def test_create_posts_to_agent_triggers(self):
+        t = _MockTransport(status=201, body={"id": "t1", "hookPath": "/v1/hooks/t1", "secret": "whsec_x"})
+        c = _client(t)
+        tr = await c.triggers.create("my-agent", provider="github", input_template={"pr": "{{payload.number}}"})
+        req = _last(t)
+        assert req.method == "POST"
+        assert req.url.path == "/v1/agents/my-agent/triggers"
+        assert json.loads(req.content) == {"provider": "github", "inputTemplate": {"pr": "{{payload.number}}"}}
+        assert tr["secret"] == "whsec_x"
+
+    async def test_list_get_delete_paths(self):
+        t = _MockTransport(body=[])
+        c = _client(t)
+        assert await c.triggers.list("a") == []
+        assert _last(t).url.path == "/v1/agents/a/triggers"
+        await c.triggers.get("t1")
+        assert _last(t).url.path == "/v1/triggers/t1"
+        t2 = _MockTransport(status=204)
+        c2 = _client(t2)
+        await c2.triggers.delete("t1")
+        assert _last(t2).method == "DELETE"
+        assert _last(t2).url.path == "/v1/triggers/t1"
+
+    async def test_update_patches_and_can_clear_template(self):
+        t = _MockTransport(body={"id": "t1"})
+        c = _client(t)
+        await c.triggers.update("t1", enabled=False, clear_input_template=True)
+        req = _last(t)
+        assert req.method == "PATCH"
+        assert req.url.path == "/v1/triggers/t1"
+        assert json.loads(req.content) == {"enabled": False, "inputTemplate": None}
+
+
+# ---------------------------------------------------------------------------
 # Budget parity methods
 # ---------------------------------------------------------------------------
 

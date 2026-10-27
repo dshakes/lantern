@@ -52,8 +52,24 @@ func envOr(key, def string) string {
 	return def
 }
 
+// baseURL returns the control-plane base URL.
+// Env var priority: LANTERN_E2E_API_URL (canonical) → LANTERN_API_URL (alias) → localhost:8080.
+// Always set LANTERN_E2E_API_URL or LANTERN_API_URL explicitly — never rely on the :8080 default
+// in a non-dev environment; it silently points at the owner's live stack.
 func baseURL() string {
-	return strings.TrimRight(envOr("LANTERN_E2E_API_URL", "http://localhost:8080"), "/")
+	for _, key := range []string{"LANTERN_E2E_API_URL", "LANTERN_API_URL"} {
+		if v := os.Getenv(key); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return "http://localhost:8080"
+}
+
+// TestMain prints the target URL once at suite start so there is no
+// silent fallback confusion when the URL is wrong.
+func TestMain(m *testing.M) {
+	fmt.Printf("e2e/runtime: target API = %s\n", baseURL())
+	os.Exit(m.Run())
 }
 
 // testImageDigest is the image-digest form the Schedule handler accepts
@@ -68,16 +84,17 @@ func testImageDigest() string {
 		"lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001")
 }
 
-// ---------- stack probe (skip-not-fail when the stack is down) ----------
+// ---------- stack probe (fatal when the stack is down, unless E2E_ALLOW_SKIP=1) ----------
 
 var (
 	probeOnce sync.Once
 	probeErr  error
 )
 
-// requireStack skips the calling test when the control-plane is not
-// listening. This is the contract that keeps CI green when the dev
-// stack isn't running.
+// requireStack asserts the control-plane is reachable.
+//
+// Stack down + E2E_ALLOW_SKIP=1 → t.Skip (CI without a live stack stays green).
+// Stack down otherwise            → t.Fatal (make test-e2e reports failure, not silence).
 func requireStack(t *testing.T) {
 	t.Helper()
 	probeOnce.Do(func() {
@@ -93,7 +110,12 @@ func requireStack(t *testing.T) {
 		}
 	})
 	if probeErr != nil {
-		t.Skipf("SKIP: control-plane not reachable at %s (%v) — start it with `make dev-infra` + `make run-api`, then re-run `make test-e2e`", baseURL(), probeErr)
+		msg := fmt.Sprintf("control-plane not reachable at %s (%v) — start it with `make dev-infra` + `make run-api`, then re-run `make test-e2e`", baseURL(), probeErr)
+		if os.Getenv("E2E_ALLOW_SKIP") == "1" {
+			t.Skipf("SKIP: %s", msg)
+		} else {
+			t.Fatalf("FATAL: %s (set E2E_ALLOW_SKIP=1 to skip instead of fail)", msg)
+		}
 	}
 }
 

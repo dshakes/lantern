@@ -93,6 +93,8 @@ export type {
   ConnectorInfo,
   ConnectorResult,
   BudgetPolicy,
+  Trigger,
+  TriggerProvider,
   EvalCase,
   EvalSuite,
   EvalCaseResult,

@@ -48,7 +48,7 @@ func TestMeteredLLMCall(t *testing.T) {
 				}
 			}
 			called := false
-			_, err := meteredLLMCall(ctx, pool, zap.NewNop(), tenant, agent, func() (string, int64, int64, float64, error) {
+			_, err := meteredLLMCall(ctx, pool, zap.NewNop(), tenant, agent, "00000000-0000-0000-0000-000000000000", func() (string, int64, int64, float64, error) {
 				called = true
 				return "ok", 7, 3, 0.01, tc.callErr
 			})

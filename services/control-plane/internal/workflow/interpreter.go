@@ -183,9 +183,9 @@ type Deps struct {
 	// connector response (JSON-as-map) or an error.
 	CallConnector func(ctx context.Context, connectorID, action string, params map[string]any) (any, error)
 
-	// CallTool runs a built-in tool (web.search, python.exec, fs.*). Returns
-	// the tool's result payload. Tools that aren't implemented yet return
-	// a NotImplemented error which the interpreter logs and continues past.
+	// CallTool runs a tool (built-in like web_search, or a sandbox tool in the
+	// run's microVM). Returns the tool's result payload; any error fails the
+	// step. StepFromContext(ctx) carries the step identity for idempotency keys.
 	CallTool func(ctx context.Context, tool string, params map[string]any) (any, error)
 
 	// EmitEvent writes a single journal_events row. The interpreter
@@ -407,7 +407,7 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 					"error":   stepErr.Error(),
 				})
 			}
-			stepCtx, cancel := context.WithTimeout(ctx, perStepTimeout)
+			stepCtx, cancel := context.WithTimeout(withStepRef(ctx, StepRef{StepID: node.ID, Attempt: attempt}), perStepTimeout)
 			stepOutput, stepErr = executeNode(stepCtx, runID, deps, emit, node, vars, out, byID, &stepUsage)
 			cancel()
 			if stepErr == nil || !isRetryable(node.Type, stepErr, rp.RetryableClasses) {
@@ -516,6 +516,34 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 }
 
 // ---- Per-node execution -----------------------------------------------------
+
+// StepRef identifies one execution of a step: the node path (loop bodies are
+// "<loop>[<i>]/<node>", so each iteration is distinct) and the retry attempt.
+// Deps that perform external side effects derive their idempotency key from
+// (runID, StepID, Attempt) — invariant #8.
+type StepRef struct {
+	StepID  string
+	Attempt int
+}
+
+type stepRefKey struct{}
+
+func withStepRef(ctx context.Context, ref StepRef) context.Context {
+	return context.WithValue(ctx, stepRefKey{}, ref)
+}
+
+// StepFromContext returns the StepRef the interpreter attached to a dep call.
+func StepFromContext(ctx context.Context) (StepRef, bool) {
+	ref, ok := ctx.Value(stepRefKey{}).(StepRef)
+	return ref, ok
+}
+
+func stepRefOr(ctx context.Context, stepID string) StepRef {
+	if ref, ok := StepFromContext(ctx); ok {
+		return ref
+	}
+	return StepRef{StepID: stepID, Attempt: 1}
+}
 
 // emitFn is a convenience alias for the emit closure passed through execution.
 type emitFn func(kind, stepID string, payload map[string]any)
@@ -900,7 +928,9 @@ func executeLoop(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			// No body edge — pass-through with the item as the result.
 			iterResult = map[string]any{"index": i, "item": item}
 		} else {
-			iterResult, iterErr = runSubgraph(ctx, runID, deps, emit, bodyStart, iterVars, out, byID, node.ID)
+			ref := stepRefOr(ctx, node.ID)
+			ref.StepID = fmt.Sprintf("%s[%d]", ref.StepID, i)
+			iterResult, iterErr = runSubgraph(withStepRef(ctx, ref), runID, deps, emit, bodyStart, iterVars, out, byID, node.ID)
 		}
 
 		if iterErr != nil {
@@ -949,7 +979,9 @@ func runSubgraph(ctx context.Context, runID string, deps Deps, emit emitFn, star
 			break
 		}
 
-		result, err := executeNode(ctx, runID, deps, emit, node, vars, out, byID, nil)
+		ref := stepRefOr(ctx, loopNodeID)
+		ref.StepID += "/" + node.ID
+		result, err := executeNode(withStepRef(ctx, ref), runID, deps, emit, node, vars, out, byID, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -2,6 +2,8 @@ import { z } from "zod";
 import type {
   Agent,
   BudgetPolicy,
+  Trigger,
+  TriggerProvider,
   ConnectorInfo,
   ConnectorResult,
   EvalBaseline,
@@ -422,6 +424,35 @@ export class LanternClient {
 
     // ListBudgets writes a BARE JSON array.
     list: (): Promise<BudgetPolicy[]> => this.fetch("/v1/budgets"),
+  };
+
+  /** Inbound webhook triggers. A provider POSTs signed deliveries to
+   *  `{baseUrl}{trigger.hookPath}`; each verified delivery starts a run. */
+  readonly triggers = {
+    create: (
+      agentName: string,
+      params: { provider: TriggerProvider; secret?: string; inputTemplate?: Record<string, unknown> },
+    ): Promise<Trigger> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(agentName)}/triggers`, {
+        method: "POST",
+        body: JSON.stringify(params),
+      }),
+
+    // ListTriggers writes a BARE JSON array.
+    list: (agentName: string): Promise<Trigger[]> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(agentName)}/triggers`),
+
+    get: (id: string): Promise<Trigger> => this.fetch(`/v1/triggers/${encodeURIComponent(id)}`),
+
+    /** `inputTemplate: null` clears the template. */
+    update: (
+      id: string,
+      params: { enabled?: boolean; secret?: string; inputTemplate?: Record<string, unknown> | null },
+    ): Promise<Trigger> =>
+      this.fetch(`/v1/triggers/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(params) }),
+
+    delete: (id: string): Promise<void> =>
+      this.fetch(`/v1/triggers/${encodeURIComponent(id)}`, { method: "DELETE" }),
   };
 
   readonly evalSuites = {
