@@ -159,6 +159,10 @@ pub fn is_private_or_metadata(addr: IpAddr) -> bool {
             || (o[0] & 0xf0) == 240
             // 224.0.0.0/4 multicast
             || (o[0] & 0xf0) == 224
+            // 192.0.0.0/24 IETF protocol assignments
+            || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+            // 198.18.0.0/15 benchmarking
+            || (o[0] == 198 && (o[1] & 0xfe) == 18)
         }
         IpAddr::V6(v6) => {
             // ::1 loopback
@@ -167,6 +171,10 @@ pub fn is_private_or_metadata(addr: IpAddr) -> bool {
             || (v6.segments()[0] & 0xfe00) == 0xfc00
             // fe80::/10 link-local
             || (v6.segments()[0] & 0xffc0) == 0xfe80
+            // NAT64 64:ff9b::/96 (well-known) and 64:ff9b:1::/48 (local)
+            || (v6.segments()[0] == 0x64
+                && v6.segments()[1] == 0xff9b
+                && (v6.segments()[2] == 1 || v6.segments()[2..6] == [0, 0, 0, 0]))
             // ::ffff:0:0/96 IPv4-mapped — re-check the embedded IPv4 part
             || v6.to_ipv4().map(|v4| is_private_or_metadata(IpAddr::V4(v4))).unwrap_or(false)
         }
@@ -927,6 +935,96 @@ fn parse_host_port(target: &str) -> Option<(String, u16)> {
 }
 
 // ---------------------------------------------------------------------------
+// Broker egress mode (ADR 0026)
+//
+// `spawn.json` `egress_mode: "broker"` → the VM has NO network device. The
+// in-guest proxy above does not run; `egress_forwarder` bridges 127.0.0.1:3128
+// to the host-side broker over vsock, and the broker enforces the allowlist and
+// injects credentials. With no NIC there is nothing to bypass, so the iptables
+// REDIRECT preflight does not apply.
+// ---------------------------------------------------------------------------
+
+/// Pure: whether a `LANTERN_EGRESS_MODE` value selects broker mode.
+#[must_use]
+pub fn is_broker_mode(mode: Option<&str>) -> bool {
+    mode.is_some_and(|m| m.trim().eq_ignore_ascii_case("broker"))
+}
+
+/// Default guest→host vsock port for egress (matches the manager's
+/// `EGRESS_VSOCK_PORT`); `spawn.json` `vsock_egress_port` overrides.
+const DEFAULT_EGRESS_VSOCK_PORT: u32 = 3128;
+
+/// Run the broker-mode forwarder on `LANTERN_EGRESS_BIND` (default
+/// 127.0.0.1:3128), dialling the host broker over vsock per connection.
+pub async fn run_broker_forwarder() -> anyhow::Result<()> {
+    let bind = std::env::var("LANTERN_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
+    let port = std::env::var("LANTERN_EGRESS_VSOCK_PORT")
+        .ok()
+        .and_then(|p| p.trim().parse().ok())
+        .unwrap_or(DEFAULT_EGRESS_VSOCK_PORT);
+    let listener = TcpListener::bind(&bind).await?;
+    tracing::info!(%bind, vsock_port = port, "egress: broker mode — forwarding to host broker over vsock");
+    crate::egress_forwarder::run(listener, move || {
+        crate::vsock::connect(crate::vsock::HOST_CID, port)
+    })
+    .await;
+    Ok(())
+}
+
+/// System CA bundles to extend with the broker CA (first one found wins).
+pub const SYSTEM_CA_BUNDLES: [&str; 3] = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/cert.pem",
+];
+
+/// Write the broker CA (`egress-ca.crt`) and a system-bundle-plus-CA file
+/// (`egress-ca-bundle.crt`) into `dir`, world-readable (a public cert the
+/// workload uid must read), and return the env that points common TLS stacks
+/// at them. Only hosts with an injection rule are ever presented under this
+/// CA — and the CA is name-constrained to exactly those hosts.
+pub fn install_broker_ca(
+    dir: &std::path::Path,
+    pem: &str,
+    system_bundles: &[&str],
+) -> std::io::Result<Vec<(String, String)>> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    let ca = dir.join("egress-ca.crt");
+    let bundle = dir.join("egress-ca-bundle.crt");
+    std::fs::write(&ca, pem)?;
+    let mut contents = system_bundles
+        .iter()
+        .find_map(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(pem);
+    std::fs::write(&bundle, contents)?;
+    for f in [&ca, &bundle] {
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o644))?;
+    }
+    let (ca, bundle) = (ca.display().to_string(), bundle.display().to_string());
+    Ok(vec![
+        ("SSL_CERT_FILE".into(), bundle.clone()),
+        ("REQUESTS_CA_BUNDLE".into(), bundle.clone()),
+        ("CURL_CA_BUNDLE".into(), bundle),
+        ("NODE_EXTRA_CA_CERTS".into(), ca),
+    ])
+}
+
+/// `install_broker_ca` against `/run/lantern` and the real system bundles.
+/// Where the broker CA lives in the guest (re-written on re-identify, so
+/// long-lived readers like `http_fetch` read it from here, not the boot env).
+pub const BROKER_CA_DIR: &str = "/run/lantern";
+pub const BROKER_CA_FILE: &str = "/run/lantern/egress-ca.crt";
+
+pub fn install_broker_ca_default(pem: &str) -> std::io::Result<Vec<(String, String)>> {
+    install_broker_ca(std::path::Path::new(BROKER_CA_DIR), pem, &SYSTEM_CA_BUNDLES)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1590,5 +1688,127 @@ mod tests {
                 "returned address {addr} must not be in a private range"
             );
         }
+    }
+
+    // ---- parity with the host-side broker (ADR 0026) ---------------------
+    // The same fixture is asserted by runtime-manager/src/egress_broker.rs.
+
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../testdata/egress_match_cases.json")).unwrap()
+    }
+
+    #[test]
+    fn parity_pattern_private_and_host_port_cases() {
+        let f = fixture();
+        for c in f["pattern_cases"].as_array().unwrap() {
+            let (p, h) = (c["pattern"].as_str().unwrap(), c["host"].as_str().unwrap());
+            assert_eq!(
+                pattern_matches(p, h),
+                c["match"].as_bool().unwrap(),
+                "{p} vs {h}"
+            );
+        }
+        for c in f["private_ip_cases"].as_array().unwrap() {
+            let ip: IpAddr = c["ip"].as_str().unwrap().parse().unwrap();
+            assert_eq!(
+                is_private_or_metadata(ip),
+                c["private"].as_bool().unwrap(),
+                "{ip}"
+            );
+        }
+        for c in f["host_port_cases"].as_array().unwrap() {
+            let want = c["host"]
+                .as_str()
+                .map(|h| (h.to_string(), c["port"].as_u64().unwrap() as u16));
+            assert_eq!(parse_host_port(c["target"].as_str().unwrap()), want);
+        }
+    }
+
+    #[tokio::test]
+    async fn parity_evaluate_cases() {
+        // Relies on the default port allowlist ([443]) — the fixture's port-80
+        // case pins that default on both sides.
+        for c in fixture()["evaluate_cases"].as_array().unwrap() {
+            let rules = c["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| rule(p.as_str().unwrap()))
+                .collect();
+            let (d, _) = make_policy(rules)
+                .evaluate_with_rate(
+                    c["host"].as_str().unwrap(),
+                    c["port"].as_u64().unwrap() as u16,
+                )
+                .await;
+            match d {
+                Decision::Allow => assert!(c["allow"].as_bool().unwrap(), "{c}"),
+                Decision::Deny(r) => assert_eq!(Some(r), c["reason"].as_str(), "{c}"),
+            }
+        }
+    }
+
+    #[test]
+    fn broker_mode_value() {
+        assert!(is_broker_mode(Some("broker")));
+        assert!(is_broker_mode(Some(" Broker ")));
+        assert!(!is_broker_mode(None));
+        assert!(!is_broker_mode(Some("")));
+        assert!(!is_broker_mode(Some("guest")));
+    }
+
+    #[test]
+    fn broker_ca_installed_world_readable_and_appended_to_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("lantern-ca-{}", std::process::id()));
+        let sys = dir.join("system.pem");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&sys, "SYSTEM-ROOTS").unwrap();
+        let pem = "-----BEGIN CERTIFICATE-----\nBROKER\n-----END CERTIFICATE-----\n";
+        let env = install_broker_ca(&dir, pem, &[sys.to_str().unwrap()]).unwrap();
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let bundle = std::fs::read_to_string(get("SSL_CERT_FILE").unwrap()).unwrap();
+        assert!(bundle.starts_with("SYSTEM-ROOTS\n") && bundle.ends_with(pem));
+        let ca = get("NODE_EXTRA_CA_CERTS").unwrap();
+        assert_eq!(std::fs::read_to_string(&ca).unwrap(), pem);
+        let mode = std::fs::metadata(&ca).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        assert_eq!(get("REQUESTS_CA_BUNDLE"), get("SSL_CERT_FILE"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn broker_forwarder_bridges_bytes_and_fails_closed_without_broker() {
+        // Bridge: workload bytes reach the "vsock" peer verbatim and back.
+        let (host_side, guest_side) = tokio::net::UnixStream::pair().unwrap();
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(guest_side)));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(crate::egress_forwarder::run(listener, move || {
+            let s = slot.lock().unwrap().take();
+            async move { s.ok_or_else(|| std::io::Error::other("one connection only")) }
+        }));
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client
+            .write_all(b"CONNECT a:443 HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let mut host_side = host_side;
+        let mut got = [0u8; 26];
+        host_side.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"CONNECT a:443 HTTP/1.1\r\n\r\n");
+        host_side
+            .write_all(b"HTTP/1.1 200 OK\r\n\r\n")
+            .await
+            .unwrap();
+        let mut back = [0u8; 19];
+        client.read_exact(&mut back).await.unwrap();
+        assert_eq!(&back, b"HTTP/1.1 200 OK\r\n\r\n");
+
+        // Second connection: the dialer fails → 502, never a direct route.
+        let mut c2 = TcpStream::connect(addr).await.unwrap();
+        let mut resp = Vec::new();
+        let _ = c2.read_to_end(&mut resp).await;
+        assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 502"));
     }
 }

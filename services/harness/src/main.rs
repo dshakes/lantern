@@ -18,6 +18,7 @@ mod activity;
 mod bootenv;
 mod cc_attest;
 mod egress;
+mod egress_forwarder;
 mod exec;
 mod heartbeat;
 mod init;
@@ -32,6 +33,7 @@ mod signals;
 mod supervisor;
 mod tls;
 mod tool_runner;
+mod vsock;
 
 use std::sync::Arc;
 
@@ -221,7 +223,10 @@ async fn run() -> Result<()> {
     // 4. Egress proxy. Seed it with the AgentSpec's declared rules so the
     //    allowlist is live the moment the workload starts (don't wait for the
     //    first heartbeat ack).
-    let egress_configured = !env.declared_egress.is_empty();
+    // Broker mode (ADR 0026): no NIC — every request leaves via the host
+    // broker, so always point the workload at the local forwarder.
+    let broker_mode = egress::is_broker_mode(std::env::var("LANTERN_EGRESS_MODE").ok().as_deref());
+    let egress_configured = broker_mode || !env.declared_egress.is_empty();
     let egress_policy = Arc::new(EgressPolicy::new(
         env.declared_egress.clone(),
         manager.clone(),
@@ -232,7 +237,13 @@ async fn run() -> Result<()> {
     //     (refuses to spawn the workload) if LANTERN_EGRESS_FAIL_CLOSED=1, else
     //     logs a prominent SECURITY warning + audit event. Runs BEFORE the
     //     workload is spawned so a bypassable allowlist never silently ships.
-    egress::enforcement_preflight(&manager, egress_configured).await?;
+    //     Broker mode has no NIC to bypass through, so the REDIRECT check is
+    //     moot there: enforcement is structural, on the host.
+    if broker_mode {
+        tracing::info!("egress: broker mode — no network device; egress only via the host broker");
+    } else {
+        egress::enforcement_preflight(&manager, egress_configured).await?;
+    }
 
     // 4c. Re-identify watcher (ADR 0025 addendum): a guest restored from a
     //     snapshot adopts the identity on its swapped cert drive. The
@@ -254,7 +265,12 @@ async fn run() -> Result<()> {
     {
         let p = Arc::clone(&egress_policy);
         tokio::spawn(async move {
-            if let Err(e) = egress::run_proxy(p).await {
+            let r = if broker_mode {
+                egress::run_broker_forwarder().await
+            } else {
+                egress::run_proxy(p).await
+            };
+            if let Err(e) = r {
                 tracing::error!(error = %e, "egress: proxy exited");
             }
         });
@@ -289,8 +305,19 @@ async fn run() -> Result<()> {
 
     // 6. Supervisor — spawn workload, hand stdio to log forwarder.
     let (stdio_tx, stdio_rx) = mpsc::channel(4);
+    // Broker mode: trust the per-VM broker CA for TLS-terminated (credential-
+    // injected) hosts. A failure here only breaks those hosts, closed.
+    let ca_env = match std::env::var("LANTERN_EGRESS_CA_PEM") {
+        Ok(pem) if broker_mode && !pem.is_empty() => egress::install_broker_ca_default(&pem)
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "egress: could not install the broker CA");
+                Vec::new()
+            }),
+        _ => Vec::new(),
+    };
     let supervisor = Supervisor::new(env.workload_cmd.clone(), manager.clone(), activity.clone())
-        .with_proxy_env(egress_configured);
+        .with_proxy_env(egress_configured)
+        .with_extra_env(ca_env);
     let supervisor_handles = supervisor.handles();
 
     // 7. Signal handlers — drain, snapshot, zombie reap.

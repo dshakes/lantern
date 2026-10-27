@@ -91,6 +91,9 @@ pub struct Reidentify {
     pub declared_secrets: Vec<SecretRef>,
     pub egress_rules: Vec<EgressRule>,
     pub network: Option<GuestNetwork>,
+    /// Broker mode: the new incarnation's broker CA (ADR 0026). Each
+    /// incarnation's broker mints its own, so the old one stops verifying.
+    pub egress_ca_pem: Option<String>,
 }
 
 /// Validate a new drive's contract. A contract without a `vm_id` cannot say
@@ -110,7 +113,20 @@ pub fn plan(contract: SpawnContract) -> anyhow::Result<Reidentify> {
         network: contract
             .network
             .filter(|n| !n.guest_ip.is_empty() && !n.host_ip.is_empty()),
+        egress_ca_pem: contract.egress_ca_pem.filter(|p| {
+            !p.is_empty() && crate::egress::is_broker_mode(contract.egress_mode.as_deref())
+        }),
     })
+}
+
+/// Re-install the new incarnation's broker CA (same files the workload's
+/// `SSL_CERT_FILE` etc. and `http_fetch` read). `Ok(false)` = nothing to do.
+pub fn reinstall_broker_ca(pem: Option<&str>, dir: &std::path::Path) -> std::io::Result<bool> {
+    let Some(pem) = pem else {
+        return Ok(false);
+    };
+    crate::egress::install_broker_ca(dir, pem, &crate::egress::SYSTEM_CA_BUNDLES)?;
+    Ok(true)
 }
 
 /// The exec token the new incarnation runs with. Never the previous one: if
@@ -200,6 +216,22 @@ async fn apply(
         }
     }
     egress.replace_rules(next.egress_rules).await;
+    // Broker mode: without this, injected hosts fail TLS after resume/fork
+    // (the new broker presents leaves from a CA the guest never saw).
+    let pem = next.egress_ca_pem;
+    match tokio::task::spawn_blocking(move || {
+        reinstall_broker_ca(
+            pem.as_deref(),
+            std::path::Path::new(crate::egress::BROKER_CA_DIR),
+        )
+    })
+    .await?
+    {
+        Ok(true) => tracing::info!("reidentify: installed the new incarnation's broker CA"),
+        Ok(false) => {}
+        // Not fatal: only injected hosts are affected, and they fail closed.
+        Err(e) => tracing::error!(error = %e, "reidentify: could not install the broker CA"),
+    }
 
     let previous = manager.vm_id();
     // Last: reconnects present the cert installed by `load_drive`.
@@ -474,6 +506,44 @@ mod tests {
         let c = crate::bootenv::parse_spawn_contract(br#"{"vm_id":"v","exec_token":""}"#).unwrap();
         let p = plan(c).unwrap();
         assert!(p.exec_token.is_none() && p.agent_instance_token.is_none());
+    }
+
+    /// Resume/fork in broker mode: the new incarnation's CA replaces the old
+    /// one in the files the workload and `http_fetch` trust.
+    #[test]
+    fn reidentify_reinstalls_the_new_broker_ca() {
+        let old = "-----BEGIN CERTIFICATE-----\nOLD\n-----END CERTIFICATE-----\n";
+        let new = "-----BEGIN CERTIFICATE-----\nNEW\n-----END CERTIFICATE-----\n";
+        let dir = std::env::temp_dir().join(format!("lantern-reid-ca-{}", std::process::id()));
+        crate::egress::install_broker_ca(&dir, old, &[]).unwrap();
+        let c = crate::bootenv::parse_spawn_contract(
+            format!(
+                r#"{{"vm_id":"vm-f","egress_mode":"broker","egress_ca_pem":{}}}"#,
+                serde_json::to_string(new).unwrap()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let p = plan(c).unwrap();
+        assert_eq!(p.egress_ca_pem.as_deref(), Some(new));
+        assert!(reinstall_broker_ca(p.egress_ca_pem.as_deref(), &dir).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("egress-ca.crt")).unwrap(),
+            new
+        );
+        assert!(
+            std::fs::read_to_string(dir.join("egress-ca-bundle.crt"))
+                .unwrap()
+                .ends_with(new)
+        );
+        // Guest mode / no CA: nothing installed.
+        let c = crate::bootenv::parse_spawn_contract(
+            br#"{"vm_id":"vm-g","egress_ca_pem":"-----BEGIN CERTIFICATE-----"}"#,
+        )
+        .unwrap();
+        assert!(plan(c).unwrap().egress_ca_pem.is_none());
+        assert!(!reinstall_broker_ca(None, &dir).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

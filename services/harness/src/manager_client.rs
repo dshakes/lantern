@@ -238,7 +238,7 @@ impl ManagerClient {
         // requested but no cert available" (no identity), and verification
         // against the URI's address (no domain). `Endpoint::connect` does not
         // go through `Endpoint::new`, so the configured TLS survives.
-        let channel = endpoint.connect().await.with_context(|| {
+        let channel = connect_channel(endpoint).await.with_context(|| {
             format!(
                 "heartbeat: could not connect to manager at {}",
                 self.manager_addr
@@ -393,7 +393,7 @@ impl ManagerClient {
         // requested but no cert available" (no identity), and verification
         // against the URI's address (no domain). `Endpoint::connect` does not
         // go through `Endpoint::new`, so the configured TLS survives.
-        let channel = endpoint.connect().await.with_context(|| {
+        let channel = connect_channel(endpoint).await.with_context(|| {
             format!(
                 "report: could not connect to manager at {}",
                 self.manager_addr
@@ -502,7 +502,7 @@ impl ManagerClient {
         // requested but no cert available" (no identity), and verification
         // against the URI's address (no domain). `Endpoint::connect` does not
         // go through `Endpoint::new`, so the configured TLS survives.
-        let channel = endpoint.connect().await.with_context(|| {
+        let channel = connect_channel(endpoint).await.with_context(|| {
             format!(
                 "vend_secret: could not connect to manager at {}",
                 self.manager_addr
@@ -579,6 +579,38 @@ impl ManagerClient {
             value: wire_resp.value,
             expires_at_unix_ms,
         })
+    }
+}
+
+/// `LANTERN_MANAGER_VSOCK_PORT` (broker egress mode, ADR 0026): the guest has
+/// no NIC, so the control channel rides vsock to the host, where the manager
+/// relays it to its own listener. mTLS is unchanged — tonic layers TLS over
+/// the custom connector, with the server name taken from the endpoint URI.
+fn manager_vsock_port() -> Option<u32> {
+    std::env::var("LANTERN_MANAGER_VSOCK_PORT")
+        .ok()
+        .and_then(|p| p.trim().parse().ok())
+        .filter(|p| *p != 0)
+}
+
+/// `Endpoint::connect`, or the same over vsock in broker mode. Keeps the
+/// `Endpoint::connect` (not `Client::connect`) rule documented at each caller.
+async fn connect_channel(
+    endpoint: tonic::transport::Endpoint,
+) -> std::result::Result<tonic::transport::Channel, tonic::transport::Error> {
+    match manager_vsock_port() {
+        Some(port) => {
+            endpoint
+                .connect_with_connector(tower::service_fn(
+                    move |_: tonic::transport::Uri| async move {
+                        crate::vsock::connect(crate::vsock::HOST_CID, port)
+                            .await
+                            .map(hyper_util::rt::TokioIo::new)
+                    },
+                ))
+                .await
+        }
+        None => endpoint.connect().await,
     }
 }
 
