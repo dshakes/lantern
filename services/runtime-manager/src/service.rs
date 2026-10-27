@@ -5148,6 +5148,7 @@ mod tests {
                     pattern: format!("{wire}.example.com"),
                     http_methods: vec![],
                     rate_bps: 0,
+                    inject: vec![],
                 }];
             }
             let resp = svc

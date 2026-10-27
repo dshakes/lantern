@@ -838,11 +838,13 @@ mod proto_conversion_tests {
                     pattern: "*.openai.com".to_string(),
                     http_methods: vec!["POST".to_string()],
                     rate_bps: 1_000_000,
+                    inject: vec![],
                 },
                 pb::EgressRule {
                     pattern: "10.0.0.0/8".to_string(),
                     http_methods: vec![],
                     rate_bps: 0,
+                    inject: vec![],
                 },
             ],
             limits_override: None,
