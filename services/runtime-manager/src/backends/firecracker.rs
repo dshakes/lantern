@@ -3441,6 +3441,18 @@ impl RuntimeBackend for FirecrackerBackend {
             ),
         }
 
+        // Remove the Firecracker API socket so a subsequent restore with the
+        // same vm_id can bind a fresh socket without EADDRINUSE.  The process
+        // is already dead (SIGKILL or ACPI shutdown above), so removing the
+        // socket here is safe.  Best-effort — a missing socket is fine.
+        let _ = tokio::fs::remove_file(&socket_path).await;
+
+        // Remove the vsock UDS that Firecracker owned on this VM's behalf.
+        // On restore Firecracker tries to bind the same path and fails with
+        // EADDRINUSE if the stale socket from the stopped VM remains.
+        let vsock_path = format!("/run/lantern/vsock/{handle_id}.sock");
+        let _ = tokio::fs::remove_file(&vsock_path).await;
+
         // LINUX-ONLY: TAP cleanup.
         // The incarnation is over: its cert must never authenticate again.
         self.set_incarnation(handle_id, None);
@@ -3580,6 +3592,13 @@ impl RuntimeBackend for FirecrackerBackend {
             // requires Linux; integration-tested on a Linux host
             "Firecracker: creating snapshot (LINUX-ONLY)"
         );
+
+        // Ensure the snapshot directory exists before telling Firecracker to
+        // write into it.  Firecracker does not create missing directories; it
+        // returns HTTP 400 "No such file or directory" if the parent is absent.
+        tokio::fs::create_dir_all(&snapshot_dir)
+            .await
+            .with_context(|| format!("create snapshot dir {snapshot_dir:?}"))?;
 
         // Pause before snapshotting.
         // LINUX-ONLY
