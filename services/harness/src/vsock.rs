@@ -64,8 +64,11 @@ mod imp {
                 return Err(err);
             }
             // Non-blocking connect: wait for writability, then read SO_ERROR.
-            let mut guard = fd.writable().await?;
-            guard.clear_ready();
+            // Do NOT clear the readiness: epoll is edge-triggered and a
+            // connected socket stays writable, so a cleared edge never comes
+            // back and the first poll_write would wait forever (seen live:
+            // guest->host bytes never left the VM).
+            let _ = fd.writable().await?;
             let mut so_err: libc::c_int = 0;
             let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
             // SAFETY: out-pointers are valid for the declared length.

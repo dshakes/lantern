@@ -85,26 +85,48 @@ are dropped immediately after and never logged, traced, or audited. Audit attrs 
 header **names** only (tests assert on captured tracing output and on the audit
 channel).
 
-## Consequences / limitations (follow-ups)
+## Exec, restore/fork, and the end-to-end path
 
-- **Exec / ExecTool / file API are unavailable on broker VMs.** The manager dials the
-  in-guest exec server over the TAP. With no NIC, exec needs host-initiated vsock
-  (`CONNECT <port>` on the base UDS) plus a vsock listener in the harness. Until then,
-  exec on a broker VM returns `FAILED_PRECONDITION` ("harness not connected"). Loopback
-  heartbeat peers, which only the vsock relay produces, are deliberately not recorded as
-  dial-back addresses. This also blocks workflow `tool_call` steps on broker VMs.
-- **Restore/fork stay guest mode.** Only cold boots honour broker mode. Snapshots carry
-  NIC config.
-- **Resolver binding.** The broker resolves on the ADR 0008 shared-token path (no agent
-  bearer). The ref comes from the manager's authenticated spawn record, not the guest.
-  The control-plane relay must still enforce that the ref belongs to the VM's tenant.
+- **Exec / ExecTool / file API work on broker VMs.** With no NIC the manager reaches the
+  in-guest exec server by **host-initiated vsock**: it connects to the VM's Firecracker
+  base UDS, sends `CONNECT 50056\n`, waits for `OK <port>\n`, and runs the same
+  `RuntimeHarness.Exec` gRPC over that stream (`HarnessTarget::Vsock` in `service.rs`).
+  The harness serves the exec gRPC on an `AF_VSOCK` listener in broker mode. The
+  per-incarnation exec-token interceptor is unchanged, so a stale incarnation's token is
+  refused over vsock exactly as over the TAP. The exec channel is plaintext gRPC plus the
+  bearer token on both transports, as before; vsock is host-only, so it is no weaker than
+  the TAP link. mTLS on this listener remains the existing follow-up. Loopback heartbeat
+  peers (the vsock control relay) are never recorded as dial-back addresses.
+- **Restore and fork honour broker mode.** A restored/forked incarnation is built in the
+  node's mode: no TAP, no `network_overrides` in the snapshot load, and a fresh per-VM CA
+  and broker per incarnation (the previous incarnation's broker is aborted). Snapshot
+  metadata records `egress_mode`, and `restore_owned_snapshot` refuses a mode mismatch.
+  A guest-mode snapshot loaded without a NIC override would reattach the source VM's TAP;
+  a broker snapshot has no eth0 to re-point.
+- **`RuntimeStream` no longer binds Firecracker's base vsock UDS.** It used to
+  remove-and-bind it, which cut the host-initiated channel. It uses guest port 1024.
+- **Tenant-scoped resolution.** `SecretResolver::resolve_scoped` carries the VM's
+  registry tenant and vm_id; VendSecret and the broker both use it. Before this, the relay
+  sent the node env's `LANTERN_TENANT_ID` / `LANTERN_VM_ID`, which are empty on a
+  multi-tenant node, so the control-plane's VM↔tenant binding was never checked against
+  the real VM. The control-plane relay resolves a ref only within the verified tenant;
+  a cross-tenant ref returns "not found" (`TestResolveSecrets_TenantIsolation_*`,
+  `TestResolveSecrets_VMBinding_WrongTenant`).
+- **End to end.**
+  - `gen/go` is regenerated with the same protoc / protoc-gen-go versions.
+  - Control-plane schedule accepts `egress[].inject {header, secretRef, valuePrefix}` and
+    returns 400 on anything that is not a `lantern.secret/...` ref, a bad header name, a
+    CR/LF prefix, or an IP/CIDR pattern. Error messages never echo the ref.
+  - The scheduler passes the spec through unchanged, including on fork respawns.
+  - TS, Python and Go SDKs have `EgressRule` / `CredentialInjection` types.
+  - The harness `http_fetch` tool trusts the broker CA.
+- **Live verification:** `infra/firecracker/broker-e2e.sh` (Linux/KVM).
+
+## Consequences / limitations
+
 - **Plain-HTTP injection sends the secret in cleartext** over the internet. This is only
   possible when an operator opens port 80 in `LANTERN_EGRESS_ALLOWED_PORTS`.
 - **h2 is not negotiated** on terminated connections. ALPN is pinned to http/1.1, which
   costs one reconnect per injected request.
-- **The harness's built-in `http_fetch` tool** does not yet trust the broker CA, so it
-  fails (closed) against injecting hosts.
-- **Go control-plane / SDKs** do not yet carry `EgressRule.inject`. The hand-maintained
-  `gen/go` stubs need the field before the control-plane can forward it. Until then the
-  field is dropped upstream and nothing is injected, which fails safe.
-- Not yet exercised on a real KVM host.
+- **Egress mode is node-wide** (`LANTERN_EGRESS_MODE`), not per-spec. Restore is refused
+  across nodes with different modes.

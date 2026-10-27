@@ -1037,9 +1037,13 @@ controls, all fail-safe:
   name-constrained ephemeral CA whose cert ships in `spawn.json`
   (`egress_ca_pem`); everything else is an opaque tunnel. The secret value never
   enters the guest, logs, or audits; `inject` specs are stripped from
-  `spawn.json`. Limits: exec/ExecTool/file API are unavailable on broker VMs
-  (needs host-initiated vsock), restore/fork stay guest mode, Go stubs don't yet
-  carry `inject`.
+  `spawn.json`. Exec/ExecTool/file API ride **host-initiated vsock** (`CONNECT
+  50056` on the Firecracker base UDS, same exec-token check); restore/fork build
+  broker incarnations (fresh CA + broker each; snapshot meta records the mode and
+  a mismatch is refused). Injected refs resolve via `resolve_scoped` with the
+  VM's registry tenant — the control-plane relay binds them to that tenant.
+  Schedule accepts `egress[].inject {header, secretRef, valuePrefix}` (400 on a
+  non-`lantern.secret/` ref). Live check: `infra/firecracker/broker-e2e.sh`.
 
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
