@@ -935,6 +935,10 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool, userFacing bool) []stru
 // every agent without a model rely on that. The rest of the chain stays as the
 // failover tail (minus the duplicate), so a retryable error on the preferred
 // model still falls over to the other providers.
+//
+// A cheap-tier preference must not turn into a frontier bill on failover: the
+// tail tries the OTHER provider's cheap tier first, then the default chain
+// with frontier models removed. If nothing is left, the call fails.
 func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred string, chain []struct{ Provider, Model string }) []struct{ Provider, Model string } {
 	if preferred == "" || preferred == "auto" {
 		return chain
@@ -945,15 +949,45 @@ func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred s
 			zap.String("preferred", preferred), zap.String("provider", provider))
 		return chain
 	}
-	out := make([]struct{ Provider, Model string }, 0, len(chain)+1)
+	out := make([]struct{ Provider, Model string }, 0, len(chain)+2)
 	out = append(out, struct{ Provider, Model string }{provider, model})
+	cheap := isCheapTierModel(model)
+	if cheap {
+		switch {
+		case provider == "anthropic" && h.providerAvailable(ctx, tenantID, "openai"):
+			out = append(out, struct{ Provider, Model string }{"openai", "gpt-4o-mini"})
+		case provider == "openai" && h.providerAvailable(ctx, tenantID, "anthropic"):
+			out = append(out, struct{ Provider, Model string }{"anthropic", haikuModel()})
+		}
+	}
 	for _, c := range chain {
-		if c.Provider == provider && c.Model == model {
+		if cheap && isFrontierModel(c.Model) {
 			continue
 		}
-		out = append(out, c)
+		dup := false
+		for _, o := range out {
+			dup = dup || o == c
+		}
+		if !dup {
+			out = append(out, c)
+		}
 	}
 	return out
+}
+
+// isCheapTierModel reports whether a concrete model id is a small/cheap tier
+// (haiku, *-mini) — what "fast", "cheap", "reasoning-small", "chat-small"
+// and friends resolve to.
+func isCheapTierModel(model string) bool {
+	return model == haikuModel() || strings.Contains(model, "haiku") ||
+		strings.HasSuffix(model, "-mini") || strings.Contains(model, "-mini-")
+}
+
+// isFrontierModel reports whether a model is frontier-priced (opus class).
+// ponytail: only opus appears in the catalog-derived chains; extend if a
+// frontier OpenAI model joins currentModelCatalog.
+func isFrontierModel(model string) bool {
+	return model == opusModel() || strings.Contains(model, "opus")
 }
 
 // ---------- Complete endpoint ----------

@@ -48,54 +48,54 @@ func anthropicStatusResponse(code int) func(*http.Request) (*http.Response, erro
 func TestPreferModel(t *testing.T) {
 	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
 	type cand = struct{ Provider, Model string }
+	var (
+		opus   = cand{"anthropic", opusModel()}
+		haiku  = cand{"anthropic", haikuModel()}
+		gpt4o  = cand{"openai", "gpt-4o"}
+		mini   = cand{"openai", "gpt-4o-mini"}
+		custom = cand{"anthropic", "claude-opus-4-1"}
+	)
 	tests := []struct {
-		name         string
-		hasOpenAI    bool
-		preferred    string
-		wantHead     cand // zero → chain must be unchanged
-		wantUnchaged bool
+		name                    string
+		hasAnthropic, hasOpenAI bool
+		preferred               string
+		want                    []cand // nil → default chain, unchanged
 	}{
-		{name: "empty keeps default chain", hasOpenAI: true, preferred: "", wantUnchaged: true},
-		{name: "auto keeps default chain", hasOpenAI: true, preferred: "auto", wantUnchaged: true},
-		{name: "capability heads chain", hasOpenAI: true, preferred: "reasoning-small", wantHead: cand{"anthropic", haikuModel()}},
-		{name: "openai capability heads chain", hasOpenAI: true, preferred: "chat-small", wantHead: cand{"openai", "gpt-4o-mini"}},
-		{name: "vendor model passthrough", hasOpenAI: true, preferred: "claude-opus-4-1", wantHead: cand{"anthropic", "claude-opus-4-1"}},
-		{name: "unconfigured provider keeps default chain", hasOpenAI: false, preferred: "chat-small", wantUnchaged: true},
+		{name: "empty keeps default chain", hasAnthropic: true, hasOpenAI: true, preferred: ""},
+		{name: "auto keeps default chain", hasAnthropic: true, hasOpenAI: true, preferred: "auto"},
+		{name: "unconfigured provider keeps default chain", hasAnthropic: true, preferred: "chat-small"},
+		// Cheap tier: preferred → other provider's cheap tier → default chain minus frontier.
+		{name: "fast, both providers", hasAnthropic: true, hasOpenAI: true, preferred: "fast", want: []cand{haiku, mini, gpt4o}},
+		{name: "fast, openai only", hasOpenAI: true, preferred: "fast", want: []cand{mini, gpt4o}},
+		{name: "fast, anthropic only fails rather than escalate", hasAnthropic: true, preferred: "fast", want: []cand{haiku}},
+		{name: "reasoning-small", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-small", want: []cand{haiku, mini, gpt4o}},
+		{name: "chat-small", hasAnthropic: true, hasOpenAI: true, preferred: "chat-small", want: []cand{mini, haiku, gpt4o}},
+		{name: "vendor cheap id", hasAnthropic: true, hasOpenAI: true, preferred: "gpt-4o-mini", want: []cand{mini, haiku, gpt4o}},
+		// Non-cheap preference keeps the whole default chain as its tail.
+		{name: "reasoning-large keeps full tail", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-large", want: []cand{{"anthropic", sonnetModel()}, opus, haiku, gpt4o, mini}},
+		{name: "vendor frontier passthrough", hasAnthropic: true, hasOpenAI: true, preferred: "claude-opus-4-1", want: []cand{custom, opus, haiku, gpt4o, mini}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ANTHROPIC_API_KEY", "sk-test")
-			openai := ""
-			if tc.hasOpenAI {
-				openai = "sk-test"
+			key := func(on bool) string {
+				if on {
+					return "sk-test"
+				}
+				return ""
 			}
-			t.Setenv("OPENAI_API_KEY", openai)
+			t.Setenv("ANTHROPIC_API_KEY", key(tc.hasAnthropic))
+			t.Setenv("OPENAI_API_KEY", key(tc.hasOpenAI))
 			logger, _ := zap.NewDevelopment()
 			h := NewLlmProxyHandler(&server.Server{Logger: logger}, nil)
 
-			base := resolveCandidateChain(true, tc.hasOpenAI, true)
+			base := resolveCandidateChain(tc.hasAnthropic, tc.hasOpenAI, true)
 			got := h.preferModel(context.Background(), "t1", tc.preferred, base)
-			if tc.wantUnchaged {
-				if fmt.Sprint(got) != fmt.Sprint(base) {
-					t.Fatalf("chain changed: got %v, want %v", got, base)
-				}
-				return
+			want := tc.want
+			if want == nil {
+				want = base
 			}
-			if got[0] != tc.wantHead {
-				t.Fatalf("head: got %v, want %v (chain %v)", got[0], tc.wantHead, got)
-			}
-			// The rest of the default chain is the failover tail, without a duplicate.
-			seen := map[cand]int{}
-			for _, c := range got {
-				seen[c]++
-			}
-			if seen[tc.wantHead] != 1 {
-				t.Errorf("preferred candidate appears %d times in %v", seen[tc.wantHead], got)
-			}
-			for _, c := range base {
-				if seen[c] == 0 {
-					t.Errorf("default candidate %v dropped from failover tail %v", c, got)
-				}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("chain: got %v, want %v (default %v)", got, want, base)
 			}
 		})
 	}
@@ -127,6 +127,8 @@ func TestCallLLMWithFailover_PreferredModel(t *testing.T) {
 			anthropicOKResponse("fallback"),
 		}}
 		h := newTestProxyWithStub(t, stub)
+		t.Setenv("OPENAI_API_KEY", "sk-test") // cheap failover target: gpt-4o-mini
+		stub.responses[1] = okByProvider("fallback")
 		var attempts []candidateAttempt
 		text, _, _, model, _, _, err := h.callLLMWithFailover(context.Background(), tenant, "reasoning-small", msgs, nil, nil, nil,
 			func(a candidateAttempt) { attempts = append(attempts, a) }, 1, true)
@@ -139,11 +141,25 @@ func TestCallLLMWithFailover_PreferredModel(t *testing.T) {
 		if first := reqModel(t, stub.req(0)); first != haikuModel() {
 			t.Errorf("first call: got %q, want preferred %q", first, haikuModel())
 		}
-		if model == haikuModel() || reqModel(t, stub.req(1)) != model {
-			t.Errorf("failover target: used %q, second request %q — want a different model than the failed preferred one", model, reqModel(t, stub.req(1)))
+		if model != "gpt-4o-mini" || reqModel(t, stub.req(1)) != "gpt-4o-mini" {
+			t.Errorf("failover target: used %q, second request %q — want the other provider's cheap tier gpt-4o-mini", model, reqModel(t, stub.req(1)))
 		}
 		if len(attempts) != 2 || attempts[0].Err == nil || attempts[1].Err != nil {
 			t.Errorf("attempts: got %+v, want [failed preferred, succeeded fallback]", attempts)
+		}
+	})
+
+	t.Run("cheap agent never escalates to frontier on failover", func(t *testing.T) {
+		stub := &stubRoundTripper{responses: []func(*http.Request) (*http.Response, error){
+			anthropicStatusResponse(http.StatusInternalServerError),
+			anthropicOKResponse("must not be reached"),
+		}}
+		h := newTestProxyWithStub(t, stub) // anthropic only: default chain is [opus, haiku]
+		if _, _, _, _, _, _, err := h.callLLMWithFailover(context.Background(), tenant, "fast", msgs, nil, nil, nil, nil, 1, true); err == nil {
+			t.Fatal("expected failure, not an escalation to a frontier model")
+		}
+		if stub.callCount() != 1 {
+			t.Errorf("provider calls: got %d, want 1 (haiku only)", stub.callCount())
 		}
 	})
 
