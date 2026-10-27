@@ -22,6 +22,7 @@ var (
 	mStepRetries metric.Int64Counter     // lantern.run.step.retries
 	mReplaySkips metric.Int64Counter     // lantern.run.replay.skips
 	mBudgetBlock metric.Int64Counter     // lantern.run.budget.blocks
+	mBudgetErr   metric.Int64Counter     // lantern.budget.check.errors
 	mRunTotal    metric.Int64Counter     // lantern.run.total
 )
 
@@ -42,6 +43,9 @@ func ensureMetrics() {
 		)
 		mBudgetBlock, _ = m.Int64Counter("lantern.run.budget.blocks",
 			metric.WithDescription("Runs blocked by agent budget hard-fail (HTTP 402)"),
+		)
+		mBudgetErr, _ = m.Int64Counter("lantern.budget.check.errors",
+			metric.WithDescription("Budget lookups that errored and failed closed"),
 		)
 		mRunTotal, _ = m.Int64Counter("lantern.run.total",
 			metric.WithDescription("Total agent runs dispatched through the inline executor"),
@@ -92,6 +96,17 @@ func RecordReplaySkip(ctx context.Context, agentName string) {
 func RecordBudgetBlock(ctx context.Context, agentName string) {
 	ensureMetrics()
 	mBudgetBlock.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("lantern.agent_name", agentName),
+	))
+}
+
+// RecordBudgetCheckError increments lantern.budget.check.errors when a budget
+// lookup errors (not "no budget") and the check fails closed. check is the
+// budget scope: "tenant", "agent", "run" or "tool".
+func RecordBudgetCheckError(ctx context.Context, check, agentName string) {
+	ensureMetrics()
+	mBudgetErr.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("lantern.budget_check", check),
 		attribute.String("lantern.agent_name", agentName),
 	))
 }

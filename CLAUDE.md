@@ -424,6 +424,17 @@ Env vars (control-plane):
 (`gen_ai.*` + router spans) and error rate → only then enable on the bridge
 tenant. The fallback guarantee keeps the bridges safe at every step.
 
+#### Connector test mode (`LANTERN_CONNECTOR_BASEURL_<NAME>`)
+
+Dev/test only. `LANTERN_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,GOOGLE,PAGERDUTY}=http://127.0.0.1:9191`
+re-points that vendor's outbound calls (scheme+host only; path preserved) at the recorded-fixture
+server `services/control-plane/cmd/connector-replay` (`go run ./cmd/connector-replay`; recorded calls at
+`GET /__requests`, Authorization never stored). **Refused in prod**: `LANTERN_ENV=prod/production/staging`
+with any override set is a startup error (`CheckConnectorBaseURLOverrides`), and the transport ignores
+overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` on `post_message`), GitHub
+`comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
+(`list_incidents`, `get_incident`, `create_incident`, `update_incident`; key in `apiKey`).
+
 ### Settings
 
 | Method | Path                                         | Description               |

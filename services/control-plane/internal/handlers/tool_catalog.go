@@ -444,6 +444,91 @@ var connectorTools = []toolDef{
 		},
 	},
 
+	// ---- W1-E additions ----
+	{
+		Connector:   "slack",
+		Action:      "reply_thread",
+		Description: "Reply inside an existing Slack thread (thread_ts is the parent message's ts).",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channel":   map[string]any{"type": "string", "description": "Channel ID, e.g. C0123"},
+				"thread_ts": map[string]any{"type": "string", "description": "ts of the thread's parent message"},
+				"text":      map[string]any{"type": "string"},
+			},
+			"required": []string{"channel", "thread_ts", "text"},
+		},
+	},
+	{
+		Connector:   "github",
+		Action:      "comment_pr",
+		Description: "Post a comment on a GitHub pull request's conversation.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"owner":  map[string]any{"type": "string"},
+				"repo":   map[string]any{"type": "string"},
+				"number": map[string]any{"type": "integer", "description": "Pull request number"},
+				"body":   map[string]any{"type": "string", "description": "Comment text (markdown)"},
+			},
+			"required": []string{"owner", "repo", "number", "body"},
+		},
+	},
+	{
+		Connector:   "sentry",
+		Action:      "get_issue",
+		Description: "Get one Sentry issue (title, status, counts, first/last seen) by id.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"organization": map[string]any{"type": "string", "description": "Organization slug"},
+				"issue_id":     map[string]any{"type": "string"},
+			},
+			"required": []string{"organization", "issue_id"},
+		},
+	},
+	{
+		Connector:   "google-calendar",
+		Action:      "create_event",
+		Description: "Create a Google Calendar event. start/end are RFC3339 timestamps.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"summary":     map[string]any{"type": "string", "description": "Event title"},
+				"start":       map[string]any{"type": "string", "description": "RFC3339, e.g. 2026-11-02T15:00:00-08:00"},
+				"end":         map[string]any{"type": "string", "description": "RFC3339"},
+				"timeZone":    map[string]any{"type": "string", "description": "IANA zone (optional)"},
+				"description": map[string]any{"type": "string"},
+				"location":    map[string]any{"type": "string"},
+				"attendees":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Attendee emails"},
+				"calendarId":  map[string]any{"type": "string", "description": "Default: primary"},
+			},
+			"required": []string{"summary", "start", "end"},
+		},
+	},
+	{
+		Connector:   "pagerduty",
+		Action:      "list_incidents",
+		Description: "List PagerDuty incidents, optionally filtered by status.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status": map[string]any{"type": "string", "enum": []string{"triggered", "acknowledged", "resolved"}},
+				"limit":  map[string]any{"type": "integer", "description": "Max results (default 25)"},
+			},
+		},
+	},
+	{
+		Connector:   "pagerduty",
+		Action:      "get_incident",
+		Description: "Get one PagerDuty incident by id.",
+		Params: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"incident_id": map[string]any{"type": "string"}},
+			"required":   []string{"incident_id"},
+		},
+	},
+
 	// ---- Gmail (extra) ----
 	{
 		Connector:   "gmail",

@@ -98,7 +98,7 @@ func (h *ConnectorExecutor) logger() *zap.Logger {
 }
 
 // httpClient is a shared client with a reasonable timeout for outbound API calls.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+var httpClient = &http.Client{Timeout: 30 * time.Second, Transport: baseURLTransport{next: http.DefaultTransport}}
 
 // Execute handles GET/POST /v1/connectors/{connectorId}/execute?action={action}.
 // It loads credentials from connector_installs, then dispatches to the
@@ -370,6 +370,8 @@ func executeConnectorAction(
 		return executeStripe(config, action, params)
 	case "sentry":
 		return executeSentry(config, action, params)
+	case "pagerduty":
+		return executePagerDuty(config, action, params)
 	case "vercel":
 		return executeVercel(config, action, params)
 	case "salesforce":
@@ -799,6 +801,33 @@ func searchGmailViaAPI(accessToken, query string, limit int) (any, error) {
 // Slack
 // ---------------------------------------------------------------------------
 
+// slackPostMessage calls chat.postMessage; a non-empty threadTS makes it a thread reply.
+// Slack reports API errors as HTTP 200 with {"ok":false,"error":...}, so ok is checked.
+// Docs: https://api.slack.com/methods/chat.postMessage
+func slackPostMessage(headers map[string]string, channel, text, threadTS string) (any, error) {
+	body := map[string]string{"channel": channel, "text": text}
+	if threadTS != "" {
+		body["thread_ts"] = threadTS
+	}
+	payload, _ := json.Marshal(body)
+	result, err := doJSONRequest("POST", "https://slack.com/api/chat.postMessage", headers, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("Slack post_message failed: %w", err)
+	}
+	if ok, _ := result["ok"].(bool); !ok {
+		return nil, fmt.Errorf("Slack post_message failed: %v", result["error"])
+	}
+	return result, nil
+}
+
+// numberParam renders an integer-ish param (JSON number or string) as a string.
+func numberParam(params map[string]any, key string) string {
+	if f, ok := params[key].(float64); ok {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return stringParam(params, key)
+}
+
 func executeSlack(config map[string]any, action string, params map[string]any) (any, error) {
 	botToken := resolveConnectorToken(config, "botToken")
 	if botToken == "" {
@@ -831,12 +860,16 @@ func executeSlack(config map[string]any, action string, params map[string]any) (
 		if channel == "" || text == "" {
 			return nil, fmt.Errorf("'channel' and 'text' parameters are required")
 		}
-		payload, _ := json.Marshal(map[string]string{"channel": channel, "text": text})
-		result, err := doJSONRequest("POST", "https://slack.com/api/chat.postMessage", headers, bytes.NewReader(payload))
-		if err != nil {
-			return nil, fmt.Errorf("Slack post_message failed: %w", err)
+		return slackPostMessage(headers, channel, text, stringParam(params, "thread_ts"))
+
+	case "reply_thread":
+		channel := stringParam(params, "channel")
+		text := stringParam(params, "text")
+		threadTS := stringParam(params, "thread_ts")
+		if channel == "" || text == "" || threadTS == "" {
+			return nil, fmt.Errorf("'channel', 'text', and 'thread_ts' parameters are required")
 		}
-		return result, nil
+		return slackPostMessage(headers, channel, text, threadTS)
 
 	case "list_users":
 		limit := intParam(params, "limit", 100)
@@ -848,7 +881,7 @@ func executeSlack(config map[string]any, action string, params map[string]any) (
 		return result, nil
 
 	default:
-		return nil, fmt.Errorf("unknown Slack action: %s (supported: list_channels, post_message, list_users)", action)
+		return nil, fmt.Errorf("unknown Slack action: %s (supported: list_channels, post_message, reply_thread, list_users)", action)
 	}
 }
 
@@ -981,8 +1014,27 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 		}
 		return result, nil
 
+	case "comment_pr":
+		// Docs: https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
+		// (a PR's conversation comments are issue comments on the same number).
+		owner := stringParam(params, "owner")
+		repo := stringParam(params, "repo")
+		number := numberParam(params, "number")
+		body := stringParam(params, "body")
+		if owner == "" || repo == "" || number == "" || body == "" {
+			return nil, fmt.Errorf("'owner', 'repo', 'number', and 'body' parameters are required")
+		}
+		payloadJSON, _ := json.Marshal(map[string]string{"body": body})
+		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%s/comments",
+			url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(number))
+		result, err := doJSONRequest("POST", apiURL, headers, bytes.NewReader(payloadJSON))
+		if err != nil {
+			return nil, fmt.Errorf("GitHub comment_pr failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown GitHub action: %s (supported: list_repos, list_prs, get_pr, list_issues, get_issue, create_issue)", action)
+		return nil, fmt.Errorf("unknown GitHub action: %s (supported: list_repos, list_prs, get_pr, list_issues, get_issue, create_issue, comment_pr)", action)
 	}
 }
 
@@ -1598,8 +1650,119 @@ func executeSentry(config map[string]any, action string, params map[string]any) 
 		}
 		return result, nil
 
+	case "get_issue":
+		// Docs: https://docs.sentry.io/api/events/retrieve-an-issue/
+		org := stringParam(params, "organization")
+		issueID := numberParam(params, "issue_id")
+		if org == "" || issueID == "" {
+			return nil, fmt.Errorf("'organization' and 'issue_id' parameters are required")
+		}
+		apiURL := fmt.Sprintf("https://sentry.io/api/0/organizations/%s/issues/%s/", url.PathEscape(org), url.PathEscape(issueID))
+		result, err := doJSONRequest("GET", apiURL, headers, nil)
+		if err != nil {
+			return nil, fmt.Errorf("Sentry get_issue failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown Sentry action: %s (supported: list_issues)", action)
+		return nil, fmt.Errorf("unknown Sentry action: %s (supported: list_issues, get_issue)", action)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PagerDuty
+// REST API v2 reference: https://developer.pagerduty.com/api-reference/
+// ---------------------------------------------------------------------------
+
+func executePagerDuty(config map[string]any, action string, params map[string]any) (any, error) {
+	token := resolveConnectorToken(config, "apiKey")
+	if token == "" {
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "PagerDuty",
+			ManualField:       "REST API Key",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://support.pagerduty.com/docs/api-access-keys",
+		})
+	}
+
+	headers := map[string]string{
+		"Authorization": "Token token=" + token,
+		"Accept":        "application/vnd.pagerduty+json;version=2",
+		"Content-Type":  "application/json",
+	}
+	// Mutating calls must name the acting user: the From header is required for
+	// incident create/update (key-based auth has no implicit user).
+	from := stringParam(params, "from")
+	const base = "https://api.pagerduty.com"
+
+	switch action {
+	case "list_incidents":
+		// https://developer.pagerduty.com/api-reference/9d0b4b12e36f9-list-incidents
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(intParam(params, "limit", 25)))
+		for _, st := range []string{"triggered", "acknowledged", "resolved"} {
+			if stringParam(params, "status") == st {
+				q.Add("statuses[]", st)
+			}
+		}
+		result, err := doJSONRequest("GET", base+"/incidents?"+q.Encode(), headers, nil)
+		if err != nil {
+			return nil, fmt.Errorf("PagerDuty list_incidents failed: %w", err)
+		}
+		return result, nil
+
+	case "get_incident":
+		// https://developer.pagerduty.com/api-reference/8a0e1aa2ec666-get-an-incident
+		id := stringParam(params, "incident_id")
+		if id == "" {
+			return nil, fmt.Errorf("'incident_id' parameter is required")
+		}
+		result, err := doJSONRequest("GET", base+"/incidents/"+url.PathEscape(id), headers, nil)
+		if err != nil {
+			return nil, fmt.Errorf("PagerDuty get_incident failed: %w", err)
+		}
+		return result, nil
+
+	case "create_incident":
+		// https://developer.pagerduty.com/api-reference/a7d81b0e9200f-create-an-incident
+		title := stringParam(params, "title")
+		serviceID := stringParam(params, "service_id")
+		if title == "" || serviceID == "" || from == "" {
+			return nil, fmt.Errorf("'title', 'service_id', and 'from' (acting user's email) parameters are required")
+		}
+		incident := map[string]any{
+			"type":    "incident",
+			"title":   title,
+			"service": map[string]string{"id": serviceID, "type": "service_reference"},
+		}
+		if details := stringParam(params, "details"); details != "" {
+			incident["body"] = map[string]string{"type": "incident_body", "details": details}
+		}
+		payload, _ := json.Marshal(map[string]any{"incident": incident})
+		headers["From"] = from
+		result, err := doJSONRequest("POST", base+"/incidents", headers, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("PagerDuty create_incident failed: %w", err)
+		}
+		return result, nil
+
+	case "update_incident":
+		// https://developer.pagerduty.com/api-reference/2fad1ddbd9a1c-update-an-incident
+		id := stringParam(params, "incident_id")
+		status := stringParam(params, "status")
+		if id == "" || from == "" || (status != "acknowledged" && status != "resolved") {
+			return nil, fmt.Errorf("'incident_id', 'from' (acting user's email), and 'status' (acknowledged|resolved) parameters are required")
+		}
+		payload, _ := json.Marshal(map[string]any{"incident": map[string]string{"type": "incident_reference", "status": status}})
+		headers["From"] = from
+		result, err := doJSONRequest("PUT", base+"/incidents/"+url.PathEscape(id), headers, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("PagerDuty update_incident failed: %w", err)
+		}
+		return result, nil
+
+	default:
+		return nil, fmt.Errorf("unknown PagerDuty action: %s (supported: list_incidents, get_incident, create_incident, update_incident)", action)
 	}
 }
 
@@ -1748,8 +1911,53 @@ func executeGoogleCalendar(config map[string]any, action string, params map[stri
 		}
 		return result, nil
 
+	case "create_event":
+		// Docs: https://developers.google.com/calendar/api/v3/reference/events/insert
+		summary := stringParam(params, "summary")
+		start := stringParam(params, "start")
+		end := stringParam(params, "end")
+		if summary == "" || start == "" || end == "" {
+			return nil, fmt.Errorf("'summary', 'start', and 'end' (RFC3339) parameters are required")
+		}
+		calendarID := stringParam(params, "calendarId")
+		if calendarID == "" {
+			calendarID = "primary"
+		}
+		when := func(ts string) map[string]string {
+			w := map[string]string{"dateTime": ts}
+			if tz := stringParam(params, "timeZone"); tz != "" {
+				w["timeZone"] = tz
+			}
+			return w
+		}
+		event := map[string]any{"summary": summary, "start": when(start), "end": when(end)}
+		for _, k := range []string{"description", "location"} {
+			if v := stringParam(params, k); v != "" {
+				event[k] = v
+			}
+		}
+		if emails, ok := params["attendees"].([]any); ok {
+			var attendees []map[string]string
+			for _, e := range emails {
+				if addr, ok := e.(string); ok && addr != "" {
+					attendees = append(attendees, map[string]string{"email": addr})
+				}
+			}
+			if len(attendees) > 0 {
+				event["attendees"] = attendees
+			}
+		}
+		payload, _ := json.Marshal(event)
+		apiURL := fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events", url.PathEscape(calendarID))
+		hdrs := map[string]string{"Authorization": headers["Authorization"], "Content-Type": "application/json", "Accept": "application/json"}
+		result, err := doJSONRequest("POST", apiURL, hdrs, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("Google Calendar create_event failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown Google Calendar action: %s (supported: list_events)", action)
+		return nil, fmt.Errorf("unknown Google Calendar action: %s (supported: list_events, create_event)", action)
 	}
 }
 

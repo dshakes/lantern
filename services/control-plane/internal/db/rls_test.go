@@ -389,6 +389,7 @@ var rlsTenantTables = []string{
 	"brief_items",
 	"immigration_deadlines",
 	"memory_distillates",
+	"auth_tokens",
 	"agent_triggers", "agent_trigger_deliveries",
 }
 
