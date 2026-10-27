@@ -197,7 +197,7 @@ test-ts: ## Run TypeScript tests
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v
 
-test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_SKIP=1 to skip instead) — see e2e/README.md
+test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_SKIP=1 to skip instead). Set LANTERN_E2E_API_URL or LANTERN_API_URL to target a non-default stack — see e2e/README.md
 	$(MAKE) e2e-lint
 	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
 	cd e2e/quickstart && go test -tags e2e -count=1 -p 1 -v ./...
