@@ -2034,20 +2034,18 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			// In-process dispatch matching the HTTP path in
 			// /v1/connectors/{id}/execute. We load credentials for the
 			// tenant + connector and call the same execute<Connector>
-			// helpers used elsewhere.
-			return dispatchConnectorInProc(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+			// helpers used elsewhere. Per-tool limits key on connector.action.
+			key := connectorID + "." + action
+			if err := gateWorkflowTool(ctx, h.srv.Pool, h.logger(), tenantID, agentName, key); err != nil {
+				return nil, err
+			}
+			out, err := dispatchConnectorInProc(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+			recordToolUse(ctx, h.srv.Pool, h.logger(), tenantID, agentName, key)
+			return out, err
 		},
-		CallTool: func(_ context.Context, tool string, params map[string]any) (any, error) {
-			// Built-in tools are still under-built (web.search etc. live
-			// in the runtime-manager). Return a structured "skipped"
-			// payload so the workflow proceeds — failing here would
-			// strand workflows that reference tools we haven't shipped.
-			return map[string]any{
-				"skipped": true,
-				"tool":    tool,
-				"params":  params,
-				"reason":  "tool runtime not wired into control-plane yet",
-			}, nil
+		CallTool: func(ctx context.Context, tool string, params map[string]any) (any, error) {
+			exec, _ := h.microVMDispatcher.(toolExecer)
+			return callWorkflowTool(ctx, h.srv.Pool, h.logger(), exec, runID, tenantID, agentName, tool, params)
 		},
 		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
 			payload, _ := json.Marshal(ev.Payload)
