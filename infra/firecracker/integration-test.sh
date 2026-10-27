@@ -867,6 +867,51 @@ else
     pass "COW isolation verified: fork-1.txt written in fork-1 is NOT visible in fork-2"
   fi
 
+  # Hard-link inode verification — prove the shared-memory optimization from
+  # PR #295 is active (mem is hard-linked, not copied into each fork's jail).
+  #
+  # Rationale: plan_jailed_fork_staging() places the mem artifact in .links[]
+  # (hard-link / MAP_PRIVATE CoW) rather than .copies[].  If the optimization
+  # is working, every fork's mem file in <chroot_base>/<fc_bin>/<vm_id>/root/
+  # snapshot/mem must have the SAME inode as the source snapshot mem file in
+  # the snapshot store.  EXDEV (cross-device hard link) falls back to a copy;
+  # on the Lima tmpfs + local-disk store setup both paths are on the same
+  # filesystem, so EXDEV should not occur.
+  CHROOT_BASE="${FIRECRACKER_CHROOT_BASE:-/srv/jailer}"
+  FC_BIN_NAME="firecracker"
+  [ -n "${FC_BINARY_PATH:-}" ] && FC_BIN_NAME=$(basename "${FC_BINARY_PATH}")
+
+  # Find the snapshot mem file in the store by snapshot_id.
+  SNAP_MEM_PATH=$(sudo find /var/lib/lantern/snapshots -name "mem" -path "*/${FORK_SNAP_ID}/mem" 2>/dev/null | head -1)
+  if [ -z "${SNAP_MEM_PATH}" ]; then
+    fail "snapshot mem file not found in store for snapshot_id=${FORK_SNAP_ID} — hard-link check cannot proceed"
+  fi
+  SNAP_MEM_INODE=$(sudo stat -c '%i' "${SNAP_MEM_PATH}")
+  SNAP_MEM_NLINKS=$(sudo stat -c '%h' "${SNAP_MEM_PATH}")
+  log "snapshot mem: path=${SNAP_MEM_PATH} inode=${SNAP_MEM_INODE} link_count=${SNAP_MEM_NLINKS}"
+
+  HARD_LINK_FAILURES=0
+  for fid in "${FORK_IDS[@]}"; do
+    FORK_MEM="${CHROOT_BASE}/${FC_BIN_NAME}/${fid}/root/snapshot/mem"
+    if ! sudo test -f "${FORK_MEM}"; then
+      log "FAIL: fork ${fid}: mem file not found at ${FORK_MEM}"
+      HARD_LINK_FAILURES=$(( HARD_LINK_FAILURES + 1 ))
+      continue
+    fi
+    FORK_MEM_INODE=$(sudo stat -c '%i' "${FORK_MEM}")
+    if [ "${FORK_MEM_INODE}" = "${SNAP_MEM_INODE}" ]; then
+      pass "fork ${fid}: mem file hard-linked to snapshot mem (inode=${FORK_MEM_INODE})"
+    else
+      log "FAIL: fork ${fid}: mem inode=${FORK_MEM_INODE} != snapshot mem inode=${SNAP_MEM_INODE} (copy path used instead of hard-link — PR #295 optimization not active)"
+      HARD_LINK_FAILURES=$(( HARD_LINK_FAILURES + 1 ))
+    fi
+  done
+
+  if [ "${HARD_LINK_FAILURES}" -gt 0 ]; then
+    fail "${HARD_LINK_FAILURES} fork(s) did not share the snapshot mem inode — hard-link optimization not applied"
+  fi
+  pass "all 3 fork mem files share snapshot mem inode ${SNAP_MEM_INODE} (link_count=${SNAP_MEM_NLINKS}) — MAP_PRIVATE CoW sharing active"
+
   # Tear down all forks cleanly.
   for fid in "${FORK_IDS[@]}"; do
     log "Stopping fork vm_id=${fid}"
