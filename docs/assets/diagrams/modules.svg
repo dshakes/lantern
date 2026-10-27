@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 552" class="lx" role="img" aria-labelledby="modules-title modules-desc">
+  <title id="modules-title">Five modules, one runtime</title>
+  <desc id="modules-desc">Five modules sit on one shared substrate. Agent runtime: durable workflow engine, capability model router, two tiers, crash replay. Personal agent: WhatsApp and iMessage assistant. Trust and governance: budgets, evals, receipts, RBAC, OTel, encryption, RLS. Channels and reach. Developer experience. The substrate is the journal, routing, budgets, tenant isolation and observability.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="modules-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="modules-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="modules-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="modules-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="modules-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="552" rx="16"/>
+  <text class="t-title" x="40" y="52">Five modules, one runtime</text>
+  <text class="t-sub" x="40" y="76">Every module is a lens on the same durable, budgeted, multi-tenant core.</text>
+  <rect class="node" x="40" y="100" width="352" height="184" rx="18"/>
+  <text class="t-h" x="56" y="126">Agent runtime</text>
+  <text class="t-b" x="56" y="146">Durable workflow engine, journal replay</text>
+  <text class="t-b" x="56" y="164">Capability-based model router,</text>
+  <text class="t-b" x="56" y="182">4 strategies, provider failover</text>
+  <text class="t-b" x="56" y="200">Two tiers, one journal: shared inline</text>
+  <text class="t-b" x="56" y="218">executor and microVM (Firecracker, Kata)</text>
+  <text class="t-b" x="56" y="236">Crash replay with no re-spent tokens</text>
+  <text class="t-b" x="56" y="254">Per-VM certificates, service-token gRPC</text>
+  <rect class="node" x="424" y="100" width="352" height="184" rx="18"/>
+  <text class="t-h" x="440" y="126">Personal agent</text>
+  <text class="t-b" x="440" y="146">WhatsApp and iMessage assistant,</text>
+  <text class="t-b" x="440" y="164">owner-only, texts in your voice</text>
+  <text class="t-b" x="440" y="182">Money and unverifiable claims are held</text>
+  <text class="t-b" x="440" y="200">for the owner, never sent</text>
+  <text class="t-b" x="440" y="218">Cross-channel memory · life-events engine</text>
+  <text class="t-b" x="440" y="236">Skill forge · event scout · time-travel recap</text>
+  <text class="t-b" x="440" y="254">Draft-and-confirm (opt-in)</text>
+  <rect class="node" x="808" y="100" width="352" height="184" rx="18"/>
+  <text class="t-h" x="824" y="126">Trust and governance</text>
+  <text class="t-b" x="824" y="146">Policy-as-code budgets (hard-fail, 402)</text>
+  <text class="t-b" x="824" y="164">Eval-in-CI and rehearsals (422 on regression)</text>
+  <text class="t-b" x="824" y="182">Ed25519 verifiable receipts</text>
+  <text class="t-b" x="824" y="200">Scoped API keys (enforcement is flag-gated)</text>
+  <text class="t-b" x="824" y="218">OTel with tenant, run and step ids</text>
+  <text class="t-b" x="824" y="236">AES-256-GCM secrets at rest</text>
+  <text class="t-b" x="824" y="254">RLS on every tenant table</text>
+  <rect class="node" x="40" y="304" width="552" height="124" rx="18"/>
+  <text class="t-h" x="56" y="330">Channels and reach</text>
+  <text class="t-b" x="56" y="350">WhatsApp · iMessage · Slack · Telegram · Discord</text>
+  <text class="t-b" x="56" y="368">voice (Twilio, LiveKit) · webchat /widget.js · email</text>
+  <text class="t-b" x="56" y="386">Signature-verified, all on the same sessions API</text>
+  <text class="t-b" x="56" y="404">A channel is an entry point, not a fork of your agent</text>
+  <rect class="node" x="608" y="304" width="552" height="124" rx="18"/>
+  <text class="t-h" x="624" y="330">Developer experience</text>
+  <text class="t-b" x="624" y="350">TypeScript, Python and Go SDKs · lantern CLI</text>
+  <text class="t-b" x="624" y="368">lantern onboard, lantern doctor, lantern agents dev</text>
+  <text class="t-b" x="624" y="386">Visual workflow editor that executes</text>
+  <text class="t-b" x="624" y="404">MCP registry · A2A cards · agent marketplace</text>
+  <rect class="group" x="40" y="448" width="1120" height="64" rx="18"/>
+  <text class="t-h" x="60" y="474">The shared substrate under all five</text>
+  <text class="t-b" x="60" y="496">journal_events durable log · capability model routing · budgets · tenant isolation · observability</text>
+</svg>

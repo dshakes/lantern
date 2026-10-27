@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 706" class="lx" role="img" aria-labelledby="agent-loops-owner-title agent-loops-owner-desc">
+  <title id="agent-loops-owner-title">Owner loops propose; you decide</title>
+  <desc id="agent-loops-owner-desc">Five loop agents that work for the owner. Concierge, every 45 minutes: capture commitments, research how to do them, nudge with one-tap actions, you act. Relationship-keeper, weekly: scan people, find those quiet for 21 days or more, draft an opener, nudge you, you reach out. Financial-sentinel, daily: scan bills over 90 days, check for a rise of 10 percent and 5 dollars, flag for review, you decide. Inbox-triage, every 45 minutes: read Gmail, classify as action or FYI, queue a draft, you confirm. Ai-radar, every 5 minutes: scan AI feeds, dedupe, rank, surface. Each loop repeats on its cadence.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="agent-loops-owner-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-owner-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-owner-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-owner-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-owner-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="706" rx="16"/>
+  <text class="t-title" x="40" y="52">Owner loops propose; you decide</text>
+  <text class="t-sub" x="40" y="76">Each loop runs on its tier cadence; flags and drafts wait for the owner.</text>
+  <rect class="group" x="40" y="104" width="1120" height="98" rx="18"/>
+  <text class="t-h" x="60" y="138">concierge</text>
+  <text class="t-s" x="60" y="158">meso, every 45 minutes</text>
+  <rect class="node" x="270" y="118" width="150" height="52" rx="10"/>
+  <text class="t-h" x="284" y="142">Capture</text>
+  <text class="t-s" x="284" y="162">commitments</text>
+  <path class="edge" d="M420 144H448" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="450" y="118" width="150" height="52" rx="10"/>
+  <text class="t-h" x="464" y="142">Research</text>
+  <text class="t-s" x="464" y="162">how to do it</text>
+  <path class="edge" d="M600 144H628" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="630" y="118" width="150" height="52" rx="10"/>
+  <text class="t-h" x="644" y="142">Nudge</text>
+  <text class="t-s" x="644" y="162">one-tap actions</text>
+  <path class="edge" d="M780 144H808" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="810" y="118" width="150" height="52" rx="10"/>
+  <text class="t-h" x="824" y="142">You act</text>
+  <text class="t-s" x="824" y="162">snooze, done</text>
+  <path class="edge" d="M885 170V188H345V172" marker-end="url(#agent-loops-owner-a)"/>
+  <text class="t-s" x="615" y="184" text-anchor="middle">repeats on the cadence</text>
+  <rect class="group" x="40" y="214" width="1120" height="98" rx="18"/>
+  <text class="t-h" x="60" y="248">relationship-keeper</text>
+  <text class="t-s" x="60" y="268">mega, weekly</text>
+  <rect class="node" x="270" y="228" width="150" height="52" rx="10"/>
+  <text class="t-h" x="284" y="252">Scan people</text>
+  <text class="t-s" x="284" y="272">labeled contacts</text>
+  <path class="edge" d="M420 254H448" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="450" y="228" width="150" height="52" rx="10"/>
+  <text class="t-h" x="464" y="252">Quiet 21+ days</text>
+  <text class="t-s" x="464" y="272">last contact</text>
+  <path class="edge" d="M600 254H628" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="630" y="228" width="150" height="52" rx="10"/>
+  <text class="t-h" x="644" y="252">Draft opener</text>
+  <text class="t-s" x="644" y="272">reach-out text</text>
+  <path class="edge" d="M780 254H808" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="810" y="228" width="150" height="52" rx="10"/>
+  <text class="t-h" x="824" y="252">Nudge you</text>
+  <text class="t-s" x="824" y="272">weekly</text>
+  <path class="edge" d="M960 254H988" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="990" y="228" width="150" height="52" rx="10"/>
+  <text class="t-h" x="1004" y="252">You reach out</text>
+  <path class="edge" d="M1065 280V298H345V282" marker-end="url(#agent-loops-owner-a)"/>
+  <text class="t-s" x="705" y="294" text-anchor="middle">repeats on the cadence</text>
+  <rect class="group" x="40" y="324" width="1120" height="98" rx="18"/>
+  <text class="t-h" x="60" y="358">financial-sentinel</text>
+  <text class="t-s" x="60" y="378">macro, daily</text>
+  <rect class="node" x="270" y="338" width="150" height="52" rx="10"/>
+  <text class="t-h" x="284" y="362">Scan bills</text>
+  <text class="t-s" x="284" y="382">last 90 days</text>
+  <path class="edge" d="M420 364H448" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="450" y="338" width="150" height="52" rx="10"/>
+  <text class="t-h" x="464" y="362">Hike check</text>
+  <text class="t-s" x="464" y="382">10%+ and $5+ rise</text>
+  <path class="edge" d="M600 364H628" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="630" y="338" width="150" height="52" rx="10"/>
+  <text class="t-h" x="644" y="362">Flag for review</text>
+  <text class="t-s" x="644" y="382">cancel draft</text>
+  <path class="edge" d="M780 364H808" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="810" y="338" width="150" height="52" rx="10"/>
+  <text class="t-h" x="824" y="362">You decide</text>
+  <text class="t-s" x="824" y="382">one-tap OK</text>
+  <path class="edge" d="M885 390V408H345V392" marker-end="url(#agent-loops-owner-a)"/>
+  <text class="t-s" x="615" y="404" text-anchor="middle">repeats on the cadence</text>
+  <rect class="group" x="40" y="434" width="1120" height="98" rx="18"/>
+  <text class="t-h" x="60" y="468">inbox-triage</text>
+  <text class="t-s" x="60" y="488">meso, every 45 minutes</text>
+  <rect class="node" x="270" y="448" width="150" height="52" rx="10"/>
+  <text class="t-h" x="284" y="472">Read Gmail</text>
+  <text class="t-s" x="284" y="492">new messages</text>
+  <path class="edge" d="M420 474H448" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="450" y="448" width="150" height="52" rx="10"/>
+  <text class="t-h" x="464" y="472">Classify</text>
+  <text class="t-s" x="464" y="492">action or FYI</text>
+  <path class="edge" d="M600 474H628" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="630" y="448" width="150" height="52" rx="10"/>
+  <text class="t-h" x="644" y="472">Queue draft</text>
+  <text class="t-s" x="644" y="492">reply drafts</text>
+  <path class="edge" d="M780 474H808" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="810" y="448" width="150" height="52" rx="10"/>
+  <text class="t-h" x="824" y="472">You confirm</text>
+  <path class="edge" d="M885 500V518H345V502" marker-end="url(#agent-loops-owner-a)"/>
+  <text class="t-s" x="615" y="514" text-anchor="middle">repeats on the cadence</text>
+  <rect class="group" x="40" y="544" width="1120" height="98" rx="18"/>
+  <text class="t-h" x="60" y="578">ai-radar</text>
+  <text class="t-s" x="60" y="598">micro, every 5 minutes</text>
+  <rect class="node" x="270" y="558" width="150" height="52" rx="10"/>
+  <text class="t-h" x="284" y="582">Scan AI feeds</text>
+  <text class="t-s" x="284" y="602">labs, people, tools</text>
+  <path class="edge" d="M420 584H448" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="450" y="558" width="150" height="52" rx="10"/>
+  <text class="t-h" x="464" y="582">Dedupe</text>
+  <text class="t-s" x="464" y="602">drop repeats</text>
+  <path class="edge" d="M600 584H628" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="630" y="558" width="150" height="52" rx="10"/>
+  <text class="t-h" x="644" y="582">Rank</text>
+  <text class="t-s" x="644" y="602">new items</text>
+  <path class="edge" d="M780 584H808" marker-end="url(#agent-loops-owner-a)"/>
+  <rect class="node" x="810" y="558" width="150" height="52" rx="10"/>
+  <text class="t-h" x="824" y="582">Surface</text>
+  <text class="t-s" x="824" y="602">pull with news</text>
+  <path class="edge" d="M885 610V628H345V612" marker-end="url(#agent-loops-owner-a)"/>
+  <text class="t-s" x="615" y="624" text-anchor="middle">repeats on the cadence</text>
+  <g transform="translate(40 668)">
+    <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Loop step</text>
+  </g>
+</svg>

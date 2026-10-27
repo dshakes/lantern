@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 690" class="lx" role="img" aria-labelledby="runtime-isolation-tiers-title runtime-isolation-tiers-desc">
+  <title id="runtime-isolation-tiers-title">Each trust class maps to one RuntimeClass, and the node must offer it</title>
+  <desc id="runtime-isolation-tiers-desc">Matrix of seven isolation classes. Trusted maps to bare runc on a shared host kernel and is the only class where that is deliberate. Standard maps to gVisor and falls back to runc only when LANTERN_ALLOW_RUNC_STANDARD is set. Untrusted maps to gVisor and is refused if gVisor is missing. Hostile maps to a Kata RuntimeClass, a hardware VM with its own kernel, and is refused if Kata is missing. Confidential maps to the Kata-CC RuntimeClass, a memory-encrypted VM, with an isolation floor of hostile, and is refused without it. Wasm maps to the Wasm RuntimeClass and devcontainer maps to gVisor with a long-lived pod and volume. Untrusted and hostile pods also get node affinity and a NoSchedule toleration for their node pool.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="runtime-isolation-tiers-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-isolation-tiers-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-isolation-tiers-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-isolation-tiers-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-isolation-tiers-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="690" rx="16"/>
+  <text class="t-title" x="40" y="52">Each trust class maps to one RuntimeClass, and the node must offer it</text>
+  <text class="t-sub" x="40" y="76">The matrix the runtime-manager applies on Kubernetes, its default substrate. A missing hardened class means the workload is refused.</text>
+  <text class="t-s" x="56" y="106">Isolation class</text>
+  <text class="t-s" x="246" y="106">RuntimeClass</text>
+  <text class="t-s" x="466" y="106">Kernel boundary</text>
+  <text class="t-s" x="746" y="106">If the node lacks the class</text>
+  <rect class="node" x="40" y="116" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="140">Trusted</text>
+  <text class="t-s" x="56" y="159">signed first-party code</text>
+  <rect class="group" x="246" y="126" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="149">runc</text>
+  <text class="t-b" x="466" y="150">shared host kernel</text>
+  <text class="t-s" x="752" y="150">bare runc is the deliberate choice here</text>
+  <rect class="node" x="40" y="180" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="204">Standard</text>
+  <text class="t-s" x="56" y="223">the default class</text>
+  <rect class="node-glass" x="246" y="190" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="213">gvisor</text>
+  <text class="t-b" x="466" y="214">user-space kernel (runsc)</text>
+  <rect class="node-deny" x="740" y="186" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="205">gVisor missing: refused unless</text>
+  <text class="t-s mono" x="752" y="220">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <rect class="node" x="40" y="244" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="268">Untrusted</text>
+  <text class="t-s" x="56" y="287">packages, browsers</text>
+  <rect class="node-glass" x="246" y="254" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="277">gvisor</text>
+  <text class="t-b" x="466" y="278">user-space kernel (runsc)</text>
+  <rect class="node-deny" x="740" y="250" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="269">gVisor missing: refused,</text>
+  <text class="t-s" x="752" y="284">never a bare runc pod</text>
+  <rect class="node" x="40" y="308" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="332">Hostile</text>
+  <text class="t-s" x="56" y="351">assume it attacks the host</text>
+  <rect class="node-glass" x="246" y="318" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="341">kata-qemu or kata-fc</text>
+  <text class="t-b" x="466" y="342">own kernel in a hardware VM</text>
+  <rect class="node-deny" x="740" y="314" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="333">Kata missing: refused,</text>
+  <text class="t-s" x="752" y="348">never a bare runc pod</text>
+  <rect class="node" x="40" y="372" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="396">Confidential</text>
+  <text class="t-s" x="56" y="415">floor: hostile tier</text>
+  <rect class="node-glass" x="246" y="382" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="405">Kata-CC class</text>
+  <text class="t-b" x="466" y="406">memory-encrypted VM (SEV-SNP, TDX)</text>
+  <rect class="node-deny" x="740" y="378" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="397">Kata-CC missing: refused,</text>
+  <text class="t-s" x="752" y="412">never a plain VM</text>
+  <rect class="node" x="40" y="436" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="460">Wasm</text>
+  <text class="t-s" x="56" y="479">signed components</text>
+  <rect class="group" x="246" y="446" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="469">wasm class</text>
+  <text class="t-b" x="466" y="470">in-process capability sandbox</text>
+  <rect class="node-deny" x="740" y="442" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="461">Wasm class missing: refused</text>
+  <text class="t-s" x="752" y="476">unless the runc opt-in is set</text>
+  <rect class="node" x="40" y="500" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="56" y="524">Devcontainer</text>
+  <text class="t-s" x="56" y="543">long-lived dev pod</text>
+  <rect class="node-glass" x="246" y="510" width="200" height="36" rx="8"/>
+  <text class="t-b mono" x="258" y="533">gvisor</text>
+  <text class="t-b" x="466" y="534">user-space kernel (runsc)</text>
+  <rect class="node-deny" x="740" y="506" width="404" height="44" rx="8"/>
+  <text class="t-s" x="752" y="525">gVisor missing: refused unless</text>
+  <text class="t-s mono" x="752" y="540">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <text class="t-b" x="40" y="590">Untrusted and hostile pods also get node affinity and a NoSchedule toleration for their node pool.</text>
+  <text class="t-s" x="40" y="612">Names come from LANTERN_RUNTIMECLASS_GVISOR, _KATA, _KATA_CC and _WASM.</text>
+  <g transform="translate(40 650)">
+  <rect class="node-glass" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Hardened RuntimeClass</text>
+  <rect class="group" x="190" width="14" height="14" rx="3"/><text class="t-s" x="212" y="11">No hardened boundary</text>
+  <rect class="node-deny" x="380" width="14" height="14" rx="3"/><text class="t-s" x="402" y="11">Refused when the class is missing</text>
+  </g>
+</svg>

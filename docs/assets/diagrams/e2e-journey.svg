@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" class="lx" role="img" aria-labelledby="e2e-journey-title e2e-journey-desc">
+  <title id="e2e-journey-title">Agent lifecycle</title>
+  <desc id="e2e-journey-desc">Six stages on the same runtime primitives: develop, test, deploy, run, observe, improve. Develop: lantern onboard, lantern agents dev, workflow editor, SDKs. Test: eval suites, rehearsals, cost forecast. Deploy: immutable versions, A/B experiments, budgets, isolation by manifest. Run: two tiers one journal, streaming, channels and schedules. Observe: traces, metrics, receipts, peer health. Improve: feedback, confidence calibration, memory distillation. The journal underlies all six stages.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="e2e-journey-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="e2e-journey-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="e2e-journey-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="e2e-journey-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="e2e-journey-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="600" rx="16"/>
+  <text class="t-title" x="40" y="52">Develop, test, deploy, run, observe, improve</text>
+  <text class="t-sub" x="40" y="76">Six stages on one runtime. Production feedback becomes the next release's eval cases.</text>
+  <rect class="node" x="40" y="100" width="352" height="130" rx="14"/>
+  <text class="t-h" x="56" y="126">1 Develop</text>
+  <text class="t-b" x="56" y="146">lantern onboard: description to running agent</text>
+  <text class="t-b" x="56" y="164">lantern agents dev: watch, smoke run</text>
+  <text class="t-b" x="56" y="182">Visual workflow editor that executes</text>
+  <text class="t-b" x="56" y="200">SDKs (TS, Python, Go) · connectors · MCP</text>
+  <rect class="node" x="424" y="100" width="352" height="130" rx="14"/>
+  <text class="t-h" x="440" y="126">2 Test</text>
+  <text class="t-b" x="440" y="146">Eval suites with per-branch baselines</text>
+  <text class="t-b" x="440" y="164">Regression returns HTTP 422 in CI</text>
+  <text class="t-b" x="440" y="182">Rehearsals replay real failures pre-merge</text>
+  <text class="t-b" x="440" y="200">Cost forecast before the run</text>
+  <rect class="node" x="808" y="100" width="352" height="130" rx="14"/>
+  <text class="t-h" x="824" y="126">3 Deploy</text>
+  <text class="t-b" x="824" y="146">Immutable agent versions</text>
+  <text class="t-b" x="824" y="164">A/B experiments: FNV-1a split, auto-promote</text>
+  <text class="t-b" x="824" y="182">Budgets as policy: hard-fail 402</text>
+  <text class="t-b" x="824" y="200">Isolation by manifest: shared or microvm</text>
+  <rect class="node" x="40" y="270" width="352" height="130" rx="14"/>
+  <text class="t-h" x="56" y="296">4 Run</text>
+  <text class="t-b" x="56" y="316">Two tiers, one journal</text>
+  <text class="t-b" x="56" y="334">Sessions stream tokens; runs stream steps</text>
+  <text class="t-b" x="56" y="352">Approvals park without compute</text>
+  <text class="t-b" x="56" y="370">Channels · schedules (tz-aware cron)</text>
+  <rect class="node" x="424" y="270" width="352" height="130" rx="14"/>
+  <text class="t-h" x="440" y="296">5 Observe</text>
+  <text class="t-b" x="440" y="316">One trace and metric contract</text>
+  <text class="t-b" x="440" y="334">lantern.tenant_id, run_id, step_id attributes</text>
+  <text class="t-b" x="440" y="352">Verifiable receipts, checked at /proof</text>
+  <text class="t-b" x="440" y="370">Peer-service health alerts</text>
+  <rect class="node" x="808" y="270" width="352" height="130" rx="14"/>
+  <text class="t-h" x="824" y="296">6 Improve</text>
+  <text class="t-b" x="824" y="316">Feedback: 1-5 scores become eval cases</text>
+  <text class="t-b" x="824" y="334">and the rehearsal queue</text>
+  <text class="t-b" x="824" y="352">Confidence calibration (opt-in)</text>
+  <text class="t-b" x="824" y="370">Memory distillation (flag-gated)</text>
+  <path class="edge" d="M984 230V250H216V270" marker-end="url(#e2e-journey-a)"/>
+  <path class="edge" d="M392 165H422" marker-end="url(#e2e-journey-a)"/>
+  <path class="edge" d="M776 165H806" marker-end="url(#e2e-journey-a)"/>
+  <path class="edge" d="M392 335H422" marker-end="url(#e2e-journey-a)"/>
+  <path class="edge" d="M776 335H806" marker-end="url(#e2e-journey-a)"/>
+  <rect class="group" x="40" y="430" width="1120" height="80" rx="18"/>
+  <text class="t-h" x="60" y="458">The substrate under all six stages</text>
+  <text class="t-b" x="60" y="484">journal_events: durable steps, crash recovery, idempotent side effects</text>
+  <text class="t-b" x="40" y="546">The loop: production feedback becomes the next release's eval cases, so the agent improves because it ran.</text>
+</svg>

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 740" class="lx" role="img" aria-labelledby="streaming-sequence-title streaming-sequence-desc">
+  <title id="streaming-sequence-title">Token streaming, end to end</title>
+  <desc id="streaming-sequence-desc">Sequence between the LLM provider, the control plane and your client. The client posts a message and opens the SSE events stream. The control plane streams from the provider and re-emits every token as a message_delta event, flushed immediately, never accumulated, then message_completed with usage, or message_error on failure. Failover to another provider only happens if zero deltas were emitted. Tool-using completions buffer tool rounds internally and emit the final text as deltas.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="streaming-sequence-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="streaming-sequence-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="streaming-sequence-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="streaming-sequence-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="streaming-sequence-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="740" rx="16"/>
+  <text class="t-title" x="40" y="52">Token streaming, end to end</text>
+  <text class="t-sub" x="40" y="76">The model's first word reaches your UI while it is still thinking about the second.</text>
+  <rect class="node" x="90" y="100" width="200" height="44" rx="10"/>
+  <text class="t-b" x="106" y="124">LLM provider</text>
+  <path class="zone" d="M190 144V470"/>
+  <rect class="node" x="500" y="100" width="200" height="44" rx="10"/>
+  <text class="t-b" x="516" y="124">control-plane</text>
+  <path class="zone" d="M600 144V470"/>
+  <rect class="node" x="910" y="100" width="200" height="44" rx="10"/>
+  <text class="t-b" x="926" y="124">your client</text>
+  <path class="zone" d="M1010 144V470"/>
+  <path class="edge" d="M1010 182H602" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b mono" x="640" y="174">POST /v1/sessions/{id}/messages</text>
+  <a href="/runtime/streaming#sse"><title>SSE transport: GET /v1/sessions/{id}/events</title>
+  <path class="edge" d="M1010 218H602" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b mono" x="630" y="210">GET /v1/sessions/{id}/events (SSE)</text>
+  </a>
+  <path class="edge" d="M600 262H192" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b" x="210" y="254">stream request (Idempotency-Key)</text>
+  <path class="edge" d="M192 304H598" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b" x="210" y="296">token deltas (provider SSE)</text>
+  <a href="/runtime/streaming#message_delta"><title>The event contract: message_delta, message_completed, message_error</title>
+  <path class="edge" d="M602 346H1008" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b" x="620" y="338">message_delta · seq 1..N · flushed per token</text>
+  <path class="edge" d="M602 388H1008" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b" x="620" y="380">message_completed · text, usage, costUsd</text>
+  <path class="edge" d="M602 430H1008" marker-end="url(#streaming-sequence-a)"/>
+  <text class="t-b" x="620" y="422">message_error · on failure, never a splice</text>
+  </a>
+  <a href="/runtime/streaming#sse"><title>Consuming the stream: TS SDK streamMessage</title>
+  <rect class="node" x="40" y="490" width="1120" height="56" rx="10"/>
+  <text class="t-b" x="56" y="514">TS SDK: for await (const chunk of client.sessions.streamMessage(id, { content })). Dashboard chat and the webchat</text>
+  <text class="t-b" x="56" y="532">widget render the same events. Also: POST /v1/completions with stream: true.</text>
+  </a>
+  <text class="t-h" x="40" y="584">Two rules that keep it honest</text>
+  <a href="/runtime/streaming"><title>Failover rule: never a mid-sentence provider swap</title>
+  <rect class="node" x="40" y="600" width="552" height="100" rx="14"/>
+  <text class="t-h" x="56" y="626">No mid-sentence provider swap</text>
+  <text class="t-b" x="56" y="646">Failover to the next provider happens only if zero</text>
+  <text class="t-b" x="56" y="664">deltas were emitted. After the first token, an error is</text>
+  <text class="t-b" x="56" y="682">a clean message_error to discard the partial stream.</text>
+  </a>
+  <a href="/runtime/streaming"><title>Tool-turn buffering: the honest limitation</title>
+  <rect class="node" x="608" y="600" width="552" height="100" rx="14"/>
+  <text class="t-h" x="624" y="626">Tool-using turns buffer, by design</text>
+  <text class="t-b" x="624" y="646">Agent completions with tools run the tool rounds</text>
+  <text class="t-b" x="624" y="664">non-streaming internally, emit tool_call_* events, then</text>
+  <text class="t-b" x="624" y="682">the final text as message_delta. Tool-free turns stream.</text>
+  </a>
+</svg>

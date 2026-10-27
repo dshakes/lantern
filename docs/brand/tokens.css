@@ -1,0 +1,80 @@
+/*
+ * Lantern brand tokens — "glass & flame".
+ * Canonical source. apps/landing and apps/docs carry a verbatim copy of the
+ * :root blocks below in their globals.css (each app builds in its own Docker
+ * context, so a cross-app @import would break). Diagram SVGs carry the same
+ * values inside their embedded <style class="lx-style"> block.
+ *
+ * Theme resolution: system preference by default; an explicit
+ * <html data-theme="light|dark"> wins.
+ */
+
+:root {
+  /* day */
+  --lx-bg: #f2f5f8;
+  --lx-surface: #ffffff;
+  --lx-surface-2: #e7edf3;
+  --lx-ink: #0f1b2d;
+  --lx-ink-2: #44546a;
+  --lx-ink-3: #5d6d83;
+  --lx-line: #c3cedb;
+
+  --lx-flame: #a85e06;       /* untrusted code, the guest — the flame */
+  --lx-flame-soft: #fbebd3;
+  --lx-glass: #1c76a6;       /* the microVM wall — the glass */
+  --lx-glass-soft: #dcedf8;
+  --lx-patina: #17785f;      /* trusted host infrastructure — verdigris */
+  --lx-patina-soft: #d6efe7;
+  --lx-signal: #c23b29;      /* denied, a boundary that must not be crossed */
+  --lx-signal-soft: #f8deda;
+
+  --lx-font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --lx-font-text: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --lx-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --lx-radius-s: 6px;   /* chips, inputs */
+  --lx-radius-m: 10px;  /* nodes, code blocks */
+  --lx-radius-l: 18px;  /* groups, the VM wall */
+
+  --lx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --lx-dur-ui: 160ms;     /* responses to a person's action */
+  --lx-dur-packet: 2.8s;  /* one packet crossing a diagram, linear */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lx-bg: #0b1220;
+    --lx-surface: #111b2e;
+    --lx-surface-2: #17243b;
+    --lx-ink: #e8eef5;
+    --lx-ink-2: #a9b6c8;
+    --lx-ink-3: #7a8aa2;
+    --lx-line: #2b3b57;
+    --lx-flame: #ffb547;
+    --lx-flame-soft: #3a2a12;
+    --lx-glass: #7cc4e8;
+    --lx-glass-soft: #13314a;
+    --lx-patina: #4fc1a6;
+    --lx-patina-soft: #123a33;
+    --lx-signal: #ff7262;
+    --lx-signal-soft: #3e1c1a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --lx-bg: #0b1220;
+  --lx-surface: #111b2e;
+  --lx-surface-2: #17243b;
+  --lx-ink: #e8eef5;
+  --lx-ink-2: #a9b6c8;
+  --lx-ink-3: #7a8aa2;
+  --lx-line: #2b3b57;
+  --lx-flame: #ffb547;
+  --lx-flame-soft: #3a2a12;
+  --lx-glass: #7cc4e8;
+  --lx-glass-soft: #13314a;
+  --lx-patina: #4fc1a6;
+  --lx-patina-soft: #123a33;
+  --lx-signal: #ff7262;
+  --lx-signal-soft: #3e1c1a;
+}

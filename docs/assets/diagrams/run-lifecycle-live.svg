@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" class="lx" role="img" aria-labelledby="run-lifecycle-live-title run-lifecycle-live-desc">
+  <title id="run-lifecycle-live-title">The life of your run</title>
+  <desc id="run-lifecycle-live-desc">Read top to bottom. Gates: the request, authentication with tenant fencing, the budget check that returns 402 when over budget, and the manifest isolation setting of shared or microvm. Execution runs in the shared tier for your own code or inside a microVM for untrusted code, and a tier failure fails loudly. Status moves queued, running, succeeded, with failed, cancelled and waiting also possible. Evidence is the journal, an Ed25519 receipt and OTel traces.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="run-lifecycle-live-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-live-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-live-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-live-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-live-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="900" rx="16"/>
+  <text class="t-title" x="40" y="52">The life of your run</text>
+  <text class="t-sub" x="40" y="76">Read top to bottom: gated, executed, tracked, proven.</text>
+  <rect class="group" x="40" y="100" width="1120" height="150" rx="18"/>
+  <text class="t-h" x="60" y="126">1 The gates, before anything runs</text>
+  <rect class="node" x="60" y="144" width="255" height="84" rx="10"/>
+  <text class="t-h" x="76" y="170">Your request</text>
+  <text class="t-b mono" x="76" y="190">POST /v1/runs</text>
+  <text class="t-b" x="76" y="208">or channel, cron, A2A</text>
+  <path class="edge" d="M315 186H333" marker-end="url(#run-lifecycle-live-a)"/>
+  <rect class="node" x="335" y="144" width="255" height="84" rx="10"/>
+  <text class="t-h" x="351" y="170">Who are you?</text>
+  <text class="t-b" x="351" y="190">Auth: JWT or API key</text>
+  <text class="t-b" x="351" y="208">everything tenant-fenced</text>
+  <path class="edge" d="M590 186H608" marker-end="url(#run-lifecycle-live-a)"/>
+  <rect class="node" x="610" y="144" width="255" height="84" rx="10"/>
+  <text class="t-h" x="626" y="170">Can you afford it?</text>
+  <text class="t-b" x="626" y="190">Over budget: HTTP 402</text>
+  <text class="t-b" x="626" y="208">no spend, no run</text>
+  <path class="edge" d="M865 186H883" marker-end="url(#run-lifecycle-live-a)"/>
+  <rect class="node" x="885" y="144" width="255" height="84" rx="10"/>
+  <text class="t-h" x="901" y="170">How sandboxed?</text>
+  <text class="t-b" x="901" y="190">Manifest isolation decides:</text>
+  <text class="t-b" x="901" y="208">shared or microvm (ADR 0022)</text>
+  <rect class="group" x="40" y="290" width="1120" height="210" rx="18"/>
+  <text class="t-h" x="60" y="316">2 Execution: one of two tiers</text>
+  <path class="edge" d="M900 228V268H320V320" marker-end="url(#run-lifecycle-live-a)"/>
+  <path class="edge-glass" d="M1012 228V316" marker-end="url(#run-lifecycle-live-ag)"/>
+  <text class="t-s" x="330" y="262">shared</text>
+  <text class="t-s" x="1024" y="262">microvm</text>
+  <a href="/runtime/#shared"><title>Shared tier</title>
+  <rect class="node" x="60" y="320" width="520" height="160" rx="10"/>
+  <text class="t-h" x="76" y="346">Shared tier: your own code</text>
+  <text class="t-b" x="76" y="366">Inline executor; tokens stream live</text>
+  <text class="t-b" x="76" y="384">Workflow graph or plain LLM loop, every step journaled</text>
+  <text class="t-b" x="76" y="402">Risky steps can wait for a human, parked at zero compute</text>
+  <text class="t-b" x="76" y="420">Crash-safe: resumes at the last completed step</text>
+  </a>
+  <a href="/runtime/#microvm"><title>MicroVM tier</title>
+  <rect class="wall" x="620" y="316" width="520" height="170" rx="18"/>
+  <text class="t-h t-glass" x="640" y="342">microVM tier: untrusted code</text>
+  <rect class="node-guest" x="640" y="356" width="480" height="114" rx="10"/>
+  <text class="t-h" x="656" y="382">Its own virtual machine per workload</text>
+  <text class="t-b" x="656" y="402">Separate kernel · egress only by allowlist</text>
+  <text class="t-b" x="656" y="420">Tools run inside: shell_exec, http_fetch</text>
+  <text class="t-b" x="656" y="438">Tier down? The run fails loudly, never downgraded</text>
+  </a>
+  <rect class="group" x="40" y="520" width="1120" height="130" rx="18"/>
+  <text class="t-h" x="60" y="546">3 Status: where your run is right now</text>
+  <rect class="node" x="60" y="556" width="150" height="44" rx="10"/>
+  <text class="t-b" x="76" y="580">queued</text>
+  <rect class="node" x="246" y="556" width="150" height="44" rx="10"/>
+  <text class="t-b" x="262" y="580">running</text>
+  <rect class="node" x="432" y="556" width="150" height="44" rx="10"/>
+  <text class="t-b" x="448" y="580">succeeded</text>
+  <path class="edge" d="M210 578H244" marker-end="url(#run-lifecycle-live-a)"/>
+  <path class="edge" d="M396 578H430" marker-end="url(#run-lifecycle-live-a)"/>
+  <rect class="node" x="618" y="556" width="522" height="44" rx="10"/>
+  <text class="t-b" x="634" y="580">Also: waiting (human approval), failed, cancelled</text>
+  <a href="/runtime/durable-execution"><title>Durable execution: crash-safe resume</title>
+  <text class="t-b" x="60" y="630">Crash? The recovery sweep (default every 30 s) re-drives the run; finished steps are never re-billed.</text>
+  </a>
+  <rect class="group" x="40" y="670" width="1120" height="130" rx="18"/>
+  <text class="t-h" x="60" y="696">4 Your evidence, what you hold afterward</text>
+  <rect class="node" x="60" y="706" width="336" height="74" rx="10"/>
+  <text class="t-h" x="76" y="732">journal_events</text>
+  <text class="t-b" x="76" y="752">every step on the record, streamed live</text>
+  <a href="/runtime/receipts"><title>Verifiable receipts</title>
+  <rect class="node" x="432" y="706" width="336" height="74" rx="10"/>
+  <text class="t-h" x="448" y="732">Ed25519 receipt</text>
+  <text class="t-b" x="448" y="752">signed proof, verifiable with no account</text>
+  </a>
+  <rect class="node" x="804" y="706" width="336" height="74" rx="10"/>
+  <text class="t-h" x="820" y="732">OTel traces</text>
+  <text class="t-b" x="820" y="752">tenant, run and step on every span</text>
+  <g transform="translate(40 850)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/>
+  <text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-guest" x="137" width="14" height="14" rx="3"/>
+  <text class="t-s" x="159" y="11">Untrusted guest</text>
+  <rect class="wall" x="288" width="14" height="14" rx="3"/>
+  <text class="t-s" x="310" y="11">microVM wall</text>
+  </g>
+</svg>

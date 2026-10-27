@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" class="lx" role="img" aria-labelledby="runtime-dispatch-title runtime-dispatch-desc">
+  <title id="runtime-dispatch-title">A spawn request lands on a hardened RuntimeClass or is refused at one of two gates</title>
+  <desc id="runtime-dispatch-desc">Decision flow for one spawn request in the runtime-manager. The request carries an isolation class and a confidential flag. A confidential request is first raised to the hostile tier, audited, and never lowered. The first gate, choose_backend, asks whether the node backend satisfies the class and, for confidential work, the Kata-CC class; if not it returns Unavailable with failed_precondition and nothing runs. The second gate, build_job, maps the class to a RuntimeClass and bails if none is configured, so a bare runc pod is never emitted for untrusted, hostile or confidential work. On success the Pod is emitted with the RuntimeClass name, node affinity and a toleration. A rules panel lists the requirements: untrusted needs gVisor, hostile needs Kata, confidential needs Kata-CC, and standard uses gVisor with runc only behind LANTERN_ALLOW_RUNC_STANDARD.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="runtime-dispatch-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-dispatch-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-dispatch-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-dispatch-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-dispatch-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="520" rx="16"/>
+  <text class="t-title" x="40" y="52">A spawn request lands on a hardened RuntimeClass or is refused at one of two gates</text>
+  <text class="t-sub" x="40" y="76">The decision path inside the runtime-manager. Nothing downgrades: a refusal at either gate means the workload never starts.</text>
+  <rect class="node" x="60" y="120" width="170" height="100" rx="10"/>
+  <text class="t-h" x="76" y="146">Spawn request</text>
+  <text class="t-b" x="76" y="166">from the scheduler</text>
+  <text class="t-s mono" x="76" y="185">isolation_class</text>
+  <text class="t-s mono" x="76" y="204">confidential</text>
+  <rect class="node-host" x="255" y="120" width="200" height="100" rx="10"/>
+  <text class="t-h" x="271" y="146">Confidential floor</text>
+  <text class="t-b" x="271" y="166">raises the class to</text>
+  <text class="t-b" x="271" y="185">hostile tier, audited,</text>
+  <text class="t-b" x="271" y="204">never lowered</text>
+  <rect class="node-host" x="480" y="120" width="220" height="100" rx="10"/>
+  <text class="t-h" x="496" y="146">choose_backend</text>
+  <text class="t-b" x="496" y="166">gate 1: does this node</text>
+  <text class="t-b" x="496" y="185">backend satisfy the class?</text>
+  <text class="t-b" x="496" y="204">Kata-CC if confidential</text>
+  <rect class="node-host" x="725" y="120" width="220" height="100" rx="10"/>
+  <text class="t-h" x="741" y="146">build_job</text>
+  <text class="t-b" x="741" y="166">gate 2: maps to a class</text>
+  <text class="t-b" x="741" y="185">bails when none is set</text>
+  <text class="t-b" x="741" y="204">(defense in depth)</text>
+  <rect class="node-glass" x="970" y="120" width="170" height="100" rx="10"/>
+  <text class="t-h" x="986" y="146">Pod emitted</text>
+  <text class="t-b" x="986" y="166">RuntimeClass set</text>
+  <text class="t-b" x="986" y="185">node affinity and</text>
+  <text class="t-b" x="986" y="204">toleration</text>
+  <path class="edge" d="M230 170H253" marker-end="url(#runtime-dispatch-a)"/>
+  <path class="edge" d="M455 170H478" marker-end="url(#runtime-dispatch-a)"/>
+  <path class="edge" d="M700 170H723" marker-end="url(#runtime-dispatch-a)"/>
+  <path class="edge" d="M945 170H968" marker-end="url(#runtime-dispatch-a)"/>
+  <path class="edge-deny" d="M590 220V298" marker-end="url(#runtime-dispatch-ad)"/>
+  <text class="t-s" x="600" y="262">no</text>
+  <path class="edge-deny" d="M835 220V298" marker-end="url(#runtime-dispatch-ad)"/>
+  <text class="t-s" x="845" y="262">no</text>
+  <rect class="node-deny" x="480" y="300" width="220" height="96" rx="10"/>
+  <text class="t-h" x="496" y="326">Refused</text>
+  <text class="t-s mono" x="496" y="346">BackendChoice::Unavailable</text>
+  <text class="t-s mono" x="496" y="365">failed_precondition</text>
+  <text class="t-b" x="496" y="384">nothing runs</text>
+  <rect class="node-deny" x="725" y="300" width="220" height="96" rx="10"/>
+  <text class="t-h" x="741" y="326">Refused</text>
+  <text class="t-b" x="741" y="346">bail!: no bare runc pod</text>
+  <text class="t-b" x="741" y="365">for untrusted or hostile</text>
+  <text class="t-b" x="741" y="384">nothing runs</text>
+  <rect class="group" x="60" y="300" width="395" height="150" rx="12"/>
+  <text class="t-h" x="76" y="326">What each class requires</text>
+  <text class="t-b" x="76" y="350">untrusted needs gVisor, hostile needs Kata</text>
+  <text class="t-b" x="76" y="370">confidential needs Kata-CC (SEV-SNP or TDX)</text>
+  <text class="t-b" x="76" y="390">standard uses gVisor; bare runc only with</text>
+  <text class="t-b mono" x="76" y="410">LANTERN_ALLOW_RUNC_STANDARD=1</text>
+  <text class="t-b" x="76" y="434">trusted runs on runc by design</text>
+  <text class="t-h" x="480" y="436">Result: a workload runs on the class it declared, or it does not run.</text>
+  <g transform="translate(40 484)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Request</text>
+  <rect class="node-host" x="90" width="14" height="14" rx="3"/><text class="t-s" x="112" y="11">Trusted host logic</text>
+  <rect class="node-glass" x="260" width="14" height="14" rx="3"/><text class="t-s" x="282" y="11">Hardened pod</text>
+  <rect class="node-deny" x="400" width="14" height="14" rx="3"/><text class="t-s" x="422" y="11">Refused</text>
+  </g>
+</svg>

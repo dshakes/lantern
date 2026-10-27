@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" class="lx" role="img" aria-labelledby="run-lifecycle-title run-lifecycle-desc">
+  <title id="run-lifecycle-title">Agent run lifecycle</title>
+  <desc id="run-lifecycle-desc">A trigger from an SDK, CLI, cron, channel, A2A call or marketplace invoke passes five stages: budget forecast with hard-fail 402, durable journaled steps, capability model routing, isolated execution in a microVM or the shared tier, and a signed receipt (Ed25519 when a seed is configured). A continuous safety loop of eval-in-CI, rehearsals with feedback, and A/B experiments gates promotion.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="run-lifecycle-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="run-lifecycle-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="600" rx="16"/>
+  <text class="t-title" x="40" y="52">Every run is budgeted, durable, isolated and provable</text>
+  <text class="t-sub" x="40" y="76">Five stages, the same for every channel. Tokens stream end to end with no buffering point.</text>
+  <rect class="node" x="40" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="56" y="136">Trigger</text>
+  <text class="t-b" x="56" y="156">SDK · CLI · cron</text>
+  <text class="t-b" x="56" y="174">channels · webchat</text>
+  <text class="t-b" x="56" y="192">A2A · marketplace</text>
+  <text class="t-b" x="56" y="210">invoke</text>
+  <path class="edge" d="M210 185H228" marker-end="url(#run-lifecycle-a)"/>
+  <rect class="node" x="230" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="246" y="136">1 Budget</text>
+  <text class="t-b" x="246" y="156">Pre-run forecast</text>
+  <text class="t-b" x="246" y="174">Hard-fail limits</text>
+  <text class="t-b" x="246" y="192">Over budget: 402</text>
+  <text class="t-b" x="246" y="210">Day, run, tool caps</text>
+  <path class="edge" d="M400 185H418" marker-end="url(#run-lifecycle-a)"/>
+  <rect class="node" x="420" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="436" y="136">2 Durable steps</text>
+  <text class="t-b" x="436" y="156">Workflow engine</text>
+  <text class="t-b" x="436" y="174">Replayable steps</text>
+  <text class="t-b" x="436" y="192">Event journal</text>
+  <text class="t-b" x="436" y="210">Owns run state</text>
+  <path class="edge" d="M590 185H608" marker-end="url(#run-lifecycle-a)"/>
+  <rect class="node" x="610" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="626" y="136">3 Model router</text>
+  <text class="t-b" x="626" y="156">model: auto</text>
+  <text class="t-b" x="626" y="174">4 strategies</text>
+  <text class="t-b" x="626" y="192">Failover</text>
+  <text class="t-b" x="626" y="210">Caching + metering</text>
+  <path class="edge" d="M780 185H798" marker-end="url(#run-lifecycle-a)"/>
+  <rect class="node-guest" x="800" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="816" y="136">4 Isolated exec</text>
+  <text class="t-b" x="816" y="156">microVM tier:</text>
+  <text class="t-b" x="816" y="174">Firecracker or Kata</text>
+  <text class="t-b" x="816" y="192">Egress allowlist</text>
+  <text class="t-b" x="816" y="210">Short-TTL secrets</text>
+  <text class="t-b" x="816" y="228">Or shared tier</text>
+  <path class="edge" d="M970 185H988" marker-end="url(#run-lifecycle-a)"/>
+  <rect class="node" x="990" y="110" width="170" height="150" rx="10"/>
+  <text class="t-h" x="1006" y="136">5 Receipt</text>
+  <text class="t-b" x="1006" y="156">Ed25519 or HMAC sig</text>
+  <text class="t-b" x="1006" y="174">over journal SHA-256</text>
+  <text class="t-b" x="1006" y="192">Verify at /proof,</text>
+  <text class="t-b" x="1006" y="210">no auth needed</text>
+  <rect class="group" x="40" y="300" width="1120" height="180" rx="18"/>
+  <text class="t-h" x="60" y="328">Continuous safety loop</text>
+  <rect class="node" x="60" y="348" width="336" height="100" rx="10"/>
+  <text class="t-h" x="76" y="374">Eval-in-CI</text>
+  <text class="t-b" x="76" y="394">Declarative suites, per-branch baseline</text>
+  <text class="t-b" x="76" y="412">Regression fails the build: HTTP 422</text>
+  <rect class="node" x="432" y="348" width="336" height="100" rx="10"/>
+  <text class="t-h" x="448" y="374">Rehearsals and feedback</text>
+  <text class="t-b" x="448" y="394">Replay real failures vs a candidate</text>
+  <text class="t-b" x="448" y="412">Thumbs-down becomes eval examples</text>
+  <rect class="node" x="804" y="348" width="336" height="100" rx="10"/>
+  <text class="t-h" x="820" y="374">A/B experiments</text>
+  <text class="t-b" x="820" y="394">Deterministic FNV-1a traffic split</text>
+  <text class="t-b" x="820" y="412">Auto-promote on &gt;2% lift, min runs/arm</text>
+  <text class="t-b" x="40" y="512">Promote only after the gate clears. Receipts prove what ran and what it cost.</text>
+  <g transform="translate(40 560)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/>
+  <text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-guest" x="137" width="14" height="14" rx="3"/>
+  <text class="t-s" x="159" y="11">Untrusted guest</text>
+  </g>
+</svg>

@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 710" class="lx" role="img" aria-labelledby="loop-tiers-title loop-tiers-desc">
+  <title id="loop-tiers-title">Five tiers set how often a loop agent wakes up</title>
+  <desc id="loop-tiers-desc">The five loop agent tiers and the seeded agents on each. Nano is event-driven with no schedule row: commute-copilot, energy-guardian, health-coach and focus-guardian. Micro runs every five minutes: ai-radar. Meso runs every 45 minutes: concierge and inbox-triage. Macro runs daily at 8am: financial-sentinel and the domain trackers care-coordinator, garage, upskill, travel-concierge and household. Mega runs weekly on Monday at 9am: relationship-keeper. The chief-of-staff role is also macro but is not seeded.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="loop-tiers-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="loop-tiers-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="loop-tiers-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="loop-tiers-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="loop-tiers-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="710" rx="16"/>
+  <text class="t-title" x="40" y="52">Five tiers set how often a loop agent wakes up</text>
+  <text class="t-sub" x="40" y="76">Same loop engine for all of them; the tier only picks the default schedule, fastest at the top.</text>
+  <text class="t-s" x="40" y="106">faster</text>
+  <rect class="group" x="40" y="116" width="1120" height="76" rx="18"/>
+  <text class="t-h" x="60" y="146">nano</text>
+  <text class="t-b" x="60" y="166">event-driven</text>
+  <text class="t-s mono" x="60" y="184">no schedule row</text>
+  <rect class="node" x="300" y="130" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="154">commute-copilot</text>
+  <text class="t-s mono" x="314" y="170">commute_copilot</text>
+  <rect class="node" x="514" y="130" width="200" height="48" rx="10"/>
+  <text class="t-h" x="528" y="154">energy-guardian</text>
+  <text class="t-s mono" x="528" y="170">energy_guardian</text>
+  <rect class="node" x="728" y="130" width="200" height="48" rx="10"/>
+  <text class="t-h" x="742" y="154">health-coach</text>
+  <text class="t-s mono" x="742" y="170">health_coach</text>
+  <rect class="node" x="942" y="130" width="200" height="48" rx="10"/>
+  <text class="t-h" x="956" y="154">focus-guardian</text>
+  <text class="t-s mono" x="956" y="170">focus_guardian</text>
+  <rect class="group" x="40" y="204" width="1120" height="76" rx="18"/>
+  <text class="t-h" x="60" y="234">micro</text>
+  <text class="t-b" x="60" y="254">every 5 minutes</text>
+  <text class="t-s mono" x="60" y="272">*/5 * * * *</text>
+  <rect class="node" x="300" y="218" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="242">ai-radar</text>
+  <text class="t-s mono" x="314" y="258">news_radar</text>
+  <rect class="group" x="40" y="292" width="1120" height="76" rx="18"/>
+  <text class="t-h" x="60" y="322">meso</text>
+  <text class="t-b" x="60" y="342">every 45 minutes</text>
+  <text class="t-s mono" x="60" y="360">*/45 * * * *</text>
+  <rect class="node" x="300" y="306" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="330">concierge</text>
+  <text class="t-s mono" x="314" y="346">concierge</text>
+  <rect class="node" x="514" y="306" width="200" height="48" rx="10"/>
+  <text class="t-h" x="528" y="330">inbox-triage</text>
+  <text class="t-s mono" x="528" y="346">inbox_triage</text>
+  <rect class="group" x="40" y="380" width="1120" height="140" rx="18"/>
+  <text class="t-h" x="60" y="410">macro</text>
+  <text class="t-b" x="60" y="430">daily at 8am</text>
+  <text class="t-s mono" x="60" y="448">0 8 * * *</text>
+  <rect class="node" x="300" y="394" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="418">financial-sentinel</text>
+  <text class="t-s mono" x="314" y="434">financial_sentinel</text>
+  <rect class="node" x="514" y="394" width="200" height="48" rx="10"/>
+  <text class="t-h" x="528" y="418">care-coordinator</text>
+  <text class="t-s mono" x="528" y="434">domain_tracker</text>
+  <rect class="node" x="728" y="394" width="200" height="48" rx="10"/>
+  <text class="t-h" x="742" y="418">garage</text>
+  <text class="t-s mono" x="742" y="434">domain_tracker</text>
+  <rect class="node" x="300" y="454" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="478">upskill</text>
+  <text class="t-s mono" x="314" y="494">domain_tracker</text>
+  <rect class="node" x="514" y="454" width="200" height="48" rx="10"/>
+  <text class="t-h" x="528" y="478">travel-concierge</text>
+  <text class="t-s mono" x="528" y="494">domain_tracker</text>
+  <rect class="node" x="728" y="454" width="200" height="48" rx="10"/>
+  <text class="t-h" x="742" y="478">household</text>
+  <text class="t-s mono" x="742" y="494">domain_tracker</text>
+  <rect class="group" x="40" y="532" width="1120" height="76" rx="18"/>
+  <text class="t-h" x="60" y="562">mega</text>
+  <text class="t-b" x="60" y="582">weekly, Monday 9am</text>
+  <text class="t-s mono" x="60" y="600">0 9 * * 1</text>
+  <rect class="node" x="300" y="546" width="200" height="48" rx="10"/>
+  <text class="t-h" x="314" y="570">relationship-keeper</text>
+  <text class="t-s mono" x="314" y="586">relationship_keeper</text>
+  <text class="t-s" x="40" y="626">slower</text>
+  <text class="t-s" x="40" y="650">The tier sets the default cron when the manifest has none or an invalid one. chief-of-staff (macro) exists as a role but is not seeded.</text>
+  <g transform="translate(40 672)">
+    <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Seeded loop agent (name, then role)</text>
+  </g>
+</svg>

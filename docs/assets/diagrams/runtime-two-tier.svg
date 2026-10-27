@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 830" class="lx" role="img" aria-labelledby="runtime-two-tier-title runtime-two-tier-desc">
+  <title id="runtime-two-tier-title">The manifest, not the caller, picks the tier, and one journal sits under both</title>
+  <desc id="runtime-two-tier-desc">Routing of a run across two tiers. A run is created from the SDK, CLI, dashboard, schedules or A2A, passes the control-plane auth and budget gate, and is routed by the agent manifest field isolation, set on the agent version and not by the caller. The shared tier, the default, runs in the control plane: a workflow interpreter with nine node types, per-step retry and an optional confidence gate that can divert a step to a human, and an LLM tool-use loop with capability-addressed models, built-in web search and idempotency keys. The microVM tier, for untrusted code, goes through the runtime-scheduler for placement and the runtime-manager for the isolation gate; inside the sandbox wall the harness runs as PID 1 beside an in-guest tool runner offering shell_exec, http_fetch, read_file, write_file and list_dir. If the microVM tier is unavailable the run fails with microvm_unavailable and is never downgraded to the shared tier. Both tiers write to one journal_events log, which powers recovery, the run waterfall, live streams and signed receipts.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="runtime-two-tier-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-two-tier-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-two-tier-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-two-tier-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-two-tier-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="830" rx="16"/>
+  <text class="t-title" x="40" y="52">The manifest, not the caller, picks the tier, and one journal sits under both</text>
+  <text class="t-sub" x="40" y="76">Isolation is a property of the agent version: shared for trusted first-party code, microvm for untrusted or exec workloads.</text>
+  <rect class="node" x="40" y="110" width="340" height="84" rx="10"/>
+  <text class="t-h" x="56" y="136">Run created</text>
+  <text class="t-b" x="56" y="156">SDK, CLI, dashboard, schedules, A2A</text>
+  <rect class="node" x="420" y="110" width="360" height="84" rx="10"/>
+  <text class="t-h" x="436" y="136">control-plane</text>
+  <text class="t-s mono" x="436" y="156">POST /v1/runs · :8080</text>
+  <text class="t-b" x="436" y="175">auth, then budget gate (402)</text>
+  <rect class="node" x="820" y="110" width="340" height="84" rx="10"/>
+  <text class="t-h" x="836" y="136">Route by manifest</text>
+  <text class="t-s mono" x="836" y="156">isolation: "shared" | "microvm"</text>
+  <text class="t-b" x="836" y="175">set on the agent version</text>
+  <path class="edge" d="M380 152H418" marker-end="url(#runtime-two-tier-a)"/>
+  <path class="edge" d="M780 152H818" marker-end="url(#runtime-two-tier-a)"/>
+  <path class="edge" d="M860 194V215H300V234" marker-end="url(#runtime-two-tier-a)"/>
+  <text class="t-s" x="312" y="208">shared (default)</text>
+  <path class="edge-glass" d="M1060 194V234" marker-end="url(#runtime-two-tier-ag)"/>
+  <text class="t-s" x="1070" y="218">microvm</text>
+  <rect class="group" x="40" y="236" width="520" height="310" rx="18"/>
+  <text class="t-h" x="60" y="262">Shared tier: trusted code, runs in the control plane</text>
+  <rect class="node" x="60" y="280" width="240" height="112" rx="10"/>
+  <text class="t-h" x="76" y="306">Workflow interpreter</text>
+  <text class="t-b" x="76" y="326">nine node types</text>
+  <text class="t-b" x="76" y="345">per-step retry</text>
+  <text class="t-b" x="76" y="364">gate can divert to a human</text>
+  <rect class="node" x="320" y="280" width="220" height="112" rx="10"/>
+  <text class="t-h" x="336" y="306">LLM tool-use loop</text>
+  <text class="t-b" x="336" y="326">capability-addressed</text>
+  <text class="t-b" x="336" y="345">web_search built in</text>
+  <text class="t-b" x="336" y="364">idempotency keys</text>
+  <rect class="node" x="60" y="412" width="480" height="112" rx="10"/>
+  <text class="t-h" x="76" y="438">Guarantees</text>
+  <text class="t-b" x="76" y="458">resumes at the last completed step after a crash</text>
+  <text class="t-b" x="76" y="477">side effects dedup on idempotency keys</text>
+  <text class="t-b" x="76" y="496">spend is budget-metered</text>
+  <rect class="group" x="620" y="236" width="540" height="310" rx="18"/>
+  <text class="t-h" x="640" y="262">MicroVM tier: untrusted code, walled in</text>
+  <rect class="node-host" x="640" y="280" width="240" height="64" rx="10"/>
+  <text class="t-h" x="656" y="306">runtime-scheduler</text>
+  <text class="t-b" x="656" y="326">placement on a node</text>
+  <rect class="node-host" x="900" y="280" width="240" height="64" rx="10"/>
+  <text class="t-h" x="916" y="306">runtime-manager</text>
+  <text class="t-b" x="916" y="326">isolation gate</text>
+  <path class="edge-patina" d="M880 312H898" marker-end="url(#runtime-two-tier-ap)"/>
+  <rect class="wall" x="640" y="370" width="500" height="154" rx="18"/>
+  <text class="t-h t-glass" x="660" y="394">Sandbox</text>
+  <rect class="node-host" x="660" y="408" width="210" height="100" rx="10"/>
+  <text class="t-h" x="676" y="434">Harness (PID 1)</text>
+  <text class="t-b" x="676" y="454">egress allowlist</text>
+  <text class="t-b" x="676" y="473">secret vends, audit</text>
+  <rect class="node-guest" x="890" y="408" width="230" height="100" rx="10"/>
+  <text class="t-h" x="906" y="434">In-guest tool runner</text>
+  <text class="t-b" x="906" y="454">shell_exec, http_fetch,</text>
+  <text class="t-b" x="906" y="473">read_file, write_file,</text>
+  <text class="t-b" x="906" y="492">list_dir</text>
+  <path class="edge-glass" d="M1020 344V368" marker-end="url(#runtime-two-tier-ag)"/>
+  <rect class="node-deny" x="620" y="568" width="540" height="66" rx="10"/>
+  <text class="t-h" x="636" y="592">Tier unavailable: the run fails</text>
+  <text class="t-s mono" x="636" y="612">code: microvm_unavailable, never downgraded</text>
+  <path class="edge-deny" d="M890 546V566" marker-end="url(#runtime-two-tier-ad)"/>
+  <rect class="node" x="40" y="668" width="1120" height="96" rx="10"/>
+  <text class="t-h" x="58" y="694">journal_events: one event log under both tiers</text>
+  <text class="t-b" x="58" y="714">every step is written before it runs; microVM steps arrive through the harness, manager and control-plane report path</text>
+  <text class="t-b" x="58" y="733">30 s recovery sweep re-drives crashed runs; powers the run waterfall, live streams, signed receipts</text>
+  <path class="edge" d="M300 546V666" marker-end="url(#runtime-two-tier-a)"/>
+  <path class="edge" d="M620 500H590V666" marker-end="url(#runtime-two-tier-a)"/>
+  <g transform="translate(40 792)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted Lantern infrastructure</text>
+  <rect class="node-guest" x="362" width="14" height="14" rx="3"/><text class="t-s" x="384" y="11">Untrusted guest</text>
+  <rect class="wall" x="512" width="14" height="14" rx="3"/><text class="t-s" x="534" y="11">Sandbox wall</text>
+  <rect class="node-deny" x="642" width="14" height="14" rx="3"/><text class="t-s" x="664" y="11">Refused</text>
+  </g>
+</svg>

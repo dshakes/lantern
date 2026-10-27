@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" class="lx" role="img" aria-labelledby="egress-broker-title egress-broker-desc">
+  <title id="egress-broker-title">Credentials are added at the host, never inside the VM</title>
+  <desc id="egress-broker-desc">Egress through the host broker (opt-in broker mode, LANTERN_EGRESS_MODE=broker, Firecracker only). In this mode the microVM has no network device. The agent workload sends its HTTP request to the harness forwarder on 127.0.0.1:3128 through the injected proxy variables. The forwarder carries it over vsock to the host egress broker running inside the runtime-manager on the data plane host. The broker checks the VM's egress allowlist. A request to a host that is not allowlisted is refused and logged as an audit event. An allowed request gets its credential injected on the host, resolved from lantern.secret references by the secret resolver (today's production resolver is the control-plane relay, ADR 0008), and is then sent to the upstream API. The credential never enters the VM. In the default mode the allowlist is enforced in-guest via an iptables-redirected CONNECT proxy instead.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="egress-broker-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="egress-broker-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="egress-broker-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="egress-broker-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="egress-broker-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="640" rx="16"/>
+  <text class="t-title" x="40" y="52">Credentials are added at the host, never inside the VM</text>
+  <text class="t-sub" x="40" y="76">Opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only). A guest request leaves only over vsock. The host broker checks the allowlist and attaches the secret on the way out.</text>
+
+  <!-- microVM -->
+  <rect class="wall" x="40" y="110" width="360" height="440" rx="18"/>
+  <text class="t-h t-glass" x="60" y="136">microVM</text>
+
+  <text class="t-s" x="380" y="136" text-anchor="end">no network device (broker mode, opt-in)</text>
+  <rect class="node-guest" x="64" y="150" width="312" height="80" rx="10"/>
+  <text class="t-h" x="80" y="178">Agent workload</text>
+  <text class="t-b" x="80" y="198">makes an ordinary HTTPS request</text>
+  <text class="t-b" x="80" y="216">holds no API credentials</text>
+
+  <rect class="node-glass" x="64" y="300" width="312" height="80" rx="10"/>
+
+  <text class="t-h" x="80" y="328">Harness forwarder</text>
+
+  <text class="t-b mono" x="80" y="348">127.0.0.1:3128</text>
+
+  <text class="t-b" x="80" y="366">the only way out of the VM</text>
+
+  <path class="edge-flame" d="M220 230V298" marker-end="url(#egress-broker-af)"/>
+
+  <text class="t-s mono" x="228" y="268">HTTPS_PROXY</text>
+
+  <text class="t-b" x="64" y="500">The credential never enters the VM.</text>
+
+  <!-- data plane host -->
+
+  <rect class="zone" x="440" y="110" width="500" height="440" rx="18"/>
+
+  <text class="t-s" x="460" y="136">Data plane host, inside <tspan class="mono">runtime-manager</tspan></text>
+
+  <rect class="node-host" x="464" y="300" width="200" height="80" rx="10"/>
+
+  <text class="t-h" x="480" y="328">Host egress broker</text>
+
+  <text class="t-b" x="480" y="348">ends the vsock stream</text>
+
+  <rect class="node-host" x="712" y="300" width="200" height="80" rx="10"/>
+
+  <text class="t-h" x="728" y="328">Allowlist check</text>
+
+  <text class="t-b" x="728" y="348">the VM's egress rules</text>
+
+  <rect class="node-host" x="712" y="150" width="200" height="80" rx="10"/>
+
+  <text class="t-h" x="728" y="178">Credential injection</text>
+
+  <text class="t-b" x="728" y="198">header added on</text>
+
+  <text class="t-b" x="728" y="216">the host side</text>
+
+  <rect class="node-host" x="464" y="150" width="200" height="80" rx="10"/>
+
+  <text class="t-h" x="480" y="178">Secret resolver</text>
+
+  <text class="t-b mono" x="480" y="198">lantern.secret/...</text>
+
+  <text class="t-b" x="480" y="216">refs from the spec</text>
+
+  <text class="t-s" x="464" y="252">Prod resolver today (ADR 0008):</text>
+
+  <text class="t-s" x="464" y="267">control-plane relay,</text>
+
+  <text class="t-s mono" x="464" y="282">/v1/runtime/secrets/resolve</text>
+
+  <rect class="node-deny" x="712" y="440" width="200" height="80" rx="10"/>
+
+  <text class="t-h" x="728" y="468">Refused</text>
+
+  <text class="t-b" x="728" y="488">logged as an audit event</text>
+
+  <!-- upstream -->
+
+  <rect class="node" x="980" y="150" width="180" height="80" rx="10"/>
+
+  <text class="t-h" x="996" y="178">Upstream API</text>
+
+  <text class="t-b" x="996" y="198">allowlisted host</text>
+
+  <!-- edges -->
+
+  <path class="edge-glass" d="M376 340H462" marker-end="url(#egress-broker-ag)"/>
+
+  <text class="t-s mono" x="420" y="332" text-anchor="middle">vsock</text>
+
+  <path class="edge-patina" d="M664 340H710" marker-end="url(#egress-broker-ap)"/>
+
+  <path class="edge-patina" d="M812 300V232" marker-end="url(#egress-broker-ap)"/>
+
+  <text class="t-s" x="820" y="270">allowed</text>
+
+  <path class="edge-deny" d="M812 380V438" marker-end="url(#egress-broker-ad)"/>
+
+  <text class="t-s" x="820" y="414">not allowlisted</text>
+
+  <path class="edge-patina" d="M664 190H710" marker-end="url(#egress-broker-ap)"/>
+
+  <path class="edge-patina" d="M912 190H978" marker-end="url(#egress-broker-ap)"/>
+
+  <g transform="translate(40 602)">
+    <rect class="node" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">External</text>
+    <rect class="node-host" x="110" width="14" height="14" rx="3"/><text class="t-s" x="132" y="11">Trusted host</text>
+    <rect class="node-glass" x="236" width="14" height="14" rx="3"/><text class="t-s" x="258" y="11">In-VM harness</text>
+    <rect class="node-guest" x="364" width="14" height="14" rx="3"/><text class="t-s" x="386" y="11">Untrusted guest</text>
+    <rect class="wall" x="504" width="14" height="14" rx="3"/><text class="t-s" x="526" y="11">microVM wall</text>
+    <rect class="zone" x="628" width="14" height="14" rx="3"/><text class="t-s" x="650" y="11">Trust boundary</text>
+    <rect class="node-deny" x="758" width="14" height="14" rx="3"/><text class="t-s" x="780" y="11">Denied</text>
+  </g>
+</svg>

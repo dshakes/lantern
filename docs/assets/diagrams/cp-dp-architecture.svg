@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 826" class="lx" role="img" aria-labelledby="cp-dp-architecture-title cp-dp-architecture-desc">
+  <title id="cp-dp-architecture-title">Your cloud runs the code; the control plane only orchestrates</title>
+  <desc id="cp-dp-architecture-desc">A request passes four control-plane steps: authenticate, budget and quota, mint per-VM identity, dispatch over service-token gRPC. It crosses a metadata-only trust boundary to the data plane, where the runtime scheduler picks a node, runtime-manager spawns the workload and the harness inside the microVM runs it. Step events, journal and a signed receipt come back up.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="cp-dp-architecture-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="cp-dp-architecture-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="cp-dp-architecture-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="cp-dp-architecture-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="cp-dp-architecture-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="826" rx="16"/>
+  <text class="t-title" x="40" y="52">Your cloud runs the code; the control plane only orchestrates</text>
+  <text class="t-sub" x="40" y="76">User code executes in the data plane. The control plane decides and records by metadata.</text>
+  <rect class="zone" x="40" y="100" width="1120" height="236" rx="18"/>
+  <text class="t-s" x="56" y="122">Control plane (managed SaaS)</text>
+  <rect class="node" x="60" y="136" width="240" height="100" rx="10"/>
+  <text class="t-h" x="76" y="162">1 Authenticate</text>
+  <text class="t-b" x="76" y="182">JWT or API key · RBAC</text>
+  <text class="t-b" x="76" y="200">tenant_id on every row,</text>
+  <text class="t-b" x="76" y="218">span and gRPC call · RLS</text>
+  <path class="edge" d="M300 186H338" marker-end="url(#cp-dp-architecture-a)"/>
+  <rect class="node" x="340" y="136" width="240" height="100" rx="10"/>
+  <text class="t-h" x="356" y="162">2 Budget and quota</text>
+  <text class="t-b" x="356" y="182">Forecast, then hard-fail</text>
+  <text class="t-b" x="356" y="200">limits: over budget is 402</text>
+  <text class="t-b" x="356" y="218">per-tenant VM quota (402/429)</text>
+  <path class="edge" d="M580 186H618" marker-end="url(#cp-dp-architecture-a)"/>
+  <rect class="node" x="620" y="136" width="240" height="100" rx="10"/>
+  <text class="t-h" x="636" y="162">3 Mint identity</text>
+  <text class="t-b" x="636" y="182">Per-VM certificate at spawn</text>
+  <text class="t-b" x="636" y="200">Secrets are lantern.secret</text>
+  <text class="t-b" x="636" y="218">refs, resolved at run time</text>
+  <path class="edge" d="M860 186H898" marker-end="url(#cp-dp-architecture-a)"/>
+  <rect class="node" x="900" y="136" width="240" height="100" rx="10"/>
+  <text class="t-h" x="916" y="162">4 Dispatch</text>
+  <text class="t-b" x="916" y="182">gRPC to the data plane,</text>
+  <text class="t-b" x="916" y="200">service-token authenticated</text>
+  <text class="t-b" x="916" y="218">tenant_id in call metadata</text>
+  <rect class="node" x="60" y="256" width="780" height="60" rx="10"/>
+  <text class="t-b" x="76" y="280">Also here: workflow engine · model router · memory · evals · marketplace · notifier</text>
+  <text class="t-b" x="76" y="298">Postgres, Redis, S3 hold metadata, costs and journals</text>
+  <rect class="zone" x="40" y="356" width="1120" height="84" rx="18"/>
+  <text class="t-s" x="56" y="378">Trust boundary: token-authenticated, metadata only</text>
+  <text class="t-b" x="56" y="402">Down: specs, secret refs, tenant_id. Up: heartbeats, step events, audit.</text>
+  <text class="t-s" x="56" y="424">mTLS is the planned hardening; the shared service token is the current gate.</text>
+  <path class="edge" d="M1020 236V460H210V520" marker-end="url(#cp-dp-architecture-a)"/>
+  <rect class="zone" x="40" y="480" width="1120" height="206" rx="18"/>
+  <text class="t-s" x="56" y="676">Data plane: your VPC (EKS, GKE, AKS, laptop)</text>
+  <rect class="node-host" x="60" y="520" width="300" height="130" rx="10"/>
+  <text class="t-h" x="76" y="546">runtime-scheduler</text>
+  <text class="t-b mono" x="76" y="566">:50055 · Go</text>
+  <text class="t-b" x="76" y="584">HA leader election · placement:</text>
+  <text class="t-b" x="76" y="602">warm pool, region, fair share, cost,</text>
+  <text class="t-b" x="76" y="620">health · picks the node for the spec</text>
+  <rect class="node-host" x="420" y="520" width="300" height="130" rx="10"/>
+  <text class="t-h" x="436" y="546">runtime-manager</text>
+  <text class="t-b mono" x="436" y="566">:50054 · Rust</text>
+  <text class="t-b" x="436" y="584">isolation gate fails closed:</text>
+  <text class="t-b" x="436" y="602">Firecracker, Kata, gVisor, Wasm</text>
+  <text class="t-b" x="436" y="620">snapshot, restore, warm pools</text>
+  <rect class="wall" x="780" y="496" width="360" height="164" rx="18"/>
+  <text class="t-h t-glass" x="800" y="520">microVM (the glass)</text>
+  <rect class="node-glass" x="800" y="534" width="320" height="104" rx="10"/>
+  <text class="t-h" x="816" y="560">harness (Rust, PID 1)</text>
+  <text class="t-b" x="816" y="580">egress allowlist proxy (:3128)</text>
+  <text class="t-b" x="816" y="598">secrets via SO_PEERCRED</text>
+  <text class="t-b" x="816" y="616">reports bound to the VM's own run</text>
+  <path class="edge-patina" d="M360 585H418" marker-end="url(#cp-dp-architecture-ap)"/>
+  <path class="edge-patina" d="M720 585H798" marker-end="url(#cp-dp-architecture-ap)"/>
+  <rect class="node" x="60" y="706" width="1080" height="56" rx="10"/>
+  <text class="t-b" x="76" y="730">Comes back up: step events to the journal, then the run waterfall and traces,</text>
+  <text class="t-b" x="76" y="748">then a signed, verifiable receipt.</text>
+  <path class="edge" d="M960 660V704" marker-end="url(#cp-dp-architecture-a)"/>
+  <g transform="translate(40 784)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/>
+  <text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-host" x="137" width="14" height="14" rx="3"/>
+  <text class="t-s" x="159" y="11">Trusted host</text>
+  <rect class="node-glass" x="268" width="14" height="14" rx="3"/>
+  <text class="t-s" x="290" y="11">In-VM harness</text>
+  <rect class="wall" x="419" width="14" height="14" rx="3"/>
+  <text class="t-s" x="441" y="11">microVM wall</text>
+  <rect class="zone" x="550" width="14" height="14" rx="3"/>
+  <text class="t-s" x="572" y="11">Trust boundary</text>
+  </g>
+</svg>

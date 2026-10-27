@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" class="lx" role="img" aria-labelledby="runtime-map-title runtime-map-desc">
+  <title id="runtime-map-title">Every run is gated, executed, survived and proven</title>
+  <desc id="runtime-map-desc">Map of the Lantern runtime in four columns, each a stage of one run. Gated: auth and tenancy with tenant_id on every row and span, a budget gate where a runaway loop gets HTTP 402, and the isolation route of shared or microvm declared at publish. Executes: the shared tier with the inline executor, workflow graphs and capability-routed LLM calls; the microVM tier for untrusted code behind the fail-closed gate; and a refusal, because an unavailable microVM tier fails the run with microvm_unavailable instead of downgrading. Survives: every step journaled in journal_events across both tiers, crash recovery by a 30 second sweep and replay that skips finished steps, and idempotency keys at every external boundary. Proves: live token and step streaming over SSE, one trace contract with tenant, run and step on every span and journal row, and an Ed25519 signed receipt verifiable without logging in. A row of chips links to durable execution, isolation, streaming, observability, sessions and memory, identity, receipts and the runtime quickstart.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="runtime-map-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-map-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-map-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-map-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-map-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="700" rx="16"/>
+  <text class="t-title" x="40" y="52">Every run is gated, executed, survived and proven</text>
+  <text class="t-sub" x="40" y="76">Four things happen to each run. Each card or chip links to its deep dive in the runtime docs.</text>
+  <rect class="group" x="40" y="104" width="262" height="392" rx="18"/>
+  <text class="t-h" x="56" y="134">It gets gated</text>
+  <rect class="node" x="56" y="150" width="230" height="100" rx="10"/>
+  <text class="t-h" x="70" y="176">Auth and tenancy</text>
+  <text class="t-b" x="70" y="196">JWT or API key; tenant_id on</text>
+  <text class="t-b" x="70" y="215">every row, RLS-backed</text>
+  <rect class="node" x="56" y="262" width="230" height="100" rx="10"/>
+  <text class="t-h" x="70" y="288">Budget gate</text>
+  <text class="t-b" x="70" y="308">forecast, then hard caps;</text>
+  <text class="t-b" x="70" y="327">a runaway loop gets HTTP 402</text>
+  <a href="/runtime/isolation">
+  <rect class="node" x="56" y="374" width="230" height="100" rx="10"/>
+  <text class="t-h" x="70" y="400">Isolation route</text>
+  <text class="t-b" x="70" y="420">isolation: shared | microvm</text>
+  <text class="t-b" x="70" y="439">declared at publish</text>
+  </a>
+  <rect class="group" x="326" y="104" width="262" height="392" rx="18"/>
+  <text class="t-h" x="342" y="134">It executes</text>
+  <rect class="node" x="342" y="150" width="230" height="100" rx="10"/>
+  <text class="t-h" x="356" y="176">Shared tier</text>
+  <text class="t-b" x="356" y="196">inline executor, workflow</text>
+  <text class="t-b" x="356" y="215">graphs, capability-routed</text>
+  <text class="t-b" x="356" y="234">LLM calls</text>
+  <a href="/runtime/isolation">
+  <rect class="node-glass" x="342" y="262" width="230" height="100" rx="10"/>
+  <text class="t-h" x="356" y="288">MicroVM tier</text>
+  <text class="t-b" x="356" y="308">untrusted code, walled in</text>
+  <text class="t-b" x="356" y="327">behind the fail-closed gate</text>
+  </a>
+  <rect class="node-deny" x="342" y="374" width="230" height="100" rx="10"/>
+  <text class="t-h" x="356" y="400">No silent downgrade</text>
+  <text class="t-b" x="356" y="420">microVM tier unavailable:</text>
+  <text class="t-b" x="356" y="439">the run fails with</text>
+  <text class="t-b" x="356" y="458">microvm_unavailable</text>
+  <rect class="group" x="612" y="104" width="262" height="392" rx="18"/>
+  <text class="t-h" x="628" y="134">It survives</text>
+  <a href="/runtime/durable-execution">
+  <rect class="node" x="628" y="150" width="230" height="100" rx="10"/>
+  <text class="t-h" x="642" y="176">Every step journaled</text>
+  <text class="t-b" x="642" y="196">journal_events, one event</text>
+  <text class="t-b" x="642" y="215">log under both tiers</text>
+  </a>
+  <a href="/runtime/durable-execution">
+  <rect class="node" x="628" y="262" width="230" height="100" rx="10"/>
+  <text class="t-h" x="642" y="288">Crash, then resume</text>
+  <text class="t-b" x="642" y="308">30 s sweep reclaims the run;</text>
+  <text class="t-b" x="642" y="327">replay skips finished steps</text>
+  </a>
+  <rect class="node" x="628" y="374" width="230" height="100" rx="10"/>
+  <text class="t-h" x="642" y="400">Side effects dedup</text>
+  <text class="t-b" x="642" y="420">idempotency keys at every</text>
+  <text class="t-b" x="642" y="439">external boundary</text>
+  <rect class="group" x="898" y="104" width="262" height="392" rx="18"/>
+  <text class="t-h" x="914" y="134">It proves itself</text>
+  <a href="/runtime/streaming">
+  <rect class="node" x="914" y="150" width="230" height="100" rx="10"/>
+  <text class="t-h" x="928" y="176">Streams live</text>
+  <text class="t-b" x="928" y="196">tokens and step events</text>
+  <text class="t-b" x="928" y="215">over SSE as they happen</text>
+  </a>
+  <a href="/runtime/observability">
+  <rect class="node" x="914" y="262" width="230" height="100" rx="10"/>
+  <text class="t-h" x="928" y="288">One trace contract</text>
+  <text class="t-b" x="928" y="308">tenant, run, step on every</text>
+  <text class="t-b" x="928" y="327">span and journal row</text>
+  </a>
+  <a href="/runtime/receipts">
+  <rect class="node" x="914" y="374" width="230" height="100" rx="10"/>
+  <text class="t-h" x="928" y="400">Signed receipt</text>
+  <text class="t-b" x="928" y="420">Ed25519 over the journal;</text>
+  <text class="t-b" x="928" y="439">verify at /proof, no login</text>
+  </a>
+  <text class="t-s" x="40" y="528">Go deeper</text>
+  <a href="/runtime/durable-execution">
+  <rect class="node" x="40" y="542" width="262" height="38" rx="10"/>
+  <text class="t-b" x="56" y="566">Durable execution</text>
+  </a>
+  <a href="/runtime/isolation">
+  <rect class="node" x="326" y="542" width="262" height="38" rx="10"/>
+  <text class="t-b" x="342" y="566">Isolation</text>
+  </a>
+  <a href="/runtime/streaming">
+  <rect class="node" x="612" y="542" width="262" height="38" rx="10"/>
+  <text class="t-b" x="628" y="566">Streaming</text>
+  </a>
+  <a href="/runtime/observability">
+  <rect class="node" x="898" y="542" width="262" height="38" rx="10"/>
+  <text class="t-b" x="914" y="566">Observability</text>
+  </a>
+  <a href="/runtime/sessions-and-memory">
+  <rect class="node" x="40" y="590" width="262" height="38" rx="10"/>
+  <text class="t-b" x="56" y="614">Sessions and memory</text>
+  </a>
+  <a href="/runtime/identity">
+  <rect class="node" x="326" y="590" width="262" height="38" rx="10"/>
+  <text class="t-b" x="342" y="614">Identity</text>
+  </a>
+  <a href="/runtime/receipts">
+  <rect class="node" x="612" y="590" width="262" height="38" rx="10"/>
+  <text class="t-b" x="628" y="614">Receipts</text>
+  </a>
+  <a href="/runtime/quickstart">
+  <rect class="node" x="898" y="590" width="262" height="38" rx="10"/>
+  <text class="t-b" x="914" y="614">Runtime quickstart</text>
+  </a>
+  <g transform="translate(40 660)">
+  <rect class="group" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Stage of a run</text>
+  <rect class="node-glass" x="150" width="14" height="14" rx="3"/><text class="t-s" x="172" y="11">Isolated tier</text>
+  <rect class="node-deny" x="300" width="14" height="14" rx="3"/><text class="t-s" x="322" y="11">Refused</text>
+  </g>
+</svg>

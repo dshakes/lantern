@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 830" class="lx" role="img" aria-labelledby="durable-execution-title durable-execution-desc">
+  <title id="durable-execution-title">Durable execution</title>
+  <desc id="durable-execution-desc">A run checkpoints every step to the journal. If the process crashes mid-step, the recovery sweep (default every 30 seconds) finds runs whose run_locks lease is absent or expired, wins the lease with an UPSERT that only steals expired leases, and re-drives the run: the shared tier re-walks the graph, the microVM tier reschedules the same run id with LANTERN_RESUME=1 up to 3 attempts. Replay skips completed steps through the journal cache and claimSideEffect dedup, re-executes the in-flight step with the same Idempotency-Key, then continues with new work and issues a receipt.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="durable-execution-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="durable-execution-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="durable-execution-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="durable-execution-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="durable-execution-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="830" rx="16"/>
+  <text class="t-title" x="40" y="52">A crash costs one step, never the run</text>
+  <text class="t-sub" x="40" y="76">Completed work is replayed from the journal, and every side effect is deduplicated.</text>
+  <rect class="group" x="40" y="100" width="1120" height="170" rx="18"/>
+  <text class="t-h" x="60" y="126">1 The run</text>
+  <text class="t-s" x="1140" y="126" text-anchor="end">every step checkpointed to the journal</text>
+  <rect class="node" x="60" y="140" width="192" height="100" rx="10"/>
+  <text class="t-h" x="76" y="166">run created</text>
+  <text class="t-b" x="76" y="186">POST /v1/runs</text>
+  <text class="t-b" x="76" y="204">run_locks lease</text>
+  <path class="edge" d="M252 190H280" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="282" y="140" width="192" height="100" rx="10"/>
+  <text class="t-h" x="298" y="166">step 1 done</text>
+  <text class="t-b" x="298" y="186">step_completed</text>
+  <text class="t-b" x="298" y="204">output in journal row</text>
+  <path class="edge" d="M474 190H502" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="504" y="140" width="192" height="100" rx="10"/>
+  <text class="t-h" x="520" y="166">step 2 done</text>
+  <text class="t-b" x="520" y="186">connector call</text>
+  <text class="t-b" x="520" y="204">dedup key per attempt</text>
+  <path class="edge" d="M696 190H724" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="726" y="140" width="192" height="100" rx="10"/>
+  <text class="t-h" x="742" y="166">step 3 in flight</text>
+  <text class="t-b" x="742" y="186">LLM + Idempotency-Key</text>
+  <text class="t-b" x="742" y="204">step_started, no end</text>
+  <path class="edge-deny" d="M918 190H946" marker-end="url(#durable-execution-ad)"/>
+  <rect class="node-deny" x="948" y="140" width="192" height="100" rx="10"/>
+  <text class="t-h" x="964" y="166">process crashes</text>
+  <text class="t-b" x="964" y="186">deploy, OOM, node loss</text>
+  <text class="t-b" x="964" y="204">the goroutine is gone</text>
+  <rect class="group" x="40" y="290" width="1120" height="210" rx="18"/>
+  <text class="t-h" x="60" y="316">2 Recovery</text>
+  <text class="t-s" x="1140" y="316" text-anchor="end">nothing is asked of the caller</text>
+  <path class="edge-deny" d="M1044 240V280H340V330" marker-end="url(#durable-execution-ad)"/>
+  <text class="t-s" x="360" y="274">lease expires; the sweep notices on its next tick</text>
+  <rect class="node" x="60" y="330" width="340" height="150" rx="10"/>
+  <text class="t-h" x="76" y="356">Recovery sweep, every 30 s</text>
+  <text class="t-b" x="76" y="376">Finds running or queued runs whose</text>
+  <text class="t-b" x="76" y="394">run_locks lease is absent or expired</text>
+  <text class="t-b mono" x="76" y="412">recovery.go · RunRecoveryLoop</text>
+  <rect class="node" x="430" y="330" width="340" height="150" rx="10"/>
+  <text class="t-h" x="446" y="356">Lease steal</text>
+  <text class="t-b" x="446" y="376">UPSERT that only wins an expired lease</text>
+  <text class="t-b" x="446" y="394">Two replicas can race; exactly one wins</text>
+  <text class="t-b mono" x="446" y="412">acquireRecoveryLock</text>
+  <rect class="node" x="800" y="330" width="340" height="150" rx="10"/>
+  <text class="t-h" x="816" y="356">Re-drive</text>
+  <text class="t-b" x="816" y="376">Shared tier: interpreter re-walks the graph</text>
+  <text class="t-b" x="816" y="394">microVM tier: same run_id, LANTERN_RESUME=1,</text>
+  <text class="t-b" x="816" y="412">up to 3 attempts</text>
+  <text class="t-b mono" x="816" y="430">redriveRun · resumeMicroVMRun</text>
+  <path class="edge" d="M400 405H428" marker-end="url(#durable-execution-a)"/>
+  <path class="edge" d="M770 405H798" marker-end="url(#durable-execution-a)"/>
+  <rect class="group" x="40" y="520" width="1120" height="160" rx="18"/>
+  <text class="t-h" x="60" y="546">3 Replay</text>
+  <text class="t-s" x="1140" y="546" text-anchor="end">completed work is never re-executed</text>
+  <path class="edge" d="M970 480V510H200V560" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="60" y="560" width="192" height="100" rx="10"/>
+  <text class="t-h" x="76" y="586">step 1 skipped</text>
+  <text class="t-b" x="76" y="606">CompletedStep cache hit</text>
+  <text class="t-b" x="76" y="624">returns the journal row</text>
+  <path class="edge" d="M252 610H280" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="282" y="560" width="192" height="100" rx="10"/>
+  <text class="t-h" x="298" y="586">step 2 skipped</text>
+  <text class="t-b" x="298" y="606">no second side effect</text>
+  <text class="t-b" x="298" y="624">claimSideEffect dedup</text>
+  <path class="edge" d="M474 610H502" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="504" y="560" width="192" height="100" rx="10"/>
+  <text class="t-h" x="520" y="586">step 3 re-executes</text>
+  <text class="t-b" x="520" y="606">same Idempotency-Key</text>
+  <text class="t-b" x="520" y="624">provider dedups</text>
+  <path class="edge" d="M696 610H724" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="726" y="560" width="192" height="100" rx="10"/>
+  <text class="t-h" x="742" y="586">step 4 done</text>
+  <text class="t-b" x="742" y="606">first new work</text>
+  <text class="t-b" x="742" y="624">since the crash</text>
+  <path class="edge" d="M918 610H946" marker-end="url(#durable-execution-a)"/>
+  <rect class="node" x="948" y="560" width="192" height="100" rx="10"/>
+  <text class="t-h" x="964" y="586">run succeeded</text>
+  <text class="t-b" x="964" y="606">Ed25519 receipt issued</text>
+  <text class="t-b" x="964" y="624">crash in the waterfall</text>
+  <rect class="node" x="40" y="704" width="1120" height="60" rx="10"/>
+  <text class="t-h" x="56" y="730">The guarantee</text>
+  <text class="t-b" x="56" y="750">No double side effects on replay: journal cache, claimSideEffect key, provider Idempotency-Key.</text>
+  <g transform="translate(40 790)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/>
+  <text class="t-s" x="22" y="11">Control plane</text>
+  <rect class="node-deny" x="137" width="14" height="14" rx="3"/>
+  <text class="t-s" x="159" y="11">Failure</text>
+  </g>
+</svg>
