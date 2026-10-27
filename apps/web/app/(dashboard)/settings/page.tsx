@@ -539,7 +539,7 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
           <h3 className="text-sm font-semibold text-zinc-100">API Keys</h3>
           <p className="mt-0.5 text-xs text-zinc-500">Manage keys used to authenticate with the Lantern API.</p>
         </div>
-        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400">Create API Key</button>
+        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400">Create API Key</button>
       </div>
 
       {/* Desktop: table, unchanged */}
@@ -665,7 +665,7 @@ function ProvidersTab({ providers, saving, onKeyChange, onTest, onSave }: { prov
 
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
+          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Save className="h-3.5 w-3.5" />Save Changes</>}
         </button>
       </div>

@@ -15,7 +15,7 @@ type Size = "sm" | "md" | "lg";
 // without touching this file.
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-lantern-400 text-white hover:bg-lantern-300 active:scale-[0.98] shadow-sm hover:shadow-md",
+    "bg-lantern-400 text-on-flame hover:bg-lantern-300 active:scale-[0.98] shadow-sm hover:shadow-md",
   secondary:
     "border border-zinc-700 bg-surface-1 text-zinc-200 hover:bg-surface-3 hover:border-zinc-600",
   ghost:

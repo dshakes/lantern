@@ -39,7 +39,7 @@ export function HealthRing({ value, size = 34, label = "Success rate", className
       title={`${label}: ${v}%`}
     >
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-zinc-800)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}

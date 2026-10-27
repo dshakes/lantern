@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LanternMark } from "@/components/lantern-mark";
 import { api } from "@/lib/api";
 import { getLastAgent, clearLastAgent, setLastAgent } from "@/lib/last-agent";
 
@@ -90,9 +91,9 @@ export default function HomePage() {
       <div className="flex flex-col items-center gap-4">
         <div
           aria-hidden
-          className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-xl"
+          className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-800 bg-surface-1"
         >
-          <span className="text-xl font-bold text-white">L</span>
+          <LanternMark className="h-8 w-8" />
         </div>
         {status === "deciding" ? (
           <p className="text-xs text-zinc-500">Loading your workspace…</p>

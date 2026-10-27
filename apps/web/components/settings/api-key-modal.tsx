@@ -176,7 +176,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
             <div className="mt-6 flex justify-end">
               <button
                 onClick={handleClose}
-                className="rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
+                className="rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400"
               >
                 Done
               </button>
@@ -258,7 +258,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
               <button
                 onClick={handleCreate}
                 disabled={!name.trim() || scopes.length === 0 || creating}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creating ? (
                   <>

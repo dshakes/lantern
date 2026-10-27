@@ -46,6 +46,7 @@ import {
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
+import { LanternMark } from "@/components/lantern-mark";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useAgents } from "@/lib/hooks";
@@ -126,18 +127,8 @@ export function Sidebar() {
           )}
           aria-label="Home"
         >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_14px_-6px_rgba(56,189,248,0.5)] transition-transform duration-150 group-hover:scale-105">
-            <svg width="18" height="18" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-              <defs>
-                <linearGradient id="lantern-mark" x1="3" y1="3" x2="23" y2="23" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#2dd4bf" />
-                  <stop offset="0.5" stopColor="#38bdf8" />
-                  <stop offset="1" stopColor="#818cf8" />
-                </linearGradient>
-              </defs>
-              <rect x="6.5" y="6.5" width="13" height="13" rx="3" transform="rotate(45 13 13)" fill="url(#lantern-mark)" />
-              <rect x="10.5" y="10.5" width="5" height="5" rx="1.5" transform="rotate(45 13 13)" fill="#0d0d12" opacity="0.85" />
-            </svg>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-surface-2 transition-transform duration-150 group-hover:scale-105">
+            <LanternMark className="h-5 w-5" />
           </div>
           {!collapsed && (
             <div className="flex flex-col leading-tight">
@@ -183,7 +174,7 @@ export function Sidebar() {
           <div className="px-4 pt-4">
             <Link
               href="/agents/create"
-              className="group flex w-full items-center gap-2 rounded-xl bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] px-3 py-2 text-xs font-semibold text-[#04121a] shadow-[0_6px_20px_-8px_rgba(56,189,248,0.55)] transition-transform duration-150 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
+              className="group flex w-full items-center gap-2 rounded-xl bg-lantern-400 px-3 py-2 text-xs font-semibold text-on-flame hover:bg-lantern-300 transition-transform duration-150 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
             >
               <Plus className="h-4 w-4 transition-transform duration-150 group-hover:rotate-90" />
               New agent
@@ -214,7 +205,7 @@ export function Sidebar() {
         {!collapsed && (
           <p className="px-2 pb-1 text-[12px] font-medium uppercase tracking-wider text-zinc-600">
             Agents
-            {agents.length > 0 && <span className="ml-2 text-zinc-700">{agents.length}</span>}
+            {agents.length > 0 && <span className="ml-2 text-zinc-600">{agents.length}</span>}
           </p>
         )}
         {loading ? (

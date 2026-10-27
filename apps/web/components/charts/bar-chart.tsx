@@ -24,7 +24,7 @@ export function BarChart({
   height = 200,
   className,
   formatValue = (n) => n.toLocaleString(),
-  defaultColor = "rgb(168 85 247)",
+  defaultColor = "var(--color-accent)",
   showLabels = true,
   orientation = "vertical",
 }: BarChartProps) {

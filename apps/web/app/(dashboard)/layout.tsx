@@ -13,6 +13,7 @@ import { User, Search, AlertTriangle, Settings, LogOut, HelpCircle } from "lucid
 import { useAuth } from "@/lib/auth";
 import { useModels } from "@/lib/model-context";
 import Link from "next/link";
+import { LanternMark } from "@/components/lantern-mark";
 
 export default function DashboardLayout({
   children,
@@ -50,7 +51,7 @@ export default function DashboardLayout({
         <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
           {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
           <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[14px] font-bold text-white">L</span>
+            <LanternMark className="h-6 w-6" />
             <span className="text-[15px] font-semibold tracking-tight text-zinc-50">Lantern</span>
           </Link>
 
@@ -88,7 +89,7 @@ export default function DashboardLayout({
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-surface-2 py-1 pl-1 pr-2.5 transition-colors hover:border-zinc-700"
               >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] text-[11px] font-bold text-zinc-950">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-lantern-400 text-[11px] font-bold text-on-flame">
                   {user?.name ? user.name.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
                 </span>
                 <span className="hidden flex-col items-start leading-tight sm:flex">

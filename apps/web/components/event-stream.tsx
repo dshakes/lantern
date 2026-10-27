@@ -366,7 +366,7 @@ function ApprovalEvent({
                       "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                       isDeny
                         ? "border border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        : "bg-lantern-600 text-white hover:bg-lantern-500"
+                        : "bg-lantern-600 text-on-flame hover:bg-lantern-500"
                     )}
                   >
                     {opt}
@@ -409,7 +409,7 @@ function QuestionEvent({ data }: { data: Record<string, unknown> }) {
               />
               <button
                 onClick={() => answer.trim() && setSubmitted(true)}
-                className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-500"
+                className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-500"
               >
                 Submit
               </button>

@@ -100,7 +100,7 @@ export function RehearsalsPanel({ agentName }: Props) {
         <button
           onClick={run}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-[12px] font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
         >
           {loading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

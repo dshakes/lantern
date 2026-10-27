@@ -1325,7 +1325,7 @@ export default function AgentDetailPage() {
                   className={clsx(
                     "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium",
                     identityDirty
-                      ? "bg-lantern-500 text-white hover:bg-lantern-400"
+                      ? "bg-lantern-500 text-on-flame hover:bg-lantern-400"
                       : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
                   )}
                 >
@@ -1388,7 +1388,7 @@ export default function AgentDetailPage() {
                     {optimizingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Optimize
                   </button>
                   <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 hover:bg-lantern-500/10"><Sparkles className="h-3 w-3" /> Generate</button>
-                  <button onClick={handleSavePrompt} disabled={savingPrompt || (!promptDirty && !instructionsDirty)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", (promptDirty || instructionsDirty) ? "bg-lantern-500 text-white hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
+                  <button onClick={handleSavePrompt} disabled={savingPrompt || (!promptDirty && !instructionsDirty)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", (promptDirty || instructionsDirty) ? "bg-lantern-500 text-on-flame hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
                     {savingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} {savingPrompt ? "Saving..." : "Save"}
                   </button>
                 </div>
@@ -1804,7 +1804,7 @@ export default function AgentDetailPage() {
                 onClick={handleChatSend}
                 disabled={(!chatInput.trim() && chatFiles.length === 0) || !setupReady}
                 title={!setupReady ? "Finish setup before sending" : undefined}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {chatStreaming && !sessionConnected ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </button>
@@ -1834,7 +1834,7 @@ export default function AgentDetailPage() {
                   }
                 }}
                 disabled={testRunning}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50"
               >
                 {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
               </button>
@@ -2033,7 +2033,7 @@ export default function AgentDetailPage() {
                 </div>
               </div>
 
-              <button onClick={handleSaveSchedule} disabled={savingSchedule || !settingsCron.trim()} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+              <button onClick={handleSaveSchedule} disabled={savingSchedule || !settingsCron.trim()} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50">
                 {savingSchedule ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving...</> : <><Save className="h-3 w-3" /> Save Schedule</>}
               </button>
             </div>
@@ -2265,7 +2265,7 @@ export default function AgentDetailPage() {
               )}
             </div>
 
-            <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+            <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50">
               {savingSettings ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...</> : "Save Settings"}
             </button>
 

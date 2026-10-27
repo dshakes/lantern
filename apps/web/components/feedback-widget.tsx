@@ -100,7 +100,7 @@ export function FeedbackWidget({ runId, source = "dashboard" }: FeedbackWidgetPr
           <button
             onClick={submitDetailed}
             disabled={submitting}
-            className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             Submit

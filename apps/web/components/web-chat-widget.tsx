@@ -68,7 +68,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
       <div className="fixed bottom-6 right-6 z-50">
         <button
           onClick={() => setIsOpen(true)}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-lantern-500 text-white shadow-lg shadow-lantern-500/30 transition-transform hover:scale-105"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-lantern-500 text-on-flame shadow-lg shadow-lantern-500/30 transition-transform hover:scale-105"
         >
           <MessageSquare className="h-6 w-6" />
         </button>
@@ -185,7 +185,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
           <button
             onClick={handleSend}
             disabled={!input.trim()}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500 text-white transition-colors hover:bg-lantern-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500 text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Send className="h-3.5 w-3.5" />
           </button>
