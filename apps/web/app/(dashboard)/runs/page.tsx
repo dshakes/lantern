@@ -105,14 +105,14 @@ export default function RunsPage() {
       />
 
       {/* Filters */}
-      <div className="border-b border-zinc-800 bg-surface-1/50 px-8 py-3">
-        <div className="flex items-center gap-3">
-          <div className="relative">
+      <div className="border-b border-zinc-800 bg-surface-1/50 px-4 py-3 sm:px-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-auto">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input type="text" placeholder="Search runs…" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
-              className="h-9 w-56 rounded-lg border border-zinc-800 bg-surface-0 pl-9 pr-3 text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 outline-none" />
+              className="h-9 w-full rounded-lg border sm:w-56 border-zinc-800 bg-surface-0 pl-9 pr-3 text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 outline-none" />
           </div>
-          <Filter className="h-4 w-4 text-zinc-500" />
+          <Filter className="hidden h-4 w-4 text-zinc-500 sm:block" />
           <select value={agentFilter} onChange={(e) => { setAgentFilter(e.target.value); setPage(0); }}
             className="h-9 rounded-lg border border-zinc-800 bg-surface-0 px-3 text-sm text-zinc-300 outline-none">
             <option value="all">All agents</option>
@@ -127,7 +127,7 @@ export default function RunsPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-4 sm:p-8">
         {error ? (
           <div className="text-center py-12">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 ring-1 ring-red-500/20">
@@ -234,7 +234,7 @@ function RunGroup({
       <button
         onClick={onToggleGroup}
         aria-expanded={groupExpanded}
-        className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm hover:bg-surface-2"
+        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-2 sm:gap-3 sm:px-4"
       >
         {groupExpanded ? (
           <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
@@ -242,15 +242,15 @@ function RunGroup({
           <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
         )}
         <Layers className="h-3.5 w-3.5 text-lantern-400 shrink-0" />
-        <span className="text-xs font-medium text-zinc-200">{agg.agentLabel}</span>
+        <span className="min-w-0 truncate text-xs font-medium text-zinc-200">{agg.agentLabel}</span>
         <StatusBadge status={agg.status} />
-        <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
+        <span className="shrink-0 rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
           {agg.count} runs
         </span>
-        <span className="ml-auto text-[12px] text-zinc-400 tabular-nums">
+        <span className="ml-auto hidden text-[12px] text-zinc-400 tabular-nums sm:inline">
           {agg.durationMs !== null ? formatDuration(agg.durationMs) : "--"}
         </span>
-        <span className="font-mono text-[12px] text-zinc-500 tabular-nums">{formatCost(agg.totalCost)}</span>
+        <span className="ml-auto shrink-0 font-mono text-[12px] text-zinc-500 tabular-nums sm:ml-0">{formatCost(agg.totalCost)}</span>
         <span className="hidden text-[12px] tabular-nums text-zinc-600 md:inline">
           {format(agg.latestAt, "MMM d, HH:mm")}
         </span>
@@ -287,16 +287,25 @@ function RunRow({
   return (
     <div className="group rounded-lg border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
       <div className="flex items-center">
-        <button onClick={() => onToggleRun(run.id)} aria-expanded={expanded} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg">
+        {/* A div, not a <button>: the agent-name button inside it would be a
+            nested interactive element (invalid HTML, hydration error). */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onToggleRun(run.id)}
+          onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggleRun(run.id); } }}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40 sm:gap-3 sm:px-4"
+        >
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
           <AgentAvatar name={run.agentName} status={run.status} size="sm" />
-          <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="text-xs font-medium text-zinc-200 hover:text-zinc-50">{run.agentName}</button>
+          <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="min-w-0 truncate text-xs font-medium text-zinc-200 hover:text-zinc-50">{run.agentName}</button>
           <StatusBadge status={run.status} />
           <span className="font-mono text-[12px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
-          <span className="ml-auto text-[12px] text-zinc-400 tabular-nums">{dur}</span>
-          <span className="font-mono text-[12px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
+          <span className="ml-auto hidden text-[12px] text-zinc-400 tabular-nums sm:inline">{dur}</span>
+          <span className="ml-auto shrink-0 font-mono text-[12px] text-zinc-500 tabular-nums sm:ml-0">{formatCost(run.costUsd)}</span>
           <span className="text-[12px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
-        </button>
+        </div>
         {/* Delete */}
         <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
           {confirming ? (

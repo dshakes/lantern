@@ -91,6 +91,22 @@
   --color-lantern-700: #a85e06;
   --color-lantern-800: #6e3d05;
   --color-lantern-900: #3a2a12;
+  /* Warning = sulfur, not amber. Stock amber sits on top of the flame
+     accent; flame (orange) and signal (red) already own the warm reds, so
+     warnings take the one warm hue left that reads apart from both. The
+     dashboard writes warnings as amber-* utilities, so the scale is remapped. */
+  --color-amber-50: #fcf9df;
+  --color-amber-100: #f9f3c4;
+  --color-amber-200: #f5eca8;
+  --color-amber-300: #f0e27a;
+  --color-amber-400: #e6d548;
+  --color-amber-500: #cfbe2a;
+  --color-amber-600: #a8991b;
+  --color-amber-700: #7a6f08;
+  --color-amber-800: #554d04;
+  --color-amber-900: #3a3503;
+  --color-amber-950: #282402;
+
   /* Ink that sits ON a solid flame fill (primary buttons, the mark tile). */
   --color-on-flame: #1a1004;
 
@@ -106,8 +122,8 @@
   --color-zinc-200: #ced8e5;
   --color-zinc-300: #a9b6c8;  /* --lx-ink-2 */
   --color-zinc-400: #9babc0;
-  --color-zinc-500: #8696ad;
-  --color-zinc-600: #7a8aa2;  /* --lx-ink-3; still used as text (286x), so AA on page + card */
+  --color-zinc-500: #8e9eb4;
+  --color-zinc-600: #7f8fa7;  /* faint text (286x as text) — AA on page, card and surface-2 */
   --color-zinc-700: #3a4b68;
   --color-zinc-800: #2b3b57;  /* --lx-line, hairline borders */
   --color-zinc-900: #17243b;
@@ -188,8 +204,8 @@
 
   --color-success: var(--lx-patina);
   --color-success-soft: var(--lx-patina-soft);
-  --color-warn: #fbbf24;
-  --color-warn-soft: rgba(251, 191, 36, 0.10);
+  --color-warn: var(--color-amber-400);
+  --color-warn-soft: color-mix(in srgb, var(--color-amber-400) 12%, transparent);
   --color-danger: var(--lx-signal);
   --color-danger-soft: var(--lx-signal-soft);
 
@@ -975,9 +991,9 @@ input[type="range"]::-webkit-slider-thumb {
   --color-zinc-100: #172437;
   --color-zinc-200: #2a3a51;
   --color-zinc-300: #44546a;  /* --lx-ink-2 */
-  --color-zinc-400: #4c5c72;  /* muted text — AA on every light surface */
-  --color-zinc-500: #56667c;  /* --lx-ink-3, nudged to clear AA on surface-3 */
-  --color-zinc-600: #5f6f85;  /* faint text — AA on page + card */
+  --color-zinc-400: #46566b;  /* muted text — AA on every light surface */
+  --color-zinc-500: #4f5f75;  /* --lx-ink-3, deepened to clear AA on surface-3 */
+  --color-zinc-600: #586880;  /* faint text — AA on page, card and surface-2 */
   --color-zinc-700: #c3cedb;  /* --lx-line */
   --color-zinc-800: #d6dee8;  /* hairline borders */
   --color-zinc-900: #e7edf3;
@@ -1059,6 +1075,15 @@ input[type="range"]::-webkit-slider-thumb {
   --color-rose-200: oklch(45.5% 0.188 13.697);
   --color-rose-300: oklch(45.5% 0.188 13.697);
   --color-rose-400: oklch(51.4% 0.222 16.935);
+}
+:root[data-theme="light"] {
+  /* Warning (sulfur) in light: dark olive-gold ink, AA on every surface. */
+  --color-amber-100: #474203;
+  --color-amber-200: #534c04;
+  --color-amber-300: #5e5605;
+  --color-amber-400: #655c06;
+  --color-amber-500: #6d6407;
+  --color-amber-600: #5e5605;
 }
 
 /* All-in YC flat style: neutralize the mission-control glass + aurora GLOBALLY
