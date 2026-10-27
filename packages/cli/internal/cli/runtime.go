@@ -495,8 +495,10 @@ func newVmForkCommand() *cobra.Command {
 		Short: "Spawn N copies of a running or paused VM from a snapshot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if count < 1 || count > 10 {
-				return fmt.Errorf("--count must be between 1 and 10, got %d", count)
+			// The upper bound is the server's (LANTERN_MAX_FORK_COUNT, default
+			// 100); it answers 400 with the cap when count is over it.
+			if count < 1 {
+				return fmt.Errorf("--count must be at least 1, got %d", count)
 			}
 			body, _ := json.Marshal(map[string]int{"count": count})
 			res, err := apiPost("/v1/runtime/vms/"+url.PathEscape(args[0])+"/fork", body)
