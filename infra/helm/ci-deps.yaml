@@ -2,7 +2,7 @@
 # postgresql.enabled=false / minio.enabled=false in values-ci.yaml). The Bitnami
 # Postgres chart crash-loops on the pgvector image, and no MinIO image (Bitnami,
 # docker.io, quay.io) is pullable any more, so CI runs plain pgvector plus an
-# S3-compatible mock (adobe/s3mock; credentials ignored). Service names/labels
+# S3-compatible mock (SeaweedFS S3, no identities configured so any credentials work). Service names/labels
 # match what the chart and its NetworkPolicies expect for release "lantern".
 # Apply with: PW=... envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
 apiVersion: apps/v1
@@ -42,15 +42,14 @@ spec:
     spec:
       containers:
         - name: s3
-          image: adobe/s3mock:latest
-          env:
-            - {name: COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS, value: lantern-backups}
-          ports: [{containerPort: 9090}]
-          readinessProbe: {tcpSocket: {port: 9090}, periodSeconds: 3}
+          image: chrislusf/seaweedfs:latest
+          args: [server, -dir=/data, -s3]
+          ports: [{containerPort: 8333}]
+          readinessProbe: {tcpSocket: {port: 8333}, periodSeconds: 3}
 ---
 apiVersion: v1
 kind: Service
 metadata: {name: lantern-minio}
 spec:
   selector: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}
-  ports: [{port: 9000, targetPort: 9090}]
+  ports: [{port: 9000, targetPort: 8333}]
