@@ -187,17 +187,22 @@ body {
 }
 .link:hover { text-decoration-color: var(--lx-ink); color: var(--lx-ink); }
 
-/* Hero backdrop: a faint drafting grid that fades out, and the flame's warmth
-   pooling behind the console. Texture, not decoration: it is the only one. */
-.hero-bg {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: linear-gradient(var(--lx-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--lx-line) 1px, transparent 1px);
-  background-size: 56px 56px;
-  opacity: 0.35;
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 30%, transparent 75%);
+/* Hero: the flame's warmth pooling behind the proof. The only ambient light. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+  color: var(--lx-ink-2);
+}
+.eyebrow::before {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--lx-flame);
+  box-shadow: 0 0 10px var(--lx-flame);
 }
 .hero-glow {
   position: absolute;
@@ -205,8 +210,8 @@ body {
   width: 64rem;
   height: 40rem;
   right: 0;
-  top: 18rem;
-  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 20%, transparent), transparent 70%);
+  top: 14rem;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 22%, transparent), transparent 70%);
   filter: blur(10px);
 }
 
@@ -269,6 +274,7 @@ body {
   font-size: 0.75rem;
   color: var(--dm-ink-3);
 }
+.console-bar { font-family: var(--lx-font-text); color: var(--dm-ink-2); }
 .console-bar span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .console-cols {
   display: grid;
@@ -278,6 +284,7 @@ body {
   font-family: var(--lx-font-text);
   padding: 0.85rem 1.1rem 0.25rem;
 }
+.console-cols { font-size: 0.78rem; }
 .console-cols span:first-child { color: var(--dm-flame); }
 .console-cols span:last-child { color: var(--dm-patina); }
 .console-body { position: relative; padding: 0.4rem 1.1rem 1rem; }
@@ -317,16 +324,16 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 2.75rem minmax(0, 1fr);
   align-items: center;
-  min-height: 3.5rem;
-  padding: 0.35rem 0;
+  min-height: 5.25rem;
+  padding: 0.9rem 0;
   border-top: 1px dashed rgb(255 255 255 / 0.05);
   transition: opacity 300ms var(--lx-ease);
 }
 .row:first-child { border-top: 0; }
-.row .req { font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; padding-right: 0.5rem; }
+.row .req { font-family: var(--lx-font-text); font-size: 0.98rem; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; padding-right: 0.5rem; }
 .row .req .dim { color: var(--dm-ink-3); }
 .row .verdict { display: flex; gap: 0.6rem; align-items: flex-start; padding-left: 0.6rem; }
-.row .pass { font-size: 0.7rem; line-height: 1.45; color: var(--dm-ink-2); font-family: var(--lx-font-mono); }
+.row .pass { font-size: 0.86rem; line-height: 1.45; color: var(--dm-ink-2); font-family: var(--lx-font-text); }
 .chip {
   flex: none;
   display: inline-block;
@@ -408,13 +415,13 @@ body {
 /* Under 640px the three columns become a stack: request, then verdict. */
 @media (max-width: 640px) {
   .console-cols, .console-wall { display: none; }
-  .row { grid-template-columns: 1fr; gap: 0.4rem; padding: 0.7rem 0; }
+  .row { grid-template-columns: 1fr; gap: 0.5rem; padding: 0.8rem 0; min-height: 0; }
   .row .packet-lane { display: none; }
   .row .verdict { padding-left: 0.75rem; border-left: 2px solid var(--dm-glass); }
 }
 
 /* ── Sections ───────────────────────────────────────────────────────── */
-.section { padding-block: clamp(4.5rem, 9vw, 7.5rem); }
+.section { padding-block: clamp(3.5rem, 8vw, 7rem); }
 
 /* How it works: the microVM cell is the lantern's glass, and the hop between
    cells names the only channel that crosses it. */
@@ -422,6 +429,78 @@ body {
   background: linear-gradient(180deg, var(--lx-flame-soft), var(--lx-surface) 70%);
   box-shadow: inset 0 0 0 2px var(--lx-glass);
 }
+/* The lantern's flame, burning inside the glass: the signature of the page. */
+.vm-flame {
+  position: absolute;
+  inset: auto 10% -2rem 10%;
+  height: 70%;
+  pointer-events: none;
+  background: radial-gradient(closest-side at 50% 85%, color-mix(in oklab, var(--lx-flame) 34%, transparent), transparent);
+  animation: flicker 5s ease-in-out infinite alternate;
+}
+@keyframes flicker {
+  0% { opacity: 0.75; transform: scale(0.97); }
+  60% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0.85; transform: scale(1); }
+}
+/* One request travels the wire: control plane, then VM, then host, then out. */
+.wire { position: absolute; z-index: 2; left: 0; right: 0; top: 0; height: 0; pointer-events: none; }
+.spark {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lx-flame);
+  box-shadow: 0 0 14px 2px var(--lx-flame);
+  animation: travel 6s var(--lx-ease) infinite;
+}
+@keyframes travel {
+  0% { left: 4%; opacity: 0; }
+  8% { opacity: 1; }
+  30% { left: 33.3%; }
+  40% { left: 33.3%; }
+  62% { left: 66.6%; background: var(--lx-flame); }
+  72% { left: 66.6%; background: var(--lx-patina); box-shadow: 0 0 14px 2px var(--lx-patina); }
+  92% { left: 98%; opacity: 1; background: var(--lx-patina); box-shadow: 0 0 14px 2px var(--lx-patina); }
+  100% { left: 100%; opacity: 0; }
+}
+@media (max-width: 767px) { .wire { display: none; } }
+
+/* Pain to fix cards; the flame warms the one you are on. */
+.pain-card {
+  position: relative;
+  border: 1px solid var(--lx-line);
+  border-radius: var(--lx-radius-l);
+  background: var(--lx-surface);
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  transition: border-color var(--lx-dur-ui) var(--lx-ease), box-shadow var(--lx-dur-ui) var(--lx-ease);
+}
+.pain-card:hover {
+  border-color: color-mix(in oklab, var(--lx-flame) 55%, var(--lx-line));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--lx-flame) 25%, transparent),
+    0 24px 60px -30px color-mix(in oklab, var(--lx-flame) 55%, transparent);
+}
+
+/* Summary comparison: a table on wide screens, stacked cards on phones. */
+.sum { width: 100%; text-align: left; font-size: 0.95rem; border: 1px solid var(--lx-line); border-radius: var(--lx-radius-l); border-collapse: separate; border-spacing: 0; overflow: hidden; background: var(--lx-surface); }
+.sum th, .sum td { padding: 1rem 1.25rem; border-top: 1px solid var(--lx-line); vertical-align: top; }
+.sum thead th { border-top: 0; font-weight: 600; color: var(--lx-ink-2); }
+.sum tbody th { font-weight: 500; color: var(--lx-ink); width: 38%; }
+.sum td { color: var(--lx-ink-2); }
+.sum .sum-us { background: var(--lx-glass-soft); color: var(--lx-ink); }
+.sum thead .sum-us { font-family: var(--lx-font-display); font-size: 1.05rem; }
+@media (max-width: 640px) {
+  .sum, .sum tbody, .sum tr, .sum th, .sum td { display: block; width: auto; }
+  .sum { border: 0; background: none; }
+  .sum thead { display: none; }
+  .sum tbody tr { border: 1px solid var(--lx-line); border-radius: var(--lx-radius-l); background: var(--lx-surface); overflow: hidden; margin-bottom: 0.75rem; }
+  .sum tbody th { border-top: 0; padding-bottom: 0.5rem; width: auto; }
+  .sum td { border-top: 1px solid var(--lx-line); padding-block: 0.75rem; }
+  .sum td::before { content: attr(data-label); display: block; font-size: 0.75rem; color: var(--lx-ink-3); margin-bottom: 0.25rem; }
+}
+
 .hop {
   position: absolute;
   z-index: 1;
@@ -462,6 +541,7 @@ body {
   line-height: 1.75;
   overflow-x: auto;
 }
+@media (max-width: 640px) { .code { white-space: pre-wrap; overflow-wrap: anywhere; } }
 .code .k { color: #c7a6ff; }
 .code .s { color: #9fd8a8; }
 .code .c { color: var(--dm-ink-3); }
