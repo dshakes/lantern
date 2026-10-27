@@ -423,7 +423,7 @@ POST /v1/settings/llm-providers/{provider}/test  — test the key`}</code>
       <div className="callout callout-info">
         <strong>No rate-limit tiers or X-RateLimit headers.</strong> Spend and
         run limits are per-agent (cost/day and runs/day enforced; cost/run checked at forecast; tokens/day stored, not enforced){" "}
-        <a href="/budgets">budgets</a>.
+        <Link href="/budgets">budgets</Link>.
       </div>
     </>
   );
