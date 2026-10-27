@@ -313,3 +313,33 @@ func TestDoctor_CreateAgentBodyUsesSystemPrompt(t *testing.T) {
 		t.Errorf("CreateAgentWithSystemPrompt must send 'systemPrompt', got captured=%v", captured)
 	}
 }
+
+// /v1/system/health returns {"services": [ServiceHealth...]} — a list, not a
+// map. doctor once fell through to a "flat" parse and printed the whole list
+// as one red ✗ even when every peer was up.
+func TestCheckSystemHealth_ListShape(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/system/health", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"services":[
+			{"name":"runtime-scheduler","addr":"localhost:50055","up":true,"consecutiveFailures":0},
+			{"name":"model-router","addr":"localhost:50053","up":false,"consecutiveFailures":4}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	got := checkSystemHealth(srv.URL, "tok")
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want 2: %+v", len(got), got)
+	}
+	if got[0].label != "runtime-scheduler" || !got[0].passed || got[0].detail != "localhost:50055" {
+		t.Errorf("up peer = %+v", got[0])
+	}
+	if got[1].label != "model-router" || got[1].passed || !strings.Contains(got[1].detail, "4 failed probes") {
+		t.Errorf("down peer = %+v", got[1])
+	}
+	for _, r := range got {
+		if r.hard {
+			t.Errorf("%s: peer checks must be soft", r.label)
+		}
+	}
+}
