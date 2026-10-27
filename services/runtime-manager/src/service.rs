@@ -185,6 +185,9 @@ pub struct RuntimeManagerGrpc {
     /// Firecracker VMs is forwarded to the in-guest harness at the IP recorded
     /// from the Heartbeat stream's peer.
     pub(crate) harness_addrs: HarnessAddrs,
+    /// Per-VM idle-suspend activity cache shared with `RuntimeHarnessGrpc`.
+    /// Written by the harness-heartbeat handler; read by scheduler_heartbeat.
+    pub(crate) activity_cache: crate::scheduler_heartbeat::ActivityCache,
 }
 
 impl RuntimeManagerGrpc {
@@ -200,6 +203,7 @@ impl RuntimeManagerGrpc {
         let snapshot_store = Arc::new(SnapshotStore::from_env());
         let heartbeat_cache: HeartbeatCache = Arc::new(DashMap::new());
         let harness_addrs: HarnessAddrs = Arc::new(DashMap::new());
+        let activity_cache: crate::scheduler_heartbeat::ActivityCache = Arc::new(DashMap::new());
 
         Self {
             backend,
@@ -209,6 +213,7 @@ impl RuntimeManagerGrpc {
             snapshot_store,
             heartbeat_cache,
             harness_addrs,
+            activity_cache,
         }
     }
 
@@ -222,7 +227,14 @@ impl RuntimeManagerGrpc {
             Arc::clone(&self.heartbeat_cache),
             Arc::clone(&self.harness_addrs),
             mtls_enabled,
+            Arc::clone(&self.activity_cache),
         )
+    }
+
+    /// Expose the activity cache so `main.rs` can wire it into the scheduler
+    /// heartbeat's `HeartbeatConfig`.
+    pub fn activity_cache(&self) -> crate::scheduler_heartbeat::ActivityCache {
+        Arc::clone(&self.activity_cache)
     }
 
     pub fn with_snapshot_store(mut self, store: SnapshotStore) -> Self {
@@ -1472,6 +1484,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 // Cancel deregisters under the backend id; also drop the
                 // wire-id alias so subsequent lookups 404.
                 self.registry.deregister(&req.vm_id);
+                // Evict from the idle-suspend activity cache so stopped or
+                // terminated VMs do not accumulate as dead entries that inflate
+                // the node heartbeat's vm_activity map indefinitely.
+                self.activity_cache.remove(&req.vm_id);
                 Ok(Response::new(pb::StopResponse {
                     ok: true,
                     detail: format!("vm {} stopped", req.vm_id),
@@ -2089,6 +2105,9 @@ pub struct RuntimeHarnessGrpc {
     /// when `LANTERN_CONTROL_PLANE_URL` / `LANTERN_RUNTIME_SECRET_TOKEN` are
     /// unset — messages are logged locally instead.
     report_forward_config: Option<(String, String)>,
+    /// Per-VM idle-suspend activity signals forwarded to the scheduler's next
+    /// node heartbeat. Updated on every harness heartbeat frame.
+    activity_cache: crate::scheduler_heartbeat::ActivityCache,
 }
 
 impl RuntimeHarnessGrpc {
@@ -2098,6 +2117,7 @@ impl RuntimeHarnessGrpc {
         heartbeat_cache: HeartbeatCache,
         harness_addrs: HarnessAddrs,
         mtls_enabled: bool,
+        activity_cache: crate::scheduler_heartbeat::ActivityCache,
     ) -> Self {
         // Build the report-forward config from the environment at construction
         // time so every RPC handler uses the same resolved values.
@@ -2123,6 +2143,7 @@ impl RuntimeHarnessGrpc {
             mtls_enabled,
             report_client,
             report_forward_config,
+            activity_cache,
         }
     }
 }
@@ -2148,6 +2169,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         let cache = Arc::clone(&self.heartbeat_cache);
         let registry = Arc::clone(&self.registry);
         let harness_addrs = Arc::clone(&self.harness_addrs);
+        let activity_cache = Arc::clone(&self.activity_cache);
 
         let (tx, rx) = mpsc::channel::<Result<pb::HeartbeatAck, Status>>(64);
 
@@ -2215,9 +2237,20 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                             mem_bytes = usage.memory_bytes,
                             worker_pid = hb.worker_pid,
                             restart_count = hb.restart_count,
+                            has_active_exec = hb.has_active_exec,
+                            last_activity_unix_ms = hb.last_activity_unix_ms,
                             "heartbeat received"
                         );
                         cache.insert(hb.vm_id.clone(), (usage, Instant::now()));
+                        // Update idle-suspend activity — scheduler reads this via
+                        // the next node heartbeat's vm_activity map.
+                        activity_cache.insert(
+                            hb.vm_id.clone(),
+                            crate::scheduler_heartbeat::VmActivityEntry {
+                                has_active_exec: hb.has_active_exec,
+                                last_activity_unix_ms: hb.last_activity_unix_ms,
+                            },
+                        );
 
                         // Record the dial-back address for exec forwarding.
                         if let Some(ip) = peer_ip {
@@ -3035,7 +3068,14 @@ mod tests {
         // registry-binding logic over plaintext (no peer cert exists in a
         // synthetic Request). The cert-enforcement path is covered by the
         // dedicated tests below with mtls_enabled=true.
-        RuntimeHarnessGrpc::new(registry, resolver, cache, addrs, false)
+        RuntimeHarnessGrpc::new(
+            registry,
+            resolver,
+            cache,
+            addrs,
+            false,
+            Arc::new(DashMap::new()),
+        )
     }
 
     #[tokio::test]
@@ -3206,7 +3246,14 @@ mod tests {
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
         let addrs: HarnessAddrs = Arc::new(DashMap::new());
-        RuntimeHarnessGrpc::new(registry, resolver, cache, addrs, true)
+        RuntimeHarnessGrpc::new(
+            registry,
+            resolver,
+            cache,
+            addrs,
+            true,
+            Arc::new(DashMap::new()),
+        )
     }
 
     /// With mTLS enforced, a request carrying NO peer cert (synthetic Request,
@@ -3694,6 +3741,7 @@ mod tests {
                 args: vec![],
                 env: HashMap::new(),
                 confidential: false,
+                idle_timeout_secs: 0,
             }),
         }
     }
@@ -3918,6 +3966,7 @@ mod tests {
                 args: vec![],
                 env,
                 confidential: false,
+                idle_timeout_secs: 0,
             }),
         }
     }
@@ -5090,5 +5139,70 @@ mod tests {
             std::path::Path::new("/run/lantern/snapshots/h-2/snapshot")
         );
         assert_eq!(m, std::path::Path::new("/run/lantern/snapshots/h-2/mem"));
+    }
+
+    // --- activity cache eviction on stop (Fix 3: no dead-entry leak) ----------
+
+    /// Stopping a VM must remove its entry from the idle-suspend activity cache
+    /// so stopped/terminated VMs do not accumulate as dead entries in the map
+    /// that would be included in every subsequent node heartbeat's vm_activity.
+    #[tokio::test]
+    async fn stop_evicts_activity_cache() {
+        use crate::scheduler_heartbeat::VmActivityEntry;
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-stop", "handle-stop");
+
+        // Pre-populate the activity cache as the harness-heartbeat handler would.
+        svc.activity_cache.insert(
+            "vm-stop".to_string(),
+            VmActivityEntry {
+                has_active_exec: false,
+                last_activity_unix_ms: 1_700_000_000_000,
+            },
+        );
+        assert!(
+            svc.activity_cache.contains_key("vm-stop"),
+            "activity_cache should have the entry before stop"
+        );
+
+        let resp = svc
+            .stop(Request::new(pb::StopRequest {
+                vm_id: "vm-stop".to_string(),
+                reason: "test".to_string(),
+                grace: None,
+            }))
+            .await
+            .expect("stop should succeed");
+        assert!(resp.into_inner().ok, "stop response ok should be true");
+
+        assert!(
+            !svc.activity_cache.contains_key("vm-stop"),
+            "activity_cache entry must be removed after stop"
+        );
+    }
+
+    /// Stopping an unknown VM must not panic or error (no entry to evict).
+    #[tokio::test]
+    async fn stop_unknown_vm_does_not_panic() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-other", "handle-other");
+        // activity_cache has no entry for "vm-unknown" — evict must be a no-op.
+        let resp = svc
+            .stop(Request::new(pb::StopRequest {
+                vm_id: "vm-unknown".to_string(),
+                reason: "test".to_string(),
+                grace: None,
+            }))
+            .await
+            .expect("stop of unknown VM should return Ok (ok=false in payload)");
+        // The backend stub succeeds (no registry entry → falls through to the
+        // backend cancel path which succeeds on NamedStub).
+        let _ = resp.into_inner();
+        assert!(
+            !svc.activity_cache.contains_key("vm-unknown"),
+            "activity_cache should not have been polluted by stop of unknown VM"
+        );
     }
 }

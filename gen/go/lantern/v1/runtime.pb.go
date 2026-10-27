@@ -528,9 +528,12 @@ type AgentSpec struct {
 	// RuntimeClass; a node/backend that cannot satisfy it refuses the schedule
 	// rather than downgrading to a weaker isolation. Confidential also upgrades
 	// any weaker trust class to HOSTILE-tier isolation (upgrade only, audited).
-	Confidential  bool `protobuf:"varint,17,opt,name=confidential,proto3" json:"confidential,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Confidential bool `protobuf:"varint,17,opt,name=confidential,proto3" json:"confidential,omitempty"`
+	// Auto-suspend after this many seconds with no active workload process.
+	// 0 (default) = never auto-suspend.
+	IdleTimeoutSecs int32 `protobuf:"varint,18,opt,name=idle_timeout_secs,json=idleTimeoutSecs,proto3" json:"idle_timeout_secs,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AgentSpec) Reset() {
@@ -680,6 +683,13 @@ func (x *AgentSpec) GetConfidential() bool {
 		return x.Confidential
 	}
 	return false
+}
+
+func (x *AgentSpec) GetIdleTimeoutSecs() int32 {
+	if x != nil {
+		return x.IdleTimeoutSecs
+	}
+	return 0
 }
 
 type PlacementHint struct {
@@ -2799,10 +2809,14 @@ type HeartbeatRequest struct {
 	At    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
 	Usage *ResourceUsage         `protobuf:"bytes,3,opt,name=usage,proto3" json:"usage,omitempty"`
 	// Worker PID + restart count for supervisor visibility.
-	WorkerPid     int32 `protobuf:"varint,4,opt,name=worker_pid,json=workerPid,proto3" json:"worker_pid,omitempty"`
-	RestartCount  int32 `protobuf:"varint,5,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WorkerPid    int32 `protobuf:"varint,4,opt,name=worker_pid,json=workerPid,proto3" json:"worker_pid,omitempty"`
+	RestartCount int32 `protobuf:"varint,5,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	// Idle-suspend: true when at least one exec/tool/workload child is running.
+	HasActiveExec bool `protobuf:"varint,6,opt,name=has_active_exec,json=hasActiveExec,proto3" json:"has_active_exec,omitempty"`
+	// Unix ms of the last exec/workload child exit. 0 = never ran.
+	LastActivityUnixMs int64 `protobuf:"varint,7,opt,name=last_activity_unix_ms,json=lastActivityUnixMs,proto3" json:"last_activity_unix_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *HeartbeatRequest) Reset() {
@@ -2866,6 +2880,20 @@ func (x *HeartbeatRequest) GetWorkerPid() int32 {
 func (x *HeartbeatRequest) GetRestartCount() int32 {
 	if x != nil {
 		return x.RestartCount
+	}
+	return 0
+}
+
+func (x *HeartbeatRequest) GetHasActiveExec() bool {
+	if x != nil {
+		return x.HasActiveExec
+	}
+	return false
+}
+
+func (x *HeartbeatRequest) GetLastActivityUnixMs() int64 {
+	if x != nil {
+		return x.LastActivityUnixMs
 	}
 	return 0
 }

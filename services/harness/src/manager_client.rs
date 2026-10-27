@@ -774,6 +774,8 @@ mod proto_conversion_tests {
             },
             worker_pid: 12345,
             restart_count: 2,
+            has_active_exec: true,
+            last_activity_unix_ms: 1_700_000_000_000,
         };
 
         let wire = pb::HeartbeatRequest::from(req);

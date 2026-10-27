@@ -84,8 +84,9 @@ func envInt(key string, def int) int {
 // the node shows the VM is not running; the RPC and reconciliation settle the
 // marker with TransitionVMState so exactly one of them releases the slot.
 const (
-	ReasonPausing  = "scheduler:pausing"
-	ReasonResuming = "scheduler:resuming"
+	ReasonPausing     = "scheduler:pausing"
+	ReasonResuming    = "scheduler:resuming"
+	ReasonIdlePausing = "scheduler:idle-pausing"
 )
 
 // lockVM serializes lifecycle mutations (Pause/Resume/Fork/Terminate) on one

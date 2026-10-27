@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::Mutex;
 
+use crate::activity::ActivityTracker;
 use crate::manager_client::ManagerClient;
 use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 
@@ -161,6 +162,7 @@ pub struct Supervisor {
     workload_cmd: Vec<String>,
     max_restarts: i32,
     manager: ManagerClient,
+    activity: ActivityTracker,
     /// When true, inject HTTP(S)_PROXY/ALL_PROXY/NO_PROXY into the workload env
     /// so its HTTP clients route through the egress allowlist proxy. Set when
     /// the AgentSpec declares egress rules (P2-B7 fix #2).
@@ -188,7 +190,11 @@ pub struct WorkloadStdio {
 }
 
 impl Supervisor {
-    pub fn new(workload_cmd: Vec<String>, manager: ManagerClient) -> Self {
+    pub fn new(
+        workload_cmd: Vec<String>,
+        manager: ManagerClient,
+        activity: ActivityTracker,
+    ) -> Self {
         Self {
             workload_cmd,
             max_restarts: std::env::var("LANTERN_MAX_RESTARTS")
@@ -196,6 +202,7 @@ impl Supervisor {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_MAX_RESTARTS),
             manager,
+            activity,
             inject_proxy_env: false,
             restart_count: Arc::new(AtomicI32::new(0)),
             worker_pid: Arc::new(AtomicI32::new(0)),
@@ -273,6 +280,10 @@ impl Supervisor {
             let pid = child.id().map(|p| p as i32).unwrap_or(-1);
             self.worker_pid.store(pid, Ordering::SeqCst);
 
+            // Mark this workload process as active for the idle-suspend logic.
+            // The guard is dropped when the child exits (end of this loop iteration).
+            let _activity_guard = self.activity.child_started();
+
             // Emit an audit event for the exec.
             self.manager
                 .enqueue_report(HarnessReport::Audit(AuditEvent {
@@ -313,6 +324,10 @@ impl Supervisor {
                 // Drained between spawn and wait.
                 return Ok(0);
             };
+
+            // Child has exited — drop the activity guard so the tracker stamps
+            // last_activity_unix_ms before the restart loop decides what to do.
+            drop(_activity_guard);
 
             tracing::info!(?status, "workload exited");
             let exit_code = status.code().unwrap_or(-1);

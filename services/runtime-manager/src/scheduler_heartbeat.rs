@@ -7,9 +7,11 @@
 //! When `SCHEDULER_URL` is empty the loop short-circuits — useful for
 //! standalone dev where the scheduler isn't running.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use serde::Serialize;
 
 use crate::handle_registry::HandleRegistry;
@@ -18,6 +20,21 @@ use crate::pool::WarmPool;
 const INTERVAL: Duration = Duration::from_secs(30);
 const FIRST_BEAT_DELAY: Duration = Duration::from_millis(200);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Per-VM activity summary bundled into every node heartbeat so the scheduler
+/// can drive idle-suspend without a separate polling path.
+#[derive(Clone, Debug, Serialize)]
+pub struct VmActivityEntry {
+    /// True when at least one exec/workload child is running.
+    pub has_active_exec: bool,
+    /// Unix ms of the last child exit. 0 = still active or never ran.
+    pub last_activity_unix_ms: i64,
+}
+
+/// Thread-safe map from vm_id → latest activity signal from its harness.
+/// Inserted by the harness-heartbeat handler in service.rs; read by the
+/// scheduler-heartbeat loop here.
+pub type ActivityCache = Arc<DashMap<String, VmActivityEntry>>;
 
 #[derive(Serialize)]
 struct HeartbeatBody {
@@ -51,6 +68,11 @@ struct HeartbeatBody {
     /// the scheduler must NOT reconcile — this keeps older managers, which do
     /// not send the field at all, from having their VMs mass-terminated.
     reports_inventory: bool,
+    /// Per-VM idle-suspend activity signals. Keyed by vm_id; absent entry means
+    /// no harness heartbeat received for that VM yet (scheduler treats as active).
+    /// Only present when the manager has at least one entry to report.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    vm_activity: HashMap<String, VmActivityEntry>,
 }
 
 /// Total capacity of this node, measured once at startup.
@@ -187,6 +209,10 @@ pub struct HeartbeatConfig {
     /// inventory is published immediately instead of up to one INTERVAL late.
     /// `None` keeps the plain fixed-interval cadence.
     pub wake: Option<Arc<tokio::sync::Notify>>,
+    /// Per-VM activity cache populated by harness-heartbeat handler. Included
+    /// in each node heartbeat so the scheduler can drive idle-suspend.
+    /// `None` means this manager does not track activity (older build).
+    pub activity: Option<ActivityCache>,
 }
 
 /// Spawn the heartbeat loop. Returns immediately; the loop runs until the
@@ -256,6 +282,15 @@ pub fn spawn(cfg: HeartbeatConfig) {
                     .map(|r| r.live_vm_ids())
                     .unwrap_or_default(),
                 reports_inventory: cfg.registry.is_some(),
+                vm_activity: cfg
+                    .activity
+                    .as_ref()
+                    .map(|a| {
+                        a.iter()
+                            .map(|e| (e.key().clone(), e.value().clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             };
 
             let mut req = client.post(&endpoint).json(&body);
