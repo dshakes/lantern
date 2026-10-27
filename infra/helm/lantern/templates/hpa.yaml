@@ -1,0 +1,28 @@
+{{- /* One HPA per stateless component that opts in via <component>.autoscaling.enabled. Needs metrics-server. */}}
+{{- $root := . }}
+{{- $components := dict "control-plane" .Values.controlPlane "gateway" .Values.gateway "model-router" .Values.modelRouter "workflow-engine" .Values.workflowEngine "dashboard" .Values.dashboard }}
+{{- range $name, $c := $components }}
+{{- if $c.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "lantern.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" $root "component" $name) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "lantern.fullname" $root }}-{{ $name }}
+  minReplicas: {{ $c.autoscaling.minReplicas }}
+  maxReplicas: {{ $c.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $c.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

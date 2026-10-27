@@ -1,0 +1,73 @@
+# values-ci.yaml -- kind CI install (.github/workflows/runtime-cluster-e2e.yml, job helm-install).
+#
+# Brings up the pieces that can boot without prod TLS material or GPUs/KVM:
+# control-plane + runtime-scheduler + Postgres/Redis/MinIO, with the default-deny
+# NetworkPolicies and the backup CronJob ENABLED so the CNI actually exercises them.
+# Everything else renders (helm template/lint covers it) but runs 0 replicas.
+# Passwords are generated per run and passed with --set; nothing secret lives here.
+#
+#   helm install lantern infra/helm/lantern -f values.yaml -f values-ci.yaml \
+#     --set secrets.postgresPassword=$PW --set postgresql.auth.password=$PW ...
+
+global:
+  image:
+    registry: ""          # images are built in the job and `kind load`ed
+    repository: lantern
+    tag: ci
+    pullPolicy: Never
+  logLevel: debug
+
+controlPlane:
+  replicas: 1
+  autoscaling: {enabled: false}
+  env:
+    LANTERN_ENV: "development"   # prod guards need TLS Secrets the chart cannot mint
+  extraEnv:
+    - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "lantern-runtime-scheduler:50055"}
+
+runtimeScheduler:
+  replicas: 1
+  env:
+    LANTERN_ENV: "development"
+
+gateway:        {replicas: 0, autoscaling: {enabled: false}}
+modelRouter:    {replicas: 0, autoscaling: {enabled: false}}
+workflowEngine: {replicas: 0, autoscaling: {enabled: false}}
+runtimeManager: {replicas: 0}
+dashboard:      {replicas: 0, autoscaling: {enabled: false}}
+surfaceGateway: {replicas: 0}
+
+networkPolicy:
+  enabled: true
+
+backup:
+  enabled: true
+  retentionDays: 1
+
+postgresql:
+  enabled: true
+  auth:
+    username: lantern
+    database: lantern
+  primary:
+    persistence:
+      size: 1Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+minio:
+  enabled: true
+  auth:
+    rootUser: lantern
+  persistence:
+    size: 1Gi
+
+secrets:
+  jwtSecret: "ci-jwt-secret-not-for-production"

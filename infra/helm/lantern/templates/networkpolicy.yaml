@@ -1,0 +1,170 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+Default-deny for every pod of the release (subchart pods included: they share
+app.kubernetes.io/instance), then the minimum flows:
+  * ingress is allowed per target from an explicit list of caller components
+  * all pods may resolve DNS and talk to other pods of the release (the
+    receiving side's policy is what gates the connection)
+  * only the components that call external APIs may leave the cluster
+*/}}
+{{- $root := . }}
+{{- $inst := dict "app.kubernetes.io/instance" .Release.Name }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-default-deny
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $inst | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-allow-egress-internal
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $inst | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    # DNS (any namespace: kube-dns lives in kube-system on most clusters, elsewhere on others)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $inst | nindent 14 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-allow-egress-external
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [control-plane, model-router, workflow-engine, surface-gateway, postgres-backup]
+  policyTypes: [Egress]
+  egress:
+    # LLM providers, connector APIs, channel APIs, S3. Private ranges stay closed
+    # (in-cluster traffic is covered above; managed infra goes in extraEgress).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- /* target component -> callers allowed to reach it (all ports of the target) */}}
+{{- $flows := dict
+  "control-plane" (list "gateway" "dashboard" "surface-gateway" "workflow-engine" "runtime-manager" "runtime-scheduler")
+  "workflow-engine" (list "control-plane" "gateway")
+  "model-router" (list "gateway" "control-plane" "workflow-engine")
+  "runtime-manager" (list "control-plane" "workflow-engine" "runtime-scheduler")
+  "runtime-scheduler" (list "control-plane" "runtime-manager")
+}}
+{{- range $target, $callers := $flows }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" $root }}-allow-to-{{ $target }}
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" $root "component" $target) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "lantern.componentSelectorLabels" (dict "root" $root "component" $target) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/instance, operator: In, values: [{{ $root.Release.Name | quote }}]}
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [{{ join ", " $callers }}]
+{{- end }}
+---
+# Scrape path: Prometheus -> control-plane :8080 and scheduler :8085.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-allow-metrics-scrape
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+      - {key: app.kubernetes.io/component, operator: In, values: [control-plane, runtime-scheduler]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.metricsFrom | nindent 8 }}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8085, protocol: TCP}
+---
+# Public entrypoints: ingress controller (or anyone, if ingressFrom is empty).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-allow-public-entry
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+      - {key: app.kubernetes.io/component, operator: In, values: [gateway, dashboard, surface-gateway]}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {port: 8443, protocol: TCP}
+        - {port: 3000, protocol: TCP}
+        - {port: 8444, protocol: TCP}
+      {{- if .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+        # the dashboard reaches the gateway, the control-plane reaches surface-gateway
+        - podSelector:
+            matchLabels:
+              {{- toYaml $inst | nindent 14 }}
+      {{- end }}
+---
+# Data stores (Bitnami subchart pods) accept only the services that use them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "lantern.fullname" . }}-allow-to-datastores
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+      - {key: app.kubernetes.io/name, operator: In, values: [postgresql, redis, minio]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, workflow-engine, runtime-scheduler, runtime-manager, model-router, surface-gateway, postgres-backup]
+{{- end }}
