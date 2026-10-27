@@ -1,9 +1,9 @@
-# CI-only stand-ins for the chart's Bitnami Postgres/MinIO subcharts (used with
+# CI-only stand-ins for the chart Bitnami Postgres/MinIO subcharts (used with
 # postgresql.enabled=false / minio.enabled=false in values-ci.yaml). The Bitnami
-# MinIO image tags the subchart pins are no longer pullable, and the Bitnami
-# Postgres chart crash-loops on the pgvector image, so CI tests Lantern's own
-# templates against plain upstream images. Service names/labels match what the
-# chart (and its NetworkPolicies) expect for release "lantern".
+# Postgres chart crash-loops on the pgvector image, and no MinIO image (Bitnami,
+# docker.io, quay.io) is pullable any more, so CI runs plain pgvector plus an
+# S3-compatible mock (adobe/s3mock; credentials ignored). Service names/labels
+# match what the chart and its NetworkPolicies expect for release "lantern".
 # Apply with: PW=... envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -41,18 +41,16 @@ spec:
     metadata: {labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}}
     spec:
       containers:
-        - name: minio
-          image: quay.io/minio/minio:latest
-          args: [server, /data]
+        - name: s3
+          image: adobe/s3mock:latest
           env:
-            - {name: MINIO_ROOT_USER, value: lantern}
-            - {name: MINIO_ROOT_PASSWORD, value: "${PW}"}
-          ports: [{containerPort: 9000}]
-          readinessProbe: {httpGet: {path: /minio/health/ready, port: 9000}, periodSeconds: 3}
+            - {name: COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS, value: lantern-backups}
+          ports: [{containerPort: 9090}]
+          readinessProbe: {tcpSocket: {port: 9090}, periodSeconds: 3}
 ---
 apiVersion: v1
 kind: Service
 metadata: {name: lantern-minio}
 spec:
   selector: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}
-  ports: [{port: 9000}]
+  ports: [{port: 9000, targetPort: 9090}]
