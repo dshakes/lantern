@@ -34,8 +34,8 @@ const sections: NavSection[] = [
     { href: "/installation", label: "Installation", icon: Download, subs: [
       { href: "/installation#prerequisites", label: "Prerequisites" }, { href: "/installation#clone", label: "Clone" }, { href: "/installation#one-command", label: "One-command stack" }, { href: "/installation#credentials", label: "Dev credentials" }, { href: "/installation#ports", label: "Service ports" },
     ]},
-    { href: "/quickstart", label: "Quickstart", icon: Rocket, subs: [
-      { href: "/quickstart#prerequisites", label: "Prerequisites" }, { href: "/quickstart#step1", label: "Start the stack" }, { href: "/quickstart#step3", label: "Create an agent" }, { href: "/quickstart#step4", label: "Run the agent" }, { href: "/quickstart#step5", label: "Stream events" },
+    { href: "/quickstart", label: "Get started", icon: Rocket, subs: [
+      { href: "/quickstart#prerequisites", label: "Before you start" }, { href: "/quickstart#dashboard", label: "In the dashboard" }, { href: "/quickstart#cli", label: "In the terminal" }, { href: "/quickstart#api", label: "The REST calls" }, { href: "/quickstart#next", label: "What's next" },
     ]},
     { href: "/stack", label: "The Stack", icon: Server, subs: [
       { href: "/stack#rule", label: "The rule" }, { href: "/stack#languages", label: "Languages" }, { href: "/stack#glossary", label: "What these things are" }, { href: "/stack#data", label: "Data stores" }, { href: "/stack#e2e", label: "End to end" }, { href: "/stack#invariants", label: "Invariants" }, { href: "/stack#tradeoffs", label: "What it costs" },

@@ -113,6 +113,15 @@ func registerProviderConfigure(mux *http.ServeMux, provider string, testOK bool)
 				_, _ = w.Write([]byte(`[]`))
 			}
 		case http.MethodPost:
+			// Mirror the real handler's contract: camelCase apiKey is required
+			// (the CLI once sent api_key and could never save a key).
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["provider"] == "" || body["apiKey"] == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"provider and apiKey are required"}`))
+				return
+			}
 			saved = true
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)

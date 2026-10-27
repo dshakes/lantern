@@ -331,10 +331,17 @@ func (c *RESTClient) Ping() error {
 
 // GenerateSpecResult is the response from POST /v1/agents/generate-spec.
 type GenerateSpecResult struct {
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	SystemPrompt string `json:"systemPrompt"`
-	Model        string `json:"model"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	SystemPrompt string         `json:"systemPrompt"`
+	Model        string         `json:"model"`
+	Rationale    string         `json:"rationale"`
+	FirstInput   map[string]any `json:"firstInput"`
+	Steps        []struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		Description string `json:"description"`
+	} `json:"steps"`
 }
 
 // GenerateSpec calls POST /v1/agents/generate-spec with a plain-English description.

@@ -62,6 +62,10 @@ func registerProvidersOK(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`[{"provider":"openai","status":"active","keyMasked":"****env****"}]`))
 	})
+	mux.HandleFunc("/v1/settings/llm-providers/openai/test", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true}`))
+	})
 }
 
 // registerProvidersEmpty wires /v1/settings/llm-providers with an empty list.

@@ -36,7 +36,10 @@ Checks performed:
   (c) LLM provider     — at least one provider key is configured.
   (d) End-to-end run   — creates a throwaway agent, runs it, confirms success.
   (e) Service ports    — TCP reachability of all known service ports.
-  (f) Peer services    — GET /v1/system/health peer-service states (if available).`,
+  (f) Sandbox runtime  — API wired to a real scheduler (not the stub), scheduler
+                         and runtime-manager reachable, KVM/Firecracker present.
+                         Soft: reported with the fix, never fails doctor.
+  (g) Peer services    — GET /v1/system/health peer-service states (if available).`,
 		SilenceUsage: true,
 		RunE:         runDoctor,
 	}
@@ -98,6 +101,9 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 
 	// ── Service ports ─────────────────────────────────────────────────────
 	printSection("Service ports", checkPorts())
+
+	// ── Sandbox runtime (soft) ────────────────────────────────────────────
+	printSection("Sandbox runtime", checkRuntime(defaultRuntimeEnv(restURL, token)))
 
 	// ── Peer-service health ───────────────────────────────────────────────
 	if peerResults := checkSystemHealth(restURL, token); len(peerResults) > 0 {
