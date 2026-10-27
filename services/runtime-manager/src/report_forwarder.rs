@@ -286,6 +286,34 @@ pub async fn forward_report(
     }
 }
 
+/// Drain host-side egress-broker audit events (ADR 0026) into the same
+/// control-plane report path harness audits use, stamped with the VM's
+/// registry tenant/run. Unconfigured (dev): the broker already logged each
+/// event locally under `lantern_audit`, so there is nothing more to do.
+pub async fn forward_broker_audits(
+    mut rx: tokio::sync::mpsc::Receiver<pb::AuditEvent>,
+    registry: std::sync::Arc<crate::handle_registry::HandleRegistry>,
+) {
+    let config = forward_config();
+    let client = config.as_ref().map(|_| build_http_client());
+    while let Some(ev) = rx.recv().await {
+        let (Some((url, token)), Some(client)) = (&config, &client) else {
+            continue;
+        };
+        let (tenant_id, run_id) = registry
+            .get(&ev.vm_id)
+            .map(|i| (i.tenant_id, i.run_id))
+            .unwrap_or_default();
+        let vm_id = ev.vm_id.clone();
+        let report = pb::HarnessReport {
+            body: Some(pb::harness_report::Body::Audit(ev)),
+        };
+        if let Some(payload) = build_report_request(&vm_id, &tenant_id, &run_id, "", &report) {
+            forward_report(client, url, token, &payload).await;
+        }
+    }
+}
+
 /// Build a shared reqwest client for report forwarding (5 s timeout).
 pub fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()

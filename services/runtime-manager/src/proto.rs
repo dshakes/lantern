@@ -143,6 +143,19 @@ pub struct EgressRule {
     pub http_methods: Vec<String>,
     #[serde(default)]
     pub rate_bps: i64,
+    /// Headers the host-side egress broker injects (ADR 0026). Carries only
+    /// `lantern.secret` refs, never values. Ignored outside broker mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inject: Vec<CredentialInjection>,
+}
+
+/// One broker-injected header (see `lantern.v1.CredentialInjection`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CredentialInjection {
+    pub header: String,
+    pub secret_uri: String,
+    #[serde(default)]
+    pub value_prefix: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
