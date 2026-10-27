@@ -55,7 +55,7 @@ The dashboard renders the widget when `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is set.
 
 ### 3. Email verification and password reset — single-use, hashed, expiring tokens
 
-- `users.email_verified_at` (new). Migration `0024` adds it with
+- `users.email_verified_at` (new). Migration `0023` adds it with
   `DEFAULT now()` so **existing users and every non-password path (OAuth,
   dev seed) are verified** — the provider already proved the address. Only the
   password sign-up path inserts `NULL`.

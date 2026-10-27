@@ -1,4 +1,4 @@
--- 0024: email verification + password reset (ADR 0027).
+-- 0023: email verification + password reset (ADR 0027).
 --
 -- DEFAULT now() is deliberate: every existing user, and every insert path that
 -- does not say otherwise (OAuth — the provider verified the address — and the
