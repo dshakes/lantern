@@ -92,8 +92,7 @@ export default function SecurityPage() {
       <ul>
         <li>
           <strong>Budgets</strong>: per-agent caps on cost per day and runs per day, and a tenant-wide daily cost cap.
-          A hard-fail budget returns HTTP 402 before the run starts. The per-run cost cap is checked at forecast time;
-          tokens/day and per-tool limits are stored, not enforced yet.
+          A hard-fail budget returns HTTP 402 before the run starts. Tokens/day is enforced at the same gates. The per-run cap is enforced mid-run in workflows and reported after the fact elsewhere; per-tool limits apply to workflow tool and connector nodes. Hard-fail budgets fail closed (503 on run create) when the budget cannot be read.
         </li>
         <li>
           <strong>Egress allowlist</strong>: declared per spawn. In broker mode anything not on the allowlist is denied

@@ -9,6 +9,49 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ## [Unreleased]
 
+### Added
+- **Webhook triggers** (ADR 0028, #323) — a public `POST /v1/hooks/{id}` URL per
+  agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run. The
+  signature is the only credential; duplicate deliveries return
+  `200 {"duplicate":true}` and start no run. Managed over REST, the TS/Python/Go
+  SDKs, `lantern hooks` and the dashboard (`/agents/[name]/triggers`). Docs:
+  `/triggers`.
+- **Account lifecycle** (ADR 0027, #318) — `LANTERN_SIGNUP_MODE`
+  (`open`/`invite`/`closed`, closed by default in prod), email verification,
+  password reset, HMAC invite codes, Turnstile captcha, Redis rate limits on the
+  pre-auth routes, owner-only data export (`GET /v1/tenants/{id}/export`) and
+  workspace deletion from Settings. Pluggable mailer (`LANTERN_MAILER` =
+  `log`/`smtp`/`http`). Docs: `/accounts`.
+- **Connector actions** (#316) — Slack `reply_thread`, GitHub `comment_pr`,
+  Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector.
+  Recorded test mode: `LANTERN_CONNECTOR_BASEURL_*` points a connector at the
+  `connector-replay` fixture server; refused in production.
+- **End-to-end kit** (#317) — `make test-e2e` against a live stack with a spend
+  policy enforced in code (reserved `e2e-*` agents, hard-fail budget per agent,
+  cheapest model tier) and `make e2e-clean`. Docs: `/testing`.
+- **Docs** — new pages for webhook triggers, accounts, end-to-end tests and
+  running real Firecracker microVMs on a Mac (Lima); budgets rewritten around an
+  enforcement matrix; models page lists every capability name per provider.
+
+### Changed
+- **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
+  workflow runs re-check the tenant cap, daily caps and `maxCostUsdPerRun`
+  before every `ai-step` and confidence vote; `toolLimits` gate workflow `tool`
+  and `connector` nodes. A budget lookup error now fails closed for hard-fail
+  budgets (503 `budget check unavailable; retry shortly` at run create, 402
+  elsewhere) instead of allowing the call. Still not enforced: the per-run cap on
+  single-call paths and projected cost at run creation.
+- **Workflow tool nodes execute** (#319) — `tool` nodes dispatch to the sandbox
+  runtime or the built-in `web_search` and fail loudly when the runtime is not
+  wired, instead of returning a placeholder; side effects carry an idempotency
+  key per loop iteration.
+- **Capability resolution** (#320) — unknown capability names route to the
+  balanced default (logged once) instead of a hardcoded model; `fast` and
+  `cheap` resolve to the cheap tier.
+- **Disk snapshots** (#322) — Firecracker snapshots capture the VM's writable
+  disk alongside memory and vmstate; resume, idle wake and fork stage from it, so
+  files written before a snapshot survive restore.
+
 ## [0.2.0] - 2026-10-27
 
 The sandbox runtime release: credentials kept out of the VM, idle VMs that

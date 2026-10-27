@@ -184,6 +184,65 @@ say so rather than making things up.`}</code>
         <Link href="/scheduling">Scheduling</Link>.
       </p>
 
+      <h2 id="tool-nodes">Workflow tool nodes</h2>
+      <p>
+        A <code>tool</code> node in a saved workflow graph really executes, or
+        the step fails. There is no simulated success. Routing is by tool
+        name:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Runs</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>web_search</code></td>
+            <td>In the control-plane, via the tenant&apos;s Anthropic key (OpenAI search-preview as fallback). Its model spend is metered like an ai-step</td>
+          </tr>
+          <tr>
+            <td>Any other name</td>
+            <td>In the run&apos;s microVM through the runtime-manager. The in-VM harness serves <code>shell_exec</code>, <code>http_fetch</code>, <code>read_file</code>, <code>write_file</code>, <code>list_dir</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The step output is <code>{"{ \"tool_name\": ..., \"result\": ... }"}</code>{" "}
+        for sandbox tools. Failures are explicit, and the step fails with one
+        of:
+      </p>
+      <pre>
+        <code>{`tool runtime unavailable: "shell_exec" needs the microVM runtime and none is wired
+tool "shell_exec": tool runtime unavailable
+tool runtime unavailable: "shell_exec": <detail from the manager>
+tool failed: "shell_exec": <detail from the tool>
+tool failed: web_search: <error>`}</code>
+      </pre>
+      <p>
+        The first two mean no runtime-manager is reachable from the
+        control-plane (for example the stub scheduler in dev). The third is
+        the manager reporting the tool unavailable for that VM. Only{" "}
+        <code>web_search</code> works without a runtime.
+      </p>
+      <p>
+        <strong>Idempotency.</strong> Each sandbox tool call carries the key{" "}
+        <code>hex(sha256("runID|stepID|attempt"))</code>, so a crash-replay or
+        retry of the same attempt dedups at the manager. Inside a loop the{" "}
+        <code>stepID</code> includes the iteration and the body node path:{" "}
+        <code>{"<loopNodeId>[<i>]/<nodeId>"}</code> (for example{" "}
+        <code>loop1[2]/search</code>), so each iteration gets its own key.
+      </p>
+      <p>
+        <strong>Budgets.</strong> <code>toolLimits</code> on the agent&apos;s
+        budget (keyed by tool name, or <code>connector.action</code> for
+        connector nodes) are checked before dispatch and counted after; a
+        hard-fail budget fails the step with{" "}
+        <code>budget limit exceeded: tool &quot;web_search&quot; budget exhausted (50/50 today)</code>.
+        See <Link href="/budgets#tool-limits">Budgets</Link>.
+      </p>
+
       <h2>Agent lifecycle</h2>
       <p>
         Each agent run goes through these states:

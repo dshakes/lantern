@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Clock, ShieldCheck, Layers, BarChart2, FlaskConical, Zap, Code, FileCode, Terminal } from "lucide-react";
+import { Clock, ShieldCheck, Layers, BarChart2, FlaskConical, Zap, Code, FileCode, Terminal, Webhook, UserPlus, Laptop, Brain, Plug, Camera } from "lucide-react";
 import { Diagram } from "./_components/Diagram";
 import { ArchitectureExplorer } from "./_components/interactive/ArchitectureExplorer";
 
@@ -38,8 +38,20 @@ const features = [
   { icon: Layers, title: "Isolation classes", href: "/runtime/isolation", desc: "runc, gVisor, Kata and Firecracker by declared class. Untrusted code is refused rather than downgraded when the hardened runtime is missing." },
   { icon: Zap, title: "Token streaming", href: "/runtime/streaming", desc: "Session replies stream token by token over SSE, with no buffering between provider and client. Tool-using turns return one completed message." },
   { icon: BarChart2, title: "Observability", href: "/runtime/observability", desc: "Control-plane HTTP/gRPC and step spans carry tenant_id, run_id and step_id; the trace context propagates into the in-VM harness." },
-  { icon: ShieldCheck, title: "Budgets", href: "/budgets", desc: "Hard caps on cost per day and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before it runs. The pre-run forecast also checks the per-run cost cap." },
+  { icon: ShieldCheck, title: "Budgets", href: "/budgets", desc: "Hard caps on cost, tokens and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and tool nodes respect per-tool limits." },
   { icon: FlaskConical, title: "Evaluations", href: "/evaluations", desc: "Pin a baseline per branch and fail CI on regression with HTTP 422. Replay past failures before promoting a version." },
+];
+
+// Shipped after v0.2.0. Keep in step with CHANGELOG [Unreleased].
+const recent = [
+  { icon: Webhook, title: "Webhook triggers", href: "/triggers", desc: "A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated." },
+  { icon: UserPlus, title: "Accounts & sign-up", href: "/accounts", desc: "Gated sign-up, email verification, password reset, invite codes, captcha, data export and workspace deletion." },
+  { icon: ShieldCheck, title: "Budgets, enforced", href: "/budgets#matrix", desc: "Tokens per day, per-run caps inside workflows, per-tool limits, and fail-closed 503 when a hard-fail budget cannot be read." },
+  { icon: Brain, title: "Capability names", href: "/models#capabilities", desc: "Every capability and optimize target, and the model it resolves to per provider." },
+  { icon: Plug, title: "Connector actions", href: "/connectors#new-actions", desc: "Slack thread replies, GitHub PR comments, Sentry issues, Calendar events, PagerDuty, and a recorded test mode." },
+  { icon: Camera, title: "Disk snapshots", href: "/runtime/sandbox-lifecycle#snapshots", desc: "Snapshots capture the VM disk; restore and fork stage from it." },
+  { icon: Laptop, title: "Real microVMs on a Mac", href: "/runtime/local-microvms", desc: "Firecracker on KVM inside a Lima guest, on Apple Silicon." },
+  { icon: FlaskConical, title: "End-to-end tests", href: "/testing", desc: "make test-e2e against a live stack, with a spend policy and make e2e-clean." },
 ];
 
 const reference = [
@@ -84,6 +96,19 @@ export default function DocsHome() {
       <h2 id="features">What the runtime gives you</h2>
       <div className="card-grid">
         {features.map((f) => (
+          <Link key={f.href} href={f.href} className="card">
+            <div className="card-title">
+              <f.icon className="h-4 w-4" />
+              {f.title}
+            </div>
+            <div className="card-desc">{f.desc}</div>
+          </Link>
+        ))}
+      </div>
+
+      <h2 id="new">New since 0.2.0</h2>
+      <div className="card-grid">
+        {recent.map((f) => (
           <Link key={f.href} href={f.href} className="card">
             <div className="card-title">
               <f.icon className="h-4 w-4" />
