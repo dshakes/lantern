@@ -25,11 +25,11 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-[#060609] text-[#f0f0f5]">
+    <main className="min-h-screen bg-bg text-ink">
       <article className="mx-auto max-w-3xl px-6 py-20">
         <a
           href="/"
-          className="text-sm text-[#9898a8] hover:text-[#f0f0f5] transition-colors"
+          className="text-sm text-ink-3 hover:text-ink transition-colors"
         >
           ← {BRAND.name}
         </a>
@@ -37,11 +37,11 @@ export default function TermsPage() {
         <h1 className="mt-8 text-3xl font-bold tracking-tight">
           Terms of Service
         </h1>
-        <p className="mt-2 text-sm text-[#9898a8]">
+        <p className="mt-2 text-sm text-ink-3">
           Effective {BRAND.effectiveDate}
         </p>
 
-        <div className="mt-10 space-y-8 text-[15px] leading-7 text-[#c8c8d4]">
+        <div className="mt-10 space-y-8 text-[15px] leading-7 text-ink-2">
           <section>
             <p>
               These Terms of Service (&ldquo;Terms&rdquo;) govern your use of{" "}
@@ -152,7 +152,7 @@ export default function TermsPage() {
               Questions about these Terms? Email{" "}
               <a
                 href={`mailto:${BRAND.contactEmail}`}
-                className="text-[#f0f0f5] underline underline-offset-4"
+                className="text-ink underline underline-offset-4"
               >
                 {BRAND.contactEmail}
               </a>
@@ -161,7 +161,7 @@ export default function TermsPage() {
           </Section>
         </div>
 
-        <p className="mt-16 text-sm text-[#9898a8]">
+        <p className="mt-16 text-sm text-ink-3">
           <a href="/privacy" className="underline underline-offset-4">
             Privacy Policy
           </a>
@@ -180,7 +180,7 @@ function Section({
 }) {
   return (
     <section>
-      <h2 className="text-lg font-semibold text-[#f0f0f5]">{title}</h2>
+      <h2 className="text-lg font-semibold text-ink">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
   );
