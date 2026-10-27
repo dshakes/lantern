@@ -141,7 +141,7 @@ Examples:
 	}
 	cmd.Flags().StringVar(&inputJSON, "input", "", `JSON payload piped to the workload's stdin (e.g. '{"name":"X"}')`)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Stream logs in real-time after scheduling")
-	cmd.Flags().Int32Var(&idleTimeoutSecs, "idle-timeout", 0, "Auto-suspend the VM after N seconds of inactivity (0 = never)")
+	cmd.Flags().Int32Var(&idleTimeoutSecs, "idle-timeout", 0, "Auto-suspend the VM after N seconds of inactivity (0 = never). Intended for sandbox-style VMs kept alive for exec sessions; exec/file requests auto-resume the VM.")
 	return cmd
 }
 

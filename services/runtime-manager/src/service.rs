@@ -1484,6 +1484,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 // Cancel deregisters under the backend id; also drop the
                 // wire-id alias so subsequent lookups 404.
                 self.registry.deregister(&req.vm_id);
+                // Evict from the idle-suspend activity cache so stopped or
+                // terminated VMs do not accumulate as dead entries that inflate
+                // the node heartbeat's vm_activity map indefinitely.
+                self.activity_cache.remove(&req.vm_id);
                 Ok(Response::new(pb::StopResponse {
                     ok: true,
                     detail: format!("vm {} stopped", req.vm_id),
@@ -5135,5 +5139,70 @@ mod tests {
             std::path::Path::new("/run/lantern/snapshots/h-2/snapshot")
         );
         assert_eq!(m, std::path::Path::new("/run/lantern/snapshots/h-2/mem"));
+    }
+
+    // --- activity cache eviction on stop (Fix 3: no dead-entry leak) ----------
+
+    /// Stopping a VM must remove its entry from the idle-suspend activity cache
+    /// so stopped/terminated VMs do not accumulate as dead entries in the map
+    /// that would be included in every subsequent node heartbeat's vm_activity.
+    #[tokio::test]
+    async fn stop_evicts_activity_cache() {
+        use crate::scheduler_heartbeat::VmActivityEntry;
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-stop", "handle-stop");
+
+        // Pre-populate the activity cache as the harness-heartbeat handler would.
+        svc.activity_cache.insert(
+            "vm-stop".to_string(),
+            VmActivityEntry {
+                has_active_exec: false,
+                last_activity_unix_ms: 1_700_000_000_000,
+            },
+        );
+        assert!(
+            svc.activity_cache.contains_key("vm-stop"),
+            "activity_cache should have the entry before stop"
+        );
+
+        let resp = svc
+            .stop(Request::new(pb::StopRequest {
+                vm_id: "vm-stop".to_string(),
+                reason: "test".to_string(),
+                grace: None,
+            }))
+            .await
+            .expect("stop should succeed");
+        assert!(resp.into_inner().ok, "stop response ok should be true");
+
+        assert!(
+            !svc.activity_cache.contains_key("vm-stop"),
+            "activity_cache entry must be removed after stop"
+        );
+    }
+
+    /// Stopping an unknown VM must not panic or error (no entry to evict).
+    #[tokio::test]
+    async fn stop_unknown_vm_does_not_panic() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-other", "handle-other");
+        // activity_cache has no entry for "vm-unknown" — evict must be a no-op.
+        let resp = svc
+            .stop(Request::new(pb::StopRequest {
+                vm_id: "vm-unknown".to_string(),
+                reason: "test".to_string(),
+                grace: None,
+            }))
+            .await
+            .expect("stop of unknown VM should return Ok (ok=false in payload)");
+        // The backend stub succeeds (no registry entry → falls through to the
+        // backend cancel path which succeeds on NamedStub).
+        let _ = resp.into_inner();
+        assert!(
+            !svc.activity_cache.contains_key("vm-unknown"),
+            "activity_cache should not have been polluted by stop of unknown VM"
+        );
     }
 }

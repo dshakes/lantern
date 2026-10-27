@@ -708,7 +708,18 @@ export interface VmScheduleSpec {
   runId?: string;
   /** Env vars to inject into the workload. */
   env?: Record<string, string>;
-  /** Auto-suspend the VM after this many seconds of inactivity. 0 = never. */
+  /**
+   * Auto-suspend the VM after this many seconds of inactivity (no active exec
+   * sessions). 0 = never auto-suspend.
+   *
+   * Intended for sandbox-style VMs kept RUNNING between requests. Workload VMs
+   * (those with a `workload_cmd` that exits on completion) are terminated
+   * normally by inventory reconciliation and do not benefit from this setting.
+   *
+   * Exec, ExecTool, and file-API calls transparently resume an auto-suspended
+   * VM before proceeding. A VM paused via the operator Pause API is never
+   * auto-resumed (409).
+   */
   idleTimeoutSecs?: number;
   /** Caller-supplied idempotency key; server mints one when absent. */
   idempotencyKey?: string;

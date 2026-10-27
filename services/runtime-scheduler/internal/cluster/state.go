@@ -94,7 +94,19 @@ type VM struct {
 	IdleTimeoutSecs int32
 	// LastActivityAt is when the harness last reported an active exec/workload
 	// child. Zero means still active or no heartbeat received yet.
+	//
+	// CLOCK-SKEW NOTE: this is always stamped with the scheduler's OWN receive
+	// time, never the guest clock. The guest's last_activity_unix_ms is used
+	// only as a change signal: if its value differs from lastActivityUnixMsSeen
+	// a new idle epoch started and we stamp now. This makes the sweeper immune
+	// to snapshot/restore clock skew (a just-resumed VM's guest clock is behind
+	// by the paused duration, so its guest timestamp would look stale — using
+	// scheduler time avoids that false-idle condition).
 	LastActivityAt time.Time
+	// lastActivityUnixMsSeen is the last guest-reported unix-ms timestamp we
+	// saw from a harness heartbeat. Used ONLY to detect changes between beats
+	// (change-signal semantics); never used as a wall clock.
+	lastActivityUnixMsSeen int64
 }
 
 // ClusterStore is the abstract interface for cluster state. Implementors
@@ -369,6 +381,16 @@ func (s *InMemoryStore) applyVMStateLocked(v *VM, state lanternv1.VmState, reaso
 		v.Usage = usage
 	}
 	v.LastEventAt = at
+	// Any transition INTO RUNNING (resume or initial spawn) resets the idle
+	// clock so the just-started VM is not immediately eligible for auto-suspend.
+	// The harness will report the first heartbeat within seconds and the clock
+	// starts fresh from that point. This also covers snapshot-restore clock skew:
+	// a VM that was auto-suspended carries stale guest timestamps; resetting here
+	// guarantees the sweeper ignores it until a fresh harness heartbeat arrives.
+	if state == lanternv1.VmState_VM_STATE_RUNNING {
+		v.LastActivityAt = time.Time{}
+		v.lastActivityUnixMsSeen = 0
+	}
 }
 
 // isTerminalVMState reports whether a VM has finished for good.
@@ -401,22 +423,33 @@ func (s *InMemoryStore) UpdateVMActivity(vmID string, hasActiveExec bool, lastAc
 		return false
 	}
 	if hasActiveExec {
-		// Child is running — clear the idle timestamp so we don't measure
-		// from before the current active period.
+		// Child is running — clear the idle timestamp so the idle clock
+		// starts fresh when the child exits. Stamp LastActivityAt with the
+		// scheduler receive time so a just-resumed VM (whose guest clock is
+		// behind by the paused duration) does not immediately look idle.
 		v.LastActivityAt = time.Time{}
-	} else if lastActivityUnixMs > 0 {
-		// Child just exited — stamp the activity time from the harness clock.
-		// Use the later of the harness-reported time and any existing stamp so
-		// a delayed or reordered heartbeat never moves the clock backward.
-		reported := time.UnixMilli(lastActivityUnixMs).UTC()
-		if reported.After(v.LastActivityAt) {
-			v.LastActivityAt = reported
+		// Reset the change-signal baseline so the next non-active beat with a
+		// changed unix-ms is correctly detected as a new idle epoch.
+		v.lastActivityUnixMsSeen = 0
+	} else {
+		// Guest is not actively executing. We use last_activity_unix_ms only
+		// as a CHANGE SIGNAL: if the value changed since we last saw it, a new
+		// idle epoch just started and we stamp scheduler-local time. This avoids
+		// trusting the guest wall clock, which is behind by the paused duration
+		// after a snapshot restore (causing a false-idle condition on resume).
+		changed := lastActivityUnixMs != v.lastActivityUnixMsSeen
+		if changed && lastActivityUnixMs > 0 {
+			// A new child-exit event arrived. Stamp with scheduler receive time.
+			v.lastActivityUnixMsSeen = lastActivityUnixMs
+			v.LastActivityAt = at
+		} else if v.LastActivityAt.IsZero() {
+			// has_active_exec=false, no change (or never ran) — first idle
+			// heartbeat: stamp scheduler receive time so the VM is eligible
+			// for auto-suspend if it never had a workload.
+			v.LastActivityAt = at
 		}
-	} else if v.LastActivityAt.IsZero() {
-		// has_active_exec=false and last_activity=0 means "never ran" — treat
-		// the heartbeat receive time as the idle start so a VM that never had
-		// a workload is still eligible for auto-suspend.
-		v.LastActivityAt = at
+		// else: no change since last beat — do not update LastActivityAt;
+		// the idle clock is already running from the previously stamped time.
 	}
 	return true
 }

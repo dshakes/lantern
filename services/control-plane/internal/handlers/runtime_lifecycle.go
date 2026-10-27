@@ -262,7 +262,7 @@ func (h *RuntimeHandler) ensureVMRunning(w http.ResponseWriter, ctx context.Cont
 
 	// The shadow row only becomes "paused" through PauseVM (an operator /
 	// API pause) — the scheduler's idle sweeper pauses WITHOUT touching it.
-	// So "paused" here means manual: never auto-resume, whatever the timeout.
+	// So shadow=="paused" means manually paused: never auto-resume.
 	if state == "paused" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error":  "conflict",
@@ -270,21 +270,32 @@ func (h *RuntimeHandler) ensureVMRunning(w http.ResponseWriter, ctx context.Cont
 		})
 		return false
 	}
+
+	// Non-running shadow states other than "paused" (terminated, failed, etc.)
+	// mean the VM is terminal — let the caller proceed; the downstream path
+	// (node lookup, manager exec) will produce the appropriate 404/409 itself.
+	if state != "running" {
+		return true
+	}
+
+	// Shadow says "running". If the VM has no idle timeout it can never be
+	// auto-suspended, so skip the Resume RPC entirely.
 	if idleTimeoutSecs <= 0 {
-		return true // never auto-suspended — let the operation proceed
+		return true
 	}
 
 	// Idle-suspend eligible: the scheduler (authoritative) may have
-	// auto-paused it while the shadow still says running. Ask it to resume;
-	// FailedPrecondition means it is already running.
-	// ponytail: one extra RPC per call for idle-enabled VMs; a scheduler
-	// GetVM / state push to the shadow avoids it if it shows up in latency.
+	// auto-paused this VM while the shadow still says "running" (the sweeper
+	// does NOT update the shadow). Ask the scheduler to resume; a
+	// FailedPrecondition reply means it is already running.
+	// ponytail: one extra RPC per call for idle-enabled VMs; a GetVM / state
+	// push to the shadow row would let us skip this if it proves expensive.
 	snap, err := h.scheduler.Resume(ctx, tenantID, vmID)
 	if err != nil {
 		switch status.Code(err) {
 		case grpccodes.FailedPrecondition:
-			// Already running (never suspended, or a concurrent request's
-			// resume won the scheduler CAS).
+			// Already running (never auto-suspended, or a concurrent request's
+			// resume won the scheduler CAS first).
 			return true
 		case grpccodes.ResourceExhausted:
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{

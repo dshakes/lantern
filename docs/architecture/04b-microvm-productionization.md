@@ -218,19 +218,37 @@ Linux/KVM host (see [`GA-READINESS.md`](../GA-READINESS.md)).
 
 **Idle-suspend (auto-pause).** Set `idle_timeout_secs > 0` on the AgentSpec when
 scheduling. The scheduler's idle sweeper (10 s tick, leader-gated) monitors
-`VM.LastActivityAt` — stamped by the harness heartbeat when the workload's last
-child process exits — and auto-pauses any RUNNING VM idle longer than the
-threshold. The state machine is `RUNNING → DRAINING+idle-pausing → PAUSED`, using
-the same crash-safe CAS as operator Pause so a mid-auto-pause crash settles to
-PAUSED (not TERMINATED) via `ReconcileNodeInventory`. The quota slot is released on
-PAUSED. Idle costs nothing.
+`VM.LastActivityAt` and auto-pauses any RUNNING VM idle longer than the threshold.
+The state machine is `RUNNING → DRAINING+idle-pausing → PAUSED`, using the same
+crash-safe CAS as operator Pause so a mid-auto-pause crash settles to PAUSED (not
+TERMINATED) via `ReconcileNodeInventory`. The quota slot is released on PAUSED.
+Idle costs nothing.
+
+**Scope: sandbox-style (persistent) VMs only.** Idle-suspend targets VMs kept
+RUNNING between requests so they can accept `exec` sessions without a cold start.
+Workload VMs — VMs spawned with a `workload_cmd` that exits on completion — are not
+candidates: the harness exits with the workload and the scheduler terminates the VM
+via normal inventory reconciliation. Setting `idle_timeout_secs` on a workload VM
+is harmless but has no effect.
+
+**Activity signal and clock-skew protection.** `VM.LastActivityAt` is stamped with
+the scheduler's own receive time. The harness heartbeat's `last_activity_unix_ms`
+(guest wall clock) is used only as a change signal: when the value changes between
+two beats, a new idle epoch started and the scheduler stamps its local time. This
+protects against snapshot/restore clock skew — a just-resumed VM's guest clock is
+behind by the paused duration; using scheduler time prevents the sweeper from
+treating a freshly resumed VM as immediately idle. Any `RUNNING` transition (spawn
+or resume) resets `LastActivityAt` to zero; the sweeper ignores the VM until the
+first fresh harness heartbeat arrives.
 
 **Transparent auto-resume.** Exec, ExecTool, and file-API requests (`/files`,
-`/files/content`) to a VM with `idle_timeout_secs > 0` first ask the scheduler to
-resume it (the scheduler is authoritative — the idle sweeper does not update the
-control-plane's shadow row). `FailedPrecondition` means it is already running, so
-concurrent requests never double-resume; quota exhaustion → 402. A VM paused by an
-operator (`POST /pause`) is never auto-resumed → 409.
+`/files/content`) to a VM with `idle_timeout_secs > 0` and shadow state `running`
+first ask the scheduler to resume it (the sweeper does not update the shadow row).
+`FailedPrecondition` means it is already running — concurrent requests never
+double-resume; quota exhaustion → 402. A VM paused by an operator (`POST /pause`,
+shadow `paused`) is never auto-resumed → 409. Terminal shadow states (terminated,
+failed) pass through without a Resume call; the downstream path produces the
+natural 404.
 
 ## Diagrams
 

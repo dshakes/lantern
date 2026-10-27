@@ -520,6 +520,10 @@ func TestEnsureVMRunning_DB(t *testing.T) {
 		{"idle-enabled but already running: proceeds", "running", 60, status.Error(grpccodes.FailedPrecondition, "vm is RUNNING"), true, 0, true, "running"},
 		{"quota exceeded on resume: 402", "running", 60, status.Error(grpccodes.ResourceExhausted, "quota"), false, http.StatusPaymentRequired, true, "running"},
 		{"scheduler down: 502", "running", 60, status.Error(grpccodes.Unavailable, "down"), false, http.StatusBadGateway, true, "running"},
+		// Fix 2: terminal shadow states must pass through without calling the
+		// scheduler — the downstream path (node lookup, exec) rejects them naturally.
+		{"terminated shadow, idle enabled: pass through, scheduler untouched", "terminated", 60, nil, true, 0, false, "terminated"},
+		{"failed shadow, idle enabled: pass through, scheduler untouched", "failed", 60, nil, true, 0, false, "failed"},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -279,6 +279,55 @@ func TestIdleSweeper_ConcurrentSweep_NoDoubleRelease(t *testing.T) {
 	}
 }
 
+// TestIdleSweeper_StaleGuestTs_AfterResume verifies that a VM whose
+// LastActivityAt was reset by a RUNNING transition (resume) is NOT swept by
+// the idle sweeper immediately, even if the harness sends a heartbeat with a
+// stale last_activity_unix_ms (snapshot-restore clock skew).
+//
+// The fix: UpdateVMActivity stamps scheduler receive time, not guest time;
+// applyVMStateLocked resets LastActivityAt on RUNNING transitions.  Together
+// they ensure the idle clock starts fresh from the first post-resume heartbeat.
+func TestIdleSweeper_StaleGuestTs_AfterResume(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	d := &lifecycleDialer{}
+	addNode(store, "n1", 8000, 16<<30)
+
+	// Seed a VM that just resumed: LastActivityAt is zero (reset by the RUNNING
+	// transition in TransitionVMState).
+	store.CreateVM(&cluster.VM{
+		Handle:          &lanternv1.VmHandle{VmId: "vm-resume", Node: "n1"},
+		Spec:            &lanternv1.AgentSpec{IdleTimeoutSecs: 60},
+		State:           lanternv1.VmState_VM_STATE_RUNNING,
+		TenantID:        "t1",
+		NodeName:        "n1",
+		IdleTimeoutSecs: 60,
+		// LastActivityAt zero — simulates a just-resumed VM.
+	})
+	store.IncrTenantVMs("t1", 1)
+	svc := newIdleService(store, d)
+
+	// A harness heartbeat arrives with a stale unix-ms (from before the pause —
+	// guest clock hasn't caught up yet).  The scheduler receive time is "now".
+	staleGuestMs := time.Now().Add(-30 * time.Minute).UnixMilli()
+	store.UpdateVMActivity("vm-resume", false, staleGuestMs, 0, time.Now())
+
+	// Drive the sweeper.
+	driveOneSweep(t, svc, time.Now())
+
+	vm, ok := store.GetVM("vm-resume")
+	if !ok {
+		t.Fatal("VM disappeared")
+	}
+	// The VM must still be RUNNING — the idle clock started ~0 seconds ago
+	// (scheduler receive time), so it is nowhere near the 60-second timeout.
+	if vm.State != lanternv1.VmState_VM_STATE_RUNNING {
+		t.Errorf("VM state = %v after resume+stale-ts beat, want RUNNING (idle < timeout)", vm.State)
+	}
+	if len(d.snaps) != 0 {
+		t.Errorf("sweeper triggered snapshot on just-resumed VM — must not happen")
+	}
+}
+
 func TestIdleSweeper_AlreadyPaused_Skipped(t *testing.T) {
 	// A VM that was paused by an operator between the list and the lock
 	// must be skipped (state check under the lock).
