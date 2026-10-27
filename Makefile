@@ -1,7 +1,7 @@
 .PHONY: help lima-up lima-image lima-e2e lima-broker-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Auto-load .env.local for run-* targets. Keeps secrets (GOOGLE_CLIENT_ID,
 # OAUTH_CLIENT_ID_*, third-party tokens) out of the Makefile + out of the
