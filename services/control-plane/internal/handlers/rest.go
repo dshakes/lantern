@@ -649,7 +649,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+		TriggerKind: runTriggerKind(ctx),
 		SessionId:   body.SessionId,
 	})
 	if err != nil {
@@ -661,7 +661,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
 				AgentName:   body.AgentName,
 				Input:       inputStruct,
-				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+				TriggerKind: runTriggerKind(ctx),
 			})
 		}
 		if err != nil {

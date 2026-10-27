@@ -591,6 +591,7 @@ func main() {
 	httpMux.HandleFunc("PUT /v1/life-events/prefs", lifeEventHandler.UpsertLifeEventPref)
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", lifeEventHandler.UndoLifeEvent)
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", lifeEventHandler.DismissLifeEvent)
+	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", commitmentHandler.CreateCommitment)
