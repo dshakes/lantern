@@ -152,6 +152,90 @@ mod imp {
             })
         }
     }
+
+    impl tonic::transport::server::Connected for VsockStream {
+        type ConnectInfo = ();
+        fn connect_info(&self) -> Self::ConnectInfo {}
+    }
+
+    /// Listening AF_VSOCK socket (host-initiated connects arrive here).
+    pub struct VsockListener {
+        fd: AsyncFd<OwnedFd>,
+    }
+
+    pub fn listen(port: u32) -> io::Result<VsockListener> {
+        // SAFETY: plain socket(2); the fd is owned immediately below.
+        let raw = unsafe {
+            libc::socket(
+                libc::AF_VSOCK,
+                libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                0,
+            )
+        };
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `raw` is a fresh, valid fd we exclusively own.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        // SAFETY: sockaddr_vm is plain-old-data; zeroed is a valid value.
+        let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
+        addr.svm_family = libc::AF_VSOCK as libc::sa_family_t;
+        addr.svm_cid = libc::VMADDR_CID_ANY;
+        addr.svm_port = port;
+        // SAFETY: `addr` outlives the call; the length matches its type.
+        let rc = unsafe {
+            libc::bind(
+                fd.as_raw_fd(),
+                (&addr as *const libc::sockaddr_vm).cast(),
+                std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
+            )
+        };
+        if rc < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: listen(2) on an fd we own.
+        if unsafe { libc::listen(fd.as_raw_fd(), 128) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(VsockListener {
+            fd: AsyncFd::new(fd)?,
+        })
+    }
+
+    impl VsockListener {
+        pub async fn accept(&self) -> io::Result<VsockStream> {
+            loop {
+                let mut guard = self.fd.readable().await?;
+                // SAFETY: accept4(2) with null peer-address out-params.
+                let res = guard.try_io(|fd| {
+                    let c = unsafe {
+                        libc::accept4(
+                            fd.as_raw_fd(),
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                            libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                        )
+                    };
+                    if c < 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(c)
+                    }
+                });
+                match res {
+                    Ok(Ok(c)) => {
+                        // SAFETY: accept4 returned a fresh fd we now own.
+                        let fd = unsafe { OwnedFd::from_raw_fd(c) };
+                        return Ok(VsockStream {
+                            fd: AsyncFd::new(fd)?,
+                        });
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_would_block) => continue,
+                }
+            }
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -165,6 +249,22 @@ mod imp {
             "vsock is only available inside a Linux microVM",
         ))
     }
+
+    /// Stand-in; `listen` always fails off Linux.
+    pub struct VsockListener;
+
+    pub fn listen(_port: u32) -> std::io::Result<VsockListener> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "vsock is only available inside a Linux microVM",
+        ))
+    }
+
+    impl VsockListener {
+        pub async fn accept(&self) -> std::io::Result<VsockStream> {
+            std::future::pending().await
+        }
+    }
 }
 
-pub use imp::connect;
+pub use imp::{connect, listen};

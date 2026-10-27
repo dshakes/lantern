@@ -380,11 +380,14 @@ async fn http_fetch(args: serde_json::Value, timeout: Duration) -> ToolResult {
         Ok(p) => p,
         Err(e) => return ToolResult::err(format!("http_fetch: cannot build proxy config: {e}")),
     };
-    let client = match reqwest::Client::builder()
-        .proxy(proxy)
-        .timeout(timeout)
-        .build()
-    {
+    let mut builder = reqwest::Client::builder().proxy(proxy).timeout(timeout);
+    // Broker egress mode (ADR 0026): hosts with a credential-injection rule
+    // are presented under the per-VM broker CA; trust it in addition to the
+    // built-in roots so http_fetch behaves like the workload does.
+    if let Some(ca) = broker_ca_cert() {
+        builder = builder.add_root_certificate(ca);
+    }
+    let client = match builder.build() {
         Ok(c) => c,
         Err(e) => return ToolResult::err(format!("http_fetch: cannot build client: {e}")),
     };
@@ -848,6 +851,30 @@ fn list_dir(path: &str, root: &Path) -> Result<ToolResult, String> {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// The broker CA from `LANTERN_EGRESS_CA_PEM`, in broker mode only.
+fn broker_ca_cert() -> Option<reqwest::Certificate> {
+    broker_ca_from(
+        std::env::var("LANTERN_EGRESS_MODE").ok().as_deref(),
+        std::env::var("LANTERN_EGRESS_CA_PEM").ok().as_deref(),
+    )
+}
+
+fn broker_ca_from(mode: Option<&str>, pem: Option<&str>) -> Option<reqwest::Certificate> {
+    if !crate::egress::is_broker_mode(mode) {
+        return None;
+    }
+    // reqwest (rustls) defers PEM parsing to `build()`, where a bad CA would
+    // fail every fetch; reject non-certificate input up front instead.
+    let pem = pem.filter(|p| p.contains("-----BEGIN CERTIFICATE-----"))?;
+    match reqwest::Certificate::from_pem(pem.as_bytes()) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::warn!(error = %e, "http_fetch: broker CA unparseable; injected hosts will fail TLS");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1264,5 +1291,17 @@ mod tests {
             !s.contains("\"result\""),
             "result key must be omitted on err"
         );
+    }
+
+    #[test]
+    fn http_fetch_trusts_broker_ca_only_in_broker_mode() {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
+        let pem = params.self_signed(&key).unwrap().pem();
+        assert!(broker_ca_from(Some("broker"), Some(&pem)).is_some());
+        assert!(broker_ca_from(None, Some(&pem)).is_none());
+        assert!(broker_ca_from(Some("broker"), None).is_none());
+        assert!(broker_ca_from(Some("broker"), Some("not a pem")).is_none());
     }
 }

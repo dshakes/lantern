@@ -58,6 +58,8 @@ fn mount_tmpfs() {
 }
 
 #[cfg(target_os = "linux")]
+// glibc types RLIMIT_* as u32 (cast is a no-op there); musl uses c_int.
+#[allow(clippy::unnecessary_cast)]
 fn set_rlimits() {
     // Cap open files at 4096 — generous for workload, prevents fd-exhaust DoS.
     do_setrlimit(libc::RLIMIT_NOFILE as u32, 4096);

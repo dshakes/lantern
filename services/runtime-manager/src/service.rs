@@ -275,6 +275,18 @@ impl RuntimeManagerGrpc {
             });
         }
 
+        // Broker-mode VM (ADR 0026): no NIC, so dial the harness over
+        // host-initiated vsock. Same exec token as the IP path.
+        if let Some(uds) = self.backend.guest_vsock(&info.handle_id) {
+            return Ok(ExecRoute::Harness {
+                endpoint: HarnessTarget::Vsock {
+                    uds,
+                    port: harness_exec_port() as u32,
+                },
+                token: info.exec_token,
+            });
+        }
+
         let guest_ip = self
             .harness_addrs
             .get(vm_id)
@@ -290,7 +302,7 @@ impl RuntimeManagerGrpc {
         // SocketAddr Display brackets IPv6 correctly for the URI.
         let sock = std::net::SocketAddr::new(guest_ip, harness_exec_port());
         Ok(ExecRoute::Harness {
-            endpoint: format!("http://{sock}"),
+            endpoint: HarnessTarget::Tcp(format!("http://{sock}")),
             token: info.exec_token,
         })
     }
@@ -304,9 +316,62 @@ enum ExecRoute {
     /// Forward the stream to the in-guest harness exec server (firecracker),
     /// authenticating with this incarnation's exec token.
     Harness {
-        endpoint: String,
+        endpoint: HarnessTarget,
         token: Option<String>,
     },
+}
+
+/// How the manager reaches a guest's harness exec server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HarnessTarget {
+    /// `http://<guest_ip>:<port>` over the VM's TAP link.
+    Tcp(String),
+    /// Host-initiated vsock through Firecracker's base UDS (broker mode: the
+    /// guest has no NIC).
+    Vsock { uds: String, port: u32 },
+}
+
+impl std::fmt::Display for HarnessTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HarnessTarget::Tcp(url) => f.write_str(url),
+            HarnessTarget::Vsock { uds, port } => write!(f, "vsock:{uds}:{port}"),
+        }
+    }
+}
+
+impl HarnessTarget {
+    /// A `RuntimeHarness` client for this target. The vsock path performs the
+    /// `CONNECT <port>` handshake per connection; the URI only names the
+    /// authority for h2.
+    async fn client(
+        &self,
+    ) -> Result<
+        pb::runtime_harness_client::RuntimeHarnessClient<tonic::transport::Channel>,
+        tonic::transport::Error,
+    > {
+        match self {
+            HarnessTarget::Tcp(url) => {
+                pb::runtime_harness_client::RuntimeHarnessClient::connect(url.clone()).await
+            }
+            HarnessTarget::Vsock { uds, port } => {
+                let (uds, port) = (uds.clone(), *port);
+                let channel = tonic::transport::Endpoint::from_static("http://harness.vsock")
+                    .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+                        let uds = uds.clone();
+                        async move {
+                            crate::backends::firecracker::vsock_connect_guest(&uds, port)
+                                .await
+                                .map(hyper_util::rt::TokioIo::new)
+                        }
+                    }))
+                    .await?;
+                Ok(pb::runtime_harness_client::RuntimeHarnessClient::new(
+                    channel,
+                ))
+            }
+        }
+    }
 }
 
 impl RuntimeManagerGrpc {
@@ -326,7 +391,7 @@ impl RuntimeManagerGrpc {
     fn exec_via_harness(
         first: pb::ExecRequest,
         caller_stream: Option<tonic::Streaming<pb::ExecRequest>>,
-        endpoint: String,
+        endpoint: HarnessTarget,
         token: Option<String>,
     ) -> Pin<Box<dyn tokio_stream::Stream<Item = Result<pb::ExecResponse, Status>> + Send + 'static>>
     {
@@ -361,20 +426,17 @@ impl RuntimeManagerGrpc {
         });
 
         tokio::spawn(async move {
-            let mut client =
-                match pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint.clone())
-                    .await
-                {
-                    Ok(client) => client,
-                    Err(e) => {
-                        let _ = tx
-                            .send(Err(Status::unavailable(format!(
-                                "exec: cannot reach in-guest harness at {endpoint}: {e}"
-                            ))))
-                            .await;
-                        return;
-                    }
-                };
+            let mut client = match endpoint.client().await {
+                Ok(client) => client,
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(Status::unavailable(format!(
+                            "exec: cannot reach in-guest harness at {endpoint}: {e}"
+                        ))))
+                        .await;
+                    return;
+                }
+            };
 
             let request = with_exec_token(
                 tonic::Request::new(ReceiverStream::new(req_rx)),
@@ -761,6 +823,17 @@ impl RuntimeManagerGrpc {
             );
             return Err(not_found());
         }
+        // A snapshot's device state fixes whether the guest has a NIC (ADR
+        // 0026): restoring it in the other egress mode would either find no
+        // eth0 to re-point or reattach the source's TAP. Refuse a mismatch.
+        if meta.egress_mode != backend.egress_mode() {
+            return Err(Status::failed_precondition(format!(
+                "snapshot {id} was taken in egress mode {:?} but this node runs {:?}; \
+                 restore it on a node with the same LANTERN_EGRESS_MODE",
+                meta.egress_mode,
+                backend.egress_mode()
+            )));
+        }
         // Bare Firecracker: the snapshot pins the source VM's vsock UDS and
         // cert-image paths, so restoring next to a live source collides on
         // them. Refuse instead (a resume follows a Stop, so its source is gone).
@@ -995,7 +1068,7 @@ const TOOL_DEADLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(
 #[allow(clippy::too_many_arguments)]
 async fn run_tool_via_harness(
     vm_id: &str,
-    endpoint: String,
+    endpoint: HarnessTarget,
     tool_name: &str,
     args_json: serde_json::Value,
     idempotency_key: &str,
@@ -1028,7 +1101,7 @@ async fn run_tool_via_harness(
 
 async fn run_tool_via_harness_inner(
     vm_id: &str,
-    endpoint: String,
+    endpoint: HarnessTarget,
     token: Option<&str>,
     tool_name: &str,
     args_json: serde_json::Value,
@@ -1054,17 +1127,16 @@ async fn run_tool_via_harness_inner(
     };
 
     // Dial the harness exec server (same path as exec_via_harness).
-    let mut client =
-        match pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint.clone()).await {
-            Ok(c) => c,
-            Err(e) => {
-                return pb::ExecToolResponse {
-                    status: pb::ToolStatus::Unavailable as i32,
-                    result: None,
-                    error: format!("exec_tool: cannot reach harness at {endpoint}: {e}"),
-                };
-            }
-        };
+    let mut client = match endpoint.client().await {
+        Ok(c) => c,
+        Err(e) => {
+            return pb::ExecToolResponse {
+                status: pb::ToolStatus::Unavailable as i32,
+                result: None,
+                error: format!("exec_tool: cannot reach harness at {endpoint}: {e}"),
+            };
+        }
+    };
 
     // Single-frame request; drop the sender to half-close immediately.
     let (req_tx, req_rx) = mpsc::channel::<pb::ExecRequest>(1);
@@ -1826,9 +1898,10 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             }));
         }
 
-        let guest_ip = match self.harness_addrs.get(&vm_id).map(|e| *e.value()) {
-            Some(ip) => ip,
-            None => {
+        // Same routing as exec: vsock for broker-mode VMs, else guest IP.
+        let endpoint = match self.route_exec(&vm_id) {
+            Ok(ExecRoute::Harness { endpoint, .. }) => endpoint,
+            _ => {
                 return Ok(Response::new(pb::ExecToolResponse {
                     status: pb::ToolStatus::Unavailable as i32,
                     result: None,
@@ -1839,11 +1912,6 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 }));
             }
         };
-
-        let endpoint = format!(
-            "http://{}",
-            std::net::SocketAddr::new(guest_ip, harness_exec_port())
-        );
 
         // Default timeout: the request's field if set, else 30s; capped.
         let timeout_sec = req
@@ -2709,6 +2777,8 @@ mod tests {
         accepts_hostile: bool,
         /// When `true`, the stub can satisfy confidential compute (Kata-CC).
         cc_capable: bool,
+        /// Broker-mode vsock UDS the stub reports via `guest_vsock`.
+        vsock: Option<String>,
     }
 
     impl NamedStub {
@@ -2717,6 +2787,7 @@ mod tests {
                 name,
                 accepts_hostile: false,
                 cc_capable: false,
+                vsock: None,
             })
         }
 
@@ -2727,6 +2798,7 @@ mod tests {
                 name,
                 accepts_hostile: true,
                 cc_capable: false,
+                vsock: None,
             })
         }
 
@@ -2736,6 +2808,7 @@ mod tests {
                 name,
                 accepts_hostile: true,
                 cc_capable: true,
+                vsock: None,
             })
         }
     }
@@ -2800,6 +2873,14 @@ mod tests {
 
         fn satisfies_confidential(&self) -> bool {
             self.cc_capable
+        }
+
+        fn guest_vsock(&self, _handle_id: &str) -> Option<String> {
+            self.vsock.clone()
+        }
+
+        fn egress_mode(&self) -> &'static str {
+            if self.vsock.is_some() { "broker" } else { "" }
         }
     }
 
@@ -3577,7 +3658,11 @@ mod tests {
         match svc.route_exec("vm-fc2").expect("route must resolve") {
             ExecRoute::Harness { endpoint, token } => {
                 let expected = format!("http://192.168.127.5:{}", harness_exec_port());
-                assert_eq!(endpoint, expected, "endpoint must dial the guest IP");
+                assert_eq!(
+                    endpoint,
+                    HarnessTarget::Tcp(expected),
+                    "endpoint must dial the guest IP"
+                );
                 assert_eq!(token.as_deref(), Some("tok-incarnation-1"));
             }
             other => panic!("expected harness route, got {other:?}"),
@@ -4736,6 +4821,35 @@ mod tests {
         assert!(svc.registry.is_empty(), "nothing booted");
     }
 
+    /// A snapshot taken in guest mode (it has a NIC in its device state) must
+    /// not restore on a broker node, which would load it without re-pointing
+    /// that NIC — reattaching the source's TAP (ADR 0026).
+    #[tokio::test]
+    async fn restore_refuses_egress_mode_mismatch() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, id) = store_with_snapshot(tmp.path(), "t-owner").await;
+        let backend: Arc<dyn RuntimeBackend> = Arc::new(NamedStub {
+            name: "firecracker",
+            accepts_hostile: true,
+            cc_capable: false,
+            vsock: Some("/x.sock".into()),
+        });
+        let svc = RuntimeManagerGrpc::new(
+            backend,
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store);
+        let err = svc
+            .spawn(Request::new(restore_spawn("t-owner", &id)))
+            .await
+            .expect_err("mode mismatch must be refused");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert!(err.message().contains("egress mode"), "{}", err.message());
+        assert!(svc.registry.is_empty(), "nothing restored");
+    }
+
     /// A backend that cannot restore from the store refuses — it must not cold
     /// boot and claim from_snapshot.
     #[tokio::test]
@@ -4882,10 +4996,145 @@ mod tests {
         format!("http://{addr}")
     }
 
+    /// A fake Firecracker hybrid-vsock UDS: answers `CONNECT <port>` with
+    /// `OK`, then serves the mock harness on the stream — behind the same
+    /// bearer-token check the real in-guest exec server enforces.
+    async fn start_vsock_harness(dir: &std::path::Path, expect_port: u32) -> String {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let uds = dir.join("vm.sock");
+        let listener = tokio::net::UnixListener::bind(&uds).unwrap();
+        let (tx, rx) = mpsc::channel::<std::io::Result<tokio::net::UnixStream>>(4);
+        tokio::spawn(async move {
+            loop {
+                let Ok((conn, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut r = tokio::io::BufReader::new(conn);
+                let mut line = String::new();
+                if r.read_line(&mut line).await.is_err() {
+                    continue;
+                }
+                let mut conn = r.into_inner();
+                if line != format!("CONNECT {expect_port}\n") {
+                    let _ = conn.shutdown().await; // Firecracker closes on a bad port
+                    continue;
+                }
+                let _ = conn.write_all(b"OK 1073741824\n").await;
+                if tx.send(Ok(conn)).await.is_err() {
+                    return;
+                }
+            }
+        });
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(
+                    pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
+                        MockHarness(MockMode::Ok),
+                        #[allow(clippy::result_large_err)]
+                        |req: Request<()>| match req.metadata().get("authorization") {
+                            Some(v) if v == "Bearer tok" => Ok(req),
+                            _ => Err(Status::unauthenticated("bad token")),
+                        },
+                    ),
+                )
+                .serve_with_incoming(ReceiverStream::new(rx)),
+        );
+        uds.display().to_string()
+    }
+
+    #[tokio::test]
+    async fn tool_call_over_host_initiated_vsock_with_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let uds = start_vsock_harness(dir.path(), 50056).await;
+        let target = HarnessTarget::Vsock { uds, port: 50056 };
+        let resp = run_tool_via_harness(
+            "vm-1",
+            target.clone(),
+            "t",
+            serde_json::json!({}),
+            "k",
+            1,
+            std::time::Duration::from_secs(5),
+            Some("tok"),
+        )
+        .await;
+        assert_eq!(resp.status, pb::ToolStatus::Ok as i32, "{}", resp.error);
+
+        // A stale incarnation's token is refused over vsock exactly as over TCP.
+        let resp = run_tool_via_harness(
+            "vm-1",
+            target,
+            "t",
+            serde_json::json!({}),
+            "k",
+            1,
+            std::time::Duration::from_secs(5),
+            Some("stale"),
+        )
+        .await;
+        assert_ne!(resp.status, pb::ToolStatus::Ok as i32);
+    }
+
+    #[tokio::test]
+    async fn vsock_connect_refused_port_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let uds = start_vsock_harness(dir.path(), 50056).await;
+        let err = crate::backends::firecracker::vsock_connect_guest(&uds, 9999)
+            .await
+            .expect_err("wrong port must not connect");
+        assert!(
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionRefused
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_route_broker_vm_uses_vsock_with_exec_token() {
+        let resolver = Arc::new(HashMapSecretResolver::new(HashMap::new()));
+        let backend: Arc<dyn RuntimeBackend> = Arc::new(NamedStub {
+            name: "firecracker",
+            accepts_hostile: true,
+            cc_capable: false,
+            vsock: Some("/run/lantern/vsock/vm-b.sock".into()),
+        });
+        let svc = RuntimeManagerGrpc::new(backend, crate::pool::PoolConfig::default(), resolver);
+        svc.registry.register(HandleInfo {
+            handle_id: "vm-b".to_string(),
+            run_id: "r".to_string(),
+            tenant_id: "t".to_string(),
+            backend: "firecracker".to_string(),
+            isolation_class: proto::IsolationClass::Untrusted,
+            created_at: chrono::Utc::now(),
+            resource_limits: proto::ResourceLimits::default(),
+            node_name: "n".to_string(),
+            declared_secret_uris: vec![],
+            agent_version_id: String::new(),
+            cert_sha256: None,
+            exec_token: Some("tok-b".to_string()),
+        });
+        // No heartbeat address needed: a broker VM has no NIC to dial.
+        match svc.route_exec("vm-b").expect("route") {
+            ExecRoute::Harness { endpoint, token } => {
+                assert_eq!(
+                    endpoint,
+                    HarnessTarget::Vsock {
+                        uds: "/run/lantern/vsock/vm-b.sock".into(),
+                        port: harness_exec_port() as u32
+                    }
+                );
+                assert_eq!(token.as_deref(), Some("tok-b"));
+            }
+            other => panic!("expected vsock harness route, got {other:?}"),
+        }
+    }
+
     async fn call_tool(endpoint: String, deadline: std::time::Duration) -> pb::ExecToolResponse {
         run_tool_via_harness(
             "vm-1",
-            endpoint,
+            HarnessTarget::Tcp(endpoint),
             "t",
             serde_json::json!({}),
             "k",
