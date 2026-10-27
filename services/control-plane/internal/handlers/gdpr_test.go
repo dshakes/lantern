@@ -332,3 +332,37 @@ func TestGDPR_PurgeWithRun(t *testing.T) {
 		t.Error("tenant row not deleted after purge")
 	}
 }
+
+// TestGDPR_PurgeSweepsTablesWithoutTenantFK: life_events has a tenant_id but no
+// FK to tenants and was missing from the explicit purge list, so erasure used
+// to leave its rows behind. The catalog sweep must remove them.
+func TestGDPR_PurgeSweepsTablesWithoutTenantFK(t *testing.T) {
+	pool := gdprTestDB(t)
+	ctx := context.Background()
+
+	var tenantID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenants (slug, name, tier, k8s_namespace)
+		VALUES ('gdpr-sweep-test', 'GDPR Sweep Test', 'personal', 'lantern-t-gdpr-sweep-test')
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO life_events (tenant_id, kind, channel, summary) VALUES ($1, 'bill', 'imessage', 'PII summary')
+	`, tenantID); err != nil {
+		t.Fatalf("seed life_event: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	newGDPRHandlerForTest(pool).DeleteTenant(rr, gdprRequest(t, tenantID, tenantID, "owner"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("purge: %d %s", rr.Code, rr.Body.String())
+	}
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT COUNT(*) FROM life_events WHERE tenant_id = $1`, tenantID).Scan(&n)
+	if n != 0 {
+		t.Fatalf("life_events rows survived erasure: %d", n)
+	}
+}

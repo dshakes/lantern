@@ -28,6 +28,7 @@ import { api } from "@/lib/api";
 import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { PageHeader } from "@/components/page-header";
+import { DangerZone } from "./danger-zone";
 import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/button";
 
@@ -448,6 +449,8 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
           </Field>
         </div>
       </SettingsSection>
+
+      <DangerZone />
 
       {/* Sticky save bar — pinned to the bottom of the viewport so it's
           always reachable, never orphaned to the bottom-right of a card. */}

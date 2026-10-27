@@ -298,14 +298,14 @@ func TestPasswordFloor_BoundaryCheck(t *testing.T) {
 	}
 }
 
-func TestCheckLoginRateLimit_NilRedis_FailOpen(t *testing.T) {
+func TestAuthRateLimited_NilRedis_FailOpen(t *testing.T) {
 	// When Redis is nil, the rate limiter must fail-open (no blocking).
 	h := &AuthHandler{srv: &server.Server{
 		Logger: zap.NewNop(),
 		// Redis is nil.
 	}}
 	for i := 0; i < 100; i++ {
-		if h.checkLoginRateLimit(context.Background(), "ip:1.2.3.4") {
+		if h.authRateLimited(context.Background(), "login:ip:1.2.3.4", loginRateLimitMax, loginRateLimitWindow) {
 			t.Error("expected fail-open (false) when Redis is nil, got exceeded=true")
 		}
 	}
