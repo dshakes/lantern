@@ -708,31 +708,25 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   fi
 
   # ---- 4c-vi. read_file: verify state marker survived ----
-  # After Stop the manager evicts the stale harness_addrs entry, so the first
-  # ExecTool after restore returns UNAVAILABLE immediately rather than timing
-  # out after the 35 s tool deadline.  The harness re-establishes its heartbeat
-  # stream within ~0.5–5 s (reconnect backoff + first interval tick), at which
-  # point ExecTool succeeds.  Keep 6 retries × 2 s = 12 s max; the test should
-  # converge in 1–3 retries.  A regression to the old 35 s timeout path would
-  # fail here (the first attempt alone would exhaust the budget).
-  log "Verifying state marker survived snapshot/restore (read_file, with retry)"
+  # ONE ExecTool, no retry loop: the manager holds an exec until the restored
+  # harness has re-identified and heartbeated under the new cert (bounded by
+  # LANTERN_HARNESS_READY_TIMEOUT_MS, default 3 s). Gate: the first exec after
+  # restore must land within FIRST_EXEC_MAX_MS (default 1500 ms).
+  FIRST_EXEC_MAX_MS="${FIRST_EXEC_MAX_MS:-1500}"
+  log "Verifying state marker survived snapshot/restore (single read_file)"
   T0=$(ms)
-  READ_RESP=""
-  for attempt in $(seq 1 6); do
-    READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
-      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-      -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
-             '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
-               tool_name:"read_file",args:{path:$path},
-               idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
-      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
-    if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
-      break
-    fi
-    log "read_file attempt ${attempt}: ExecTool not ready yet (waiting 2s)..."
-    sleep 2
-  done
-  timing_record "read_file_after_restore" "${T0}" "$(ms)"
+  READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
+           '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
+             tool_name:"read_file",args:{path:$path},
+             idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
+  T1=$(ms)
+  timing_record "read_file_after_restore" "${T0}" "${T1}"
+  [ $(( T1 - T0 )) -le "${FIRST_EXEC_MAX_MS}" ] \
+    || fail "first exec after restore took $(( T1 - T0 )) ms (> ${FIRST_EXEC_MAX_MS} ms). Response: ${READ_RESP}\nLog:\n$(grep -E 'harness ready|waited for the harness|readiness timeout|reidentify' "${MANAGER_LOG}" | tail -10)"
+  pass "first exec after restore: $(( T1 - T0 )) ms (gate ${FIRST_EXEC_MAX_MS} ms)"
 
   if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
     pass "state marker survived stop/restore — file system state is durable across snapshot cycles"

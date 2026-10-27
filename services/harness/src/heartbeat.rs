@@ -74,10 +74,21 @@ impl Heartbeat {
     /// A fast-fail cycle (connect → RPC error → ack channel closes) keeps
     /// doubling the backoff. A genuinely healthy stream resets it once the
     /// first ack arrives, confirming the stream is usable end-to-end.
+    ///
+    /// Restore fast path: a stream that was acked reconnects once with no
+    /// sleep (a restore kills a healthy stream), and a re-identify cuts any
+    /// backoff short — the stale cert's attempt was refused and doubled the
+    /// backoff, but the new identity deserves an immediate try. The manager
+    /// holds the first exec after resume/fork until this reconnect lands.
     pub async fn run(self) {
         let mut backoff = INITIAL_BACKOFF;
+        let mut reconnected_fast = false;
 
         loop {
+            // Subscribe before connecting: a re-identify at any later point —
+            // including the one that tears this stream down — wakes the pause.
+            let identity_changed = self.manager.identity_changed();
+            let mut acked = false;
             match self.manager.open_heartbeat_stream().await {
                 Ok((req_tx, mut ack_rx)) => {
                     tracing::info!("heartbeat: stream open to {}", self.manager.manager_addr);
@@ -121,6 +132,7 @@ impl Heartbeat {
                         if first_ack {
                             backoff = INITIAL_BACKOFF;
                             first_ack = false;
+                            acked = true;
                         }
 
                         self.manager.note_contact().await;
@@ -146,6 +158,7 @@ impl Heartbeat {
 
                     tracing::warn!("heartbeat: ack stream ended, will reconnect");
                     send_handle.abort();
+                    self.manager.hint_restore();
                 }
                 Err(e) => {
                     // `{:#}` prints the whole anyhow chain. Display alone shows
@@ -160,8 +173,29 @@ impl Heartbeat {
                 }
             }
 
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(MAX_BACKOFF);
+            // One immediate retry per healthy stream; a manager that acks and
+            // drops in a loop still gets paced by the backoff every other time.
+            if acked && !reconnected_fast {
+                reconnected_fast = true;
+                continue;
+            }
+            reconnected_fast = false;
+            backoff = pause_before_reconnect(backoff, identity_changed).await;
+        }
+    }
+}
+
+/// Sleep `backoff` before reconnecting, unless the identity changes first
+/// (then reconnect now). Returns the backoff for the next failure.
+async fn pause_before_reconnect(
+    backoff: Duration,
+    identity_changed: impl std::future::Future<Output = ()>,
+) -> Duration {
+    tokio::select! {
+        () = tokio::time::sleep(backoff) => (backoff * 2).min(MAX_BACKOFF),
+        () = identity_changed => {
+            tracing::info!("heartbeat: identity changed; reconnecting now");
+            INITIAL_BACKOFF
         }
     }
 }
@@ -371,6 +405,56 @@ mod tests {
         assert_eq!(
             backoff, MAX_BACKOFF,
             "backoff must clamp at MAX_BACKOFF after enough doublings"
+        );
+    }
+
+    /// The restore race: a stale-cert attempt was refused and the backoff
+    /// doubled; the re-identify that follows must not wait it out.
+    #[tokio::test(start_paused = true)]
+    async fn identity_change_cuts_the_backoff_short() {
+        let m = ManagerClient::new("127.0.0.1:1".into(), "vm-src".into());
+        let changed = m.identity_changed();
+        let t0 = tokio::time::Instant::now();
+        let remote = m.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            remote.reidentify(crate::manager_client::Identity {
+                vm_id: "vm-fork".into(),
+                exec_token: String::new(),
+                agent_instance_token: None,
+            });
+        });
+        let next = pause_before_reconnect(Duration::from_secs(4), changed).await;
+        assert_eq!(
+            t0.elapsed(),
+            Duration::from_millis(30),
+            "not the 4 s backoff"
+        );
+        assert_eq!(next, INITIAL_BACKOFF, "backoff resets for the new identity");
+
+        // A change that landed while the stream was still open (it is what
+        // tore the stream down) resolves the pause in 0 ms.
+        let changed = m.identity_changed();
+        m.reidentify(crate::manager_client::Identity {
+            vm_id: "vm-fork-2".into(),
+            exec_token: String::new(),
+            agent_instance_token: None,
+        });
+        let t1 = tokio::time::Instant::now();
+        pause_before_reconnect(MAX_BACKOFF, changed).await;
+        assert_eq!(t1.elapsed(), Duration::ZERO);
+    }
+
+    /// No identity change: plain doubling backoff (FIX 4 semantics).
+    #[tokio::test(start_paused = true)]
+    async fn pause_without_identity_change_sleeps_and_doubles() {
+        let t0 = tokio::time::Instant::now();
+        let next = pause_before_reconnect(INITIAL_BACKOFF, std::future::pending()).await;
+        assert_eq!(t0.elapsed(), INITIAL_BACKOFF);
+        assert_eq!(next, INITIAL_BACKOFF * 2);
+        assert_eq!(
+            pause_before_reconnect(MAX_BACKOFF, std::future::pending()).await,
+            MAX_BACKOFF
         );
     }
 
