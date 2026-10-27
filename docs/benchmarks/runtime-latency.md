@@ -85,7 +85,7 @@ indicative of dev-laptop performance — not bare-metal production numbers).
 | `snapshot` | 634 | 128 MiB mem snapshot to disk (134 MB written) |
 | `stop` | 207 | graceful SendCtrlAltDel (aarch64 not supported) + SIGKILL fallback |
 | `restore` | 138 | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
-| `read_file_after_restore` | 4 204 | 2 ExecTool retries × 2 s wait; operation itself ~200 ms once ready |
+| `read_file_after_restore` | 4 204 → **2 857** | before WP1: 2 ExecTool retries × 2 s wait. After WP1: one ExecTool held by the manager until the restored harness re-identifies — median of 5 runs, see below |
 | `stop_before_fork` | 197 | Stop restored VM before fork test |
 | `fork_spawn_1` | 131 | jailer: hard-link mem + per-VM rootfs copy + jail chroot setup |
 | `fork_spawn_2` | 145 | |
@@ -96,17 +96,38 @@ indicative of dev-laptop performance — not bare-metal production numbers).
 (link_count=4 = 1 source snapshot + 3 forks), confirming MAP_PRIVATE CoW is
 active and each fork pays O(1) disk I/O for the 128 MiB mem file.
 
-**Note on `read_file_after_restore`:** The Spawn RPC returns as soon as
-Firecracker accepts the snapshot load, but the harness's in-guest exec server
-(vsock-based ExecTool path) takes an additional 2–5 s to re-establish the
-heartbeat TCP connection and become ready.  The test retries ExecTool with a
-2 s gap; in this run two retries were needed (4 s wait).  Prior to the
-`ACTIVE_TOOL_CHILDREN` zombie-reaper fix and vsock/API-socket cleanup in
-`cancel()`, this step took 37 s because the vsock socket from the stopped VM
-remained on disk, causing `EADDRINUSE` on restore and `ECHILD` in the exec
-server.  After the fixes it is dominated by the 4 s channel warm-up wait.
-A production scheduler would poll the heartbeat ready state rather than a fixed
-retry loop, reducing this to ~200 ms.
+**`read_file_after_restore` after WP1 (fast restore)** — measured 2026-10-27,
+same Lima VM, jailed mode, guest (TAP) egress. **Indicative only: nested virt.**
+
+| run | 1 | 2 | 3 | 4 | 5 | p50 | max |
+|-----|--:|--:|--:|--:|--:|----:|----:|
+| first exec after restore (ms) | 2 571 | 3 053 | 2 847 | 2 924 | 2 857 | **2 857** | 3 053 |
+
+The test now makes ONE ExecTool call with no retry loop. The manager holds it
+(`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s) until the restored guest's
+first cert-pinned heartbeat, then dispatches it. The fixed 2 s retry
+quantization is gone, and so are the 1 s re-identify poll and the doubled
+heartbeat backoff. The gate hard-fails above 3 500 ms and warns above 1 500 ms.
+
+**Sub-second is not met on Lima.** The time left is CPU-bound guest work that
+runs very slowly under nested virt, not waiting. One instrumented run (guest
+clock, after restore):
+
+| step | ms |
+|------|---:|
+| re-identify: mount cert drive, copy material, read `spawn.json`, unmount | ~600 |
+| re-address eth0, egress rules, broker CA, identity swap | ~130 |
+| old heartbeat stream noticed and torn down | ~150 |
+| mTLS connect + handshake to the manager | ~480 |
+| Heartbeat RPC + first heartbeat + ack | ~260 |
+| manager → guest exec dial + `read_file` | ~320 |
+
+The same mTLS connect takes ~430 ms at cold boot on this VM, so the slowness is
+general to this VM, not caused by restore. On bare-metal KVM each of these
+steps should take milliseconds, but that has not been measured. If Lima still
+matters, the next levers are: skip the ext4 mount on the critical path (the
+manager could push the new identity over vsock), and reuse TLS sessions on
+reconnect.
 
 ---
 
@@ -132,7 +153,7 @@ Replace the values above with the measured `duration_ms` from that output.
 | snapshot | `PUT /snapshot/create` — guest paused, mem written to file | memory size × disk throughput |
 | stop | `PUT /actions SendCtrlAltDel` + SIGKILL | guest ACPI handler / kernel shutdown |
 | restore (Spawn RPC) | `PUT /snapshot/load` + `PATCH /drives/{certs,rootfs}` + `PATCH /vm Resumed` | mem file read + page fault warm-up |
-| ExecTool ready | harness heartbeat TCP reconnect after resume | vsock re-establish + manager registration |
+| ExecTool ready | guest re-identify (≤ 250 ms poll, or at once when a manager stream dies) + mTLS heartbeat reconnect; the manager holds exec until the first pinned heartbeat | cert-drive mount + TLS handshake |
 | ExecTool operation | vsock gRPC (harness) → tool exec → result | vsock latency + tool work |
 | fork spawn | same as restore, new vm_id, per-VM rootfs copy | mem read + `cp` of rootfs file |
 

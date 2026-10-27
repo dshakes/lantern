@@ -101,9 +101,10 @@ impl HarnessReady {
 }
 
 /// How long exec waits for a guest's harness to (re)connect before giving up
-/// (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 3000). Covers resume/fork:
-/// restore ~150 ms + re-identify ≤ 250 ms poll + reconnect.
-const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(3000);
+/// (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5000). Covers resume/fork:
+/// restore ~100 ms + re-identify (≤ 250 ms poll + drive reload) + mTLS
+/// reconnect — measured 2.2–2.8 s on nested-virt Lima, where 3 s was too tight.
+const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 fn harness_ready_timeout() -> Duration {
     std::env::var("LANTERN_HARNESS_READY_TIMEOUT_MS")
