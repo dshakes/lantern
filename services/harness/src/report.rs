@@ -99,6 +99,7 @@ pub async fn run(manager: ManagerClient, mut rx: mpsc::Receiver<HarnessReport>) 
                 backoff = RECONNECT_MIN; // healthy → reset backoff
             }
             Ok(Err(e)) => {
+                manager.hint_restore();
                 tracing::warn!(
                     error = %e, dropped, backoff_ms = backoff.as_millis() as u64,
                     "report: Report RPC failed; reconnecting (security audits already \

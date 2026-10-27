@@ -30,8 +30,15 @@ use crate::proto::{AuditEvent, EgressRule, HarnessReport, SecretRef, now_unix_ms
 use crate::secrets::SecretCache;
 
 /// Poll cadence — the upper bound on how long a restored guest runs under
-/// the stale (already pinned-out, so inert) identity.
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// the stale (already pinned-out, so inert) identity, and so on the first
+/// exec after resume/fork (the manager waits for the new identity).
+/// A dead manager stream also triggers an immediate read (`restore_hinted`):
+/// on restore Firecracker resets every vsock connection, so broker-mode
+/// guests usually re-identify before this tick; TAP guests only notice on
+/// their next send (≤ 5 s), so they rely on the poll.
+// ponytail: one 2 KiB virtio-blk read per tick per VM (~4/s). Upgrade path:
+// trigger on the VMGenID uevent (6.10+ aarch64 guests) and drop this to 5 s.
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// ext4 superblock: at byte 1024; magic (le16 0xEF53) at +0x38; UUID at +0x68.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // readers are Linux-only
@@ -161,7 +168,7 @@ pub fn hosts_with_manager(existing: &str, host_ip: &str) -> String {
     out
 }
 
-/// Watch the cert drive forever; re-identify on change.
+/// Watch the cert drive forever (poll + stream-death hint); re-identify on change.
 pub async fn run(
     manager: ManagerClient,
     secrets: Arc<SecretCache>,
@@ -171,8 +178,9 @@ pub async fn run(
 ) {
     let mut watch = IdentityWatch::new(baseline);
     let mut ticker = tokio::time::interval(POLL_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        ticker.tick().await;
+        next_check(&mut ticker, &manager).await;
         let previous = watch.seen;
         let current = tokio::task::spawn_blocking(move || read_marker(device))
             .await
@@ -191,6 +199,14 @@ pub async fn run(
             tracing::error!(error = format!("{e:#}"), "reidentify: failed; will retry");
             watch.retry(previous);
         }
+    }
+}
+
+/// Wait for the next poll tick or a restore hint, whichever comes first.
+async fn next_check(ticker: &mut tokio::time::Interval, manager: &ManagerClient) {
+    tokio::select! {
+        _ = ticker.tick() => {}
+        () = manager.restore_hinted() => {}
     }
 }
 
@@ -551,6 +567,22 @@ mod tests {
         assert_eq!(next_exec_token(Some("new".into()), "old").unwrap(), "new");
         assert!(next_exec_token(None, "old").is_err(), "no silent reuse");
         assert_eq!(next_exec_token(None, "").unwrap(), "", "dev stays dev");
+    }
+
+    /// A dead manager stream re-reads the drive at once, not on the next tick.
+    #[tokio::test(start_paused = true)]
+    async fn restore_hint_preempts_the_poll() {
+        let m = ManagerClient::new("127.0.0.1:1".into(), "vm".into());
+        let mut ticker = tokio::time::interval(POLL_INTERVAL);
+        next_check(&mut ticker, &m).await; // first tick is immediate
+        let t0 = tokio::time::Instant::now();
+        // A hint raised before anyone waits is kept, not lost.
+        m.clone().hint_restore();
+        next_check(&mut ticker, &m).await;
+        assert_eq!(t0.elapsed(), Duration::ZERO, "hint wakes immediately");
+        // No hint: the poll is the backstop.
+        next_check(&mut ticker, &m).await;
+        assert_eq!(t0.elapsed(), POLL_INTERVAL);
     }
 
     #[tokio::test]

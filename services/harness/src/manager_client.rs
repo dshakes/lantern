@@ -60,6 +60,12 @@ pub struct ManagerClient {
     /// watch it and reconnect, so the TLS session presents the NEW cert —
     /// an established session keeps the identity it was opened with.
     identity_gen: Arc<tokio::sync::watch::Sender<u64>>,
+    /// Poked when a manager stream dies. A restore resets every vsock
+    /// connection (and RSTs the TAP one on its next send), so a dead stream
+    /// is the earliest in-guest hint that the cert drive may have been
+    /// swapped; the re-identify watcher re-reads it at once instead of
+    /// waiting for its next poll.
+    restore_hint: Arc<tokio::sync::Notify>,
     /// Per-instance identity token minted by the control-plane at schedule
     /// time and injected as `LANTERN_AGENT_INSTANCE_TOKEN`. Attached as
     /// `authorization: Bearer <token>` metadata on every `VendSecret` call
@@ -101,6 +107,7 @@ impl ManagerClient {
             manager_addr,
             vm_id: Arc::new(std::sync::RwLock::new(vm_id)),
             identity_gen: Arc::new(tokio::sync::watch::channel(0).0),
+            restore_hint: Arc::new(tokio::sync::Notify::new()),
             agent_instance_token: Arc::new(std::sync::RwLock::new(agent_instance_token)),
             exec_token: Arc::new(std::sync::RwLock::new(
                 std::env::var("LANTERN_HARNESS_EXEC_TOKEN").unwrap_or_default(),
@@ -149,6 +156,17 @@ impl ManagerClient {
                 std::future::pending::<()>().await;
             }
         }
+    }
+
+    /// A manager stream died: ask the re-identify watcher to check the cert
+    /// drive now (see `restore_hint`). Stored if nobody is waiting yet.
+    pub(crate) fn hint_restore(&self) {
+        self.restore_hint.notify_one();
+    }
+
+    /// Resolves on the next [`Self::hint_restore`] (or a stored one).
+    pub(crate) async fn restore_hinted(&self) {
+        self.restore_hint.notified().await;
     }
 
     /// Register the channel used by the Report stream so subsystems can fan
