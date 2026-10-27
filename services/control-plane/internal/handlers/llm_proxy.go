@@ -936,9 +936,10 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool, userFacing bool) []stru
 // failover tail (minus the duplicate), so a retryable error on the preferred
 // model still falls over to the other providers.
 //
-// A cheap-tier preference must not turn into a frontier bill on failover: the
-// tail tries the OTHER provider's cheap tier first, then the default chain
-// with frontier models removed. If nothing is left, the call fails.
+// A cheap-tier preference must not turn into a bigger bill on failover: the
+// tail is the OTHER provider's cheap tier, then any other cheap-tier entries
+// of the default chain — never a sonnet/gpt-4o/opus-class model. If nothing
+// cheap is left, the call fails.
 func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred string, chain []struct{ Provider, Model string }) []struct{ Provider, Model string } {
 	if preferred == "" || preferred == "auto" {
 		return chain
@@ -961,7 +962,7 @@ func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred s
 		}
 	}
 	for _, c := range chain {
-		if cheap && isFrontierModel(c.Model) {
+		if cheap && !isCheapTierModel(c.Model) {
 			continue
 		}
 		dup := false
@@ -981,13 +982,6 @@ func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred s
 func isCheapTierModel(model string) bool {
 	return model == haikuModel() || strings.Contains(model, "haiku") ||
 		strings.HasSuffix(model, "-mini") || strings.Contains(model, "-mini-")
-}
-
-// isFrontierModel reports whether a model is frontier-priced (opus class).
-// ponytail: only opus appears in the catalog-derived chains; extend if a
-// frontier OpenAI model joins currentModelCatalog.
-func isFrontierModel(model string) bool {
-	return model == opusModel() || strings.Contains(model, "opus")
 }
 
 // ---------- Complete endpoint ----------

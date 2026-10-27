@@ -149,9 +149,9 @@ GET /v1/agents/triage   →  { ..., "model": "reasoning-large" }`}</code>
           <strong>Agent models go first</strong> — an agent&apos;s{" "}
           <a href="#agent-model">model</a> heads the chain and the default
           chain follows it. A cheap-tier agent (Haiku / <code>*-mini</code>)
-          fails over to the other provider&apos;s cheap tier first and never
-          to an Opus-class model; if nothing cheaper is left, the call fails
-          instead of escalating the bill
+          fails over only to the other provider&apos;s cheap tier — never to a
+          Sonnet, gpt-4o or Opus class model; if both cheap tiers fail, the
+          call fails instead of escalating the bill
         </li>
         <li>
           <strong>No mid-sentence swap</strong> — in streaming, failover only happens

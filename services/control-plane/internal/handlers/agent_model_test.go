@@ -64,13 +64,13 @@ func TestPreferModel(t *testing.T) {
 		{name: "empty keeps default chain", hasAnthropic: true, hasOpenAI: true, preferred: ""},
 		{name: "auto keeps default chain", hasAnthropic: true, hasOpenAI: true, preferred: "auto"},
 		{name: "unconfigured provider keeps default chain", hasAnthropic: true, preferred: "chat-small"},
-		// Cheap tier: preferred → other provider's cheap tier → default chain minus frontier.
-		{name: "fast, both providers", hasAnthropic: true, hasOpenAI: true, preferred: "fast", want: []cand{haiku, mini, gpt4o}},
-		{name: "fast, openai only", hasOpenAI: true, preferred: "fast", want: []cand{mini, gpt4o}},
+		// Cheap tier: preferred → other provider's cheap tier → nothing pricier (fail instead).
+		{name: "fast, both providers", hasAnthropic: true, hasOpenAI: true, preferred: "fast", want: []cand{haiku, mini}},
+		{name: "fast, openai only fails rather than escalate", hasOpenAI: true, preferred: "fast", want: []cand{mini}},
 		{name: "fast, anthropic only fails rather than escalate", hasAnthropic: true, preferred: "fast", want: []cand{haiku}},
-		{name: "reasoning-small", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-small", want: []cand{haiku, mini, gpt4o}},
-		{name: "chat-small", hasAnthropic: true, hasOpenAI: true, preferred: "chat-small", want: []cand{mini, haiku, gpt4o}},
-		{name: "vendor cheap id", hasAnthropic: true, hasOpenAI: true, preferred: "gpt-4o-mini", want: []cand{mini, haiku, gpt4o}},
+		{name: "reasoning-small", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-small", want: []cand{haiku, mini}},
+		{name: "chat-small", hasAnthropic: true, hasOpenAI: true, preferred: "chat-small", want: []cand{mini, haiku}},
+		{name: "vendor cheap id", hasAnthropic: true, hasOpenAI: true, preferred: "gpt-4o-mini", want: []cand{mini, haiku}},
 		// Non-cheap preference keeps the whole default chain as its tail.
 		{name: "reasoning-large keeps full tail", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-large", want: []cand{{"anthropic", sonnetModel()}, opus, haiku, gpt4o, mini}},
 		{name: "vendor frontier passthrough", hasAnthropic: true, hasOpenAI: true, preferred: "claude-opus-4-1", want: []cand{custom, opus, haiku, gpt4o, mini}},
@@ -160,6 +160,22 @@ func TestCallLLMWithFailover_PreferredModel(t *testing.T) {
 		}
 		if stub.callCount() != 1 {
 			t.Errorf("provider calls: got %d, want 1 (haiku only)", stub.callCount())
+		}
+	})
+
+	t.Run("cheap agent fails after both cheap tiers, no gpt-4o/sonnet/opus", func(t *testing.T) {
+		stub := &stubRoundTripper{responses: []func(*http.Request) (*http.Response, error){
+			anthropicStatusResponse(http.StatusInternalServerError),
+			anthropicStatusResponse(http.StatusInternalServerError),
+			okByProvider("must not be reached"),
+		}}
+		h := newTestProxyWithStub(t, stub)
+		t.Setenv("OPENAI_API_KEY", "sk-test")
+		if _, _, _, _, _, _, err := h.callLLMWithFailover(context.Background(), tenant, "fast", msgs, nil, nil, nil, nil, 1, true); err == nil {
+			t.Fatal("expected failure once both cheap tiers failed")
+		}
+		if stub.callCount() != 2 || reqModel(t, stub.req(0)) != haikuModel() || reqModel(t, stub.req(1)) != "gpt-4o-mini" {
+			t.Errorf("calls: %d (want 2: haiku, gpt-4o-mini)", stub.callCount())
 		}
 	})
 
