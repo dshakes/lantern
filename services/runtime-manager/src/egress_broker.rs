@@ -38,7 +38,7 @@ use tokio::net::{TcpStream, UnixListener};
 use tokio::sync::mpsc;
 
 use crate::proto::{CredentialInjection, EgressRule, pb};
-use crate::secret_resolver::SecretResolver;
+use crate::secret_resolver::{ResolveScope, SecretResolver};
 
 /// Guest→host vsock port the harness forwarder dials for egress.
 pub const EGRESS_VSOCK_PORT: u32 = 3128;
@@ -489,6 +489,9 @@ pub fn native_roots() -> rustls::RootCertStore {
 /// One VM's broker.
 pub struct Broker {
     vm_id: String,
+    /// The VM's tenant from the manager's spawn record — the relay resolves
+    /// injected refs only inside it.
+    tenant_id: String,
     policy: Policy,
     resolver: Arc<dyn SecretResolver>,
     mitm: Option<Arc<MitmCa>>,
@@ -503,6 +506,7 @@ pub struct Broker {
 impl Broker {
     pub fn new(
         vm_id: &str,
+        tenant_id: &str,
         policy: Policy,
         mitm: Option<Arc<MitmCa>>,
         deps: &BrokerDeps,
@@ -514,6 +518,7 @@ impl Broker {
         tls.alpn_protocols = vec![b"http/1.1".to_vec()];
         Ok(Self {
             vm_id: vm_id.to_string(),
+            tenant_id: tenant_id.to_string(),
             policy,
             resolver: Arc::clone(&deps.resolver),
             mitm,
@@ -753,7 +758,15 @@ impl Broker {
             }
             // ADR 0008 shared-token relay path (no agent bearer): the URI comes
             // from the manager's own spawn record, not from the guest.
-            let value = match self.resolver.resolve(&inj.secret_uri, None).await {
+            let scope = ResolveScope {
+                tenant_id: &self.tenant_id,
+                vm_id: &self.vm_id,
+            };
+            let value = match self
+                .resolver
+                .resolve_scoped(&inj.secret_uri, scope, None)
+                .await
+            {
                 Ok(v) => v,
                 Err(_) => {
                     tracing::warn!(vm_id = %self.vm_id, header = %inj.header, "egress broker: credential resolution failed");
@@ -1197,7 +1210,7 @@ pub(crate) mod tests {
     ) -> (Broker, mpsc::Receiver<pb::AuditEvent>) {
         let (d, rx) = deps(roots);
         let mitm = MitmCa::for_rules("vm-test", &rules).unwrap().map(Arc::new);
-        let mut b = Broker::new("vm-test", Policy::new(rules, ports), mitm, &d).unwrap();
+        let mut b = Broker::new("vm-test", "t1", Policy::new(rules, ports), mitm, &d).unwrap();
         b.test_upstream = upstream;
         (b, rx)
     }
@@ -1485,6 +1498,76 @@ pub(crate) mod tests {
         let text = logs.text();
         assert!(text.contains("egress broker audit"), "capture works");
         assert!(!text.contains(SECRET), "secret leaked into logs: {text}");
+    }
+
+    /// Records the scope each resolution was made under.
+    struct ScopeRecorder(std::sync::Mutex<Vec<(String, String)>>);
+
+    #[async_trait::async_trait]
+    impl SecretResolver for ScopeRecorder {
+        async fn resolve(
+            &self,
+            _uri: &str,
+            _bearer: Option<&str>,
+        ) -> Result<String, crate::secret_resolver::SecretResolverError> {
+            Err(crate::secret_resolver::SecretResolverError::Backend {
+                detail: "unscoped resolve must not be used by the broker".into(),
+            })
+        }
+        async fn resolve_scoped(
+            &self,
+            _uri: &str,
+            scope: ResolveScope<'_>,
+            _bearer: Option<&str>,
+        ) -> Result<String, crate::secret_resolver::SecretResolverError> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((scope.tenant_id.into(), scope.vm_id.into()));
+            Ok(SECRET.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn injection_resolves_scoped_to_the_vms_tenant() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            let mut r = BufReader::new(s);
+            let _ = read_head(&mut r).await;
+            let _ = r
+                .get_mut()
+                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                .await;
+        });
+        let rec = Arc::new(ScopeRecorder(std::sync::Mutex::new(Vec::new())));
+        let (tx, _rx) = mpsc::channel(8);
+        let deps = BrokerDeps {
+            resolver: rec.clone(),
+            audit: tx,
+            upstream_roots: Arc::new(rustls::RootCertStore::empty()),
+        };
+        let rules = vec![inject_rule("api.x.com")];
+        let mut b = Broker::new(
+            "vm-7",
+            "tenant-owner",
+            Policy::new(rules, vec![80]),
+            None,
+            &deps,
+        )
+        .unwrap();
+        b.test_upstream = Some(addr);
+        let out = roundtrip(
+            &b,
+            "GET http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\r\n",
+        )
+        .await;
+        assert!(out.starts_with("HTTP/1.1 204"), "{out}");
+        assert_eq!(
+            *rec.0.lock().unwrap(),
+            vec![("tenant-owner".to_string(), "vm-7".to_string())]
+        );
     }
 
     pub(crate) mod capture {

@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -651,6 +652,7 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 			}
 		}
 		er.RateBps = int64Of(firstOf(r, "rate_bps", "rateBps"))
+		er.Inject = egressInjectFromMap(r)
 		a.EgressRules = append(a.EgressRules, er)
 	}
 	for _, r := range mapSlice(spec["secrets"]) {
@@ -660,6 +662,62 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 		a.Secrets = append(a.Secrets, sr)
 	}
 	return a
+}
+
+// egressInjectFromMap parses an egress rule's `inject` entries (ADR 0026):
+// `{header, secretRef, valuePrefix}` (snake_case and `secret_uri` accepted).
+// The runtime-manager's host-side broker resolves the ref and sets the header
+// on the way out; the secret never enters the VM.
+func egressInjectFromMap(r map[string]any) []*lanternv1.CredentialInjection {
+	var out []*lanternv1.CredentialInjection
+	for _, m := range mapSlice(r["inject"]) {
+		ci := &lanternv1.CredentialInjection{}
+		ci.Header, _ = m["header"].(string)
+		ci.SecretUri, _ = firstOf(m, "secretRef", "secret_ref", "secretUri", "secret_uri").(string)
+		ci.ValuePrefix, _ = firstOf(m, "valuePrefix", "value_prefix").(string)
+		out = append(out, ci)
+	}
+	return out
+}
+
+// validateEgressInject rejects malformed credential-injection specs before
+// anything is scheduled: the header must be an RFC 7230 token, the ref a
+// parseable `lantern.secret/...` ref, and the prefix free of CR/LF. Errors
+// name the rule/entry index only — never the ref (it is not echoed or logged).
+func validateEgressInject(rules []map[string]any) error {
+	for i, r := range rules {
+		for j, ci := range egressInjectFromMap(r) {
+			if !isHTTPToken(ci.Header) {
+				return fmt.Errorf("egress rule %d inject %d: header must be a valid HTTP header name", i, j)
+			}
+			if parseRef(ci.SecretUri).scope == "" {
+				return fmt.Errorf("egress rule %d inject %d: secretRef must be a lantern.secret/... ref", i, j)
+			}
+			if strings.ContainsAny(ci.ValuePrefix, "\r\n") {
+				return fmt.Errorf("egress rule %d inject %d: valuePrefix must not contain CR/LF", i, j)
+			}
+			if pattern, _ := r["pattern"].(string); pattern == "" || net.ParseIP(strings.TrimPrefix(pattern, "*.")) != nil || strings.Contains(pattern, "/") {
+				return fmt.Errorf("egress rule %d: credential injection requires a hostname pattern", i)
+			}
+		}
+	}
+	return nil
+}
+
+// isHTTPToken reports whether s is a non-empty RFC 7230 token.
+func isHTTPToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+			strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // applySpecMap fills the fields of spec that the typed decode left empty from a
@@ -1002,6 +1060,9 @@ func (h *RuntimeHandler) ScheduleRunInMicroVM(ctx context.Context, tenantID, age
 	// limits / egress_rules / secrets / confidential (ADR 0023) / env +
 	// restoreSnapshotId (crash-resume, ADR 0022) — either casing.
 	applySpecMap(&spec, manifest)
+	if err := validateEgressInject(spec.EgressRules); err != nil {
+		return "", err
+	}
 
 	// Look up the run's session_id — when present, route through the session VM
 	// affinity path so all turns of the same session reuse one VM.
@@ -1717,6 +1778,11 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	if spec.ImageDigest == "" {
 		span.SetStatus(codes.Error, "imageDigest required")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "imageDigest is required"})
+		return
+	}
+	if err := validateEgressInject(spec.EgressRules); err != nil {
+		span.SetStatus(codes.Error, "invalid egress inject")
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// Stamp known spec attributes immediately so they appear even if we

@@ -112,6 +112,8 @@ export type {
   VmState,
   RuntimeVm,
   VmScheduleSpec,
+  EgressRule,
+  CredentialInjection,
   VmPauseResult,
   VmResumeResult,
   VmFileContent,

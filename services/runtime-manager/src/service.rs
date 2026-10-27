@@ -2476,9 +2476,15 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         // Step 3: resolve the plaintext value.
         // Forward the agent-instance Bearer (if present) so the relay can
         // pass it to the control-plane for secondary identity verification.
+        // Scoped to THIS VM's registry tenant (manager-verified at spawn, not a
+        // guest claim): the relay resolves the ref only inside that tenant.
+        let scope = crate::secret_resolver::ResolveScope {
+            tenant_id: &info.tenant_id,
+            vm_id: &req.vm_id,
+        };
         let value = self
             .secret_resolver
-            .resolve(&req.secret_uri, agent_bearer.as_deref())
+            .resolve_scoped(&req.secret_uri, scope, agent_bearer.as_deref())
             .await
             .map_err(|e| {
                 tracing::error!(

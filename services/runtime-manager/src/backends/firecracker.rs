@@ -2981,6 +2981,7 @@ impl FirecrackerBackend {
     fn start_broker(
         &self,
         cfg: &VmConfig,
+        tenant_id: &str,
         rules: &[EgressRule],
         mitm: Option<Arc<MitmCa>>,
     ) -> Result<()> {
@@ -2997,6 +2998,7 @@ impl FirecrackerBackend {
         let control_listener = bind(MANAGER_VSOCK_PORT)?;
         let broker = Arc::new(Broker::new(
             &cfg.vm_id,
+            tenant_id,
             Policy::from_env(rules.to_vec()),
             mitm,
             deps,
@@ -3499,7 +3501,7 @@ impl FirecrackerBackend {
         }
 
         // Each incarnation gets its own broker + CA (ADR 0026).
-        if broker && let Err(e) = self.start_broker(&cfg, &req.egress_rules, mitm) {
+        if broker && let Err(e) = self.start_broker(&cfg, &req.tenant_id, &req.egress_rules, mitm) {
             if let Err(ce) = self.cancel(&vm_id, "egress broker failed to start").await {
                 tracing::warn!(vm_id = %vm_id, error = %ce, "teardown after broker failure failed");
             }
@@ -3661,7 +3663,7 @@ impl RuntimeBackend for FirecrackerBackend {
         }
 
         if cfg.egress_mode == EgressMode::Broker
-            && let Err(e) = self.start_broker(&cfg, &req.egress_rules, mitm)
+            && let Err(e) = self.start_broker(&cfg, &req.tenant_id, &req.egress_rules, mitm)
         {
             // A broker-mode guest without its broker has no control channel
             // and no egress: tear it down rather than leave it orphaned.
