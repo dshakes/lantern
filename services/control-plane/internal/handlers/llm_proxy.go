@@ -782,6 +782,19 @@ func resolveModel(capability string) (provider, model string) {
 	}
 }
 
+// balancedScore ranks a model for the default "balanced" strategy: quality
+// dominates (so it never falls to the tool-shy mini tier), speed helps, and
+// price is a real penalty. The previous formula only gave cheap models a
+// bonus capped at ~30 points, so Opus (quality 10, $90/1M in+out) outscored
+// Sonnet (quality 9, $18/1M) and every default-routed call paid frontier
+// prices — the opposite of the documented intent (Sonnet is the default,
+// GPT-4o when only OpenAI is keyed).
+//
+//	opus 189.5 · sonnet 196.5 · gpt-4o 180.9 · haiku 149.6 · gpt-4o-mini 129.8
+func balancedScore(m modelOption) float64 {
+	return float64(m.quality)*20 + float64(m.speed)*3 - (m.costPer1MIn+m.costPer1MOut)*0.25
+}
+
 // resolveAutoModel picks the best model given which providers have a key
 // available. Caller is responsible for determining availability (DB +
 // env-var fallback) so we can pick from what the specific tenant has
@@ -827,10 +840,7 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 			// always picked mini — which is tool-shy in practice (the model
 			// often refuses to call tools that ARE present in the request).
 			//
-			// New formula: quality dominates; cost is a tiebreaker with a hard
-			// cap so it can't outscore a quality jump.
-			costBonus := 30.0 / (m.costPer1MIn + m.costPer1MOut + 1) // capped ~30
-			score = float64(m.quality)*20 + float64(m.speed)*3 + costBonus
+			score = balancedScore(m)
 		}
 
 		candidates = append(candidates, candidate{m.provider, m.model, score})
@@ -879,9 +889,7 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool, userFacing bool) []stru
 		if m.provider == "openai" && !hasOpenAI {
 			continue
 		}
-		costBonus := 30.0 / (m.costPer1MIn + m.costPer1MOut + 1)
-		score := float64(m.quality)*20 + float64(m.speed)*3 + costBonus
-		all = append(all, ranked{m.provider, m.model, score})
+		all = append(all, ranked{m.provider, m.model, balancedScore(m)})
 	}
 	// Sort descending by score (small list, n^2 is fine).
 	for i := 0; i < len(all); i++ {
