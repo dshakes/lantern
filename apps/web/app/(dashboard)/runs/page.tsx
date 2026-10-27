@@ -109,7 +109,7 @@ export default function RunsPage() {
         <div className="flex items-center gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <input type="text" placeholder="Search runs..." value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
+            <input type="text" placeholder="Search runs…" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
               className="h-9 w-56 rounded-lg border border-zinc-800 bg-surface-0 pl-9 pr-3 text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 outline-none" />
           </div>
           <Filter className="h-4 w-4 text-zinc-500" />
@@ -141,8 +141,8 @@ export default function RunsPage() {
           <EmptyState
             illustration={<RunsIllustration size={120} />}
             title="No runs yet"
-            description="Runs appear here when you execute an agent. Open an agent and click Run, or trigger one from the API."
-            actionLabel="View Agents"
+            description="Run an agent from its page, or call POST /v1/runs. Each run lands here with its steps, output, and cost."
+            actionLabel="Go to agents"
             onAction={() => router.push("/agents")}
             secondaryActionLabel="See examples"
             secondaryActionHref="/marketplace"

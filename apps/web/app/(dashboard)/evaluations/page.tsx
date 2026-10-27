@@ -442,7 +442,7 @@ export default function EvaluationsPage() {
       {/* Header */}
       <PageHeader
         title="Analytics"
-        description="Performance, cost attribution, and quality signals across every run."
+        description="Success rate, cost, latency, and eval failures across your runs."
         action={
           <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-surface-0 p-0.5">
             {(["7d", "30d", "all"] as const).map((range) => (
@@ -598,8 +598,10 @@ export default function EvaluationsPage() {
                 <EmptyState
                   size="compact"
                   icon={CheckCircle2}
-                  title="All green"
-                  description="No failing cases in the recent window."
+                  title="No failing eval cases"
+                  description={evalFailures?.runsScanned
+                    ? `No case failed in the last ${evalFailures.runsScanned} eval runs.`
+                    : "No eval runs recorded yet. Eval suites post results to POST /v1/eval-runs."}
                 />
               ) : (
                 <div className="space-y-2.5">

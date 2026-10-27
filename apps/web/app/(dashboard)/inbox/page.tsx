@@ -190,12 +190,12 @@ export default function MissionControlPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Ambient aurora glow behind the transparent header — same pattern as the Agents page. */}
-      <div className="relative overflow-hidden">
+      <div className="relative shrink-0 overflow-hidden">
         <div aria-hidden className="mc-aurora" />
         <PageHeader
           className="relative z-10 !bg-transparent"
-          title="Mission Control"
-          description="Fleet-wide operations across every agent — health, spend, live work, and what needs you. All metrics derived from real runs."
+          title="Activity"
+          description="Health, spend, and live runs for every agent, plus the runs waiting on your review."
         />
       </div>
 
@@ -1156,8 +1156,8 @@ function PersonalAttention({ tenantId }: { tenantId: string }) {
       ) : totalItems === 0 && !anyError ? (
         <EmptyState
           icon={InboxIcon}
-          title="Your attention queue is clear"
-          description="Nothing waiting across your channels. The Brief lives in your self-chat too — text `?` to your assistant."
+          title="Nothing is waiting on you"
+          description="No drafts, open commitments, or unanswered threads on your channels. Text ? in your self-chat to get the same Brief."
         />
       ) : (
         <div className="mx-auto max-w-3xl">

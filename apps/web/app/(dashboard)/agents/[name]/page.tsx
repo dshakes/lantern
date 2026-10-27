@@ -1119,7 +1119,7 @@ export default function AgentDetailPage() {
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header — mission-control treatment: ambient aurora behind, dense
           glass summary row below (matches app/(dashboard)/agents/page.tsx). */}
-      <div className="relative overflow-hidden border-b border-zinc-800">
+      <div className="relative shrink-0 overflow-hidden border-b border-zinc-800">
         <div aria-hidden className="mc-aurora" />
         <div className="relative z-10 px-8 py-5">
           <button
