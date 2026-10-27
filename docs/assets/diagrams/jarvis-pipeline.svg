@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" class="lx" role="img" aria-labelledby="jarvis-pipeline-title jarvis-pipeline-desc">
+  <title id="jarvis-pipeline-title">Every contact reply passes the same gates before it is sent</title>
+  <desc id="jarvis-pipeline-desc">Reply pipeline of the WhatsApp and iMessage bridges. An inbound message passes the owner-only command gate, pre-LLM safety checks, context assembly and the persona prompt, then the LLM drafts a reply through the control plane with provider failover. The draft goes through the bot-tell guards, which suppress it and trigger one regeneration and a strict third attempt, then a confidence tier, critique-refine for medium and low drafts, the commitment gate and the grounding gate, which hold the reply for the owner, and finally the claim verifier and pacing before it is sent to the contact as the owner. Low confidence drafts go to the owner only when draft-and-confirm is enabled. Background loops run beside the pipeline.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="jarvis-pipeline-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="jarvis-pipeline-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="jarvis-pipeline-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="jarvis-pipeline-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="jarvis-pipeline-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="660" rx="16"/>
+  <text class="t-title" x="40" y="52">Every contact reply passes the same gates before it is sent</text>
+  <text class="t-sub" x="40" y="76">WhatsApp and iMessage bridges: draft, check, hold or send. Red steps can suppress or hold a reply.</text>
+  <rect class="node" x="40" y="108" width="200" height="96" rx="10"/>
+  <text class="t-h" x="54" y="132">Inbound message</text>
+  <text class="t-b mono" x="54" y="152">WhatsApp :3100</text>
+  <text class="t-b mono" x="54" y="168">iMessage :3200</text>
+  <text class="t-b" x="54" y="184">commands are owner-only</text>
+  <path class="edge" d="M240 156H268" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="270" y="108" width="200" height="96" rx="10"/>
+  <text class="t-h" x="284" y="132">Safety checks</text>
+  <text class="t-b" x="284" y="152">life threat: escalate</text>
+  <text class="t-b" x="284" y="168">injection or PII: refuse</text>
+  <text class="t-b" x="284" y="184">runs before the LLM</text>
+  <path class="edge" d="M470 156H498" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="500" y="108" width="200" height="96" rx="10"/>
+  <text class="t-h" x="514" y="132">Context</text>
+  <text class="t-b" x="514" y="152">owner profile and facts</text>
+  <text class="t-b" x="514" y="168">14-day episodes, topics</text>
+  <text class="t-b" x="514" y="184">cross-channel people</text>
+  <path class="edge" d="M700 156H728" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="730" y="108" width="200" height="96" rx="10"/>
+  <text class="t-h" x="744" y="132">Persona prompt</text>
+  <text class="t-b" x="744" y="152">owner: full facts</text>
+  <text class="t-b" x="744" y="168">contact: limited facts</text>
+  <text class="t-b" x="744" y="184">owner voice and dialect</text>
+  <path class="edge" d="M930 156H958" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="960" y="108" width="200" height="96" rx="10"/>
+  <text class="t-h" x="974" y="132">LLM draft</text>
+  <text class="t-b" x="974" y="152">capability auto, via the</text>
+  <text class="t-b" x="974" y="168">control plane, provider</text>
+  <text class="t-b" x="974" y="184">failover, web_search</text>
+  <rect class="node-deny" x="40" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="54" y="286">Bot-tell guards</text>
+  <text class="t-b" x="54" y="306">stock phrases, leaks</text>
+  <text class="t-b" x="54" y="322">repeat skeleton</text>
+  <text class="t-b" x="54" y="338">voice drift, location</text>
+  <path class="edge" d="M210 310H228" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="230" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="244" y="286">Confidence tier</text>
+  <text class="t-b" x="244" y="306">HIGH, MEDIUM, LOW</text>
+  <text class="t-b" x="244" y="322">money, medical, cold</text>
+  <text class="t-b" x="244" y="338">contact, thumbs-down</text>
+  <path class="edge" d="M400 310H418" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="420" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="434" y="286">Critique-refine</text>
+  <text class="t-b" x="434" y="306">MEDIUM and LOW only</text>
+  <text class="t-b" x="434" y="322">edit vs 5 similar</text>
+  <text class="t-b" x="434" y="338">real sent messages</text>
+  <path class="edge" d="M590 310H608" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node-deny" x="610" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="624" y="286">Commitment gate</text>
+  <text class="t-b" x="624" y="306">money or action</text>
+  <text class="t-b" x="624" y="322">promise, money ask</text>
+  <text class="t-b" x="624" y="338">any language</text>
+  <path class="edge" d="M780 310H798" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node-deny" x="800" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="814" y="286">Grounding gate</text>
+  <text class="t-b" x="814" y="306">unverifiable date or</text>
+  <text class="t-b" x="814" y="322">outcome, wrong tone</text>
+  <text class="t-b" x="814" y="338">for bad news</text>
+  <path class="edge" d="M970 310H988" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node" x="990" y="262" width="170" height="96" rx="10"/>
+  <text class="t-h" x="1004" y="286">Claims and pacing</text>
+  <text class="t-b" x="1004" y="306">claims become intent</text>
+  <text class="t-b" x="1004" y="322">unless actually done</text>
+  <text class="t-b" x="1004" y="338">per-contact pace</text>
+  <path class="edge" d="M1060 204V233H125V260" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node-deny" x="40" y="398" width="170" height="92" rx="10"/>
+  <text class="t-h" x="54" y="422">Suppressed</text>
+  <text class="t-b" x="54" y="442">regenerate once, then</text>
+  <text class="t-b" x="54" y="458">one strict third try</text>
+  <path class="edge-deny" d="M125 358V396" marker-end="url(#jarvis-pipeline-ad)"/>
+  <rect class="node" x="230" y="398" width="360" height="92" rx="10"/>
+  <text class="t-h" x="244" y="422">Draft to owner, opt-in</text>
+  <text class="t-b" x="244" y="442">LOW tier is held only when</text>
+  <text class="t-b" x="244" y="458">LANTERN_DRAFT_CONFIRM (iMessage) or</text>
+  <text class="t-b" x="244" y="474">LANTERN_DRAFT_HIGH_STAKES (WhatsApp)</text>
+  <path class="edge" d="M315 358V396" marker-end="url(#jarvis-pipeline-a)"/>
+  <rect class="node-deny" x="610" y="398" width="360" height="92" rx="10"/>
+  <text class="t-h" x="624" y="422">Held for the owner, never sent</text>
+  <text class="t-b" x="624" y="442">paged to self-chat with the draft</text>
+  <text class="t-b" x="624" y="458">the owner reply becomes the message</text>
+  <text class="t-b" x="624" y="474">VIPs always use the draft queue</text>
+  <path class="edge-deny" d="M695 358V396" marker-end="url(#jarvis-pipeline-ad)"/>
+  <path class="edge-deny" d="M885 358V396" marker-end="url(#jarvis-pipeline-ad)"/>
+  <rect class="node-guest" x="990" y="398" width="170" height="92" rx="10"/>
+  <text class="t-h" x="1004" y="422">Sent to contact</text>
+  <text class="t-b" x="1004" y="442">as the owner, paced</text>
+  <text class="t-b" x="1004" y="458">sent log entry</text>
+  <path class="edge-flame" d="M1075 358V396" marker-end="url(#jarvis-pipeline-af)"/>
+  <rect class="group" x="40" y="520" width="1120" height="72" rx="18"/>
+  <text class="t-h" x="56" y="544">Background loops, not on the reply path</text>
+  <text class="t-b" x="56" y="566">thumbs-down flywheel turns rejections into style lessons · anticipation nudges · quiet-hours queue with morning replay · hot-reloaded owner profile</text>
+  <g transform="translate(40 626)">
+    <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Pipeline step</text>
+    <rect class="node-deny" x="137" width="14" height="14" rx="3"/><text class="t-s" x="159" y="11">Suppress or hold gate</text>
+    <rect class="node-guest" x="325" width="14" height="14" rx="3"/><text class="t-s" x="347" y="11">Speaks to a real contact as the owner</text>
+  </g>
+</svg>

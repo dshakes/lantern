@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 836" class="lx" role="img" aria-labelledby="personal-harness-architecture-title personal-harness-architecture-desc">
+  <title id="personal-harness-architecture-title">The personal harness runs five layers, with privacy rails around all of them</title>
+  <desc id="personal-harness-architecture-desc">Layered architecture of the personal harness. Surfaces on top: iMessage, WhatsApp, voice, email and webchat. Five layers follow. Sense: device signals, Mac app usage, inbox ingestion and inbound messages. Remember: person graph, episodic memory, topic index, owner profile, presence and the life-events ledger. Reason: life-event engine, auto-act ladder, availability concierge, anticipation and scheduling. Sound like you: owner voice, language and dialect, bot-tell guards, pacing and draft-and-confirm with the claim verifier. Act: paced reply send, Mac actions, connectors and voice calls. A dashed band of safety and privacy rails sits under the layers: owner-only commands, location-leak guard, kill switch, local files at mode 0600, and secrets never logged. The control plane substrate at the bottom holds the LLM proxy and the people, memory, signals and life-events APIs.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="personal-harness-architecture-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="personal-harness-architecture-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="personal-harness-architecture-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="personal-harness-architecture-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="personal-harness-architecture-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="836" rx="16"/>
+  <text class="t-title" x="40" y="52">The personal harness runs five layers, with privacy rails around all of them</text>
+  <text class="t-sub" x="40" y="76">Sense, remember, reason, sound like you, act. Surfaces feed the layers and memory joins them.</text>
+  <rect class="group" x="40" y="100" width="1120" height="50" rx="18"/>
+  <text class="t-h" x="56" y="120">Surfaces</text>
+  <text class="t-s" x="56" y="138">ingress and egress</text>
+  <rect class="node" x="250" y="108" width="164" height="34" rx="10"/>
+  <text class="t-h" x="264" y="132">iMessage</text>
+  <rect class="node" x="430" y="108" width="164" height="34" rx="10"/>
+  <text class="t-h" x="444" y="132">WhatsApp</text>
+  <rect class="node" x="610" y="108" width="164" height="34" rx="10"/>
+  <text class="t-h" x="624" y="132">Voice</text>
+  <rect class="node" x="790" y="108" width="164" height="34" rx="10"/>
+  <text class="t-h" x="804" y="132">Email</text>
+  <rect class="node" x="970" y="108" width="164" height="34" rx="10"/>
+  <text class="t-h" x="984" y="132">Webchat</text>
+  <rect class="group" x="40" y="162" width="1120" height="86" rx="18"/>
+  <text class="t-h" x="56" y="200">Sense</text>
+  <text class="t-s" x="56" y="220">what is happening</text>
+  <rect class="node" x="250" y="172" width="213" height="66" rx="10"/>
+  <text class="t-h" x="264" y="196">Device signals</text>
+  <text class="t-b" x="264" y="216">location, focus, driving,</text>
+  <text class="t-b" x="264" y="232">health, now playing</text>
+  <rect class="node" x="475" y="172" width="213" height="66" rx="10"/>
+  <text class="t-h" x="489" y="196">Mac app usage</text>
+  <text class="t-b" x="489" y="216">opt-in, owner-only,</text>
+  <text class="t-b" x="489" y="232">summaries only</text>
+  <rect class="node" x="700" y="172" width="213" height="66" rx="10"/>
+  <text class="t-h" x="714" y="196">Inbox ingestion</text>
+  <text class="t-b" x="714" y="216">email into life-events</text>
+  <rect class="node" x="925" y="172" width="213" height="66" rx="10"/>
+  <text class="t-h" x="939" y="196">Inbound messages</text>
+  <text class="t-b" x="939" y="216">every channel, every turn</text>
+  <rect class="group" x="40" y="258" width="1120" height="86" rx="18"/>
+  <text class="t-h" x="56" y="296">Remember</text>
+  <text class="t-s" x="56" y="316">one self across channels</text>
+  <rect class="node" x="250" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="264" y="292">Person graph</text>
+  <text class="t-b" x="264" y="312">one canonical</text>
+  <text class="t-b" x="264" y="328">identity</text>
+  <rect class="node" x="400" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="414" y="292">Episodes</text>
+  <text class="t-b" x="414" y="312">14-day, date,</text>
+  <text class="t-b" x="414" y="328">topic, outcome</text>
+  <rect class="node" x="550" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="564" y="292">Topic index</text>
+  <text class="t-b" x="564" y="312">7-day recall</text>
+  <text class="t-b" x="564" y="328">across threads</text>
+  <rect class="node" x="700" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="714" y="292">Owner profile</text>
+  <text class="t-b" x="714" y="312">facts, rules,</text>
+  <text class="t-b" x="714" y="328">style, lessons</text>
+  <rect class="node" x="850" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="864" y="292">Presence</text>
+  <text class="t-b" x="864" y="312">availability,</text>
+  <text class="t-b" x="864" y="328">both bridges</text>
+  <rect class="node" x="1000" y="268" width="138" height="66" rx="10"/>
+  <text class="t-h" x="1014" y="292">Life-events</text>
+  <text class="t-b" x="1014" y="312">bills, travel,</text>
+  <text class="t-b" x="1014" y="328">fraud</text>
+  <rect class="group" x="40" y="354" width="1120" height="86" rx="18"/>
+  <text class="t-h" x="56" y="392">Reason</text>
+  <text class="t-s" x="56" y="412">decide what to do</text>
+  <rect class="node" x="250" y="364" width="168" height="66" rx="10"/>
+  <text class="t-h" x="264" y="388">Life-event engine</text>
+  <text class="t-b" x="264" y="408">classify, extract</text>
+  <rect class="node" x="430" y="364" width="168" height="66" rx="10"/>
+  <text class="t-h" x="444" y="388">Auto-act ladder</text>
+  <text class="t-b" x="444" y="408">auto, ask, off</text>
+  <text class="t-b" x="444" y="424">per event kind</text>
+  <rect class="node" x="610" y="364" width="168" height="66" rx="10"/>
+  <text class="t-h" x="624" y="388">Availability</text>
+  <text class="t-b" x="624" y="408">presence into</text>
+  <text class="t-b" x="624" y="424">contact replies</text>
+  <rect class="node" x="790" y="364" width="168" height="66" rx="10"/>
+  <text class="t-h" x="804" y="388">Anticipation</text>
+  <text class="t-b" x="804" y="408">proactive nudges</text>
+  <rect class="node" x="970" y="364" width="168" height="66" rx="10"/>
+  <text class="t-h" x="984" y="388">Scheduling</text>
+  <text class="t-b" x="984" y="408">propose, hold,</text>
+  <text class="t-b" x="984" y="424">confirm</text>
+  <rect class="group" x="40" y="450" width="1120" height="86" rx="18"/>
+  <text class="t-h" x="56" y="488">Sound like you</text>
+  <text class="t-s" x="56" y="508">indistinguishable from you</text>
+  <rect class="node" x="250" y="460" width="168" height="66" rx="10"/>
+  <text class="t-h" x="264" y="484">Owner voice</text>
+  <text class="t-b" x="264" y="504">mined from real</text>
+  <text class="t-b" x="264" y="520">sent messages</text>
+  <rect class="node" x="430" y="460" width="168" height="66" rx="10"/>
+  <text class="t-h" x="444" y="484">Language, dialect</text>
+  <text class="t-b" x="444" y="504">your register,</text>
+  <text class="t-b" x="444" y="520">never invented</text>
+  <rect class="node" x="610" y="460" width="168" height="66" rx="10"/>
+  <text class="t-h" x="624" y="484">Bot-tell guards</text>
+  <text class="t-b" x="624" y="504">suppress and</text>
+  <text class="t-b" x="624" y="520">regenerate</text>
+  <rect class="node" x="790" y="460" width="168" height="66" rx="10"/>
+  <text class="t-h" x="804" y="484">Pacing</text>
+  <text class="t-b" x="804" y="504">real per-contact</text>
+  <text class="t-b" x="804" y="520">latency</text>
+  <rect class="node" x="970" y="460" width="168" height="66" rx="10"/>
+  <text class="t-h" x="984" y="484">Claim verifier</text>
+  <text class="t-b" x="984" y="504">claims become intent</text>
+  <text class="t-b" x="984" y="520">unless done</text>
+  <rect class="group" x="40" y="546" width="1120" height="86" rx="18"/>
+  <text class="t-h" x="56" y="584">Act</text>
+  <text class="t-s" x="56" y="604">follow through</text>
+  <rect class="node" x="250" y="556" width="213" height="66" rx="10"/>
+  <text class="t-h" x="264" y="580">Reply send</text>
+  <text class="t-b" x="264" y="600">paced, per channel</text>
+  <rect class="node" x="475" y="556" width="213" height="66" rx="10"/>
+  <text class="t-h" x="489" y="580">Mac actions</text>
+  <text class="t-b" x="489" y="600">Calendar, Notes, Mail</text>
+  <rect class="node" x="700" y="556" width="213" height="66" rx="10"/>
+  <text class="t-h" x="714" y="580">Connectors</text>
+  <text class="t-b" x="714" y="600">Gmail, Calendar, more</text>
+  <rect class="node" x="925" y="556" width="213" height="66" rx="10"/>
+  <text class="t-h" x="939" y="580">Voice calls</text>
+  <text class="t-b" x="939" y="600">Twilio, LiveKit</text>
+  <rect class="zone" x="40" y="642" width="1120" height="60" rx="18"/>
+  <text class="t-h" x="56" y="666">Privacy rails</text>
+  <rect class="node" x="230" y="654" width="174" height="36" rx="10"/>
+  <text class="t-h" x="244" y="678">Owner-only</text>
+  <rect class="node" x="415" y="654" width="174" height="36" rx="10"/>
+  <text class="t-h" x="429" y="678">No location leaks</text>
+  <rect class="node" x="600" y="654" width="174" height="36" rx="10"/>
+  <text class="t-h" x="614" y="678">Kill switch</text>
+  <rect class="node" x="785" y="654" width="174" height="36" rx="10"/>
+  <text class="t-h" x="799" y="678">Files mode 0600</text>
+  <rect class="node" x="970" y="654" width="174" height="36" rx="10"/>
+  <text class="t-h" x="984" y="678">Secrets not logged</text>
+  <rect class="node" x="40" y="718" width="1120" height="56" rx="10"/>
+  <text class="t-h" x="54" y="742">Control plane substrate</text>
+  <text class="t-b mono" x="260" y="742">LLM proxy /v1/completions</text>
+  <text class="t-b mono" x="500" y="742">/v1/people</text>
+  <text class="t-b mono" x="600" y="742">/v1/memory</text>
+  <text class="t-b mono" x="700" y="742">/v1/signals</text>
+  <text class="t-b mono" x="810" y="742">/v1/life-events</text>
+  <text class="t-b mono" x="940" y="742">connectors</text>
+  <text class="t-s" x="56" y="762">Postgres with row-level security, plus local 0600 JSONL on the Mac</text>
+  <g transform="translate(40 800)">
+    <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Component</text>
+    <rect class="zone" x="112" width="14" height="14" rx="3"/><text class="t-s" x="134" y="11">Trust boundary: privacy rails</text>
+  </g>
+</svg>

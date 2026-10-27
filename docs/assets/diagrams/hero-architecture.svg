@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" class="lx" role="img" aria-labelledby="hero-architecture-title hero-architecture-desc">
+  <title id="hero-architecture-title">The agent loop runs outside; untrusted code runs inside a microVM</title>
+  <desc id="hero-architecture-desc">Lantern architecture at a glance. On the left, the control plane runs the agent loop (the workflow interpreter), budgets and quotas, the replayable journal, and the model router; LLM calls leave from the model router to the LLM providers and never from the VM. In the middle, the data plane host runs the trusted runtime-manager and (in opt-in broker mode) a host egress broker. On the right, a microVM wall contains the Lantern harness as PID 1 and the untrusted agent workload. A tool call goes from the agent loop to the runtime-manager over ExecTool, across the wall to the harness, which runs it for the workload. This diagram shows the broker mode path (LANTERN_EGRESS_MODE=broker, opt-in, Firecracker only): the VM has no network device; a network request from the workload goes to the harness forwarder on 127.0.0.1:3128, then over vsock to the host broker, which checks the allowlist and injects the credential before calling the upstream API. In the default mode the allowlist is enforced in-guest.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="hero-architecture-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="hero-architecture-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="hero-architecture-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="hero-architecture-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="hero-architecture-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="680" rx="16"/>
+  <text class="t-title" x="40" y="52">The agent loop runs outside; untrusted code runs inside a microVM</text>
+  <text class="t-sub" x="40" y="76">Tool calls cross the wall through the runtime-manager. Network requests leave only through the host broker.</text>
+
+  <!-- control plane -->
+  <rect class="zone" x="40" y="104" width="300" height="420" rx="18"/>
+  <text class="t-s" x="60" y="128">Control plane (Go)</text>
+  <rect class="node" x="64" y="144" width="252" height="64" rx="10"/>
+  <text class="t-h" x="80" y="170">Agent loop</text>
+  <text class="t-b" x="80" y="190">workflow interpreter, tool_call steps</text>
+  <rect class="node" x="64" y="228" width="252" height="64" rx="10"/>
+  <text class="t-h" x="80" y="254">Budgets and quotas</text>
+  <text class="t-b" x="80" y="274">HTTP 402 when a hard cap is hit</text>
+  <rect class="node" x="64" y="312" width="252" height="64" rx="10"/>
+  <text class="t-h" x="80" y="338">Journal</text>
+  <text class="t-b mono" x="80" y="358">journal_events, replayable</text>
+  <rect class="node" x="64" y="396" width="252" height="64" rx="10"/>
+  <text class="t-h" x="80" y="422">Model router</text>
+  <text class="t-b" x="80" y="442">capability, not model name</text>
+
+  <!-- data plane host -->
+  <rect class="zone" x="380" y="104" width="780" height="420" rx="18"/>
+  <text class="t-s" x="400" y="128">Data plane host (managed or your cloud)</text>
+  <rect class="node-host" x="404" y="144" width="236" height="80" rx="10"/>
+  <text class="t-h mono" x="420" y="172">runtime-manager</text>
+  <text class="t-b" x="420" y="192">spawns microVMs,</text>
+  <text class="t-b" x="420" y="210">runs tool calls (<tspan class="mono">ExecTool</tspan>)</text>
+  <!-- opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) -->
+  <rect class="node-host" x="404" y="296" width="236" height="80" rx="10"/>
+  <text class="t-h" x="420" y="324">Host egress broker</text>
+  <text class="t-b" x="420" y="344">allowlist check,</text>
+  <text class="t-b" x="420" y="362">credential injection</text>
+  <text class="t-s" x="420" y="392">(opt-in broker mode)</text>
+
+  <!-- microVM -->
+  <rect class="wall" x="680" y="140" width="456" height="360" rx="18"/>
+  <text class="t-h t-glass" x="700" y="166">microVM</text>
+  <text class="t-s" x="1116" y="166" text-anchor="end">no network device (broker mode, opt-in)</text>
+  <rect class="node-glass" x="710" y="184" width="396" height="96" rx="10"/>
+  <text class="t-h" x="726" y="212">Harness (PID 1)</text>
+  <text class="t-b" x="726" y="232">tool runner, secrets socket, audit stream</text>
+  <text class="t-b" x="726" y="252">egress forwarder <tspan class="mono">127.0.0.1:3128</tspan></text>
+  <rect class="node-guest" x="710" y="380" width="396" height="96" rx="10"/>
+  <text class="t-h" x="726" y="408">Agent workload</text>
+  <text class="t-b" x="726" y="428">user code, packages from the internet</text>
+  <text class="t-b" x="726" y="448">runs as an unprivileged uid</text>
+
+  <!-- tool call: loop -> manager -> harness -> workload -->
+  <path class="edge" d="M316 176H402" marker-end="url(#hero-architecture-a)"/>
+  <path class="edge-patina" d="M640 204H708" marker-end="url(#hero-architecture-ap)"/>
+  <path class="edge-glass" d="M840 280V378" marker-end="url(#hero-architecture-ag)"/>
+  <text class="t-s" x="848" y="334">runs the tool</text>
+
+  <!-- network: workload -> forwarder -> vsock -> broker -> upstream -->
+  <path class="edge-flame" d="M1000 380V282" marker-end="url(#hero-architecture-af)"/>
+  <text class="t-s" x="1008" y="334">outbound request</text>
+  <!-- broker mode path: forwarder → vsock → broker → upstream -->
+  <path class="edge-glass" d="M760 280V336H642" marker-end="url(#hero-architecture-ag)"/>
+  <text class="t-s mono" x="692" y="328">vsock</text>
+  <path class="edge-patina" d="M522 376V558" marker-end="url(#hero-architecture-ap)"/>
+  <text class="t-s" x="530" y="456">credential added</text>
+  <text class="t-s" x="530" y="472">at the host</text>
+
+  <!-- LLM calls -->
+  <path class="edge" d="M190 460V558" marker-end="url(#hero-architecture-a)"/>
+  <text class="t-s" x="198" y="500">LLM calls,</text>
+  <text class="t-s" x="198" y="516">never from the VM</text>
+
+  <!-- external -->
+  <rect class="node" x="64" y="560" width="252" height="52" rx="10"/>
+  <text class="t-h" x="80" y="591">LLM providers</text>
+  <rect class="node" x="404" y="560" width="236" height="52" rx="10"/>
+  <text class="t-h" x="420" y="591">Upstream APIs</text>
+
+  <g transform="translate(40 642)">
+    <rect class="node" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane</text>
+    <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted host</text>
+    <rect class="node-glass" x="256" width="14" height="14" rx="3"/><text class="t-s" x="278" y="11">In-VM harness</text>
+    <rect class="node-guest" x="384" width="14" height="14" rx="3"/><text class="t-s" x="406" y="11">Untrusted guest</text>
+    <rect class="wall" x="524" width="14" height="14" rx="3"/><text class="t-s" x="546" y="11">microVM wall</text>
+    <rect class="zone" x="648" width="14" height="14" rx="3"/><text class="t-s" x="670" y="11">Trust boundary</text>
+  </g>
+</svg>

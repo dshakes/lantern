@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" class="lx" role="img" aria-labelledby="sandbox-lifecycle-title sandbox-lifecycle-desc">
+  <title id="sandbox-lifecycle-title">A sandbox can pause, resume and fork without losing its identity</title>
+  <desc id="sandbox-lifecycle-desc">Sandbox lifecycle state machine. A VM is scheduled with POST /v1/runtime/schedule and becomes running once the harness reports heartbeats; a running VM holds a quota slot. Pause snapshots and stops it: the snapshot id is recorded and the quota slot is freed. Resume restores the same vm_id as a new incarnation with a fresh cert and exec token; it returns 402 when over quota and 409 when the VM is not paused. A running VM that stays idle past its idleTimeoutSecs is suspended and its compute and quota slot released; an exec or file request (REST, CLI or SDK) resumes it transparently (first exec after restore ~4 s). A VM paused by an operator is never auto-resumed. DELETE drains and terminates a VM from any live state. Fork takes one snapshot of a running or paused source VM and starts N children, each with its own vm_id, cert, agent identity and exec token, linked back by parent_vm_id. Children share the snapshot's memory copy-on-write, and N is capped at 100 by default (LANTERN_MAX_FORK_COUNT, ceiling 1000). Forking a running VM needs the jailer and Firecracker 1.12 or later (tested on 1.15).</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="sandbox-lifecycle-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="sandbox-lifecycle-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="sandbox-lifecycle-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="sandbox-lifecycle-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="sandbox-lifecycle-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="760" rx="16"/>
+  <text class="t-title" x="40" y="52">A sandbox can pause, resume and fork without losing its identity</text>
+  <text class="t-sub" x="40" y="76">Each restore is a new incarnation of the same vm_id. Each fork is a new VM with its own identity.</text>
+
+  <!-- states -->
+  <rect class="node" x="40" y="130" width="200" height="72" rx="10"/>
+  <text class="t-h" x="56" y="158">Scheduled</text>
+  <text class="t-b" x="56" y="178">pending, then spawning</text>
+  <text class="t-s mono" x="40" y="224">POST /v1/runtime/schedule</text>
+
+  <rect class="node-guest" x="320" y="130" width="220" height="72" rx="10"/>
+  <text class="t-h" x="336" y="158">Running</text>
+  <text class="t-b" x="336" y="178">holds a quota slot</text>
+
+  <rect class="node" x="680" y="130" width="220" height="72" rx="10"/>
+  <text class="t-h" x="696" y="158">Paused</text>
+  <text class="t-b" x="696" y="178">snapshot, no quota slot</text>
+
+  <rect class="node" x="980" y="130" width="180" height="72" rx="10"/>
+  <text class="t-h" x="996" y="158">Terminated</text>
+  <text class="t-b" x="996" y="178">resources released</text>
+
+  <path class="edge" d="M240 166H318" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s" x="250" y="158">heartbeat</text>
+  <path class="edge" d="M540 152H678" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s mono" x="552" y="144">pause</text>
+  <path class="edge" d="M680 182H542" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s mono" x="552" y="198">resume</text>
+  <path class="edge" d="M900 166H978" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s mono" x="910" y="158">DELETE</text>
+  <text class="t-s" x="980" y="224">from any live state,</text>
+  <text class="t-s" x="980" y="240">drain then stop</text>
+
+  <text class="t-s" x="680" y="224">snapshot_id recorded, slot freed</text>
+  <text class="t-s" x="680" y="240">resume: same vm_id, new incarnation,</text>
+  <text class="t-s" x="680" y="256">fresh cert and exec token</text>
+  <text class="t-s t-signal" x="680" y="272">402 over quota, 409 not paused</text>
+
+  <!-- idle suspend (MERGED #296) -->
+  <rect class="node" x="320" y="320" width="220" height="72" rx="10"/>
+  <text class="t-h" x="336" y="348">Idle-suspended</text>
+  <text class="t-b" x="336" y="368">wakes on the next request</text>
+  <path class="edge" d="M380 202V318" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s mono" x="372" y="258" text-anchor="end">idleTimeoutSecs</text>
+  <text class="t-s" x="372" y="274" text-anchor="end">elapsed</text>
+  <path class="edge" d="M480 320V204" marker-end="url(#sandbox-lifecycle-a)"/>
+  <text class="t-s" x="490" y="258">auto-resume on exec</text>
+  <text class="t-s" x="490" y="274">or file request</text>
+
+  <!-- fork -->
+  <rect class="group" x="40" y="430" width="1120" height="250" rx="18"/>
+  <text class="t-h" x="60" y="458">Fork</text>
+  <text class="t-s mono" x="104" y="458">POST /v1/runtime/vms/{id}/fork  {"count": N}</text>
+
+  <rect class="node" x="64" y="510" width="200" height="72" rx="10"/>
+  <text class="t-h" x="80" y="538">Source VM</text>
+  <text class="t-b" x="80" y="558">running or paused</text>
+
+  <rect class="node" x="344" y="510" width="240" height="72" rx="10"/>
+  <text class="t-h" x="360" y="538">One snapshot</text>
+  <text class="t-b" x="360" y="558">memory shared copy-on-write</text>
+
+  <rect class="node-guest" x="680" y="470" width="320" height="56" rx="10"/>
+  <text class="t-h" x="696" y="494">Fork 1, new vm_id</text>
+  <text class="t-b" x="696" y="513">own cert, agent identity, exec token</text>
+  <rect class="node-guest" x="680" y="538" width="320" height="56" rx="10"/>
+  <text class="t-h" x="696" y="562">Fork 2, new vm_id</text>
+  <text class="t-b" x="696" y="581">own cert, agent identity, exec token</text>
+  <rect class="node-guest" x="680" y="606" width="320" height="56" rx="10"/>
+  <text class="t-h" x="696" y="630">Fork N, new vm_id</text>
+  <text class="t-b" x="696" y="649">own cert, agent identity, exec token</text>
+
+  <path class="edge" d="M264 546H342" marker-end="url(#sandbox-lifecycle-a)"/>
+  <path class="edge" d="M584 546H630V498H678" marker-end="url(#sandbox-lifecycle-a)"/>
+  <path class="edge" d="M630 546V566H678" marker-end="url(#sandbox-lifecycle-a)"/>
+  <path class="edge" d="M630 566V634H678" marker-end="url(#sandbox-lifecycle-a)"/>
+
+  <text class="t-s" x="1016" y="494">parent_vm_id</text>
+  <text class="t-s" x="1016" y="510">= source</text>
+  <text class="t-s" x="1016" y="562">each child</text>
+  <text class="t-s" x="1016" y="578">succeeds or</text>
+  <text class="t-s" x="1016" y="594">fails on its own</text>
+
+  <text class="t-s" x="64" y="620">N up to 100 by default (ceiling 1000), set by <tspan class="mono">LANTERN_MAX_FORK_COUNT</tspan></text>
+  <text class="t-s" x="64" y="644">Forking a running VM needs the jailer and Firecracker 1.12 or later.</text>
+
+  <g transform="translate(40 718)">
+    <rect class="node" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">VM state</text>
+    <rect class="node-guest" x="110" width="14" height="14" rx="3"/><text class="t-s" x="132" y="11">Workload running</text>
+    <text class="t-s t-signal" x="262" y="11">Refused (HTTP status)</text>
+  </g>
+</svg>

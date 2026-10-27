@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 584" class="lx" role="img" aria-labelledby="agent-loops-contact-title agent-loops-contact-desc">
+  <title id="agent-loops-contact-title">Contact loops reply as you, so every reply meets the hold gates</title>
+  <desc id="agent-loops-contact-desc">The two reactive contact loops. Whatsapp-assistant and imessage-assistant each run on every inbound message: the contact message is understood with owner context, a draft is written in the owner voice, and it crosses the hold gates, the commitment gate and the grounding gate, before it is sent to the contact as the owner. A held reply is paged to the owner in self-chat instead of being sent, and VIPs always go through the draft queue. The iMessage loop falls back to Twilio SMS or RCS when the iMessage send fails.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="agent-loops-contact-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-contact-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-contact-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-contact-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="agent-loops-contact-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="584" rx="16"/>
+  <text class="t-title" x="40" y="52">Contact loops reply as you, so every reply meets the hold gates</text>
+  <text class="t-sub" x="40" y="76">Both bridges run the same reactive pipeline on every inbound message.</text>
+  <rect class="group" x="40" y="104" width="1120" height="200" rx="18"/>
+  <text class="t-h" x="60" y="134">whatsapp-assistant</text>
+  <text class="t-b" x="227.20000000000002" y="134">reactive, on every inbound WhatsApp message</text>
+  <rect class="node" x="60" y="154" width="200" height="72" rx="10"/>
+  <text class="t-h" x="74" y="178">Contact message</text>
+  <text class="t-b" x="74" y="198">inbound, any contact</text>
+  <rect class="node" x="300" y="154" width="200" height="72" rx="10"/>
+  <text class="t-h" x="314" y="178">Understand</text>
+  <text class="t-b" x="314" y="198">profile, episodes,</text>
+  <text class="t-b" x="314" y="214">topics, person graph</text>
+  <rect class="node" x="540" y="154" width="200" height="72" rx="10"/>
+  <text class="t-h" x="554" y="178">Draft in your voice</text>
+  <text class="t-b" x="554" y="198">bot-tell and voice checks</text>
+  <text class="t-b" x="554" y="214">confidence tier</text>
+  <rect class="node-deny" x="780" y="154" width="170" height="72" rx="10"/>
+  <text class="t-h" x="794" y="178">Hold gates</text>
+  <text class="t-b" x="794" y="198">commitment, grounding</text>
+  <text class="t-b" x="794" y="214">VIPs: draft queue</text>
+  <rect class="node-guest" x="990" y="154" width="150" height="72" rx="10"/>
+  <text class="t-h" x="1004" y="178">Send</text>
+  <text class="t-s" x="1004" y="198">paced, as you</text>
+  <text class="t-s" x="1004" y="214">typing shown first</text>
+  <path class="edge" d="M260 190H298" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge" d="M500 190H538" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge" d="M740 190H778" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge-flame" d="M950 190H988" marker-end="url(#agent-loops-contact-af)"/>
+  <rect class="node-deny" x="780" y="254" width="170" height="44" rx="10"/>
+  <text class="t-h" x="794" y="278">Held for you</text>
+  <path class="edge-deny" d="M865 226V252" marker-end="url(#agent-loops-contact-ad)"/>
+  <text class="t-s" x="966" y="281">paged to self-chat</text>
+  <rect class="group" x="40" y="320" width="1120" height="200" rx="18"/>
+  <text class="t-h" x="60" y="350">imessage-assistant</text>
+  <text class="t-b" x="227.20000000000002" y="350">reactive, on every inbound iMessage</text>
+  <rect class="node" x="60" y="370" width="200" height="72" rx="10"/>
+  <text class="t-h" x="74" y="394">Contact message</text>
+  <text class="t-b" x="74" y="414">inbound, any contact</text>
+  <rect class="node" x="300" y="370" width="200" height="72" rx="10"/>
+  <text class="t-h" x="314" y="394">Understand</text>
+  <text class="t-b" x="314" y="414">profile, episodes,</text>
+  <text class="t-b" x="314" y="430">topics, person graph</text>
+  <rect class="node" x="540" y="370" width="200" height="72" rx="10"/>
+  <text class="t-h" x="554" y="394">Draft in your voice</text>
+  <text class="t-b" x="554" y="414">bot-tell and voice checks</text>
+  <text class="t-b" x="554" y="430">confidence tier</text>
+  <rect class="node-deny" x="780" y="370" width="170" height="72" rx="10"/>
+  <text class="t-h" x="794" y="394">Hold gates</text>
+  <text class="t-b" x="794" y="414">commitment, grounding</text>
+  <text class="t-b" x="794" y="430">VIPs: draft queue</text>
+  <rect class="node-guest" x="990" y="370" width="150" height="72" rx="10"/>
+  <text class="t-h" x="1004" y="394">Send</text>
+  <text class="t-s" x="1004" y="414">paced, as you</text>
+  <text class="t-s" x="1004" y="430">else Twilio SMS</text>
+  <path class="edge" d="M260 406H298" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge" d="M500 406H538" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge" d="M740 406H778" marker-end="url(#agent-loops-contact-a)"/>
+  <path class="edge-flame" d="M950 406H988" marker-end="url(#agent-loops-contact-af)"/>
+  <rect class="node-deny" x="780" y="470" width="170" height="44" rx="10"/>
+  <text class="t-h" x="794" y="494">Held for you</text>
+  <path class="edge-deny" d="M865 442V468" marker-end="url(#agent-loops-contact-ad)"/>
+  <text class="t-s" x="966" y="497">paged to self-chat</text>
+  <g transform="translate(40 546)">
+    <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Pipeline step</text>
+    <rect class="node-deny" x="137" width="14" height="14" rx="3"/><text class="t-s" x="159" y="11">Hold gate</text>
+    <rect class="node-guest" x="249" width="14" height="14" rx="3"/><text class="t-s" x="271" y="11">Speaks to a real contact as the owner</text>
+  </g>
+</svg>

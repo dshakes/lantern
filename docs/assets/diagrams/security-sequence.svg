@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1180" class="lx" role="img" aria-labelledby="security-sequence-title security-sequence-desc">
+  <title id="security-sequence-title">A sandbox is checked at every hop, from schedule to signed receipt</title>
+  <desc id="security-sequence-desc">Sequence of security checks for a headless sandbox. The caller posts to /v1/runtime/schedule with a JWT or API key carrying runtime:write. The control plane applies the runtime quota gate, returning HTTP 402 when a hard cap is hit, then mints a per-VM agent identity token (EdDSA, HS256 fallback). It calls the runtime-scheduler with the service token and tenant_id; the scheduler asks the runtime-manager to spawn over mTLS with the service token. The manager boots the microVM with spawn.json and a per-VM certificate on a read-only image, and the harness starts the workload as an unprivileged uid. When the workload asks for a secret on the secrets socket, the harness checks its uid with SO_PEERCRED and calls VendSecret with its per-VM certificate (CN must equal the vm_id and match this incarnation's pin) plus the agent instance token. The manager checks the secret URI was declared in the spec, resolves it through the control plane with X-Lantern-Runtime-Token, and returns it with a TTL of at most 300 seconds. In opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) credentials are injected at the host egress broker instead of vended into the VM. In the default mode secrets are vended into the VM. Outbound requests go through the harness proxy on 127.0.0.1:3128 and are refused when not allowlisted. The harness streams audit events to the manager, which posts them to /v1/runtime/report and the runtime_audit_events table. Finally the control plane issues a signed run receipt (Ed25519 or HMAC) covering the journal's SHA-256.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="security-sequence-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="security-sequence-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="security-sequence-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="security-sequence-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="security-sequence-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="1180" rx="16"/>
+  <text class="t-title" x="40" y="52">A sandbox is checked at every hop, from schedule to signed receipt</text>
+  <text class="t-sub" x="40" y="76">Each arrow names the credential it carries. Boxes on a lifeline are checks that can refuse.</text>
+
+  <!-- zones -->
+  <rect class="zone" x="410" y="88" width="380" height="78" rx="18"/>
+  <text class="t-s" x="426" y="106">Data plane host</text>
+  <rect class="wall" x="810" y="88" width="350" height="78" rx="18"/>
+  <text class="t-s t-glass" x="826" y="106">microVM</text>
+
+  <!-- lifelines -->
+  <rect class="group" x="99" y="156" width="2" height="958"/>
+  <rect class="group" x="299" y="156" width="2" height="958"/>
+  <rect class="group" x="499" y="156" width="2" height="958"/>
+  <rect class="group" x="699" y="156" width="2" height="958"/>
+  <rect class="group" x="899" y="156" width="2" height="958"/>
+  <rect class="group" x="1099" y="156" width="2" height="958"/>
+
+  <!-- heads -->
+  <rect class="node" x="30" y="116" width="140" height="40" rx="10"/>
+  <text class="t-h" x="100" y="141" text-anchor="middle">Caller</text>
+  <rect class="node" x="220" y="116" width="160" height="40" rx="10"/>
+  <text class="t-h" x="300" y="141" text-anchor="middle">Control plane</text>
+  <rect class="node-host" x="420" y="116" width="160" height="40" rx="10"/>
+  <text class="t-h mono" x="500" y="141" text-anchor="middle">runtime-scheduler</text>
+  <rect class="node-host" x="620" y="116" width="160" height="40" rx="10"/>
+  <text class="t-h mono" x="700" y="141" text-anchor="middle">runtime-manager</text>
+  <rect class="node-glass" x="820" y="116" width="160" height="40" rx="10"/>
+  <text class="t-h" x="900" y="141" text-anchor="middle">Harness (PID 1)</text>
+  <rect class="node-guest" x="1020" y="116" width="130" height="40" rx="10"/>
+  <text class="t-h" x="1085" y="141" text-anchor="middle">Workload</text>
+
+  <!-- schedule -->
+  <path class="edge" d="M100 196H298" marker-end="url(#security-sequence-a)"/>
+  <text class="t-s mono" x="110" y="188">POST /v1/runtime/schedule</text>
+  <text class="t-s" x="110" y="212">JWT or API key, runtime:write</text>
+
+  <rect class="node" x="210" y="226" width="180" height="44" rx="10"/>
+  <text class="t-h" x="224" y="244">Quota gate</text>
+  <text class="t-s t-signal" x="224" y="261">402 if a hard cap is hit</text>
+  <rect class="node" x="210" y="282" width="180" height="44" rx="10"/>
+  <text class="t-h" x="224" y="300">Mint agent identity</text>
+  <text class="t-s" x="224" y="317">EdDSA JWT, HS256 fallback</text>
+
+  <path class="edge" d="M300 360H498" marker-end="url(#security-sequence-a)"/>
+  <text class="t-b" x="310" y="352">Schedule</text>
+  <text class="t-s" x="310" y="376">service token, tenant_id</text>
+
+  <path class="edge-patina" d="M500 408H698" marker-end="url(#security-sequence-ap)"/>
+  <text class="t-b" x="510" y="400">Spawn</text>
+  <text class="t-s" x="510" y="424">mTLS + service token</text>
+
+  <path class="edge-patina" d="M700 456H898" marker-end="url(#security-sequence-ap)"/>
+  <text class="t-b" x="710" y="448">boot microVM</text>
+  <text class="t-s" x="710" y="472"><tspan class="mono">spawn.json</tspan>, per-VM cert</text>
+
+  <path class="edge-glass" d="M900 504H1098" marker-end="url(#security-sequence-ag)"/>
+  <text class="t-b" x="910" y="496">start workload</text>
+  <text class="t-s" x="910" y="520">as an unprivileged uid</text>
+
+  <!-- secret vend (master) -->
+  <path class="edge-flame" d="M1100 564H902" marker-end="url(#security-sequence-af)"/>
+  <text class="t-b" x="910" y="556">secret request</text>
+  <text class="t-s mono" x="910" y="580">secrets.sock, SO_PEERCRED</text>
+
+  <path class="edge-glass" d="M900 612H702" marker-end="url(#security-sequence-ag)"/>
+  <text class="t-b mono" x="710" y="604">VendSecret</text>
+  <text class="t-s" x="710" y="628">cert CN = vm_id, pinned</text>
+  <text class="t-s" x="710" y="643">+ agent instance token</text>
+
+  <rect class="node-host" x="600" y="658" width="200" height="44" rx="10"/>
+  <text class="t-h" x="614" y="676">Allowlist check</text>
+  <text class="t-s" x="614" y="693">URI declared in the spec</text>
+
+  <path class="edge-patina" d="M700 738H302" marker-end="url(#security-sequence-ap)"/>
+  <text class="t-b" x="510" y="730">resolve secret ref</text>
+  <text class="t-s mono" x="510" y="754">X-Lantern-Runtime-Token</text>
+
+  <path class="edge" d="M300 786H698" marker-end="url(#security-sequence-a)"/>
+  <text class="t-b" x="510" y="778">secret value</text>
+
+  <path class="edge-patina" d="M700 834H898" marker-end="url(#security-sequence-ap)"/>
+  <text class="t-b" x="710" y="826">TTL at most 300 s</text>
+  <path class="edge-glass" d="M900 834H1098" marker-end="url(#security-sequence-ag)"/>
+  <text class="t-b" x="910" y="826">over the socket</text>
+
+  <!-- opt-in broker mode note -->
+  <rect class="node-host" x="40" y="852" width="1120" height="32" rx="10"/>
+  <text class="t-b" x="56" y="873">With the host egress broker (opt-in, LANTERN_EGRESS_MODE=broker), credentials are injected on the host instead of vended into the VM.</text>
+
+  <!-- egress -->
+  <path class="edge-flame" d="M1100 926H902" marker-end="url(#security-sequence-af)"/>
+  <text class="t-b" x="910" y="918">outbound request</text>
+  <text class="t-s" x="910" y="942">proxy <tspan class="mono">127.0.0.1:3128</tspan></text>
+  <text class="t-s t-signal" x="910" y="957">refused if not allowlisted</text>
+
+  <!-- audit -->
+  <path class="edge-glass" d="M900 990H702" marker-end="url(#security-sequence-ag)"/>
+  <text class="t-b mono" x="710" y="982">Report</text>
+  <text class="t-s" x="710" y="1006">security audits never dropped</text>
+
+  <path class="edge-patina" d="M700 1038H302" marker-end="url(#security-sequence-ap)"/>
+  <text class="t-s mono" x="510" y="1030">POST /v1/runtime/report</text>
+  <text class="t-s mono" x="510" y="1054">runtime_audit_events</text>
+
+  <!-- receipt -->
+  <path class="edge" d="M300 1086H102" marker-end="url(#security-sequence-a)"/>
+  <text class="t-s" x="110" y="1078">Signed run receipt (Ed25519 or HMAC)</text>
+  <text class="t-s" x="110" y="1102">covers the journal SHA-256</text>
+
+  <g transform="translate(40 1146)">
+    <rect class="node" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane</text>
+    <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted host</text>
+    <rect class="node-glass" x="256" width="14" height="14" rx="3"/><text class="t-s" x="278" y="11">In-VM harness</text>
+    <rect class="node-guest" x="384" width="14" height="14" rx="3"/><text class="t-s" x="406" y="11">Untrusted guest</text>
+    <rect class="wall" x="524" width="14" height="14" rx="3"/><text class="t-s" x="546" y="11">microVM wall</text>
+    <rect class="zone" x="648" width="14" height="14" rx="3"/><text class="t-s" x="670" y="11">Trust boundary</text>
+    <text class="t-s t-signal" x="790" y="11">Refused</text>
+  </g>
+</svg>

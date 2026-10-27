@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 590" class="lx" role="img" aria-labelledby="observability-flow-title observability-flow-desc">
+  <title id="observability-flow-title">One run, one story</title>
+  <desc id="observability-flow-desc">Every signal carries the same identifiers: lantern.tenant_id, run_id, step_id and user_id. Six signals: OTel traces, lantern.run.* metrics, the journal_events timeline streamed over SSE and gRPC, peer-service health from TCP probes, externally verifiable Ed25519 receipts over a SHA-256 of the journal, and cost attribution from usage rollups.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="observability-flow-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="observability-flow-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="observability-flow-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="observability-flow-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="observability-flow-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="590" rx="16"/>
+  <text class="t-title" x="40" y="52">One run, one story</text>
+  <text class="t-sub" x="40" y="76">Every signal speaks the same identifiers, so nothing needs correlation glue.</text>
+  <rect class="node" x="40" y="100" width="1120" height="66" rx="10"/>
+  <text class="t-h" x="56" y="126">The attribute contract, stamped everywhere</text>
+  <text class="t-b" x="56" y="146">tenant_id · run_id · step_id · user_id on every span (internal/middleware.EnrichSpan)</text>
+  <a href="/runtime/observability"><title>Traces: OTel spans with the attribute contract</title>
+  <rect class="node" x="40" y="190" width="352" height="130" rx="14"/>
+  <text class="t-h" x="56" y="216">Traces (OTel)</text>
+  <text class="t-b" x="56" y="236">HTTP entry span, named by route template</text>
+  <text class="t-b" x="56" y="254">Step spans, then LLM spans (gen_ai.*)</text>
+  <text class="t-b" x="56" y="272">No-op safe when OTel is not enabled</text>
+  </a>
+  <a href="/runtime/observability#metrics"><title>Metrics: lantern.run.* histograms and counters</title>
+  <rect class="node" x="424" y="190" width="352" height="130" rx="14"/>
+  <text class="t-h" x="440" y="216">Metrics (OTel)</text>
+  <text class="t-b" x="440" y="236">lantern.run.step.duration (histogram)</text>
+  <text class="t-b" x="440" y="254">lantern.run.step.retries · .total</text>
+  <text class="t-b" x="440" y="272">lantern.run.replay.skips · .budget.blocks</text>
+  <text class="t-b" x="440" y="290">replay.skips is crash-resume health</text>
+  </a>
+  <a href="/runtime/durable-execution#journal"><title>journal_events: the event-sourced run timeline</title>
+  <rect class="node" x="808" y="190" width="352" height="130" rx="14"/>
+  <text class="t-h" x="824" y="216">Journal</text>
+  <text class="t-b" x="824" y="236">step_started, step_completed, step_failed,</text>
+  <text class="t-b" x="824" y="254">confidence_evaluated: the run waterfall</text>
+  <text class="t-b" x="824" y="272">SSE with 15 s heartbeat, 500 ms tail, and gRPC</text>
+  <text class="t-b mono" x="824" y="290">GET /v1/runs/{id}/events</text>
+  </a>
+  <a href="/runtime/observability#health"><title>Peer health sweep: GET /v1/system/health</title>
+  <rect class="node" x="40" y="340" width="352" height="130" rx="14"/>
+  <text class="t-h" x="56" y="366">Peer health</text>
+  <text class="t-b" x="56" y="386">Periodic TCP probes of peer services</text>
+  <text class="t-b" x="56" y="404">Down after 3 straight failures</text>
+  <text class="t-b" x="56" y="422">One owner alert per transition</text>
+  <text class="t-b mono" x="56" y="440">GET /v1/system/health</text>
+  </a>
+  <a href="/runtime/receipts"><title>Verifiable receipts: signed proof of execution (Ed25519 when a seed is configured)</title>
+  <rect class="node" x="424" y="340" width="352" height="130" rx="14"/>
+  <text class="t-h" x="440" y="366">Receipts</text>
+  <text class="t-b" x="440" y="386">SHA-256 over the full journal stream</text>
+  <text class="t-b" x="440" y="404">Ed25519 signature; verify with no account</text>
+  <text class="t-b mono" x="440" y="422">POST /v1/runs/receipts/verify</text>
+  <text class="t-b mono" x="440" y="440">/.well-known/lantern-receipts</text>
+  </a>
+  <a href="/runtime/observability"><title>Cost attribution: usage rollups, budgets, forecasts</title>
+  <rect class="node" x="808" y="340" width="352" height="130" rx="14"/>
+  <text class="t-h" x="824" y="366">Cost attribution</text>
+  <text class="t-b" x="824" y="386">Per-call usage into agent_usage_daily</text>
+  <text class="t-b" x="824" y="404">Feeds budget enforcement (402)</text>
+  <text class="t-b" x="824" y="422">Forecasts and /evaluations analytics</text>
+  <text class="t-b" x="824" y="440">tokens and costUsd on every completion</text>
+  </a>
+  <rect class="node" x="40" y="490" width="1120" height="70" rx="10"/>
+  <text class="t-h" x="56" y="516">What this buys you at 3 AM</text>
+  <text class="t-b" x="56" y="536">A failing run: the exact step, its trace, what it cost. One tenant_id and run_id filters all of it.</text>
+</svg>

@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" class="lx" role="img" aria-labelledby="runtime-lifecycle-title runtime-lifecycle-desc">
+  <title id="runtime-lifecycle-title">One spawn crosses five actors under a single identity chain</title>
+  <desc id="runtime-lifecycle-desc">Sequence diagram of one sandbox spawn across five lanes: the journal, the control plane, the runtime-scheduler, the runtime-manager and the harness inside the sandbox. The control plane receives the schedule request, applies the quota gate and mints an agent-instance token. The scheduler places the request and tells the manager to spawn. The manager creates a hardened Job and Pod with a default-deny egress policy applied first, and the harness boots as PID 1. The harness opens a heartbeat stream with a per-VM certificate, vends secrets with the instance token through the manager and the control-plane relay, and streams logs, traces and audit events back through the manager to the report endpoint. The control plane appends step events to the journal, terminates the sandbox with a grace period, and signs a run receipt with Ed25519 over the journal hash.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="runtime-lifecycle-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-lifecycle-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-lifecycle-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-lifecycle-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="runtime-lifecycle-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="800" rx="16"/>
+  <text class="t-title" x="40" y="52">One spawn crosses five actors under a single identity chain</text>
+  <text class="t-sub" x="40" y="76">Read top to bottom: schedule, place, spawn, run, report, record, tear down. Arrows that cross the sandbox wall are the only way in or out.</text>
+  <rect class="group" x="40" y="104" width="210" height="620" rx="12"/>
+  <rect class="node" x="50" y="114" width="190" height="58" rx="10"/>
+  <text class="t-h" x="66" y="138">Journal</text>
+  <text class="t-s" x="66" y="158">journal_events</text>
+  <rect class="group" x="266" y="104" width="210" height="620" rx="12"/>
+  <rect class="node" x="276" y="114" width="190" height="58" rx="10"/>
+  <text class="t-h" x="292" y="138">Control plane</text>
+  <text class="t-s mono" x="292" y="158">:8080 · :50051 gRPC</text>
+  <rect class="group" x="492" y="104" width="210" height="620" rx="12"/>
+  <rect class="node-host" x="502" y="114" width="190" height="58" rx="10"/>
+  <text class="t-h" x="518" y="138">Scheduler</text>
+  <text class="t-s mono" x="518" y="158">runtime-scheduler</text>
+  <rect class="group" x="718" y="104" width="210" height="620" rx="12"/>
+  <rect class="node-host" x="728" y="114" width="190" height="58" rx="10"/>
+  <text class="t-h" x="744" y="138">Manager</text>
+  <text class="t-s mono" x="744" y="158">runtime-manager</text>
+  <rect class="group" x="944" y="104" width="210" height="620" rx="12"/>
+  <rect class="node-host" x="954" y="114" width="190" height="58" rx="10"/>
+  <text class="t-h" x="970" y="138">Harness</text>
+  <text class="t-s mono" x="970" y="158">PID 1 in the sandbox</text>
+  <rect class="wall" x="938" y="96" width="222" height="644" rx="18"/>
+  <text class="t-s" x="954" y="732">microVM or sandbox pod</text>
+  <path class="edge" d="M377 214H591" marker-end="url(#runtime-lifecycle-a)"/>
+  <text class="t-b" x="383" y="192">1 Schedule(AgentSpec)</text>
+  <text class="t-s" x="383" y="208">quota gate, 402 over cap</text>
+  <path class="edge-patina" d="M603 262H817" marker-end="url(#runtime-lifecycle-ap)"/>
+  <text class="t-b" x="609" y="240">2 Spawn</text>
+  <text class="t-s" x="609" y="256">after 5-factor placement</text>
+  <path class="edge-glass" d="M829 310H1043" marker-end="url(#runtime-lifecycle-ag)"/>
+  <text class="t-b" x="952" y="288">3 Create Job, harness boots</text>
+  <text class="t-s" x="952" y="304">egress deny policy first</text>
+  <path class="edge-glass" d="M1043 358H829" marker-end="url(#runtime-lifecycle-ag)"/>
+  <text class="t-b" x="952" y="336">4 Heartbeat stream</text>
+  <text class="t-s" x="952" y="352">per-VM cert, vm_id from peer</text>
+  <path class="edge-glass" d="M1043 406H829" marker-end="url(#runtime-lifecycle-ag)"/>
+  <text class="t-b" x="952" y="384">5 VendSecret + Bearer</text>
+  <text class="t-s" x="952" y="400">JWT minted at schedule</text>
+  <path class="edge-patina" d="M817 454H377" marker-end="url(#runtime-lifecycle-ap)"/>
+  <text class="t-b" x="383" y="432">6 Relay the secret request</text>
+  <text class="t-s" x="383" y="448">verify vm and tenant, fail-closed</text>
+  <path class="edge-glass" d="M1043 502H829" marker-end="url(#runtime-lifecycle-ag)"/>
+  <text class="t-b" x="952" y="480">7 Report stream</text>
+  <text class="t-s" x="952" y="496">logs, traces, audit</text>
+  <path class="edge-patina" d="M817 550H377" marker-end="url(#runtime-lifecycle-ap)"/>
+  <text class="t-b" x="383" y="528">8 POST /v1/runtime/report</text>
+  <text class="t-s" x="383" y="544">bound to the VM and tenant</text>
+  <path class="edge" d="M365 598H151" marker-end="url(#runtime-lifecycle-a)"/>
+  <text class="t-b" x="157" y="576">9 Append step events</text>
+  <text class="t-s" x="157" y="592">journal_events, idempotent</text>
+  <path class="edge" d="M377 646H817" marker-end="url(#runtime-lifecycle-a)"/>
+  <text class="t-b" x="383" y="624">10 Terminate(grace)</text>
+  <text class="t-s" x="383" y="640">drain, then sanitized teardown</text>
+  <path class="edge" d="M365 694H151" marker-end="url(#runtime-lifecycle-a)"/>
+  <text class="t-b" x="157" y="672">11 Sign run receipt</text>
+  <text class="t-s" x="157" y="688">Ed25519 over the journal hash</text>
+  <g transform="translate(40 762)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane and journal</text>
+  <rect class="node-host" x="190" width="14" height="14" rx="3"/><text class="t-s" x="212" y="11">Trusted Lantern infrastructure</text>
+  <rect class="wall" x="422" width="14" height="14" rx="3"/><text class="t-s" x="444" y="11">Sandbox wall</text>
+  </g>
+</svg>

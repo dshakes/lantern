@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" class="lx" role="img" aria-labelledby="isolation-ladder-title isolation-ladder-desc">
+  <title id="isolation-ladder-title">Backends climb from shared kernel to microVM, and each class has a floor</title>
+  <desc id="isolation-ladder-desc">A ladder of five isolation backends under a fail-closed gate. From weakest to strongest: runc with a shared namespaced kernel, serving trusted; gVisor with a user-space kernel, serving standard and untrusted; Kata with its own kernel and hypervisor per pod, serving hostile and below; Firecracker, a microVM with the Lantern harness as PID 1, session VMs and an in-guest tool runner, serving every class. Wasmtime, a capability sandbox for wasm workloads, sits apart and refuses untrusted and hostile outright. The gate at the top, choose_backend and then build_job, refuses a node whose backend cannot satisfy the class. When the hardened class is missing the workload does not run.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="isolation-ladder-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="isolation-ladder-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="isolation-ladder-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="isolation-ladder-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="isolation-ladder-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+  <rect class="canvas" width="1200" height="700" rx="16"/>
+  <text class="t-title" x="40" y="52">Backends climb from shared kernel to microVM, and each class has a floor</text>
+  <text class="t-sub" x="40" y="76">The runtime honors the trust class you declare or refuses it. Strength rises left to right; the gate never skips a rung.</text>
+  <a href="/runtime/isolation#fail-closed">
+  <rect class="node-host" x="40" y="100" width="1120" height="70" rx="10"/>
+  <text class="t-h" x="58" y="126">Fail-closed gate</text>
+  <text class="t-b" x="58" y="146">choose_backend() refuses a node whose backend cannot satisfy the class; build_job() re-checks before any pod is emitted.</text>
+  </a>
+  <rect class="node" x="60" y="288" width="204" height="84" rx="10"/>
+  <text class="t-h" x="76" y="314">runc</text>
+  <text class="t-b" x="76" y="334">shared kernel</text>
+  <rect class="node-glass" x="279" y="264" width="204" height="108" rx="10"/>
+  <text class="t-h" x="295" y="290">gVisor</text>
+  <text class="t-b" x="295" y="310">user-space kernel</text>
+  <text class="t-b" x="295" y="329">between code and host</text>
+  <text class="t-s mono" x="295" y="348">RuntimeClass gvisor</text>
+  <rect class="node-glass" x="498" y="246" width="204" height="126" rx="10"/>
+  <text class="t-h" x="514" y="272">Kata</text>
+  <text class="t-b" x="514" y="292">own kernel + hypervisor</text>
+  <text class="t-b" x="514" y="311">a VM per pod</text>
+  <text class="t-s mono" x="514" y="330">RuntimeClass kata</text>
+  <a href="/runtime/sessions-and-memory">
+  <rect class="node-glass" x="717" y="228" width="204" height="144" rx="10"/>
+  <text class="t-h" x="733" y="254">Firecracker</text>
+  <text class="t-b" x="733" y="274">microVM, harness PID 1</text>
+  <text class="t-b" x="733" y="293">session VMs, tool runner</text>
+  </a>
+  <rect class="node" x="936" y="264" width="204" height="108" rx="10"/>
+  <text class="t-h" x="952" y="290">Wasmtime</text>
+  <text class="t-b" x="952" y="310">capability sandbox</text>
+  <text class="t-b" x="952" y="329">for wasm workloads</text>
+  <path class="edge" d="M60 394H900" marker-end="url(#isolation-ladder-a)"/>
+  <text class="t-s" x="912" y="398">more isolation</text>
+  <a href="/runtime/isolation#classes">
+  <rect class="node" x="60" y="430" width="204" height="52" rx="10"/>
+  <text class="t-h" x="76" y="452">Trusted</text>
+  <text class="t-s" x="76" y="472">first-party code you wrote</text>
+  </a>
+  <a href="/runtime/isolation#classes">
+  <rect class="node" x="279" y="430" width="204" height="52" rx="10"/>
+  <text class="t-h" x="295" y="452">Standard</text>
+  <text class="t-s" x="295" y="472">the default class</text>
+  </a>
+  <a href="/runtime/isolation#classes">
+  <rect class="node" x="279" y="490" width="204" height="52" rx="10"/>
+  <text class="t-h" x="295" y="512">Untrusted</text>
+  <text class="t-s" x="295" y="532">user or generated code</text>
+  </a>
+  <a href="/runtime/isolation#classes">
+  <rect class="node" x="498" y="430" width="204" height="52" rx="10"/>
+  <text class="t-h" x="514" y="452">Hostile</text>
+  <text class="t-s" x="514" y="472">assumed to attack the host</text>
+  </a>
+  <a href="/runtime/isolation#classes">
+  <rect class="node" x="717" y="430" width="204" height="52" rx="10"/>
+  <text class="t-h" x="733" y="452">Any class</text>
+  <text class="t-s" x="733" y="472">every trust class fits</text>
+  </a>
+  <rect class="node-deny" x="936" y="430" width="204" height="52" rx="10"/>
+  <text class="t-h" x="952" y="452">Refuses</text>
+  <text class="t-s" x="952" y="472">untrusted and hostile</text>
+  <text class="t-s" x="60" y="418">Classes served at each rung</text>
+  <text class="t-b" x="40" y="586">Standard runs on gVisor; runc only if LANTERN_ALLOW_RUNC_STANDARD=1 is set. Untrusted needs a separate kernel (gVisor).</text>
+  <text class="t-b" x="40" y="606">When the hardened class is missing from the cluster the workload does not run. That refusal is the feature.</text>
+  <g transform="translate(40 650)">
+  <rect class="node" x="0" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Trust class or shared kernel</text>
+  <rect class="node-glass" x="220" width="14" height="14" rx="3"/><text class="t-s" x="242" y="11">Isolation backend</text>
+  <rect class="node-host" x="390" width="14" height="14" rx="3"/><text class="t-s" x="412" y="11">Gate (trusted host)</text>
+  <rect class="node-deny" x="580" width="14" height="14" rx="3"/><text class="t-s" x="602" y="11">Refused</text>
+  </g>
+</svg>

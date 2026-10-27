@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 940" class="lx" role="img" aria-labelledby="trust-boundaries-title trust-boundaries-desc">
+  <title id="trust-boundaries-title">Every boundary demands its own credential</title>
+  <desc id="trust-boundaries-desc">Lantern's trust boundaries, left to right. The caller sends a JWT or a scoped API key to the gateway on :8443 or the control plane on :8080. The gateway reaches the control plane's gRPC port :50051 with the shared x-lantern-service-token; the control plane enforces API-key scopes and Postgres row-level security keyed by app.tenant_id, and mints each VM's agent identity. The control plane reaches the workflow engine (:50052), the model router (:50053, which also receives the tenant's provider key per call), and the runtime-scheduler (:50055) with the same service token; every one of those gRPC ports accepts a tenant_id only from a caller presenting it. On the data plane host, the control plane, workflow engine and scheduler reach the runtime-manager (:50054) with an mTLS client cert plus the service token, and the manager refuses per-VM certificates (OU=lantern-vm) on every RuntimeManager method. The manager calls back to the control plane with X-Lantern-Runtime-Token to resolve secrets and forward reports. Inside the microVM, the harness runs as PID 1, reads spawn.json from a read-only image, and talks to the manager with its per-VM certificate plus the agent instance token. The workload runs as an unprivileged LANTERN_WORKLOAD_UID and reaches the secrets socket, which checks its uid with SO_PEERCRED. In opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only), outbound requests from the workload leave over vsock through a host egress broker that adds the credential on the host, so no credential crosses into the VM and the VM has no network device. In the default mode the allowlist is enforced in-guest.</desc>
+  <style class="lx-style">
+    .lx{--bg:#f2f5f8;--surface:#ffffff;--surface2:#e7edf3;--ink:#0f1b2d;--ink2:#44546a;--ink3:#5d6d83;--line:#c3cedb;--flame:#a85e06;--flame-soft:#fbebd3;--glass:#1c76a6;--glass-soft:#dcedf8;--patina:#17785f;--patina-soft:#d6efe7;--signal:#c23b29;--signal-soft:#f8deda}
+    @media (prefers-color-scheme:dark){.lx{--bg:#0b1220;--surface:#111b2e;--surface2:#17243b;--ink:#e8eef5;--ink2:#a9b6c8;--ink3:#7a8aa2;--line:#2b3b57;--flame:#ffb547;--flame-soft:#3a2a12;--glass:#7cc4e8;--glass-soft:#13314a;--patina:#4fc1a6;--patina-soft:#123a33;--signal:#ff7262;--signal-soft:#3e1c1a}}
+    .lx text{font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--ink)}
+    .lx .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lx .canvas{fill:var(--bg)}
+    .lx .t-title{font-size:22px;font-weight:600;letter-spacing:-.01em}
+    .lx .t-sub{font-size:13px;fill:var(--ink2)}
+    .lx .t-h{font-size:14px;font-weight:600}
+    .lx .t-b{font-size:12.5px;fill:var(--ink2)}
+    .lx .t-s{font-size:11.5px;fill:var(--ink3)}
+    .lx .t-flame{fill:var(--flame)} .lx .t-glass{fill:var(--glass)} .lx .t-patina{fill:var(--patina)} .lx .t-signal{fill:var(--signal)}
+    .lx .node{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+    .lx .node-guest{fill:var(--flame-soft);stroke:var(--flame);stroke-width:1.5}
+    .lx .node-host{fill:var(--patina-soft);stroke:var(--patina);stroke-width:1.5}
+    .lx .node-glass{fill:var(--glass-soft);stroke:var(--glass);stroke-width:1.5}
+    .lx .node-deny{fill:var(--signal-soft);stroke:var(--signal);stroke-width:1.5}
+    .lx .group{fill:var(--surface2);stroke:none}
+    .lx .wall{fill:none;stroke:var(--glass);stroke-width:2.5}
+    .lx .zone{fill:none;stroke:var(--ink3);stroke-width:1.25;stroke-dasharray:6 5}
+    .lx .edge{fill:none;stroke:var(--ink2);stroke-width:1.5}
+    .lx .edge-flame{fill:none;stroke:var(--flame);stroke-width:1.75}
+    .lx .edge-glass{fill:none;stroke:var(--glass);stroke-width:1.75}
+    .lx .edge-patina{fill:none;stroke:var(--patina);stroke-width:1.75}
+    .lx .edge-deny{fill:none;stroke:var(--signal);stroke-width:1.75;stroke-dasharray:4 4}
+    .lx .head{fill:var(--ink2)} .lx .head-flame{fill:var(--flame)} .lx .head-glass{fill:var(--glass)} .lx .head-patina{fill:var(--patina)} .lx .head-deny{fill:var(--signal)}
+    .lx .dot-flame{fill:var(--flame)} .lx .dot-glass{fill:var(--glass)} .lx .dot-patina{fill:var(--patina)} .lx .dot-signal{fill:var(--signal)} .lx .dot-ink{fill:var(--ink3)}
+  </style>
+  <defs>
+    <marker id="trust-boundaries-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="trust-boundaries-af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-flame" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="trust-boundaries-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-glass" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="trust-boundaries-ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-patina" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="trust-boundaries-ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-deny" d="M0 0 10 5 0 10z"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1200" height="940" rx="16"/>
+  <text class="t-title" x="40" y="52">Every boundary demands its own credential</text>
+  <text class="t-sub" x="40" y="76">Dashed lines are trust boundaries; the solid line is the microVM wall. The table names what crosses each one.</text>
+
+  <!-- caller / internet -->
+  <rect class="zone" x="40" y="110" width="180" height="540" rx="18"/>
+  <text class="t-s" x="56" y="132">Caller and internet</text>
+  <rect class="node" x="56" y="150" width="148" height="220" rx="10"/>
+  <text class="t-h" x="72" y="178">Caller</text>
+  <text class="t-b" x="72" y="198">SDK, CLI,</text>
+  <text class="t-b" x="72" y="216">dashboard</text>
+  <rect class="node" x="56" y="490" width="148" height="56" rx="10"/>
+  <text class="t-h" x="72" y="523">LLM providers</text>
+
+  <!-- gateway + control plane -->
+  <rect class="zone" x="250" y="110" width="330" height="540" rx="18"/>
+  <text class="t-s" x="266" y="132">Gateway and control plane</text>
+  <rect class="node" x="274" y="150" width="282" height="72" rx="10"/>
+  <text class="t-h" x="290" y="178">Gateway <tspan class="mono">:8443</tspan></text>
+  <text class="t-b" x="290" y="198">checks the JWT or API key</text>
+  <rect class="node" x="274" y="262" width="282" height="108" rx="10"/>
+  <text class="t-h" x="290" y="288">Control plane</text>
+  <text class="t-b mono" x="290" y="308">:8080, gRPC :50051</text>
+  <text class="t-b" x="290" y="326">API-key scopes, RLS on <tspan class="mono">app.tenant_id</tspan></text>
+  <text class="t-b" x="290" y="344">mints each VM's agent identity</text>
+  <rect class="node" x="274" y="410" width="282" height="56" rx="10"/>
+  <text class="t-h" x="290" y="434">Workflow engine</text>
+  <text class="t-b mono" x="290" y="453">:50052</text>
+  <rect class="node" x="274" y="490" width="282" height="56" rx="10"/>
+  <text class="t-h" x="290" y="514">Model router</text>
+  <text class="t-b" x="290" y="533"><tspan class="mono">:50053</tspan>, tenant provider key per call</text>
+  <text class="t-s" x="274" y="600">Each gRPC port accepts a tenant_id only</text>
+  <text class="t-s" x="274" y="616">from a caller with the service token.</text>
+
+  <!-- data plane host -->
+  <rect class="zone" x="610" y="110" width="300" height="540" rx="18"/>
+  <text class="t-s" x="626" y="132">Data plane host</text>
+  <rect class="node-host" x="634" y="150" width="252" height="72" rx="10"/>
+  <text class="t-h mono" x="650" y="178">runtime-scheduler</text>
+  <text class="t-b" x="650" y="198"><tspan class="mono">:50055</tspan>, places VMs</text>
+  <rect class="node-host" x="634" y="262" width="252" height="108" rx="10"/>
+  <text class="t-h mono" x="650" y="288">runtime-manager</text>
+  <text class="t-b" x="650" y="308"><tspan class="mono">:50054</tspan>, mTLS + service token</text>
+  <text class="t-b" x="650" y="326">refuses <tspan class="mono">OU=lantern-vm</tspan> certs</text>
+  <text class="t-b" x="650" y="344">on RuntimeManager methods</text>
+  <!-- opt-in broker mode (LANTERN_EGRESS_MODE=broker, Firecracker only) -->
+  <rect class="node-host" x="634" y="490" width="252" height="72" rx="10"/>
+  <text class="t-h" x="650" y="518">Host egress broker</text>
+  <text class="t-b" x="650" y="538">adds credential on egress (opt-in)</text>
+
+  <!-- microVM -->
+  <rect class="wall" x="940" y="110" width="220" height="540" rx="18"/>
+  <text class="t-h t-glass" x="956" y="136">microVM</text>
+  <rect class="node-glass" x="956" y="180" width="188" height="120" rx="10"/>
+  <text class="t-h" x="972" y="206">Harness, PID 1</text>
+  <text class="t-b" x="972" y="226">per-VM cert</text>
+  <text class="t-b mono" x="972" y="244">OU=lantern-vm</text>
+  <text class="t-b" x="972" y="262">reads <tspan class="mono">spawn.json</tspan> from</text>
+  <text class="t-b" x="972" y="280">a read-only image</text>
+  <rect class="node-glass" x="956" y="330" width="188" height="72" rx="10"/>
+  <text class="t-h" x="972" y="358">Secrets socket</text>
+  <text class="t-b mono" x="972" y="378">SO_PEERCRED</text>
+  <rect class="node-guest" x="956" y="440" width="188" height="96" rx="10"/>
+  <text class="t-h" x="972" y="466">Workload</text>
+  <text class="t-b" x="972" y="486">unprivileged uid,</text>
+  <text class="t-b" x="972" y="504">secret env withheld</text>
+  <text class="t-s" x="956" y="626">no network device (broker mode, opt-in)</text>
+
+  <!-- edges -->
+  <path class="edge" d="M204 186H272" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M204 316H272" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M415 222V260" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M415 370V408" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M274 340H262V504H272" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M274 532H206" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M556 290H596V186H632" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge" d="M556 330H632" marker-end="url(#trust-boundaries-a)"/>
+  <path class="edge-patina" d="M634 352H558" marker-end="url(#trust-boundaries-ap)"/>
+  <path class="edge-patina" d="M760 222V260" marker-end="url(#trust-boundaries-ap)"/>
+  <path class="edge-glass" d="M888 290H954" marker-start="url(#trust-boundaries-ag)" marker-end="url(#trust-boundaries-ag)"/>
+  <path class="edge-glass" d="M1050 330V302" marker-end="url(#trust-boundaries-ag)"/>
+  <path class="edge-flame" d="M1050 440V404" marker-end="url(#trust-boundaries-af)"/>
+  <path class="edge-flame" d="M956 520H888" marker-end="url(#trust-boundaries-af)"/>
+  <!-- broker mode path: workload → forwarder → vsock → broker → upstream -->
+  <path class="edge-patina" d="M760 562V716H938" marker-end="url(#trust-boundaries-ap)"/>
+  <rect class="node" x="940" y="690" width="220" height="52" rx="10"/>
+  <text class="t-h" x="956" y="721">Upstream APIs</text>
+
+  <!-- credential table -->
+  <text class="t-h" x="40" y="700">What crosses each boundary</text>
+  <text class="t-s" x="40" y="726">Caller to gateway or control plane</text>
+  <text class="t-b" x="300" y="726">JWT, or an API key carrying scopes</text>
+  <text class="t-s" x="40" y="746">Gateway to control plane</text>
+  <text class="t-b mono" x="300" y="746">x-lantern-service-token</text>
+  <text class="t-s" x="40" y="766">Control plane to engine, router, scheduler</text>
+  <text class="t-b" x="300" y="766">service token; the router also gets the tenant provider key</text>
+  <text class="t-s" x="40" y="786">Control plane, engine, scheduler to manager</text>
+  <text class="t-b" x="300" y="786">mTLS client cert + service token</text>
+  <text class="t-s" x="40" y="806">runtime-manager to control plane</text>
+  <text class="t-b" x="300" y="806"><tspan class="mono">X-Lantern-Runtime-Token</tspan> (secret resolve, reports)</text>
+  <text class="t-s" x="40" y="826">Harness to runtime-manager</text>
+  <text class="t-b" x="300" y="826">per-VM cert + agent instance token</text>
+  <text class="t-s" x="40" y="846">Workload to harness</text>
+  <text class="t-b" x="300" y="846">its uid, checked with <tspan class="mono">SO_PEERCRED</tspan></text>
+  <text class="t-s" x="40" y="866">Workload to upstream (broker mode, opt-in)</text>
+  <text class="t-b" x="300" y="866">nothing; the host broker adds the credential on the host side</text>
+
+  <g transform="translate(40 900)">
+    <rect class="node" width="14" height="14" rx="3"/><text class="t-s" x="22" y="11">Control plane</text>
+    <rect class="node-host" x="130" width="14" height="14" rx="3"/><text class="t-s" x="152" y="11">Trusted host</text>
+    <rect class="node-glass" x="256" width="14" height="14" rx="3"/><text class="t-s" x="278" y="11">In-VM harness</text>
+    <rect class="node-guest" x="384" width="14" height="14" rx="3"/><text class="t-s" x="406" y="11">Untrusted guest</text>
+    <rect class="wall" x="524" width="14" height="14" rx="3"/><text class="t-s" x="546" y="11">microVM wall</text>
+    <rect class="zone" x="648" width="14" height="14" rx="3"/><text class="t-s" x="670" y="11">Trust boundary</text>
+  </g>
+</svg>
