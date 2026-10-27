@@ -71,21 +71,30 @@ wall-clock milliseconds as measured by the test script and emitted to the
 **Environment:** Lima VM (`infra/lima/firecracker-dev.yaml`) on Apple Silicon
 M4 Max, macOS 15, nested KVM via Virtualization.framework. Guest: Ubuntu 24.04
 LTS, 4 vCPU, 8 GiB RAM.  VM spec: 1 vCPU, 128 MiB RAM, musl harness as PID 1,
-aarch64 vmlinux-5.10.245.  Run at: 2026-10-27T02:37:23Z.
+aarch64 vmlinux-5.10.245.  Run at: 2026-10-27T05:08:06Z (jailed mode,
+`FIRECRACKER_JAILER_PATH=/usr/local/bin/jailer`, UID 123:100, chroot
+`/srv/jailer`).
 
 **These are measured values from a real Lima run** (nested-virt, aarch64,
 indicative of dev-laptop performance — not bare-metal production numbers).
 
 | step | duration_ms | notes |
 |------|-----------:|-------|
-| `shell_exec` | 795 | ExecTool round-trip after heartbeat bidi stream established |
-| `write_file` | 108 | ExecTool write_file to /workspace |
-| `snapshot` | 383 | 128 MiB mem snapshot to disk (134 MB written) |
-| `stop` | 180 | graceful SendCtrlAltDel (aarch64 not supported) + SIGKILL fallback |
-| `restore` | 97 | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
-| `read_file_after_restore` | 4 214 | 2 ExecTool retries × 2 s wait; operation itself ~200 ms once ready |
-| `stop_before_fork` | 183 | Stop restored VM before fork test |
-| **total** | **5 960** | fork test skipped (requires `FIRECRACKER_JAILER_PATH`); see note below |
+| `shell_exec` | 1 393 | ExecTool round-trip after heartbeat bidi stream established |
+| `write_file` | 265 | ExecTool write_file to /workspace |
+| `snapshot` | 634 | 128 MiB mem snapshot to disk (134 MB written) |
+| `stop` | 207 | graceful SendCtrlAltDel (aarch64 not supported) + SIGKILL fallback |
+| `restore` | 138 | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
+| `read_file_after_restore` | 4 204 | 2 ExecTool retries × 2 s wait; operation itself ~200 ms once ready |
+| `stop_before_fork` | 197 | Stop restored VM before fork test |
+| `fork_spawn_1` | 131 | jailer: hard-link mem + per-VM rootfs copy + jail chroot setup |
+| `fork_spawn_2` | 145 | |
+| `fork_spawn_3` | 160 | |
+| **total** | **7 474** | fork×3 included; see notes below |
+
+**Hard-link inode proof (PR #295):** all 3 fork mem files shared inode 1354345
+(link_count=4 = 1 source snapshot + 3 forks), confirming MAP_PRIVATE CoW is
+active and each fork pays O(1) disk I/O for the 128 MiB mem file.
 
 **Note on `read_file_after_restore`:** The Spawn RPC returns as soon as
 Firecracker accepts the snapshot load, but the harness's in-guest exec server

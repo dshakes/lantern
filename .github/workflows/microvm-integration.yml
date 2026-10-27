@@ -250,13 +250,30 @@ jobs:
 
           # Expose jailer path for the fork lifecycle test (conditional in the
           # test script — skipped with [SKIP] when jailer is absent).
+          # FIRECRACKER_JAILER_PATH must be explicitly set (not just on PATH)
+          # because the manager must also be started with it; the integration
+          # test passes the same env var to the manager via its setsid env
+          # block.  UID/GID/CHROOT_BASE use the same defaults as the manager
+          # (123:100, /srv/jailer) so the fork test and inode check agree on
+          # where the jail directories live.
           JAILER_BIN=""
           command -v jailer >/dev/null 2>&1 && JAILER_BIN="$(command -v jailer)" || true
+
+          # Create the jailer chroot base dir (root-owned, 755).
+          if [ -n "${JAILER_BIN}" ]; then
+            sudo mkdir -p /srv/jailer
+            sudo chmod 755 /srv/jailer
+            sudo mkdir -p /var/lib/lantern/snapshots
+            sudo chmod 755 /var/lib/lantern/snapshots
+          fi
 
           # Firecracker + loop devices + TAP setup need root.
           sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,LANTERN_RUNTIME_BACKEND \
             MANAGER_BIN="$MANAGER_BIN" EXPECT_VENDSECRET=1 \
             FIRECRACKER_JAILER_PATH="${JAILER_BIN}" \
+            FIRECRACKER_JAILER_UID="123" \
+            FIRECRACKER_JAILER_GID="100" \
+            FIRECRACKER_CHROOT_BASE="/srv/jailer" \
             LIFECYCLE_TIMING_DIR="$RUNNER_TEMP/lifecycle-timing" \
             bash infra/firecracker/integration-test.sh
 
