@@ -1060,6 +1060,11 @@ func runStartupGuards(logger *zap.Logger) {
 		logger.Fatal(msg)
 	}
 
+	// Connector base-URL overrides are test-only; never in prod.
+	if fatal, msg := handlers.CheckConnectorBaseURLOverrides(prod, os.Getenv); fatal {
+		logger.Fatal(msg)
+	}
+
 	// R1 — Runtime scheduler address (W12 microVM path).
 	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
 	// data corruption, not a graceful degradation. Refuse to start.

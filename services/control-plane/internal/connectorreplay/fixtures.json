@@ -1,0 +1,32 @@
+[
+  {"method": "GET", "path": "/api/conversations.list", "status": 200,
+   "response": {"ok": true, "channels": [{"id": "C0123", "name": "eng-alerts"}]}},
+  {"method": "POST", "path": "/api/chat.postMessage", "status": 200,
+   "response": {"ok": true, "channel": "C0123", "ts": "1700000001.000200", "message": {"type": "message", "text": "recorded"}}},
+
+  {"method": "GET", "path": "/repos/acme/api/pulls", "status": 200,
+   "response": [{"number": 42, "title": "Fix retry storm", "state": "open", "user": {"login": "octocat"}, "html_url": "https://github.com/acme/api/pull/42"}]},
+  {"method": "GET", "path": "/repos/acme/api/pulls/42", "status": 200,
+   "response": {"number": 42, "title": "Fix retry storm", "state": "open", "additions": 12, "deletions": 3}},
+  {"method": "POST", "path": "/repos/acme/api/issues/42/comments", "status": 201,
+   "response": {"id": 9001, "body": "recorded", "html_url": "https://github.com/acme/api/pull/42#issuecomment-9001", "user": {"login": "lantern-bot"}}},
+
+  {"method": "GET", "path": "/api/0/organizations/acme/issues/", "status": 200,
+   "response": [{"id": "1001", "title": "TypeError: undefined is not a function", "status": "unresolved", "count": "128"}]},
+  {"method": "GET", "path": "/api/0/organizations/acme/issues/1001/", "status": 200,
+   "response": {"id": "1001", "title": "TypeError: undefined is not a function", "status": "unresolved", "count": "128", "firstSeen": "2026-10-20T10:00:00Z", "lastSeen": "2026-10-27T09:12:00Z"}},
+
+  {"method": "GET", "path": "/incidents", "status": 200,
+   "response": {"incidents": [{"id": "PABC123", "title": "API latency high", "status": "triggered", "urgency": "high"}], "limit": 25, "more": false}},
+  {"method": "GET", "path": "/incidents/PABC123", "status": 200,
+   "response": {"incident": {"id": "PABC123", "title": "API latency high", "status": "triggered", "urgency": "high"}}},
+  {"method": "POST", "path": "/incidents", "status": 201,
+   "response": {"incident": {"id": "PNEW456", "title": "recorded", "status": "triggered"}}},
+  {"method": "PUT", "path": "/incidents/PABC123", "status": 200,
+   "response": {"incident": {"id": "PABC123", "status": "acknowledged"}}},
+
+  {"method": "GET", "path": "/calendar/v3/calendars/primary/events", "status": 200,
+   "response": {"kind": "calendar#events", "items": [{"id": "evt1", "summary": "Standup"}]}},
+  {"method": "POST", "path": "/calendar/v3/calendars/primary/events", "status": 200,
+   "response": {"kind": "calendar#event", "id": "evt2", "status": "confirmed", "summary": "recorded", "htmlLink": "https://calendar.google.com/event?eid=evt2"}}
+]
