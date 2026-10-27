@@ -52,7 +52,7 @@
 #   FC_HARNESS_BIN      Path to a prebuilt static lantern-harness binary. When
 #                       unset, the script builds it from services/harness via
 #                       a musl target (requires the Rust musl toolchain).
-#   ARCH                x86_64 (default) or aarch64. Selects the prebuilt kernel.
+#   ARCH                x86_64 or aarch64 (default: the host arch). Selects the prebuilt kernel.
 #
 set -euo pipefail
 
@@ -64,7 +64,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${1:-${REPO_ROOT}/.fc-image}"
 mkdir -p "${OUT_DIR}"
 
-ARCH="${ARCH:-x86_64}"
+# Default to the host arch: on an Apple Silicon Lima guest an x86_64 kernel
+# silently fails to boot.
+ARCH="${ARCH:-$(uname -m)}"
+[ "${ARCH}" = "arm64" ] && ARCH=aarch64
 FC_KERNEL_VERSION="${FC_KERNEL_VERSION:-5.10}"
 FC_ROOTFS_SIZE_MB="${FC_ROOTFS_SIZE_MB:-64}"
 
