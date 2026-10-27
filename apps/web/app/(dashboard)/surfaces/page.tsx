@@ -565,7 +565,7 @@ export default function SurfacesPage() {
                       href={surface.primaryActionHref}
                       className={clsx(
                         "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-on-flame hover:bg-lantern-400",
                       )}
                     >
                       {surface.primaryActionLabel || (connected ? "Manage" : "Set up")}
@@ -575,7 +575,7 @@ export default function SurfacesPage() {
                       onClick={() => openConfig(surface)}
                       className={clsx(
                         "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-on-flame hover:bg-lantern-400",
                       )}
                     >
                       {connected ? "Configure" : "Set up"}
@@ -755,7 +755,7 @@ export default function SurfacesPage() {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Check className="h-3.5 w-3.5" />Save</>}
                 </button>

@@ -1,25 +1,137 @@
 @import "tailwindcss";
 
+/* Brand tokens ("glass & flame") — verbatim copy of the :root blocks in
+   docs/brand/tokens.css (canonical, lantern-site). This is the ONE place the
+   brand palette lives in apps/web; everything below derives from it.
+   flame = untrusted guest code / primary accent · glass = the microVM wall ·
+   patina = trusted host · signal = denied. */
+:root {
+  /* day */
+  --lx-bg: #f2f5f8;
+  --lx-surface: #ffffff;
+  --lx-surface-2: #e7edf3;
+  --lx-ink: #0f1b2d;
+  --lx-ink-2: #44546a;
+  --lx-ink-3: #5d6d83;
+  --lx-line: #c3cedb;
+
+  --lx-flame: #a85e06;       /* untrusted code, the guest — the flame */
+  --lx-flame-soft: #fbebd3;
+  --lx-glass: #1c76a6;       /* the microVM wall — the glass */
+  --lx-glass-soft: #dcedf8;
+  --lx-patina: #17785f;      /* trusted host infrastructure — verdigris */
+  --lx-patina-soft: #d6efe7;
+  --lx-signal: #c23b29;      /* denied, a boundary that must not be crossed */
+  --lx-signal-soft: #f8deda;
+
+  --lx-font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --lx-font-text: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --lx-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --lx-radius-s: 6px;   /* chips, inputs */
+  --lx-radius-m: 10px;  /* nodes, code blocks */
+  --lx-radius-l: 18px;  /* groups, the VM wall */
+
+  --lx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --lx-dur-ui: 160ms;     /* responses to a person's action */
+  --lx-dur-packet: 2.8s;  /* one packet crossing a diagram, linear */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lx-bg: #0b1220;
+    --lx-surface: #111b2e;
+    --lx-surface-2: #17243b;
+    --lx-ink: #e8eef5;
+    --lx-ink-2: #a9b6c8;
+    --lx-ink-3: #7a8aa2;
+    --lx-line: #2b3b57;
+    --lx-flame: #ffb547;
+    --lx-flame-soft: #3a2a12;
+    --lx-glass: #7cc4e8;
+    --lx-glass-soft: #13314a;
+    --lx-patina: #4fc1a6;
+    --lx-patina-soft: #123a33;
+    --lx-signal: #ff7262;
+    --lx-signal-soft: #3e1c1a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --lx-bg: #0b1220;
+  --lx-surface: #111b2e;
+  --lx-surface-2: #17243b;
+  --lx-ink: #e8eef5;
+  --lx-ink-2: #a9b6c8;
+  --lx-ink-3: #7a8aa2;
+  --lx-line: #2b3b57;
+  --lx-flame: #ffb547;
+  --lx-flame-soft: #3a2a12;
+  --lx-glass: #7cc4e8;
+  --lx-glass-soft: #13314a;
+  --lx-patina: #4fc1a6;
+  --lx-patina-soft: #123a33;
+  --lx-signal: #ff7262;
+  --lx-signal-soft: #3e1c1a;
+}
+
+/* Dashboard scales, derived from the brand. Dark values here (dark is the
+   default theme); the light remap lives at the bottom of this file under
+   :root[data-theme="light"]. Tailwind v4 emits each as a CSS var, so the
+   ~2,900 zinc/surface/lantern utilities re-skin from here alone.
+   `lantern-*` is the accent scale = flame. */
 @theme {
-  --color-lantern-50: #f0f0ff;
-  --color-lantern-100: #ddddf8;
-  --color-lantern-200: #bbb8f0;
-  --color-lantern-300: #9590e8;
-  --color-lantern-400: #7c6df8;
-  --color-lantern-500: #6e5dce;
-  --color-lantern-600: #5a48b5;
-  --color-lantern-700: #47389a;
-  --color-lantern-800: #362b78;
-  --color-lantern-900: #251e56;
+  --color-lantern-50: #fff6e8;
+  --color-lantern-100: #ffe9c7;
+  --color-lantern-200: #ffd89c;
+  --color-lantern-300: #ffc670;
+  --color-lantern-400: #ffb547; /* --lx-flame (dark) */
+  --color-lantern-500: #f5a32e;
+  --color-lantern-600: #d9861a;
+  --color-lantern-700: #a85e06;
+  --color-lantern-800: #6e3d05;
+  --color-lantern-900: #3a2a12;
+  /* Warning = sulfur, not amber. Stock amber sits on top of the flame
+     accent; flame (orange) and signal (red) already own the warm reds, so
+     warnings take the one warm hue left that reads apart from both. The
+     dashboard writes warnings as amber-* utilities, so the scale is remapped. */
+  --color-amber-50: #fcf9df;
+  --color-amber-100: #f9f3c4;
+  --color-amber-200: #f5eca8;
+  --color-amber-300: #f0e27a;
+  --color-amber-400: #e6d548;
+  --color-amber-500: #cfbe2a;
+  --color-amber-600: #a8991b;
+  --color-amber-700: #7a6f08;
+  --color-amber-800: #554d04;
+  --color-amber-900: #3a3503;
+  --color-amber-950: #282402;
 
-  --color-surface-0: #09090b;
-  --color-surface-1: #0f0f12;
-  --color-surface-2: #18181b;
-  --color-surface-3: #27272a;
-  --color-surface-4: #3f3f46;
+  /* Ink that sits ON a solid flame fill (primary buttons, the mark tile). */
+  --color-on-flame: #1a1004;
 
-  --font-sans: "Inter", "Geist", system-ui, -apple-system, sans-serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", "Fira Code", monospace;
+  --color-surface-0: #0b1220; /* --lx-bg */
+  --color-surface-1: #111b2e; /* --lx-surface */
+  --color-surface-2: #17243b; /* --lx-surface-2 */
+  --color-surface-3: #1e2d47;
+  --color-surface-4: #2b3b57; /* --lx-line */
+
+  /* Neutral scale — cool blue-grey ink from the brand, not stock zinc. */
+  --color-zinc-50: #f5f8fc;
+  --color-zinc-100: #e8eef5;  /* --lx-ink */
+  --color-zinc-200: #ced8e5;
+  --color-zinc-300: #a9b6c8;  /* --lx-ink-2 */
+  --color-zinc-400: #9babc0;
+  --color-zinc-500: #8e9eb4;
+  --color-zinc-600: #7f8fa7;  /* faint text (286x as text) — AA on page, card and surface-2 */
+  --color-zinc-700: #3a4b68;
+  --color-zinc-800: #2b3b57;  /* --lx-line, hairline borders */
+  --color-zinc-900: #17243b;
+  --color-zinc-950: #0b1220;
+
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-bricolage), "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
 }
 
 /* ---------------------------------------------------------------------------
@@ -76,26 +188,26 @@
   --easing-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Semantic colors — alias to palette so themes can swap. */
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #d4d4d8;
-  --color-text-tertiary: #a1a1aa;
-  --color-text-muted: #71717a;
-  --color-text-disabled: #52525b;
+  --color-text-primary: var(--color-zinc-50);
+  --color-text-secondary: var(--color-zinc-200);
+  --color-text-tertiary: var(--color-zinc-400);
+  --color-text-muted: var(--color-zinc-500);
+  --color-text-disabled: var(--color-zinc-600);
 
-  --color-border-subtle: #27272a;
-  --color-border-default: #3f3f46;
-  --color-border-strong: #52525b;
+  --color-border-subtle: var(--color-zinc-800);
+  --color-border-default: var(--color-zinc-700);
+  --color-border-strong: var(--color-zinc-600);
 
   --color-accent: var(--color-lantern-400);
   --color-accent-hover: var(--color-lantern-300);
-  --color-accent-soft: rgba(124, 109, 248, 0.12);
+  --color-accent-soft: color-mix(in srgb, var(--lx-flame) 14%, transparent);
 
-  --color-success: #34d399;
-  --color-success-soft: rgba(52, 211, 153, 0.10);
-  --color-warn: #fbbf24;
-  --color-warn-soft: rgba(251, 191, 36, 0.10);
-  --color-danger: #f87171;
-  --color-danger-soft: rgba(248, 113, 113, 0.10);
+  --color-success: var(--lx-patina);
+  --color-success-soft: var(--lx-patina-soft);
+  --color-warn: var(--color-amber-400);
+  --color-warn-soft: color-mix(in srgb, var(--color-amber-400) 12%, transparent);
+  --color-danger: var(--lx-signal);
+  --color-danger-soft: var(--lx-signal-soft);
 
   /* Per-page container chrome. */
   --page-max-w: 1400px;
@@ -129,15 +241,21 @@ html {
 
 body {
   background: var(--color-surface-0);
-  color: #fafafa;
+  color: var(--color-zinc-50);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Display face for page/section titles only; dense UI stays in Plex Sans. */
+h1, h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+
 ::selection {
-  background: rgba(124, 109, 248, 0.3);
-  color: #fff;
+  background: color-mix(in srgb, var(--lx-flame) 35%, transparent);
+  color: var(--color-zinc-50);
 }
 
 @keyframes glow-pulse {
@@ -247,8 +365,8 @@ body {
 }
 
 .code-block {
-  background: linear-gradient(135deg, #0f0f12, #18181b);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-zinc-800);
   border-radius: 12px;
 }
 
@@ -293,8 +411,8 @@ input, textarea, select {
 }
 input:focus-visible, textarea:focus-visible, select:focus-visible {
   outline: none;
-  border-color: rgba(124, 109, 248, 0.5);
-  box-shadow: 0 0 0 3px rgba(124, 109, 248, 0.18);
+  border-color: color-mix(in srgb, var(--lx-flame) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-flame) 22%, transparent);
 }
 
 /* Card chrome — every .surface-card across the dashboard picks up the
@@ -308,7 +426,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(135deg, rgba(124, 109, 248, 0.05), transparent 60%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--lx-flame) 6%, transparent), transparent 60%);
   opacity: 0;
   transition: opacity var(--motion-normal) var(--easing-standard);
   pointer-events: none;
@@ -319,14 +437,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 .surface-card:hover, .connector-card:hover {
   box-shadow: var(--elev-2);
-  border-color: #3f3f46;
+  border-color: var(--color-zinc-700);
   transform: translateY(-1px);
 }
 
 /* Section dividers — thinner + softer than border-zinc-800 for the
    secondary level of hierarchy (within a card, between rows). */
 .divide-soft > * + * {
-  border-top: 1px solid rgba(63, 63, 70, 0.5);
+  border-top: 1px solid var(--color-zinc-800);
 }
 
 /* Card hover lift */
@@ -382,8 +500,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   transform: translateX(-50%);
   padding: 4px 8px;
   border-radius: 6px;
-  background: #27272a;
-  color: #fafafa;
+  background: var(--color-surface-4);
+  color: var(--color-zinc-50);
   font-size: 11px;
   white-space: nowrap;
   pointer-events: none;
@@ -397,41 +515,41 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 /* Focus ring */
 .focus-ring:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px #09090b, 0 0 0 4px rgba(124, 109, 248, 0.5);
+  box-shadow: 0 0 0 2px var(--color-surface-0), 0 0 0 4px color-mix(in srgb, var(--lx-flame) 60%, transparent);
 }
 
 /* Button variants */
 .btn-primary {
   background: var(--color-lantern-500);
-  color: #fff;
+  color: var(--color-on-flame);
   transition: background 0.15s ease;
 }
 .btn-primary:hover {
   background: var(--color-lantern-400);
 }
 .btn-secondary {
-  border: 1px solid #3f3f46;
-  color: #d4d4d8;
+  border: 1px solid var(--color-zinc-700);
+  color: var(--color-zinc-200);
   transition: all 0.15s ease;
 }
 .btn-secondary:hover {
-  border-color: #52525b;
-  color: #fff;
+  border-color: var(--color-zinc-600);
+  color: var(--color-zinc-50);
 }
 .btn-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
+  background: var(--lx-signal-soft);
+  color: var(--lx-signal);
   transition: background 0.15s ease;
 }
 .btn-danger:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: color-mix(in srgb, var(--lx-signal) 22%, transparent);
 }
 .btn-ghost {
-  color: #a1a1aa;
+  color: var(--color-zinc-400);
   transition: all 0.15s ease;
 }
 .btn-ghost:hover {
-  color: #e4e4e7;
+  color: var(--color-zinc-100);
   background: var(--color-surface-3);
 }
 
@@ -445,7 +563,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   border-radius: 0.5rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #a1a1aa;
+  color: var(--color-zinc-400);
   transition: all 0.15s ease;
   position: relative;
   cursor: pointer;
@@ -453,7 +571,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 .sidebar-item:hover {
   background: var(--color-surface-3);
-  color: #fafafa;
+  color: var(--color-zinc-50);
 }
 
 .sidebar-item.active {
@@ -487,12 +605,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #71717a;
-  border-bottom: 1px solid #27272a;
+  color: var(--color-zinc-500);
+  border-bottom: 1px solid var(--color-zinc-800);
 }
 
 .data-table tbody tr {
-  border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-zinc-800) 60%, transparent);
   transition: background-color 0.15s ease;
   cursor: pointer;
 }
@@ -509,7 +627,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .data-table tbody td {
   padding: 0.75rem 1rem;
   font-size: 0.875rem;
-  color: #d4d4d8;
+  color: var(--color-zinc-200);
 }
 
 /* Scrollbar styling */
@@ -524,12 +642,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--color-zinc-700);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: var(--color-zinc-600);
 }
 
 /* Pulse animation for running status */
@@ -594,17 +712,17 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .editor-canvas .react-flow__edge-path {
-  stroke: #52525b;
+  stroke: var(--color-zinc-600);
   stroke-width: 2;
 }
 
 .editor-canvas .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #6e5dce;
+  stroke: var(--color-accent);
   stroke-width: 2.5;
 }
 
 .editor-canvas .react-flow__connection-line {
-  stroke: #6e5dce;
+  stroke: var(--color-accent);
   stroke-width: 2;
   stroke-dasharray: 5 5;
 }
@@ -615,22 +733,22 @@ input[type="range"]::-webkit-slider-thumb {
 
 .editor-canvas .react-flow__handle:hover {
   transform: scale(1.3);
-  box-shadow: 0 0 0 3px rgba(110, 93, 206, 0.3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-flame) 30%, transparent);
 }
 
 /* Controls styling */
 .editor-controls {
-  border: 1px solid #27272a !important;
+  border: 1px solid var(--color-zinc-800) !important;
   border-radius: 8px !important;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
 }
 
 .editor-controls .react-flow__controls-button {
-  background: #0f0f12 !important;
+  background: var(--color-surface-1) !important;
   border: none !important;
-  border-bottom: 1px solid #27272a !important;
-  color: #a1a1aa !important;
+  border-bottom: 1px solid var(--color-zinc-800) !important;
+  color: var(--color-zinc-400) !important;
   width: 28px !important;
   height: 28px !important;
   padding: 0 !important;
@@ -640,8 +758,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .editor-controls .react-flow__controls-button:hover {
-  background: #18181b !important;
-  color: #fafafa !important;
+  background: var(--color-surface-2) !important;
+  color: var(--color-zinc-50) !important;
 }
 
 .editor-controls .react-flow__controls-button:last-child {
@@ -657,13 +775,13 @@ input[type="range"]::-webkit-slider-thumb {
 /* Edge label */
 .editor-canvas .react-flow__edge-text {
   font-size: 10px;
-  fill: #71717a;
+  fill: var(--color-zinc-500);
 }
 
 /* Selection box */
 .editor-canvas .react-flow__selection {
-  background: rgba(110, 93, 206, 0.08);
-  border: 1px solid rgba(110, 93, 206, 0.3);
+  background: color-mix(in srgb, var(--lx-flame) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lx-flame) 30%, transparent);
 }
 
 /* Wizard step transitions */
@@ -736,10 +854,10 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* Agent loop diagram — ported from apps/docs */
-.agent-loop { margin: 0.65rem 0; border-radius: 12px; border: 1px solid #2a2a30; padding: 0.65rem 0.9rem 0.6rem; background: linear-gradient(160deg, rgba(255,255,255,0.015), rgba(255,255,255,0)); }
+.agent-loop { margin: 0.65rem 0; border-radius: 12px; border: 1px solid var(--color-zinc-800); padding: 0.65rem 0.9rem 0.6rem; background: var(--color-surface-1); }
 .agent-loop-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.45rem; }
-.agent-loop-title { font-size: 0.82rem; font-weight: 650; color: #ededf0; }
-.agent-loop-cadence { font-size: 0.69rem; color: #71717a; }
+.agent-loop-title { font-size: 0.82rem; font-weight: 650; color: var(--color-zinc-100); }
+.agent-loop-cadence { font-size: 0.69rem; color: var(--color-zinc-500); }
 .agent-loop-contact-badge { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #12030a; background: #fb7185; border-radius: 999px; padding: 0.14rem 0.5rem; margin-left: auto; }
 .agent-loop-sky     { border-left: 3px solid rgba(56,189,248,0.55); }
 .agent-loop-amber   { border-left: 3px solid rgba(245,158,11,0.70); }
@@ -750,13 +868,13 @@ input[type="range"]::-webkit-slider-thumb {
 /* Card consistent style */
 .surface-card, .connector-card {
   border-radius: 12px;
-  border: 1px solid #27272a;
-  background: #0f0f12;
+  border: 1px solid var(--color-zinc-800);
+  background: var(--color-surface-1);
   padding: 20px;
   transition: border-color 0.15s ease;
 }
 .surface-card:hover, .connector-card:hover {
-  border-color: #3f3f46;
+  border-color: var(--color-zinc-700);
 }
 
 /* Mobile "More" sheet transitions (used by components/mobile-nav.tsx). */
@@ -805,7 +923,7 @@ input[type="range"]::-webkit-slider-thumb {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 10px;
-  color: #71717a;
+  color: var(--color-zinc-500);
 }
 
 /* Ambient aurora glow behind the Agents page header — layered radial
@@ -859,30 +977,114 @@ input[type="range"]::-webkit-slider-thumb {
    scale under [data-theme="light"]. Tailwind v4 emits every color as a CSS
    var (--color-zinc-800 etc.), so redefining the scale here re-skins all
    ~2,900 zinc/surface utilities without touching a single component.
-   Dark stays the default (no selector). Accent (lantern) is theme-neutral.
+   Dark stays the default (no selector). The flame accent is remapped too.
    =========================================================================== */
 :root[data-theme="light"] {
-  /* Surfaces: off-white page, white cards, soft greys for hover/borders. */
-  --color-surface-0: #f6f6f8;
-  --color-surface-1: #ffffff;
-  --color-surface-2: #f1f1f4;
-  --color-surface-3: #e9e9ee;
-  --color-surface-4: #dedee5;
+  /* Surfaces: brand day palette — cool off-white page, white cards. */
+  --color-surface-0: #f2f5f8; /* --lx-bg */
+  --color-surface-1: #ffffff; /* --lx-surface */
+  --color-surface-2: #e7edf3; /* --lx-surface-2 */
+  --color-surface-3: #dde5ee;
+  --color-surface-4: #cfd9e4;
   /* Neutral scale inverted: low n = dark (text), high n = light (bg/border). */
-  --color-zinc-50:  #18181b;
-  --color-zinc-100: #1f1f23;
-  --color-zinc-200: #303036;
-  --color-zinc-300: #52525b;
-  --color-zinc-400: #6b6b78;  /* muted text — readable on light */
-  --color-zinc-500: #8a8a97;
-  --color-zinc-600: #b4b4bd;
-  --color-zinc-700: #d6d6dd;
-  --color-zinc-800: #e6e6ec;  /* hairline borders */
-  --color-zinc-900: #f1f1f4;
-  --color-zinc-950: #f8f8fa;
+  --color-zinc-50:  #0f1b2d;  /* --lx-ink */
+  --color-zinc-100: #172437;
+  --color-zinc-200: #2a3a51;
+  --color-zinc-300: #44546a;  /* --lx-ink-2 */
+  --color-zinc-400: #46566b;  /* muted text — AA on every light surface */
+  --color-zinc-500: #4f5f75;  /* --lx-ink-3, deepened to clear AA on surface-3 */
+  --color-zinc-600: #586880;  /* faint text — AA on page, card and surface-2 */
+  --color-zinc-700: #c3cedb;  /* --lx-line */
+  --color-zinc-800: #d6dee8;  /* hairline borders */
+  --color-zinc-900: #e7edf3;
+  --color-zinc-950: #f2f5f8;
+  /* Accent (flame) — inverted like zinc so text-lantern-300/400 stay AA on
+     white, and solid fills (500/600) carry white ink. */
+  --color-lantern-50:  #fdf6ec;
+  --color-lantern-100: #fbebd3;  /* --lx-flame-soft */
+  --color-lantern-200: #7a4304;
+  --color-lantern-300: #824704;
+  --color-lantern-400: #8f4f05;
+  --color-lantern-500: #985405;  /* --lx-flame (day) #a85e06, deepened to clear AA as text on surface-3 */
+  --color-lantern-600: #844804;
+  --color-lantern-700: #6e3d05;
+  --color-lantern-800: #f3cf9a;
+  --color-lantern-900: #fbebd3;
+  --color-on-flame: #ffffff;
+  --elev-1: 0 1px 2px rgba(15, 27, 45, 0.06);
+  --elev-2: 0 2px 6px rgba(15, 27, 45, 0.08), 0 1px 2px rgba(15, 27, 45, 0.06);
+  --elev-3: 0 8px 24px rgba(15, 27, 45, 0.12), 0 2px 4px rgba(15, 27, 45, 0.06);
+  --elev-4: 0 16px 48px rgba(15, 27, 45, 0.16);
   color-scheme: light;
 }
-:root[data-theme="light"] body { background: var(--color-surface-0); color: #18181b; }
+:root[data-theme="light"] body { background: var(--color-surface-0); color: var(--color-zinc-50); }
+
+/* Chromatic text shades in light: the dashboard writes status/category text
+   as text-<hue>-300/400 (tuned for dark). On a light page those wash out, so
+   the light theme points them at the 700/800 stops — one remap instead of
+   per-component `dark:` variants. Solid 500+ fills and /NN tints are untouched. */
+:root[data-theme="light"] {
+  --color-red-200: oklch(44.4% 0.177 26.899);
+  --color-red-300: oklch(44.4% 0.177 26.899);
+  --color-red-400: oklch(50.5% 0.213 27.518);
+  --color-orange-200: oklch(47% 0.157 37.304);
+  --color-orange-300: oklch(47% 0.157 37.304);
+  --color-orange-400: oklch(47% 0.157 37.304);
+  --color-amber-200: oklch(47.3% 0.137 46.201);
+  --color-amber-300: oklch(47.3% 0.137 46.201);
+  --color-amber-400: oklch(47.3% 0.137 46.201);
+  --color-yellow-200: oklch(47.6% 0.114 61.907);
+  --color-yellow-300: oklch(47.6% 0.114 61.907);
+  --color-yellow-400: oklch(47.6% 0.114 61.907);
+  --color-lime-200: oklch(45.3% 0.124 130.933);
+  --color-lime-300: oklch(45.3% 0.124 130.933);
+  --color-lime-400: oklch(45.3% 0.124 130.933);
+  --color-green-200: oklch(44.8% 0.119 151.328);
+  --color-green-300: oklch(44.8% 0.119 151.328);
+  --color-green-400: oklch(52.7% 0.154 150.069);
+  --color-emerald-200: oklch(43.2% 0.095 166.913);
+  --color-emerald-300: oklch(43.2% 0.095 166.913);
+  --color-emerald-400: oklch(50.8% 0.118 165.612);
+  --color-teal-200: oklch(43.7% 0.078 188.216);
+  --color-teal-300: oklch(43.7% 0.078 188.216);
+  --color-teal-400: oklch(51.1% 0.096 186.391);
+  --color-cyan-200: oklch(45% 0.085 224.283);
+  --color-cyan-300: oklch(45% 0.085 224.283);
+  --color-cyan-400: oklch(52% 0.105 223.128);
+  --color-sky-200: oklch(44.3% 0.11 240.79);
+  --color-sky-300: oklch(44.3% 0.11 240.79);
+  --color-sky-400: oklch(50% 0.134 242.749);
+  --color-blue-200: oklch(42.4% 0.199 265.638);
+  --color-blue-300: oklch(42.4% 0.199 265.638);
+  --color-blue-400: oklch(48.8% 0.243 264.376);
+  --color-indigo-200: oklch(39.8% 0.195 277.366);
+  --color-indigo-300: oklch(39.8% 0.195 277.366);
+  --color-indigo-400: oklch(45.7% 0.24 277.023);
+  --color-violet-200: oklch(43.2% 0.232 292.759);
+  --color-violet-300: oklch(43.2% 0.232 292.759);
+  --color-violet-400: oklch(49.1% 0.27 292.581);
+  --color-purple-200: oklch(43.8% 0.218 303.724);
+  --color-purple-300: oklch(43.8% 0.218 303.724);
+  --color-purple-400: oklch(49.6% 0.265 301.924);
+  --color-fuchsia-200: oklch(45.2% 0.211 324.591);
+  --color-fuchsia-300: oklch(45.2% 0.211 324.591);
+  --color-fuchsia-400: oklch(51.8% 0.253 323.949);
+  --color-pink-200: oklch(45.9% 0.187 3.815);
+  --color-pink-300: oklch(45.9% 0.187 3.815);
+  --color-pink-400: oklch(52.5% 0.223 3.958);
+  --color-rose-200: oklch(45.5% 0.188 13.697);
+  --color-rose-300: oklch(45.5% 0.188 13.697);
+  --color-rose-400: oklch(51.4% 0.222 16.935);
+}
+:root[data-theme="light"] {
+  /* Warning (sulfur) in light: dark olive-gold ink, AA on every surface. */
+  --color-amber-100: #474203;
+  --color-amber-200: #534c04;
+  --color-amber-300: #5e5605;
+  --color-amber-400: #655c06;
+  --color-amber-500: #6d6407;
+  --color-amber-600: #5e5605;
+}
 
 /* All-in YC flat style: neutralize the mission-control glass + aurora GLOBALLY
    so every page that already uses .mc-glass / .mc-aurora becomes a calm flat

@@ -147,7 +147,7 @@ export default function RunDetailPage() {
                 />
                 <button
                   type="submit"
-                  className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-500"
+                  className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-500"
                 >
                   Load
                 </button>

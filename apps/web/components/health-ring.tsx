@@ -18,7 +18,7 @@ interface HealthRingProps {
 function gradeColor(v: number): string {
   if (v >= 95) return "#34d399"; // emerald — healthy
   if (v >= 80) return "#2dd4bf"; // teal
-  if (v >= 50) return "#fbbf24"; // amber — watch
+  if (v >= 50) return "var(--color-amber-400)"; // warn — watch
   return "#fb7185"; // rose — hurting
 }
 
@@ -39,7 +39,7 @@ export function HealthRing({ value, size = 34, label = "Success rate", className
       title={`${label}: ${v}%`}
     >
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-zinc-800)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}

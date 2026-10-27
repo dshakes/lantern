@@ -462,7 +462,7 @@ export default function ConnectorsPage() {
                 onClick={() => { setShowMcpModal(true); setMcpForm({ agentName: "", slug: "" }); setMcpErrors({}); }}
                 disabled={agents.length === 0}
                 title={agents.length === 0 ? "Create an agent first" : undefined}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add server
@@ -567,7 +567,7 @@ export default function ConnectorsPage() {
                 <span
                   className={clsx(
                     "mt-3 inline-flex w-full items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                    on ? "border border-zinc-700 text-zinc-300 group-hover:bg-surface-3" : "bg-lantern-500 text-white group-hover:bg-lantern-400",
+                    on ? "border border-zinc-700 text-zinc-300 group-hover:bg-surface-3" : "bg-lantern-500 text-on-flame group-hover:bg-lantern-400",
                   )}
                 >
                   {on ? "Configure" : "Connect"}
@@ -622,7 +622,7 @@ export default function ConnectorsPage() {
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">
               <button onClick={() => setShowMcpModal(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
-              <button onClick={handleAddMcp} disabled={mcpSaving} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50">
+              <button onClick={handleAddMcp} disabled={mcpSaving} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50">
                 {mcpSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}Add Server
               </button>
             </div>
@@ -713,7 +713,7 @@ export default function ConnectorsPage() {
                 <button onClick={() => setMc(null)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
                 <div className="flex items-center gap-2">
                   {view === "manual" && mc.oauthProvider && <button onClick={() => { setOauthErr(""); setMsg(""); setView("choose"); }} className="rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300">Back</button>}
-                  {view === "manual" && <button onClick={handleConnect} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"><Plug className="h-3.5 w-3.5" />Test &amp; Connect</button>}
+                  {view === "manual" && <button onClick={handleConnect} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400"><Plug className="h-3.5 w-3.5" />Test &amp; Connect</button>}
                 </div>
               </>)}
             </div>

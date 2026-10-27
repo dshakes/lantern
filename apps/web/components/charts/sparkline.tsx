@@ -19,8 +19,8 @@ export function Sparkline({
   data,
   width = 120,
   height = 32,
-  stroke = "rgb(168 85 247)",
-  fill = "rgb(168 85 247 / 0.12)",
+  stroke = "var(--color-accent)",
+  fill = "color-mix(in srgb, var(--color-accent) 12%, transparent)",
   strokeWidth = 1.5,
   className,
   showDots = false,
@@ -105,7 +105,7 @@ export function Sparkline({
               y1={0}
               x2={hover.x}
               y2={height}
-              stroke="rgb(82 82 91)"
+              stroke="var(--color-zinc-600)"
               strokeWidth={1}
               strokeDasharray="2,2"
             />
@@ -114,7 +114,7 @@ export function Sparkline({
               cy={hover.y}
               r={3}
               fill={stroke}
-              stroke="rgb(9 9 11)"
+              stroke="var(--color-surface-0)"
               strokeWidth={2}
             />
           </>

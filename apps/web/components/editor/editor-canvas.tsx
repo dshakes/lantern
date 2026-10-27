@@ -69,10 +69,10 @@ function workflowToReactFlowEdges(def: WorkflowDefinition): Edge[] {
     label: e.label,
     type: "smoothstep",
     animated: false,
-    style: { stroke: "#52525b", strokeWidth: 2 },
+    style: { stroke: "var(--color-zinc-600)", strokeWidth: 2 },
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      color: "#52525b",
+      color: "var(--color-zinc-600)",
       width: 16,
       height: 16,
     },
@@ -332,10 +332,10 @@ export function EditorCanvas({
         id: `e-${connection.source}-${connection.target}-${Date.now()}`,
         type: "smoothstep",
         animated: false,
-        style: { stroke: "#52525b", strokeWidth: 2 },
+        style: { stroke: "var(--color-zinc-600)", strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: "#52525b",
+          color: "var(--color-zinc-600)",
           width: 16,
           height: 16,
         },
@@ -624,7 +624,7 @@ export function EditorCanvas({
             nodeTypes={nodeTypes}
             isValidConnection={isValidConnection}
             connectionLineType={ConnectionLineType.SmoothStep}
-            connectionLineStyle={{ stroke: "#6e5dce", strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: "var(--color-accent)", strokeWidth: 2 }}
             snapToGrid
             snapGrid={[20, 20]}
             fitView
@@ -633,10 +633,10 @@ export function EditorCanvas({
             maxZoom={2}
             defaultEdgeOptions={{
               type: "smoothstep",
-              style: { stroke: "#52525b", strokeWidth: 2 },
+              style: { stroke: "var(--color-zinc-600)", strokeWidth: 2 },
               markerEnd: {
                 type: MarkerType.ArrowClosed,
-                color: "#52525b",
+                color: "var(--color-zinc-600)",
                 width: 16,
                 height: 16,
               },
@@ -648,7 +648,7 @@ export function EditorCanvas({
               variant={BackgroundVariant.Dots}
               gap={20}
               size={1}
-              color="#27272a"
+              color="var(--color-zinc-800)"
             />
             <Controls
               showInteractive={false}

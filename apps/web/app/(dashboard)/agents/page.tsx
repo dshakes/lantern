@@ -291,12 +291,12 @@ export default function AgentsPage() {
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Page header — title + badges only. Create button lives in the toolbar below.
           Ambient aurora glow sits behind it; header itself goes transparent so it shows through. */}
-      <div className="relative overflow-hidden">
+      <div className="relative shrink-0 overflow-hidden">
         <div aria-hidden className="mc-aurora" />
         <PageHeader
           className="relative z-10 !bg-transparent"
           title="Agents"
-          description="Every agent you've deployed — click into one for sessions, runs, budgets, and channels."
+          description="Open an agent to see its runs, sessions, budget, and channels."
           badge={
             <>
               {agents.length > 0 && <CountBadge count={agents.length} />}
@@ -311,8 +311,8 @@ export default function AgentsPage() {
           <EmptyState
             illustration={<AgentsIllustration size={120} />}
             title="No agents yet"
-            description="Describe what you want an agent to do — Lantern drafts the configuration, you review and ship. About 30 seconds end-to-end."
-            actionLabel="Create Agent"
+            description="Describe the job in a sentence. Lantern drafts the prompt and settings, and you review them before the agent is created."
+            actionLabel="Create an agent"
             onAction={() => router.push("/agents/create")}
             secondaryActionLabel="Browse templates"
             secondaryActionHref="/marketplace"

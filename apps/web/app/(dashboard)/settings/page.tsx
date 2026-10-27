@@ -333,7 +333,7 @@ export default function SettingsPage() {
           every other page (Agents, Inbox, Connectors). */}
       <PageHeader
         title="Settings"
-        description="Workspace preferences, API keys, LLM providers, team access, and billing."
+        description="API keys, model providers, team access, and billing for this workspace."
       />
 
       {/* Tab strip — sits as its own bordered band right below the header,
@@ -365,8 +365,8 @@ export default function SettingsPage() {
       {/* Modals */}
       <ApiKeyModal open={showCreateKey} onClose={() => setShowCreateKey(false)} onCreated={handleKeyCreated} />
       <InviteModal open={showInvite} onClose={() => setShowInvite(false)} onInvited={handleInviteMember} />
-      <ConfirmDialog open={!!revokeTarget} title="Revoke API Key" message={`Are you sure you want to revoke "${revokeTarget?.name}"? Any integrations using this key will stop working immediately.`} confirmLabel="Revoke Key" destructive onConfirm={handleRevokeKey} onCancel={() => setRevokeTarget(null)} />
-      <ConfirmDialog open={!!removeTarget} title="Remove Team Member" message={`Are you sure you want to remove ${removeTarget?.name} (${removeTarget?.email}) from the team?`} confirmLabel="Remove Member" destructive onConfirm={handleRemoveMember} onCancel={() => setRemoveTarget(null)} />
+      <ConfirmDialog open={!!revokeTarget} title="Revoke API key" message={`Revoke "${revokeTarget?.name}"? Anything using this key stops working immediately.`} confirmLabel="Revoke key" destructive onConfirm={handleRevokeKey} onCancel={() => setRevokeTarget(null)} />
+      <ConfirmDialog open={!!removeTarget} title="Remove team member" message={`Remove ${removeTarget?.name} (${removeTarget?.email})? They lose access to this workspace.`} confirmLabel="Remove member" destructive onConfirm={handleRemoveMember} onCancel={() => setRemoveTarget(null)} />
     </div>
   );
 }
@@ -380,7 +380,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
     <div className="space-y-5 pb-24">
       <SettingsSection
         title="Workspace"
-        description="The label and ID for this workspace. The ID is referenced from SDKs and webhook payloads."
+        description="Saved in this browser only. Workspace settings don't sync to the server yet."
       >
         <Field label="Workspace name">
           <input
@@ -390,7 +390,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none transition-colors duration-150 focus:border-lantern-500/60"
           />
         </Field>
-        <Field label="Workspace ID" hint="Read-only — provisioned at tenant creation.">
+        <Field label="Workspace ID" hint="Example value, not your tenant ID.">
           <div className="flex gap-2">
             <input
               type="text"
@@ -412,7 +412,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
 
       <SettingsSection
         title="Defaults"
-        description="Apply to every new agent unless overridden on the agent's own settings."
+        description="Saved in this browser only. New agents don't read these defaults yet."
       >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field
@@ -539,7 +539,7 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
           <h3 className="text-sm font-semibold text-zinc-100">API Keys</h3>
           <p className="mt-0.5 text-xs text-zinc-500">Manage keys used to authenticate with the Lantern API.</p>
         </div>
-        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400">Create API Key</button>
+        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400">Create API Key</button>
       </div>
 
       {/* Desktop: table, unchanged */}
@@ -655,9 +655,9 @@ function ProvidersTab({ providers, saving, onKeyChange, onTest, onSave }: { prov
         <p className="mt-0.5 text-xs text-zinc-500">Configure API keys for LLM providers. The model router maps capability requests to these.</p>
       </div>
 
-      <ProviderCard name="OpenAI" description="GPT-4o, GPT-4, o3, and more" icon={<span className="text-sm font-bold text-emerald-400">AI</span>} apiKey={providers.openai.key} status={providers.openai.status} onApiKeyChange={(k) => onKeyChange("openai", k)} onTest={() => onTest("openai")} />
-      <ProviderCard name="Anthropic" description="Claude Opus, Sonnet, Haiku" icon={<span className="text-sm font-bold text-orange-400">A</span>} apiKey={providers.anthropic.key} status={providers.anthropic.status} onApiKeyChange={(k) => onKeyChange("anthropic", k)} onTest={() => onTest("anthropic")} />
-      <ProviderCard name="Google AI" description="Gemini Pro, Gemini Ultra" icon={<span className="text-sm font-bold text-blue-400">G</span>} apiKey={providers.google.key} status={providers.google.status} onApiKeyChange={(k) => onKeyChange("google", k)} onTest={() => onTest("google")} />
+      <ProviderCard name="OpenAI" description="GPT and o-series models" icon={<span className="text-sm font-bold text-emerald-400">AI</span>} apiKey={providers.openai.key} status={providers.openai.status} onApiKeyChange={(k) => onKeyChange("openai", k)} onTest={() => onTest("openai")} />
+      <ProviderCard name="Anthropic" description="Claude models" icon={<span className="text-sm font-bold text-orange-400">A</span>} apiKey={providers.anthropic.key} status={providers.anthropic.status} onApiKeyChange={(k) => onKeyChange("anthropic", k)} onTest={() => onTest("anthropic")} />
+      <ProviderCard name="Google AI" description="Key is stored, but runs don't route to Gemini yet" icon={<span className="text-sm font-bold text-blue-400">G</span>} apiKey={providers.google.key} status={providers.google.status} onApiKeyChange={(k) => onKeyChange("google", k)} onTest={() => onTest("google")} />
 
       <div className="rounded-lg border border-zinc-800 bg-surface-2 px-4 py-3">
         <p className="text-xs text-zinc-500">Keys are encrypted at rest and only decrypted inside the microVM runtime at execution time.</p>
@@ -665,7 +665,7 @@ function ProvidersTab({ providers, saving, onKeyChange, onTest, onSave }: { prov
 
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
+          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Save className="h-3.5 w-3.5" />Save Changes</>}
         </button>
       </div>

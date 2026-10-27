@@ -15,18 +15,18 @@ export type AgentLoopProps = {
 };
 
 const COLORS: Record<Tone, { stroke: string; fill: string; text: string; border: string }> = {
-  sky:     { stroke: "#38bdf8", fill: "rgba(56,189,248,0.13)",   text: "#7dd3fc", border: "rgba(56,189,248,0.45)" },
-  amber:   { stroke: "#f59e0b", fill: "rgba(245,158,11,0.13)",   text: "#fcd34d", border: "rgba(245,158,11,0.50)" },
-  violet:  { stroke: "#a78bfa", fill: "rgba(167,139,250,0.13)",  text: "#c4b5fd", border: "rgba(167,139,250,0.45)" },
-  emerald: { stroke: "#34d399", fill: "rgba(52,211,153,0.13)",   text: "#6ee7b7", border: "rgba(52,211,153,0.45)" },
-  rose:    { stroke: "#fb7185", fill: "rgba(251,113,133,0.13)",  text: "#fda4af", border: "rgba(251,113,133,0.50)" },
+  sky:     { stroke: "#38bdf8", fill: "rgba(56,189,248,0.13)",   text: "var(--color-sky-300, #7dd3fc)", border: "rgba(56,189,248,0.45)" },
+  amber:   { stroke: "#f59e0b", fill: "rgba(245,158,11,0.13)",   text: "var(--color-amber-300, #fcd34d)", border: "rgba(245,158,11,0.50)" },
+  violet:  { stroke: "#a78bfa", fill: "rgba(167,139,250,0.13)",  text: "var(--color-violet-300, #c4b5fd)", border: "rgba(167,139,250,0.45)" },
+  emerald: { stroke: "#34d399", fill: "rgba(52,211,153,0.13)",   text: "var(--color-emerald-300, #6ee7b7)", border: "rgba(52,211,153,0.45)" },
+  rose:    { stroke: "#fb7185", fill: "rgba(251,113,133,0.13)",  text: "var(--color-rose-300, #fda4af)", border: "rgba(251,113,133,0.50)" },
 };
 
 // ponytail: inline styles so no CSS change needed for exec-model badges
 const EXEC_BADGE: Record<ExecModel, { bg: string; color: string; label: string }> = {
-  scheduled: { bg: "rgba(56,189,248,0.15)",  color: "#7dd3fc", label: "scheduled"  },
-  bridge:    { bg: "rgba(167,139,250,0.15)", color: "#c4b5fd", label: "bridge loop" },
-  reactive:  { bg: "rgba(52,211,153,0.15)",  color: "#6ee7b7", label: "reactive"    },
+  scheduled: { bg: "rgba(56,189,248,0.15)",  color: "var(--color-sky-300, #7dd3fc)", label: "scheduled"  },
+  bridge:    { bg: "rgba(167,139,250,0.15)", color: "var(--color-violet-300, #c4b5fd)", label: "bridge loop" },
+  reactive:  { bg: "rgba(52,211,153,0.15)",  color: "var(--color-emerald-300, #6ee7b7)", label: "reactive"    },
 };
 
 const NW  = 110;
@@ -119,7 +119,7 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
         </g>
       </svg>
       {iface && (
-        <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "#71717a" }}>{iface}</p>
+        <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "var(--color-zinc-500)" }}>{iface}</p>
       )}
     </div>
   );

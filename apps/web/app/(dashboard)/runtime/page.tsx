@@ -155,12 +155,12 @@ export default function RuntimePage() {
 
   return (
     <div className="flex flex-col">
-      <div className="relative overflow-hidden">
+      <div className="relative shrink-0 overflow-hidden">
         <div aria-hidden className="mc-aurora" />
         <PageHeader
           className="relative z-10 !bg-transparent"
-          title="Runtime Command Center"
-          description="Headless agents running in isolated microVMs."
+          title="Runtime"
+          description="Headless agent workloads, their isolation tier, and the nodes they run on."
           action={
             <div className="flex items-center gap-2">
               <div

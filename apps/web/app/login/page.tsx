@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
+import { LanternMark } from "@/components/lantern-mark";
 
 function GoogleIcon() {
   return (
@@ -122,7 +123,7 @@ export default function LoginPage() {
           setError(message);
         }
       } else {
-        setError("OAuth requires the API server. Start it with: make run-api");
+        setError("Can't reach the Lantern API, so Google and GitHub sign-in are unavailable. In local dev, start it with make run-api.");
       }
       setOauthLoading(null);
     }
@@ -133,14 +134,14 @@ export default function LoginPage() {
     setError(null);
 
     if (!email.trim() || !password.trim()) {
-      setError("Email and password are required");
+      setError("Enter your email and password.");
       return;
     }
 
     if (mode === "signup") {
-      if (!name.trim()) { setError("Name is required"); return; }
-      if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
-      if (password !== confirmPassword) { setError("Passwords do not match"); return; }
+      if (!name.trim()) { setError("Enter your name."); return; }
+      if (password.length < 12) { setError("Use a password of at least 12 characters."); return; }
+      if (password !== confirmPassword) { setError("The passwords don't match."); return; }
     }
 
     setLoading(true);
@@ -153,7 +154,7 @@ export default function LoginPage() {
         router.replace(nextPath);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
+      setError(err instanceof Error ? err.message : "Couldn't sign in. Check your email and password.");
     } finally {
       setLoading(false);
     }
@@ -170,9 +171,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[380px]">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-lantern-400 to-lantern-600">
-            <span className="text-lg font-bold text-white">L</span>
-          </div>
+          <LanternMark className="mx-auto mb-4 h-11 w-11" />
           <h1 className="text-xl font-semibold text-zinc-100">
             {mode === "signin" ? "Welcome back" : "Create your account"}
           </h1>
@@ -294,7 +293,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-lantern-500 py-2.5 text-sm font-medium text-white transition-all hover:bg-lantern-400 disabled:opacity-50 active:scale-[0.98]"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-lantern-500 py-2.5 text-sm font-medium text-on-flame transition-all hover:bg-lantern-400 disabled:opacity-50 active:scale-[0.98]"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

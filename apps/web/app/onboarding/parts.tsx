@@ -71,7 +71,7 @@ export function ProgressRail({ current, blocked }: { current: Step; blocked: boo
               <span
                 className={clsx(
                   "relative z-10 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
-                  st === "done" && "border-lantern-400 bg-lantern-400 text-white",
+                  st === "done" && "border-lantern-400 bg-lantern-400 text-on-flame",
                   st === "current" && !isBlocked && "border-lantern-400 bg-surface-0 text-lantern-300 ring-4 ring-lantern-500/25",
                   isBlocked && "border-amber-400 bg-surface-0 text-amber-400 ring-4 ring-amber-400/15",
                   st === "todo" && "border-zinc-700 bg-surface-0 text-zinc-500",
@@ -101,7 +101,7 @@ export function AgentMessage({ children, busy }: { children: ReactNode; busy?: b
     <div className="flex gap-3">
       <span
         aria-hidden
-        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-lantern-400 text-xs font-bold text-white"
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-lantern-400 text-xs font-bold text-on-flame"
       >
         L
       </span>

@@ -70,7 +70,7 @@ export function LineChart({
         d: pts
           .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`)
           .join(" "),
-        color: s.color ?? "rgb(168 85 247)",
+        color: s.color ?? "var(--color-accent)",
         name: s.name,
       };
     });
@@ -78,7 +78,7 @@ export function LineChart({
     const points = Array.from({ length: n }, (_, i) =>
       series.map((s) => ({
         seriesName: s.name,
-        color: s.color ?? "rgb(168 85 247)",
+        color: s.color ?? "var(--color-accent)",
         v: s.values[i] ?? 0,
         x: padL + i * stepX,
         y: padT + innerH - (((s.values[i] ?? 0) - min) / range) * innerH,
@@ -143,7 +143,7 @@ export function LineChart({
                 y1={y}
                 x2={w - padR}
                 y2={y}
-                stroke="rgb(39 39 42)"
+                stroke="var(--color-zinc-800)"
                 strokeWidth={1}
               />
               <text
@@ -199,7 +199,7 @@ export function LineChart({
               y1={padT}
               x2={hoverPoints[0].x}
               y2={padT + innerH}
-              stroke="rgb(82 82 91)"
+              stroke="var(--color-zinc-600)"
               strokeDasharray="3,3"
               strokeWidth={1}
             />
@@ -210,7 +210,7 @@ export function LineChart({
                 cy={p.y}
                 r={4}
                 fill={p.color}
-                stroke="rgb(9 9 11)"
+                stroke="var(--color-surface-0)"
                 strokeWidth={2}
               />
             ))}

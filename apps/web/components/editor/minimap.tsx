@@ -25,10 +25,10 @@ export function EditorMinimap({ visible }: { visible: boolean }) {
   return (
     <ReactFlowMiniMap
       nodeColor={getNodeColor}
-      maskColor="rgba(9, 9, 11, 0.7)"
+      maskColor="color-mix(in srgb, var(--color-surface-0) 70%, transparent)"
       style={{
-        backgroundColor: "#18181b",
-        border: "1px solid #27272a",
+        backgroundColor: "var(--color-surface-2)",
+        border: "1px solid var(--color-zinc-800)",
         borderRadius: 8,
       }}
       pannable

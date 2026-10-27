@@ -79,7 +79,7 @@ export function EmptyState({
             {actionLabel && actionHref && !onAction && (
               <Link
                 href={actionHref}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </Link>
@@ -87,7 +87,7 @@ export function EmptyState({
             {actionLabel && onAction && (
               <button
                 onClick={onAction}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </button>

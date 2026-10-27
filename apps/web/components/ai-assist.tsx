@@ -147,7 +147,7 @@ export function AiAssistButton({
         <button
           onClick={handleGenerate}
           disabled={loading || !prompt.trim()}
-          className="inline-flex items-center gap-1 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
           Generate

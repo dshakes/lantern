@@ -205,7 +205,7 @@ export function OneClickTemplates() {
               <button
                 onClick={() => apply(t)}
                 disabled={!!applying}
-                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md disabled:opacity-50"
+                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-2 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md disabled:opacity-50"
               >
                 {applying === t.id ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
