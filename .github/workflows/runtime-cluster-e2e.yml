@@ -161,7 +161,9 @@ jobs:
           version: v3.16.2
 
       - name: Vendor chart dependencies
-        run: helm dependency build "$CHART"
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build "$CHART"
 
       # Static gates first: cheap, and they cover every template incl. the ones that run 0 replicas.
       - name: helm lint + template (dev, ci, prod) + kubeconform
