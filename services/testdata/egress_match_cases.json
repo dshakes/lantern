@@ -1,0 +1,61 @@
+{
+  "_comment": "Shared egress-matcher parity fixture (ADR 0026). Read by BOTH services/harness/src/egress.rs (in-guest proxy) and services/runtime-manager/src/egress_broker.rs (host-side broker) tests. The two matchers are separate crates; this file is what keeps them from diverging. Add a case here, never to only one side.",
+  "pattern_cases": [
+    { "pattern": "api.openai.com", "host": "api.openai.com", "match": true },
+    { "pattern": "api.openai.com", "host": "evil.com", "match": false },
+    { "pattern": "api.openai.com", "host": "xapi.openai.com", "match": false },
+    { "pattern": "*.openai.com", "host": "api.openai.com", "match": true },
+    { "pattern": "*.openai.com", "host": "a.b.openai.com", "match": true },
+    { "pattern": "*.openai.com", "host": "openai.com", "match": false },
+    { "pattern": "*.openai.com", "host": "evilopenai.com", "match": false },
+    { "pattern": "*.openai.com", "host": ".openai.com", "match": false },
+    { "pattern": "*.", "host": "anything.com", "match": false },
+    { "pattern": "*.", "host": "", "match": false },
+    { "pattern": "", "host": "", "match": true }
+  ],
+  "private_ip_cases": [
+    { "ip": "10.1.2.3", "private": true },
+    { "ip": "172.16.0.1", "private": true },
+    { "ip": "172.31.255.255", "private": true },
+    { "ip": "172.32.0.1", "private": false },
+    { "ip": "192.168.1.1", "private": true },
+    { "ip": "127.0.0.1", "private": true },
+    { "ip": "169.254.169.254", "private": true },
+    { "ip": "100.64.0.1", "private": true },
+    { "ip": "0.0.0.0", "private": true },
+    { "ip": "224.0.0.1", "private": true },
+    { "ip": "240.0.0.1", "private": true },
+    { "ip": "8.8.8.8", "private": false },
+    { "ip": "::1", "private": true },
+    { "ip": "fd00::1", "private": true },
+    { "ip": "fe80::1", "private": true },
+    { "ip": "::ffff:10.0.0.1", "private": true },
+    { "ip": "::ffff:8.8.8.8", "private": false },
+    { "ip": "2606:4700::1111", "private": false },
+    { "ip": "192.0.0.8", "private": true },
+    { "ip": "192.0.1.1", "private": false },
+    { "ip": "198.18.0.1", "private": true },
+    { "ip": "198.19.255.254", "private": true },
+    { "ip": "198.20.0.1", "private": false },
+    { "ip": "64:ff9b::808:808", "private": true },
+    { "ip": "64:ff9b::a00:1", "private": true },
+    { "ip": "64:ff9b:1::1", "private": true },
+    { "ip": "64:ff9b:2::1", "private": false }
+  ],
+  "host_port_cases": [
+    { "target": "api.openai.com:443", "host": "api.openai.com", "port": 443 },
+    { "target": "[::1]:8443", "host": "::1", "port": 8443 },
+    { "target": "api.openai.com", "host": null, "port": null },
+    { "target": "api.openai.com:notaport", "host": null, "port": null },
+    { "target": "api.openai.com:70000", "host": null, "port": null }
+  ],
+  "evaluate_cases": [
+    { "rules": [], "host": "api.openai.com", "port": 443, "allow": false, "reason": "no rules configured" },
+    { "rules": ["api.openai.com"], "host": "api.openai.com", "port": 443, "allow": true },
+    { "rules": ["api.openai.com"], "host": "evil.com", "port": 443, "allow": false, "reason": "no matching allowlist rule" },
+    { "rules": ["*.openai.com"], "host": "api.openai.com", "port": 80, "allow": false, "reason": "port not in allowlist" },
+    { "rules": ["*.openai.com"], "host": "169.254.169.254", "port": 443, "allow": false, "reason": "IP literal in private/metadata range" },
+    { "rules": ["8.8.8.8"], "host": "8.8.8.8", "port": 443, "allow": true },
+    { "rules": ["*.openai.com"], "host": "8.8.8.8", "port": 443, "allow": false, "reason": "IP literal not explicitly allowlisted" }
+  ]
+}

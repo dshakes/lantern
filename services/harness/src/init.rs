@@ -16,6 +16,7 @@ pub async fn boot() -> Result<()> {
     {
         mount_tmpfs();
         set_rlimits();
+        loopback_up();
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -23,6 +24,37 @@ pub async fn boot() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Bring `lo` up. Nothing else does in a broker-mode guest (ADR 0026): with
+/// no NIC there is no kernel `ip=` autoconfig, which was what used to raise
+/// loopback, and the egress forwarder (127.0.0.1:3128) and every workload's
+/// `HTTP(S)_PROXY` need it. Idempotent; harmless when `lo` is already up.
+#[cfg(target_os = "linux")]
+fn loopback_up() {
+    // SAFETY: plain socket(2); closed below on every path.
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        tracing::warn!(error = %std::io::Error::last_os_error(), "init: cannot open socket to raise lo");
+        return;
+    }
+    // SAFETY: ifreq is plain-old-data; zeroed is valid. "lo\0" fits IFNAMSIZ.
+    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (dst, src) in ifr.ifr_name.iter_mut().zip(b"lo\0") {
+        *dst = *src as libc::c_char;
+    }
+    // SAFETY: SIOCGIFFLAGS/SIOCSIFFLAGS read/write `ifr`, which outlives both calls.
+    let ok = unsafe {
+        libc::ioctl(fd, libc::SIOCGIFFLAGS as _, &mut ifr) == 0 && {
+            ifr.ifr_ifru.ifru_flags |= (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
+            libc::ioctl(fd, libc::SIOCSIFFLAGS as _, &ifr) == 0
+        }
+    };
+    if !ok {
+        tracing::warn!(error = %std::io::Error::last_os_error(), "init: could not bring lo up");
+    }
+    // SAFETY: closing the fd we opened above.
+    unsafe { libc::close(fd) };
 }
 
 #[cfg(target_os = "linux")]
@@ -58,6 +90,8 @@ fn mount_tmpfs() {
 }
 
 #[cfg(target_os = "linux")]
+// glibc types RLIMIT_* as u32 (cast is a no-op there); musl uses c_int.
+#[allow(clippy::unnecessary_cast)]
 fn set_rlimits() {
     // Cap open files at 4096 — generous for workload, prevents fd-exhaust DoS.
     do_setrlimit(libc::RLIMIT_NOFILE as u32, 4096);

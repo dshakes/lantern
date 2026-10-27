@@ -78,6 +78,15 @@ pub struct SpawnContract {
     /// The manager's environment class (→ `LANTERN_ENV`). Typed, so it can
     /// never come from the caller-supplied `env` map.
     pub lantern_env: Option<String>,
+    /// `"broker"` → no NIC; egress is bridged over vsock to the host-side
+    /// broker (ADR 0026). Absent → legacy in-guest proxy.
+    pub egress_mode: Option<String>,
+    /// PEM of the per-VM broker CA (public) the workload must trust for
+    /// hosts with a credential-injection rule.
+    pub egress_ca_pem: Option<String>,
+    /// Guest→host vsock ports for egress and the manager control channel.
+    pub vsock_egress_port: Option<u32>,
+    pub vsock_manager_port: Option<u32>,
 }
 
 /// `LANTERN_*` keys a caller may legitimately put in the workload env (agent
@@ -164,6 +173,18 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if let Some(env) = c.lantern_env.as_ref().filter(|e| !e.is_empty()) {
         pairs.push(("LANTERN_ENV".into(), env.clone()));
+    }
+    if let Some(mode) = c.egress_mode.as_ref().filter(|m| !m.is_empty()) {
+        pairs.push(("LANTERN_EGRESS_MODE".into(), mode.clone()));
+    }
+    if let Some(pem) = c.egress_ca_pem.as_ref().filter(|p| !p.is_empty()) {
+        pairs.push(("LANTERN_EGRESS_CA_PEM".into(), pem.clone()));
+    }
+    if let Some(port) = c.vsock_egress_port.filter(|p| *p != 0) {
+        pairs.push(("LANTERN_EGRESS_VSOCK_PORT".into(), port.to_string()));
+    }
+    if let Some(port) = c.vsock_manager_port.filter(|p| *p != 0) {
+        pairs.push(("LANTERN_MANAGER_VSOCK_PORT".into(), port.to_string()));
     }
     let typed = pairs.len();
     let mut dropped: Vec<&str> = Vec::new();
@@ -893,6 +914,46 @@ mod tests {
                 .expect("egress JSON round-trips");
         assert_eq!(rules[0].pattern, "api.example.com");
         assert_eq!(rules[0].http_methods, vec!["GET".to_string()]);
+    }
+
+    #[test]
+    fn spawn_contract_broker_fields_map_to_env() {
+        let c = parse_spawn_contract(
+            br#"{"version":1,"egress_mode":"broker","egress_ca_pem":"-----BEGIN CERTIFICATE-----\nX\n",
+                "vsock_egress_port":3128,"vsock_manager_port":50054,
+                "egress_rules":[{"pattern":"api.openai.com","inject":[{"header":"Authorization","secret_uri":"lantern.secret://t/k"}]}]}"#,
+        )
+        .expect("broker contract");
+        let pairs = contract_env_pairs(&c).expect("encodable");
+        let get = |k: &str| pairs.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("LANTERN_EGRESS_MODE").as_deref(), Some("broker"));
+        assert!(get("LANTERN_EGRESS_CA_PEM").is_some_and(|p| p.starts_with("-----BEGIN")));
+        assert_eq!(get("LANTERN_EGRESS_VSOCK_PORT").as_deref(), Some("3128"));
+        assert_eq!(get("LANTERN_MANAGER_VSOCK_PORT").as_deref(), Some("50054"));
+        // An injection spec (should one ever arrive) is dropped, not parsed
+        // into the guest's rules — the manager strips it anyway.
+        assert!(
+            !get("LANTERN_EGRESS_RULES")
+                .unwrap_or_default()
+                .contains("secret")
+        );
+    }
+
+    #[test]
+    fn spawn_contract_without_broker_fields_is_legacy_mode() {
+        // An older manager's spawn.json: no broker keys → no broker env, so
+        // the harness runs the in-guest proxy exactly as before.
+        let c = parse_spawn_contract(br#"{"version":1,"egress_rules":[{"pattern":"x.com"}]}"#)
+            .expect("legacy contract");
+        let pairs = contract_env_pairs(&c).expect("encodable");
+        for k in [
+            "LANTERN_EGRESS_MODE",
+            "LANTERN_EGRESS_CA_PEM",
+            "LANTERN_EGRESS_VSOCK_PORT",
+            "LANTERN_MANAGER_VSOCK_PORT",
+        ] {
+            assert!(pairs.iter().all(|(n, _)| n != k), "{k} must be absent");
+        }
     }
 
     #[test]
