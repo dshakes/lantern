@@ -22,6 +22,9 @@ export function Nav() {
           <Link href="/#how" className="rounded-md px-3 py-1.5 hover:text-ink">
             How it works
           </Link>
+          <Link href="/#measured" className="rounded-md px-3 py-1.5 hover:text-ink">
+            Benchmarks
+          </Link>
           <Link href="/compare/" className="rounded-md px-3 py-1.5 hover:text-ink">
             Compare
           </Link>
@@ -42,7 +45,7 @@ export function Nav() {
 
 export function Footer() {
   return (
-    <footer className="border-t border-line py-10">
+    <footer className="site-foot border-t border-line pt-10">
       <div className={`${wrap} flex flex-wrap items-center justify-between gap-4 text-sm text-ink-3`}>
         <span className="flex items-center gap-2">
           <LanternMark className="h-5 w-5" /> Lantern is open source under Apache-2.0.

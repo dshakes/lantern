@@ -26,7 +26,7 @@ const PLATFORM: Row[] = [
   { row: "Durable agent runs with crash-resume", cells: ["yes", "out of scope", "no", "no"] },
   {
     row: "Budgets that return HTTP 402 before the model call",
-    cells: ["partial: cost/day, runs/day, tenant daily cost; token and per-tool limits stored, not enforced", "out of scope", "no", "partial"],
+    cells: ["yes: cost, runs and tokens per day, tenant daily cost; per-run and per-tool caps on workflow runs", "out of scope", "no", "partial"],
   },
   { row: "Multi-provider model routing with failover", cells: ["yes", "out of scope", "no", "no"] },
   { row: "Signed, offline-verifiable run receipts", cells: ["partial: only with a signing key configured", "out of scope", "no", "no"] },

@@ -32,7 +32,7 @@ const STEPS = [
 
 const TICK_MS = 2200;
 
-export function BrokerDemo({ recording }: { recording: string }) {
+export function BrokerDemo({ recording, poster }: { recording: string; poster: string }) {
   // step = rows revealed; STEPS.length + 1 holds the finished run before replaying.
   const [step, setStep] = useState(STEPS.length + 1);
   const [anim, setAnim] = useState(false);
@@ -88,7 +88,11 @@ export function BrokerDemo({ recording }: { recording: string }) {
       </div>
       <figcaption id="console-cap" className="console-foot">
         <span>Every broker check in the run passed. Replayed from the test&rsquo;s own output.</span>
-        <a href={recording}>Watch the recording</a>
+        <a href={recording} className="console-rec">
+          {/* eslint-disable-next-line @next/next/no-img-element -- static export */}
+          <img src={poster} alt="" width={96} height={24} loading="lazy" decoding="async" />
+          Watch the recording
+        </a>
       </figcaption>
     </figure>
   );

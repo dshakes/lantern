@@ -204,15 +204,12 @@ body {
   background: var(--lx-flame);
   box-shadow: 0 0 10px var(--lx-flame);
 }
-.hero-glow {
+/* The page starts and ends lit: warm light behind the proof and the closing CTA. */
+.proof-glow {
   position: absolute;
+  inset: -38% -30% -42% -30%;
   pointer-events: none;
-  width: 64rem;
-  height: 40rem;
-  right: 0;
-  top: 14rem;
-  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 22%, transparent), transparent 70%);
-  filter: blur(10px);
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 30%, transparent) 55%, transparent 100%);
 }
 
 /* Copyable command */
@@ -391,6 +388,7 @@ body {
 .console[data-anim="on"] .console-final[data-state="hidden"] { opacity: 0; }
 .console-foot {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
@@ -444,7 +442,16 @@ body {
   100% { opacity: 0.85; transform: scale(1); }
 }
 /* One request travels the wire: control plane, then VM, then host, then out. */
-.wire { position: absolute; z-index: 2; left: 0; right: 0; top: 0; height: 0; pointer-events: none; }
+.wire {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lx-flame) 70%, transparent) 12%, color-mix(in oklab, var(--lx-flame) 70%, transparent) 88%, transparent);
+}
 .spark {
   position: absolute;
   top: -4px;
@@ -454,17 +461,42 @@ body {
   border-radius: 50%;
   background: var(--lx-flame);
   box-shadow: 0 0 14px 2px var(--lx-flame);
-  animation: travel 6s var(--lx-ease) infinite;
+  opacity: 0;
+  animation: travel 4s linear infinite;
 }
+/* agent (16%) -> "one tool call" (33%) -> microVM (50%) -> "to the host" (67%) -> host (83%) -> out */
 @keyframes travel {
-  0% { left: 4%; opacity: 0; }
-  8% { opacity: 1; }
-  30% { left: 33.3%; }
-  40% { left: 33.3%; }
-  62% { left: 66.6%; background: var(--lx-flame); }
-  72% { left: 66.6%; background: var(--lx-patina); box-shadow: 0 0 14px 2px var(--lx-patina); }
-  92% { left: 98%; opacity: 1; background: var(--lx-patina); box-shadow: 0 0 14px 2px var(--lx-patina); }
+  0% { left: 14%; opacity: 0; }
+  6% { opacity: 1; }
+  22% { left: 33.3%; }
+  38% { left: 50%; }
+  54% { left: 66.6%; }
+  66% { left: 83%; }
+  80% { left: 83%; }
+  96% { left: 99%; opacity: 1; }
   100% { left: 100%; opacity: 0; }
+}
+/* The host's verdict lands while the pulse waits on it. */
+.cred-badge {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--lx-patina);
+  background: color-mix(in oklab, var(--lx-patina) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--lx-patina) 40%, transparent);
+  animation: cred 4s linear infinite;
+}
+@keyframes cred {
+  0%, 64% { opacity: 0; transform: translateY(3px); }
+  70%, 94% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
 }
 @media (max-width: 767px) { .wire { display: none; } }
 
@@ -478,7 +510,7 @@ body {
   transition: border-color var(--lx-dur-ui) var(--lx-ease), box-shadow var(--lx-dur-ui) var(--lx-ease);
 }
 .pain-card:hover {
-  border-color: color-mix(in oklab, var(--lx-flame) 55%, var(--lx-line));
+  border-color: var(--lx-flame);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--lx-flame) 25%, transparent),
     0 24px 60px -30px color-mix(in oklab, var(--lx-flame) 55%, transparent);
 }
@@ -518,7 +550,18 @@ body {
 @media (max-width: 767px) {
   .hop { right: auto; left: 1.5rem; top: auto; bottom: 0; transform: translateY(50%); }
 }
-.rule { border-top: 1px solid var(--lx-line); }
+/* Section dividers are the same amber wire the request travels on. */
+.rule { position: relative; }
+.rule::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(1240px, 100%);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lx-flame) 55%, transparent) 20%, color-mix(in oklab, var(--lx-flame) 55%, transparent) 80%, transparent);
+}
 
 /* Timing chart bars */
 .bar {
@@ -541,7 +584,39 @@ body {
   line-height: 1.75;
   overflow-x: auto;
 }
-@media (max-width: 640px) { .code { white-space: pre-wrap; overflow-wrap: anywhere; } }
+/* Phones: code keeps its lines and scrolls; the right edge fades to say so. */
+@media (max-width: 640px) {
+  .code { mask-image: linear-gradient(90deg, #000 88%, transparent); padding-right: 2.5rem; }
+}
+.response-bar { display: flex; align-items: center; gap: 0.75rem; font-family: var(--lx-font-mono); font-size: 0.8rem; color: var(--lx-ink-2); }
+.status-pill {
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-weight: 600;
+  color: var(--lx-signal);
+  background: color-mix(in oklab, var(--lx-signal) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--lx-signal) 45%, transparent);
+}
+.response-body { margin-top: 0.6rem; color: var(--dm-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; mask-image: none; }
+/* "indicative" sits right on the number it qualifies. */
+.ind {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 0.35rem 0.3rem 0;
+  border: 1px solid var(--lx-line);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-family: var(--lx-font-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+  color: var(--lx-ink-2);
+  background: var(--lx-surface);
+}
+.site-foot { padding-bottom: calc(3rem + env(safe-area-inset-bottom)); }
+.console-rec { display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.console-rec img { width: 96px; height: auto; border-radius: 3px; border: 1px solid var(--dm-line); }
 .code .k { color: #c7a6ff; }
 .code .s { color: #9fd8a8; }
 .code .c { color: var(--dm-ink-3); }
@@ -553,7 +628,7 @@ body {
   inset: auto 0 -20rem 0;
   height: 36rem;
   pointer-events: none;
-  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 20%, transparent), transparent);
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 26%, transparent), transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
