@@ -1,4 +1,4 @@
--- 0029: per-agent model on agents.
+-- 0025: per-agent model on agents.
 --
 -- The capability ("fast", "reasoning-small", "auto") or vendor model id the
 -- agent's runs and sessions prefer; NULL/''/'auto' keeps the balanced default
