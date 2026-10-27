@@ -30,6 +30,7 @@ var scopeExempt = map[string]string{
 	"POST /v1/voice/calls/status/{provider}": "provider signature",
 	"POST /v1/voice/webhook/{provider}":      "provider signature",
 	"POST /v1/surfaces/slack/command":        "Slack signing secret",
+	"POST /v1/hooks/{id}":                    "per-trigger HMAC signature (ADR 0028)",
 
 	// Shared-token / service-to-service.
 	"POST /v1/surfaces/whatsapp/heartbeat": "bridge shared token",

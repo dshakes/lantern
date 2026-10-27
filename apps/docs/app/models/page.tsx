@@ -87,6 +87,54 @@ LANTERN_ROUTE_STRATEGY=quality
 LANTERN_ROUTE_STRATEGY=fast`}</code>
       </pre>
 
+      <h2 id="agent-model">Per-agent model</h2>
+      <p>
+        Each agent can carry a <code>model</code>: a capability (
+        <code>fast</code>, <code>cheap</code>, <code>reasoning-small</code>,{" "}
+        <code>reasoning-large</code>, …) or a vendor model id (
+        <code>gpt-*</code>, <code>o1*</code>, <code>o3*</code>,{" "}
+        <code>claude-*</code>). Runs, sessions and workflow{" "}
+        <code>ai-step</code> nodes with no capability of their own try that
+        model first. Use it to pin a cheap model on a high-volume agent, or a
+        stronger one on an agent that needs it.
+      </p>
+      <pre>
+        <code>{`# Set on create
+POST /v1/agents
+{ "name": "triage", "model": "fast" }
+
+# Change later ("" or "auto" goes back to the default chain)
+PATCH /v1/agents/triage
+{ "model": "reasoning-large" }
+
+# Read it back
+GET /v1/agents/triage   →  { ..., "model": "reasoning-large" }`}</code>
+      </pre>
+      <ul>
+        <li>
+          <strong>Unset or <code>auto</code></strong> — exactly the{" "}
+          <a href="#auto">auto</a> chain, unchanged.
+        </li>
+        <li>
+          <strong>Validation</strong> — anything else returns 400. Embedding,
+          rerank and speech capabilities are rejected because agents run text
+          completions. The error never echoes the value.
+        </li>
+        <li>
+          <strong>Provider not keyed</strong> — if the model&apos;s provider has
+          no key for your tenant, the agent uses the default chain.
+        </li>
+        <li>
+          <strong>Workflow nodes</strong> — an <code>ai-step</code> with an
+          explicit capability keeps it; only <code>auto</code> nodes take the
+          agent&apos;s model.
+        </li>
+        <li>
+          <strong>Recorded</strong> — the model that answered is on the
+          run&apos;s <code>llm:main</code> step in the run timeline.
+        </li>
+      </ul>
+
       <h2 id="failover">Failover</h2>
       <p>
         The control plane fails over across providers (not across models of
@@ -96,6 +144,14 @@ LANTERN_ROUTE_STRATEGY=fast`}</code>
         <li>
           <strong>429, 402 and 5xx</strong> — move to the next candidate
           provider; a rate limit adds a backoff first
+        </li>
+        <li>
+          <strong>Agent models go first</strong> — an agent&apos;s{" "}
+          <a href="#agent-model">model</a> heads the chain and the default
+          chain follows it. A cheap-tier agent (Haiku / <code>*-mini</code>)
+          fails over to the other provider&apos;s cheap tier first and never
+          to an Opus-class model; if nothing cheaper is left, the call fails
+          instead of escalating the bill
         </li>
         <li>
           <strong>No mid-sentence swap</strong> — in streaming, failover only happens

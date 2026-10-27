@@ -389,6 +389,72 @@ func (c *Client) DeleteBudget(ctx context.Context, agentName string) error {
 // ErrNoBudget is returned by GetBudget when no budget is configured.
 var ErrNoBudget = errors.New("lantern: no budget configured")
 
+// ---------- Triggers (inbound webhooks) ----------
+
+// Trigger is an inbound webhook bound to an agent. A provider POSTs signed
+// deliveries to the API base URL + HookPath; each verified delivery starts a
+// run. Secret is set only on CreateTrigger, and only when Lantern generated it.
+type Trigger struct {
+	ID             string          `json:"id"`
+	AgentName      string          `json:"agentName"`
+	Provider       string          `json:"provider"` // generic | github | sentry | pagerduty
+	Enabled        bool            `json:"enabled"`
+	InputTemplate  json.RawMessage `json:"inputTemplate,omitempty"`
+	HookPath       string          `json:"hookPath"`
+	LastDeliveryAt string          `json:"lastDeliveryAt,omitempty"`
+	CreatedAt      string          `json:"createdAt"`
+	Secret         string          `json:"secret,omitempty"`
+}
+
+// TriggerCreate is the body of CreateTrigger. An empty Secret is generated
+// server-side and returned once.
+type TriggerCreate struct {
+	Provider      string          `json:"provider"`
+	Secret        string          `json:"secret,omitempty"`
+	InputTemplate json.RawMessage `json:"inputTemplate,omitempty"`
+}
+
+// TriggerUpdate is the body of UpdateTrigger. Nil fields are left unchanged;
+// InputTemplate = json.RawMessage("null") clears the template.
+type TriggerUpdate struct {
+	Enabled       *bool           `json:"enabled,omitempty"`
+	Secret        *string         `json:"secret,omitempty"`
+	InputTemplate json.RawMessage `json:"inputTemplate,omitempty"`
+}
+
+// CreateTrigger creates an inbound webhook trigger for an agent.
+func (c *Client) CreateTrigger(ctx context.Context, agentName string, in TriggerCreate) (*Trigger, error) {
+	var out Trigger
+	err := c.do(ctx, http.MethodPost, "/v1/agents/"+url.PathEscape(agentName)+"/triggers", in, &out)
+	return &out, err
+}
+
+// ListTriggers lists an agent's triggers. Secrets are never included.
+func (c *Client) ListTriggers(ctx context.Context, agentName string) ([]Trigger, error) {
+	var out []Trigger
+	err := c.do(ctx, http.MethodGet, "/v1/agents/"+url.PathEscape(agentName)+"/triggers", nil, &out)
+	return out, err
+}
+
+// GetTrigger returns one trigger.
+func (c *Client) GetTrigger(ctx context.Context, id string) (*Trigger, error) {
+	var out Trigger
+	err := c.do(ctx, http.MethodGet, "/v1/triggers/"+url.PathEscape(id), nil, &out)
+	return &out, err
+}
+
+// UpdateTrigger enables/disables a trigger, replaces its secret, or changes its input template.
+func (c *Client) UpdateTrigger(ctx context.Context, id string, in TriggerUpdate) (*Trigger, error) {
+	var out Trigger
+	err := c.do(ctx, http.MethodPatch, "/v1/triggers/"+url.PathEscape(id), in, &out)
+	return &out, err
+}
+
+// DeleteTrigger removes a trigger.
+func (c *Client) DeleteTrigger(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/triggers/"+url.PathEscape(id), nil, nil)
+}
+
 // ---------- Evals ----------
 
 // EvalSuite represents a named test suite for an agent.
