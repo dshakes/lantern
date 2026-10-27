@@ -38,6 +38,9 @@ http = "1"
 # mTLS: explicit deps so we control the crypto provider (ring, not aws-lc-rs)
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = "0.26"
+# Upstream trust roots for the egress broker's TLS-terminated path (ADR 0026).
+# Already in the lock (0.8.3, via tonic/hyper-rustls) — no new crate.
+rustls-native-certs = "0.8"
 rustls-pemfile = "2"
 rustls-pki-types = "1"
 # Used by tls::verify_client_cert_vm_id to extract CN/SAN from peer cert DER.

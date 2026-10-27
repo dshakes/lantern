@@ -60,6 +60,28 @@ pub trait SecretResolver: Send + Sync + 'static {
         secret_uri: &str,
         agent_bearer: Option<&str>,
     ) -> Result<String, SecretResolverError>;
+
+    /// Resolve on behalf of ONE VM: `scope` is the VM's manager-verified
+    /// (registry / spawn record) tenant + vm_id, never a guest claim. The
+    /// relay sends it to the control-plane, which resolves the ref only inside
+    /// that tenant after checking the VM belongs to it — a ref naming another
+    /// tenant's secret is "not found". Backends without a tenant notion
+    /// (env/test) ignore the scope.
+    async fn resolve_scoped(
+        &self,
+        secret_uri: &str,
+        _scope: ResolveScope<'_>,
+        agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError> {
+        self.resolve(secret_uri, agent_bearer).await
+    }
+}
+
+/// Which VM (and so which tenant) a resolution is for.
+#[derive(Clone, Copy, Debug)]
+pub struct ResolveScope<'a> {
+    pub tenant_id: &'a str,
+    pub vm_id: &'a str,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -386,20 +408,41 @@ impl SecretResolver for RelaySecretResolver {
         secret_uri: &str,
         agent_bearer: Option<&str>,
     ) -> Result<String, SecretResolverError> {
+        let scope = ResolveScope {
+            tenant_id: &self.tenant_id,
+            vm_id: &self.vm_id,
+        };
+        self.resolve_scoped(secret_uri, scope, agent_bearer).await
+    }
+
+    /// The relay body carries the VM's tenant + vm_id; the control-plane
+    /// verifies the binding and resolves only within that tenant. An empty
+    /// scope is refused here rather than sent (it can never bind).
+    async fn resolve_scoped(
+        &self,
+        secret_uri: &str,
+        scope: ResolveScope<'_>,
+        agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError> {
+        if scope.tenant_id.is_empty() || scope.vm_id.is_empty() {
+            return Err(SecretResolverError::Backend {
+                detail: format!("relay: no tenant/vm scope for ref '{secret_uri}'"),
+            });
+        }
         let refs = vec![secret_uri.to_string()];
 
         // Log ref name only — never the token, bearer, or a resolved value.
         tracing::debug!(
             ref_name = secret_uri,
-            tenant_id = %self.tenant_id,
-            vm_id = %self.vm_id,
+            tenant_id = %scope.tenant_id,
+            vm_id = %scope.vm_id,
             has_agent_bearer = agent_bearer.is_some(),
             "relay: resolving secret ref (value NOT logged)"
         );
 
         let body = RelayResolveRequest {
-            tenant_id: &self.tenant_id,
-            vm_id: &self.vm_id,
+            tenant_id: scope.tenant_id,
+            vm_id: scope.vm_id,
             refs: &refs,
         };
 
@@ -758,6 +801,45 @@ mod tests {
             lower.contains("x-lantern-runtime-token: svc-token"),
             "request must still carry x-lantern-runtime-token, got:\n{request_str}"
         );
+    }
+
+    /// The scoped path sends the VM's own tenant + vm_id (not the node's env
+    /// defaults) — that is what the control-plane binds the ref to.
+    #[tokio::test]
+    async fn relay_scoped_sends_the_vms_tenant_and_vm_id() {
+        let (addr, listener) = bind_mock().await;
+        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        let server = tokio::spawn(serve_one(listener, 200, body));
+        let resolver = relay_for(addr, "svc-token");
+        let scope = ResolveScope {
+            tenant_id: "t-owner",
+            vm_id: "vm-42",
+        };
+        resolver
+            .resolve_scoped("lantern.secret/llm/openai", scope, None)
+            .await
+            .expect("should resolve");
+        let req = String::from_utf8_lossy(&server.await.unwrap()).to_string();
+        assert!(req.contains(r#""tenant_id":"t-owner""#), "{req}");
+        assert!(req.contains(r#""vm_id":"vm-42""#), "{req}");
+        assert!(
+            !req.contains("tenant-test"),
+            "node default must not leak: {req}"
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_scoped_refuses_empty_scope_without_a_request() {
+        let resolver = relay_for("127.0.0.1:9".parse().unwrap(), "svc-token");
+        let scope = ResolveScope {
+            tenant_id: "",
+            vm_id: "vm-42",
+        };
+        let err = resolver
+            .resolve_scoped("lantern.secret/llm/openai", scope, None)
+            .await
+            .expect_err("empty tenant must not be sent");
+        assert!(matches!(err, SecretResolverError::Backend { .. }));
     }
 
     /// When `agent_bearer` is `None`, the relay must NOT include an

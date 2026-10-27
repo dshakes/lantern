@@ -170,7 +170,7 @@
 
       <rect x="312" y="0" width="290" height="100" rx="8" fill="#191427" stroke="#5b4a86"/>
       <text x="324" y="20" class="t" font-size="11.5" font-weight="700">Egress — deny default</text>
-      <text x="324" y="40" class="sub" font-size="10">HTTP CONNECT proxy + nftables</text>
+      <text x="324" y="40" class="sub" font-size="10">guest CONNECT proxy, or host broker (vsock, no NIC)</text>
       <text x="324" y="56" class="sub" font-size="10">token-bucket · audit-on-deny</text>
       <text x="324" y="72" class="sub" font-size="10">blocks 169.254.169.254 + RFC1918</text>
       <text x="324" y="90" class="sub" font-size="10">revocations propagate on HeartbeatAck</text>
