@@ -81,15 +81,16 @@ function Hero() {
       <div className="hero-glow" aria-hidden="true" />
       <div className={`${wrap} relative pb-20 pt-14 md:pt-20 lg:pb-28`}>
         <h1 id="hero-h" className="display text-[clamp(2.6rem,5.9vw,5.25rem)]">
-          <span className="block">Run the code your agents&nbsp;write.</span>
-          <span className="block">Keep your keys out of&nbsp;it.</span>
+          <span className="block">Run your agents in your own&nbsp;cloud.</span>
+          <span className="block">The whole runtime, open&nbsp;source.</span>
         </h1>
         <div className="mt-10 grid grid-cols-1 gap-12 lg:mt-14 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-14">
         <div>
           <p className="lede">
-            Lantern runs agent-written code in a Firecracker or Kata microVM in your own cloud, while the prompts and model
-            keys stay on your control plane. In broker mode (opt-in, Firecracker) the VM has no network card: the host
-            checks every request and adds the credential itself.
+            Lantern is an Apache-2.0 agent runtime you deploy in your VPC or on-prem. Agent-written code runs in a
+            Firecracker or Kata microVM, and around it you get durable runs, budgets, model routing and signed receipts. In
+            broker mode (opt-in, Firecracker) the VM has no network card and the host adds credentials: the replay is a real
+            run.
           </p>
           <div className="mt-8 max-w-xl">
             <CopyCommand command={CLONE} label="Clone and start Lantern locally" />
@@ -114,29 +115,29 @@ function Hero() {
 function Problem() {
   const beats = [
     {
-      now: "It shares your network.",
-      answer: "In broker mode the VM has no network device. Its only way out is vsock to a broker on the host that holds the allowlist.",
+      now: "It runs in someone else's cloud.",
+      answer: "Lantern is Apache-2.0 and deploys in your VPC or on-prem. The control plane, the sandboxes and the run data stay in your account.",
     },
     {
-      now: "It shares your keys.",
-      answer: "Model keys and prompts never enter the VM. In broker mode, tool credentials are attached on the host, so the code never holds them.",
+      now: "A crash starts it over.",
+      answer: "Every step is journaled. After a crash the run is re-driven and the steps that already completed are skipped, not repeated.",
     },
     {
-      now: "It shares your kernel.",
-      answer: "Each sandbox gets its own kernel in a Firecracker or Kata microVM. A missing runtime refuses the run instead of falling back to a container.",
+      now: "Nothing stops the spend.",
+      answer: "Per-agent and tenant-wide daily caps return HTTP 402 before the model is called. Forecast a run's cost before you send it.",
     },
   ];
   return (
     <section className="section rule" aria-labelledby="problem-h">
       <div className={wrap}>
         <h2 id="problem-h" className="h2 max-w-4xl">
-          Agents now write code and run it. Usually right next to everything you care about.
+          A sandbox runs the code. Production agents need the rest of the runtime too.
         </h2>
         <dl className="mt-14 md:mt-20">
           {beats.map((b) => (
             <div key={b.now} className="grid grid-cols-1 gap-3 border-t border-line py-8 md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] md:items-baseline md:gap-12 md:py-10">
               <dt className="display text-[clamp(2rem,4.6vw,3.75rem)] text-ink-3">
-                <span className="sr-only">Today, agent code </span>
+                <span className="sr-only">Without a runtime, your agent: </span>
                 {b.now}
               </dt>
               <dd className="leading-relaxed text-ink-2 md:text-lg">
@@ -183,8 +184,8 @@ function How() {
             The VM asks. The host decides.
           </h2>
           <p className="lede lg:justify-self-end">
-            Three places, three jobs. A compromised workload has nothing to steal and nothing to steer, because the parts
-            worth stealing were never in the box.
+            Three places, three jobs. The agent loop, the prompts and the model keys never enter the VM; in broker mode,
+            neither do tool credentials.
           </p>
         </div>
         <ol className="relative mt-14 grid grid-cols-1 gap-px rounded-[var(--lx-radius-l)] border border-line bg-line md:grid-cols-3">
@@ -381,20 +382,29 @@ function Features() {
   );
 }
 
-type Cell = "yes" | "no" | `partial${string}` | string;
-const COMPARE: { row: string; cells: [Cell, Cell, Cell, Cell] }[] = [
-  { row: "Hardware-isolated microVM per sandbox", cells: ["yes", "yes", "yes", "partial: gVisor"] },
-  { row: "Agent loop runs outside the sandbox", cells: ["yes", "not stated", "partial: you host the loop", "partial: you host the loop"] },
-  { row: "Credentials never enter the sandbox", cells: ["partial: broker mode, opt-in; ACE does this by default", "yes", "no", "no"] },
-  { row: "Egress allowlist enforced outside the guest", cells: ["partial: broker mode, opt-in", "yes", "partial", "partial: IP/CIDR"] },
+type Cell = string;
+type Row = { row: string; cells: [Cell, Cell, Cell, Cell] };
+// Mirrors README "How Lantern compares": ACE leads on the sandbox; the platform half is out of its scope.
+const SANDBOX: Row[] = [
+  { row: "Hardware-isolated microVM per sandbox", cells: ["yes: Firecracker / Kata", "yes", "yes", "partial: gVisor"] },
+  { row: "Agent loop runs outside the sandbox", cells: ["yes", "yes", "partial: you host the loop", "partial: you host the loop"] },
+  { row: "Credentials never enter the sandbox", cells: ["partial: broker mode, opt-in", "yes: by default", "no", "no"] },
+  { row: "Egress allowlist enforced outside the guest", cells: ["partial: broker mode, opt-in", "yes: by default", "partial", "partial: IP/CIDR"] },
   { row: "Idle auto-suspend, resume on demand", cells: ["yes", "yes", "partial", "partial"] },
   { row: "Snapshot and fork", cells: ["yes: shared-memory fork", "yes", "partial", "partial"] },
-  { row: "Durable agent runs with crash-resume", cells: ["yes", "no", "no", "no"] },
-  { row: "Hard budgets and pre-run cost forecast", cells: ["yes", "no", "no", "partial"] },
-  { row: "Multi-provider model routing", cells: ["yes", "no", "no", "no"] },
-  { row: "Signed, offline-verifiable run receipts", cells: ["partial: Ed25519 with a configured seed", "no", "no", "no"] },
-  { row: "Hardware root of trust / attestation", cells: ["partial: recorded, not verified", "yes: Titan", "no", "no"] },
-  { row: "Self-host in your cloud, open source", cells: ["yes: Apache-2.0", "no", "partial", "no"] },
+  { row: "Hardware root of trust / attestation", cells: ["partial: measurement recorded, not verified", "yes: Titan", "no", "no"] },
+  { row: "Proven at scale", cells: ["Lima nested-KVM + CI only", "The infrastructure behind Gemini's agents (per Google)", "Production", "Production"] },
+];
+const PLATFORM: Row[] = [
+  { row: "Durable agent runs with crash-resume", cells: ["yes", "out of scope", "no", "no"] },
+  {
+    row: "Budgets that return HTTP 402 before the model call",
+    cells: ["partial: cost/day, runs/day, tenant daily cost; token and per-tool limits stored, not enforced", "out of scope", "no", "partial"],
+  },
+  { row: "Multi-provider model routing with failover", cells: ["yes", "out of scope", "no", "no"] },
+  { row: "Signed, offline-verifiable run receipts", cells: ["partial: Ed25519 with a configured seed", "out of scope", "no", "no"] },
+  { row: "Self-host in your VPC or on-prem", cells: ["yes: Apache-2.0", "no: Google Cloud only", "partial", "no"] },
+  { row: "Availability", cells: ["Open source today", "Preview \u201cin the coming months\u201d", "Generally available", "Generally available"] },
 ];
 
 function Mark({ c }: { c: Cell }) {
@@ -405,14 +415,14 @@ function Mark({ c }: { c: Cell }) {
         <span className={c === "yes" ? "sr-only" : "text-xs text-ink-2"}>{c === "yes" ? "Yes" : c.slice(5)}</span>
       </span>
     );
-  if (c === "no")
+  if (c === "no" || c.startsWith("no: "))
     return (
-      <span className="inline-flex items-center text-ink-3">
-        <X className="h-4 w-4" aria-hidden="true" />
-        <span className="sr-only">No</span>
+      <span className="inline-flex items-start gap-1.5 text-ink-3">
+        <X className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className={c === "no" ? "sr-only" : "text-xs text-ink-2"}>{c === "no" ? "No" : c.slice(4)}</span>
       </span>
     );
-  if (!c.startsWith("partial")) return <span className="text-xs text-ink-3">{c}</span>;
+  if (!c.startsWith("partial")) return <span className="text-xs text-ink-2">{c}</span>;
   const note = c.startsWith("partial: ") ? c.slice(9) : "Partial";
   return (
     <span className="inline-flex items-start gap-1.5 text-flame">
@@ -425,8 +435,69 @@ function Mark({ c }: { c: Cell }) {
   );
 }
 
+const COLS = ["Lantern", "Google Agent Compute Engine", "E2B", "Modal"];
+
+function CompareTable({ id, title, intro, rows }: { id: string; title: string; intro: string; rows: Row[] }) {
+  return (
+    <div className="mt-14">
+      <h3 id={id} className="font-display text-xl font-semibold text-ink">
+        {title}
+      </h3>
+      <p className="mt-2 max-w-3xl leading-relaxed text-ink-2">{intro}</p>
+      <div className="mt-6 overflow-x-auto rounded-[var(--lx-radius-l)] border border-line bg-surface" tabIndex={0} role="region" aria-labelledby={id}>
+        <table className="w-full min-w-[760px] text-left text-sm">
+          <caption className="sr-only">{title}: Lantern, Google Agent Compute Engine, E2B and Modal</caption>
+          <thead>
+            <tr className="border-b border-line">
+              <th scope="col" className="w-[26%] p-4">
+                <span className="sr-only">Capability</span>
+              </th>
+              {COLS.map((c, n) => (
+                <th
+                  key={c}
+                  scope="col"
+                  className={`w-[18.5%] p-4 align-bottom font-semibold ${n === 0 ? "bg-glass-soft font-display text-base text-ink" : "text-ink-2"}`}
+                >
+                  {n === 0 ? (
+                    <span className="flex items-center gap-2">
+                      <LanternMark className="h-5 w-5" /> {c}
+                    </span>
+                  ) : (
+                    c
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((r) => (
+              <tr key={r.row}>
+                <th scope="row" className="p-4 font-normal text-ink">
+                  {r.row}
+                </th>
+                {r.cells.map((c, n) => (
+                  <td key={n} className={`p-4 align-top ${n === 0 ? "bg-glass-soft" : ""}`}>
+                    <Mark c={c} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Compare() {
-  const cols = ["Lantern", "Google Agent Compute Engine", "E2B", "Modal"];
+  const picks = [
+    { who: "Google ACE", when: "if you want a managed sandbox on Google Cloud with the strongest isolation defaults." },
+    { who: "E2B or Modal", when: "if you want hosted sandboxes today." },
+    {
+      who: "Lantern",
+      when: "if you need to run agents in your own cloud or on-prem, with the sandbox, durable execution, spend limits and audit trail in one stack you control.",
+    },
+  ];
   return (
     <section id="compare" className="section rule" aria-labelledby="compare-h">
       <div className={wrap}>
@@ -435,68 +506,40 @@ function Compare() {
             How it compares.
           </h2>
           <p className="lede lg:justify-self-end">
-            Google announced Agent Compute Engine on October 22, 2026: a microVM per agent, credentials kept outside it.
-            Lantern runs that shape today, in your cloud, with durable runs, budgets, routing and receipts around it.
+            Google Agent Compute Engine, E2B and Modal are managed sandboxes: compute you rent to run agent code. Lantern
+            is an open-source agent runtime you host yourself, and its sandbox is one part of it. So the comparison has
+            two halves.
           </p>
         </div>
-        <div className="mt-12 overflow-x-auto rounded-[var(--lx-radius-l)] border border-line bg-surface" tabIndex={0} role="region" aria-labelledby="compare-h">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <caption className="sr-only">Feature comparison of Lantern, Google Agent Compute Engine, E2B and Modal</caption>
-            <thead>
-              <tr className="border-b border-line">
-                <th scope="col" className="p-4">
-                  <span className="sr-only">Capability</span>
-                </th>
-                {cols.map((c, n) => (
-                  <th
-                    key={c}
-                    scope="col"
-                    className={`p-4 align-bottom font-semibold ${n === 0 ? "bg-glass-soft font-display text-base text-ink" : "text-ink-2"}`}
-                  >
-                    {n === 0 ? (
-                      <span className="flex items-center gap-2">
-                        <LanternMark className="h-5 w-5" /> {c}
-                      </span>
-                    ) : (
-                      c
-                    )}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {COMPARE.map((r) => (
-                <tr key={r.row}>
-                  <th scope="row" className="p-4 font-normal text-ink">
-                    {r.row}
-                  </th>
-                  {r.cells.map((c, n) => (
-                    <td key={n} className={`p-4 align-top ${n === 0 ? "bg-glass-soft" : ""}`}>
-                      <Mark c={c} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-              <tr>
-                <th scope="row" className="p-4 font-normal text-ink">
-                  Availability
-                </th>
-                <td className="bg-glass-soft p-4 text-xs font-medium text-ink">Open source today</td>
-                <td className="p-4 text-xs text-ink-2">Announced Oct 22, 2026; rolling out &ldquo;in the coming months&rdquo;</td>
-                <td className="p-4 text-xs text-ink-2">Generally available</td>
-                <td className="p-4 text-xs text-ink-2">Generally available</td>
-              </tr>
-            </tbody>
-          </table>
+        <CompareTable
+          id="cmp-sandbox"
+          title="The sandbox"
+          intro="This is ACE's whole product, and on isolation it is ahead of Lantern by default: its sandbox never holds a credential and all egress leaves through a proxy on the host, backed by Google's hardware root of trust. Lantern can do the same only in its opt-in broker mode on Firecracker, validated on nested KVM, not at Google's scale."
+          rows={SANDBOX}
+        />
+        <CompareTable
+          id="cmp-platform"
+          title="The platform around it"
+          intro="These are agent-runtime features. ACE is a compute layer, so &ldquo;out of scope&rdquo; means it isn't trying to do them, not that it fails at them; on Google Cloud they come from other products."
+          rows={PLATFORM}
+        />
+        <div className="mt-14">
+          <h3 className="font-display text-xl font-semibold text-ink">When to pick which</h3>
+          <ul className="mt-4 grid grid-cols-1 gap-x-10 gap-y-4 md:grid-cols-3">
+            {picks.map((p) => (
+              <li key={p.who} className="border-t border-line pt-4 leading-relaxed text-ink-2">
+                <span className="font-semibold text-ink">Pick {p.who}</span> {p.when}
+              </li>
+            ))}
+          </ul>
         </div>
-        <p className="mt-4 max-w-3xl text-sm leading-relaxed text-ink-3">
-          A cross means not offered or not announced; &ldquo;not stated&rdquo; means the public material doesn&rsquo;t say.
+        <p className="mt-10 max-w-3xl text-sm leading-relaxed text-ink-3">
           Competitor columns reflect each vendor&rsquo;s public docs and announcements as of October 2026; the Google
-          column is per launch coverage (
-          <a className="link" href="https://siliconangle.com/2026/10/22/google-cloud-introduces-agent-compute-engine-to-host-ai-agents/">
-            SiliconANGLE, Oct 22 2026
-          </a>
-          ), as Google&rsquo;s own documentation was not yet published. If one is out of date,{" "}
+          column follows Google&rsquo;s{" "}
+          <a className="link" href="https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive">
+            Agent Compute Engine deep dive
+          </a>{" "}
+          (Oct 22, 2026). A cross means not offered or not announced. If a cell is out of date,{" "}
           <a className="link" href={`${GITHUB}/issues`}>
             open an issue
           </a>
@@ -603,7 +646,7 @@ function OpenSource() {
         <div className="mt-24 flex flex-col items-center text-center md:mt-32">
           <LanternMark className="h-14 w-14" />
           <p className="display mt-8 max-w-4xl text-[clamp(2.75rem,8vw,6.5rem)]">
-            Clone it. Then try to get out.
+            Clone it. Run it on your own machines.
           </p>
           <div className="mt-10 w-full max-w-3xl text-left">
             <CopyCommand command={CLONE} label="Clone and start Lantern locally" />

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lantern.run";
-const title = "Lantern: run the code your agents write, keep your keys out of it";
+const title = "Lantern: the open-source agent runtime for your own cloud";
 const description =
-  "Open-source runtime for AI agents. Agent-written code runs in a Firecracker or Kata microVM in your cloud; prompts and model keys stay on your control plane. Durable runs, budgets that return 402, signed receipts. Apache-2.0.";
+  "Open-source runtime for AI agents that you host in your VPC or on-prem: a Firecracker or Kata microVM sandbox plus durable runs, budgets that return 402, model routing and signed receipts. Apache-2.0.";
 
 export const metadata: Metadata = {
   // Origin only: Next already prefixes file-based og:image URLs with the basePath.
