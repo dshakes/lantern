@@ -13,8 +13,9 @@
 # plus the Go/process collectors are REAL and alerted below in the
 # `lantern-scheduler` group.
 #
-# Everything else the SLO list asks for — control-plane 5xx, run-failure rate,
-# budget 402 surge, data-plane heartbeat, DB pool saturation, gateway /
+# The control-plane now also serves /metrics (group lantern-instrumented-slos:
+# 5xx rate, run-failure rate, budget 402 surge). Still without an in-app metric:
+# data-plane heartbeat, DB pool saturation, gateway /
 # model-router p99 latency, cron firing — has NO in-app Prometheus metric yet.
 # For those we fall back to signals that ARE real today:
 #   * `up` / blackbox probes against the documented health endpoints
@@ -127,7 +128,7 @@ groups:
     rules:
       - alert: ControlPlaneDown
         # `up` for the control-plane scrape job. If you have no /metrics on the
-        # control-plane yet (you don't — see TODO group), point this job at a
+        # control-plane yet (it does now — /metrics on :8080), point this job at a
         # blackbox-exporter probe of http://<cp>:8080/readyz instead and alert on
         # probe_success == 0. Keep ONE of the two, not both.
         expr: up{job="lantern-control-plane"} == 0
@@ -267,66 +268,53 @@ groups:
           runbook: "docs/runbooks/scheduler-not-firing.md"
 
   # =========================================================================
-  # TODO — NEEDS IN-APP INSTRUMENTATION before these can be enabled.
-  # The rules below reference metrics that are NOT emitted today. They are kept
-  # as a COMMENT block (not a real group with an empty `rules:` list, which
-  # `promtool check rules` rejects). Ship the metric (file noted), confirm the
-  # series exists in Prometheus, add the rule into a real group above, THEN
-  # enable it. Tracked against the operational-backbone epic.
-  #
-  # group name when enabled: lantern-instrumented-slos
+  # REAL — control-plane /metrics (internal/telemetry/metrics.go, :8080).
+  # OTel instruments bridged to Prometheus. Series pinned by
+  # internal/telemetry/metrics_test.go — rename there and here together.
+  # =========================================================================
+  - name: lantern-instrumented-slos
+    rules:
+      - alert: ControlPlane5xxRateHigh
+        # otelhttp wraps the whole control-plane mux (cmd/server/main.go).
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{job="lantern-control-plane",http_response_status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_server_request_duration_seconds_count{job="lantern-control-plane"}[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels: { severity: critical, service: control-plane }
+        annotations:
+          summary: "control-plane 5xx rate >5% (5m)"
+          runbook: "docs/runbooks/control-plane-5xx.md"
+
+      - alert: RunFailureRateHigh
+        # Inline executor only (rest.go RecordRunTotal); microVM-tier runs are not counted yet.
+        expr: |
+          (
+            sum(rate(lantern_run_total{job="lantern-control-plane",lantern_status="failed"}[10m]))
+            /
+            clamp_min(sum(rate(lantern_run_total{job="lantern-control-plane"}[10m])), 0.001)
+          ) > 0.20
+        for: 10m
+        labels: { severity: critical, service: control-plane }
+        annotations:
+          summary: "Run failure rate >20% (10m)"
+          runbook: "docs/runbooks/run-failure-spike.md"
+
+      - alert: BudgetDenied402Surge
+        expr: sum(rate(lantern_run_budget_blocks_total{job="lantern-control-plane"}[15m])) > 0.2
+        for: 15m
+        labels: { severity: warning, service: control-plane }
+        annotations:
+          summary: "Surge in budget 402 denials (API runs)"
+          runbook: "docs/runbooks/budget-402-surge.md"
+
+  # =========================================================================
+  # TODO — still NEEDS in-app instrumentation (kept as comments: a rule over a
+  # non-existent series is a silent always-green).
   # =========================================================================
   #
-      # --- control-plane HTTP 5xx rate ---------------------------------------
-      # NEEDS: a request-counting middleware on the control-plane HTTP mux
-      #   emitting `lantern_http_requests_total{method,route,status}` (counter).
-      #   Suggested home: services/control-plane/internal/server (HTTP mux setup)
-      #   + a /metrics handler via promhttp. No metric exists today.
-      # - alert: ControlPlane5xxRateHigh
-      #   expr: |
-      #     (
-      #       sum(rate(lantern_http_requests_total{job="lantern-control-plane",status=~"5.."}[5m]))
-      #       /
-      #       clamp_min(sum(rate(lantern_http_requests_total{job="lantern-control-plane"}[5m])), 0.001)
-      #     ) > 0.05
-      #   for: 5m
-      #   labels: { severity: critical, service: control-plane }
-      #   annotations:
-      #     summary: "control-plane 5xx rate >5% (5m)"
-      #     runbook: "docs/runbooks/control-plane-5xx.md"
-
-      # --- run failure-rate spike --------------------------------------------
-      # NEEDS: `lantern_runs_completed_total{status}` (counter, status =
-      #   succeeded|failed|cancelled), emitted where the run terminal status is
-      #   written — workflow-engine (journal KindRunFailed/KindRunCompleted) or
-      #   the control-plane inline run executor. No metric exists today.
-      # - alert: RunFailureRateHigh
-      #   expr: |
-      #     (
-      #       sum(rate(lantern_runs_completed_total{status="failed"}[10m]))
-      #       /
-      #       clamp_min(sum(rate(lantern_runs_completed_total[10m])), 0.001)
-      #     ) > 0.20
-      #   for: 10m
-      #   labels: { severity: critical, service: control-plane }
-      #   annotations:
-      #     summary: "Run failure rate >20% (10m)"
-      #     runbook: "docs/runbooks/run-failure-spike.md"
-
-      # --- budget hard-fail 402 surge (API runs/completions) -----------------
-      # NEEDS: `lantern_budget_denied_total{reason}` (counter) incremented on
-      #   every 402 from the budget enforcer in
-      #   services/control-plane/internal/handlers (POST /v1/runs, /v1/completions,
-      #   voice). The runtime-side 402 IS covered today via the scheduler
-      #   `result="quota"` alert above; this covers the API-budget 402 path.
-      # - alert: BudgetDenied402Surge
-      #   expr: sum(rate(lantern_budget_denied_total[15m])) > 0.2
-      #   for: 15m
-      #   labels: { severity: warning, service: control-plane }
-      #   annotations:
-      #     summary: "Surge in budget 402 denials (API runs/completions)"
-      #     runbook: "docs/runbooks/budget-402-surge.md"
-
       # --- gateway / model-router p99 latency --------------------------------
       # NEEDS: a Prometheus histogram on the Rust hot path, e.g.
       #   `lantern_gateway_request_duration_seconds_bucket` and
