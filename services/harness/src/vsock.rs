@@ -23,6 +23,13 @@ mod imp {
         fd: AsyncFd<OwnedFd>,
     }
 
+    /// Register a socket fd with the reactor.
+    fn register(fd: OwnedFd) -> io::Result<AsyncFd<OwnedFd>> {
+        // SAFETY: `fd` is a fresh, valid socket fd we exclusively own; it moves
+        // into the AsyncFd and stays registered until the AsyncFd drops it.
+        Ok(unsafe { AsyncFd::register(fd) }?)
+    }
+
     pub async fn connect(cid: u32, port: u32) -> io::Result<VsockStream> {
         // SAFETY: plain socket(2); the fd is owned immediately below.
         let raw = unsafe {
@@ -50,7 +57,7 @@ mod imp {
                 std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
             )
         };
-        let fd = AsyncFd::new(fd)?;
+        let fd = register(fd)?;
         if rc < 0 {
             let err = io::Error::last_os_error();
             if err.raw_os_error() != Some(libc::EINPROGRESS) {
@@ -197,9 +204,7 @@ mod imp {
         if unsafe { libc::listen(fd.as_raw_fd(), 128) } < 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(VsockListener {
-            fd: AsyncFd::new(fd)?,
-        })
+        Ok(VsockListener { fd: register(fd)? })
     }
 
     impl VsockListener {
@@ -226,9 +231,7 @@ mod imp {
                     Ok(Ok(c)) => {
                         // SAFETY: accept4 returned a fresh fd we now own.
                         let fd = unsafe { OwnedFd::from_raw_fd(c) };
-                        return Ok(VsockStream {
-                            fd: AsyncFd::new(fd)?,
-                        });
+                        return Ok(VsockStream { fd: register(fd)? });
                     }
                     Ok(Err(e)) => return Err(e),
                     Err(_would_block) => continue,
