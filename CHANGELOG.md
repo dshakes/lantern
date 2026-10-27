@@ -9,6 +9,16 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ## [Unreleased]
 
+### Added
+- Helm: `runtime-scheduler` and `surface-gateway` templates, per-tier HPA, PodDisruptionBudgets, default-deny
+  `NetworkPolicy` with the required allow flows, an opt-in Postgres backup CronJob, and `values-ci.yaml`.
+- Control-plane Prometheus `/metrics` on `:8080`; the control-plane SLO alert group is now enabled.
+- `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
+
+### Fixed
+- `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
+  they now use the published `ghcr.io/dshakes/lantern/<name>` images.
+
 ## [0.2.0] - 2026-10-27
 
 The sandbox runtime release: credentials kept out of the VM, idle VMs that

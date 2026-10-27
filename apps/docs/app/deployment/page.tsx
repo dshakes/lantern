@@ -74,7 +74,7 @@ export default function DeploymentPage() {
       <p>
         The repo ships one chart, <code>infra/helm/lantern</code>, with <code>values-dev.yaml</code>,{" "}
         <code>values-staging.yaml</code> and <code>values-prod.yaml</code>. It deploys the gateway, control plane, model
-        router, workflow engine, runtime manager and dashboard, with optional Postgres, Redis and MinIO subcharts. The
+        router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with optional Postgres, Redis and MinIO subcharts. The
         chart defaults <code>LANTERN_ENV=production</code>, so the production startup guards are on.
       </p>
       <pre><code>{`helm install lantern ./infra/helm/lantern \\
@@ -82,11 +82,22 @@ export default function DeploymentPage() {
   --values infra/helm/lantern/values-prod.yaml`}</code></pre>
       <p>
         Top-level values keys: <code>global</code>, <code>gateway</code>, <code>controlPlane</code>,{" "}
-        <code>modelRouter</code>, <code>workflowEngine</code>, <code>runtimeManager</code>, <code>dashboard</code>,{" "}
-        <code>postgresql</code>, <code>redis</code>, <code>minio</code>, <code>ingress</code>, <code>secrets</code>,{" "}
+        <code>modelRouter</code>, <code>workflowEngine</code>, <code>runtimeManager</code>, <code>runtimeScheduler</code>,{" "}
+        <code>surfaceGateway</code>, <code>dashboard</code>, <code>postgresql</code>, <code>redis</code>, <code>minio</code>,{" "}
+        <code>ingress</code>, <code>networkPolicy</code>, <code>backup</code>, <code>secrets</code>,{" "}
         <code>serviceAccount</code>. There is no separate data-plane chart yet; for a data plane in another cloud, use the
         Terraform path below.
       </p>
+      <h3>Production settings</h3>
+      <ul>
+        <li><strong>Autoscaling and disruption</strong> — <code>&lt;component&gt;.autoscaling.enabled</code> adds a CPU-based HPA (needs metrics-server) for the control plane, gateway, model router, workflow engine and dashboard; <code>values-prod.yaml</code> turns it on. Components with more than one replica get a PodDisruptionBudget.</li>
+        <li><strong>NetworkPolicy</strong> — <code>networkPolicy.enabled=true</code> denies all traffic in the release, then allows only the service-to-service flows the platform needs, DNS, and scrapes of <code>/metrics</code> from <code>networkPolicy.metricsFrom</code>. Only the control plane, model router, workflow engine, surface gateway and backup job may leave the cluster; use <code>networkPolicy.extraEgress</code> for managed Postgres or Redis on private IPs. Your CNI must enforce policy (Calico, Cilium).</li>
+        <li><strong>Secrets you must supply</strong> — <code>secrets.jwtSecret</code>, <code>credentialKey</code>, <code>receiptSecret</code>, <code>grpcServiceToken</code>, <code>schedulerNodeToken</code> and <code>appDbPassword</code>. The control plane also refuses to start in production without its gRPC TLS cert and the runtime-manager mTLS client cert; the chart cannot create these, so mount them with <code>controlPlane.extraVolumes</code> and <code>extraEnv</code>.</li>
+        <li><strong>Backups</strong> — <code>backup.enabled=true</code> adds a CronJob that writes a gzipped <code>pg_dump</code> to <code>s3://&lt;backup.s3Bucket&gt;/postgres/</code> and prunes dumps older than <code>backup.retentionDays</code>. Prove a dump restores with <code>scripts/db-restore-drill.sh &lt;dump.sql.gz&gt;</code>; see <code>docs/runbooks/db-restore.md</code>. This is a floor; managed Postgres with point-in-time recovery is the recommended production path.</li>
+      </ul>
+      <div className="callout callout-info">
+        <strong>Limits:</strong> the in-cluster Postgres and MinIO subcharts are for development and evaluation. The scheduler&apos;s readiness probe uses <code>/healthz</code> by default because <code>/readyz</code> stays unready until a runtime-manager node registers.
+      </div>
 
       <h2 id="terraform">Terraform</h2>
       <p>
@@ -108,7 +119,7 @@ terraform apply`}</code></pre>
 
       <h2 id="monitoring">Monitoring</h2>
       <p>
-        Every service emits OTel traces tagged with <code>tenant_id</code>, <code>run_id</code>, <code>step_id</code>, and <code>agent_version</code>. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. Alert rules and Grafana dashboards live in <code>infra/monitoring/</code>; runbooks in <code>docs/runbooks/</code>. See <Link href="/runtime/observability">Observability</Link> for details.
+        Every service emits OTel traces tagged with <code>tenant_id</code>, <code>run_id</code>, <code>step_id</code>, and <code>agent_version</code>. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at <code>:8080/metrics</code> (HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in <code>infra/monitoring/</code>; runbooks in <code>docs/runbooks/</code>. See <Link href="/runtime/observability">Observability</Link> for details.
       </p>
 
       <h2 id="migrations">Database migrations</h2>
