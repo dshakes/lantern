@@ -311,6 +311,10 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   FC_KERNEL_PATH="${FC_KERNEL_PATH}" \
   FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
   ${FC_BINARY_PATH:+FC_BINARY_PATH="${FC_BINARY_PATH}"} \
+  ${FIRECRACKER_JAILER_PATH:+FIRECRACKER_JAILER_PATH="${FIRECRACKER_JAILER_PATH}"} \
+  ${FIRECRACKER_JAILER_UID:+FIRECRACKER_JAILER_UID="${FIRECRACKER_JAILER_UID}"} \
+  ${FIRECRACKER_JAILER_GID:+FIRECRACKER_JAILER_GID="${FIRECRACKER_JAILER_GID}"} \
+  ${FIRECRACKER_CHROOT_BASE:+FIRECRACKER_CHROOT_BASE="${FIRECRACKER_CHROOT_BASE}"} \
   LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" \
   LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
   LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
@@ -709,15 +713,39 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
 
   # VM_ID now points at the restored VM so cleanup stops it.
   VM_ID="${RESTORED_VM_ID}"
+
+  # Stop the restored VM before the fork test.  The fork test spawns N new
+  # vm_ids from the same snapshot.  In bare (unjailed) mode the manager refuses
+  # to spawn a fork while the snapshot's source vm_id is still running because
+  # each bare restore binds to /run/lantern/vsock/<source-vm-id>.sock — two
+  # running VMs with the same id would collide.  Stopping first satisfies the
+  # manager's FailedPrecondition guard without requiring the jailer.
+  log "Stopping restored vm_id=${VM_ID} before fork test"
+  T0=$(ms)
+  grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"stop before fork test"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+    || log "Stop returned non-zero (VM may already be gone)"
+  timing_record "stop_before_fork" "${T0}" "$(ms)"
+  pass "restored VM stopped before fork test"
 fi # SHELL_EXEC_AVAILABLE
 
 # ---------------------------------------------------------------------------
-# 4d. Fork test (conditional on jailer binary availability).
+# 4d. Fork test (conditional on FIRECRACKER_JAILER_PATH being explicitly set).
 #
 # Forking N distinct vm_ids from the same snapshot requires the jailer: bare
 # mode can only restore the source vm_id because the vsock socket path is
-# baked into the snapshot state.  If the jailer binary is absent, skip with
-# a clear explanation.
+# baked into the snapshot state.  A fork with a different vm_id in bare mode
+# always gets FailedPrecondition from the manager.
+#
+# Detection: FIRECRACKER_JAILER_PATH must be explicitly set in the environment
+# — finding the jailer binary on PATH is NOT sufficient, because the manager
+# must also be started with that env var to enable jailed mode.  Both the
+# manager env (propagated via the setsid block above) and the fork request
+# must agree that jailing is in use.  Auto-discovery from PATH causes a false
+# positive: the binary exists but the manager runs bare, so every fork gets
+# FailedPrecondition.
 #
 # Fork verifications:
 #   a. Each fork gets a distinct vm_id and comes alive.
@@ -725,12 +753,9 @@ fi # SHELL_EXEC_AVAILABLE
 #   c. All fork VMs are terminated cleanly (no leaked processes).
 # ---------------------------------------------------------------------------
 JAILER_PATH="${FIRECRACKER_JAILER_PATH:-}"
-if [ -z "${JAILER_PATH}" ]; then
-  command -v jailer >/dev/null 2>&1 && JAILER_PATH="$(command -v jailer)" || true
-fi
 
 if [ -z "${JAILER_PATH}" ] || [ ! -x "${JAILER_PATH}" ]; then
-  skip "fork test SKIPPED — jailer binary not found (set FIRECRACKER_JAILER_PATH or install jailer alongside firecracker)"
+  skip "fork test SKIPPED — FIRECRACKER_JAILER_PATH not set or not executable (set FIRECRACKER_JAILER_PATH to the jailer binary; jailer binary on PATH is not sufficient because the manager must also be started with it)"
 elif [ "${SNAPSHOT_AVAILABLE}" = "false" ]; then
   skip "fork test SKIPPED — no snapshot available (shell_exec or snapshot step was skipped)"
 else

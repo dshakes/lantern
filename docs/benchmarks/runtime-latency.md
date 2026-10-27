@@ -71,32 +71,33 @@ wall-clock milliseconds as measured by the test script and emitted to the
 **Environment:** Lima VM (`infra/lima/firecracker-dev.yaml`) on Apple Silicon
 M4 Max, macOS 15, nested KVM via Virtualization.framework. Guest: Ubuntu 24.04
 LTS, 4 vCPU, 8 GiB RAM.  VM spec: 1 vCPU, 128 MiB RAM, musl harness as PID 1,
-aarch64 vmlinux-5.10.245.  Run at: 2026-10-26T22:05:58Z.
+aarch64 vmlinux-5.10.245.  Run at: 2026-10-27T02:37:23Z.
 
 **These are measured values from a real Lima run** (nested-virt, aarch64,
 indicative of dev-laptop performance — not bare-metal production numbers).
 
 | step | duration_ms | notes |
 |------|-----------:|-------|
-| `shell_exec` | 489 | ExecTool round-trip after heartbeat bidi stream established |
-| `write_file` | 152 | ExecTool write_file to /workspace |
-| `snapshot` | 405 | 128 MiB mem snapshot to disk (134 MB written) |
-| `stop` | 185 | graceful SendCtrlAltDel + SIGKILL fallback |
-| `restore` | 123 | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
-| `read_file_after_restore` | 37 067 | includes ~35 s ExecTool channel warm-up wait (1 retry × 2 s + initial timeout); operation itself ~500 ms once ready |
-| `fork_spawn_1` | 134 | same mem-load path as restore; per-VM rootfs copy included |
-| `fork_spawn_2` | 136 | |
-| `fork_spawn_3` | 152 | |
-| **total** | **38 843** | dominated by the read_file retry wait; see note below |
+| `shell_exec` | 795 | ExecTool round-trip after heartbeat bidi stream established |
+| `write_file` | 108 | ExecTool write_file to /workspace |
+| `snapshot` | 383 | 128 MiB mem snapshot to disk (134 MB written) |
+| `stop` | 180 | graceful SendCtrlAltDel (aarch64 not supported) + SIGKILL fallback |
+| `restore` | 97 | Spawn RPC turnaround (PUT /snapshot/load + PATCH /drives + PATCH /vm) |
+| `read_file_after_restore` | 4 214 | 2 ExecTool retries × 2 s wait; operation itself ~200 ms once ready |
+| `stop_before_fork` | 183 | Stop restored VM before fork test |
+| **total** | **5 960** | fork test skipped (requires `FIRECRACKER_JAILER_PATH`); see note below |
 
 **Note on `read_file_after_restore`:** The Spawn RPC returns as soon as
 Firecracker accepts the snapshot load, but the harness's in-guest exec server
 (vsock-based ExecTool path) takes an additional 2–5 s to re-establish the
 heartbeat TCP connection and become ready.  The test retries ExecTool with a
-2 s gap; in this run one retry was needed.  The underlying read_file operation
-itself takes ~500 ms once the channel is ready (comparable to `shell_exec`).
+2 s gap; in this run two retries were needed (4 s wait).  Prior to the
+`ACTIVE_TOOL_CHILDREN` zombie-reaper fix and vsock/API-socket cleanup in
+`cancel()`, this step took 37 s because the vsock socket from the stopped VM
+remained on disk, causing `EADDRINUSE` on restore and `ECHILD` in the exec
+server.  After the fixes it is dominated by the 4 s channel warm-up wait.
 A production scheduler would poll the heartbeat ready state rather than a fixed
-retry loop.
+retry loop, reducing this to ~200 ms.
 
 ---
 
@@ -153,4 +154,4 @@ size**, not the VM's configured memory limit.
 - **ExecTool channel warm-up**: the ~2–5 s delay before ExecTool is usable
   after a restore/fork is a harness reconnect latency, not a Firecracker
   property.  A ready-state signal from the heartbeat stream would eliminate
-  the retry loop and reduce perceived restore latency by 35 s in the test.
+  the retry loop and reduce perceived restore latency from ~4 s to ~200 ms.
