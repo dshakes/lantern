@@ -66,6 +66,11 @@ var knownReadActions = map[string]map[string]bool{
 	},
 	"sentry": {
 		"list_issues": true,
+		"get_issue":   true,
+	},
+	"pagerduty": {
+		"list_incidents": true,
+		"get_incident":   true,
 	},
 	"vercel": {
 		"list_projects":    true,

@@ -43,6 +43,9 @@ func main() {
 
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+	// Packages that log via zap.L() (e.g. budget lookup errors) would
+	// otherwise write to the no-op global logger.
+	zap.ReplaceGlobals(logger)
 
 	// --- Startup security guards ---
 	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
@@ -441,7 +444,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", gmailHandler.GetMessages)
 	// Connector executor — registered before {id} to avoid path conflict.
 	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
-	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
+	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, connectorExecutor.Execute))
 	// Twilio webhooks — owner's private agent channel. NO auth
 	// middleware (Twilio HMAC verification is done inside the handler).
 	httpMux.HandleFunc("POST /v1/sms/twilio/webhook", smsHandler.SMSWebhook)
@@ -470,24 +473,24 @@ func main() {
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).
 	httpMux.HandleFunc("GET /v1/whatsapp/vips", waPersonalHandler.ListVIPs)
-	httpMux.HandleFunc("POST /v1/whatsapp/vips", waPersonalHandler.AddVIP)
-	httpMux.HandleFunc("DELETE /v1/whatsapp/vips", waPersonalHandler.RemoveVIP)
+	httpMux.HandleFunc("POST /v1/whatsapp/vips", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.AddVIP))
+	httpMux.HandleFunc("DELETE /v1/whatsapp/vips", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.RemoveVIP))
 	httpMux.HandleFunc("GET /v1/whatsapp/facts", waPersonalHandler.ListFacts)
-	httpMux.HandleFunc("POST /v1/whatsapp/facts", waPersonalHandler.AddFact)
-	httpMux.HandleFunc("DELETE /v1/whatsapp/facts/{id}", waPersonalHandler.DeleteFact)
-	httpMux.HandleFunc("POST /v1/whatsapp/drafts", waPersonalHandler.CreateDraft)
+	httpMux.HandleFunc("POST /v1/whatsapp/facts", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.AddFact))
+	httpMux.HandleFunc("DELETE /v1/whatsapp/facts/{id}", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.DeleteFact))
+	httpMux.HandleFunc("POST /v1/whatsapp/drafts", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.CreateDraft))
 	httpMux.HandleFunc("GET /v1/whatsapp/drafts", waPersonalHandler.ListDrafts)
-	httpMux.HandleFunc("POST /v1/whatsapp/drafts/{id}/act", waPersonalHandler.ActOnDraft)
+	httpMux.HandleFunc("POST /v1/whatsapp/drafts/{id}/act", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.ActOnDraft))
 
 	// Identity graph + unified cross-channel timeline (Jarvis memory).
-	httpMux.HandleFunc("POST /v1/people/resolve", identityHandler.ResolvePerson)
+	httpMux.HandleFunc("POST /v1/people/resolve", authHandler.WithScope(handlers.ScopeWrite, identityHandler.ResolvePerson))
 	// /merge and /duplicates are registered before the bare GET /v1/people so
 	// the more-specific paths are not shadowed by a wildcard.
-	httpMux.HandleFunc("POST /v1/people/merge", identityHandler.MergePeople)
+	httpMux.HandleFunc("POST /v1/people/merge", authHandler.WithScope(handlers.ScopeWrite, identityHandler.MergePeople))
 	httpMux.HandleFunc("GET /v1/people/duplicates", identityHandler.ListDuplicates)
-	httpMux.HandleFunc("POST /v1/people/relationship", identityHandler.StampRelationship)
+	httpMux.HandleFunc("POST /v1/people/relationship", authHandler.WithScope(handlers.ScopeWrite, identityHandler.StampRelationship))
 	httpMux.HandleFunc("GET /v1/people", identityHandler.ListPeople)
-	httpMux.HandleFunc("POST /v1/memory/events", identityHandler.IngestEvent)
+	httpMux.HandleFunc("POST /v1/memory/events", authHandler.WithScope(handlers.ScopeWrite, identityHandler.IngestEvent))
 	httpMux.HandleFunc("GET /v1/memory/context", identityHandler.GetContext)
 	httpMux.HandleFunc("GET /v1/memory/search", identityHandler.SearchMemory)
 
@@ -503,10 +506,10 @@ func main() {
 	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
 	// 1:1 to Shortcut steps. Plain-text responses so Siri can speak
 	// them aloud. Authenticated via the standard bearer token.
-	httpMux.HandleFunc("POST /v1/shortcuts/pause", shortcutsHandler.Pause)
-	httpMux.HandleFunc("POST /v1/shortcuts/resume", shortcutsHandler.Resume)
+	httpMux.HandleFunc("POST /v1/shortcuts/pause", authHandler.WithScope(handlers.ScopeWrite, shortcutsHandler.Pause))
+	httpMux.HandleFunc("POST /v1/shortcuts/resume", authHandler.WithScope(handlers.ScopeWrite, shortcutsHandler.Resume))
 	httpMux.HandleFunc("GET /v1/shortcuts/status", shortcutsHandler.Status)
-	httpMux.HandleFunc("POST /v1/shortcuts/say", shortcutsHandler.Say)
+	httpMux.HandleFunc("POST /v1/shortcuts/say", authHandler.WithScope(handlers.ScopeRunsExecute, shortcutsHandler.Say))
 	// Slack /lantern slash command. Signed via SLACK_SIGNING_SECRET when
 	// configured (dev accepts unverified + warns); ephemeral JSON replies.
 	slackCommandHandler := handlers.NewSlackCommandHandler(srv)
@@ -521,18 +524,18 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.RevokeApiKey))
 
 	// LLM proxy / completions endpoint.
-	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
-	httpMux.HandleFunc("POST /v1/vision/ocr", llmProxyHandler.OCR)
-	httpMux.HandleFunc("POST /v1/audio/transcriptions", llmProxyHandler.Transcribe)
+	httpMux.HandleFunc("POST /v1/completions", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.Complete))
+	httpMux.HandleFunc("POST /v1/vision/ocr", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.OCR))
+	httpMux.HandleFunc("POST /v1/audio/transcriptions", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.Transcribe))
 	// Streaming no-tools completion for the bridges' "first-sentence-fast"
 	// path. text/event-stream with per-token `data:` chunks + final
 	// `data: [DONE]`. No tool-call loop — tool-using queries should go
 	// through /v1/sessions/{id}/messages (full agentic pipeline).
-	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", llmProxyHandler.HandleStreamCompletion)
+	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleStreamCompletion))
 	// Outbound TTS — OpenAI tts-1. Returns raw audio bytes (mp3 by
 	// default). Used by the bridges' voice-out path when the owner
 	// opts in via LANTERN_VOICE_OUT=on.
-	httpMux.HandleFunc("POST /v1/voice/tts", llmProxyHandler.HandleTTS)
+	httpMux.HandleFunc("POST /v1/voice/tts", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleTTS))
 
 	// Agent AI generation endpoints.
 	httpMux.HandleFunc("POST /v1/agents/generate-spec", authHandler.WithScope(handlers.ScopeAgentsWrite, llmProxyHandler.GenerateAgentSpec))
@@ -562,7 +565,7 @@ func main() {
 
 	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
 	httpMux.HandleFunc("GET /v1/agents/{name}/card", a2aHandler.GetAgentCard)
-	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", a2aHandler.InvokeAgent)
+	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, a2aHandler.InvokeAgent))
 	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
 	// Workflow persistence endpoints (visual editor).
@@ -585,47 +588,48 @@ func main() {
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
 
 	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
-	httpMux.HandleFunc("POST /v1/life-events", lifeEventHandler.CreateLifeEvent)
+	httpMux.HandleFunc("POST /v1/life-events", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.CreateLifeEvent))
 	httpMux.HandleFunc("GET /v1/life-events", lifeEventHandler.ListLifeEvents)
 	httpMux.HandleFunc("GET /v1/life-events/prefs", lifeEventHandler.ListLifeEventPrefs)
-	httpMux.HandleFunc("PUT /v1/life-events/prefs", lifeEventHandler.UpsertLifeEventPref)
-	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", lifeEventHandler.UndoLifeEvent)
-	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", lifeEventHandler.DismissLifeEvent)
+	httpMux.HandleFunc("PUT /v1/life-events/prefs", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UpsertLifeEventPref))
+	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
+	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
+	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
-	httpMux.HandleFunc("POST /v1/commitments", commitmentHandler.CreateCommitment)
+	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))
 	httpMux.HandleFunc("GET /v1/commitments", commitmentHandler.ListCommitments)
 	httpMux.HandleFunc("GET /v1/commitments/{id}", commitmentHandler.GetCommitment)
-	httpMux.HandleFunc("PUT /v1/commitments/{id}", commitmentHandler.UpdateCommitment)
-	httpMux.HandleFunc("POST /v1/commitments/{id}/snooze", commitmentHandler.SnoozeCommitment)
-	httpMux.HandleFunc("POST /v1/commitments/{id}/done", commitmentHandler.DoneCommitment)
-	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", commitmentHandler.DismissCommitment)
+	httpMux.HandleFunc("PUT /v1/commitments/{id}", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.UpdateCommitment))
+	httpMux.HandleFunc("POST /v1/commitments/{id}/snooze", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.SnoozeCommitment))
+	httpMux.HandleFunc("POST /v1/commitments/{id}/done", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.DoneCommitment))
+	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.DismissCommitment))
 	// Stage 2: LLM-powered research + cited action plan.
-	httpMux.HandleFunc("POST /v1/commitments/{id}/research", commitmentHandler.ResearchCommitment)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/research", authHandler.WithScope(handlers.ScopeRunsExecute, commitmentHandler.ResearchCommitment))
 	// Cross-app workflows (LANTERN_CROSS_APP=on, default OFF).
 	// Propose: autonomous read + LLM compose → stored proposal (no side-effect).
 	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
-	httpMux.HandleFunc("POST /v1/cross-app/propose", crossAppHandler.Propose)
+	httpMux.HandleFunc("POST /v1/cross-app/propose", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.Propose))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.ExecuteAction))
 
 	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF — ADR 0017).
 	// Read: autonomous web read; dispatch 503 in increment 1 (no runtime yet).
 	// Propose: owner-confirm browser_act stored as a commitment (no execution).
 	// Execute: SOLE browser write path; owner confirm required.
-	httpMux.HandleFunc("POST /v1/browser/read", browserHandler.Read)
-	httpMux.HandleFunc("POST /v1/browser/propose", browserHandler.Propose)
+	httpMux.HandleFunc("POST /v1/browser/read", authHandler.WithScope(handlers.ScopeRunsExecute, browserHandler.Read))
+	httpMux.HandleFunc("POST /v1/browser/propose", authHandler.WithScope(handlers.ScopeWrite, browserHandler.Propose))
 	httpMux.HandleFunc("POST /v1/browser/commitments/{id}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, browserHandler.Execute))
 
 	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
-	httpMux.HandleFunc("POST /v1/domain-records", domainRecordHandler.CreateDomainRecord)
+	httpMux.HandleFunc("POST /v1/domain-records", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.CreateDomainRecord))
 	httpMux.HandleFunc("GET /v1/domain-records", domainRecordHandler.ListDomainRecords)
-	httpMux.HandleFunc("PUT /v1/domain-records/{id}", domainRecordHandler.UpdateDomainRecord)
-	httpMux.HandleFunc("DELETE /v1/domain-records/{id}", domainRecordHandler.DeleteDomainRecord)
+	httpMux.HandleFunc("PUT /v1/domain-records/{id}", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.UpdateDomainRecord))
+	httpMux.HandleFunc("DELETE /v1/domain-records/{id}", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.DeleteDomainRecord))
 	httpMux.HandleFunc("GET /v1/domains/{domain}/digest", domainRecordHandler.DomainDigest)
 
 	// AI Radar feed (news_radar loop agent).
 	httpMux.HandleFunc("GET /v1/news", newsHandler.ListNews)
-	httpMux.HandleFunc("POST /v1/news/ask", newsHandler.AskNews)
+	httpMux.HandleFunc("POST /v1/news/ask", authHandler.WithScope(handlers.ScopeRunsExecute, newsHandler.AskNews))
 
 	// Loop-agent platform primitive (Stage 3).
 	// Must be registered before the generic /v1/agents/{name} patterns to avoid shadowing.
@@ -652,8 +656,8 @@ func main() {
 	httpMux.HandleFunc("GET /v1/marketplace/{slug}", marketplaceHandler.Get)
 	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}", authHandler.WithScope(handlers.ScopeAgentsWrite, marketplaceHandler.Unpublish))
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/fork", authHandler.WithScope(handlers.ScopeAgentsWrite, marketplaceHandler.Fork))
-	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", marketplaceHandler.Star)
-	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", marketplaceHandler.Star)
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", authHandler.WithScope(handlers.ScopeWrite, marketplaceHandler.Star))
+	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", authHandler.WithScope(handlers.ScopeWrite, marketplaceHandler.Star))
 	// W11c: cross-tenant invocations with HMAC-signed settlement.
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, marketplaceHandler.Invoke))
 	httpMux.HandleFunc("GET /v1/marketplace/invocations", marketplaceHandler.ListInvocations)
@@ -662,10 +666,10 @@ func main() {
 	// the dashboard surfaces them, an operator grants → optionally
 	// exchanges WebRTC SDP → releases when done.
 	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler, restHandler)
-	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", takeoverHandler.Request)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Request))
 	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Grant))
-	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", takeoverHandler.Answer)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Answer))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Release))
 
 	// Agent templates — one-click create-agent + budget + schedule for
@@ -684,7 +688,7 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, voiceHandler.DeleteNumber))
 	httpMux.HandleFunc("GET /v1/voice/calls", voiceHandler.ListCalls)
 	httpMux.HandleFunc("POST /v1/voice/calls/status/{provider}", voiceHandler.CallStatus)
-	httpMux.HandleFunc("POST /v1/voice/token", voiceHandler.MintToken)
+	httpMux.HandleFunc("POST /v1/voice/token", authHandler.WithScope(handlers.ScopeRunsExecute, voiceHandler.MintToken))
 	httpMux.HandleFunc("POST /v1/voice/webhook/{provider}", voiceHandler.Webhook)
 
 	// MCP server registry + per-agent attachments.
@@ -716,7 +720,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Conclude))
 
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
-	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", receiptHandler.IssueReceipt)
+	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", authHandler.WithScope(handlers.ScopeRunsWrite, receiptHandler.IssueReceipt))
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
 	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
 
@@ -742,26 +746,29 @@ func main() {
 	}
 
 	// RLHF feedback loop — per-run thumbs + preferred-output capture.
-	httpMux.HandleFunc("POST /v1/runs/{id}/feedback", feedbackHandler.SubmitFeedback)
+	httpMux.HandleFunc("POST /v1/runs/{id}/feedback", authHandler.WithScope(handlers.ScopeRunsWrite, feedbackHandler.SubmitFeedback))
 	httpMux.HandleFunc("GET /v1/runs/{id}/feedback", feedbackHandler.ListFeedback)
 	httpMux.HandleFunc("GET /v1/agents/{name}/feedback", feedbackHandler.AgentSummary)
 
 	// Rehearsals — replay past failures against a candidate agent version.
-	httpMux.HandleFunc("POST /v1/runs/rehearse", rehearseHandler.Rehearse)
+	httpMux.HandleFunc("POST /v1/runs/rehearse", authHandler.WithScope(handlers.ScopeRunsWrite, rehearseHandler.Rehearse))
 
 	// Immigration Deadline Sentinel (LANTERN_IMMIGRATION_SENTINEL, default OFF).
 	httpMux.HandleFunc("GET /v1/immigration/deadlines", immigrationHandler.List)
-	httpMux.HandleFunc("POST /v1/immigration/scan", immigrationHandler.Scan)
+	httpMux.HandleFunc("POST /v1/immigration/scan", authHandler.WithScope(handlers.ScopeRunsExecute, immigrationHandler.Scan))
 
 	// Memory distillation (LANTERN_MEMORY_DISTILL, default OFF).
 	// LLM-distilled long-term facts/preferences extracted from session
 	// transcripts + timeline events.  Loop started below.
 	httpMux.HandleFunc("GET /v1/memory/distillates", memoryDistillHandler.List)
-	httpMux.HandleFunc("POST /v1/memory/distill", memoryDistillHandler.Trigger)
+	httpMux.HandleFunc("POST /v1/memory/distill", authHandler.WithScope(handlers.ScopeRunsExecute, memoryDistillHandler.Trigger))
 
 	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
-	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
+	httpMux.HandleFunc("DELETE /v1/tenants/{id}", authHandler.WithScope(handlers.ScopeAdmin, gdprHandler.DeleteTenant))
+	if err := handlers.RegisterAccountLifecycleRoutes(httpMux, authHandler, gdprHandler, handlers.IsProd()); err != nil {
+		logger.Fatal("account lifecycle (ADR 0027)", zap.Error(err))
+	}
 
 	// System health snapshot — peer-service TCP reachability for the dashboard.
 	httpMux.HandleFunc("GET /v1/system/health", healthSweeper.ServeHealth)
@@ -770,10 +777,10 @@ func main() {
 	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
 	// confirm-and-call is the SOLE dial path and requires owner/admin role.
 	errandHandler := handlers.NewErrandHandler(srv, authHandler, llmProxyHandler)
-	httpMux.HandleFunc("POST /v1/errands", errandHandler.Propose)
+	httpMux.HandleFunc("POST /v1/errands", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.Propose))
 	httpMux.HandleFunc("GET /v1/errands", errandHandler.List)
 	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.ConfirmAndCall))
-	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", errandHandler.OptOut)
+	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", authHandler.WithScope(handlers.ScopeWrite, errandHandler.OptOut))
 	// ErrandTurn: Twilio <Gather> callback — unauthenticated by JWT,
 	// authenticated by X-Twilio-Signature (see ErrandTurn handler).
 	httpMux.HandleFunc("POST /v1/voice/errand/turn/{id}", errandHandler.ErrandTurn)
@@ -1057,6 +1064,11 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 
 	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH"), os.Getenv("LANTERN_USE_CLAUDE_CODE")); fatal {
+		logger.Fatal(msg)
+	}
+
+	// Connector base-URL overrides are test-only; never in prod.
+	if fatal, msg := handlers.CheckConnectorBaseURLOverrides(prod, os.Getenv); fatal {
 		logger.Fatal(msg)
 	}
 

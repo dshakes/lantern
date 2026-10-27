@@ -620,6 +620,13 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 				zap.String("agent", body.AgentName),
 				zap.String("reason", bc.Reason),
 			)
+			if bc.Unavailable {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":  "budget check unavailable; retry shortly",
+					"reason": bc.Reason,
+				})
+				return
+			}
 			middleware.RecordBudgetBlock(r.Context(), body.AgentName)
 			writeJSON(w, http.StatusPaymentRequired, map[string]any{
 				"error":  "agent budget limit reached: " + bc.Reason,
@@ -649,7 +656,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
-		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+		TriggerKind: runTriggerKind(ctx),
 		SessionId:   body.SessionId,
 	})
 	if err != nil {
@@ -661,7 +668,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
 				AgentName:   body.AgentName,
 				Input:       inputStruct,
-				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+				TriggerKind: runTriggerKind(ctx),
 			})
 		}
 		if err != nil {
@@ -1947,19 +1954,24 @@ func postBridgeSendSelf(base, token, tenantID, message string) error {
 var errWorkflowBudgetExceeded = errors.New("budget limit exceeded")
 
 // meteredLLMCall wraps one workflow LLM call with the same budget discipline as
-// the single-call executor: CheckBudget before (hard-fail blocks, no spend),
-// RecordUsageSpend after with the call's real tokens/cost (runs_count untouched). Usage is recorded even
-// when the call errors after spending. Covers ai-steps and the self-consistency
-// confidence votes, which share Deps.CallLLM.
-func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName string,
+// the single-call executor: CheckRunBudget before (hard-fail blocks, no spend;
+// includes the per-run cap against what this run has spent so far), then
+// RecordUsageSpend + AccrueRunSpend after with the call's real tokens/cost
+// (runs_count untouched). Usage is recorded even when the call errors after
+// spending. Covers ai-steps and the self-consistency confidence votes, which
+// share Deps.CallLLM.
+func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName, runID string,
 	call func() (text string, tokensIn, tokensOut int64, costUsd float64, err error)) (string, error) {
-	if bc := CheckBudget(ctx, pool, tenantID, agentName, 0); !bc.Allowed && bc.HardFail {
+	if bc := CheckRunBudget(ctx, pool, tenantID, agentName, runID); !bc.Allowed && bc.HardFail {
 		return "", fmt.Errorf("%w: %s", errWorkflowBudgetExceeded, bc.Reason)
 	}
 	text, tin, tout, cost, err := call()
 	if tin > 0 || tout > 0 || cost > 0 {
 		if recErr := RecordUsageSpend(ctx, pool, tenantID, agentName, tin, tout, cost); recErr != nil {
 			logger.Warn("workflow llm: RecordUsage failed", zap.String("agent", agentName), zap.Error(recErr))
+		}
+		if accErr := AccrueRunSpend(ctx, pool, tenantID, runID, tin, tout, cost); accErr != nil {
+			logger.Warn("workflow llm: run spend accrual failed", zap.String("run_id", runID), zap.Error(accErr))
 		}
 	}
 	return text, err
@@ -2001,7 +2013,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			if err != nil {
 				return "", err
 			}
-			text, llmErr := meteredLLMCall(ctx, h.srv.Pool, h.logger(), tenantID, agentName,
+			text, llmErr := meteredLLMCall(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID,
 				func() (string, int64, int64, float64, error) {
 					return h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
 				})
@@ -2022,20 +2034,18 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			// In-process dispatch matching the HTTP path in
 			// /v1/connectors/{id}/execute. We load credentials for the
 			// tenant + connector and call the same execute<Connector>
-			// helpers used elsewhere.
-			return dispatchConnectorInProc(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+			// helpers used elsewhere. Per-tool limits key on connector.action.
+			key := connectorID + "." + action
+			if err := gateWorkflowTool(ctx, h.srv.Pool, h.logger(), tenantID, agentName, key); err != nil {
+				return nil, err
+			}
+			out, err := dispatchConnectorInProc(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+			recordToolUse(ctx, h.srv.Pool, h.logger(), tenantID, agentName, key)
+			return out, err
 		},
-		CallTool: func(_ context.Context, tool string, params map[string]any) (any, error) {
-			// Built-in tools are still under-built (web.search etc. live
-			// in the runtime-manager). Return a structured "skipped"
-			// payload so the workflow proceeds — failing here would
-			// strand workflows that reference tools we haven't shipped.
-			return map[string]any{
-				"skipped": true,
-				"tool":    tool,
-				"params":  params,
-				"reason":  "tool runtime not wired into control-plane yet",
-			}, nil
+		CallTool: func(ctx context.Context, tool string, params map[string]any) (any, error) {
+			exec, _ := h.microVMDispatcher.(toolExecer)
+			return callWorkflowTool(ctx, h.srv.Pool, h.logger(), exec, runID, tenantID, agentName, tool, params)
 		},
 		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
 			payload, _ := json.Marshal(ev.Payload)

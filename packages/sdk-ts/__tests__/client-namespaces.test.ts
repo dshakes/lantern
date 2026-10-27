@@ -219,6 +219,39 @@ describe("LanternClient namespaces (wire contract)", () => {
     expect(lastCall().url).toBe("http://localhost:9/v1/budgets");
   });
 
+  // -- triggers ---------------------------------------------------------
+
+  it("triggers.create POSTs provider/secret/inputTemplate to /v1/agents/{name}/triggers", async () => {
+    await client.triggers.create("triage", { provider: "github", inputTemplate: { pr: "{{payload.number}}" } });
+    const { url, init } = lastCall();
+    expect(url).toBe("http://localhost:9/v1/agents/triage/triggers");
+    expect(init.method).toBe("POST");
+    expect(bodyOf(init)).toEqual({ provider: "github", inputTemplate: { pr: "{{payload.number}}" } });
+  });
+
+  it("triggers.list fetches the bare array at /v1/agents/{name}/triggers", async () => {
+    mockFetch([{ id: "t1", agentName: "triage", provider: "github", enabled: true, hookPath: "/v1/hooks/t1", createdAt: "now" }]);
+    const result = await client.triggers.list("triage");
+    expect(result).toHaveLength(1);
+    expect(lastCall().url).toBe("http://localhost:9/v1/agents/triage/triggers");
+  });
+
+  it("triggers.update PATCHes /v1/triggers/{id} and passes null to clear the template", async () => {
+    await client.triggers.update("t1", { enabled: false, inputTemplate: null });
+    const { url, init } = lastCall();
+    expect(url).toBe("http://localhost:9/v1/triggers/t1");
+    expect(init.method).toBe("PATCH");
+    expect(bodyOf(init)).toEqual({ enabled: false, inputTemplate: null });
+  });
+
+  it("triggers.get / delete hit /v1/triggers/{id}", async () => {
+    await client.triggers.get("t1");
+    expect(lastCall().url).toBe("http://localhost:9/v1/triggers/t1");
+    mockFetch(undefined, 204);
+    await client.triggers.delete("t1");
+    expect(lastCall().init.method).toBe("DELETE");
+  });
+
   // -- evalSuites / evalRuns / evalBaselines -----------------------------
 
   it("evalSuites.upsert posts agentName/name/cases to /v1/eval-suites", async () => {

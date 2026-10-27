@@ -58,6 +58,7 @@ import {
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { AiAssistButton } from "@/components/ai-assist";
+import { LinkButton } from "@/components/button";
 import { useAgent, useAgentRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { StatusBadge } from "@/components/status-badge";
@@ -2043,6 +2044,15 @@ export default function AgentDetailPage() {
         {/* SETTINGS TAB */}
         {activeTab === "settings" && (
           <div className="mx-auto max-w-2xl space-y-6">
+            {/* Webhook triggers (ADR 0028) */}
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-200">Webhook triggers</h3>
+                <p className="text-[11px] text-zinc-500">Run this agent when GitHub, Sentry, PagerDuty or any signed webhook fires.</p>
+              </div>
+              <LinkButton href={`/agents/${encodeURIComponent(name)}/triggers`} size="sm">Manage</LinkButton>
+            </div>
+
             {/* Default Model */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <h3 className="text-sm font-semibold text-zinc-200">Default Model</h3>

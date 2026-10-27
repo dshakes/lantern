@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -212,17 +214,124 @@ func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provi
 	return false
 }
 
+// warnedCapabilities tracks unknown capability strings that have already
+// produced a WARN log so we don't flood the log on every call. The capability
+// string is never secret (it's a model-tier selector from the SDK or workflow
+// editor) so it is safe to store in a package-level map. It is caller-supplied,
+// so the set is capped: past maxWarnedCapabilities distinct names we stop
+// remembering (and stop warning) rather than grow without bound.
+var (
+	warnedCapabilities     sync.Map
+	warnedCapabilitiesSize atomic.Int64
+)
+
+const maxWarnedCapabilities = 256
+
+// warnUnknownCapabilityOnce reports whether this is the first sighting of
+// capability that should be logged.
+func warnUnknownCapabilityOnce(capability string) bool {
+	if _, seen := warnedCapabilities.Load(capability); seen {
+		return false
+	}
+	if warnedCapabilitiesSize.Load() >= maxWarnedCapabilities {
+		return false
+	}
+	if _, loaded := warnedCapabilities.LoadOrStore(capability, struct{}{}); loaded {
+		return false
+	}
+	warnedCapabilitiesSize.Add(1)
+	return true
+}
+
+// isKnownCapabilityOrVendorPrefix returns true when s is an explicitly handled
+// capability name or a vendor-prefixed model id (gpt-*, claude-*, o1-*, o3-*).
+// Used by resolveModelForTenant to distinguish "known but not tenant-aware" from
+// "unknown: warn + fallback".
+func isKnownCapabilityOrVendorPrefix(s string) bool {
+	switch s {
+	// All Capability enum values from the proto / TS SDK / Python SDK:
+	case "reasoning-frontier", "reasoning-large", "reasoning-small",
+		"chat-large", "chat-small",
+		"vision-large", "vision-small",
+		"code-large":
+		return true
+	}
+	// Vendor-prefixed model literals pass through unchanged.
+	return strings.HasPrefix(s, "gpt") ||
+		strings.HasPrefix(s, "o1") ||
+		strings.HasPrefix(s, "o3") ||
+		strings.HasPrefix(s, "claude")
+}
+
 // resolveModelForTenant is the tenant-aware version of resolveModel. It maps
-// "auto" against the tenant's actually-configured providers so the router
-// picks from what the user set up in Settings, not just the process env.
+// all SDK-advertised Capability and OptimizeTarget values against the tenant's
+// actually-configured providers so the router picks from what the user set up
+// in Settings, not just the process env.
+//
+// SDK inventory (controls what must be handled here):
+//   - TS sdk-ts/src/types.ts Capability: reasoning-frontier, reasoning-large,
+//     reasoning-small, chat-large, chat-small, chat-edge, vision-large,
+//     vision-small, code-large, code-small, embed-large, embed-small, rerank,
+//     transcribe, tts, auto.
+//   - Python sdk-python/lantern/types.py Capability: identical set.
+//   - Go sdk-go/client.go: untyped string field (no enum); accepts all of the above.
+//   - OptimizeTarget (TS + Python): cheap, fast, best, balanced.
 func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, capability string) (string, string) {
-	if capability == "auto" || capability == "" {
+	switch capability {
+	// --- OptimizeTarget + "auto" / "balanced" (all tenant-aware) ---
+	case "auto", "":
+		return resolveAutoModel(
+			h.providerAvailable(ctx, tenantID, "anthropic"),
+			h.providerAvailable(ctx, tenantID, "openai"),
+		)
+	case "balanced":
+		// Same as "auto" for the tenant-aware path.
+		return resolveAutoModel(
+			h.providerAvailable(ctx, tenantID, "anthropic"),
+			h.providerAvailable(ctx, tenantID, "openai"),
+		)
+	case "fast", "cheap",
+		// "chat-edge" and "code-small" are the cheapest Capability tiers;
+		// both map to the same cheap-tier logic as the OptimizeTarget values.
+		"chat-edge", "code-small":
+		return resolveCheapModel(
+			h.providerAvailable(ctx, tenantID, "anthropic"),
+			h.providerAvailable(ctx, tenantID, "openai"),
+		)
+	case "best":
+		// "best" → highest-quality model available to this tenant.
+		if h.providerAvailable(ctx, tenantID, "anthropic") {
+			return "anthropic", opusModel()
+		}
+		return "openai", "gpt-4o"
+
+	// --- Non-completion Capability values ---
+	// These are valid SDK capabilities for embedding / ranking / speech but
+	// cannot be served by the text-completion endpoint. Route to the tenant's
+	// balanced default rather than hardcoding an arbitrary model.
+	case "embed-large", "embed-small", "rerank", "transcribe", "tts":
 		return resolveAutoModel(
 			h.providerAvailable(ctx, tenantID, "anthropic"),
 			h.providerAvailable(ctx, tenantID, "openai"),
 		)
 	}
-	return resolveModel(capability)
+
+	// For vendor-prefixed model literals and fixed-tier Capability values the
+	// mapping is provider-agnostic; delegate to the env-based resolver.
+	if isKnownCapabilityOrVendorPrefix(capability) {
+		return resolveModel(capability)
+	}
+
+	// Unknown, non-vendor capability name: warn once (no secrets) and route to
+	// the tenant's balanced default — never silently buy gpt-4o (invariant #6).
+	if warnUnknownCapabilityOnce(capability) {
+		h.logger().Warn("unknown model capability; routing to balanced default",
+			zap.String("capability", capability))
+	}
+	return resolveAutoModel(
+		h.providerAvailable(ctx, tenantID, "anthropic"),
+		h.providerAvailable(ctx, tenantID, "openai"),
+	)
 }
 
 // resolveModelForTenantAuto is the complexity-aware variant used by the tool
@@ -574,39 +683,102 @@ func currentModelCatalog() []modelOption {
 // it pointing at the dynamic catalog so they pick up env overrides.
 var modelCatalog = currentModelCatalog()
 
+// resolveCheapModel returns the cheapest available model tier: Haiku when the
+// tenant has Anthropic, gpt-4o-mini when they have OpenAI, gpt-4o-mini as the
+// fallback when neither flag is set (caller will get a "no key" error anyway).
+// Used by the "fast" and "cheap" OptimizeTarget capabilities so they never
+// silently route to an expensive model (invariant #6).
+func resolveCheapModel(hasAnthropic, hasOpenAI bool) (string, string) {
+	if hasAnthropic {
+		return "anthropic", haikuModel()
+	}
+	return "openai", "gpt-4o-mini"
+}
+
 // resolveModel maps a capability name to a concrete provider + model.
 // "auto" requires tenant context so we can consult llm_provider_configs — use
 // (*LlmProxyHandler).resolveModelForTenant for that case. This plain form
-// handles only named capabilities and delegates "auto" to an env-only default.
+// handles only named capabilities and delegates "auto"/"unknown" to the
+// env-based resolveAutoModel (balanced default).
+//
+// This function must enumerate every Capability and OptimizeTarget value the
+// SDKs advertise so none silently falls to an unexpected (possibly expensive)
+// default. Handled set:
+//
+//	Capability:      reasoning-frontier, reasoning-large, reasoning-small,
+//	                 chat-large, chat-small, chat-edge,
+//	                 vision-large, vision-small,
+//	                 code-large, code-small,
+//	                 embed-large, embed-small, rerank, transcribe, tts, auto.
+//	OptimizeTarget:  cheap, fast, best, balanced.
 func resolveModel(capability string) (provider, model string) {
+	hasAnthropic := os.Getenv("ANTHROPIC_API_KEY") != ""
+	hasOpenAI := os.Getenv("OPENAI_API_KEY") != ""
+
 	switch capability {
-	case "auto", "":
-		return resolveAutoModel(
-			os.Getenv("ANTHROPIC_API_KEY") != "",
-			os.Getenv("OPENAI_API_KEY") != "",
-		)
-	case "chat-large":
+	// --- OptimizeTarget values + auto/balanced ---
+	case "auto", "", "balanced":
+		return resolveAutoModel(hasAnthropic, hasOpenAI)
+	case "fast", "cheap":
+		// Must resolve to the cheapest available tier, never gpt-4o (invariant #6).
+		return resolveCheapModel(hasAnthropic, hasOpenAI)
+	case "best":
+		if hasAnthropic {
+			return "anthropic", opusModel()
+		}
 		return "openai", "gpt-4o"
+
+	// --- Capability: reasoning tier ---
 	case "reasoning-frontier":
 		return "anthropic", opusModel()
 	case "reasoning-large":
 		return "anthropic", sonnetModel()
 	case "reasoning-small":
 		return "anthropic", haikuModel()
+
+	// --- Capability: chat tier ---
+	case "chat-large":
+		return "openai", "gpt-4o"
 	case "chat-small":
 		return "openai", "gpt-4o-mini"
-	case "code-large":
-		return "anthropic", sonnetModel()
+	case "chat-edge":
+		// Cheapest chat tier — same logic as "fast"/"cheap".
+		return resolveCheapModel(hasAnthropic, hasOpenAI)
+
+	// --- Capability: vision tier ---
 	case "vision-large":
 		return "openai", "gpt-4o"
+	case "vision-small":
+		// gpt-4o-mini supports vision at lower cost than gpt-4o.
+		return "openai", "gpt-4o-mini"
+
+	// --- Capability: code tier ---
+	case "code-large":
+		return "anthropic", sonnetModel()
+	case "code-small":
+		// Cheapest code tier — same logic as "fast"/"cheap".
+		return resolveCheapModel(hasAnthropic, hasOpenAI)
+
+	// --- Non-completion capabilities ---
+	// embed-*, rerank, transcribe, tts are valid SDK capabilities but cannot
+	// be served by this text-completion endpoint. Route to the balanced default
+	// rather than hardcoding an arbitrary model (the caller will get a useful
+	// response instead of a misleading gpt-4o attempt).
+	case "embed-large", "embed-small", "rerank", "transcribe", "tts":
+		return resolveAutoModel(hasAnthropic, hasOpenAI)
+
 	default:
+		// Vendor-prefixed model literals pass through unchanged.
 		if strings.HasPrefix(capability, "gpt") || strings.HasPrefix(capability, "o1") || strings.HasPrefix(capability, "o3") {
 			return "openai", capability
 		}
 		if strings.HasPrefix(capability, "claude") {
 			return "anthropic", capability
 		}
-		return "openai", "gpt-4o"
+		// Unknown, non-vendor capability: return the env-based balanced default
+		// rather than hardcoding gpt-4o. resolveModelForTenant handles the
+		// WARN-once log for callers that have a logger.
+		return resolveAutoModel(hasAnthropic, hasOpenAI)
 	}
 }
 

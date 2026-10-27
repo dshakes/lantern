@@ -365,6 +365,28 @@ a zone is configured; before this it fired at 09:00 UTC). The same
 `max_cost_usd_per_day` rolls at the deployment's local midnight, not UTC. Env:
 `LANTERN_DEFAULT_TIMEZONE` (deployment-wide IANA; unset → UTC, a no-op).
 
+### Webhook triggers (ADR 0028)
+
+| Method   | Path                           | Description                                                                 |
+| -------- | ------------------------------ | --------------------------------------------------------------------------- |
+| `POST`   | `/v1/agents/{name}/triggers`   | Create `{provider, secret?, inputTemplate?}`; generated secret returned once |
+| `GET`    | `/v1/agents/{name}/triggers`   | List (never includes secrets)                                               |
+| `GET`/`PATCH`/`DELETE` | `/v1/triggers/{id}` | Get / `{enabled?, secret?, inputTemplate? (null clears)}` / delete. Cross-tenant → 404 |
+| `POST`   | `/v1/hooks/{id}`               | **Public.** Signed delivery → run (`trigger_kind=webhook`) via `CreateRun`  |
+
+`internal/handlers/triggers.go`; tables `agent_triggers` + `agent_trigger_deliveries`
+(migration 0024, RLS). Providers: `generic` (`X-Lantern-Signature: t=,v1=` over
+`<t>.<body>`, ±5 min), `github` (`X-Hub-Signature-256`), `sentry`
+(`Sentry-Hook-Signature`), `pagerduty` (`X-PagerDuty-Signature: v1=`). HMAC-SHA256,
+constant-time. Unknown/disabled/agent-gone → 404, bad signature → 401, >1 MiB → 413,
+per-trigger rate limit (after verification) → 429, budget → 402. Dedup on the delivery
+id AND a hash of the signed bytes (GitHub/Sentry/PagerDuty don't sign their delivery
+id): duplicate → `200 {"duplicate":true}`, no second run; a failed run creation frees
+the delivery so the provider's retry works. Secret encrypted via `internal/secrets`.
+Mutators carry `agents:write`. Env: `LANTERN_HOOK_RATE_PER_MIN` (default 60),
+`LANTERN_HOOK_BURST` (default 10). SDKs `triggers.*` / `CreateTrigger…`; CLI
+`lantern hooks`; dashboard `/agents/[name]/triggers`.
+
 ### Completions (LLM proxy)
 
 | Method | Path              | Description                                     |
@@ -401,6 +423,17 @@ Env vars (control-plane):
 **Rollout (staged):** enable on a NON-bridge tenant first → watch traces
 (`gen_ai.*` + router spans) and error rate → only then enable on the bridge
 tenant. The fallback guarantee keeps the bridges safe at every step.
+
+#### Connector test mode (`LANTERN_CONNECTOR_BASEURL_<NAME>`)
+
+Dev/test only. `LANTERN_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,GOOGLE,PAGERDUTY}=http://127.0.0.1:9191`
+re-points that vendor's outbound calls (scheme+host only; path preserved) at the recorded-fixture
+server `services/control-plane/cmd/connector-replay` (`go run ./cmd/connector-replay`; recorded calls at
+`GET /__requests`, Authorization never stored). **Refused in prod**: `LANTERN_ENV=prod/production/staging`
+with any override set is a startup error (`CheckConnectorBaseURLOverrides`), and the transport ignores
+overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` on `post_message`), GitHub
+`comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
+(`list_incidents`, `get_incident`, `create_incident`, `update_incident`; key in `apiKey`).
 
 ### Settings
 

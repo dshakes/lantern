@@ -449,6 +449,23 @@ export interface ConnectorResult {
 // Budgets
 // ---------------------------------------------------------------------------
 
+/** Inbound webhook trigger (ADR 0028). `secret` is returned only by create,
+ *  and only when Lantern generated it. */
+export type TriggerProvider = "generic" | "github" | "sentry" | "pagerduty";
+
+export interface Trigger {
+  id: string;
+  agentName: string;
+  provider: TriggerProvider;
+  enabled: boolean;
+  inputTemplate?: Record<string, unknown>;
+  /** Path of the public endpoint, e.g. `/v1/hooks/<id>`. */
+  hookPath: string;
+  lastDeliveryAt?: string;
+  createdAt: string;
+  secret?: string;
+}
+
 export interface BudgetPolicy {
   agentName: string;
   maxCostUsdPerDay?: number;

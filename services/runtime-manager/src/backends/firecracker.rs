@@ -2142,6 +2142,9 @@ pub const JAILED_SNAPSHOT_DIR: &str = "/snapshot";
 pub const JAILED_SNAPSHOT_VMSTATE: &str = "/snapshot/vmstate";
 /// In-jail path of the staged guest-memory file for `PUT /snapshot/load`.
 pub const JAILED_SNAPSHOT_MEM: &str = "/snapshot/mem";
+/// Snapshot artifact holding the VM's writable disk, captured while the VM is
+/// paused for the memory snapshot so the two describe the same instant.
+pub const SNAPSHOT_ROOTFS_ARTIFACT: &str = "rootfs";
 
 /// S3 key prefix the snapshot store uploads under.  Must mirror
 /// `snapshot_store::S3_PREFIX` (kept in sync by the layout doc in
@@ -2314,7 +2317,8 @@ pub fn per_vm_rootfs_path(vm_id: &str) -> String {
     format!("/run/lantern/rootfs/{vm_id}.ext4")
 }
 
-/// Copy the global (shared) rootfs to a per-VM writable path so that each
+/// Copy the restore's disk (the snapshot's captured rootfs, or the global
+/// rootfs for a legacy snapshot) to a per-VM writable path so that each
 /// unjailed restore gets its own ext4 image.
 ///
 /// Without this, every restored VM opens the SAME `rootfs.ext4` file for
@@ -2328,15 +2332,15 @@ pub fn per_vm_rootfs_path(vm_id: &str) -> String {
 ///
 /// LINUX-RUNTIME-ONLY (live path): only reached on bare Firecracker, behind
 /// the `restore_needs_stopped_source` gate.
-async fn stage_unjailed_rootfs(global_rootfs: &str, vm_id: &str) -> Result<String> {
+async fn stage_unjailed_rootfs(source_disk: &str, vm_id: &str) -> Result<String> {
     const ROOTFS_DIR: &str = "/run/lantern/rootfs";
     tokio::fs::create_dir_all(ROOTFS_DIR)
         .await
         .with_context(|| format!("create unjailed rootfs dir {ROOTFS_DIR}"))?;
     let per_vm = per_vm_rootfs_path(vm_id);
-    tokio::fs::copy(global_rootfs, &per_vm)
+    tokio::fs::copy(source_disk, &per_vm)
         .await
-        .with_context(|| format!("copy rootfs {global_rootfs} -> {per_vm}"))?;
+        .with_context(|| format!("copy rootfs {source_disk} -> {per_vm}"))?;
     tracing::debug!(
         vm_id,
         path = %per_vm,
@@ -2643,28 +2647,52 @@ fn snapshot_s3_from_env() -> Option<std::sync::Arc<dyn object_store::ObjectStore
 ///
 /// Both artifacts must live in the same snapshot directory; a half-uploaded
 /// snapshot (one artifact missing) is treated as not found rather than
-/// restored with a dangling memory backend.
+/// restored with a dangling memory backend. The third element is the captured
+/// disk (`rootfs`) key — `None` for a legacy, pre-disk-capture snapshot.
 #[must_use]
 pub fn find_snapshot_keys_in_listing(
     keys: &[String],
     snapshot_id: &str,
-) -> Option<(String, String)> {
+) -> Option<(String, String, Option<String>)> {
     let vmstate_suffix = format!("/{snapshot_id}/snapshot");
     let vmstate_key = keys.iter().find(|k| k.ends_with(&vmstate_suffix))?;
-    let mem_key = format!(
-        "{}/mem",
-        vmstate_key.strip_suffix("/snapshot").unwrap_or(vmstate_key)
-    );
-    if keys.contains(&mem_key) {
-        Some((vmstate_key.clone(), mem_key))
-    } else {
-        None
+    let dir = vmstate_key.strip_suffix("/snapshot").unwrap_or(vmstate_key);
+    let mem_key = format!("{dir}/mem");
+    if !keys.contains(&mem_key) {
+        return None;
+    }
+    let rootfs_key = format!("{dir}/{SNAPSHOT_ROOTFS_ARTIFACT}");
+    let rootfs = keys.contains(&rootfs_key).then_some(rootfs_key);
+    Some((vmstate_key.clone(), mem_key, rootfs))
+}
+
+/// Host paths of one snapshot's artifacts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotFiles {
+    pub vmstate: std::path::PathBuf,
+    pub mem: std::path::PathBuf,
+    /// The VM's writable disk captured with the memory (`rootfs`). `None` for
+    /// a legacy snapshot taken before disks were captured: it restores onto
+    /// the base rootfs, which does NOT match its guest page cache.
+    pub rootfs: Option<std::path::PathBuf>,
+}
+
+impl SnapshotFiles {
+    /// The artifacts in `dir` (store / snapshot layout `<dir>/{snapshot,mem,rootfs}`).
+    async fn in_dir(dir: &Path) -> Self {
+        let rootfs = dir.join(SNAPSHOT_ROOTFS_ARTIFACT);
+        let has_rootfs = tokio::fs::try_exists(&rootfs).await.unwrap_or(false);
+        Self {
+            vmstate: dir.join("snapshot"),
+            mem: dir.join("mem"),
+            rootfs: has_rootfs.then_some(rootfs),
+        }
     }
 }
 
 /// Scan the local snapshot-store tree
 /// (`<root>/<agent_version_id>/<vm_id>/<snapshot_id>/`) for `snapshot_id` and
-/// return the `(vmstate, mem)` file paths when found.
+/// return its artifact paths when found.
 ///
 /// The store's `get` is keyed by the full `(agent_version, vm, snapshot)`
 /// triple, but a `RestoreRequest` only carries `store://<snapshot_id>`, so
@@ -2677,7 +2705,7 @@ pub fn find_snapshot_keys_in_listing(
 async fn locate_snapshot_artifacts_local(
     root: &Path,
     snapshot_id: &str,
-) -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>> {
+) -> Result<Option<SnapshotFiles>> {
     let mut version_dirs = match tokio::fs::read_dir(root).await {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -2714,7 +2742,7 @@ async fn locate_snapshot_artifacts_local(
                      refusing to restore from a corrupt store entry"
                 );
             }
-            return Ok(Some((vmstate, mem)));
+            return Ok(Some(SnapshotFiles::in_dir(&candidate).await));
         }
     }
     Ok(None)
@@ -2761,7 +2789,7 @@ async fn fetch_snapshot_from_s3(
     s3: &dyn object_store::ObjectStore,
     snapshot_id: &str,
     cache_root: &Path,
-) -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>> {
+) -> Result<Option<SnapshotFiles>> {
     use futures::TryStreamExt;
 
     let prefix = object_store::path::Path::from(STORE_S3_PREFIX);
@@ -2772,7 +2800,9 @@ async fn fetch_snapshot_from_s3(
         .await
         .context("list snapshot objects in S3")?;
 
-    let Some((vmstate_key, mem_key)) = find_snapshot_keys_in_listing(&keys, snapshot_id) else {
+    let Some((vmstate_key, mem_key, rootfs_key)) =
+        find_snapshot_keys_in_listing(&keys, snapshot_id)
+    else {
         return Ok(None);
     };
 
@@ -2792,18 +2822,30 @@ async fn fetch_snapshot_from_s3(
     let mem = dir.join("mem");
     download_s3_object(s3, &vmstate_key, &vmstate).await?;
     download_s3_object(s3, &mem_key, &mem).await?;
+    let rootfs = match rootfs_key {
+        Some(key) => {
+            let path = dir.join(SNAPSHOT_ROOTFS_ARTIFACT);
+            download_s3_object(s3, &key, &path).await?;
+            Some(path)
+        }
+        None => None,
+    };
 
     tracing::info!(
         snapshot_id = %snapshot_id,
         cache_dir = ?dir,
         "restore: fetched snapshot artifacts from S3 tier into local cache"
     );
-    Ok(Some((vmstate, mem)))
+    Ok(Some(SnapshotFiles {
+        vmstate,
+        mem,
+        rootfs,
+    }))
 }
 
-/// Resolve a `store://<snapshot_id>` to the host paths of its `(vmstate,
-/// mem)` artifacts: local `SNAPSHOT_DIR` tier first, then the S3 tier when
-/// configured.  Mirrors `SnapshotStore::get`'s retrieval order.
+/// Resolve a `store://<snapshot_id>` to the host paths of its artifacts:
+/// local `SNAPSHOT_DIR` tier first, then the S3 tier when configured.
+/// Mirrors `SnapshotStore::get`'s retrieval order.
 ///
 /// A snapshot found in neither tier is a clear NOT_FOUND-style error — the
 /// restore fails fast instead of booting a VM with dangling backing files.
@@ -2811,7 +2853,7 @@ async fn resolve_store_snapshot(
     root: &Path,
     s3: Option<&dyn object_store::ObjectStore>,
     snapshot_id: &str,
-) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+) -> Result<SnapshotFiles> {
     if let Some(found) = locate_snapshot_artifacts_local(root, snapshot_id).await? {
         return Ok(found);
     }
@@ -3177,6 +3219,21 @@ impl FirecrackerBackend {
         }
     }
 
+    /// Host path of the rootfs a running VM is writing to: the jail's staged
+    /// copy, an unjailed restore's per-VM copy, or (unjailed cold boot) the
+    /// configured rootfs itself.
+    async fn live_rootfs_path(&self, vm_id: &str) -> String {
+        if self.jailer.is_some() {
+            return self.host_vm_path(vm_id, &jail_artifact_path(&self.rootfs_path));
+        }
+        let per_vm = per_vm_rootfs_path(vm_id);
+        if tokio::fs::try_exists(&per_vm).await.unwrap_or(false) {
+            per_vm
+        } else {
+            self.rootfs_path.clone()
+        }
+    }
+
     /// Return the "not available" error used in all fail-closed paths.
     fn not_available_error() -> anyhow::Error {
         anyhow::anyhow!(
@@ -3369,18 +3426,18 @@ impl FirecrackerBackend {
     ///   2. Build this VM's config under the RESTORING request's vm_id: fresh
     ///      /30 + TAP, fresh cert (CN/SAN = vm_id) and cert image whose
     ///      `spawn.json` carries the restoring request's contract.
-    ///   3. TAP up; jailed: stage vmstate/mem + cert image + rootfs into the new
-    ///      chroot; spawn firecracker.
+    ///   3. TAP up; jailed: stage vmstate/mem + cert image + the snapshot's
+    ///      captured disk into the new chroot; spawn firecracker.
     ///   4. [`plan_identity_restore`]: load (paused, NIC → own TAP), swap the
     ///      cert drive, resume.
     ///
     /// LINUX-RUNTIME-ONLY behind the availability gate; the plan/staging/config
     /// construction is pure and unit-tested.
     ///
-    /// Known limitations (need a KVM host to close — see the ADR addendum):
-    /// the snapshot's rootfs / vsock paths must resolve at load (bare: the
-    /// source VM's vsock UDS; jailed: the base rootfs is staged, not the source
-    /// VM's disk state — ADR 0007 Tier 2).
+    /// The restored VM resumes on its own copy of the disk captured with the
+    /// snapshot (legacy snapshots without one fall back to the base rootfs,
+    /// with a WARN). Known limitation: bare restores still need the snapshot's
+    /// vsock UDS path to resolve at load.
     async fn restore_with_identity(
         &self,
         snapshot_uri: &str,
@@ -3399,37 +3456,50 @@ impl FirecrackerBackend {
         // every jail that hard-links it can mmap it without ownership, and we
         // track the live reference so we know when the shared inode has no more
         // jail hard-link holders.
-        let (host_vmstate, host_mem, snapshot_id_for_refcount) =
-            match parse_snapshot_source(snapshot_uri) {
-                SnapshotSource::HostPath {
-                    vmstate_path,
-                    mem_path,
-                } => (vmstate_path, mem_path, None),
-                SnapshotSource::Store { snapshot_id } => {
-                    let s3 = snapshot_s3_from_env();
-                    let (v, m) =
-                        resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
-                            .await?;
-                    // Mark the canonical mem file immutable before hard-linking
-                    // it into jail dirs.  Idempotent — already-0444 is fine.
-                    if let Err(e) = make_mem_readonly(&m) {
-                        tracing::warn!(
-                            snapshot_id = %snapshot_id,
-                            mem = ?m,
-                            error = %e,
-                            "could not mark mem file read-only; falling back to copy staging"
-                        );
-                        (v.display().to_string(), m.display().to_string(), None)
-                    } else {
-                        let snap_id = snapshot_id.clone();
-                        (
-                            v.display().to_string(),
-                            m.display().to_string(),
-                            Some(snap_id),
-                        )
-                    }
+        let (files, snapshot_id_for_refcount) = match parse_snapshot_source(snapshot_uri) {
+            SnapshotSource::HostPath { vmstate_path, .. } => {
+                let dir = Path::new(&vmstate_path).parent().unwrap_or(Path::new(""));
+                let mut files = SnapshotFiles::in_dir(dir).await;
+                files.vmstate = vmstate_path.into();
+                (files, None)
+            }
+            SnapshotSource::Store { snapshot_id } => {
+                let s3 = snapshot_s3_from_env();
+                let files =
+                    resolve_store_snapshot(&snapshot_store_root(), s3.as_deref(), &snapshot_id)
+                        .await?;
+                // Mark the canonical mem file immutable before hard-linking
+                // it into jail dirs.  Idempotent — already-0444 is fine.
+                if let Err(e) = make_mem_readonly(&files.mem) {
+                    tracing::warn!(
+                        snapshot_id = %snapshot_id,
+                        mem = ?files.mem,
+                        error = %e,
+                        "could not mark mem file read-only; falling back to copy staging"
+                    );
+                    (files, None)
+                } else {
+                    (files, Some(snapshot_id))
                 }
-            };
+            }
+        };
+        let host_vmstate = files.vmstate.display().to_string();
+        let host_mem = files.mem.display().to_string();
+        // The disk the restored guest resumes on. It must be the one captured
+        // with the memory: the guest's page cache and ext4 journal describe
+        // THAT disk, and resuming them onto the base image silently loses or
+        // corrupts every write made before the snapshot.
+        let disk = match &files.rootfs {
+            Some(rootfs) => rootfs.display().to_string(),
+            None => {
+                tracing::warn!(
+                    snapshot_uri,
+                    "snapshot has no captured disk (legacy, pre-disk-capture); restoring onto \
+                     the BASE rootfs — /workspace writes made before the snapshot are not on it"
+                );
+                self.rootfs_path.clone()
+            }
+        };
 
         // Step 2: this VM's own identity + contract.
         let vm_id = resolve_vm_id(&req.vm_id)?;
@@ -3475,7 +3545,7 @@ impl FirecrackerBackend {
             .await?;
         }
         if let Err(e) = self
-            .restore_after_tap(&cfg, &binary, &host_vmstate, &host_mem, shared_mem)
+            .restore_after_tap(&cfg, &binary, &host_vmstate, &host_mem, &disk, shared_mem)
             .await
         {
             if !broker && let Err(te) = teardown_tap_device(&cfg.tap_dev).await {
@@ -3522,12 +3592,17 @@ impl FirecrackerBackend {
     /// CoW, O(1) disk I/O, shared pages via the host page cache).  The caller
     /// guarantees the mem file is already 0444 (`make_mem_readonly`) before
     /// passing `true`.  When `false` (bare / fc:// path) the mem file is copied.
+    ///
+    /// `disk`: host path of the rootfs to resume on — the snapshot's captured
+    /// disk (or the base rootfs for a legacy snapshot). Every restore/fork gets
+    /// its OWN writable copy of it; the snapshot's copy is never written.
     async fn restore_after_tap(
         &self,
         cfg: &VmConfig,
         binary: &str,
         host_vmstate: &str,
         host_mem: &str,
+        disk: &str,
         shared_mem: bool,
     ) -> Result<()> {
         // `socket_path` — where the manager connects to send FC API calls.
@@ -3552,13 +3627,17 @@ impl FirecrackerBackend {
                 };
                 // The snapshot names its drives by in-jail basename; staging
                 // THIS VM's cert image there means the load already resolves
-                // the new identity (the PATCH below makes it explicit).
-                for host in [&cfg.certs_image_path, &cfg.rootfs_path] {
-                    plan.copies.push((
-                        host.clone(),
-                        format!("{chroot_root}{}", jail_artifact_path(host)),
-                    ));
-                }
+                // the new identity (the PATCH below makes it explicit). The
+                // disk lands under the base rootfs's basename, which is what
+                // the snapshot's device state points at.
+                plan.copies.push((
+                    cfg.certs_image_path.clone(),
+                    format!("{chroot_root}{}", jail_artifact_path(&cfg.certs_image_path)),
+                ));
+                plan.copies.push((
+                    disk.to_string(),
+                    format!("{chroot_root}{}", jail_artifact_path(&cfg.rootfs_path)),
+                ));
                 stage_jailed_snapshot(&plan, jailer).await?;
                 // Jailed path staged its own rootfs copy into the chroot; no
                 // extra PATCH /drives/rootfs needed.
@@ -3580,7 +3659,7 @@ impl FirecrackerBackend {
                 // block-device writes from this VM are not visible in any
                 // other VM that restores from the same snapshot.  See
                 // `stage_unjailed_rootfs` and `per_vm_rootfs_path`.
-                let per_vm = stage_unjailed_rootfs(&cfg.rootfs_path, &cfg.vm_id).await?;
+                let per_vm = stage_unjailed_rootfs(disk, &cfg.vm_id).await?;
                 (
                     cfg.socket_path.clone(),
                     cfg.certs_image_path.clone(),
@@ -3887,7 +3966,11 @@ impl RuntimeBackend for FirecrackerBackend {
     /// Sequence:
     ///   1. Pause the VM (PATCH /vm Paused)
     ///   2. PUT /snapshot/create
-    ///   3. Resume the VM (PATCH /vm Resumed)
+    ///   3. Copy the VM's writable rootfs next to vmstate/mem — still paused,
+    ///      so disk and memory describe the same instant. Firecracker does not
+    ///      snapshot disks; without this a restore resumes a page cache that
+    ///      describes blocks the disk does not have.
+    ///   4. Resume the VM (PATCH /vm Resumed) — attempted even if 3 failed.
     ///
     /// LINUX-ONLY: requires a running VM.  Integration-tested on a Linux host.
     async fn snapshot(&self, req: &SnapshotRequest) -> Result<SnapshotInfo> {
@@ -3942,6 +4025,19 @@ impl RuntimeBackend for FirecrackerBackend {
         .await
         .context("failed to create snapshot")?;
 
+        // Capture the disk while paused (step 3). Disk time = pause time, so
+        // it is logged; `tokio::fs::copy` is copy_file_range, which reflinks
+        // on XFS/btrfs (near-instant) and byte-copies elsewhere.
+        let disk_start = Instant::now();
+        let live_disk = self.live_rootfs_path(&req.handle_id).await;
+        let host_disk_copy = self.host_vm_path(
+            &req.handle_id,
+            &format!("{snapshot_dir}/{SNAPSHOT_ROOTFS_ARTIFACT}"),
+        );
+        let disk = tokio::fs::copy(&live_disk, &host_disk_copy)
+            .await
+            .with_context(|| format!("capture VM disk {live_disk} -> {host_disk_copy}"));
+
         // Resume after snapshot.
         // LINUX-ONLY
         unix_socket_patch(
@@ -3953,6 +4049,13 @@ impl RuntimeBackend for FirecrackerBackend {
         )
         .await
         .context("failed to resume VM after snapshot")?;
+        let disk_bytes = disk?;
+        tracing::info!(
+            vm_id = %req.handle_id,
+            disk_bytes,
+            disk_capture_ms = disk_start.elapsed().as_secs_f64() * 1000.0,
+            "Firecracker: VM disk captured with the snapshot"
+        );
 
         tracing::info!(
             vm_id = %req.handle_id,
@@ -5981,6 +6084,7 @@ mod tests {
             Some((
                 "snapshots/av1/vm1/snap-a/snapshot".to_string(),
                 "snapshots/av1/vm1/snap-a/mem".to_string(),
+                None,
             ))
         );
         // Half-uploaded snapshot (mem absent) is treated as not found.
@@ -6005,11 +6109,57 @@ mod tests {
             .unwrap();
 
         let none: Option<&dyn object_store::ObjectStore> = None;
-        let (vmstate, mem) = resolve_store_snapshot(root.path(), none, "snap-123")
+        let files = resolve_store_snapshot(root.path(), none, "snap-123")
             .await
             .expect("snapshot must be found locally");
-        assert_eq!(vmstate, dir.join("snapshot"));
-        assert_eq!(mem, dir.join("mem"));
+        assert_eq!(files.vmstate, dir.join("snapshot"));
+        assert_eq!(files.mem, dir.join("mem"));
+        assert_eq!(files.rootfs, None, "legacy snapshot: no captured disk");
+
+        // A disk-capturing snapshot resolves its rootfs too.
+        tokio::fs::write(dir.join(SNAPSHOT_ROOTFS_ARTIFACT), b"disk")
+            .await
+            .unwrap();
+        let files = resolve_store_snapshot(root.path(), none, "snap-123")
+            .await
+            .unwrap();
+        assert_eq!(files.rootfs, Some(dir.join(SNAPSHOT_ROOTFS_ARTIFACT)));
+    }
+
+    #[test]
+    fn find_snapshot_keys_includes_captured_disk_from_same_dir() {
+        let keys = vec![
+            "snapshots/av/vm/snap-d/snapshot".to_string(),
+            "snapshots/av/vm/snap-d/mem".to_string(),
+            "snapshots/av/vm/snap-d/rootfs".to_string(),
+            // Another snapshot's disk must never be picked up.
+            "snapshots/av/vm/snap-e/rootfs".to_string(),
+            "snapshots/av/vm/snap-e/snapshot".to_string(),
+            "snapshots/av/vm/snap-e/mem".to_string(),
+        ];
+        let (_, _, rootfs) = find_snapshot_keys_in_listing(&keys, "snap-d").unwrap();
+        assert_eq!(rootfs.as_deref(), Some("snapshots/av/vm/snap-d/rootfs"));
+    }
+
+    /// S3 fallback downloads the captured disk alongside vmstate/mem.
+    #[tokio::test]
+    async fn fetch_snapshot_from_s3_downloads_captured_disk() {
+        use object_store::ObjectStore;
+        let s3 = object_store::memory::InMemory::new();
+        for (name, body) in [("snapshot", "v"), ("mem", "m"), ("rootfs", "disk-bytes")] {
+            s3.put(
+                &object_store::path::Path::from(format!("snapshots/av/vm/snap-s3/{name}")),
+                bytes::Bytes::from(body).into(),
+            )
+            .await
+            .unwrap();
+        }
+        let root = tempfile::TempDir::new().unwrap();
+        let files = resolve_store_snapshot(root.path(), Some(&s3), "snap-s3")
+            .await
+            .unwrap();
+        let rootfs = files.rootfs.expect("captured disk fetched");
+        assert_eq!(tokio::fs::read(rootfs).await.unwrap(), b"disk-bytes");
     }
 
     #[tokio::test]

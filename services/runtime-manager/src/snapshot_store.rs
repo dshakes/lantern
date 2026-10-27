@@ -27,12 +27,15 @@
 //!         meta.json   — SnapshotMeta serialised as JSON
 //!         snapshot    — Firecracker snapshot file
 //!         mem         — Firecracker memory file
+//!         rootfs      — the VM's writable disk, captured while paused with
+//!                       `mem` (absent on legacy snapshots)
 //!
 //! s3://$S3_BUCKET/
 //!   snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/
 //!     meta.json
 //!     snapshot
 //!     mem
+//!     rootfs
 //! ```
 //!
 //! # Retention (ADR 0007 Tier 2)
@@ -49,7 +52,7 @@
 //! # SHA-256
 //!
 //! The checksum is computed over all artifact bytes concatenated in sorted
-//! filename order.  For firecracker snapshots that is always `mem` then
+//! filename order.  For firecracker snapshots that is `mem`, `rootfs`,
 //! `snapshot` (alphabetical).  The `sha2` crate is already in the workspace
 //! lockfile via wasmtime's dependency tree; we add it directly to
 //! `Cargo.toml` so the dependency is explicit.
@@ -93,6 +96,10 @@ pub struct SnapshotMeta {
     /// snapshot loaded without a NIC override would reattach the SOURCE's TAP.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub egress_mode: String,
+    /// Artifact filenames, sorted. Empty on snapshots written before this
+    /// field existed; no `rootfs` entry = a legacy snapshot without its disk.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
 }
 
 /// Bytes to store. The caller supplies a map of `filename → bytes`; the store
@@ -454,6 +461,7 @@ impl SnapshotStore {
             egress_mode: crate::egress_broker::EgressMode::from_env()
                 .contract_value()
                 .to_string(),
+            artifacts: sources.iter().map(|(name, _)| name.clone()).collect(),
         };
 
         // Write the meta sidecar locally.
@@ -1317,11 +1325,70 @@ mod tests {
         assert_eq!(found.tenant_id, "t-s3");
     }
 
-    /// Legacy meta.json without tenant_id deserializes as untenanted.
+    /// Legacy meta.json without tenant_id deserializes as untenanted, and
+    /// without `artifacts` as having no recorded artifacts (no disk).
     #[test]
     fn legacy_meta_without_tenant_is_untenanted() {
         let json = r#"{"id":"x","sha256":"s","size_bytes":1,"created_at":"2026-01-01T00:00:00Z","agent_version_id":"a","vm_id":"v"}"#;
         let meta: SnapshotMeta = serde_json::from_str(json).unwrap();
         assert!(meta.tenant_id.is_empty());
+        assert!(meta.artifacts.is_empty());
+    }
+
+    /// The captured disk is a first-class artifact: stored byte-exact, covered
+    /// by the sha256, listed in `artifacts`, and deleted by retention with the
+    /// rest of the snapshot.
+    #[tokio::test]
+    async fn put_files_stores_disk_artifact_and_retention_removes_it() {
+        let src = tempfile::tempdir().unwrap();
+        let disk: Vec<u8> = (0..(STREAM_BUF_BYTES + 5))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let disk_path = write_tmp(src.path(), "disk", &disk).await;
+        let mem_path = write_tmp(src.path(), "m", b"mem").await;
+        let snap_path = write_tmp(src.path(), "s", b"vmstate").await;
+
+        let root = tempfile::tempdir().unwrap();
+        let store = SnapshotStore::new(root.path());
+        let meta = store
+            .put_files(
+                "av",
+                "t",
+                "vm",
+                &[
+                    ("snapshot", &snap_path),
+                    ("mem", &mem_path),
+                    ("rootfs", &disk_path),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(meta.artifacts, ["mem", "rootfs", "snapshot"]);
+        let expected = {
+            let mut h = Sha256::new();
+            h.update(b"mem");
+            h.update(&disk);
+            h.update(b"vmstate");
+            hex::encode(h.finalize())
+        };
+        assert_eq!(meta.sha256, expected, "disk bytes are in the digest");
+        let dir = store.snapshot_dir("av", "vm", &meta.id);
+        assert_eq!(tokio::fs::read(dir.join("rootfs")).await.unwrap(), disk);
+        let reread = store.get("av", "vm", &meta.id).await.unwrap().unwrap();
+        assert_eq!(reread.artifacts, meta.artifacts);
+
+        // Push it out of the count window: its disk goes with it.
+        for _ in 0..MAX_SNAPSHOTS_PER_VM {
+            let mut later = SnapshotStore::new(root.path());
+            later.clock = Some(Utc::now() + chrono::Duration::seconds(60));
+            later
+                .put_files("av", "t", "vm", &[("mem", &mem_path)])
+                .await
+                .unwrap();
+        }
+        assert!(
+            !dir.join("rootfs").exists(),
+            "retention must delete the disk"
+        );
     }
 }
