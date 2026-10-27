@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -252,6 +253,12 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `agent name "*" is reserved`})
 		return
 	}
+	if body.Model != nil {
+		if err := validAgentModel(*body.Model); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	agent, err := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
 		Name:        body.Name,
@@ -411,6 +418,32 @@ func validManifestIsolation(iso string) error {
 	}
 }
 
+// agentModelPattern bounds a vendor model id to a short slug.
+var agentModelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,99}$`)
+
+// validAgentModel accepts "" (clear → default chain), a completion-capable
+// SDK Capability / OptimizeTarget (sdk-ts types.ts, sdk-python types.py), or a
+// vendor-prefixed model id. The value is never echoed: a mis-pasted API key
+// must not come back in a response or a log line.
+func validAgentModel(m string) error {
+	switch m {
+	case "", "auto",
+		"reasoning-frontier", "reasoning-large", "reasoning-small",
+		"chat-large", "chat-small", "chat-edge",
+		"vision-large", "vision-small", "code-large", "code-small",
+		"cheap", "fast", "best", "balanced":
+		return nil
+	}
+	if agentModelPattern.MatchString(m) {
+		for _, p := range []string{"gpt", "o1", "o3", "claude"} {
+			if strings.HasPrefix(m, p) {
+				return nil
+			}
+		}
+	}
+	return errors.New(`invalid model: must be "auto", an SDK capability (e.g. "fast", "reasoning-small") or a vendor model id (gpt-*, o1*, o3*, claude-*)`)
+}
+
 // UpdateAgent handles PATCH /v1/agents/{name}. Currently supports updating
 // the system prompt used by interactive sessions and the chat surfaces.
 func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
@@ -454,6 +487,13 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+		}
+	}
+
+	if body.Model != nil {
+		if err := validAgentModel(*body.Model); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
 		}
 	}
 
@@ -1461,7 +1501,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				`UPDATE agents
 				 SET system_prompt = $1,
 				     model = COALESCE(NULLIF(model,''), $2),
-				     labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
+				     labels = COALESCE(NULLIF(labels, 'null'::jsonb), '{}'::jsonb) || $5::jsonb
 				 WHERE name = $3 AND tenant_id = $4`,
 				tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
 			)
