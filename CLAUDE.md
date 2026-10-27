@@ -836,6 +836,22 @@ executors (`internal/engine/step_executor.go`) do real dispatch:
   fabricating a result. (Regression-guarded: it once journaled a fake
   `child_started`/`child_completed` pair and returned a placeholder output.)
 
+### Ops: Helm completeness, metrics, backups (W1-D)
+
+`infra/helm/lantern` now ships every service `values-prod.yaml` needs: `runtime-scheduler`
+(2 replicas, leader election; needs `secrets.schedulerNodeToken`) and `surface-gateway`, an HPA
+per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PDBs, and
+default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
+rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Prod TLS/mTLS
+Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
+The control-plane serves Prometheus `/metrics` on `:8080` (OTel instruments bridged by
+`internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
+expose through the ingress). The `lantern-instrumented-slos` alert group in
+`infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
+`pg_dump` CronJob to S3/MinIO; restore drill: `scripts/db-restore-drill.sh`, runbook
+`docs/runbooks/db-restore.md`. `scripts/check-app-grants.sh` verifies the `lantern_app` GRANTs.
+CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`).
+
 ### Human takeover (W11a)
 
 Workflow `approval` nodes block on a `takeover_requests` row. Operators
