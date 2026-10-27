@@ -240,6 +240,9 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		AvatarURL    *string           `json:"avatarUrl"`
 		StylePrompt  *string           `json:"stylePrompt"`
 		SystemPrompt *string           `json:"systemPrompt"`
+		// Model is the capability ("fast", "reasoning-small", "auto") or vendor
+		// model id this agent's runs and sessions prefer.
+		Model *string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -267,16 +270,17 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// the UPDATE so that, under LANTERN_RLS_ENFORCE=1, the RLS policy evaluates
 	// the GUC and allows the write.  WHERE tenant_id = $4 remains the primary
 	// correctness guard; RLS is defence-in-depth.
-	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil {
+	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil || body.Model != nil {
 		tenantID, _ := middleware.TenantIDFromContext(ctx)
 		uerr := db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `
 				UPDATE agents SET
 					avatar_url   = COALESCE($1, avatar_url),
 					style_prompt = COALESCE($2, style_prompt),
-					system_prompt = COALESCE($3, system_prompt)
+					system_prompt = COALESCE($3, system_prompt),
+					model         = COALESCE($6, model)
 				WHERE tenant_id = $4 AND name = $5
-			`, body.AvatarURL, body.StylePrompt, body.SystemPrompt, tenantID, body.Name)
+			`, body.AvatarURL, body.StylePrompt, body.SystemPrompt, tenantID, body.Name, body.Model)
 			return err
 		})
 		if uerr != nil {
@@ -293,6 +297,9 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.SystemPrompt != nil {
 		out["systemPrompt"] = *body.SystemPrompt
+	}
+	if body.Model != nil {
+		out["model"] = *body.Model
 	}
 	writeJSON(w, http.StatusCreated, out)
 }
@@ -338,12 +345,13 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		avatarURL    *string
 		stylePrompt  *string
 		systemPrompt *string
+		model        *string
 	)
 	_ = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT avatar_url, style_prompt, system_prompt
+			SELECT avatar_url, style_prompt, system_prompt, model
 			FROM agents WHERE tenant_id = $1 AND name = $2
-		`, tenantID, name).Scan(&avatarURL, &stylePrompt, &systemPrompt)
+		`, tenantID, name).Scan(&avatarURL, &stylePrompt, &systemPrompt, &model)
 	})
 	if avatarURL != nil {
 		out["avatarUrl"] = *avatarURL
@@ -353,6 +361,9 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if systemPrompt != nil {
 		out["systemPrompt"] = *systemPrompt
+	}
+	if model != nil {
+		out["model"] = *model
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -425,6 +436,7 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt *string `json:"systemPrompt"`
 		AvatarURL    *string `json:"avatarUrl"`
 		StylePrompt  *string `json:"stylePrompt"`
+		Model        *string `json:"model"`
 		// Manifest merges into the current agent version's manifest JSONB (ADR 0022).
 		// Only the fields provided are merged; other manifest fields are unchanged.
 		// The isolation field, if present, is validated before the write.
@@ -445,7 +457,7 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if body.SystemPrompt == nil && body.AvatarURL == nil && body.StylePrompt == nil && body.Manifest == nil {
+	if body.SystemPrompt == nil && body.AvatarURL == nil && body.StylePrompt == nil && body.Model == nil && body.Manifest == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": false})
 		return
 	}
@@ -461,9 +473,10 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			UPDATE agents SET
 				system_prompt = COALESCE($1, system_prompt),
 				avatar_url    = COALESCE($2, avatar_url),
-				style_prompt  = COALESCE($3, style_prompt)
+				style_prompt  = COALESCE($3, style_prompt),
+				model         = COALESCE($6, model)
 			WHERE name = $4 AND tenant_id = $5
-		`, body.SystemPrompt, body.AvatarURL, body.StylePrompt, name, tenantID)
+		`, body.SystemPrompt, body.AvatarURL, body.StylePrompt, name, tenantID, body.Model)
 		rowsAffected = tag.RowsAffected()
 		return execErr
 	})
@@ -1386,12 +1399,13 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	inputJSON, _ := json.Marshal(input)
 	var storedSystemPrompt *string
 	var labelsJSON []byte
+	var agentModel string // preferred model for the failover chain; ""/"auto" = default
 	// rls-exempt: inline executor — agents read self-scoped by explicit
 	// `tenant_id = $2`; runs in a detached goroutine ctx.
 	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
-	).Scan(&storedSystemPrompt, &labelsJSON)
+	).Scan(&storedSystemPrompt, &labelsJSON, &agentModel)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
 	// resolvedTemplateID drives prefetch dispatch — MUST be set on every
 	// run, not just freshly-backfilled ones. Earlier bug: backfill ran
@@ -1429,6 +1443,9 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		}
 		if found && tpl.SystemPrompt != "" {
 			systemPromptStr = tpl.SystemPrompt
+			if agentModel == "" {
+				agentModel = tpl.Model
+			}
 			// Persist system_prompt AND labels so the next run sees
 			// lbl.TemplateID and can hit step 1 above (no name-match
 			// fallback needed) — and the setup gate can re-derive
@@ -1703,7 +1720,7 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	// builder suffixes the provider name so failover targets stay distinct.
 	llmCtx, toolSpend := withToolUsage(WithLLMIdempotencyBase(ctx, llmIdempotencyBaseFor(runID, llmStepID, 1)))
 	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
-		llmCtx, tenantID,
+		llmCtx, tenantID, agentModel,
 		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5, false,
 	)
 	if llmErr == nil {
@@ -1992,12 +2009,13 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		return false
 	}
 	var wfRaw []byte
+	var agentModel string
 	// rls-exempt: inline executor — agents read self-scoped by explicit
 	// `tenant_id = $2`; detached goroutine ctx.
 	err := h.srv.Pool.QueryRow(ctx,
-		`SELECT COALESCE(workflow, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT COALESCE(workflow, '{}'::jsonb)::text::bytea, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
-	).Scan(&wfRaw)
+	).Scan(&wfRaw, &agentModel)
 	if err != nil || len(wfRaw) == 0 {
 		return false
 	}
@@ -2008,6 +2026,11 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 
 	deps := workflow.Deps{
 		CallLLM: func(ctx context.Context, prompt, capability string) (string, error) {
+			// A node's explicit capability wins; "auto" (the interpreter's
+			// default for an unset one) defers to the agent's model.
+			if capability == "auto" && agentModel != "" {
+				capability = agentModel
+			}
 			provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, capability)
 			apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 			if err != nil {
