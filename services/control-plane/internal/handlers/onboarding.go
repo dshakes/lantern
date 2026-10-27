@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -40,6 +41,17 @@ func NewOnboardingHandler(srv *server.Server, auth *AuthHandler, llm *LlmProxyHa
 	return &OnboardingHandler{srv: srv, auth: auth, llm: llm}
 }
 
+// RegisterRoutes mounts /v1/onboarding with its scopes. Kept here (not in
+// main.go) so the scope wiring is under test.
+//   - explain makes an LLM call (spends tenant money) → runs:execute
+//   - state writes → settings:write; state read → read
+func (h *OnboardingHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/onboarding", h.auth.WithScope(ScopeRead, h.GetState))
+	mux.HandleFunc("PUT /v1/onboarding", h.auth.WithScope(ScopeSettingsWrite, h.PutState))
+	mux.HandleFunc("DELETE /v1/onboarding", h.auth.WithScope(ScopeSettingsWrite, h.DeleteState))
+	mux.HandleFunc("POST /v1/onboarding/explain", h.auth.WithScope(ScopeRunsExecute, h.Explain))
+}
+
 // onboardingSteps is the flow order; the dashboard state machine mirrors it.
 var onboardingSteps = map[string]bool{
 	"goal": true, "spec": true, "provider": true, "create": true,
@@ -52,20 +64,59 @@ var onboardingSandboxStates = map[string]bool{
 
 var onboardingAgentName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+// onboardingSpec is the persisted agent design: only the fields the flow
+// reads. Typed (not map[string]any) so arbitrary nested fields — e.g. a key
+// a client stuffed into the spec — are dropped on decode, never stored.
+type onboardingSpec struct {
+	Name         string                `json:"name"`
+	Description  string                `json:"description,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	SystemPrompt string                `json:"systemPrompt,omitempty"`
+	FirstInput   *onboardingFirstInput `json:"firstInput,omitempty"`
+	Rationale    string                `json:"rationale,omitempty"`
+	Isolation    string                `json:"isolation,omitempty"`
+	Tools        []string              `json:"tools,omitempty"`
+	Steps        []onboardingSpecStep  `json:"steps,omitempty"`
+}
+
+type onboardingFirstInput struct {
+	Prompt string `json:"prompt"`
+}
+
+type onboardingSpecStep struct {
+	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+func (s *onboardingSpec) validate() error {
+	if s.Name != "" && !onboardingAgentName.MatchString(s.Name) {
+		return errors.New("spec.name must be lowercase letters, digits and hyphens")
+	}
+	if s.Model != "" && !specCapabilityModels[s.Model] {
+		return errors.New("spec.model must be a capability name (auto, chat-small, …), never a vendor model")
+	}
+	if len(s.Description) > 500 || len(s.SystemPrompt) > 8000 || len(s.Rationale) > 1000 ||
+		(s.FirstInput != nil && len(s.FirstInput.Prompt) > 4000) || len(s.Steps) > 20 || len(s.Tools) > 20 {
+		return errors.New("spec is too large")
+	}
+	return nil
+}
+
 // onboardingState is the persisted resume document.
 type onboardingState struct {
-	Step         string         `json:"step"`
-	Goal         string         `json:"goal,omitempty"`
-	Spec         map[string]any `json:"spec,omitempty"`
-	SpecApproved bool           `json:"specApproved,omitempty"`
-	AgentName    string         `json:"agentName,omitempty"`
-	AgentCreated bool           `json:"agentCreated,omitempty"`
-	RunID        string         `json:"runId,omitempty"`
-	RunStatus    string         `json:"runStatus,omitempty"`
-	Sandbox      string         `json:"sandbox,omitempty"`
-	VMID         string         `json:"vmId,omitempty"`
-	CompletedAt  *time.Time     `json:"completedAt,omitempty"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
+	Step         string          `json:"step"`
+	Goal         string          `json:"goal,omitempty"`
+	Spec         *onboardingSpec `json:"spec,omitempty"`
+	SpecApproved bool            `json:"specApproved,omitempty"`
+	AgentName    string          `json:"agentName,omitempty"`
+	AgentCreated bool            `json:"agentCreated,omitempty"`
+	RunID        string          `json:"runId,omitempty"`
+	RunStatus    string          `json:"runStatus,omitempty"`
+	Sandbox      string          `json:"sandbox,omitempty"`
+	VMID         string          `json:"vmId,omitempty"`
+	CompletedAt  *time.Time      `json:"completedAt,omitempty"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 func (s *onboardingState) validate() error {
@@ -83,6 +134,9 @@ func (s *onboardingState) validate() error {
 	}
 	if len(s.RunID) > 64 || len(s.VMID) > 64 || len(s.RunStatus) > 32 {
 		return errors.New("runId/vmId/runStatus too long")
+	}
+	if s.Spec != nil {
+		return s.Spec.validate()
 	}
 	return nil
 }
@@ -235,9 +289,11 @@ func (h *OnboardingHandler) explain(ctx context.Context, tenantID string, req on
 	return text, nil
 }
 
+// clip truncates to at most n runes (never splits a multi-byte character —
+// Telugu / emoji input must not become invalid UTF-8 in the prompt).
 func clip(s string, n int) string {
-	if len(s) <= n {
+	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string([]rune(s)[:n]) + "…"
 }

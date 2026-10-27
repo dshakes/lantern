@@ -2,11 +2,15 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -218,7 +222,13 @@ func TestOnboardingState_ResumeAndTenantIsolation(t *testing.T) {
 	// Save mid-flow, including a field that must NEVER be persisted.
 	rr := onbReq(t, h.PutState, http.MethodPut, "/v1/onboarding", a, map[string]any{
 		"step": "run", "goal": "write standups", "agentName": "standup-writer", "agentCreated": true,
-		"spec":   map[string]any{"name": "standup-writer"},
+		"spec": map[string]any{
+			"name":         "standup-writer",
+			"systemPrompt": "You write standups.",
+			"firstInput":   map[string]any{"prompt": "Yesterday: login fix", "token": "sk-nested-first-input"},
+			"apiKey":       "sk-nested-spec-key",
+			"env":          map[string]any{"OPENAI_API_KEY": "sk-nested-env"},
+		},
 		"apiKey": "sk-should-not-persist",
 	})
 	if rr.Code != http.StatusOK {
@@ -233,8 +243,20 @@ func TestOnboardingState_ResumeAndTenantIsolation(t *testing.T) {
 	}
 	var raw string
 	_ = pool.QueryRow(context.Background(), `SELECT settings::text FROM tenants WHERE id = $1`, a).Scan(&raw)
-	if strings.Contains(raw, "sk-should-not-persist") {
-		t.Fatal("secret reached tenants.settings")
+	for _, secret := range []string{"sk-should-not-persist", "sk-nested-spec-key", "sk-nested-env", "sk-nested-first-input"} {
+		if strings.Contains(raw, secret) {
+			t.Fatalf("secret %q reached tenants.settings: %s", secret, raw)
+		}
+	}
+	// The fields the flow uses survive.
+	spec, _ := st["spec"].(map[string]any)
+	if spec["systemPrompt"] != "You write standups." || spec["firstInput"].(map[string]any)["prompt"] != "Yesterday: login fix" {
+		t.Fatalf("typed spec lost real fields: %v", spec)
+	}
+	if rr := onbReq(t, h.PutState, http.MethodPut, "/v1/onboarding", a, map[string]any{
+		"step": "spec", "spec": map[string]any{"name": "x", "model": "gpt-5"},
+	}); rr.Code != http.StatusBadRequest {
+		t.Errorf("vendor model in spec: got %d, want 400 (invariant #6)", rr.Code)
 	}
 
 	// Tenant B sees nothing of A's, and B's reset does not touch A.
@@ -273,5 +295,93 @@ func TestOnboardingState_ResumeAndTenantIsolation(t *testing.T) {
 	onbReq(t, h.DeleteState, http.MethodDelete, "/v1/onboarding", a, nil)
 	if _, st := getOnboarding(t, h, a); len(st) != 0 {
 		t.Errorf("after delete: %v", st)
+	}
+}
+
+// ---- clip (rune-safe) -------------------------------------------------------
+
+func TestClip_RuneSafe(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hello…"},
+		{"నమస్కారం మిత్రమా", 4, "నమస్…"}, // Telugu: 4 runes = న మ స ్
+		{"🚀🚀🚀🚀", 2, "🚀🚀…"},
+		{"", 3, ""},
+	}
+	for _, c := range cases {
+		got := clip(c.in, c.n)
+		if got != c.want {
+			t.Errorf("clip(%q,%d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("clip(%q,%d) produced invalid UTF-8", c.in, c.n)
+		}
+	}
+}
+
+// ---- route scopes under LANTERN_AUTHZ_ENFORCE=1 (DB-backed API keys) ----------
+
+func TestOnboardingRoutes_ScopeEnforcement(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	auth := NewAuthHandler(srv, testJWTSecret)
+	mux := http.NewServeMux()
+	NewOnboardingHandler(srv, auth, NewLlmProxyHandler(srv, auth)).RegisterRoutes(mux)
+	tenant := seedOnboardingTenant(t, pool)
+
+	seq := 0
+	key := func(scopes ...string) string {
+		seq++
+		raw := fmt.Sprintf("hlx_live_onbscope_%04d", seq)
+		sum := sha256.Sum256([]byte(raw))
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO api_keys (tenant_id, name, key_hash, key_prefix, scopes) VALUES ($1, $2, $3, $4, $5)`,
+			tenant, fmt.Sprintf("onb-scope-test-%d", seq), hex.EncodeToString(sum[:]), raw[:8], scopes); err != nil {
+			t.Fatalf("insert key: %v", err)
+		}
+		return raw
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE name LIKE 'onb-scope-test-%'`)
+	})
+	do := func(method, path, raw, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+raw)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	readOnly := key(string(ScopeRead))
+	execute := key(string(ScopeRunsExecute))
+	explainBody := `{"error":"boom"}`
+
+	// explain spends tenant money on an LLM call: a read-only key is refused.
+	if c := do(http.MethodPost, "/v1/onboarding/explain", readOnly, explainBody); c != http.StatusForbidden {
+		t.Errorf("explain with read-only key: got %d, want 403", c)
+	}
+	// runs:execute passes the scope gate (then 400 no_provider — not 403).
+	if c := do(http.MethodPost, "/v1/onboarding/explain", execute, explainBody); c == http.StatusForbidden || c == http.StatusUnauthorized {
+		t.Errorf("explain with runs:execute: got %d, want past the scope gate", c)
+	}
+	// GET needs a read scope: runs:execute alone does not imply read.
+	if c := do(http.MethodGet, "/v1/onboarding", execute, ""); c != http.StatusForbidden {
+		t.Errorf("GET with runs:execute only: got %d, want 403", c)
+	}
+	if c := do(http.MethodGet, "/v1/onboarding", readOnly, ""); c != http.StatusOK {
+		t.Errorf("GET with read: got %d, want 200", c)
+	}
+	// Writes need settings:write.
+	if c := do(http.MethodPut, "/v1/onboarding", readOnly, `{"step":"goal"}`); c != http.StatusForbidden {
+		t.Errorf("PUT with read-only key: got %d, want 403", c)
 	}
 }

@@ -297,7 +297,9 @@ error-to-fix mapping and labelled basic-design fallback live in
 `apps/web/app/onboarding/onboarding-logic.ts` (unit-tested). Resume state is
 server-side in `tenants.settings->'onboarding'`; there is no new table because
 `tenants` is RLS-exempt, the state is scoped by the auth tenant id, and the
-document is a whitelisted struct, so a key can never be persisted. The page
+document is a whitelisted struct (including a typed spec DTO — no free-form
+nested maps), so a key can never be persisted. Scopes are wired in
+`OnboardingHandler.RegisterRoutes` (under test). The page
 derives the resume step from recorded facts (`resumeStep`) and re-verifies the
 provider every session. The CLI's `--yes` or a non-TTY stdin never prompts.
 `lantern doctor` has a soft "Sandbox runtime" section (stub vs. real
@@ -305,10 +307,10 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 
 | Method   | Path                      | Description                                                         |
 | -------- | ------------------------- | ------------------------------------------------------------------- |
-| `GET`    | `/v1/onboarding`          | Resume document (`{}` when none)                                    |
+| `GET`    | `/v1/onboarding`          | Resume document (`{}` when none); `read`                            |
 | `PUT`    | `/v1/onboarding`          | Replace it (`settings:write`; unknown fields dropped)               |
 | `DELETE` | `/v1/onboarding`          | Start over                                                          |
-| `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run's output/error (LLM)   |
+| `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
 
 ### Runs
 
