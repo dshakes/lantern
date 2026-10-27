@@ -206,9 +206,10 @@ jobs:
         run: |
           set -euo pipefail
           pw="$(openssl rand -hex 16)"
+          PW="$pw" envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
+          kubectl rollout status deploy/lantern-postgresql deploy/lantern-minio --timeout=180s
           helm install lantern "$CHART" -f "$CHART/values-ci.yaml" \
-            --set "postgresql.auth.password=$pw" --set "secrets.postgresPassword=$pw" \
-            --set "minio.auth.rootPassword=$pw" --set "secrets.minioPassword=$pw" \
+            --set "secrets.postgresPassword=$pw" --set "secrets.minioPassword=$pw" \
             --set "secrets.grpcServiceToken=$(openssl rand -hex 16)" \
             --set "secrets.schedulerNodeToken=$(openssl rand -hex 16)" \
             --wait --timeout 10m
@@ -242,6 +243,7 @@ jobs:
         if: failure()
         run: |
           kubectl get pods -o wide || true
+          for p in $(kubectl get pods -o name); do echo "== $p"; kubectl logs "$p" --all-containers --tail=40 || true; done
           kubectl describe pods || true
           kubectl get netpol || true
           kubectl logs -l app.kubernetes.io/part-of=lantern --all-containers --tail=100 --prefix || true

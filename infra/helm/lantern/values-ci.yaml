@@ -44,30 +44,18 @@ backup:
   enabled: true
   retentionDays: 1
 
+# Bitnami subcharts off: CI supplies plain Postgres/MinIO (infra/helm/ci-deps.yaml).
 postgresql:
-  enabled: true
-  auth:
-    username: lantern
-    database: lantern
-  primary:
-    persistence:
-      size: 1Gi
-  image:
-    repository: pgvector/pgvector
-    tag: pg16
-
+  enabled: false
+  auth: {username: lantern, database: lantern}
 redis:
   enabled: true
   architecture: standalone
   auth:
     enabled: false
-
 minio:
-  enabled: true
-  auth:
-    rootUser: lantern
-  persistence:
-    size: 1Gi
+  enabled: false
+  auth: {rootUser: lantern}
 
 secrets:
   jwtSecret: "ci-jwt-secret-not-for-production"
