@@ -582,6 +582,26 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
     fail "write_file failed. Response:\n${WRITE_RESP}\nLog:\n$(tail -20 "${MANAGER_LOG}")"
   fi
 
+  # ---- 4c-i-b. Flush the marker to the VM's disk before snapshotting ----
+  # WP2 regression guard. The workload runs as uid 1000, so it cannot
+  # `echo 3 > /proc/sys/vm/drop_caches`; the post-restore check below uses an
+  # O_DIRECT read instead, which bypasses the guest page cache for the file's
+  # data. `sync` here makes those pages clean, so O_DIRECT cannot be satisfied
+  # by flushing them from memory — the bytes must already be on the disk the
+  # restored VM was given. A restore onto the base rootfs (no disk in the
+  # snapshot) reads zeros/garbage there instead of the marker.
+  log "Flushing guest writes to disk before snapshot (sync)"
+  SYNC_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg vm "${VM_ID}" \
+           '{vm_id:$vm,run_id:"itest-run-001",step_id:"itest-step-sync",
+             tool_name:"shell_exec",args:{command:"sync && echo synced-ok"},
+             idempotency_key:"itest-run-001:itest-step-sync:1"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || SYNC_RESP=""
+  printf '%s' "${SYNC_RESP}" | grep -q "synced-ok" \
+    || fail "guest sync failed. Response:\n${SYNC_RESP}"
+  pass "guest writes flushed to disk before snapshot"
+
   # ---- 4c-ii. Snapshot ----
   log "Snapshotting vm_id=${VM_ID} (Snapshot RPC)"
   T0=$(ms)
@@ -632,8 +652,8 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
 
   # ---- 4c-iv. Restore (Spawn with restore_snapshot_id) ----
   # In bare (unjailed) mode the backend requires the same vm_id as the source.
-  # The backend's restore path copies the global rootfs to a per-VM path so
-  # that writes do not bleed back into the snapshot image (see Rust commit).
+  # The restore stages its own writable copy of the disk captured with the
+  # snapshot, so writes never bleed back into the snapshot image.
   log "Restoring vm_id=${VM_ID} from snapshot_id=${SNAPSHOT_ID}"
   RESTORE_REQ=$(jq -n \
     --arg uri "${SECRET_URI}" \
@@ -738,6 +758,27 @@ if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
     pass "state marker survived stop/restore — file system state is durable across snapshot cycles"
   else
     fail "state marker NOT found after restore. Expected: ${MARKER_CONTENT}. Response:\n${READ_RESP}\nLog:\n$(tail -30 "${MANAGER_LOG}")"
+  fi
+
+  # ---- 4c-vi-b. The marker is on the restored DISK, not just in guest memory ----
+  # read_file above can be served from the guest page cache the snapshot
+  # carried, which passes even when the restored disk is the base image. An
+  # O_DIRECT read skips that cache: it returns the marker only if the disk
+  # captured with the snapshot is the one this VM resumed on.
+  log "Verifying the marker is on the restored disk (O_DIRECT read, page cache bypassed)"
+  T0=$(ms)
+  DIRECT_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg cmd "dd if=${MARKER_PATH} bs=4096 iflag=direct 2>/dev/null" \
+           '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-direct",
+             tool_name:"shell_exec",args:{command:$cmd},
+             idempotency_key:"itest-run-002:itest-step-direct:1"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || DIRECT_RESP=""
+  timing_record "direct_read_after_restore" "${T0}" "$(ms)"
+  if printf '%s' "${DIRECT_RESP}" | grep -qF "${MARKER_CONTENT}"; then
+    pass "marker read from the restored disk with the page cache bypassed — the snapshot captured the VM's disk"
+  else
+    fail "DISK STATE LOST: marker absent on the restored disk (O_DIRECT read). The restore resumed guest memory onto a disk that does not match it. Response:\n${DIRECT_RESP}"
   fi
 
   # VM_ID now points at the restored VM so cleanup stops it.
