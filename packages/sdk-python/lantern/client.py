@@ -73,6 +73,7 @@ class LanternClient:
         self.sessions = self._Sessions(self)
         self.connectors = self._Connectors(self)
         self.budgets = self._Budgets(self)
+        self.triggers = self._Triggers(self)
         self.evals = self._Evals(self)
         self.experiments = self._Experiments(self)
         self.marketplace = self._Marketplace(self)
@@ -582,6 +583,70 @@ class LanternClient:
             """List all budgets for the tenant (GET /v1/budgets)."""
             data = await self._c._request("GET", "/v1/budgets")
             return [BudgetResult.from_dict(b) for b in (data or [])]
+
+    # ------------------------------------------------------------------
+    # triggers namespace (inbound webhooks, ADR 0028)
+    # ------------------------------------------------------------------
+
+    class _Triggers:
+        """Inbound webhook triggers. A provider POSTs signed deliveries to
+        ``base_url + trigger["hookPath"]``; each verified delivery starts a run."""
+
+        def __init__(self, client: LanternClient) -> None:
+            self._c = client
+
+        async def create(
+            self,
+            agent_name: str,
+            *,
+            provider: str,
+            secret: str | None = None,
+            input_template: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Create a trigger (POST /v1/agents/{name}/triggers). ``secret`` is in
+            the response only when Lantern generated it — store it then."""
+            body: dict[str, Any] = {"provider": provider}
+            if secret is not None:
+                body["secret"] = secret
+            if input_template is not None:
+                body["inputTemplate"] = input_template
+            data: dict[str, Any] = await self._c._request("POST", f"/v1/agents/{agent_name}/triggers", body=body)
+            return data
+
+        async def list(self, agent_name: str) -> list[dict[str, Any]]:
+            """List an agent's triggers (GET /v1/agents/{name}/triggers). Never includes secrets."""
+            return await self._c._request("GET", f"/v1/agents/{agent_name}/triggers") or []
+
+        async def get(self, trigger_id: str) -> dict[str, Any]:
+            """Get one trigger (GET /v1/triggers/{id})."""
+            data: dict[str, Any] = await self._c._request("GET", f"/v1/triggers/{trigger_id}")
+            return data
+
+        async def update(
+            self,
+            trigger_id: str,
+            *,
+            enabled: bool | None = None,
+            secret: str | None = None,
+            input_template: dict[str, Any] | None = None,
+            clear_input_template: bool = False,
+        ) -> dict[str, Any]:
+            """Update a trigger (PATCH /v1/triggers/{id})."""
+            body: dict[str, Any] = {}
+            if enabled is not None:
+                body["enabled"] = enabled
+            if secret is not None:
+                body["secret"] = secret
+            if clear_input_template:
+                body["inputTemplate"] = None
+            elif input_template is not None:
+                body["inputTemplate"] = input_template
+            data: dict[str, Any] = await self._c._request("PATCH", f"/v1/triggers/{trigger_id}", body=body)
+            return data
+
+        async def delete(self, trigger_id: str) -> None:
+            """Delete a trigger (DELETE /v1/triggers/{id})."""
+            await self._c._request("DELETE", f"/v1/triggers/{trigger_id}")
 
     # ------------------------------------------------------------------
     # evals namespace

@@ -2013,6 +2013,41 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     return this.request<Budget[]>(`/v1/budgets`);
   }
 
+  // ---- Webhook triggers (ADR 0028) -----------------------------------------
+
+  async listTriggers(agentName: string): Promise<Trigger[]> {
+    return this.request<Trigger[]>(`/v1/agents/${encodeURIComponent(agentName)}/triggers`);
+  }
+
+  async createTrigger(
+    agentName: string,
+    body: { provider: TriggerProvider; secret?: string; inputTemplate?: Record<string, unknown> },
+  ): Promise<Trigger> {
+    return this.request<Trigger>(`/v1/agents/${encodeURIComponent(agentName)}/triggers`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateTrigger(
+    id: string,
+    body: { enabled?: boolean; secret?: string; inputTemplate?: Record<string, unknown> | null },
+  ): Promise<Trigger> {
+    return this.request<Trigger>(`/v1/triggers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteTrigger(id: string): Promise<void> {
+    return this.request<void>(`/v1/triggers/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  /** Absolute URL a provider should POST deliveries to. */
+  hookUrl(hookPath: string): string {
+    return `${this.baseUrl}${hookPath}`;
+  }
+
   // ---- Forecast (pre-run cost) ---------------------------------------------
 
   async forecastRun(body: {
@@ -2366,6 +2401,21 @@ export interface MarketplaceAgent {
   starred: boolean;
   publishedAt: string;
   author: string;
+}
+
+export type TriggerProvider = "generic" | "github" | "sentry" | "pagerduty";
+
+export interface Trigger {
+  id: string;
+  agentName: string;
+  provider: TriggerProvider;
+  enabled: boolean;
+  inputTemplate?: Record<string, unknown>;
+  hookPath: string;
+  lastDeliveryAt?: string;
+  createdAt: string;
+  /** Only on create, only when the server generated it. */
+  secret?: string;
 }
 
 export interface Budget {
