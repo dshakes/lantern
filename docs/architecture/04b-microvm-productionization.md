@@ -1,10 +1,12 @@
 # MicroVM Productionization — From Spike to Production Data Plane
 
+> **In one line:** control-plane gates and stamps, the Go `runtime-scheduler` places, the Rust `runtime-manager` spawns, and the Rust `harness` is PID 1 in the VM. **Try it:** `lantern run examples/headless-agents/01-hello/agent.yaml -f` ([guide](../guides/headless-agent-quickstart.md)).
+>
 > **What this is:** the system-level overview of how a `Run` request becomes a running microVM, how the in-VM harness talks back, and how the three services defined in `packages/proto/lantern/v1/runtime.proto` collaborate.
 >
 > **Companion to:** [`04-runtime-isolation.md`](04-runtime-isolation.md) — which classes exist and *why*. This doc is the *how*: the wiring between control-plane, scheduler, runtime-manager, and the in-VM harness.
 >
-> **Audience:** anyone touching `services/runtime-manager`, `services/runtime-scheduler` (new), the proto, or the harness binary.
+> **Audience:** anyone touching `services/runtime-manager`, `services/runtime-scheduler`, the proto, or `services/harness`.
 
 ---
 
@@ -59,9 +61,9 @@ Three services, one proto:
 
 | Service | Scope | Language | Lives in |
 |---|---|---|---|
-| `RuntimeScheduler` | cluster-wide; one logical instance (HA pair) | Rust | `services/runtime-scheduler/` (new) |
-| `RuntimeManager` | node-local; one per host | Rust | `services/runtime-manager/` (existing spike) |
-| `RuntimeHarness` | inside the guest; one per VM | Rust (static musl) | `services/runtime-harness/` (new) |
+| `RuntimeScheduler` | cluster-wide; one leader (Postgres advisory-lock election) | Go | `services/runtime-scheduler/` |
+| `RuntimeManager` | node-local; one per host | Rust | `services/runtime-manager/` |
+| `RuntimeHarness` | inside the guest; one per VM | Rust (static musl) | `services/harness/` |
 
 Each maps directly to a service block in `runtime.proto`. The split is the subject of [ADR 0003](../adr/0003-scheduler-as-separate-service.md).
 
@@ -69,18 +71,20 @@ Each maps directly to a service block in `runtime.proto`. The split is the subje
 
 ## Data flow — happy path
 
-1. **Caller → control-plane.** Workflow engine or SDK POSTs `/v1/runs`. The control-plane resolves the agent version, looks up its `AgentSpec` template (image digest, isolation class, limits, egress rules, secret refs), and **stamps `tenant_id` from the JWT** into the spec — see comment in `runtime.proto:106`. RBAC + per-tenant quota are checked here, *before* the scheduler ever sees the request.
+1. **Caller → control-plane.** CLI or SDK POSTs `/v1/runtime/schedule` (or an `isolation: microvm` agent run is routed here by the run executor, [ADR 0022](../adr/0022-two-tier-agent-runtime.md)). The control-plane resolves the agent version, looks up its `AgentSpec` template (image digest, isolation class, limits, egress rules, secret refs), and **stamps `tenant_id` from the JWT** into the spec — see comment in `runtime.proto:106`. RBAC + per-tenant quota are checked here, *before* the scheduler ever sees the request.
 2. **control-plane → scheduler.** `RuntimeScheduler.Schedule(spec, hint, cold_start_budget)`. Returns a `VmHandle` once a node is picked. The schedule decision uses:
    - The `IsolationClass` to pick a backend (`standard`/`untrusted` → Firecracker pool; `hostile` → Kata node-pool; `trusted` → K8s; `wasm` → in-process on a trusted host).
    - Warm-pool inventory per `(class, image_digest)` reported by each manager in its `Cluster()` response.
    - `PlacementHint` (region/AZ/node pin/spread topology).
 3. **scheduler → runtime-manager.** `RuntimeManager.Spawn(spec, handle)` over gRPC to the chosen node. Manager either:
-   - Picks a pre-restored VM out of the warm pool (≤ 30ms warm hit), or
-   - mmap-restores a snapshot (≤ 200ms), or
-   - Cold-boots from the OCI image (≤ 1.5s).
+   - Picks a pre-restored VM out of the warm pool (target ≤ 30ms warm hit), or
+   - mmap-restores a snapshot (target ≤ 200ms), or
+   - Cold-boots from the OCI image (target ≤ 1.5s).
+
+   These are targets; measured numbers are in [`docs/benchmarks/runtime-latency.md`](../benchmarks/runtime-latency.md).
 4. **harness boot.** PID 1 in the guest is the harness binary, baked into the rootfs image — see [ADR 0004](../adr/0004-harness-baked-into-vm-image.md). On boot it:
    - Opens a vsock connection to the manager.
-   - Sends `Heartbeat` every 5s; missed heartbeats for 30s force-terminate the VM.
+   - Sends `Heartbeat` every 5s; the manager treats a heartbeat older than 30s (`HEARTBEAT_STALE_SECS`) as stale.
    - Resolves each `SecretRef` via `VendSecret` (one round-trip per secret) — short-TTL JWT exchange, see [ADR 0005](../adr/0005-secret-vending-via-short-jwt.md).
    - Installs the egress filter from `AgentSpec.egress_rules` — see [ADR 0006](../adr/0006-egress-allowlist-at-harness.md). In broker mode (`LANTERN_EGRESS_MODE=broker`, [ADR 0026](../adr/0026-host-egress-broker.md)) the VM has no NIC; the harness instead forwards `127.0.0.1:3128` over vsock to the manager's host-side broker, which enforces the rules and injects `EgressRule.inject` credentials on the way out.
    - Exec's the worker (user agent code).
@@ -99,7 +103,7 @@ Each maps directly to a service block in `runtime.proto`. The split is the subje
 - Returns the run ID immediately; the caller subscribes to `RuntimeScheduler.Events` (multiplexed by `vm_id`) for live status.
 
 ### runtime-scheduler (placement)
-- Maintains an in-memory view of each node's free `vcpu_millis`, `memory_bytes`, warm-pool inventory — refreshed from `RuntimeManager.Cluster()` every 10s.
+- Maintains an in-memory view of each node's free `vcpu_millis`, `memory_bytes`, warm-pool inventory, reported by the managers.
 - Per-class queues. A `standard` request never blocks behind a `hostile` request (separate node pool).
 - Snapshot locality: prefer the node that already has the snapshot file in its local snapshot cache. Falls back to S3 pull.
 - Emits `StatusEvent` to subscribers. The scheduler is the **only** thing that writes `VmState` transitions to durable storage.
@@ -109,15 +113,15 @@ Each maps directly to a service block in `runtime.proto`. The split is the subje
 - One per host. Holds the `RuntimeBackend` trait impls (Firecracker, Kata, K8s Job, Wasmtime) — see [`04-runtime-isolation.md`](04-runtime-isolation.md#how-runtime-manager-actually-drives-all-of-this).
 - Owns the per-host warm pool. PID-controller adjusts pool size to the running rate per `(class, digest)`.
 - Terminates the `Heartbeat` and `Report` streams from each guest harness.
-- Vends short-TTL secrets — calls control-plane's secret store and caches with the requested TTL (capped at 15 min).
+- Vends short-TTL secrets by calling the control-plane relay `POST /v1/runtime/secrets/resolve` ([ADR 0008](../adr/0008-runtime-secret-relay.md)); the manager never holds the decryption key.
 - Exposes `Logs`/`Exec`/`Stats` for the dashboard's debug pane.
 
 ### runtime-harness (in-VM init)
 - PID 1 inside the guest.
 - One static binary, no dynamic deps, baked into the base image.
-- Three streams to the manager over vsock: `Heartbeat`, `Report`, `VendSecret`.
-- Enforces the egress allowlist via nftables in the guest's network namespace.
-- Supervises the worker; restarts on crash up to a small bound, then reports `VM_STATE_FAILED`.
+- Streams to the manager over vsock: `Heartbeat`, `Report`, plus the `VendSecret` and `Exec` calls.
+- Egress: CONNECT allowlist proxy on `127.0.0.1:3128`, enforced by an iptables REDIRECT rule; fail-closed in prod when rules are declared and the REDIRECT is absent.
+- Supervises the worker; restarts on crash up to `DEFAULT_MAX_RESTARTS` (5), then reports `VM_STATE_FAILED`.
 
 ---
 
@@ -128,8 +132,8 @@ A request crosses these trust boundaries; each is a checkpoint:
 | Boundary | Trust transition | Enforced by |
 |---|---|---|
 | Caller → control-plane | external untrusted → tenant-authenticated | JWT verification, RBAC, tenant_id stamping |
-| control-plane → scheduler | gRPC mTLS, workload identity | SPIFFE-style SVID per pod |
-| scheduler → manager | gRPC mTLS, workload identity | same |
+| control-plane → scheduler | gRPC, `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`) | service-auth interceptor, fail-closed in prod |
+| scheduler → manager | gRPC, service token + client TLS (`LANTERN_RUNTIME_MANAGER_TLS_*`) | manager interceptor ([ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md)) |
 | manager → harness | host → guest (vsock) | guest cannot reach manager except over vsock; no IP routing host↔guest |
 | harness → worker | guest PID 1 → guest user process | seccomp profile, dropped caps, read-only rootfs |
 | worker → internet | guest user process → outside world | harness egress allowlist + host CNI policy (defense in depth, [ADR 0006](../adr/0006-egress-allowlist-at-harness.md)) |
@@ -138,7 +142,7 @@ A request crosses these trust boundaries; each is a checkpoint:
 Invariants (these are load-bearing):
 
 - The worker **never** sees raw long-lived secrets. It sees short-TTL tokens vended at boot ([ADR 0005](../adr/0005-secret-vending-via-short-jwt.md)).
-- The harness **never** speaks to the control-plane directly. All traffic goes manager → control-plane.
+- The harness **never** speaks to the control-plane directly. All traffic goes manager → control-plane (the manager forwards `Report` frames to `POST /v1/runtime/report`).
 - `tenant_id` is on every gRPC metadata header; cross-tenant joins are rejected at the manager.
 
 ---
@@ -166,7 +170,7 @@ control-plane ── spans ─────────────────�
                                                             (run-detail waterfall)
 ```
 
-Every span carries the standard Lantern attribute set: `tenant_id`, `run_id`, `step_id`, `agent_version`, `vm_id`, `isolation_class`. The run-detail page in `apps/web/app/(dashboard)/runs/[id]` joins these with `journal_events` to produce the timeline.
+Control-plane spans carry the `lantern.*` attribute set (`lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, `lantern.isolation_class`). See the [observability guide](../guides/observability.md). The run-detail page in `apps/web/app/(dashboard)/runs/[id]` joins these with `journal_events` to produce the timeline.
 
 Metrics on the same channel: `lantern_vm_boot_duration_seconds{class}`, `lantern_vm_running{node,class}`, `lantern_warm_pool_size{class,digest}`, `lantern_egress_denied_total{vm_id}`.
 
@@ -214,8 +218,7 @@ owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
    come back in `forks[].error`; they do not fail the whole call.
 
 Re-identification matters because a restored guest otherwise resumes with the
-source VM's cert and id. Status: unit- and contract-tested; not yet exercised on a
-Linux/KVM host (see [`GA-READINESS.md`](../GA-READINESS.md)).
+source VM's cert and id. Status: unit- and contract-tested, and exercised end to end by the KVM CI job described under *Lifecycle validation* below (see [`GA-READINESS.md`](../GA-READINESS.md)).
 
 **Idle-suspend (auto-pause).** Set `idle_timeout_secs > 0` on the AgentSpec when
 scheduling. The scheduler's idle sweeper (10 s tick, leader-gated) monitors
@@ -253,9 +256,9 @@ natural 404.
 
 ## Diagrams
 
-<img src="diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime, including the microVM trust chain: control-plane to runtime-scheduler to runtime-manager to Firecracker VM with harness PID 1" width="100%">
+<img src="../assets/diagrams/runtime-two-tier.svg" alt="Two-tier agent runtime, including the microVM trust chain: control-plane to runtime-scheduler to runtime-manager to Firecracker VM with harness PID 1" width="100%">
 
-<img src="diagrams/sandbox-lifecycle.svg" alt="Sandbox lifecycle: running, pause (snapshot and stop), paused, resume (restore, re-identify, fresh exec token), and fork into N children each with a fresh identity" width="100%">
+<img src="../assets/diagrams/sandbox-lifecycle.svg" alt="Sandbox lifecycle: running, pause (snapshot and stop), paused, resume (restore, re-identify, fresh exec token), and fork into N children each with a fresh identity" width="100%">
 
 Lifecycle and identity semantics: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md).
 
@@ -272,11 +275,11 @@ Lifecycle and identity semantics: [ADR 0025](../adr/0025-sandbox-spawn-contract-
 - Force-terminates the microVM and reschedules per the idempotency rule.
 
 ### Worker crash, harness alive
-- Harness restarts the worker up to `restart_count < 3`.
+- Harness restarts the worker up to 5 times (`DEFAULT_MAX_RESTARTS`).
 - After that, harness reports `VM_STATE_FAILED` and exits cleanly.
 
 ### Scheduler crash
-- HA pair with leader election in etcd. Followers replay the scheduler's WAL (the `StatusEvent` log) to rebuild in-memory state.
+- HA via leader election on a Postgres advisory lock (`internal/leader`); state lives in Postgres (`internal/store`), so a new leader rebuilds from the store.
 - In-flight `Schedule` calls fail-fast with `UNAVAILABLE`; control-plane retries with exponential backoff.
 
 ### Snapshot corruption
@@ -288,18 +291,20 @@ Lifecycle and identity semantics: [ADR 0025](../adr/0025-sandbox-spawn-contract-
 ## Interfaces
 
 ### gRPC (the proto)
-`runtime.proto` is the source of truth. Three services, twelve RPCs. No REST shim between them — these are internal.
+`runtime.proto` is the source of truth: three services (`RuntimeScheduler`, `RuntimeManager`, `RuntimeHarness`). No REST shim between them — these are internal.
 
 ### REST (caller-facing, via control-plane)
 The caller never speaks the runtime proto directly. The mapping:
 
 | REST | Proto |
 |---|---|
-| `POST /v1/runs` | `RuntimeScheduler.Schedule` |
-| `GET /v1/runs/{id}/events` (SSE) | `RuntimeScheduler.Events` (filtered to `run_id`) |
-| `DELETE /v1/runs/{id}` | `RuntimeScheduler.Terminate` |
-| `POST /v1/runs/{id}/snapshot` | `RuntimeScheduler.Snapshot` |
-| `GET /v1/runs/{id}/logs` (SSE) | `RuntimeManager.Logs` |
+| `POST /v1/runtime/schedule` | `RuntimeScheduler.Schedule` |
+| `GET /v1/runtime/vms`, `/vms/{id}` | `RuntimeScheduler.List` / shadow `runtime_vms` row |
+| `DELETE /v1/runtime/vms/{id}` | `RuntimeScheduler.Terminate` |
+| `POST /v1/runtime/vms/{id}/pause\|resume\|fork` | `RuntimeScheduler.Pause` / `Resume` / `Fork` |
+| `GET /v1/runtime/vms/{id}/logs` (SSE) | `RuntimeManager.Logs` |
+| `POST /v1/runtime/vms/{id}/exec` | `RuntimeManager.Exec` |
+| `GET /v1/runtime/cluster` | `RuntimeScheduler.Cluster` |
 
 The control-plane handles JWT auth, tenant stamping, and run-level persistence (`runs`, `journal_events`); the scheduler/manager are internal-only.
 
@@ -312,14 +317,12 @@ The control-plane handles JWT auth, tenant stamping, and run-level persistence (
 
 | Proto symbol | Implementation |
 |---|---|
-| `RuntimeScheduler.Schedule` | `services/runtime-scheduler/src/handlers/schedule.rs` |
-| `RuntimeScheduler.Events` | scheduler's broadcast bus, fed by every manager's status stream |
-| `RuntimeScheduler.Snapshot` | scheduler picks the node, forwards to `RuntimeManager.Spawn`-adjacent snapshot RPC |
-| `RuntimeManager.Spawn` | `services/runtime-manager/src/backends/{firecracker,kata,k8s,wasm}.rs` |
-| `RuntimeManager.Logs/Exec/Stats` | per-backend; Firecracker uses vsock console + harness shell |
-| `RuntimeHarness.Heartbeat` | `services/runtime-harness/src/heartbeat.rs` — vsock client |
-| `RuntimeHarness.VendSecret` | manager-side: calls control-plane secret store, caches short-TTL token |
-| `RuntimeHarness.Report` | manager-side: forwards to local OTel collector DaemonSet |
+| `RuntimeScheduler.*` | `services/runtime-scheduler/internal/handlers/` (placement in `internal/placement`, `internal/scoring`) |
+| `RuntimeManager.Spawn` | `services/runtime-manager/src/service.rs` dispatching to `backends/{firecracker,kata,k8s,docker,wasm}.rs` |
+| `RuntimeManager.Logs/Exec/ExecTool/Stats` | per-backend; Firecracker uses vsock plus the harness |
+| `RuntimeHarness.Heartbeat` | `services/harness/src/heartbeat.rs` |
+| `RuntimeHarness.VendSecret` | harness `secrets.rs` / `manager_client.rs`; manager calls the control-plane relay |
+| `RuntimeHarness.Report` | harness streams to the manager, which forwards to the control-plane `POST /v1/runtime/report` |
 
 ---
 
@@ -334,10 +337,11 @@ The control-plane handles JWT auth, tenant stamping, and run-level persistence (
 
 ## In-guest tool runner (shipped 2026-07-23)
 
-The runtime-manager's `exec_tool` previously returned `TOOL_STATUS_UNAVAILABLE` because no in-guest runner existed (documented in ADR 0015). As of commit f26c7c7, the harness now contains a typed tool registry in `services/harness/src/tool_runner.rs`:
+The runtime-manager's `exec_tool` previously returned `TOOL_STATUS_UNAVAILABLE` because no in-guest runner existed (documented in ADR 0015). The harness now contains a typed tool registry in `services/harness/src/tool_runner.rs`:
 
 - **`shell_exec`** — run a shell command with enforced timeout; returns stdout, stderr, exit code.
 - **`http_fetch`** — HTTP request forced through the `127.0.0.1:3128` egress-allowlist proxy; 1 MiB response cap.
+- **`read_file` / `write_file` / `list_dir`** — confined to `LANTERN_WORKSPACE` (default `/workspace`); these back the sandbox file API.
 - Unknown tool names return `TOOL_STATUS_ERROR` (typed, never `UNAVAILABLE`).
 
 Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__lantern_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel before the general exec audit path so serialized arguments never appear in audit logs (invariant #10). `TOOL_STATUS_UNAVAILABLE` now strictly means the VM is not found or the harness is unreachable.

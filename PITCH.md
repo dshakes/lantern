@@ -1,124 +1,131 @@
 # Lantern
 
-**Lantern is the open-source runtime that takes an AI agent from your laptop to
-production in your own cloud — and the same runtime powers a personal agent that
-texts on your real WhatsApp/iMessage indistinguishably from you.**
+**Lantern is an open-source runtime for AI agents that you host in your own cloud.
+The agent loop runs on your control plane. The code the agent writes runs in a
+microVM. Every step is journaled, every agent has a budget, and every completed run
+can be signed.**
 
-One command to run locally. One to ship to your VPC. Apache-2.0.
+The same runtime drives a personal agent that answers on its owner's WhatsApp and
+iMessage, in their voice, and holds anything risky for them to approve.
+
+Apache-2.0. `make dev` runs it on a laptop.
 
 ---
 
 ## The problem
 
-Building an agent demo is easy. Running agents in production is not. Teams hit the
-same six walls:
+An agent demo takes an afternoon. Running agents in production hits the same six walls:
 
-1. **No durable runtime.** Frameworks give you a `while` loop. Real agents need
-   durable, replayable steps, idempotency, retries, and run state you can trust.
-2. **Unpredictable cost.** "It's probably ~$X" is not a budget. Finance wants a
-   forecast and a hard cap; one runaway tool loop burns the month.
-3. **No safety net for changes.** A prompt tweak silently regresses; you find out
-   from users. There's no eval gate in CI.
-4. **Untrusted code, bare pods.** Agents run other people's code and pull packages
-   from the internet — usually in a container on a shared daemon. That's not isolation.
-5. **Chat-only.** The agent lives in a vendor dashboard. Your users are on WhatsApp,
-   Slack, the phone, your website.
-6. **Vendor lock-in.** Your prompts, tokens, and customer data sit in someone else's
-   cloud.
+1. **Runs aren't durable.** A framework gives you a `while` loop. When the process
+   dies mid-run, the run restarts from zero and repeats its side effects.
+2. **Cost has no ceiling.** One runaway tool loop can spend the month's budget before
+   anyone looks.
+3. **Changes ship blind.** A prompt tweak regresses quietly and users find it first.
+4. **Untrusted code runs in a container.** Agents execute code they wrote or
+   downloaded, usually on a shared kernel next to the keys that call the model.
+5. **Agents live in a dashboard.** Users are on WhatsApp, Slack, the phone and the
+   website.
+6. **The data leaves.** Prompts, tokens and customer data sit in a vendor's cloud.
 
 ## The insight
 
-The hard parts of "agent in production" are the **same primitives** whether the agent
-is a headless backend worker or a personal assistant texting your family: durable
-execution, capability-based model routing, budgets, isolation, verifiable provenance,
-and real channels. Build that runtime once and you get both a production agent
-platform and a world-class personal agent for free. Most companies build one or the
-other; Lantern is the substrate for both.
+Production agents and personal agents need the same primitives: durable steps,
+capability-routed models, budgets, isolation, provenance and real channels. Build the
+runtime once and both fall out of it. Every fix the personal agent forces on the
+runtime, and every guarantee the runtime adds, improves the other side.
 
 ## Why now
 
-- Models are finally good enough that a personal agent can pass as *you* — if the
-  surrounding system handles voice, memory, pacing, and safety. That system is the
-  moat, not the model.
-- Capability-addressed routing (`model: "auto"`) means you ride every model
-  improvement without rewrites.
-- Regulated and serious buyers will not ship agents to a vendor cloud. They need
-  their VPC, audit trails, and hard cost controls. The control-plane / data-plane
-  split is now table stakes.
+- Agents now write and run code as a matter of course. That code needs its own
+  kernel, and the loop that holds the keys must not share it. Google's Agent Compute
+  Engine announcement (October 22, 2026) puts a microVM per agent and credentials
+  outside it at the center of its pitch. Lantern runs that shape today, self-hosted.
+- Addressing models by capability (`model: "auto"`) lets an agent pick up a better
+  model without a code change.
+- Regulated buyers will not send agent traffic through a vendor cloud. They need the
+  data plane in their VPC, audit trails and hard cost limits.
 
 ---
 
-## Solution — five modules, one runtime
+## What ships
 
 | Module | What it is | Status |
 |---|---|---|
-| **1. Agent Runtime** | Go control plane + durable workflow engine + Rust multi-LLM router + microVM runtime (scheduler / manager / harness) + edge gateway. Run agents in **your** cloud; control plane never touches user code. | Core prod-ready; microVM live boot is alpha (fail-closed) |
-| **2. Personal Agent ("Jarvis")** | WhatsApp + iMessage bridges that text **as you** — owner-only, learns your real voice from history, agentic macOS actions (Calendar / Notes / Mail), cross-channel memory, urgent-alerting, draft-and-confirm. | Live, in daily use |
-| **3. Trust and Governance** | Policy-as-code budgets (hard-fail 402), eval-in-CI + rehearsals, HMAC-verifiable run receipts, guardrails, multi-tenant RLS, AES-256-GCM secrets, fail-closed prod posture. | Prod-ready |
-| **4. Channels and Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature-verified inbound, naturally paced replies. | Prod-ready |
-| **5. Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one-command local dev, visual workflow editor that *executes*, MCP server registry, A2A agent cards, forkable agent marketplace with signed cross-tenant settlement. | Prod-ready |
+| **Agent runtime** | Go control plane and durable workflow engine, Rust model router, microVM runtime (scheduler, manager, in-VM harness). The control plane never touches user code. | Core in use. Firecracker lifecycle (boot, exec, snapshot, restore, fork) passes end to end on real KVM in a jailed Lima nested-virt guest; bare-metal numbers pending. |
+| **Egress broker** | VM with no network device; egress crosses vsock to a host broker that enforces the allowlist and injects credentials. | Opt-in (`LANTERN_EGRESS_MODE=broker`), Firecracker only. Default mode routes egress through an in-guest proxy; enforcement needs the image's iptables REDIRECT rule. |
+| **Trust and governance** | Budgets that return HTTP 402, eval gates that return HTTP 422 in CI, rehearsals of past failures, signed run receipts (Ed25519 when a signing seed is configured, HMAC-SHA256 otherwise), row-level security on every tenant table, AES-256-GCM credentials at rest. | In use. RLS and per-scope authZ enforcement are flag-gated per environment. |
+| **Personal agent** | WhatsApp and iMessage bridges that reply as the owner, learn their voice from their own sent messages, take Calendar / Notes / Mail actions on confirmation, and hold money promises and unverifiable claims for approval. | In daily use by the founder. |
+| **Channels** | WhatsApp, iMessage, Slack, Telegram, Discord, voice (Twilio, LiveKit), embeddable webchat. | In use. |
+| **Developer experience** | TypeScript, Python and Go SDKs, the `lantern` CLI (`doctor`, `onboard`, `test`, `vm`), a visual workflow editor whose graphs execute (tool nodes not yet wired), MCP registry, A2A agent cards, agent marketplace. | In use. |
 
-## Who needs it (ICP)
+## Who it's for
 
-- **Startups** shipping AI-native products who need real infrastructure without a
-  six-month platform build — they want to clone it, configure their LLM keys, and
-  ship in a day.
-- **Enterprises with compliance requirements** who cannot route customer data through
-  a SaaS vendor — they need the data plane in their own VPC with cryptographic audit
-  trails.
-- **Founders and operators** who want a personal assistant that actually sounds like
-  them, on their own phone number, without a third-party holding the keys.
+- **Startups shipping AI-native products** that need durable runs, budgets and
+  isolation without a six-month platform build.
+- **Companies with compliance requirements** that need the data plane in their own
+  VPC and a signed record of what each run did.
+- **Founders and operators** who want an assistant on their own number that sounds
+  like them, with no third party holding the keys.
 
-## Market framing
+## Market
 
-The agent-infrastructure category is being created right now. Every organization that
-ships an LLM feature eventually needs durable execution, cost controls, and eval
-tooling. The alternatives are: build it yourself (expensive), use a narrow framework
-that stops at the demo layer (no isolation, no eval, no channels), or give a vendor
-your data. Lantern is the Apache-2.0 option — full-featured, self-hosted, no paywall.
+Every team that ships an LLM feature ends up needing durable execution, cost
+controls and eval gates. Today the options are to build it, to use a framework that
+stops at the demo, or to hand a vendor the data. Lantern is the self-hosted,
+Apache-2.0 option, with no paywalled tier.
 
-## Moat / insight
+## Moat
 
-The natural-communication layer (voice-from-history, pacing, dialect, privacy guards,
-claim verifier, bot-tell guards) is the part nobody else has and the part that takes
-the most real-world iteration. The platform is the substrate; the personal agent
-is the wedge that makes it real every day. Every improvement to the platform improves
-the personal agent, and vice versa.
+The communication layer of the personal agent: voice learned from the owner's own
+messages, pacing taken from their real reply times, dialect rules, a commitment gate
+that holds money promises, a grounding gate that holds claims the bot can't verify,
+and a verifier that rewrites "I sent it" to "I'll send it" unless it did. Each of
+these came from a real failure in live use. The platform is the substrate; the
+personal agent is the daily stress test.
 
-## How a run works — durable, budgeted, isolated, verifiable
+## How a run works
 
-![Agent run lifecycle](docs/assets/run-lifecycle.svg)
+![Agent run lifecycle](docs/assets/diagrams/run-lifecycle.svg)
 
-1. `POST /v1/runs/forecast` — tokens, cost, confidence; HTTP 402 if budget exceeded.
-2. Budget gate — hard-fail if the policy says no.
-3. Durable step execution — the workflow engine journals every step; idempotent replay on retry.
-4. Capability routing — model router maps `"auto"` / `"reasoning-large"` / … to the right provider.
-5. MicroVM isolation — untrusted code goes to Firecracker / K8s; never a bare pod.
-6. Signed receipt — HMAC-SHA256 over the journal; verifiable by anyone at `/proof`.
+1. **Forecast.** `POST /v1/runs/forecast` estimates tokens and cost and says whether
+   the run would exceed its budget.
+2. **Budget gate.** A hard-fail budget returns HTTP 402 before any model is called.
+3. **Durable steps.** Every step is journaled. After a crash the recovery sweep
+   re-drives the run and completed steps return their cached output instead of
+   running again.
+4. **Capability routing.** `"auto"` or `"reasoning-large"` maps to a concrete provider
+   model.
+5. **Isolation.** Untrusted code runs in a Firecracker or Kata microVM, never a bare
+   pod.
+6. **Receipt.** `POST /v1/runs/{id}/receipt` signs the hash of the run's journal: Ed25519 when
+   `LANTERN_RECEIPT_ED25519_SEED` is set (HMAC-SHA256 dev fallback otherwise). Anyone can
+   check an Ed25519 receipt at `/proof` against the published key.
 
 ---
 
-## Proof it is real
+## Proof
 
-- **Polyglot monorepo building:** Go control plane, Rust hot path (gateway / router /
-  runtime / harness), TS dashboard + SDK + bridges, Python SDK — all building.
-- **Tested:** ~290 Rust unit tests across the 5 services, 565 bridge-core tests,
-  control-plane + SDK suites, machine-validated bridge behaviors (urgent-alert,
-  location-privacy, voice) — green in CI.
-- **Hardened:** two security audits remediated (auth, tenant isolation, webhook
-  verification, XSS, secrets, fail-closed-in-prod); dependency CVEs patched.
-- **Honest:** the exact items still needing a Linux/KVM host to validate (real
-  Firecracker boot, live mTLS handshake, secret-vending transport) are enumerated in
-  `SECURITY.md` and ship **fail-closed** — nothing pretends to work.
+- **Real KVM.** The Firecracker integration test boots, snapshots, restores and forks
+  a jailed VM; it passes on a Lima nested-KVM host and runs in CI where the runner
+  exposes KVM (best-effort on hosted runners). Three forks shared one memory inode (copy-on-write) and each
+  spawned in 131–160 ms ([Lima nested-virt, indicative](docs/benchmarks/runtime-latency.md)).
+- **Tested.** Go (`-race`), Rust, TypeScript and Python suites, plus DB-backed
+  row-level-security tests that connect as the restricted role. `make ci-local` runs
+  the CI matrix.
+- **Fail-closed in production.** A missing service token or a stub scheduler stops
+  the service from starting. A missing isolation runtime refuses the run instead of
+  downgrading it.
+- **Honest about gaps.** What still needs a bare-metal host to validate is listed in
+  [`SECURITY.md`](SECURITY.md).
 
 ## Status and ask
 
-**Public alpha.** Modules 2–5 are in real use. Module 1's microVM live-boot is the
-last integration mile (Linux/KVM host), implemented and fail-closed today.
+**Public alpha.** The control plane, budgets, evals, receipts, channels and personal
+agent are in real use. The microVM runtime is proven on nested KVM; bare-metal
+validation is next.
 
-We are looking for **design partners** who want to run agents in their own cloud with
-real cost, eval, and audit controls — and early users for the personal agent.
-Apache-2.0; self-host everything. The managed cloud is convenience, not a paywall.
+We want **design partners** who need agents in their own cloud with real cost, eval
+and audit controls, and early users for the personal agent.
 
-*Run it: `git clone https://github.com/dshakes/lantern && make dev`*
-*See [README](README.md) and [SECURITY.md](SECURITY.md).*
+*Run it: `git clone https://github.com/dshakes/lantern && cd lantern && make dev`.
+See the [README](README.md) and [SECURITY.md](SECURITY.md).*

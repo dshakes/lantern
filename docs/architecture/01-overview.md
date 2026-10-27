@@ -1,6 +1,8 @@
 # Architecture Overview
 
 > **Read this first.** Every other architecture doc assumes you've read this one.
+>
+> **In one line:** Lantern runs production agents on a control-plane / data-plane split, with every step journaled to Postgres, every model call routed by capability, and untrusted code confined to microVMs. **Try it:** `lantern dev`, then follow [`headless-agent-quickstart`](../guides/headless-agent-quickstart.md).
 
 ## Mission
 
@@ -108,6 +110,8 @@ The single point of contact with all LLM providers. Implements a Vercel-AI-Gatew
 
 ### Memory Service (Go)
 
+> The platform-facing memory API (`/v1/memory/*`, `/v1/people/*`) is served over REST by the control-plane; there is deliberately no gRPC `MemoryService` ([ADR 0013](../adr/0013-billing-scheduler-grpc-memory-rest.md)). The tiers below describe the model.
+
 Three-tier memory model borrowed from Letta:
 
 - **Core** — small, always-included scratchpad in the prompt (key-value)
@@ -168,7 +172,7 @@ The control-plane workflow interpreter owns the execution loop. No VM is spawned
 
 ### Path B — Headless microVM run (`POST /v1/runtime/schedule` · `lantern run` CLI)
 
-The agent bundle runs as a process inside a hardened Kubernetes pod; the harness is PID 1. The workflow engine journals every step; crash-replay resumes at the first incomplete node.
+The agent bundle runs as a process inside a hardened pod or microVM; the harness is PID 1. Crash-replay of the spawn itself is handled by the scheduler/manager lifecycle; step-level journaling is the engine's job (see the two-tier note below).
 
 ```
 1. `lantern run my-agent.yaml --input '{...}'`
@@ -185,16 +189,16 @@ The agent bundle runs as a process inside a hardened Kubernetes pod; the harness
 4. Runtime Manager:
    ├─ consults isolation.class (e.g., "standard")
    ├─ builds K8s pod spec; sets runtimeClassName (e.g., "gvisor")
-   ├─ either restores from a warm snapshot (~28ms) or cold-boots (~150ms)
+   ├─ either restores from a warm snapshot (Firecracker: tens of ms) or cold-boots (target under 200ms)
    ├─ injects the bundle, env, secrets, and a per-instance Ed25519 identity
    └─ starts the harness (PID 1); on Firecracker the contract (command, egress rules,
       workload uid) arrives as spawn.json on the cert drive, and the harness drops the
       workload to that uid
 
 5. Agent process executes user code inside the pod:
-   ├─ each step() call hits the Workflow Engine over gRPC
-   │  ├─ if step result already in journal → returned (replay)
-   │  └─ otherwise → engine writes StepStarted, executes the side-effect, writes StepCompleted
+   ├─ durable step journaling via the Workflow Engine (design target; see the two-tier note below
+   │  for what carries traffic today): a step already in the journal is returned (replay),
+   │  otherwise StepStarted → side-effect → StepCompleted
    ├─ each ctx.llm.* call goes to Model Router → provider → streams tokens back
    └─ egress is enforced by the harness; deny-default unless declared in agent.yaml
 
@@ -219,7 +223,7 @@ The agent bundle runs as a process inside a hardened Kubernetes pod; the harness
    └─ Streaming clients receive a final cancel event
 ```
 
-On the microVM tier a running VM can also be **paused** (snapshot + stop, frees the quota slot), **resumed** under the same `vm_id`, or **forked** into 1–10 children (`POST /v1/runtime/vms/{id}/pause|resume|fork`). A restored VM is re-issued a fresh identity — cert, exec token, network address — rather than reusing the source's. Diagram: [`sandbox-lifecycle.svg`](diagrams/sandbox-lifecycle.svg).
+On the microVM tier a running VM can also be **paused** (snapshot + stop, frees the quota slot), **resumed** under the same `vm_id`, or **forked** into up to `LANTERN_MAX_FORK_COUNT` children (default 100, ceiling 1000) that share the snapshot memory copy-on-write (`POST /v1/runtime/vms/{id}/pause|resume|fork`). A restored VM is re-issued a fresh identity — cert, exec token, network address — rather than reusing the source's. Diagram: [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
 
 ## Why each language
 
@@ -245,13 +249,13 @@ We promise:
 
 ## Security model (one paragraph; full doc in `10-security.md`)
 
-mTLS between every internal service. JWT for user requests. API keys for SDK requests, scoped per agent. Secrets resolved at runtime by the runtime manager from a per-tenant KMS-backed store; secrets never appear in journals, logs, traces, or run outputs. Untrusted code runs in hardened Kubernetes pods (`gVisor` RuntimeClass) with seccomp deny-by-default and an egress allowlist; hostile code runs in Kata microVM pods on dedicated nodes. Neither is ever downgraded to a bare `runc` pod. Signed agent bundles via cosign, verified before scheduling. Per-tenant K8s namespaces with NetworkPolicies. Tenant-isolated database rows; tenant-isolated S3 prefixes; per-tenant encryption keys for memory and bundles.
+mTLS between every internal service. JWT for user requests. API keys for SDK requests, scoped per agent. Secrets are stored AES-256-GCM-encrypted (`LANTERN_CREDENTIAL_KEY`, held only by the control-plane) and vended at runtime through the control-plane secret relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)); secrets never appear in journals, logs, traces, or run outputs. Untrusted code runs in hardened Kubernetes pods (`gVisor` RuntimeClass) with seccomp deny-by-default and an egress allowlist; hostile code runs in Kata microVM pods on dedicated nodes. Neither is ever downgraded to a bare `runc` pod. Signed agent bundles via cosign, verified before scheduling. Per-tenant K8s namespaces with NetworkPolicies. Tenant-isolated database rows; tenant-isolated S3 prefixes; per-tenant encryption keys for memory and bundles.
 
 ## What's intentionally NOT in this architecture
 
 - **A custom database.** Postgres + Redis + S3 + pgvector. Period.
 - **A custom message queue.** Postgres LISTEN/NOTIFY + a polling fallback for the spike; Redis Streams for production scale.
-- **A custom container runtime.** We use containerd and firecracker-containerd.
+- **A custom container runtime.** Kubernetes RuntimeClasses (runc, gVisor, Kata) plus Firecracker for the microVM tier.
 - **A custom service mesh.** mTLS is handled by the gateway and our gRPC stack directly. We do not require Istio/Linkerd.
 - **Multi-cloud abstraction layers.** Terraform modules for AWS and GCP, but we don't pretend to be cloud-agnostic in a leaky way.
 - **A "framework" for users to extend us.** Users write agents. The platform's surface is the SDK, the bundle, and the gRPC API. No plugin system.
@@ -265,7 +269,7 @@ In production, runs execute in one of two tiers selected by the agent manifest's
 
 Routing is determined at run creation from the resolved agent version. A caller cannot downgrade an agent that declares `"microvm"` to the shared tier. Failure is explicit (`microvm_unavailable`), never a silent fallback across the isolation boundary.
 
-The workflow-engine service (`:50052`) is a third implementation of durable step execution that is wired but carries no run traffic. Per [ADR 0022](../adr/0022-two-tier-agent-runtime.md), it is not a routing tier.
+The workflow-engine service (`:50052`) is a third implementation of durable step execution. Per [ADR 0022](../adr/0022-two-tier-agent-runtime.md) it is not a routing tier; it is reached through the data-plane `RouteRun` path, not by the shared or microVM tiers above.
 
 Full details: [`09-agent-runtime.md`](09-agent-runtime.md).
 

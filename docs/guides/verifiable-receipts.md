@@ -1,8 +1,8 @@
 # Verifiable Receipts
 
-Every completed Lantern run can produce an **Ed25519-signed receipt** that proves,
-without trusting Lantern, that a specific sequence of events occurred — and that
-no event was added, removed, or modified after the receipt was issued.
+**What:** an Ed25519-signed receipt over the SHA-256 of a run's `journal_events`.
+**Why:** anyone can check, without trusting Lantern, that no event was added, removed or altered after issuance.
+**Try it:** `curl -X POST localhost:8080/v1/runs/<run_id>/receipt -H "Authorization: Bearer $LANTERN_API_TOKEN"`, then paste the result into the dashboard `/proof` page.
 
 ## What a receipt covers
 
@@ -53,21 +53,17 @@ curl -X POST http://localhost:8080/v1/runs/<run_id>/receipt \
   -H "Authorization: Bearer $LANTERN_API_TOKEN"
 ```
 
-The receipt is persisted in `run_receipts` and returned in the response:
+The receipt is persisted in `run_receipts` and returned as `{payload, signature, algorithm}`:
 
 ```json
 {
-  "run_id": "run_01abc",
-  "tenant_id": "00000000-0000-0000-0000-000000000001",
-  "issued_at": "2026-06-21T10:00:00Z",
-  "journal_hash": "sha256:e3b0c44298fc...",
-  "signature": "base64url:<ed25519-sig>",
-  "algorithm": "EdDSA"
+  "payload": { "runId": "run_01abc", "tenantId": "...", "journalHash": "...", "issuedAt": "2026-06-21T10:00:00Z", "...": "see fields above" },
+  "signature": "<base64 (std) ed25519 signature>",
+  "algorithm": "Ed25519"
 }
 ```
 
-Only completed runs (status `succeeded` or `failed`) can have receipts issued.
-A run that is still in flight returns `HTTP 409`.
+An unknown run id returns `404`. `algorithm` is `HMAC-SHA256` when `LANTERN_RECEIPT_ED25519_SEED` is unset (legacy/dev fallback).
 
 ## Verifying a receipt offline
 
@@ -77,14 +73,14 @@ A run that is still in flight returns `HTTP 409`.
 curl https://your-lantern/.well-known/lantern-receipts
 ```
 
-Response:
+Response (Ed25519 mode; in HMAC mode only `algorithm` and `keyFingerprint` are returned):
 
 ```json
 {
-  "algorithm": "EdDSA",
-  "curve": "Ed25519",
-  "public_key_b64": "<base64-encoded public key>",
-  "key_fingerprint": "SHA256:<fingerprint>"
+  "algorithm": "Ed25519",
+  "publicKey": "<base64 public key>",
+  "keyFingerprint": "<hex>",
+  "docs": "https://docs.lantern.dev/receipts"
 }
 ```
 
@@ -96,14 +92,11 @@ pin the key out-of-band.
 ```bash
 curl -X POST http://localhost:8080/v1/runs/receipts/verify \
   -H "Content-Type: application/json" \
-  -d '{
-    "run_id": "run_01abc",
-    "journal_hash": "sha256:e3b0c44...",
-    "signature": "base64url:<sig>",
-    "issued_at": "2026-06-21T10:00:00Z"
-  }'
-# → {"valid": true}  or  {"valid": false, "reason": "signature mismatch"}
+  -d "$RECEIPT"        # the full {payload, signature, algorithm} object from issuance
+# -> {"valid": true, ...}  or  {"valid": false, "reason": "signature mismatch"}
 ```
+
+If the run exists, the server compares against the signature it persisted (constant time); otherwise it recomputes over the canonical JSON.
 
 This endpoint requires no JWT — it is designed for external auditors and the
 public receipt verifier at `/proof`.
@@ -116,7 +109,7 @@ RECEIPT=$(curl -s -X POST http://localhost:8080/v1/runs/<run_id>/receipt \
   -H "Authorization: Bearer $LANTERN_API_TOKEN")
 
 # 2. Extract and base64-decode the signature
-echo "$RECEIPT" | jq -r '.signature' | base64 -d > sig.bin
+echo "$RECEIPT" | jq -r '.signature' | base64 -d > sig.bin   # std base64
 
 # 3. Reproduce canonical JSON of the payload
 #    Sort the payload keys alphabetically, marshal without whitespace.
@@ -157,6 +150,4 @@ against the published public key and reports valid/invalid + the journal hash.
 
 ## HMAC back-compat
 
-Before Ed25519 receipts landed (PR #40), receipts used HMAC-SHA256 (shared-secret).
-Existing `run_receipts` rows with the `hmac` algorithm field are still verifiable
-via the `/verify` endpoint, which supports both. New receipts always use Ed25519.
+Receipts use HMAC-SHA256 (shared-secret) when `LANTERN_RECEIPT_ED25519_SEED` is unset. The `/verify` endpoint accepts both `HMAC-SHA256` and `Ed25519`; set the seed for any deployment where outside parties verify.

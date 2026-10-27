@@ -2,7 +2,9 @@
 
 > Every service in the Lantern platform, in one place. Read [`01-overview.md`](01-overview.md) first.
 
-This document is the **canonical reference** for what each service does, what it owns, what it depends on, and what its API surface looks like. If a service is not listed here, it does not exist.
+This document is the **canonical reference** for what each service does, what it owns, what it depends on, and what its API surface looks like.
+
+**Status legend.** Each service below describes its target contract. Where the code today is narrower, an *As built* note says so. The authoritative RPC surface is `packages/proto/lantern/v1/*.proto`; the authoritative REST surface is `services/control-plane/cmd/server/main.go`. Connectors, the visual builder and the credential store are **not** separate services today - they live in the control-plane and the dashboard (see sections 11-13).
 
 ## Conventions
 
@@ -28,7 +30,7 @@ This document is the **canonical reference** for what each service does, what it
 
 Single edge for all traffic. Terminates TLS, validates JWT or API key, applies per-tenant rate limits, attaches `tenant_id` and trace context to every downstream request, and proxies streaming responses without buffering. Implements:
 
-- Auth: JWT (RS256) for user requests, API keys (Ed25519-signed) for SDK requests
+- Auth: JWT for user requests; API keys validated by introspection against the control-plane (`POST /internal/auth/introspect-key`, 60s cache, fail-closed; `services/gateway/src/introspect.rs`)
 - Rate limit: token-bucket per tenant + per API key, backed by Redis
 - Streaming proxy: SSE, WebSocket, and gRPC server-streaming pass-through with backpressure
 - Error normalization: every downstream error becomes a structured `Problem` (RFC 7807)
@@ -42,26 +44,26 @@ Single edge for all traffic. Terminates TLS, validates JWT or API key, applies p
 |---|---|
 | **Language** | Go |
 | **State** | Postgres: `tenants`, `users`, `agents`, `agent_versions`, `runs`, `api_keys`, `policies`, `triggers`, `webhooks` (see [`03-data-model.md`](03-data-model.md)) |
-| **Depends on** | `workflow-engine`, `runtime-manager`, K8s API, S3 (bundle storage), KMS |
+| **Depends on** | `workflow-engine`, `runtime-scheduler`, `runtime-manager`, `model-router`, K8s API, S3 (bundle storage) |
 | **Public surface** | REST + gRPC: agents/runs/tenants/RBAC CRUD |
 | **Internal surface** | gRPC: `RunCreated`, `BundleResolved`, `AgentVersionChanged` events |
 | **SLO** | p99 read ≤ 50ms; p99 write ≤ 200ms; 99.9% availability |
 
 System of record for the entire platform. Owns lifecycle of agents, agent versions (immutable bundles in S3 keyed by digest), runs, tenants, users, RBAC, API keys, webhooks, and policies. Validates input against agent schemas before scheduling. Talks to the K8s API to provision per-tenant namespaces and resource quotas. **Never executes user code.**
 
-Key endpoints (REST surface; gRPC mirrors):
+Key endpoints (a representative subset; the full list is in `CLAUDE.md` and `cmd/server/main.go`):
 ```
 POST   /v1/agents
 GET    /v1/agents/{name}
-POST   /v1/agents/{name}/versions
-GET    /v1/agents/{name}/versions/{version}
 POST   /v1/runs
 GET    /v1/runs/{id}
 GET    /v1/runs/{id}/events     SSE
-POST   /v1/runs/{id}/cancel
-POST   /v1/runs/{id}/signals/{name}
-GET    /v1/tenants/{id}/usage
+POST   /v1/runtime/schedule     headless microVM runs
+POST   /v1/runs/{id}/receipt    signed receipt
+POST   /v1/runs/forecast        cost forecast
 ```
+
+The control-plane also hosts the inline run executor and workflow interpreter (shared tier, [ADR 0022](../adr/0022-two-tier-agent-runtime.md)), connectors, memory/people REST, budgets, evals and the marketplace.
 
 ---
 
@@ -73,7 +75,7 @@ GET    /v1/tenants/{id}/usage
 | **State** | Postgres: `journal_events` (partitioned by `run_id`), `step_state`, `run_locks` |
 | **Depends on** | `runtime-manager`, `model-router`, `memory`, `notifier` |
 | **Public surface** | None (internal only) |
-| **Internal surface** | gRPC: `ExecuteRun`, `ResumeRun`, `SignalRun`, `CancelRun`, `StepStream` |
+| **Internal surface** | gRPC `WorkflowEngineService`: `ExecuteRun`, `ResumeRun`, `SignalRun`, `CancelRun`, `QueryRun` (service-token gated, run RPCs tenant-scoped) |
 | **SLO** | Step recording p99 ≤ 50ms; replay correctness 100% |
 
 Heart of Lantern. Event-sourced durable execution. Every step start, step complete, step failure, signal, query, and child workflow event becomes an entry in the `journal_events` table partitioned by `run_id`. On crash or restart, the engine reads the journal, reconstructs in-memory state, and the agent code re-runs deterministically — already-journaled steps return cached results, while new steps execute for real.
@@ -88,7 +90,9 @@ Implements:
 - Child workflows — sub-agent invocations as nested journal sequences
 - Cancellation — cooperative; structured cleanup via `defer`/`finally` semantics
 
-Runs are sharded across engine workers by `run_id` hash. Each run has a Postgres advisory lock to prevent split-brain.
+Runs are claimed by engine workers under a Postgres advisory lock to prevent split-brain.
+
+*As built:* the full `step.map` / `step.race` / `step.sleep` SDK surface is the design target; leaf dispatch implemented today covers `llm_call` (via model-router), `tool_call` (via `RuntimeManager.ExecTool`) and `child_run` (see CLAUDE.md). Run traffic on the primary dev path executes in the control-plane inline executor instead ([ADR 0022](../adr/0022-two-tier-agent-runtime.md)).
 
 See [`05-workflow-engine.md`](05-workflow-engine.md) for the deep dive.
 
@@ -100,14 +104,14 @@ See [`05-workflow-engine.md`](05-workflow-engine.md) for the deep dive.
 |---|---|
 | **Language** | Rust |
 | **State** | Local: snapshot pool, warm VM pool, sandbox metadata cache. Authoritative state lives in K8s. |
-| **Depends on** | K8s API, containerd / firecracker-containerd, Wasmtime, KMS, S3 (bundles) |
+| **Depends on** | K8s API, Firecracker / Kata / containerd, Wasmtime, control-plane (secret relay), S3 (bundles) |
 | **Public surface** | None |
-| **Internal surface** | gRPC: `Schedule`, `Cancel`, `Stream`, `WarmPool`, `Snapshot` |
+| **Internal surface** | gRPC `RuntimeManager`: `Spawn`, `Stop`, `Logs`, `Exec`, `ExecTool`, `Stats`, `Snapshot` |
 | **SLO** | Cold start p99 ≤ 200ms (warm pool), ≤ 1.5s (cold); availability 99.95% |
 
 Owns all interaction with physical compute. Translates "schedule this run on this isolation class" into a Kubernetes pod with the appropriate `runtimeClassName` ([ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)). Owns warm pools and snapshot/restore for fast cold starts.
 
-> **Substrate update (2026-06-18):** [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md) supersedes the class→backend mapping below. Kubernetes is now the default substrate; isolation is a `runtimeClassName` on the pod, not five separate backends. The authoritative current mapping is: `TRUSTED` → `runc`; `STANDARD`/`UNTRUSTED` → `gvisor`; `HOSTILE` → `kata-qemu`/`kata-fc` (dedicated pool); `WASM` → `crun+wasm`; `DEVCONTAINER` → long-lived pod + PVC, `gvisor`. The table below (Firecracker as STANDARD default) reflects the ADR 0002 design and remains for historical context.
+> **Substrate update (2026-06-18):** [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md) supersedes the class-to-backend table below. Kubernetes is the default substrate; isolation is a `runtimeClassName` on the pod, not five separate backends. Current mapping: `TRUSTED` → `runc`; `STANDARD`/`UNTRUSTED` → `gvisor`; `HOSTILE` → `kata-qemu`/`kata-fc` (dedicated pool); `WASM` → `crun+wasm`; `DEVCONTAINER` → long-lived pod + PVC, `gvisor`. The table below (Firecracker as STANDARD default) is the ADR 0002 design, kept for the latency targets only.
 
 For each isolation class (ADR 0002 design — see ADR 0009 for current mapping):
 
@@ -120,20 +124,20 @@ For each isolation class (ADR 0002 design — see ADR 0009 for current mapping):
 | `wasm` | Wasmtime in-process | 5ms | 5ms |
 | `devcontainer` | Long-lived pod with attached PVC | 3s | n/a (long-lived) |
 
-Streams stdout, stderr, lifecycle events, and step gRPC traffic between the agent process and the workflow engine.
+Streams stdout, stderr and lifecycle events from the harness back to the control-plane.
 
 Enforces:
 - seccomp profile per class (deny-by-default for `untrusted` and `hostile`)
-- Egress allowlist enforced via eBPF + NetworkPolicy
+- Egress allowlist: NetworkPolicy on the host plus the in-VM harness CONNECT proxy with an iptables REDIRECT (fail-closed in prod; see 04b)
 - Read-only rootfs for `untrusted`
-- KMS-resolved secrets injected at exec time, never written to disk
+- Secrets vended by the harness over `/run/lantern/secrets.sock` via the control-plane relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)); never baked into the image
 - Resource limits from `agent.yaml.limits` translated to cgroups + Firecracker MMIO
 
-**Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, 1–10 via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
+**Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, up to `LANTERN_MAX_FORK_COUNT` (default 100, ceiling 1000) via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
 
 **Spawn contract.** The manager writes `spawn.json` (workload command, env, egress rules, `workload_uid`/`gid`) onto the read-only cert drive; the harness reads it at boot and drops the workload to that uid. The manager, not the caller, chooses the uid.
 
-**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](diagrams/sandbox-lifecycle.svg).
+**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](../assets/diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
 
 See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 
@@ -144,10 +148,10 @@ See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 | | |
 |---|---|
 | **Language** | Rust |
-| **State** | Redis (prompt cache, semantic cache index, capability→model mapping cache, per-tenant budgets) |
-| **Depends on** | All upstream LLM providers (OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Together, local Ollama, …) |
+| **State** | Redis (prompt cache, 24h TTL) |
+| **Depends on** | Upstream LLM providers (OpenAI and Anthropic wired today; others per `providers/`) |
 | **Public surface** | OpenAI Chat Completions–compatible HTTPS, plus Lantern-native streaming gRPC |
-| **Internal surface** | gRPC: `Complete`, `CompleteStream`, `Embed`, `Rerank`, `Tokenize` |
+| **Internal surface** | gRPC `ModelService`: `Complete`, `CompleteStream`, `Embed`, `Tokenize` |
 | **SLO** | p50 streaming TTFT overhead ≤ 30ms; failover transparent on 5xx/429 |
 
 The single point of contact with all LLM providers. Implements a Vercel-AI-Gateway-style unified API: one endpoint, OpenAI-compatible, plus first-class capability addressing.
@@ -158,19 +162,17 @@ Capabilities (not models):
 - `chat-large`, `chat-small` — non-reasoning chat
 - `vision-large`, `vision-small`
 - `embed-large`, `embed-small`
-- `rerank` — cross-encoder rerankers
+- `rerank` — cross-encoder rerankers (planned; no `Rerank` RPC yet)
 - `code-large`, `code-small`
 - `auto` — router picks based on prompt class + history
 
-**Cost-aware big/small routing:**
-1. If the agent says `auto`, the router classifies the prompt with a tiny in-process classifier (a fine-tuned ALBERT, ~50ms).
-2. It picks the cheapest model historically successful at this class for this tenant.
-3. If the response confidence (from the model's logprobs or self-assessment) is below threshold, it escalates to the next-larger model and discards the cheaper attempt.
-4. Failure on the chosen provider triggers transparent failover to the next-best provider.
+**Routing (as built):** the router ranks candidate models by strategy (`cheap`, `fast`, `best`, plus capability scoring) and fails over transparently to the next provider on error, marking the response `escalated`.
+
+*Design target, not yet in the router source:* a prompt-class classifier with history-based big/small selection and confidence-triggered escalation.
 
 **Caching:**
-- **Prompt cache:** SHA-256 of normalized request → response. 24h TTL by default. Per-tenant.
-- **Semantic cache:** embedding of the prompt → kNN search in pgvector for near-duplicates within `cosine ≥ 0.985`. Read-only prompts only (no tools).
+- **Prompt cache (built):** normalized request to response in Redis, 24h TTL.
+- **Semantic cache (design target, not yet built):** embedding kNN for near-duplicates on read-only prompts.
 
 **Generation IDs** are injected on the first token (Vercel pattern) so dashboard reconnects can resume mid-stream.
 
@@ -187,8 +189,8 @@ See [`06-model-router.md`](06-model-router.md).
 | **Language** | Go |
 | **State** | Postgres + pgvector, Redis, S3 |
 | **Depends on** | KMS for per-tenant encryption keys |
-| **Public surface** | None |
-| **Internal surface** | gRPC: `Write`, `Read`, `Search`, `Compact`, `Delete` |
+| **Public surface** | None directly; the platform serves memory over REST from the control-plane (`/v1/memory/*`, `/v1/people/*`) |
+| **Internal surface** | HTTP/health only today. There is no memory proto on purpose ([ADR 0013](../adr/0013-billing-scheduler-grpc-memory-rest.md)); `Write`/`Read`/`Search` are the logical operations |
 | **SLO** | p99 search ≤ 100ms for tier-1; p99 write ≤ 50ms |
 
 Three-tier memory borrowed from Letta:
@@ -211,7 +213,7 @@ Multi-scope: tenant, user, agent, run. Per-tenant encryption keys; pgvector inde
 | **Internal surface** | gRPC: `Notify`, `ListSubscriptions` |
 | **SLO** | First delivery attempt within 1s of event; at-least-once with idempotency |
 
-Listens to engine events. Delivers notifications via webhook, email, Slack, Discord, SMS, voice call, in-app, mobile push, and email reply-bot. At-least-once with idempotency keys. Per-tenant rate limits and provider failover. Templates are versioned and Liquid-based.
+Listens to engine events. Delivers via webhook, email, Slack, Discord and SMS (Twilio); in-app and push are planned. At-least-once with idempotency keys. Cross-provider failover is not yet implemented.
 
 ---
 
@@ -223,7 +225,7 @@ Listens to engine events. Delivers notifications via webhook, email, Slack, Disc
 | **State** | Postgres: `usage_events`, `aggregations`, `invoices`, `budgets` |
 | **Depends on** | All services that emit usage events |
 | **Public surface** | REST: usage/invoices read; budget set |
-| **Internal surface** | gRPC: `EmitUsage`, `CheckBudget` |
+| **Internal surface** | gRPC `BillingService`: `EmitUsage`, `CheckBudget`, `GetUsage`, `SetBudget` |
 | **SLO** | Aggregation lag ≤ 60s; budget enforcement ≤ 5s |
 
 Captures usage events: CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress, connector-call counts. Aggregates into a metering pipeline. Per-tenant cost attribution by tag. **Hard budget enforcement is wired into the model router** — when a tenant hits 100% of budget, model calls return a `BudgetExceeded` structured error and the run goes to `paused-on-budget` state until topped up. In the control plane, budgets are per agent plus an optional **tenant-wide daily cap** (`PUT /v1/budgets/tenant`, enforced on agentless `/v1/completions` too); workflow `ai-step` and built-in `web_search` spend is metered via `CheckBudget`/`RecordUsage`.
@@ -238,16 +240,17 @@ Captures usage events: CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by mo
 | **State** | Postgres: `schedules`, `trigger_state`, `dead_letter` |
 | **Depends on** | `control-plane` (to create runs) |
 | **Public surface** | None |
-| **Internal surface** | gRPC: `RegisterSchedule`, `Trigger` |
+| **Internal surface** | gRPC `SchedulerService`: `RegisterSchedule`, `ListSchedules`, `DeleteSchedule`, `Trigger` |
 | **SLO** | Trigger fire within 5s of scheduled time; 99.9% availability |
 
 Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue, per-tenant fair-share scheduling. Implements:
 
 - Cron schedules (`0 9 * * MON`)
-- Event-driven triggers (subscribes to internal Kafka/NATS topic)
+- Timezone-aware matching (`timezone` on the schedule, `LANTERN_DEFAULT_TIMEZONE`)
 - Webhook triggers (registered via `control-plane`)
 - Delayed runs (`runIn: 5m`)
-- Polling triggers (used by connectors that don't support webhooks — e.g. IMAP)
+
+Event-bus and polling triggers are planned; no Kafka/NATS dependency exists today.
 
 ---
 
@@ -275,7 +278,9 @@ See [`12-control-surfaces.md`](12-control-surfaces.md).
 
 ---
 
-## 11. `connector-hub` — Integration Framework
+## 11. `connector-hub` — Integration Framework (not a separate service)
+
+> *As built:* connectors (17 real connector APIs) execute inside the control-plane (`POST /v1/connectors/{id}/execute`); there is no `services/connector-hub`. The table below is the design contract.
 
 | | |
 |---|---|
@@ -319,7 +324,7 @@ See [`13-connectors-and-integrations.md`](13-connectors-and-integrations.md).
 
 ---
 
-## 12. `builder` — Visual Workflow Builder (frontend)
+## 12. `builder` — Visual Workflow Builder (frontend; part of `apps/web`)
 
 | | |
 |---|---|
@@ -348,7 +353,9 @@ See [`14-visual-builder.md`](14-visual-builder.md).
 
 ---
 
-## 13. `vault` — Personal Credential Vault
+## 13. `vault` — Personal Credential Vault (design; not a separate service)
+
+> *As built:* credentials are AES-256-GCM-encrypted at rest in the control-plane (`internal/secrets`, `LANTERN_CREDENTIAL_KEY`) and vended to workloads through the secret relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)). There is no `services/vault`.
 
 | | |
 |---|---|
@@ -359,9 +366,35 @@ See [`14-visual-builder.md`](14-visual-builder.md).
 | **Internal surface** | gRPC: `Put`, `Get`, `Delete`, `Rotate`, `WrapForRuntime` |
 | **SLO** | p99 read ≤ 30ms; rotation success 100% |
 
-Stores OAuth tokens, API keys, and any personal credentials a user attaches to a workflow. **Per-user envelope encryption** with a tenant-scoped master key. Secrets are never decrypted in memory anywhere except the runtime-manager at exec time, where they're injected via `tmpfs` and zeroed on container exit. Secrets are referenced in agent bundles by ref form `lantern.secret/<id>` and never appear in journals, logs, traces, or run state.
+Stores OAuth tokens, API keys, and any personal credentials a user attaches to a workflow. **Per-user envelope encryption** with a tenant-scoped master key. Secrets are referenced in agent bundles by ref form `lantern.secret/...` (URI form `lantern.secret://<tenant>/key/<name>` in `agent.yaml`) and never appear in journals, logs, traces, or run state.
 
 See [`10-security.md`](10-security.md).
+
+---
+
+## 14. `runtime-scheduler` — MicroVM Placement
+
+| | |
+|---|---|
+| **Language** | Go |
+| **State** | Postgres: `runtime_vms`, audit/quota tables |
+| **Depends on** | `runtime-manager` |
+| **Public surface** | REST `:8085` (health/ops) |
+| **Internal surface** | gRPC `RuntimeScheduler` on `:50055`: `Schedule`, `Events`, `List`, `Terminate`, `Snapshot`, `Cluster`, `Pause`, `Resume`, `Fork` (service-token gated) |
+
+Places headless agent microVMs: warm pool, region, fair-share, cost and health factors. The control-plane (`/v1/runtime/schedule`) enforces tenant quota (HTTP 402) before calling it. See [`04b-microvm-productionization.md`](04b-microvm-productionization.md).
+
+---
+
+## 15. `harness` — In-VM PID 1
+
+Rust binary baked into the VM image. Enforces the egress allowlist, vends secrets over a peer-authenticated unix socket, drops the workload to a non-root uid, and streams heartbeats, logs and audit events to the manager over `RuntimeHarness` (`Heartbeat`, `VendSecret`, `Report`, `Exec`).
+
+---
+
+## Other services
+
+`data-plane-agent` (customer-cloud data-plane registration/heartbeat, `dataplane.proto`), `surface-gateway` (section 10), and the macOS `imessage-bridge` / `whatsapp-bridge` personal-assistant services (see `CLAUDE.md`) complete the tree under `services/`.
 
 ---
 
@@ -371,7 +404,7 @@ See [`10-security.md`](10-security.md).
 OTel collector deployment, Tempo for traces, Loki for logs, Mimir for metrics, Grafana for dashboards. Every service is instrumented; every gRPC call propagates trace context.
 
 ### Migrations — `migrations/`
-Sqlc + golang-migrate for Go services. Sqlx + migrations for Rust services. One migration history per database (Postgres) shared across services that touch it.
+Control-plane migrations are idempotent SQL under `services/control-plane/internal/db/` (`migrate.go` plus numbered files in `migrations/`); a proper migration tool is the production target.
 
 ### Codegen — `gen/`
 Protoc plugins generate gRPC clients/servers, OpenAPI from protos via gnostic, TS clients via ts-proto. Single source of truth in `packages/proto/`.

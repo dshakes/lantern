@@ -7,8 +7,7 @@ it from there: quota gate, scheduler placement, hardened pod spawn, in-VM harnes
 boot, short-TTL secret vending, OTel-traced execution, journal-backed crash replay,
 and a signed receipt at the end.
 
-This directory contains practical guides for the runtime. Each is self-contained;
-follow the cross-links when you need depth.
+This directory contains practical guides for the runtime. Each guide gives what, why, a command to try, and reference. Follow the cross-links for depth.
 
 ## Guides in this directory
 
@@ -20,6 +19,9 @@ follow the cross-links when you need depth.
 | [Observability](observability.md) | One trace per spawn, GenAI semconv, loop/retry anomaly events, `GET /v1/runtime/metrics`. |
 | [Identity and secrets](identity-and-secrets.md) | Per-instance Ed25519 identity, short-TTL secret vending over mTLS, the `lantern.secret/` ref form. |
 | [Verifiable receipts](verifiable-receipts.md) | Ed25519-signed receipts, offline verification, tamper-evidence. |
+| [CLI agent loop](cli-agent-loop.md) | `lantern onboard`, `lantern doctor`, `lantern agent dev`. |
+| [Self-service journey](self-service-e2e.md) | Develop, test, deploy, run, observe, improve - end to end. |
+| [Local to production](local-to-prod.md) | Laptop, Docker microVM tier, K8s data plane; promotion checklist. |
 
 ## Where to go from here
 
@@ -35,4 +37,3 @@ follow the cross-links when you need depth.
   explaining why that isolation class was chosen.
 - **Manual test walkthrough** — [`examples/headless-agents/MANUAL-TEST.md`](../../examples/headless-agents/MANUAL-TEST.md) —
   step-by-step REST-level exercise of scheduling, quotas, audit, and terminate.
-- **Docs site** — served at `localhost:3002` in dev (`make dashboard-dev` also starts it).

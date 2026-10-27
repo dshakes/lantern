@@ -1,11 +1,8 @@
 # Durable Execution
 
-Every agent run in Lantern is **durable by default**: the workflow engine journals
-every step, and on crash it replays from the last completed step — no re-spent
-tokens, no double side-effects, no manual checkpoint logic in your code.
-
-This guide explains what that means in practice, how to inspect the journal, and
-how to recover a stuck run.
+**What:** every run journals each step to `journal_events`; after a crash it resumes from the first incomplete step.
+**Why:** no re-spent tokens, no double side-effects, no checkpoint code (invariant #3).
+**Try it:** start a run, `kill -9` the control plane mid-run, restart it, and watch `curl -N .../v1/runs/<run_id>/events` continue (the sweep runs every 30s).
 
 For the engine internals (event sourcing, determinism, signals, queries) see
 [`docs/architecture/05-workflow-engine.md`](../architecture/05-workflow-engine.md).
@@ -31,13 +28,14 @@ against it.
 ### Replay on crash
 
 When the engine worker that owns a run crashes — mid-step, mid-LLM-call,
-mid-tool-execution — the recovery watchdog detects the abandoned run (via the
-run lease heartbeat expiry) and re-drives it on the next available worker.
+mid-tool-execution — the recovery sweep (`internal/handlers/recovery.go`, every 30s, `LANTERN_RECOVERY_INTERVAL`)
+finds runs in `running`/`queued` whose `run_locks` row is absent or expired, takes a fresh
+lock, and re-drives them.
 
-On resume, the engine replays the user's `run` function from the start. When it
-reaches a step that already has a `step_completed` event in the journal, it
-**returns the cached result immediately** without re-executing the side-effect.
-The user's code sees no difference.
+On re-drive, the workflow interpreter walks the graph from the trigger again. For every
+side-effecting node (`ai-step`, `tool`, `connector`, `subagent`, `approval`) that already has a
+`step_completed` event in the journal, it **returns the cached output** without re-executing.
+The plain-LLM path has the same cache (`checkCachedLLMStep`, `durable_replay.go`).
 
 Consequence: a crash mid-way through a 10-step agent replays steps 1–N instantly
 (journal lookups) and continues from step N+1.
@@ -53,21 +51,21 @@ even under chaos.**
 
 External calls — webhook deliveries, email sends, Twilio messages, Stripe charges —
 carry an idempotency key derived from `(run_id, step_id, attempt)` stored in
-`side_effect_receipts`. On replay, if the receipt exists, the side-effect is
+`side_effect_receipts` (`claimSideEffect`). On replay, if the receipt exists, the side-effect is
 skipped entirely and the original response is returned. **Each external call fires
 at most once.**
 
 ### Exactly-once completion
 
-The engine uses a distributed run lease (`run_locks` table, heartbeat-renewed by
-the owning worker). A second worker cannot pick up a run that is still live. If
-the original worker dies, the lease expires and the watchdog re-assigns.
+Runs are guarded by a distributed lease in the `run_locks` table. Recovery only steals a lock that has
+expired (a single UPSERT), so a second worker cannot take a live run. If the
+original worker dies, the lease expires and the sweep re-assigns.
 Concurrent double-execution is prevented; exactly-once completion observation is
 guaranteed by the journal.
 
 ## Run lease and recovery watchdog
 
-Every worker holds a lease row in `run_locks`:
+Each driven run holds a lease row in `run_locks`:
 
 ```text
 run_id | worker_id     | expires_at
@@ -75,9 +73,8 @@ run_id | worker_id     | expires_at
 abc123 | worker-7      | 2026-06-21T10:05:00
 ```
 
-The worker heartbeats the lease every 10s. If `expires_at` lapses without renewal,
-the recovery watchdog (a background goroutine in the engine) treats the run as
-orphaned and re-queues it. The new worker replays the journal and continues.
+A recovery-acquired lock has a TTL of 10 minutes (`recoveryLockTTL`). If `expires_at` lapses, the
+recovery sweep treats the run as orphaned and re-drives it; the journal supplies the cached steps.
 
 ## Inspecting the journal
 
@@ -114,8 +111,8 @@ A run is stuck if:
 - `status = 'running'` but no `step_started` event has landed in the last N minutes.
 - The run lease in `run_locks` has expired but the watchdog hasn't fired yet.
 
-Normal path: the recovery watchdog re-drives it automatically within the lease
-expiry window (default: lease TTL + watchdog poll interval, typically ~60s).
+Normal path: the sweep re-drives it automatically once the lease has expired (poll interval 30s by
+default; a lease acquired by a previous recovery can last up to 10 minutes).
 
 If you need to force recovery:
 
@@ -125,8 +122,8 @@ curl http://localhost:8080/v1/runs/<run_id> \
   -H "Authorization: Bearer $LANTERN_API_TOKEN"
 ```
 
-There is no manual "resume" endpoint — the engine re-drives automatically. If a
-run stays stuck after 5+ minutes, check the engine logs for a panic or DB
+There is no manual "resume" endpoint for crashed runs - recovery is automatic. If a
+run stays stuck past the lease TTL, check the control-plane logs for a panic or DB
 connectivity error; those block the watchdog.
 
 ## What "exactly-once" does and does not cover
@@ -159,8 +156,7 @@ Workflow graph nodes of type `loop` and `subagent` are also durable:
 - **Loop** — each iteration emits `step_started`/`step_completed` events. On crash
   mid-iteration, replay re-runs from the last completed iteration.
 - **Subagent** — the parent run tracks the child `run_id` in its journal. On crash,
-  the watchdog checks the child's status; if it completed, the result is returned
-  from the journal without re-spawning.
+  the re-driven parent finds the child's completed `step_completed` in the journal and does not re-spawn it. In the durable `workflow-engine`, a crash between creating the child row and journaling completion is handled by adoption via `trigger_meta`. A child that stops on `approval`/`wait_signal` fails the parent step with `ErrChildRunPaused` (nested approvals are not supported yet).
 
 ## Human-in-the-loop (approval nodes)
 
@@ -170,7 +166,7 @@ Workflow graph nodes of type `loop` and `subagent` are also durable:
 state: pending → granted → released
 ```
 
-The run holds its lease (heartbeating) while blocked. When an operator grants the
+The run stays blocked on the row. When an operator grants the
 takeover (via `POST /v1/runs/<id>/takeover/<tid>/grant`), the workflow interpreter
 unblocks and continues. The approval wait survives engine restarts — on resume the
 interpreter re-checks the `takeover_requests` row state.

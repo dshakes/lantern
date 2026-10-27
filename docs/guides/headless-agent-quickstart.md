@@ -1,8 +1,8 @@
 # Headless Agent Quickstart
 
-This guide walks you from a blank terminal to a running headless agent in about
-15 minutes. You will write an `agent.yaml`, schedule it with `lantern run`, watch
-live logs, inspect the OTel trace, and terminate the VM.
+**What:** run an agent as an isolated, quota-gated, traced workload with one command.
+**Why:** untrusted agent code never touches the control plane (invariant #5), and you get logs, traces and a signed receipt for free.
+**Try it:** `lantern run examples/headless-agents/01-hello/agent.yaml -f` (after the setup below, ~15 min end to end).
 
 ## Prerequisites
 
@@ -82,7 +82,7 @@ lantern run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name": "world"}'
 ```
 
-`lantern run` posts the spec to `POST /v1/runtime/schedule` and prints the `vm_id`.
+`lantern run` posts the spec to `POST /v1/runtime/schedule` and prints the VM id. Add `-f` to stream logs immediately; `lantern vm ls` lists VMs.
 
 Or call the REST API directly:
 
@@ -91,15 +91,16 @@ curl -X POST http://localhost:8080/v1/runtime/schedule \
   -H "Authorization: Bearer $LANTERN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "spec": {
-      "image_digest": "lantern/demos/hello@sha256:0000...0001",
-      "isolation": "trusted",
-      "limits": { "vcpu": "100m", "memory": "64Mi", "timeout_secs": 30 }
-    },
-    "input": {"name": "world"}
+    "imageDigest": "lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "isolation": "trusted",
+    "network": "none",
+    "idempotent": true,
+    "limits": { "vcpu": "100m", "memory": "64Mi", "timeout": "30s", "scratch_size": "16Mi" }
   }'
-# → {"vm_id":"vm_01abc...","state":"scheduled"}
+# -> {"vmId":"...","node":"...","az":"...","createdAt":"..."}
 ```
+
+The body is the flat spec (camelCase or the snake_case keys from `agent.yaml`), not wrapped in `spec`.
 
 > If your tenant is over quota the response is `HTTP 402`. Raise the limit with
 > `PUT /v1/runtime/quota` (owner role required).
@@ -118,7 +119,7 @@ Via REST:
 ```bash
 curl -N http://localhost:8080/v1/runtime/vms/<vm_id>/logs \
   -H "Authorization: Bearer $LANTERN_API_TOKEN"
-# streams newline-delimited log lines until the VM terminates
+# SSE stream of log lines until the VM terminates
 ```
 
 ## Step 4 — Inspect the trace
@@ -127,14 +128,14 @@ If you set `OTEL_EXPORTER_OTLP_ENDPOINT` before starting the control-plane, ever
 spawn emits a correlated trace spanning control-plane → scheduler → manager → harness.
 The correlation tuple is `(tenant_id, run_id, step_id, agent_instance_id, trace_id)`.
 
-Query your trace backend (Jaeger, Tempo, Honeycomb) by `run_id` to see the full
+`OTEL_EXPORTER_OTLP_ENDPOINT` is typically `http://localhost:4318`. Query your trace backend (Jaeger, Tempo, Honeycomb) by `run_id` to see the full
 chain. See [Observability](observability.md) for the span names and attribute keys.
 
 ## Step 5 — Terminate
 
 ```bash
-curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vm_id>?grace=10s" \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+lantern vm stop <vm_id> --grace 10     # seconds
+# or: curl -X DELETE http://localhost:8080/v1/runtime/vms/<vm_id> -H "Authorization: Bearer $LANTERN_API_TOKEN"
 ```
 
 The manager sends `SIGTERM`, waits for the grace window, then kills the pod and

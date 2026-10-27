@@ -1,8 +1,8 @@
 # Identity and Secrets
 
-Every agent instance that Lantern spawns gets a **short-lived, per-instance
-identity** and accesses secrets through **short-TTL vending over mTLS** — not
-through environment variables baked into the image.
+**What:** every spawned agent instance gets a short-lived Ed25519 identity and fetches secrets by short-TTL vending over mTLS.
+**Why:** the image never holds credentials, and a stolen instance token only unlocks that one run's declared secrets (invariant #10).
+**Try it:** `lantern run examples/headless-agents/02-web-scraper/agent.yaml` (declares one `secret_uri`).
 
 For the full reasoning see [ADR 0005](../adr/0005-secret-vending-via-short-jwt.md)
 (why short-TTL vending) and [ADR 0008](../adr/0008-runtime-secret-relay.md) (why
@@ -54,13 +54,13 @@ Secrets are declared as **refs**, never values:
 spec:
   secrets:
     - env_name: OPENAI_API_KEY
-      secret_uri: lantern.secret://tenant/my-tenant/key/openai-api-key
+      secret_uri: lantern.secret://__tenant__/key/openai-api-key
 
     - env_name: DATABASE_URL
-      secret_uri: lantern.secret://tenant/my-tenant/key/postgres-url
+      secret_uri: lantern.secret://__tenant__/key/postgres-url
 ```
 
-The `lantern.secret://` URI is an opaque ref. The control-plane resolves it to the
+The `lantern.secret://` URI is an opaque ref (`__tenant__` is a placeholder for the caller's tenant, as in `examples/headless-agents/02-web-scraper/agent.yaml`). The control-plane resolves it to the
 actual value (stored AES-256-GCM-encrypted in `llm_provider_configs` or
 `connector_installs`) only when the harness asks for it at boot.
 
@@ -77,13 +77,13 @@ workload boots
       (shared token auth, VM-binding check, rate-limited, audited)
       control-plane decrypts the value, returns a short-TTL token
     manager returns the value to the harness
-  harness writes value to tmpfs /run/lantern/secrets/<env_name> (mode 0600)
-  harness exports as env var to the workload process
-  harness refreshes before TTL expiry, in-place
+  harness caches the value in tmpfs and serves it on the unix socket /run/lantern/secrets.sock
+    (SO_PEERCRED: only LANTERN_WORKLOAD_UID and the harness uid are admitted)
+  harness re-vends before TTL expiry
 ```
 
-The workload reads the env var normally. The Lantern SDK's secret client
-re-reads the env on each use, so it picks up rotated values transparently.
+The workload fetches secrets from the socket; it never sees `LANTERN_*` control keys.
+Unauthorized socket peers are refused and logged as `secret_access_denied`.
 
 **The manager never holds the decryption key** (`LANTERN_CREDENTIAL_KEY`). That key
 lives only on the control-plane. A compromised manager node cannot decrypt any
@@ -102,7 +102,7 @@ the expired token returns `UNAUTHENTICATED`.
 
 ## `LANTERN_ALLOW_SECRET_STUB=1`
 
-In development without a real manager, the harness falls back to reading secrets
+In development without a real manager, the harness (`services/harness/src/manager_client.rs`) falls back to reading secrets
 from its own env when `LANTERN_ALLOW_SECRET_STUB=1` is set. This flag must never
 be set in production — the control-plane secret relay is the only production path.
 

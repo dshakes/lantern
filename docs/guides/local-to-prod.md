@@ -1,7 +1,10 @@
 # Local to production — running Lantern agents everywhere
 
-This guide walks the full promotion path: shared-tier on your laptop → local
-microVM tier with Docker → staging K8s cluster → production. Every command in
+**What:** the promotion path, shared tier on your laptop, then local microVM tier with Docker, then a staging K8s cluster, then production.
+**Why:** each rung proves a different layer; the checklist in section D is what must be true before you flip the next one.
+**Try it:** `make dev-infra && make run-api && curl localhost:8080/healthz`.
+
+Details: Every command in
 sections A and B was validated in a dev environment (macOS, Docker 28.0,
 runtime-manager + scheduler both local). Section C is operator-validated on
 real clusters; the commands work but require infrastructure you do not have
