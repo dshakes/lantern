@@ -111,6 +111,7 @@ export type {
   ForecastResult,
   VmState,
   RuntimeVm,
+  VmScheduleSpec,
   VmPauseResult,
   VmResumeResult,
   VmFileContent,

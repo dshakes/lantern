@@ -1030,11 +1030,11 @@ loopback + `169.254.169.254` direct).
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
+| `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets, `idleTimeoutSecs`). Returns `vm_id`. 402 if quota exceeded |
 | `GET`    | `/v1/runtime/vms`                | List VMs (`?state=running&limit=50`)                                                                    |
 | `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
 | `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
-| `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state |
+| `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state. **Auto-resume**: exec / ExecTool / file-API requests to a VM auto-suspended with `idleTimeoutSecs > 0` resume it transparently (409 for manually-paused VMs) |
 | `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
@@ -1047,9 +1047,15 @@ loopback + `169.254.169.254` direct).
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
 
+**Idle-suspend auto-pause (Google ACE model).** Set `idleTimeoutSecs > 0` on the schedule spec (REST `idleTimeoutSecs`, proto `idle_timeout_secs`, CLI `--idle-timeout N`). The scheduler's idle sweeper (10 s tick) auto-snapshots-and-stops any RUNNING VM idle longer than the threshold (`VM.LastActivityAt` stamped by the harness heartbeat's `has_active_exec` / `last_activity_unix_ms` signals); state transitions `RUNNING → DRAINING+idle-pausing → PAUSED` via the same crash-safe CAS as operator Pause. The quota slot is released. Exec, ExecTool, and file-API requests to an idle-enabled VM first call `scheduler.Resume` (the sweeper does not update the control-plane shadow row, so the shadow can't tell); `FailedPrecondition` = already running. A VM paused via `POST /pause` (shadow `paused`) is never auto-resumed → 409. Known limitation: `GET /v1/runtime/vms` shows an auto-suspended VM as `running`. `auto_resume` audit event on each transparent resume.
+
+**Scope: sandbox-style (persistent) VMs only.** Idle-suspend is intended for VMs that remain RUNNING between requests (long-lived exec sandboxes). Workload VMs — VMs spawned to run a single `workload_cmd` and exit — are NOT candidates: the harness exits when the workload finishes and the scheduler terminates the VM normally via inventory reconciliation. Setting `idleTimeoutSecs` on a workload VM is harmless but has no effect. A VM that runs only a short-lived workload and no exec sessions will report `has_active_exec=false` from the first heartbeat; pair `idleTimeoutSecs` with a value larger than the expected workload duration to avoid spurious suspends.
+
+**Clock-skew protection.** `LastActivityAt` is always stamped with the scheduler's own receive time, never the guest wall clock (`last_activity_unix_ms` is used only as a change signal). A just-resumed VM whose guest clock is behind by the paused duration therefore starts its idle clock at the resume time, not at the pre-pause guest timestamp. Any `RUNNING` transition (spawn or resume) also resets `LastActivityAt` to zero, so the sweeper ignores the VM until the first fresh harness heartbeat arrives.
+
 CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork [--count N]`) and dashboard pages
-(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{pause,resume,fork,execStream,listFiles,readFile,writeFile}`,
-Python `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,write_file}`, Go `PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile`; CLI `lantern vm ls|cat|put`. End-to-end demo
+(`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{schedule,pause,resume,fork,execStream,listFiles,readFile,writeFile}` (`VmScheduleSpec` for typed schedule with `idleTimeoutSecs`),
+Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `lantern run --idle-timeout N`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Wiring env vars (set on control-plane + scheduler):**

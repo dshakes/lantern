@@ -233,6 +233,86 @@ func (h *RuntimeHandler) setVMState(ctx context.Context, tenantID, vmID, state, 
 	}
 }
 
+// ensureVMRunning transparently resumes a PAUSED VM that has idle_timeout_secs > 0
+// (i.e. was auto-suspended) before the caller proceeds with an exec or file-API
+// operation.
+//
+//   - RUNNING → return true immediately (no-op).
+//   - PAUSED + idle_timeout_secs > 0 → Resume; update runtime_vms; return true.
+//   - PAUSED + idle_timeout_secs == 0 → 409; the VM was manually paused (not
+//     auto-suspended); the caller must explicitly resume. Return false.
+//   - Resume returns FailedPrecondition → another concurrent request already
+//     resumed it; treat as RUNNING, return true.
+//   - Resume returns ResourceExhausted → 402 (tenant quota), return false.
+//   - Any other scheduler error → 502, return false.
+//
+// ctx must already carry the tenant_id.
+func (h *RuntimeHandler) ensureVMRunning(w http.ResponseWriter, ctx context.Context, tenantID, vmID string) bool {
+	var state string
+	var idleTimeoutSecs int32
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT state, idle_timeout_secs FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`,
+			vmID, tenantID,
+		).Scan(&state, &idleTimeoutSecs)
+	}); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
+		return false
+	}
+
+	// The shadow row only becomes "paused" through PauseVM (an operator /
+	// API pause) — the scheduler's idle sweeper pauses WITHOUT touching it.
+	// So shadow=="paused" means manually paused: never auto-resume.
+	if state == "paused" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error":  "conflict",
+			"reason": "vm is paused; resume it first",
+		})
+		return false
+	}
+
+	// Non-running shadow states other than "paused" (terminated, failed, etc.)
+	// mean the VM is terminal — let the caller proceed; the downstream path
+	// (node lookup, manager exec) will produce the appropriate 404/409 itself.
+	if state != "running" {
+		return true
+	}
+
+	// Shadow says "running". If the VM has no idle timeout it can never be
+	// auto-suspended, so skip the Resume RPC entirely.
+	if idleTimeoutSecs <= 0 {
+		return true
+	}
+
+	// Idle-suspend eligible: the scheduler (authoritative) may have
+	// auto-paused this VM while the shadow still says "running" (the sweeper
+	// does NOT update the shadow). Ask the scheduler to resume; a
+	// FailedPrecondition reply means it is already running.
+	// ponytail: one extra RPC per call for idle-enabled VMs; a GetVM / state
+	// push to the shadow row would let us skip this if it proves expensive.
+	snap, err := h.scheduler.Resume(ctx, tenantID, vmID)
+	if err != nil {
+		switch status.Code(err) {
+		case grpccodes.FailedPrecondition:
+			// Already running (never auto-suspended, or a concurrent request's
+			// resume won the scheduler CAS first).
+			return true
+		case grpccodes.ResourceExhausted:
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{
+				"error":  "quota exceeded",
+				"reason": status.Convert(err).Message(),
+			})
+		default:
+			h.logger().Error("auto-resume failed", zap.String("vm_id", vmID), zap.Error(err))
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "auto-resume failed"})
+		}
+		return false
+	}
+	h.setVMState(ctx, tenantID, vmID, "running", snap)
+	h.auditRuntime(ctx, tenantID, vmID, "auto_resume", map[string]any{"snapshot_id": snap}, "", "")
+	return true
+}
+
 // PauseVM handles POST /v1/runtime/vms/{id}/pause.
 func (h *RuntimeHandler) PauseVM(w http.ResponseWriter, r *http.Request) {
 	claims, ctx, vmID, ok := h.lifecycleTarget(w, r)
@@ -337,16 +417,20 @@ func (h *RuntimeHandler) ForkVM(w http.ResponseWriter, r *http.Request) {
 	// and secret binding).
 	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		for _, f := range res.Forks {
-			// The child inherits the source's placement, isolation and (redacted)
-			// spec; it is linked back via parent_vm_id + snapshot_id.
+			// The child inherits the source's placement, isolation, (redacted)
+			// spec and idle timeout (the scheduler copies the spec, so a fork can
+			// be auto-suspended and must be auto-resumable); it is linked back via
+			// parent_vm_id + snapshot_id.
 			if _, e := tx.Exec(ctx, `
 				INSERT INTO runtime_vms
 				  (vm_id, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
-				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id, created_at)
+				   state, state_reason, spec, agent_instance_id, confidential, parent_vm_id, snapshot_id,
+				   idle_timeout_secs, created_at)
 				SELECT $1, tenant_id, agent_version_id, run_id, node, az, region, isolation_class,
 				       $2, NULLIF($3, ''),
 				       jsonb_set(spec, '{env,LANTERN_AGENT_INSTANCE_ID}', to_jsonb($7::text)),
-				       NULLIF($7, ''), confidential, vm_id, $4, now()
+				       NULLIF($7, ''), confidential, vm_id, $4,
+				       idle_timeout_secs, now()
 				FROM runtime_vms WHERE vm_id = $5 AND tenant_id = $6
 				ON CONFLICT (vm_id) DO NOTHING
 			`, f.VMID, f.State, f.Error, res.SnapshotID, vmID, claims.TenantID, f.AgentInstanceID); e != nil {

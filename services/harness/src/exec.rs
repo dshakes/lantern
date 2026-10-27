@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
+use crate::activity::ActivityTracker;
 use crate::manager_client::ManagerClient;
 use crate::proto::{self, AuditEvent, HarnessReport, pb};
 
@@ -48,11 +49,12 @@ const CHUNK_SIZE: usize = 8 * 1024;
 /// `ManagerClient`); a peer calling them on the guest gets UNIMPLEMENTED.
 pub struct ExecService {
     manager: ManagerClient,
+    activity: ActivityTracker,
 }
 
 impl ExecService {
-    pub fn new(manager: ManagerClient) -> Self {
-        Self { manager }
+    pub fn new(manager: ManagerClient, activity: ActivityTracker) -> Self {
+        Self { manager, activity }
     }
 }
 
@@ -481,6 +483,10 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
 
         let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
 
+        // Mark this exec child as active for idle-suspend. The guard is moved
+        // into the spawned task so it is dropped when the exec completes.
+        let activity_guard = self.activity.child_started();
+
         if first.tty {
             // Interactive: forward inbound stdin frames into the PTY. Once
             // the exec finishes (receiver dropped) keep draining so the
@@ -497,20 +503,29 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
                     }
                 }
             });
-            tokio::spawn(run_exec_tty(
-                first.command,
-                first.argv,
-                first.term,
-                tty_winsize(first.term_rows, first.term_cols),
-                stdin_rx,
-                tx,
-            ));
+            tokio::spawn(async move {
+                run_exec_tty(
+                    first.command,
+                    first.argv,
+                    first.term,
+                    tty_winsize(first.term_rows, first.term_cols),
+                    stdin_rx,
+                    tx,
+                )
+                .await;
+                // Guard dropped here — marks activity timestamp.
+                drop(activity_guard);
+            });
         } else {
             // One-shot (unchanged): drain any stdin frames so the
             // manager-side relay never stalls on a blocked send. Stdin is
             // not piped (mirrors the docker backend path).
             tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
-            tokio::spawn(run_exec(first.command, first.argv, tx));
+            tokio::spawn(async move {
+                run_exec(first.command, first.argv, tx).await;
+                // Guard dropped here — marks activity timestamp.
+                drop(activity_guard);
+            });
         }
 
         let out: Self::ExecStream = Box::pin(ReceiverStream::new(rx));
@@ -573,7 +588,7 @@ fn exec_auth(
 /// accepts arbitrary shell commands as the harness uid; anything on the guest
 /// tap interface can reach it.  In dev (token unset) a SECURITY warning is
 /// logged; in prod a missing token is fatal (mirrors the TLS prod guard).
-pub async fn run(manager: ManagerClient) -> Result<()> {
+pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()> {
     let addr_raw = std::env::var("LANTERN_HARNESS_EXEC_ADDR")
         .unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
     let addr: std::net::SocketAddr = addr_raw
@@ -602,7 +617,7 @@ pub async fn run(manager: ManagerClient) -> Result<()> {
     // restored from a snapshot re-identifies and must start rejecting the
     // previous incarnation's token immediately.
     let auth = manager.clone();
-    let svc = ExecService::new(manager);
+    let svc = ExecService::new(manager, activity);
     tonic::transport::Server::builder()
         .add_service(
             pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(

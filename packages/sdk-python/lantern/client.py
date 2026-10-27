@@ -990,6 +990,14 @@ class LanternClient:
             self._c = client
 
         async def schedule(self, spec: dict[str, Any]) -> dict[str, Any]:
+            """Submit an AgentSpec to schedule a microVM workload.
+
+            Pass ``idle_timeout_secs`` (int) in *spec* to enable idle-suspend
+            auto-pause: the VM will be automatically snapshotted and stopped
+            after that many seconds of inactivity (no running exec/workload
+            child). 0 or absent means never auto-suspend. Exec, ExecTool, and
+            file-API requests to an auto-suspended VM transparently resume it.
+            """
             return await self._c._request("POST", "/v1/runtime/schedule", body=spec)
 
         async def list(self, *, state: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:

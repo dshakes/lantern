@@ -77,6 +77,10 @@ pub struct HeartbeatRequest {
     pub usage: ResourceUsage,
     pub worker_pid: i32,
     pub restart_count: i32,
+    /// True when at least one exec/workload child is running right now.
+    pub has_active_exec: bool,
+    /// Unix ms of the last exec/workload child exit; 0 = still active or never ran.
+    pub last_activity_unix_ms: i64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -193,6 +197,8 @@ impl From<HeartbeatRequest> for pb::HeartbeatRequest {
             }),
             worker_pid: r.worker_pid,
             restart_count: r.restart_count,
+            has_active_exec: r.has_active_exec,
+            last_activity_unix_ms: r.last_activity_unix_ms,
         }
     }
 }

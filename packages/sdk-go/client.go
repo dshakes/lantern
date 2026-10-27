@@ -721,7 +721,46 @@ func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOp
 	return &out, err
 }
 
-// ---------- Sandbox lifecycle (microVM pause / resume / fork) ----------
+// ---------- Sandbox schedule + lifecycle (microVM pause / resume / fork) ----------
+
+// VMScheduleSpec holds the fields for scheduling a microVM workload.
+// Pass it to ScheduleVM. Fields are snake_case in the JSON body to match the
+// control-plane spec map convention.
+type VMScheduleSpec struct {
+	// ImageDigest is the OCI image digest (required).
+	ImageDigest string `json:"imageDigest"`
+	// Isolation is the sandbox class ("microvm", "kata", "docker", etc.).
+	Isolation string `json:"isolation,omitempty"`
+	// Env is injected into the workload process.
+	Env map[string]string `json:"env,omitempty"`
+	// IdleTimeoutSecs enables idle-suspend: the VM is automatically
+	// snapshotted and stopped after this many seconds of inactivity (no
+	// running workload child). 0 (default) = never auto-suspend.
+	// Exec, ExecTool, and file-API requests to an auto-suspended VM
+	// transparently resume it.
+	IdleTimeoutSecs int32 `json:"idleTimeoutSecs,omitempty"`
+	// IdempotencyKey deduplicates retried schedules at the scheduler.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	// AgentVersionID, RunID are metadata for the shadow row.
+	AgentVersionID string `json:"agentVersionId,omitempty"`
+	RunID          string `json:"runId,omitempty"`
+}
+
+// VMScheduleResult is the response from ScheduleVM.
+type VMScheduleResult struct {
+	VMID string `json:"vmId"`
+	Node string `json:"node,omitempty"`
+	Az   string `json:"az,omitempty"`
+	Stub bool   `json:"stub,omitempty"`
+}
+
+// ScheduleVM submits a VMScheduleSpec to the runtime scheduler and returns
+// the assigned vm_id. Set IdleTimeoutSecs > 0 to enable idle-suspend auto-pause.
+func (c *Client) ScheduleVM(ctx context.Context, spec VMScheduleSpec) (*VMScheduleResult, error) {
+	var out VMScheduleResult
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/schedule", spec, &out)
+	return &out, err
+}
 
 // VMLifecycle is the result of pausing or resuming a runtime VM.
 type VMLifecycle struct {

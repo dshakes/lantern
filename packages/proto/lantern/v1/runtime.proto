@@ -123,6 +123,10 @@ message AgentSpec {
   // rather than downgrading to a weaker isolation. Confidential also upgrades
   // any weaker trust class to HOSTILE-tier isolation (upgrade only, audited).
   bool confidential                      = 17;
+  // Auto-suspend after this many seconds with no active workload process.
+  // 0 (default) = never auto-suspend. Only VMs with idle_timeout_secs > 0
+  // are eligible for idle-suspend. On resume the VM resumes from its snapshot.
+  int32 idle_timeout_secs                = 18;
 }
 
 message PlacementHint {
@@ -510,6 +514,10 @@ message HeartbeatRequest {
   // Worker PID + restart count for supervisor visibility.
   int32 worker_pid                             = 4;
   int32 restart_count                          = 5;
+  // Idle-suspend: true when at least one exec/tool/workload child is running.
+  bool has_active_exec                         = 6;
+  // Unix ms of the last exec/workload child exit. 0 = never ran.
+  int64 last_activity_unix_ms                  = 7;
 }
 
 message HeartbeatAck {

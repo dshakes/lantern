@@ -30,6 +30,7 @@ import type {
   VmFileList,
   VmForkResult,
   VmPauseResult,
+  VmScheduleSpec,
   VmWriteFileResult,
   VmResumeResult,
   RuntimeVm,
@@ -141,8 +142,8 @@ export class LanternClient {
   };
 
   readonly runtime = {
-    /** Submit an AgentSpec; the spec shape is owned by runtime.proto. */
-    schedule: (spec: Record<string, unknown>): Promise<{ vmId: string } & Record<string, unknown>> =>
+    /** Submit a VmScheduleSpec; idleTimeoutSecs > 0 enables idle-suspend auto-pause. */
+    schedule: (spec: VmScheduleSpec | Record<string, unknown>): Promise<{ vmId: string } & Record<string, unknown>> =>
       this.fetch("/v1/runtime/schedule", { method: "POST", body: JSON.stringify(spec) }),
 
     // The list endpoint returns bare rows; the detail endpoint wraps the row as

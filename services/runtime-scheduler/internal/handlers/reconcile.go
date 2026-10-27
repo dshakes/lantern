@@ -109,7 +109,9 @@ func ReconcileNodeInventory(
 		// A VM caught mid-Pause/mid-Resume (live, or left by a scheduler crash)
 		// that the node is not running is PAUSED — its snapshot is intact — not
 		// TERMINATED. CAS so the racing lifecycle RPC cannot release twice.
-		if (v.State == lanternv1.VmState_VM_STATE_DRAINING && v.Reason == ReasonPausing) ||
+		// ReasonIdlePausing is handled identically to ReasonPausing.
+		if (v.State == lanternv1.VmState_VM_STATE_DRAINING &&
+			(v.Reason == ReasonPausing || v.Reason == ReasonIdlePausing)) ||
 			(v.State == lanternv1.VmState_VM_STATE_SPAWNING && v.Reason == ReasonResuming) {
 			if store.TransitionVMState(id, v.State, v.Reason, lanternv1.VmState_VM_STATE_PAUSED,
 				"reconciled: not running on node after interrupted pause/resume", now) {

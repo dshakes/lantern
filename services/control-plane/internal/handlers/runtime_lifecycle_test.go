@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 )
 
 // doLifecycle fires POST /v1/runtime/vms/{id}/{op} at the matching handler.
@@ -196,6 +197,11 @@ func TestLifecycle_DB(t *testing.T) {
 	})
 
 	t.Run("fork inserts child rows incl. failed child", func(t *testing.T) {
+		// The source is idle-enabled: children must inherit it, or an
+		// auto-suspended fork could never be auto-resumed.
+		if _, err := pool.Exec(context.Background(), `UPDATE runtime_vms SET idle_timeout_secs = 90 WHERE vm_id = $1`, vm); err != nil {
+			t.Fatalf("set idle timeout: %v", err)
+		}
 		sched.forkRes = ForkResult{SnapshotID: "snap-f", Forks: []ForkChildResult{
 			{VMID: "vm-child-ok-" + tenant[:8], State: "running"},
 			{VMID: "vm-child-bad-" + tenant[:8], State: "failed", Error: "boot failed"},
@@ -219,6 +225,10 @@ func TestLifecycle_DB(t *testing.T) {
 		}
 		if st, _, _ := vmShadow(t, h, "vm-child-bad-"+tenant[:8]); st != "failed" {
 			t.Errorf("failed child state = %s", st)
+		}
+		var idle int32
+		if err := pool.QueryRow(context.Background(), `SELECT idle_timeout_secs FROM runtime_vms WHERE vm_id = $1`, "vm-child-ok-"+tenant[:8]).Scan(&idle); err != nil || idle != 90 {
+			t.Errorf("child idle_timeout_secs = %d (%v), want 90 inherited from the source", idle, err)
 		}
 	})
 
@@ -464,4 +474,77 @@ func TestListVMs_IncludesForkLineage(t *testing.T) {
 	if derefStr(rows[0].ParentVMID) != "vm-parent" || derefStr(rows[0].SnapshotID) != "snap-1" {
 		t.Errorf("lineage missing from list: parent=%v snapshot=%v", rows[0].ParentVMID, rows[0].SnapshotID)
 	}
+}
+
+// ensureVMRunning is the auto-resume gate in front of exec / ExecTool / the
+// file API. The scheduler's idle sweeper pauses WITHOUT touching the shadow
+// row, so an idle-enabled VM whose shadow says "running" must still be
+// resumed; a shadow "paused" only comes from an operator pause and must not.
+func TestEnsureVMRunning_DB(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+	tenant := uniqueTenantID("idle")
+	seedTestTenant(t, pool, tenant)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenant) })
+	sched := &recScheduler{}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+
+	seed := func(vmID, state string, idle int) {
+		seedLifecycleVM(t, h, tenant, vmID, state)
+		if _, err := pool.Exec(context.Background(),
+			`UPDATE runtime_vms SET idle_timeout_secs = $2 WHERE vm_id = $1`, vmID, idle); err != nil {
+			t.Fatalf("set idle timeout: %v", err)
+		}
+	}
+	run := func(vmID string, schedErr error) (bool, int) {
+		sched.calls, sched.lifecycleErr = nil, schedErr
+		w := httptest.NewRecorder()
+		ok := h.ensureVMRunning(w, middleware.InjectTenantID(context.Background(), tenant), tenant, vmID)
+		return ok, w.Code
+	}
+	p := tenant[:8]
+
+	cases := []struct {
+		name       string
+		state      string
+		idle       int
+		schedErr   error
+		wantOK     bool
+		wantCode   int // only checked when !wantOK
+		wantResume bool
+		wantShadow string
+	}{
+		{"no idle timeout: proceeds, scheduler untouched", "running", 0, nil, true, 0, false, "running"},
+		{"operator-paused, idle enabled: 409, never auto-resumed", "paused", 60, nil, false, http.StatusConflict, false, "paused"},
+		{"auto-suspended (shadow stale 'running'): resumed", "running", 60, nil, true, 0, true, "running"},
+		{"idle-enabled but already running: proceeds", "running", 60, status.Error(grpccodes.FailedPrecondition, "vm is RUNNING"), true, 0, true, "running"},
+		{"quota exceeded on resume: 402", "running", 60, status.Error(grpccodes.ResourceExhausted, "quota"), false, http.StatusPaymentRequired, true, "running"},
+		{"scheduler down: 502", "running", 60, status.Error(grpccodes.Unavailable, "down"), false, http.StatusBadGateway, true, "running"},
+		// Fix 2: terminal shadow states must pass through without calling the
+		// scheduler — the downstream path (node lookup, exec) rejects them naturally.
+		{"terminated shadow, idle enabled: pass through, scheduler untouched", "terminated", 60, nil, true, 0, false, "terminated"},
+		{"failed shadow, idle enabled: pass through, scheduler untouched", "failed", 60, nil, true, 0, false, "failed"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := fmt.Sprintf("vm-idle-%d-%s", i, p)
+			seed(vm, tc.state, tc.idle)
+			ok, code := run(vm, tc.schedErr)
+			if ok != tc.wantOK || (!ok && code != tc.wantCode) {
+				t.Fatalf("ok=%v code=%d, want ok=%v code=%d", ok, code, tc.wantOK, tc.wantCode)
+			}
+			if resumed := len(sched.calls) == 1 && sched.calls[0] == "resume:"+vm; resumed != tc.wantResume {
+				t.Errorf("scheduler calls = %v, want resume=%v", sched.calls, tc.wantResume)
+			}
+			if st, _, _ := vmShadow(t, h, vm); st != tc.wantShadow {
+				t.Errorf("shadow state = %s, want %s", st, tc.wantShadow)
+			}
+		})
+	}
+
+	t.Run("unknown / other-tenant vm: 404, scheduler untouched", func(t *testing.T) {
+		if ok, code := run("vm-idle-missing-"+p, nil); ok || code != http.StatusNotFound || len(sched.calls) != 0 {
+			t.Fatalf("ok=%v code=%d calls=%v", ok, code, sched.calls)
+		}
+	})
 }

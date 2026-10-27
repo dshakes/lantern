@@ -171,6 +171,9 @@ func main() {
 	schedSvc.SnapshotPersister = snapPersister
 	schedSvc.Elector = elector
 	schedSvc.Metrics = schedMetrics
+
+	// --- Idle sweeper (auto-suspend VMs past their idle_timeout_secs) ---
+	handlers.StartIdleSweeper(ctx, schedSvc, handlers.DefaultIdleSweepInterval, elector.IsLeader)
 	// Seed the active-VM gauge from current store state so a leader that takes
 	// over after failover reports the real count, not 0.
 	schedMetrics.ActiveVMs.Set(float64(len(clusterStore.ListVMs("", nil))))
