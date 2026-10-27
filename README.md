@@ -140,23 +140,53 @@ Each hop is authenticated: JWT or scoped API key at the edge; a shared service t
 
 ## How Lantern compares
 
-| | **Lantern** | Google Agent Compute Engine | E2B | Modal |
+Google's Agent Compute Engine (announced October 22, 2026) and E2B and Modal are
+**managed sandboxes**: compute you rent to run agent code. Lantern is an
+**open-source agent runtime you host yourself**; its microVM sandbox is one part,
+next to durable runs, budgets, routing, evals and receipts. So the honest
+comparison has two halves.
+
+**The sandbox.** This is ACE's whole product, and on isolation it is ahead of
+Lantern by default: its sandbox never holds a credential and all egress leaves
+through a proxy on the host, backed by Google's hardware root of trust. Lantern
+can do the same, but only in its opt-in broker mode on Firecracker, and has been
+validated on nested KVM, not at Google's scale.
+
+| The sandbox | **Lantern** | Google ACE | E2B | Modal |
 |---|---|---|---|---|
-| Hardware-isolated microVM per sandbox | ✅ | ✅ | ✅ | partial (gVisor) |
-| Agent loop runs outside the sandbox | ✅ | not stated | partial (you host the loop) | partial (you host the loop) |
-| Credentials never enter the sandbox | partial (broker mode, opt-in; ACE does this by default) | ✅ | ❌ | ❌ |
-| Egress allowlist enforced outside the guest | partial (broker mode, opt-in) | ✅ | partial | partial (IP/CIDR) |
+| Hardware-isolated microVM per sandbox | ✅ Firecracker / Kata | ✅ | ✅ | partial (gVisor) |
+| Agent loop runs outside the sandbox | ✅ | ✅ | partial (you host the loop) | partial (you host the loop) |
+| Credentials never enter the sandbox | partial (broker mode, opt-in) | ✅ by default | ❌ | ❌ |
+| Egress allowlist enforced outside the guest | partial (broker mode, opt-in) | ✅ by default | partial | partial (IP/CIDR) |
 | Idle auto-suspend, resume on demand | ✅ | ✅ | partial | partial |
 | Snapshot and fork | ✅ (shared-memory fork) | ✅ | partial | partial |
-| Durable agent runs with crash-resume | ✅ | ❌ | ❌ | ❌ |
-| Hard budgets and pre-run cost forecast | ✅ | ❌ | ❌ | partial |
-| Multi-provider model routing | ✅ | ❌ | ❌ | ❌ |
-| Signed, offline-verifiable run receipts | partial (Ed25519 with a configured seed) | ❌ | ❌ | ❌ |
-| Hardware root of trust / attestation | partial (recorded, not verified) | ✅ (Titan) | ❌ | ❌ |
-| Self-host in your cloud, open source | ✅ Apache-2.0 | ❌ | partial | ❌ |
-| Availability | Open source today | Announced Oct 22, 2026; rolling out "in the coming months" | GA | GA |
+| Hardware root of trust / attestation | partial (measurement recorded, not verified) | ✅ (Titan) | ❌ | ❌ |
+| Proven at scale | Lima nested-KVM + CI only | the infrastructure behind Gemini's agents (per Google) | production | production |
 
-❌ means not offered or not announced; "not stated" means the public material doesn't say. Competitor columns reflect each vendor's public docs and announcements as of October 2026 (the Google column is per launch coverage, [SiliconANGLE, Oct 22 2026](https://siliconangle.com/2026/10/22/google-cloud-introduces-agent-compute-engine-to-host-ai-agents/); Google's own documentation was not yet published); open an issue if one is out of date.
+**The platform around it.** These are agent-runtime features. ACE is a compute
+layer, so "out of scope" means it isn't trying to do them, not that it fails at
+them; on Google Cloud they come from other products.
+
+| The platform | **Lantern** | Google ACE | E2B | Modal |
+|---|---|---|---|---|
+| Durable agent runs with crash-resume | ✅ | out of scope | ❌ | ❌ |
+| Budgets that return HTTP 402 before the model call | partial (cost/day, runs/day, tenant daily cost; tokens and per-tool limits stored, not enforced) | out of scope | ❌ | partial |
+| Multi-provider model routing with failover | ✅ | out of scope | ❌ | ❌ |
+| Signed, offline-verifiable run receipts | partial (Ed25519 with a configured seed) | out of scope | ❌ | ❌ |
+| Self-host in your VPC or on-prem | ✅ Apache-2.0 | ❌ Google Cloud only | partial | ❌ |
+| Availability | open source today | preview "in the coming months" | GA | GA |
+
+**When to pick which.** Pick ACE if you want a managed sandbox on Google Cloud
+with the strongest isolation defaults. Pick E2B or Modal if you want hosted
+sandboxes today. Pick Lantern if you need to run agents in your own cloud or
+on-prem, with the sandbox, durable execution, spend limits and audit trail in
+one stack you control.
+
+Competitor columns reflect each vendor's public docs and announcements as of
+October 2026; the Google column follows Google's [Agent Compute Engine deep
+dive](https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive)
+(Oct 22, 2026). ❌ means not offered or not announced. Open an issue if a cell is
+out of date.
 
 ## Use it from code
 
