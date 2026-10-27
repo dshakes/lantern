@@ -140,7 +140,8 @@ func TestResolveAutoModel_NeverReturnsUnavailable(t *testing.T) {
 
 func TestResolveModel_KnownCapabilities(t *testing.T) {
 	// Ensure env doesn't leak into "auto" (resolveModel delegates to
-	// resolveAutoModel using env flags).
+	// resolveAutoModel using env flags). With only OpenAI configured, the
+	// cheap-tier capabilities (chat-edge, code-small) return gpt-4o-mini.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "x")
 
@@ -149,6 +150,7 @@ func TestResolveModel_KnownCapabilities(t *testing.T) {
 		provider string
 		model    string
 	}{
+		// Fixed-tier capabilities
 		{"chat-large", "openai", "gpt-4o"},
 		{"chat-small", "openai", "gpt-4o-mini"},
 		{"reasoning-frontier", "anthropic", "claude-opus-4-8"},
@@ -156,6 +158,10 @@ func TestResolveModel_KnownCapabilities(t *testing.T) {
 		{"reasoning-small", "anthropic", "claude-haiku-4-5-20251001"},
 		{"code-large", "anthropic", "claude-sonnet-4-6"},
 		{"vision-large", "openai", "gpt-4o"},
+		// Newly-mapped capabilities (W1-G)
+		{"vision-small", "openai", "gpt-4o-mini"},
+		{"chat-edge", "openai", "gpt-4o-mini"},  // cheapest tier; only OpenAI configured
+		{"code-small", "openai", "gpt-4o-mini"}, // cheapest tier; only OpenAI configured
 	}
 	for _, tc := range cases {
 		t.Run(tc.cap, func(t *testing.T) {
@@ -181,10 +187,38 @@ func TestResolveModel_PassthroughGPT(t *testing.T) {
 	}
 }
 
-func TestResolveModel_UnknownFallsBack(t *testing.T) {
-	p, m := resolveModel("who-knows")
-	if p != "openai" || m != "gpt-4o" {
-		t.Errorf("unknown capability fallback: got (%s, %s), want (openai, gpt-4o)", p, m)
+// TestResolveModel_UnknownRoutesToBestAvailable verifies that an unknown
+// (non-vendor-prefixed) capability name no longer hardcodes gpt-4o. It routes
+// to resolveAutoModel so the tenant's actually-configured providers are used.
+// Old behaviour: always "openai", "gpt-4o" — broke tenants that only have
+// Anthropic configured (they'd get back a provider with no key).
+func TestResolveModel_UnknownRoutesToBestAvailable(t *testing.T) {
+	// With only Anthropic env → must pick Anthropic, not openai/gpt-4o.
+	t.Setenv("ANTHROPIC_API_KEY", "ant-key")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+
+	p, _ := resolveModel("who-knows")
+	if p != "anthropic" {
+		t.Errorf("unknown with only Anthropic configured should pick anthropic, got %s", p)
+	}
+
+	// With only OpenAI env → must pick OpenAI.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "oai-key")
+
+	p, _ = resolveModel("fsat") // deliberate typo
+	if p != "openai" {
+		t.Errorf("unknown with only OpenAI configured should pick openai, got %s", p)
+	}
+
+	// Neither configured → falls to the resolveAutoModel no-key fallback (openai).
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	p2, m2 := resolveModel("totally-unknown")
+	if p2 == "" || m2 == "" {
+		t.Errorf("unknown with no keys should still return a non-empty (provider, model), got (%q, %q)", p2, m2)
 	}
 }
 
@@ -263,29 +297,121 @@ func TestResolveCheapModel_NeverExpensive(t *testing.T) {
 	}
 }
 
-// TestResolveModel_OptimizeTargets covers the SDK-advertised OptimizeTarget
-// values so they don't fall through to the expensive default.
+// cheapCapabilities is the set of capability names that must NEVER resolve to
+// an expensive (gpt-4o / opus / sonnet) model — table-tested exhaustively below.
+var cheapCapabilities = []string{"fast", "cheap", "chat-edge", "code-small"}
+
+// TestResolveModel_AllSDKCapabilities is the comprehensive table test covering
+// every Capability and OptimizeTarget the TS SDK (types.ts), Python SDK
+// (types.py) and proto (models.proto) advertise, proving none falls through to
+// an unexpected (possibly expensive) default.
+func TestResolveModel_AllSDKCapabilities(t *testing.T) {
+	tests := []struct {
+		capability   string
+		anthropicEnv string // non-empty = provider configured
+		openaiEnv    string
+		wantProvider string
+		neverModel   string // if non-empty, assert the returned model is NOT this
+		mustBeCheap  bool   // if true, assert !isExpensive(model)
+	}{
+		// --- OptimizeTarget ---
+		// "fast" must always be cheap
+		{"fast", "ant-key", "", "anthropic", "gpt-4o", true},
+		{"fast", "", "oai-key", "openai", "gpt-4o", true},
+		{"fast", "ant-key", "oai-key", "anthropic", "gpt-4o", true}, // prefers Haiku
+		// "cheap" same routing
+		{"cheap", "ant-key", "", "anthropic", "gpt-4o", true},
+		{"cheap", "", "oai-key", "openai", "gpt-4o", true},
+		// "best" → most capable
+		{"best", "ant-key", "", "anthropic", "", false},
+		{"best", "", "oai-key", "openai", "", false},
+		// "balanced" behaves like "auto"
+		{"balanced", "", "oai-key", "openai", "", false},
+		{"balanced", "ant-key", "", "anthropic", "", false},
+
+		// --- Capability: reasoning tier (fixed mappings) ---
+		{"reasoning-frontier", "ant-key", "", "anthropic", "", false},
+		{"reasoning-large", "ant-key", "", "anthropic", "", false},
+		{"reasoning-small", "ant-key", "", "anthropic", "", false},
+
+		// --- Capability: chat tier ---
+		{"chat-large", "", "oai-key", "openai", "", false},
+		{"chat-small", "", "oai-key", "openai", "", false},
+		{"chat-edge", "ant-key", "", "anthropic", "gpt-4o", true}, // cheap tier
+		{"chat-edge", "", "oai-key", "openai", "gpt-4o", true},
+
+		// --- Capability: vision tier ---
+		{"vision-large", "", "oai-key", "openai", "", false},
+		{"vision-small", "", "oai-key", "openai", "", false},
+
+		// --- Capability: code tier ---
+		{"code-large", "ant-key", "", "anthropic", "", false},
+		{"code-small", "ant-key", "", "anthropic", "gpt-4o", true}, // cheap tier
+		{"code-small", "", "oai-key", "openai", "gpt-4o", true},
+
+		// --- Non-completion capabilities (embed, rerank, transcribe, tts) ---
+		// These are valid SDK values but can't be served by text-completion;
+		// they must route to the balanced default (whichever provider is available)
+		// rather than hardcoding gpt-4o.
+		{"embed-large", "", "oai-key", "openai", "", false},
+		{"embed-small", "", "oai-key", "openai", "", false},
+		{"rerank", "", "oai-key", "openai", "", false},
+		{"transcribe", "", "oai-key", "openai", "", false},
+		{"tts", "", "oai-key", "openai", "", false},
+		// With Anthropic available, non-completion capabilities should pick it too.
+		{"embed-large", "ant-key", "", "anthropic", "", false},
+
+		// --- Vendor passthrough (must not be treated as unknown) ---
+		{"gpt-4o-turbo", "", "oai-key", "openai", "", false},      // gpt- prefix
+		{"o1-mini", "", "oai-key", "openai", "", false},           // o1- prefix
+		{"claude-3-haiku", "ant-key", "", "anthropic", "", false}, // claude- prefix
+
+		// --- Unknown capability: must NOT return gpt-4o when only Anthropic is set ---
+		{"totally-unknown", "ant-key", "", "anthropic", "gpt-4o", false},
+		{"fsat", "", "oai-key", "openai", "", false}, // typo of "fast"
+	}
+
+	for _, tc := range tests {
+		name := tc.capability + "/ant=" + tc.anthropicEnv + "/oai=" + tc.openaiEnv
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", tc.anthropicEnv)
+			t.Setenv("OPENAI_API_KEY", tc.openaiEnv)
+			t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+
+			prov, model := resolveModel(tc.capability)
+			if prov == "" || model == "" {
+				t.Fatalf("resolveModel(%q) returned empty (provider=%q model=%q)", tc.capability, prov, model)
+			}
+			if prov != tc.wantProvider {
+				t.Errorf("provider=%q want %q (model=%q)", prov, tc.wantProvider, model)
+			}
+			if tc.neverModel != "" && model == tc.neverModel {
+				t.Errorf("returned forbidden model %q for capability %q", model, tc.capability)
+			}
+			if tc.mustBeCheap && isExpensive(model) {
+				t.Errorf("capability %q returned expensive model %q — must be haiku/gpt-4o-mini tier", tc.capability, model)
+			}
+		})
+	}
+}
+
+// TestResolveModel_OptimizeTargets is kept for backward-compat / smaller CI
+// signal; the full table is TestResolveModel_AllSDKCapabilities above.
 func TestResolveModel_OptimizeTargets(t *testing.T) {
 	tests := []struct {
 		capability   string
-		anthropicEnv string // empty = not set
+		anthropicEnv string
 		openaiEnv    string
 		wantProvider string
-		neverModel   string // if non-empty, assert the model is NOT this
+		neverModel   string
 	}{
-		// "fast" with Anthropic → Haiku, never gpt-4o
 		{"fast", "ant-key", "", "anthropic", "gpt-4o"},
-		// "fast" with OpenAI only → gpt-4o-mini, never gpt-4o
 		{"fast", "", "oai-key", "openai", "gpt-4o"},
-		// "fast" with both → Anthropic (Haiku) preferred
 		{"fast", "ant-key", "oai-key", "anthropic", "gpt-4o"},
-		// "cheap" same routing as "fast"
 		{"cheap", "ant-key", "", "anthropic", "gpt-4o"},
 		{"cheap", "", "oai-key", "openai", "gpt-4o"},
-		// "balanced" behaves like "auto" (picks a provider that's available)
 		{"balanced", "", "oai-key", "openai", ""},
 		{"balanced", "ant-key", "", "anthropic", ""},
-		// "best" → most capable; Opus when Anthropic is available
 		{"best", "ant-key", "", "anthropic", ""},
 		{"best", "", "oai-key", "openai", ""},
 	}
@@ -299,7 +425,7 @@ func TestResolveModel_OptimizeTargets(t *testing.T) {
 				t.Errorf("resolveModel(%q) provider=%q want %q (model=%q)", tc.capability, prov, tc.wantProvider, model)
 			}
 			if tc.neverModel != "" && model == tc.neverModel {
-				t.Errorf("resolveModel(%q) returned forbidden model %q — must not be %q", tc.capability, model, tc.neverModel)
+				t.Errorf("resolveModel(%q) returned forbidden model %q", tc.capability, model)
 			}
 			if (tc.capability == "fast" || tc.capability == "cheap") && isExpensive(model) {
 				t.Errorf("resolveModel(%q) returned expensive model %q", tc.capability, model)
