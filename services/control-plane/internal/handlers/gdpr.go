@@ -1,8 +1,9 @@
 package handlers
 
-// gdpr.go — GDPR / right-to-erasure tenant purge endpoint.
+// gdpr.go — GDPR right-to-erasure purge and Art. 20 data export.
 //
 // DELETE /v1/tenants/{id}
+// GET    /v1/tenants/{id}/export  (see ExportTenant)
 //
 // Security:
 //   - Bearer JWT required (standard auth middleware path via validateRequest).
@@ -21,10 +22,16 @@ package handlers
 // there is an immutable record even if the commit fails.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -228,6 +235,46 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ── 6b. Every other table with a tenant_id column ──────────────────────
+	// The explicit list above predates later tables (life_events, commitments,
+	// domain_records, errands, …) that have no FK to tenants, so nothing
+	// cascaded them and erasure left their rows — including health PII —
+	// behind. Sweeping the catalog keeps the purge complete as tables are added.
+	sweep, err := tx.Query(ctx, `
+		SELECT c.relname FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
+		WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> 'users'
+		ORDER BY c.relname`)
+	if err != nil {
+		log.Error("GDPR: list tenant tables failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	var rest []string
+	for sweep.Next() {
+		var t string
+		if err = sweep.Scan(&t); err != nil {
+			break
+		}
+		rest = append(rest, t)
+	}
+	sweep.Close()
+	if err == nil {
+		err = sweep.Err()
+	}
+	if err != nil {
+		log.Error("GDPR: read tenant tables failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	for _, t := range rest {
+		// Identifier comes from the catalog, quoted by pgx — not user input.
+		if !stepSQL(t, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1`, pgx.Identifier{t}.Sanitize()), targetID) {
+			return
+		}
+	}
+
 	// ── 7. users ────────────────────────────────────────────────────────────
 	if !step("users", "tenant_id", targetID) {
 		return
@@ -252,5 +299,113 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant_id": targetID,
 		"deleted":   deleted,
+	})
+}
+
+// exportRedacted reports whether a column holds credential material that must
+// not leave the system, even to its owner: password/key hashes, anything
+// encrypted at rest, and the provider/connector config blobs that embed keys.
+func exportRedacted(table, column string) bool {
+	switch {
+	case column == "password_hash", column == "key_hash", column == "token_hash", column == "provider_config":
+		return true
+	case strings.HasSuffix(column, "_encrypted"):
+		return true
+	case table == "connector_installs" && column == "config":
+		return true
+	}
+	return false
+}
+
+// ExportTenant handles GET /v1/tenants/{id}/export: every row of every table
+// with a tenant_id column (found from the catalog, so new tables are included
+// without touching this code), plus the tenant row, as one JSON document.
+// ponytail: buffered in memory; stream per table if exports outgrow a response.
+// Owner JWT only; another tenant's id is 404 so existence never leaks.
+func (h *GDPRHandler) ExportTenant(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if claims.Role != "owner" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner role required"})
+		return
+	}
+	tenantID := r.PathValue("id")
+	if tenantID != claims.TenantID {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
+	tables := map[string]json.RawMessage{}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		// pg_catalog, not information_schema: the latter hides tables the
+		// role can't read, which would silently drop them from the export
+		// instead of failing loudly on a missing grant.
+		rows, err := tx.Query(ctx, `
+			SELECT c.relname, a.attname
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+			WHERE n.nspname = 'public' AND c.relkind = 'r'
+			  AND EXISTS (SELECT 1 FROM pg_attribute t
+				WHERE t.attrelid = c.oid AND t.attname = 'tenant_id' AND NOT t.attisdropped)
+			ORDER BY c.relname, a.attnum`)
+		if err != nil {
+			return fmt.Errorf("list tenant tables: %w", err)
+		}
+		drop := map[string][]string{}
+		var order []string
+		for rows.Next() {
+			var table, col string
+			if err := rows.Scan(&table, &col); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan catalog row: %w", err)
+			}
+			if _, seen := drop[table]; !seen {
+				order = append(order, table)
+				drop[table] = []string{}
+			}
+			if exportRedacted(table, col) {
+				drop[table] = append(drop[table], col)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read catalog: %w", err)
+		}
+
+		for _, table := range order {
+			// Identifier comes from the catalog, quoted by pgx — not user input.
+			q := fmt.Sprintf(`SELECT COALESCE(jsonb_agg(to_jsonb(t) - $2::text[]), '[]'::jsonb) FROM %s t WHERE t.tenant_id = $1`,
+				pgx.Identifier{table}.Sanitize())
+			var doc json.RawMessage
+			if err := tx.QueryRow(ctx, q, tenantID, drop[table]).Scan(&doc); err != nil {
+				return fmt.Errorf("export %s: %w", table, err)
+			}
+			tables[table] = doc
+		}
+		var tenant json.RawMessage
+		if err := tx.QueryRow(ctx, `SELECT to_jsonb(t) FROM tenants t WHERE t.id = $1`, tenantID).Scan(&tenant); err != nil {
+			return fmt.Errorf("export tenant row: %w", err)
+		}
+		tables["tenants"] = json.RawMessage("[" + string(tenant) + "]")
+		return nil
+	})
+	if err != nil {
+		h.logger().Error("GDPR export failed", zap.String("tenant_id", tenantID), zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	h.logger().Info("GDPR tenant export",
+		zap.String("tenant_id", tenantID), zap.String("initiated_by_user", claims.Subject), zap.Int("tables", len(tables)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="lantern-export-%s.json"`, tenantID))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenantId":   tenantID,
+		"exportedAt": time.Now().UTC().Format(time.RFC3339),
+		"tables":     tables,
 	})
 }

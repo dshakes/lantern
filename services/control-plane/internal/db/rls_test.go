@@ -389,6 +389,7 @@ var rlsTenantTables = []string{
 	"brief_items",
 	"immigration_deadlines",
 	"memory_distillates",
+	"auth_tokens",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,

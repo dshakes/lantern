@@ -762,6 +762,9 @@ func main() {
 	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
 	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
+	if err := handlers.RegisterAccountLifecycleRoutes(httpMux, authHandler, gdprHandler, handlers.IsProd()); err != nil {
+		logger.Fatal("account lifecycle (ADR 0027)", zap.Error(err))
+	}
 
 	// System health snapshot — peer-service TCP reachability for the dashboard.
 	httpMux.HandleFunc("GET /v1/system/health", healthSweeper.ServeHealth)

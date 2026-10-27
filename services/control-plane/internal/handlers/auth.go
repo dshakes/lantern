@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/mailer"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -27,15 +28,33 @@ import (
 type AuthHandler struct {
 	srv       *server.Server
 	jwtSecret []byte
+	// rl backs the /auth/* rate limits; nil (no Redis) means fail-open.
+	rl spawnRedisClient
+	// mailer delivers verification + reset links (ADR 0027).
+	mailer mailer.Mailer
 }
 
 // NewAuthHandler creates an AuthHandler using the given server and JWT secret.
+// Mail uses the LANTERN_MAILER driver; a misconfigured driver falls back to the
+// log driver here and is refused at startup by CheckSignupConfig.
 func NewAuthHandler(srv *server.Server, jwtSecret string) *AuthHandler {
-	return &AuthHandler{
+	m, err := mailer.FromEnv(srv.Logger.Named("mailer"), isProd())
+	if err != nil {
+		m = &mailer.LogMailer{Logger: srv.Logger.Named("mailer"), Redact: isProd()}
+	}
+	h := &AuthHandler{
 		srv:       srv,
 		jwtSecret: []byte(jwtSecret),
+		mailer:    m,
 	}
+	if srv.Redis != nil { // avoid a typed-nil interface
+		h.rl = srv.Redis
+	}
+	return h
 }
+
+// SetMailer replaces the mail driver (tests).
+func (h *AuthHandler) SetMailer(m mailer.Mailer) { h.mailer = m }
 
 func (h *AuthHandler) logger() *zap.Logger {
 	return h.srv.Logger.Named("auth")
@@ -49,9 +68,11 @@ func (h *AuthHandler) JWTSecret() []byte {
 // ---------- request / response types ----------
 
 type signupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	Name         string `json:"name"`
+	InviteCode   string `json:"inviteCode"`
+	CaptchaToken string `json:"captchaToken"`
 }
 
 type loginRequest struct {
@@ -106,6 +127,11 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validEmail(req.Email) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "a valid email is required"})
+		return
+	}
+
 	if len(req.Password) < 12 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 12 characters"})
 		return
@@ -116,6 +142,30 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	ip := remoteIP(r)
+
+	// Abuse controls (ADR 0027): rate limit, sign-up mode, captcha — in that
+	// order, so a closed deployment never calls out to Turnstile.
+	if h.authRateLimited(ctx, "signup:ip:"+ip, signupPerIPHour, authRateLimitHour) {
+		writeTooMany(w)
+		return
+	}
+	switch signupMode() {
+	case signupOpen:
+	case signupInvite:
+		if !inviteCodeValid(os.Getenv("LANTERN_SIGNUP_INVITE_SECRET"), req.Email, req.InviteCode, time.Now()) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "a valid invite code is required to sign up"})
+			return
+		}
+	default:
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "sign-up is closed"})
+		return
+	}
+	if status, msg := h.checkCaptcha(ctx, req.CaptchaToken, ip); status != 0 {
+		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	verify := requireEmailVerification()
 
 	// Hash the password.
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -133,6 +183,11 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		`SELECT id FROM users WHERE email = $1 LIMIT 1`, req.Email,
 	).Scan(&existingID)
 	if err == nil {
+		if verify {
+			// Enumeration-safe: identical to a fresh sign-up.
+			writeVerificationPending(w)
+			return
+		}
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already registered"})
 		return
 	}
@@ -172,8 +227,8 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	// Create user.
 	var userID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (tenant_id, email, display_name, auth_provider, auth_subject, password_hash)
-		VALUES ($1, $2, $3, 'local', $4, $5)
+		INSERT INTO users (tenant_id, email, display_name, auth_provider, auth_subject, password_hash, email_verified_at)
+		VALUES ($1, $2, $3, 'local', $4, $5, NULL)
 		RETURNING id
 	`, tenantID, req.Email, req.Name, req.Email, string(hash)).Scan(&userID)
 	if err != nil {
@@ -182,9 +237,24 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verifyToken, err := insertAuthToken(ctx, tx, tenantID, userID, purposeVerifyEmail, verifyTokenTTL)
+	if err != nil {
+		h.logger().Error("issue verify token failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		h.logger().Error("commit failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	h.sendVerifyMail(req.Email, verifyToken)
+	if verify {
+		h.logger().Info("user signed up, verification pending",
+			zap.String("user_id", userID), zap.String("tenant_id", tenantID))
+		writeVerificationPending(w)
 		return
 	}
 
@@ -214,36 +284,21 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// writeVerificationPending is the prod sign-up answer: no token until the
+// email is verified, and the same body whether or not the email was new.
+func writeVerificationPending(w http.ResponseWriter) {
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"verificationRequired": true,
+		"message":              "Check your email for a link to verify your account.",
+	})
+}
+
 // loginRateLimitMax is the maximum number of login attempts allowed per
 // sliding window per key (per-IP and per-account separately).
 const loginRateLimitMax = 10
 
 // loginRateLimitWindow is the sliding window duration for login rate limiting.
 const loginRateLimitWindow = time.Minute
-
-// checkLoginRateLimit checks whether the given key (e.g. "ip:1.2.3.4" or
-// "email:user@example.com") has exceeded loginRateLimitMax attempts in the
-// last loginRateLimitWindow. Returns true when the limit is exceeded.
-//
-// Uses a Redis sliding-window counter (INCR + EXPIRE). When Redis is
-// unavailable, the check is skipped (fail-open) rather than blocking
-// legitimate logins — a down Redis should not lock users out of the system.
-func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, key string) (exceeded bool) {
-	if h.srv.Redis == nil {
-		return false
-	}
-	redisKey := "login_rl:" + key
-	n, err := h.srv.Redis.Incr(ctx, redisKey).Result()
-	if err != nil {
-		// Redis unavailable — fail open.
-		return false
-	}
-	if n == 1 {
-		// First hit in this window — set the expiry.
-		h.srv.Redis.Expire(ctx, redisKey, loginRateLimitWindow) //nolint:errcheck
-	}
-	return n > int64(loginRateLimitMax)
-}
 
 // Login validates credentials and returns a JWT.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -269,14 +324,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// checked; a single breach from either triggers 429. This defends
 	// against both credential-stuffing (many IPs targeting one account)
 	// and password-spray (one IP targeting many accounts).
-	clientIP := r.RemoteAddr
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Use the leftmost (client) IP when behind a trusted proxy.
-		if parts := strings.SplitN(xff, ",", 2); len(parts) > 0 {
-			clientIP = strings.TrimSpace(parts[0])
-		}
-	}
-	if h.checkLoginRateLimit(ctx, "ip:"+clientIP) || h.checkLoginRateLimit(ctx, "email:"+req.Email) {
+	// remoteIP trusts X-Forwarded-For only from LANTERN_TRUSTED_PROXIES; the
+	// raw leftmost XFF used before let any client rotate its "IP".
+	clientIP := remoteIP(r)
+	if h.authRateLimited(ctx, "login:ip:"+clientIP, loginRateLimitMax, loginRateLimitWindow) ||
+		h.authRateLimited(ctx, "login:email:"+req.Email, loginRateLimitMax, loginRateLimitWindow) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; please try again later"})
 		return
 	}
@@ -287,16 +339,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		displayName  *string
 		passwordHash *string
 		role         string
+		verifiedAt   *time.Time
 	)
 	// rls-exempt: pre-auth login — resolves the tenant from the email/password
 	// across all tenants; the tenant context is the OUTPUT of this lookup.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT u.id, u.tenant_id, u.display_name, u.password_hash,
-			COALESCE((SELECT 'owner' FROM tenants WHERE id = u.tenant_id LIMIT 1), 'member')
+			COALESCE((SELECT 'owner' FROM tenants WHERE id = u.tenant_id LIMIT 1), 'member'),
+			u.email_verified_at
 		FROM users u
 		WHERE u.email = $1
 		LIMIT 1
-	`, req.Email).Scan(&userID, &tenantID, &displayName, &passwordHash, &role)
+	`, req.Email).Scan(&userID, &tenantID, &displayName, &passwordHash, &role, &verifiedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
@@ -314,6 +368,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if err := bcrypt.CompareHashAndPassword([]byte(*passwordHash), []byte(req.Password)); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+
+	// Checked only after the password matched, so it reveals nothing to a
+	// caller who doesn't already hold the credentials.
+	if verifiedAt == nil && requireEmailVerification() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "email not verified", "code": "email_unverified"})
 		return
 	}
 
