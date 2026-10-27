@@ -139,6 +139,22 @@ cleanup() {
       -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"integration-test cleanup"}')" \
       "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
   fi
+  # Forks too: a run that fails mid-fork-test otherwise leaks every fork VM
+  # (they outlive the manager for the same setsid reason as above).
+  if [ "${#FORK_IDS[@]}" -gt 0 ] && [ -s "${WORK}/client.crt" ] && port_open; then
+    for fid in "${FORK_IDS[@]}"; do
+      grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" \
+        -servername localhost -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+        -d "$(jq -n --arg id "${fid}" '{vm_id:$id, reason:"integration-test cleanup"}')" \
+        "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >/dev/null 2>&1 || true
+    done
+  fi
+  # The snapshot this run took (its mem file is the VM's full RAM) - never
+  # leave it behind. Only this run's own id, never a glob over the store.
+  if [ -n "${SNAPSHOT_ID:-}" ]; then
+    sudo find /var/lib/lantern/snapshots -mindepth 2 -maxdepth 2 -type d -name "${SNAPSHOT_ID}" \
+      -exec rm -r -- {} + 2>/dev/null || true
+  fi
 
   # The pgid may have been published after the handshake loop gave up, so read
   # the file again rather than trusting only the variable. Without this, a
@@ -210,6 +226,7 @@ Find it with: sudo ss -lntp | grep 50054" >&2
 
   rm -rf "${WORK}" 2>/dev/null || true
 }
+FORK_IDS=()
 trap cleanup EXIT
 
 # Fail fast, and for the RIGHT reason, if the port is already taken — by a
