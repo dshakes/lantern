@@ -22,6 +22,7 @@ type agenticRecorder struct {
 	created     []map[string]any
 	runInputs   []map[string]any
 	specFailure bool
+	existing    []string // agents that already exist before onboard runs
 }
 
 func newAgenticServer(t *testing.T, rec *agenticRecorder) *httptest.Server {
@@ -50,6 +51,9 @@ func newAgenticServer(t *testing.T, rec *agenticRecorder) *httptest.Server {
 		_, _ = w.Write([]byte(agenticSpec))
 	})
 	created := map[string]bool{}
+	for _, n := range rec.existing {
+		created[n] = true
+	}
 	mux.HandleFunc("/v1/agents/", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Path[len("/v1/agents/"):]
 		rec.mu.Lock()
@@ -184,5 +188,49 @@ func TestOnboard_SavedKeyFailingTestStopsBeforeCreate(t *testing.T) {
 	}
 	if createCalled {
 		t.Fatal("agent was created despite a failing provider")
+	}
+}
+
+func TestOnboardAgentic_InteractiveExistingNameDefaultsToUniqueName(t *testing.T) {
+	rec := &agenticRecorder{existing: []string{"notes-summarizer", "notes-summarizer-2"}}
+	srv := newAgenticServer(t, rec)
+	// goal, Enter on "Reuse it as-is? [y/N]" (default no), then "y" to create.
+	cfg := &onboardConfig{restURL: srv.URL, forceTTY: true, reader: newStringReader("Summarize notes", "", "y")}
+	if err := runOnboard(cfg); err != nil {
+		t.Fatalf("runOnboard: %v", err)
+	}
+	if len(rec.created) == 0 || rec.created[0]["name"] != "notes-summarizer-3" {
+		t.Fatalf("want a new agent with a unique suffix (notes-summarizer-3), got %v", rec.created)
+	}
+}
+
+func TestOnboardAgentic_InteractiveExistingNameReuseOnYes(t *testing.T) {
+	rec := &agenticRecorder{existing: []string{"notes-summarizer"}}
+	srv := newAgenticServer(t, rec)
+	cfg := &onboardConfig{restURL: srv.URL, forceTTY: true, reader: newStringReader("Summarize notes", "y")}
+	if err := runOnboard(cfg); err != nil {
+		t.Fatalf("runOnboard: %v", err)
+	}
+	for _, c := range rec.created {
+		if c["name"] != "lantern-guide" {
+			t.Fatalf("reuse must not create an agent, got %v", c)
+		}
+	}
+	if len(rec.runInputs) == 0 {
+		t.Fatal("reused agent was not run")
+	}
+}
+
+func TestOnboardAgentic_YesReusesExistingWithoutAsking(t *testing.T) {
+	rec := &agenticRecorder{existing: []string{"notes-summarizer"}}
+	srv := newAgenticServer(t, rec)
+	cfg := &onboardConfig{restURL: srv.URL, forceTTY: true, yes: true, reader: newStringReader()}
+	if err := runOnboard(cfg); err != nil {
+		t.Fatalf("runOnboard: %v", err)
+	}
+	for _, c := range rec.created {
+		if c["name"] != "lantern-guide" {
+			t.Fatalf("--yes must reuse silently, but created %v", c)
+		}
 	}
 }

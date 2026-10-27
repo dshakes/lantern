@@ -459,8 +459,24 @@ func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string
 		fmt.Fprintf(os.Stderr, "%s✓%s\n", colorGreen, colorReset)
 		printSpecProposal(spec)
 		if _, err := client.GetAgent(spec.Name); err == nil {
-			fmt.Fprintf(os.Stderr, "   %s%s already exists — reusing it%s\n", colorDim, spec.Name, colorReset)
-			return spec.Name, false, specFirstInput(spec), nil
+			if !interactive {
+				// CI (--yes / non-TTY): reuse, as before — reruns stay idempotent.
+				fmt.Fprintf(os.Stderr, "   %s%s already exists — reusing it%s\n", colorDim, spec.Name, colorReset)
+				return spec.Name, false, specFirstInput(spec), nil
+			}
+			// Interactive: an existing agent with this name may be unrelated
+			// work — never take it over silently. Default: a new, unique name.
+			fmt.Fprintf(os.Stderr, "   An agent named %s already exists. Reuse it as-is? [y/N] ", spec.Name)
+			ans, _ := cfg.lineReader().ReadLine()
+			if a := strings.ToLower(strings.TrimSpace(ans)); a == "y" || a == "yes" {
+				return spec.Name, false, specFirstInput(spec), nil
+			}
+			free, ferr := uniqueAgentName(client, spec.Name)
+			if ferr != nil {
+				return "", false, nil, ferr
+			}
+			fmt.Fprintf(os.Stderr, "   I'll create it as %s instead.\n", free)
+			spec.Name = free
 		}
 		if interactive {
 			fmt.Fprint(os.Stderr, "   Create it? [Y/n] ")
@@ -501,6 +517,17 @@ func onboardEnsureAgent(cfg *onboardConfig, client *internal.RESTClient) (string
 			colorGreen, colorReset, colorDim, quickstartAgentName, colorReset)
 	}
 	return quickstartAgentName, false, nil, nil
+}
+
+// uniqueAgentName returns base-2, base-3, … — the first name not taken.
+func uniqueAgentName(client *internal.RESTClient, base string) (string, error) {
+	for i := 2; i <= 50; i++ {
+		name := fmt.Sprintf("%s-%d", base, i)
+		if _, err := client.GetAgent(name); err != nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("onboard: no free name for %q after 50 tries — pick a different goal or delete old agents", base)
 }
 
 // printSpecProposal shows the designed agent so the user knows what will be created.
