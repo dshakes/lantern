@@ -151,8 +151,11 @@ cleanup() {
   fi
   # The snapshot this run took (its mem file is the VM's full RAM) - never
   # leave it behind. Only this run's own id, never a glob over the store.
+  # Store layout is $SNAPSHOT_DIR/<agent_version_id>/<vm_id>/<snapshot_id>/
+  # (see snapshot_store.rs) — the snapshot id directory is at depth 3 from
+  # the store root, not depth 2.
   if [ -n "${SNAPSHOT_ID:-}" ]; then
-    sudo find /var/lib/lantern/snapshots -mindepth 2 -maxdepth 2 -type d -name "${SNAPSHOT_ID}" \
+    sudo find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
       -exec rm -r -- {} + 2>/dev/null || true
   fi
 
@@ -193,22 +196,31 @@ cleanup() {
 
   # Backstop for any VM that outlived the manager (each firecracker setsid()s
   # into its own session, so nothing above reaches it). Matched on THIS run's
-  # vm_id in the api socket path — a uuid, so it cannot match another run's VM,
-  # an unrelated hypervisor, or this script's own command line. That last part
-  # matters: a broad `pkill -f firecracker` also matches the usual dev host's
-  # Lima VM name and the shell running this script.
-  # Matched on the vm_id ANYWHERE in a firecracker process's argv, not on the
+  # vm_ids — the primary PLUS every fork id — in the api socket path, all
+  # uuids, so this cannot match another run's VM, an unrelated hypervisor, or
+  # this script's own command line. That last part matters: a broad
+  # `pkill -f firecracker` also matches the usual dev host's Lima VM name and
+  # the shell running this script.
+  # Matched on the id ANYWHERE in a firecracker process's argv, not on the
   # bare `/run/firecracker/<id>.sock` path: under jailer mode the socket lives
   # inside the jail root instead, so a path match would miss it and leak the VM.
-  # The id is a uuid minted for this run, and only processes actually named
-  # `firecracker` are considered, so this cannot match another run, an unrelated
-  # hypervisor, or this script.
-  if [ -n "${VM_ID:-}" ]; then
+  # Forks need the same backstop as the primary VM: a manager that dies
+  # mid-fork-test leaves every fork's firecracker process reparented and
+  # outside any process group this script can reach, exactly like the
+  # primary VM case above.
+  BACKSTOP_IDS=()
+  [ -n "${VM_ID:-}" ] && BACKSTOP_IDS+=("${VM_ID}")
+  [ "${#FORK_IDS[@]}" -gt 0 ] && BACKSTOP_IDS+=("${FORK_IDS[@]}")
+  if [ "${#BACKSTOP_IDS[@]}" -gt 0 ]; then
     for pid in $(pgrep -x firecracker 2>/dev/null); do
       [ "${pid}" = "$$" ] && continue
-      if tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${VM_ID}"; then
-        kill -KILL "${pid}" 2>/dev/null || true
-      fi
+      CMDLINE="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null)"
+      for id in "${BACKSTOP_IDS[@]}"; do
+        if printf '%s' "${CMDLINE}" | grep -qF "${id}"; then
+          kill -KILL "${pid}" 2>/dev/null || true
+          break
+        fi
+      done
     done
   fi
 
