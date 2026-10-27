@@ -670,7 +670,7 @@ func TestTriggers_MissingScope403(t *testing.T) {
 
 // TestRLSTriggers_EnforcedAppPool runs CRUD and a delivery with the handler's
 // tenant-scoped work on the lantern_app pool, where RLS genuinely applies —
-// proving both the policies and the GRANTs in migration 0025.
+// proving both the policies and the GRANTs in migration 0024.
 func TestRLSTriggers_EnforcedAppPool(t *testing.T) {
 	e := newEnforcedServer(t)
 	env := newTriggerEnv(t, e.srv)

@@ -375,7 +375,7 @@ a zone is configured; before this it fired at 09:00 UTC). The same
 | `POST`   | `/v1/hooks/{id}`               | **Public.** Signed delivery → run (`trigger_kind=webhook`) via `CreateRun`  |
 
 `internal/handlers/triggers.go`; tables `agent_triggers` + `agent_trigger_deliveries`
-(migration 0025, RLS). Providers: `generic` (`X-Lantern-Signature: t=,v1=` over
+(migration 0024, RLS). Providers: `generic` (`X-Lantern-Signature: t=,v1=` over
 `<t>.<body>`, ±5 min), `github` (`X-Hub-Signature-256`), `sentry`
 (`Sentry-Hook-Signature`), `pagerduty` (`X-PagerDuty-Signature: v1=`). HMAC-SHA256,
 constant-time. Unknown/disabled/agent-gone → 404, bad signature → 401, >1 MiB → 413,

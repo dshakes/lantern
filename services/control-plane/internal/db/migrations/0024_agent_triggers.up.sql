@@ -1,4 +1,4 @@
--- 0025: inbound webhook triggers (ADR 0028).
+-- 0024: inbound webhook triggers (ADR 0028).
 --
 -- agent_triggers: one public endpoint (POST /v1/hooks/{id}) bound to one agent.
 -- secret_enc is an internal/secrets envelope (AES-256-GCM when
