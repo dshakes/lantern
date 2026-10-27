@@ -167,6 +167,8 @@ pub struct Supervisor {
     /// so its HTTP clients route through the egress allowlist proxy. Set when
     /// the AgentSpec declares egress rules (P2-B7 fix #2).
     inject_proxy_env: bool,
+    /// Extra workload env (broker-mode CA bundle paths, ADR 0026).
+    extra_env: Vec<(String, String)>,
 
     restart_count: Arc<AtomicI32>,
     worker_pid: Arc<AtomicI32>,
@@ -204,6 +206,7 @@ impl Supervisor {
             manager,
             activity,
             inject_proxy_env: false,
+            extra_env: Vec::new(),
             restart_count: Arc::new(AtomicI32::new(0)),
             worker_pid: Arc::new(AtomicI32::new(0)),
             draining: Arc::new(AtomicBool::new(false)),
@@ -217,6 +220,13 @@ impl Supervisor {
     #[must_use]
     pub fn with_proxy_env(mut self, enabled: bool) -> Self {
         self.inject_proxy_env = enabled;
+        self
+    }
+
+    /// Add env vars to every workload spawn (after the env filter).
+    #[must_use]
+    pub fn with_extra_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.extra_env = env;
         self
     }
 
@@ -272,6 +282,8 @@ impl Supervisor {
                      (egress allowlist)"
                 );
             }
+
+            cmd.envs(self.extra_env.iter().map(|(k, v)| (k, v)));
 
             let mut child = cmd
                 .spawn()

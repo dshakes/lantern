@@ -617,29 +617,53 @@ pub async fn run(manager: ManagerClient, activity: ActivityTracker) -> Result<()
         );
     }
 
-    tracing::info!(%addr, "exec: in-guest exec server listening");
-
     // The token is read from the shared client state per call: a guest
     // restored from a snapshot re-identifies and must start rejecting the
     // previous incarnation's token immediately.
     let auth = manager.clone();
     let svc = ExecService::new(manager, activity);
-    tonic::transport::Server::builder()
-        .add_service(
-            pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
-                svc,
-                // clippy::result_large_err (tightened in Rust 1.94) flags the
-                // 176-byte `tonic::Status` here. Both halves of that signature
-                // are tonic's, not ours: `Interceptor` requires exactly
-                // `FnMut(Request<()>) -> Result<Request<()>, Status>`, so the
-                // error cannot be boxed without failing to implement the trait.
-                #[allow(clippy::result_large_err)]
-                move |req: tonic::Request<()>| exec_auth(&auth, req),
-            ),
-        )
-        .serve(addr)
-        .await
-        .context("exec: server exited")?;
+    let router = tonic::transport::Server::builder().add_service(
+        pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
+            svc,
+            // clippy::result_large_err (tightened in Rust 1.94) flags the
+            // 176-byte `tonic::Status` here. Both halves of that signature
+            // are tonic's, not ours: `Interceptor` requires exactly
+            // `FnMut(Request<()>) -> Result<Request<()>, Status>`, so the
+            // error cannot be boxed without failing to implement the trait.
+            #[allow(clippy::result_large_err)]
+            move |req: tonic::Request<()>| exec_auth(&auth, req),
+        ),
+    );
+
+    // Broker egress mode (ADR 0026): no NIC, so the manager reaches this
+    // server by host-initiated vsock on the exec port. Same service, same
+    // per-incarnation token interceptor — only the transport differs.
+    if crate::egress::is_broker_mode(std::env::var("LANTERN_EGRESS_MODE").ok().as_deref()) {
+        let port = u32::from(addr.port());
+        let listener = crate::vsock::listen(port)
+            .with_context(|| format!("exec: cannot listen on vsock port {port}"))?;
+        tracing::info!(
+            vsock_port = port,
+            "exec: in-guest exec server listening on vsock"
+        );
+        let (tx, rx) = mpsc::channel(16);
+        tokio::spawn(async move {
+            loop {
+                let conn = listener.accept().await;
+                if tx.send(conn).await.is_err() {
+                    return;
+                }
+            }
+        });
+        router
+            .serve_with_incoming(ReceiverStream::new(rx))
+            .await
+            .context("exec: server exited")?;
+        return Ok(());
+    }
+
+    tracing::info!(%addr, "exec: in-guest exec server listening");
+    router.serve(addr).await.context("exec: server exited")?;
     Ok(())
 }
 

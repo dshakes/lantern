@@ -82,7 +82,7 @@ Each maps directly to a service block in `runtime.proto`. The split is the subje
    - Opens a vsock connection to the manager.
    - Sends `Heartbeat` every 5s; missed heartbeats for 30s force-terminate the VM.
    - Resolves each `SecretRef` via `VendSecret` (one round-trip per secret) — short-TTL JWT exchange, see [ADR 0005](../adr/0005-secret-vending-via-short-jwt.md).
-   - Installs the egress filter from `AgentSpec.egress_rules` — see [ADR 0006](../adr/0006-egress-allowlist-at-harness.md).
+   - Installs the egress filter from `AgentSpec.egress_rules` — see [ADR 0006](../adr/0006-egress-allowlist-at-harness.md). In broker mode (`LANTERN_EGRESS_MODE=broker`, [ADR 0026](../adr/0026-host-egress-broker.md)) the VM has no NIC; the harness instead forwards `127.0.0.1:3128` over vsock to the manager's host-side broker, which enforces the rules and injects `EgressRule.inject` credentials on the way out.
    - Exec's the worker (user agent code).
 5. **worker runs.** stdout/stderr stream out via the harness `Report` stream; OTel spans and Prometheus metrics ride the same channel as oneof bodies (`runtime.proto:380`).
 6. **completion.** Worker exits, harness sends a final `Heartbeat` with `state=TERMINATED`, manager releases the VM, scheduler decrements its tally. If `idempotent=true` and the worker exited non-zero, the scheduler re-queues with a different node.
@@ -133,6 +133,7 @@ A request crosses these trust boundaries; each is a checkpoint:
 | manager → harness | host → guest (vsock) | guest cannot reach manager except over vsock; no IP routing host↔guest |
 | harness → worker | guest PID 1 → guest user process | seccomp profile, dropped caps, read-only rootfs |
 | worker → internet | guest user process → outside world | harness egress allowlist + host CNI policy (defense in depth, [ADR 0006](../adr/0006-egress-allowlist-at-harness.md)) |
+| worker → internet (broker mode) | guest user process → outside world | NO guest NIC; host-side egress broker over vsock enforces the allowlist and injects credentials, which never enter the VM ([ADR 0026](../adr/0026-host-egress-broker.md)) |
 
 Invariants (these are load-bearing):
 
@@ -402,6 +403,7 @@ v1.15.1 tarball, so the fork test runs without any extra setup.
 - [ADR 0004](../adr/0004-harness-baked-into-vm-image.md) — harness baked into base images
 - [ADR 0005](../adr/0005-secret-vending-via-short-jwt.md) — short-TTL secret vending
 - [ADR 0006](../adr/0006-egress-allowlist-at-harness.md) — egress filtering in the guest
+- [ADR 0026](../adr/0026-host-egress-broker.md) — broker egress mode: no guest NIC, host-side egress broker over vsock, credential injection
 - [ADR 0007](../adr/0007-snapshot-retention-policy.md) — keep last 3 for 7 days
 - [Firecracker snapshotting](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md)
 - [State of MicroVM Isolation 2026](https://emirb.github.io/blog/microvm-2026/)

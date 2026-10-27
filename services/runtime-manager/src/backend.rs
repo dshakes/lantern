@@ -249,4 +249,19 @@ pub trait RuntimeBackend: Send + Sync {
             Liveness::Starting
         })
     }
+
+    /// Host path of the VM's vsock base UDS when the guest has NO network
+    /// device (broker egress mode, ADR 0026): the manager then reaches the
+    /// in-guest harness exec server by host-initiated vsock instead of the
+    /// guest IP. `None` = dial the heartbeat-derived guest address as before.
+    fn guest_vsock(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
+    /// The node's egress mode as recorded in snapshot metadata (`""` =
+    /// guest NIC, `"broker"` = no NIC). Restore requires the snapshot's mode
+    /// to match.
+    fn egress_mode(&self) -> &'static str {
+        ""
+    }
 }

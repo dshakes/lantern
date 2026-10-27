@@ -238,3 +238,38 @@ func TestVMFiles(t *testing.T) {
 		t.Fatalf("WriteFile = %d, %v (%s %q %q)", n, err, gotMethod, gotBody, gotCT)
 	}
 }
+
+// ADR 0026: ScheduleVM sends egressRules[].inject in the control-plane's
+// REST shape {header, secretRef, valuePrefix}.
+func TestScheduleVM_SendsEgressInject(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/runtime/schedule" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"vmId":"vm-1"}`))
+	}))
+	defer srv.Close()
+
+	c := New(WithBaseURL(srv.URL))
+	out, err := c.ScheduleVM(context.Background(), VMScheduleSpec{
+		ImageDigest: "sha256:abc",
+		EgressRules: []EgressRule{{
+			Pattern: "api.openai.com",
+			Inject:  []CredentialInjection{{Header: "Authorization", SecretRef: "lantern.secret/llm/openai", ValuePrefix: "Bearer "}},
+		}},
+		RunID: "r-1",
+	})
+	if err != nil || out.VMID != "vm-1" {
+		t.Fatalf("ScheduleVM: %v %v", out, err)
+	}
+	inj := got["egressRules"].([]any)[0].(map[string]any)["inject"].([]any)[0].(map[string]any)
+	if inj["header"] != "Authorization" || inj["secretRef"] != "lantern.secret/llm/openai" || inj["valuePrefix"] != "Bearer " {
+		t.Fatalf("inject wire shape wrong: %v", inj)
+	}
+	if got["runId"] != "r-1" || got["imageDigest"] != "sha256:abc" {
+		t.Fatalf("spec fields lost: %v", got)
+	}
+}

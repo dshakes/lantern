@@ -723,6 +723,25 @@ func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOp
 
 // ---------- Sandbox schedule + lifecycle (microVM pause / resume / fork) ----------
 
+// CredentialInjection is a header the runtime-manager's host-side egress
+// broker sets on requests matching the rule. SecretRef is a
+// `lantern.secret/...` ref resolved on the host at request time; the secret
+// value never enters the VM. Honoured only in broker egress mode.
+type CredentialInjection struct {
+	Header      string `json:"header"`
+	SecretRef   string `json:"secretRef"`
+	ValuePrefix string `json:"valuePrefix,omitempty"`
+}
+
+// EgressRule is one egress allowlist entry. Inject requires a hostname
+// pattern (not an IP or CIDR).
+type EgressRule struct {
+	Pattern     string                `json:"pattern"`
+	HTTPMethods []string              `json:"httpMethods,omitempty"`
+	RateBps     int64                 `json:"rateBps,omitempty"`
+	Inject      []CredentialInjection `json:"inject,omitempty"`
+}
+
 // VMScheduleSpec holds the fields for scheduling a microVM workload.
 // Pass it to ScheduleVM. Fields are snake_case in the JSON body to match the
 // control-plane spec map convention.
@@ -733,6 +752,9 @@ type VMScheduleSpec struct {
 	Isolation string `json:"isolation,omitempty"`
 	// Env is injected into the workload process.
 	Env map[string]string `json:"env,omitempty"`
+	// EgressRules is the egress allowlist; a rule's Inject entries have the
+	// host-side broker add credentials on the way out (ADR 0026).
+	EgressRules []EgressRule `json:"egressRules,omitempty"`
 	// IdleTimeoutSecs enables idle-suspend: the VM is automatically
 	// snapshotted and stopped after this many seconds of inactivity (no
 	// running workload child). 0 (default) = never auto-suspend.

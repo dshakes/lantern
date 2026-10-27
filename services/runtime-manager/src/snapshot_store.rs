@@ -87,6 +87,12 @@ pub struct SnapshotMeta {
     /// Empty on legacy/untenanted snapshots — which are never restorable.
     #[serde(default)]
     pub tenant_id: String,
+    /// Egress mode of the VM when snapshotted (`"broker"` = no NIC in its
+    /// device state, ADR 0026; empty = guest NIC). Restore refuses a mode
+    /// mismatch: a broker snapshot has no eth0 to re-point, and a guest-mode
+    /// snapshot loaded without a NIC override would reattach the SOURCE's TAP.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub egress_mode: String,
 }
 
 /// Bytes to store. The caller supplies a map of `filename → bytes`; the store
@@ -442,6 +448,12 @@ impl SnapshotStore {
             agent_version_id: agent_version_id.to_string(),
             vm_id: vm_id.to_string(),
             tenant_id: tenant_id.to_string(),
+            // ponytail: the mode is node-wide (`LANTERN_EGRESS_MODE`), so the
+            // snapshotting node's mode IS the VM's. Thread it per-VM if the
+            // mode ever becomes per-spec.
+            egress_mode: crate::egress_broker::EgressMode::from_env()
+                .contract_value()
+                .to_string(),
         };
 
         // Write the meta sidecar locally.
