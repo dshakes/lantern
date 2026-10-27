@@ -1403,3 +1403,20 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// The warn-once set is keyed by a caller-supplied string, so it must stop
+// growing at its cap instead of being an unbounded memory sink.
+func TestWarnUnknownCapabilityOnce_Bounded(t *testing.T) {
+	if !warnUnknownCapabilityOnce("bounded-probe-first") {
+		t.Fatal("first sighting should warn")
+	}
+	if warnUnknownCapabilityOnce("bounded-probe-first") {
+		t.Fatal("second sighting must not warn again")
+	}
+	for i := 0; i < maxWarnedCapabilities*4; i++ {
+		warnUnknownCapabilityOnce(fmt.Sprintf("bounded-probe-%d", i))
+	}
+	if n := warnedCapabilitiesSize.Load(); n > maxWarnedCapabilities {
+		t.Fatalf("warned set grew to %d, cap is %d", n, maxWarnedCapabilities)
+	}
+}

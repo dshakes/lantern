@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -216,8 +217,31 @@ func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provi
 // warnedCapabilities tracks unknown capability strings that have already
 // produced a WARN log so we don't flood the log on every call. The capability
 // string is never secret (it's a model-tier selector from the SDK or workflow
-// editor) so it is safe to store in a package-level map.
-var warnedCapabilities sync.Map
+// editor) so it is safe to store in a package-level map. It is caller-supplied,
+// so the set is capped: past maxWarnedCapabilities distinct names we stop
+// remembering (and stop warning) rather than grow without bound.
+var (
+	warnedCapabilities     sync.Map
+	warnedCapabilitiesSize atomic.Int64
+)
+
+const maxWarnedCapabilities = 256
+
+// warnUnknownCapabilityOnce reports whether this is the first sighting of
+// capability that should be logged.
+func warnUnknownCapabilityOnce(capability string) bool {
+	if _, seen := warnedCapabilities.Load(capability); seen {
+		return false
+	}
+	if warnedCapabilitiesSize.Load() >= maxWarnedCapabilities {
+		return false
+	}
+	if _, loaded := warnedCapabilities.LoadOrStore(capability, struct{}{}); loaded {
+		return false
+	}
+	warnedCapabilitiesSize.Add(1)
+	return true
+}
 
 // isKnownCapabilityOrVendorPrefix returns true when s is an explicitly handled
 // capability name or a vendor-prefixed model id (gpt-*, claude-*, o1-*, o3-*).
@@ -300,7 +324,7 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 
 	// Unknown, non-vendor capability name: warn once (no secrets) and route to
 	// the tenant's balanced default — never silently buy gpt-4o (invariant #6).
-	if _, warned := warnedCapabilities.LoadOrStore(capability, struct{}{}); !warned {
+	if warnUnknownCapabilityOnce(capability) {
 		h.logger().Warn("unknown model capability; routing to balanced default",
 			zap.String("capability", capability))
 	}
