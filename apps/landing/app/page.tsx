@@ -87,13 +87,13 @@ function How() {
     },
   ];
   return (
-    <section id="how" className="section rule" aria-labelledby="how-h">
+    <section id="how" className="section band" aria-labelledby="how-h">
       <div className={wrap}>
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-end">
+        <div className="mx-auto max-w-3xl text-center">
           <h2 id="how-h" className="h2">
             The VM asks. The host decides.
           </h2>
-          <p className="lede lg:justify-self-end">
+          <p className="lede mx-auto mt-6">
             Three places, three jobs. The agent thinks outside the box, its code runs inside it, and the host decides
             what leaves.
           </p>
@@ -196,7 +196,7 @@ function PainFix() {
           ))}
         </ul>
         <p className="mt-8 text-sm text-ink-3">
-          Plus model routing with failover, eval suites that gate CI, sessions, schedules and 17 connectors.{" "}
+          Plus model routing with failover, eval suites that gate CI, sessions, schedules and 18 connectors.{" "}
           <a className="link" href={DOCS}>
             Everything, in the docs
           </a>
@@ -397,7 +397,7 @@ function highlight(src: string) {
 function Code() {
   return (
     <section className="section rule" aria-labelledby="code-h">
-      <div className={`${wrap} grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)] lg:items-center`}>
+      <div className={`${wrap} grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3.4fr)_minmax(0,8.6fr)] lg:items-center`}>
         <div>
           <h2 id="code-h" className="h2">
             A budget before the first token.

@@ -463,18 +463,14 @@ body {
   box-shadow: 0 0 14px 2px var(--lx-flame);
   opacity: 0;
   animation: travel 4s linear infinite;
+  z-index: 0;
 }
-/* agent (16%) -> "one tool call" (33%) -> microVM (50%) -> "to the host" (67%) -> host (83%) -> out */
+/* One continuous run across the three cards; it slides under the hop pills, never over their text. */
 @keyframes travel {
-  0% { left: 14%; opacity: 0; }
-  6% { opacity: 1; }
-  22% { left: 33.3%; }
-  38% { left: 50%; }
-  54% { left: 66.6%; }
-  66% { left: 83%; }
-  80% { left: 83%; }
-  96% { left: 99%; opacity: 1; }
-  100% { left: 100%; opacity: 0; }
+  0% { left: 1%; opacity: 0; }
+  5% { opacity: 1; }
+  95% { left: 98%; opacity: 1; }
+  100% { left: 99%; opacity: 0; }
 }
 /* The host's verdict lands while the pulse waits on it. */
 .cred-badge {
@@ -494,9 +490,17 @@ body {
   animation: cred 4s linear infinite;
 }
 @keyframes cred {
-  0%, 64% { opacity: 0; transform: translateY(3px); }
-  70%, 94% { opacity: 1; transform: none; }
+  0%, 72% { opacity: 0; transform: translateY(3px); }
+  78%, 97% { opacity: 1; transform: none; }
   100% { opacity: 0; }
+}
+/* The one full-bleed band: the section people screenshot. */
+.band {
+  position: relative;
+  background:
+    radial-gradient(60rem 22rem at 50% 0%, color-mix(in oklab, var(--lx-flame) 12%, transparent), transparent 70%),
+    color-mix(in oklab, var(--lx-surface) 55%, var(--lx-bg));
+  border-block: 1px solid color-mix(in oklab, var(--lx-flame) 30%, var(--lx-line));
 }
 @media (max-width: 767px) { .wire { display: none; } }
 
@@ -535,7 +539,7 @@ body {
 
 .hop {
   position: absolute;
-  z-index: 1;
+  z-index: 3;
   right: 0;
   top: 0;
   transform: translate(50%, -50%);
@@ -597,7 +601,7 @@ body {
   background: color-mix(in oklab, var(--lx-signal) 12%, transparent);
   border: 1px solid color-mix(in oklab, var(--lx-signal) 45%, transparent);
 }
-.response-body { margin-top: 0.6rem; color: var(--dm-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; mask-image: none; }
+.response-body { margin-top: 0.6rem; color: var(--dm-ink-2); font-size: 0.76rem; }
 /* "indicative" sits right on the number it qualifies. */
 .ind {
   display: inline-block;
