@@ -8,19 +8,48 @@ the Kata runtime) run natively there while you develop on the Mac.
 Verified on an M4 Max: a Firecracker microVM boots Ubuntu 22.04 to login in
 **~1.6 s** inside the guest.
 
-## Quick start
+## Quick start (one command per step)
 
 ```bash
 brew install lima
+make lima-up           # create/start "firecracker-dev"; verify /dev/kvm, firecracker, jailer; install guest build deps
+make lima-e2e          # build harness + manager + image in the VM, run the jailed lifecycle e2e, print the timing table
+make lima-broker-e2e   # broker egress mode (ADR 0026): no NIC, vsock-only, credential injection
+```
+
+| Target | What it does |
+| ------ | ------------ |
+| `make lima-up` | Creates the VM from `firecracker-dev.yaml` if absent, starts it if stopped (idempotent when running). Fails fast with a clear message on M1/M2 or macOS < 15 (no nested virt). |
+| `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness (musl, all tools incl. `write_file`) as PID 1. Cached at `~/.cache/lantern-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
+| `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed (`FIRECRACKER_JAILER_*`, `EXPECT_VENDSECRET=1`). Timing table saved to `~/.cache/lantern-lima/timing/lifecycle-timing.md`. |
+| `make lima-broker-e2e` | Same build, then `infra/firecracker/broker-e2e.sh` (needs outbound HTTPS to httpbin.org). |
+| `make lima-down` | `limactl stop firecracker-dev`. |
+| `make lima-clean` | `cargo clean --target-dir ~/.cache/lantern-lima/target` and removes the cached image files. |
+
+Both e2e targets fail if the run leaves a firecracker process, snapshot
+directory or jail behind. They wait (up to `LIMA_PORT_WAIT_SECS`, default
+1800) when the manager port (`:50054`, broker `:51054`) is already in use by
+another run in the VM, rather than killing it. Builds refuse to start when the
+VM disk is over `LIMA_DISK_MAX_PCT` (default 85%); `make lima-clean` frees the
+caches. The repo is mounted read-only in the guest, so all build output goes to
+`~/.cache/lantern-lima` there, not into the repo.
+
+If `make lima-up` reports no `/dev/kvm`, use the KVM CI workflow
+(`.github/workflows/microvm-integration.yml`) or a remote Linux host instead;
+the Docker backend (`RUNTIME_BACKEND=docker`) remains the zero-setup macOS dev
+path.
+
+The manual steps below are what the targets automate; keep them for debugging.
+
+### Manual VM setup
+
+```bash
 limactl start infra/lima/firecracker-dev.yaml   # creates "firecracker-dev"
 limactl shell firecracker-dev                   # /dev/kvm exists in here
 ```
 
 The provision scripts install the pinned Firecracker release and open
-`/dev/kvm`. If the VM fails the `/dev/kvm` check, your Mac is M1/M2 or
-pre-macOS-15 — use the KVM CI workflow (`.github/workflows/microvm-integration.yml`)
-or a remote Linux host instead; the Docker backend (`RUNTIME_BACKEND=docker`)
-remains the zero-setup macOS dev path.
+`/dev/kvm`.
 
 ## Smoke-boot a microVM
 
@@ -40,7 +69,7 @@ EOF
 firecracker --no-api --config-file vm.json   # boots to a root login on ttyS0
 ```
 
-## Running the lifecycle e2e test
+## Running the lifecycle e2e test by hand
 
 The full integration test (boot + snapshot/stop/restore + fork×3 + timing) runs
 inside the Lima guest where `/dev/kvm` is available.  The repo is mounted

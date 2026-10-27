@@ -1,4 +1,4 @@
-.PHONY: help dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help lima-up lima-image lima-e2e lima-broker-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -285,6 +285,26 @@ audit: ## Run security audits on all dependencies
 	cd services/model-router && cargo audit
 	cd services/runtime-manager && cargo audit
 	cd packages/sdk-ts && npm audit --omit=dev  # production deps only — dev-tool advisories (vitest/esbuild) aren't shipped
+
+# ---------- Firecracker on a Mac (Lima, M3+ / macOS 15+) ----------
+
+lima-up: ## Create/start the firecracker-dev Lima VM; verify /dev/kvm + firecracker + jailer
+	@bash infra/lima/lima.sh up
+
+lima-image: ## Build the microVM kernel + rootfs (harness as PID 1) inside the VM, cached
+	@bash infra/lima/lima.sh image
+
+lima-e2e: ## Real Firecracker lifecycle e2e (jailed, mTLS VendSecret) inside the VM + timing table
+	@bash infra/lima/lima.sh e2e
+
+lima-broker-e2e: ## Broker egress mode (ADR 0026) e2e inside the VM
+	@bash infra/lima/lima.sh broker-e2e
+
+lima-down: ## Stop the firecracker-dev VM
+	@bash infra/lima/lima.sh down
+
+lima-clean: ## Drop the VM's cached cargo target + microVM image
+	@bash infra/lima/lima.sh clean
 
 # ---------- CI ----------
 
