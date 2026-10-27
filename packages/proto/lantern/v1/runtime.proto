@@ -80,6 +80,23 @@ message EgressRule {
   repeated string http_methods = 2;
   // Optional bytes/sec rate limit per rule.
   int64 rate_bps = 3;
+  // Credentials the HOST-SIDE egress broker adds to requests matching this
+  // rule (ADR 0026). Only honoured when the manager runs the VM in broker
+  // egress mode; the secret value is resolved on the host at request time and
+  // never enters the guest. Ignored by the in-guest proxy.
+  repeated CredentialInjection inject = 4;
+}
+
+// One header the egress broker sets on the way out. The workload sends a
+// placeholder (or nothing); the broker replaces any same-named header with
+// `value_prefix + <resolved secret>`.
+message CredentialInjection {
+  // HTTP header name, e.g. "Authorization" or "x-api-key".
+  string header = 1;
+  // Lantern secret ref: lantern.secret://tenant/<id>/key/<name>.
+  string secret_uri = 2;
+  // Literal prepended to the secret value, e.g. "Bearer ".
+  string value_prefix = 3;
 }
 
 message SecretRef {

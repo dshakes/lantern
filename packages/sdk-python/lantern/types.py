@@ -732,6 +732,28 @@ async def _default_subagent(agent: str, input: Any) -> Any:
 # --- Runtime (microVM) pause / resume / fork / exec-stream ---------------
 
 
+class CredentialInjection(ApiModel):
+    """A header the host-side egress broker sets on matching requests (ADR 0026).
+
+    ``secret_ref`` is a ``lantern.secret/...`` ref resolved on the host at
+    request time; the secret value never enters the VM. Serializes as
+    ``{header, secretRef, valuePrefix}``.
+    """
+
+    header: str
+    secret_ref: str
+    value_prefix: str = ""
+
+
+class EgressRule(ApiModel):
+    """One egress allowlist entry; ``inject`` requires a hostname pattern."""
+
+    pattern: str
+    http_methods: list[str] = Field(default_factory=list)
+    rate_bps: int = 0
+    inject: list[CredentialInjection] = Field(default_factory=list)
+
+
 class VmPauseResult(ApiModel):
     vm_id: str
     snapshot_id: str

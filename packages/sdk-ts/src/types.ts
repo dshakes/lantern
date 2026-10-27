@@ -725,6 +725,8 @@ export interface VmScheduleSpec {
   idempotencyKey?: string;
   /** Whether to route through confidential-compute (SEV-SNP/TDX). */
   confidential?: boolean;
+  /** Egress allowlist; `inject` adds host-side credentials (ADR 0026). */
+  egressRules?: EgressRule[];
   [key: string]: unknown;
 }
 
@@ -738,6 +740,28 @@ export interface RuntimeVm {
   /** Auto-suspend timeout in seconds. 0 = never auto-suspend. */
   idleTimeoutSecs?: number;
   [key: string]: unknown;
+}
+
+/**
+ * A header the host-side egress broker sets on requests matching the rule
+ * (ADR 0026). `secretRef` is a `lantern.secret/...` ref resolved on the host
+ * at request time — the secret value never enters the VM. Only honoured when
+ * the runtime-manager runs in broker egress mode.
+ */
+export interface CredentialInjection {
+  header: string;
+  secretRef: string;
+  /** Literal prepended to the secret, e.g. `"Bearer "`. */
+  valuePrefix?: string;
+}
+
+/** One egress allowlist entry (`"api.openai.com"`, `"*.openai.com"`, CIDR). */
+export interface EgressRule {
+  pattern: string;
+  httpMethods?: string[];
+  rateBps?: number;
+  /** Requires a hostname pattern (not an IP / CIDR). */
+  inject?: CredentialInjection[];
 }
 
 export interface VmPauseResult {

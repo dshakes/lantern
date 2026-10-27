@@ -380,3 +380,87 @@ func TestSchedulePaths_HonorEgressSecretsLimits(t *testing.T) {
 		})
 	}
 }
+
+// ADR 0026: egress[].inject is parsed into the proto (both casings) and
+// forwarded to the scheduler/manager; the ref is carried, never resolved here.
+func TestAgentSpecFromMap_EgressInject(t *testing.T) {
+	spec := map[string]any{
+		"egress_rules": []any{
+			map[string]any{
+				"pattern": "api.openai.com",
+				"inject": []any{
+					map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai", "valuePrefix": "Bearer "},
+					map[string]any{"header": "x-org", "secret_ref": "lantern.secret/connector/5f2b7c1e-1111-4222-8333-444455556666/org"},
+				},
+			},
+		},
+	}
+	a := agentSpecFromMap(spec)
+	inj := a.GetEgressRules()[0].GetInject()
+	if len(inj) != 2 {
+		t.Fatalf("want 2 injections, got %d", len(inj))
+	}
+	if inj[0].GetHeader() != "Authorization" || inj[0].GetSecretUri() != "lantern.secret/llm/openai" || inj[0].GetValuePrefix() != "Bearer " {
+		t.Errorf("camelCase entry mis-parsed: %+v", inj[0])
+	}
+	if inj[1].GetSecretUri() == "" || inj[1].GetValuePrefix() != "" {
+		t.Errorf("snake_case entry mis-parsed: %+v", inj[1])
+	}
+}
+
+func TestValidateEgressInject(t *testing.T) {
+	rule := func(pattern string, inj map[string]any) []map[string]any {
+		return []map[string]any{{"pattern": pattern, "inject": []any{inj}}}
+	}
+	ok := map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"}
+	if err := validateEgressInject(rule("api.openai.com", ok), nil); err != nil {
+		t.Fatalf("valid inject rejected: %v", err)
+	}
+	if err := validateEgressInject([]map[string]any{{"pattern": "x.com"}}, nil); err != nil {
+		t.Fatalf("rule without inject rejected: %v", err)
+	}
+	const raw = "sk-live-RAWSECRET"
+	bad := map[string][]map[string]any{
+		"raw value as ref": rule("api.openai.com", map[string]any{"header": "Authorization", "secretRef": raw}),
+		"wrong scheme":     rule("api.openai.com", map[string]any{"header": "Authorization", "secretRef": "lantern.secret://tenant/t/key/k"}),
+		"bad header":       rule("api.openai.com", map[string]any{"header": "X-A\r\nEvil", "secretRef": "lantern.secret/llm/openai"}),
+		"crlf prefix":      rule("api.openai.com", map[string]any{"header": "A", "secretRef": "lantern.secret/llm/openai", "valuePrefix": "x\r\n"}),
+		"ip pattern":       rule("8.8.8.8", ok),
+		"cidr pattern":     rule("10.0.0.0/8", ok),
+		"wildcard pattern": rule("*.openai.com", ok),
+		"bare wildcard":    rule("*", ok),
+	}
+	for name, rules := range bad {
+		err := validateEgressInject(rules, nil)
+		if err == nil {
+			t.Errorf("%s: want error", name)
+			continue
+		}
+		if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "lantern.secret/llm") {
+			t.Errorf("%s: error echoes the ref: %v", name, err)
+		}
+	}
+}
+
+// L2: the same ref in `secrets` and `egress[].inject` would vend the value
+// injection exists to keep out of the VM.
+func TestValidateEgressInject_RefAlsoInSecretsRejected(t *testing.T) {
+	rules := []map[string]any{{"pattern": "api.openai.com", "inject": []any{
+		map[string]any{"header": "Authorization", "secretRef": "lantern.secret/llm/openai"},
+	}}}
+	for _, secrets := range [][]map[string]any{
+		{{"env_name": "K", "secret_uri": "lantern.secret/llm/openai"}},
+		{{"envName": "K", "secretUri": "lantern.secret/llm/openai"}},
+	} {
+		err := validateEgressInject(rules, secrets)
+		if err == nil || !strings.Contains(err.Error(), "also listed in secrets") {
+			t.Fatalf("want overlap rejection, got %v", err)
+		}
+		if strings.Contains(err.Error(), "lantern.secret/") {
+			t.Fatalf("error echoes the ref: %v", err)
+		}
+	}
+	if err := validateEgressInject(rules, []map[string]any{{"secret_uri": "lantern.secret/llm/anthropic"}}); err != nil {
+		t.Fatalf("distinct ref rejected: %v", err)
+	}
+}
