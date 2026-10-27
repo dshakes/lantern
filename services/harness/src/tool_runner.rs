@@ -43,6 +43,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -304,11 +305,18 @@ async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
         .kill_on_drop(true);
     crate::supervisor::as_workload(&mut cmd);
 
+    // Increment BEFORE spawn so the zombie_reaper sees it before the child
+    // can exit and trigger SIGCHLD.  Decremented after wait() returns.
+    crate::signals::ACTIVE_TOOL_CHILDREN.fetch_add(1, Ordering::AcqRel);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return ToolResult::err(format!("shell_exec: spawn failed: {e}")),
+        Err(e) => {
+            crate::signals::ACTIVE_TOOL_CHILDREN.fetch_sub(1, Ordering::AcqRel);
+            return ToolResult::err(format!("shell_exec: spawn failed: {e}"));
+        }
     };
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        crate::signals::ACTIVE_TOOL_CHILDREN.fetch_sub(1, Ordering::AcqRel);
         return ToolResult::err("shell_exec: child stdio unavailable");
     };
 
@@ -323,6 +331,7 @@ async fn shell_exec(args: serde_json::Value, timeout: Duration) -> ToolResult {
         (out, err, child.wait().await)
     })
     .await;
+    crate::signals::ACTIVE_TOOL_CHILDREN.fetch_sub(1, Ordering::AcqRel);
 
     match run {
         Err(_) => ToolResult::err(format!(

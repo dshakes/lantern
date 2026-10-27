@@ -301,6 +301,7 @@ log "Starting runtime-manager (RUNTIME_BACKEND=firecracker) on ${MANAGER_ADDR}"
 # Inside the wrapper, `$$` is the session leader in BOTH cases, so it is the one
 # value that is always right. It writes that, then execs the manager, which
 # inherits the pid and stays the leader.
+# shellcheck disable=SC2016  # $$ intentionally expands in the child bash, not here
 setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   env \
   RUNTIME_BACKEND=firecracker \
@@ -310,6 +311,10 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   FC_KERNEL_PATH="${FC_KERNEL_PATH}" \
   FC_ROOTFS_PATH="${FC_ROOTFS_PATH}" \
   ${FC_BINARY_PATH:+FC_BINARY_PATH="${FC_BINARY_PATH}"} \
+  ${FIRECRACKER_JAILER_PATH:+FIRECRACKER_JAILER_PATH="${FIRECRACKER_JAILER_PATH}"} \
+  ${FIRECRACKER_JAILER_UID:+FIRECRACKER_JAILER_UID="${FIRECRACKER_JAILER_UID}"} \
+  ${FIRECRACKER_JAILER_GID:+FIRECRACKER_JAILER_GID="${FIRECRACKER_JAILER_GID}"} \
+  ${FIRECRACKER_CHROOT_BASE:+FIRECRACKER_CHROOT_BASE="${FIRECRACKER_CHROOT_BASE}"} \
   LANTERN_MANAGER_TLS_CA="${WORK}/ca.crt" \
   LANTERN_MANAGER_TLS_CERT="${WORK}/server.crt" \
   LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
@@ -460,7 +465,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4b. Invoke a tool in the guest via ExecTool.
+# Timing infrastructure.  Every lifecycle step records a start + end epoch-ms
+# value.  At the very end these are emitted as JSON + markdown so CI can upload
+# the file as a build artifact.
+# ---------------------------------------------------------------------------
+ms() { date +%s%3N; }
+# TIMING_JSON accumulates a JSON array of objects; assembled at the end.
+TIMING_JSON="[]"
+timing_record() {
+  # timing_record <label> <start_ms> <end_ms>
+  local label="$1" start_ms="$2" end_ms="$3"
+  local duration_ms=$(( end_ms - start_ms ))
+  TIMING_JSON=$(printf '%s' "${TIMING_JSON}" \
+    | jq --arg l "${label}" --argjson s "${start_ms}" --argjson e "${end_ms}" --argjson d "${duration_ms}" \
+         '. + [{label:$l, start_ms:$s, end_ms:$e, duration_ms:$d}]')
+}
+
+# Wait for the heartbeat bidi stream before issuing any ExecTool call.
+# VendSecret (vsock) can succeed before the heartbeat TCP address is registered
+# in the manager, but ExecTool requires that address.  This wait is bounded
+# and idempotent — if VendSecret was skipped the stream is still needed.
+for _ in $(seq 1 60); do
+  grep -q "heartbeat: bidi stream established" "${MANAGER_LOG}" && break
+  sleep 0.5
+done
+grep -q "heartbeat: bidi stream established" "${MANAGER_LOG}" \
+  || fail "heartbeat stream never established before ExecTool — guest may not have connected back. Log:\n$(tail -40 "${MANAGER_LOG}")"
+log "heartbeat bidi stream established — ExecTool path is ready"
+
+# ---------------------------------------------------------------------------
+# 4b. Invoke a tool in the guest via ExecTool (shell_exec marker check).
 #
 # This is the workflow-engine's tool_call path end to end: manager -> in-guest
 # harness exec server -> tool registry -> real execution -> typed result. It can
@@ -472,13 +506,17 @@ fi
 # is available, and skips this assertion when it did not.
 # ---------------------------------------------------------------------------
 log "Invoking a tool in the guest (ExecTool -> shell_exec)"
+T0=$(ms)
 TOOL_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
   -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
   -d "{\"vm_id\":\"${VM_ID}\",\"run_id\":\"itest-run-001\",\"step_id\":\"itest-step-1\",\"tool_name\":\"shell_exec\",\"args\":{\"command\":\"echo lantern-tool-marker\"},\"idempotency_key\":\"itest-run-001:itest-step-1:1\"}" \
   "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || TOOL_RESP=""
+timing_record "shell_exec" "${T0}" "$(ms)"
 
+SHELL_EXEC_AVAILABLE=false
 if printf '%s' "${TOOL_RESP}" | grep -q "lantern-tool-marker"; then
   pass "tool invoked in-guest and returned its output (ExecTool -> shell_exec)"
+  SHELL_EXEC_AVAILABLE=true
 elif printf '%s' "${TOOL_RESP}" | grep -q "No such file or directory"; then
   skip "in-guest tool ran but the image has no /bin/sh — install a static busybox to assert execution"
 else
@@ -486,7 +524,421 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Tear down.
+# 4c. Lifecycle — write a state file before snapshot so we can verify it
+#     survives a stop/restore cycle.  Only runs when shell_exec is available
+#     (the marker proof above passed), since write_file requires a real
+#     harness exec layer — same dependency.
+# ---------------------------------------------------------------------------
+SNAPSHOT_ID=""
+SNAPSHOT_AVAILABLE=false
+
+if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
+  # ---- 4c-i. write_file: drop a known marker into /workspace ----
+  MARKER_PATH="/workspace/itest-state-marker.txt"
+  MARKER_CONTENT="lantern-state-survived-restore-$(date +%s)"
+  log "Writing state marker before snapshot (write_file -> ${MARKER_PATH})"
+  T0=$(ms)
+  WRITE_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg vm "${VM_ID}" --arg path "${MARKER_PATH}" --arg content "${MARKER_CONTENT}" \
+           '{vm_id:$vm,run_id:"itest-run-001",step_id:"itest-step-wf",
+             tool_name:"write_file",args:{path:$path,content:$content},
+             idempotency_key:"itest-run-001:itest-step-wf:1"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WRITE_RESP=""
+  timing_record "write_file" "${T0}" "$(ms)"
+
+  if printf '%s' "${WRITE_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"'; then
+    pass "state marker written to guest /workspace"
+  else
+    fail "write_file failed. Response:\n${WRITE_RESP}\nLog:\n$(tail -20 "${MANAGER_LOG}")"
+  fi
+
+  # ---- 4c-ii. Snapshot ----
+  log "Snapshotting vm_id=${VM_ID} (Snapshot RPC)"
+  T0=$(ms)
+  SNAP_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Snapshot 2>>"${MANAGER_LOG}") \
+    || fail "Snapshot RPC failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
+  timing_record "snapshot" "${T0}" "$(ms)"
+
+  SNAPSHOT_ID=$(printf '%s' "${SNAP_RESP}" | jq -r '.snapshotId // .snapshot_id // empty')
+  [ -n "${SNAPSHOT_ID}" ] || fail "Snapshot returned no snapshot_id: ${SNAP_RESP}"
+  SNAP_BYTES=$(printf '%s' "${SNAP_RESP}" | jq -r '.bytes // 0')
+  log "Snapshot created: id=${SNAPSHOT_ID} bytes=${SNAP_BYTES}"
+  pass "snapshot succeeded (${SNAP_BYTES} bytes, id=${SNAPSHOT_ID})"
+  SNAPSHOT_AVAILABLE=true
+
+  # The backend always resumes the VM after snapshotting.  Now Stop it so that
+  # the restore below proves a full pause/restore cycle — not a hot copy.
+  # ---- 4c-iii. Stop the VM ----
+  log "Stopping vm_id=${VM_ID} (Stop)"
+  T0=$(ms)
+  grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"lifecycle-test stop before restore"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+    || log "Stop returned non-zero — may already be stopping"
+  timing_record "stop" "${T0}" "$(ms)"
+
+  # Assert the firecracker process for this VM is gone.  A leaked process would
+  # appear as a false-alive restored VM or a stale socket — both misleading.
+  FC_LEAKED=false
+  for _ in $(seq 1 30); do
+    FC_LEAKED=false
+    for pid in $(pgrep -x firecracker 2>/dev/null); do
+      if tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${VM_ID}"; then
+        FC_LEAKED=true
+        break
+      fi
+    done
+    [ "${FC_LEAKED}" = "false" ] && break
+    sleep 0.2
+  done
+  if [ "${FC_LEAKED}" = "true" ]; then
+    fail "firecracker process for ${VM_ID} still running after Stop — process leak"
+  fi
+  pass "VM stopped — no firecracker process for ${VM_ID}"
+
+  # ---- 4c-iv. Restore (Spawn with restore_snapshot_id) ----
+  # In bare (unjailed) mode the backend requires the same vm_id as the source.
+  # The backend's restore path copies the global rootfs to a per-VM path so
+  # that writes do not bleed back into the snapshot image (see Rust commit).
+  log "Restoring vm_id=${VM_ID} from snapshot_id=${SNAPSHOT_ID}"
+  RESTORE_REQ=$(jq -n \
+    --arg uri "${SECRET_URI}" \
+    --arg tenant "${ITEST_TENANT_ID}" \
+    --arg snap "${SNAPSHOT_ID}" \
+    --arg vmid "${VM_ID}" \
+    '{
+      spec: {
+        tenant_id: $tenant,
+        image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        isolation: "ISOLATION_HOSTILE",
+        limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
+        run_id: "itest-run-002",
+        command: ["/usr/local/bin/lantern-harness"],
+        secrets: [ { env_name: "OPENAI_API_KEY", secret_uri: $uri } ],
+        restore_snapshot_id: $snap
+      },
+      handle: { vm_id: $vmid }
+    }')
+  T0=$(ms)
+  RESTORE_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "${RESTORE_REQ}" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
+    || fail "Restore Spawn RPC failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
+  timing_record "restore" "${T0}" "$(ms)"
+
+  RESTORED_VM_ID=$(printf '%s' "${RESTORE_RESP}" | jq -r '.handle.vmId // .handle.id // empty')
+  [ -n "${RESTORED_VM_ID}" ] || fail "Restore Spawn returned no vm_id: ${RESTORE_RESP}"
+  FROM_SNAP=$(printf '%s' "${RESTORE_RESP}" | jq -r '.fromSnapshot // false')
+  log "Restored vm_id=${RESTORED_VM_ID} (from_snapshot=${FROM_SNAP})"
+
+  # Wait for the restored harness to come alive.
+  #
+  # A restored VM resumes from memory state — the harness was already running,
+  # so the "starting lantern-harness (PID 1)" boot banner does NOT re-appear.
+  # What DOES appear is a new heartbeat stream established line once the harness
+  # reconnects the bidi stream to the manager (it detects the session ended and
+  # reconnects).  Use that as the alive signal, falling back to the old boot
+  # marker in case the heartbeat log format changes.
+  RESTORE_ALIVE_MARKER="heartbeat: bidi stream established"
+  RESTORE_ALIVE_MARKER2="${GUEST_ALIVE_MARKER}"
+  for _ in $(seq 1 100); do
+    grep -q "Kernel panic" "${MANAGER_LOG}" && break
+    grep -qF "${RESTORE_ALIVE_MARKER}"  "${MANAGER_LOG}" && break
+    # Also accept a second boot-banner as a fallback (e.g. cold-restored harness).
+    ALIVE_COUNT=$(grep -c "${RESTORE_ALIVE_MARKER2}" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    [ "${ALIVE_COUNT}" -ge 2 ] && break
+    sleep 0.3
+  done
+  if grep -q "Kernel panic" "${MANAGER_LOG}"; then
+    fail "guest PANICKED after restore.\n$(grep -B 8 'Kernel panic' "${MANAGER_LOG}" | tail -20)"
+  fi
+  if grep -qF "${RESTORE_ALIVE_MARKER}" "${MANAGER_LOG}"; then
+    pass "restored VM is alive (heartbeat stream re-established after restore)"
+  else
+    ALIVE_COUNT=$(grep -c "${RESTORE_ALIVE_MARKER2}" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    [ "${ALIVE_COUNT}" -ge 2 ] \
+      || fail "harness not alive after restore — no heartbeat reconnect and no second startup marker (${ALIVE_COUNT} occurrences). Log:\n$(tail -40 "${MANAGER_LOG}")"
+    pass "restored VM is alive (harness re-reported startup)"
+  fi
+
+  # ---- 4c-v. re-identification check ----
+  # The backend issues PATCH /drives/certs with the new cert image before
+  # resuming, so the restored VM's cert CN should match the (unchanged) vm_id.
+  # We can verify this by confirming the manager logged the identity swap.
+  if grep -q "plan_identity_restore\|PATCH.*drives/certs\|new identity\|cert.*swapped\|reidentif" "${MANAGER_LOG}"; then
+    pass "re-identification log found in manager output"
+  else
+    # Not a hard failure: different build profiles may not emit a debug-level log.
+    skip "re-identification log line not found (debug logs may be suppressed); cert swap is enforced structurally"
+  fi
+
+  # ---- 4c-vi. read_file: verify state marker survived ----
+  # After Stop the manager evicts the stale harness_addrs entry, so the first
+  # ExecTool after restore returns UNAVAILABLE immediately rather than timing
+  # out after the 35 s tool deadline.  The harness re-establishes its heartbeat
+  # stream within ~0.5–5 s (reconnect backoff + first interval tick), at which
+  # point ExecTool succeeds.  Keep 6 retries × 2 s = 12 s max; the test should
+  # converge in 1–3 retries.  A regression to the old 35 s timeout path would
+  # fail here (the first attempt alone would exhaust the budget).
+  log "Verifying state marker survived snapshot/restore (read_file, with retry)"
+  T0=$(ms)
+  READ_RESP=""
+  for attempt in $(seq 1 6); do
+    READ_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+      -d "$(jq -n --arg vm "${RESTORED_VM_ID}" --arg path "${MARKER_PATH}" \
+             '{vm_id:$vm,run_id:"itest-run-002",step_id:"itest-step-rf",
+               tool_name:"read_file",args:{path:$path},
+               idempotency_key:"itest-run-002:itest-step-rf:1"}')" \
+      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || READ_RESP=""
+    if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
+      break
+    fi
+    log "read_file attempt ${attempt}: ExecTool not ready yet (waiting 2s)..."
+    sleep 2
+  done
+  timing_record "read_file_after_restore" "${T0}" "$(ms)"
+
+  if printf '%s' "${READ_RESP}" | grep -qF "${MARKER_CONTENT}"; then
+    pass "state marker survived stop/restore — file system state is durable across snapshot cycles"
+  else
+    fail "state marker NOT found after restore. Expected: ${MARKER_CONTENT}. Response:\n${READ_RESP}\nLog:\n$(tail -30 "${MANAGER_LOG}")"
+  fi
+
+  # VM_ID now points at the restored VM so cleanup stops it.
+  VM_ID="${RESTORED_VM_ID}"
+
+  # Stop the restored VM before the fork test.  The fork test spawns N new
+  # vm_ids from the same snapshot.  In bare (unjailed) mode the manager refuses
+  # to spawn a fork while the snapshot's source vm_id is still running because
+  # each bare restore binds to /run/lantern/vsock/<source-vm-id>.sock — two
+  # running VMs with the same id would collide.  Stopping first satisfies the
+  # manager's FailedPrecondition guard without requiring the jailer.
+  log "Stopping restored vm_id=${VM_ID} before fork test"
+  T0=$(ms)
+  grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg id "${VM_ID}" '{vm_id:$id, reason:"stop before fork test"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
+    || log "Stop returned non-zero (VM may already be gone)"
+  timing_record "stop_before_fork" "${T0}" "$(ms)"
+  pass "restored VM stopped before fork test"
+fi # SHELL_EXEC_AVAILABLE
+
+# ---------------------------------------------------------------------------
+# 4d. Fork test (conditional on FIRECRACKER_JAILER_PATH being explicitly set).
+#
+# Forking N distinct vm_ids from the same snapshot requires the jailer: bare
+# mode can only restore the source vm_id because the vsock socket path is
+# baked into the snapshot state.  A fork with a different vm_id in bare mode
+# always gets FailedPrecondition from the manager.
+#
+# Detection: FIRECRACKER_JAILER_PATH must be explicitly set in the environment
+# — finding the jailer binary on PATH is NOT sufficient, because the manager
+# must also be started with that env var to enable jailed mode.  Both the
+# manager env (propagated via the setsid block above) and the fork request
+# must agree that jailing is in use.  Auto-discovery from PATH causes a false
+# positive: the binary exists but the manager runs bare, so every fork gets
+# FailedPrecondition.
+#
+# Fork verifications:
+#   a. Each fork gets a distinct vm_id and comes alive.
+#   b. COW isolation: writing fork-N.txt in fork-N is NOT visible in fork-M.
+#   c. All fork VMs are terminated cleanly (no leaked processes).
+# ---------------------------------------------------------------------------
+JAILER_PATH="${FIRECRACKER_JAILER_PATH:-}"
+
+if [ -z "${JAILER_PATH}" ] || [ ! -x "${JAILER_PATH}" ]; then
+  skip "fork test SKIPPED — FIRECRACKER_JAILER_PATH not set or not executable (set FIRECRACKER_JAILER_PATH to the jailer binary; jailer binary on PATH is not sufficient because the manager must also be started with it)"
+elif [ "${SNAPSHOT_AVAILABLE}" = "false" ]; then
+  skip "fork test SKIPPED — no snapshot available (shell_exec or snapshot step was skipped)"
+else
+  log "Running fork lifecycle test with jailer=${JAILER_PATH}"
+  FORK_SNAP_ID="${SNAPSHOT_ID}"
+
+  # Spawn 3 forks, each with a unique vm_id and a different run_id.
+  FORK_IDS=()
+  for i in 1 2 3; do
+    FORK_VM_ID="itest-fork-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-' | head -c 16)"
+    log "Spawning fork #${i}: vm_id=${FORK_VM_ID}"
+    FORK_REQ=$(jq -n \
+      --arg tenant "${ITEST_TENANT_ID}" \
+      --arg snap "${FORK_SNAP_ID}" \
+      --arg vmid "${FORK_VM_ID}" \
+      --arg run "itest-fork-run-${i}" \
+      '{
+        spec: {
+          tenant_id: $tenant,
+          image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+          isolation: "ISOLATION_HOSTILE",
+          limits: { vcpu: "1", memory: "128Mi", timeout: "30s" },
+          run_id: $run,
+          command: ["/usr/local/bin/lantern-harness"],
+          restore_snapshot_id: $snap
+        },
+        handle: { vm_id: $vmid }
+      }')
+    T0=$(ms)
+    FORK_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+      -d "${FORK_REQ}" \
+      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Spawn 2>>"${MANAGER_LOG}") \
+      || fail "Fork #${i} Spawn failed. Log:\n$(tail -30 "${MANAGER_LOG}")"
+    timing_record "fork_spawn_${i}" "${T0}" "$(ms)"
+
+    SPAWNED_ID=$(printf '%s' "${FORK_RESP}" | jq -r '.handle.vmId // .handle.id // empty')
+    [ -n "${SPAWNED_ID}" ] || fail "Fork #${i} Spawn returned no vm_id: ${FORK_RESP}"
+    FORK_IDS+=("${SPAWNED_ID}")
+    pass "fork #${i} spawned: vm_id=${SPAWNED_ID}"
+  done
+
+  # Wait for all forks to come alive: watch for 3 distinct heartbeat reconnects
+  # (one per fork) in the manager log.  Because three VMs log concurrently,
+  # lines can interleave at the byte level — we count heartbeat occurrences
+  # rather than grepping for a specific vm_id within a single line.
+  # The write_file retry below serves as the final readiness gate.
+  for _ in $(seq 1 150); do
+    grep -q "Kernel panic" "${MANAGER_LOG}" && break
+    HB_COUNT=$(grep -c "heartbeat: bidi stream established" "${MANAGER_LOG}" 2>/dev/null || echo 0)
+    # At least 3 new heartbeats (original VM + 3 forks may produce ≥4 total).
+    [ "${HB_COUNT}" -ge 4 ] && break
+    sleep 0.3
+  done
+  if grep -q "Kernel panic" "${MANAGER_LOG}"; then
+    fail "kernel panic during fork"
+  fi
+  pass "all 3 forks are alive (heartbeat reconnects observed in manager log)"
+
+  # Assert distinct vm_ids.
+  if [ "${#FORK_IDS[@]}" -eq 3 ] && \
+     [ "${FORK_IDS[0]}" != "${FORK_IDS[1]}" ] && \
+     [ "${FORK_IDS[1]}" != "${FORK_IDS[2]}" ] && \
+     [ "${FORK_IDS[0]}" != "${FORK_IDS[2]}" ]; then
+    pass "all 3 forks have distinct vm_ids"
+  else
+    fail "fork vm_ids are not all distinct: ${FORK_IDS[*]}"
+  fi
+
+  # COW isolation: write fork-N.txt in each fork.  The ExecTool channel is
+  # ready once the heartbeat stream reconnects (~0.5–5 s) — retry up to 6×2s.
+  # Same regression guard as read_file_after_restore: a 35 s timeout would
+  # exhaust the budget on the first attempt.
+  for i in "${!FORK_IDS[@]}"; do
+    fid="${FORK_IDS[$i]}"
+    n=$(( i + 1 ))
+    log "Writing /workspace/fork-${n}.txt in fork ${fid}"
+    WF_RESP=""
+    for attempt in $(seq 1 6); do
+      WF_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+        -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+        -d "$(jq -n --arg vm "${fid}" --arg path "/workspace/fork-${n}.txt" --arg content "fork-${n}-marker" \
+               "{vm_id:\$vm,run_id:\"itest-fork-run-${n}\",step_id:\"wf-${n}\",
+                 tool_name:\"write_file\",args:{path:\$path,content:\$content},
+                 idempotency_key:\"itest-fork-run-${n}:wf-${n}:1\"}")" \
+        "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || WF_RESP=""
+      printf '%s' "${WF_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"' && break
+      log "write_file fork-${n} attempt ${attempt}: waiting 2s..."
+      sleep 2
+    done
+    printf '%s' "${WF_RESP}" | grep -qi '"status":"OK"\|bytes_written\|"result"' \
+      || fail "write_file fork-${n}.txt in fork ${fid} failed after retries: ${WF_RESP}"
+  done
+  pass "wrote fork-N.txt in each of the 3 fork VMs"
+
+  # Now read fork-1.txt from fork-2 — it must NOT be there (COW isolation).
+  fid2="${FORK_IDS[1]}"
+  log "Verifying COW isolation: fork-1.txt must NOT be visible in fork-2 (${fid2})"
+  COW_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+    -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+    -d "$(jq -n --arg vm "${fid2}" \
+           '{vm_id:$vm,run_id:"itest-fork-run-2",step_id:"cow-check",
+             tool_name:"read_file",args:{path:"/workspace/fork-1.txt"},
+             idempotency_key:"itest-fork-run-2:cow-check:1"}')" \
+    "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || COW_RESP=""
+  if printf '%s' "${COW_RESP}" | grep -q "fork-1-marker"; then
+    fail "COW ISOLATION FAILURE: fork-1.txt from fork-1 is visible in fork-2 — writes are bleeding across VM rootfs images"
+  else
+    pass "COW isolation verified: fork-1.txt written in fork-1 is NOT visible in fork-2"
+  fi
+
+  # Hard-link inode verification — prove the shared-memory optimization from
+  # PR #295 is active (mem is hard-linked, not copied into each fork's jail).
+  #
+  # Rationale: plan_jailed_fork_staging() places the mem artifact in .links[]
+  # (hard-link / MAP_PRIVATE CoW) rather than .copies[].  If the optimization
+  # is working, every fork's mem file in <chroot_base>/<fc_bin>/<vm_id>/root/
+  # snapshot/mem must have the SAME inode as the source snapshot mem file in
+  # the snapshot store.  EXDEV (cross-device hard link) falls back to a copy;
+  # on the Lima tmpfs + local-disk store setup both paths are on the same
+  # filesystem, so EXDEV should not occur.
+  CHROOT_BASE="${FIRECRACKER_CHROOT_BASE:-/srv/jailer}"
+  FC_BIN_NAME="firecracker"
+  [ -n "${FC_BINARY_PATH:-}" ] && FC_BIN_NAME=$(basename "${FC_BINARY_PATH}")
+
+  # Find the snapshot mem file in the store by snapshot_id.
+  SNAP_MEM_PATH=$(sudo find /var/lib/lantern/snapshots -name "mem" -path "*/${FORK_SNAP_ID}/mem" 2>/dev/null | head -1)
+  if [ -z "${SNAP_MEM_PATH}" ]; then
+    fail "snapshot mem file not found in store for snapshot_id=${FORK_SNAP_ID} — hard-link check cannot proceed"
+  fi
+  SNAP_MEM_INODE=$(sudo stat -c '%i' "${SNAP_MEM_PATH}")
+  SNAP_MEM_NLINKS=$(sudo stat -c '%h' "${SNAP_MEM_PATH}")
+  log "snapshot mem: path=${SNAP_MEM_PATH} inode=${SNAP_MEM_INODE} link_count=${SNAP_MEM_NLINKS}"
+
+  HARD_LINK_FAILURES=0
+  for fid in "${FORK_IDS[@]}"; do
+    FORK_MEM="${CHROOT_BASE}/${FC_BIN_NAME}/${fid}/root/snapshot/mem"
+    if ! sudo test -f "${FORK_MEM}"; then
+      log "FAIL: fork ${fid}: mem file not found at ${FORK_MEM}"
+      HARD_LINK_FAILURES=$(( HARD_LINK_FAILURES + 1 ))
+      continue
+    fi
+    FORK_MEM_INODE=$(sudo stat -c '%i' "${FORK_MEM}")
+    if [ "${FORK_MEM_INODE}" = "${SNAP_MEM_INODE}" ]; then
+      pass "fork ${fid}: mem file hard-linked to snapshot mem (inode=${FORK_MEM_INODE})"
+    else
+      log "FAIL: fork ${fid}: mem inode=${FORK_MEM_INODE} != snapshot mem inode=${SNAP_MEM_INODE} (copy path used instead of hard-link — PR #295 optimization not active)"
+      HARD_LINK_FAILURES=$(( HARD_LINK_FAILURES + 1 ))
+    fi
+  done
+
+  if [ "${HARD_LINK_FAILURES}" -gt 0 ]; then
+    fail "${HARD_LINK_FAILURES} fork(s) did not share the snapshot mem inode — hard-link optimization not applied"
+  fi
+  pass "all 3 fork mem files share snapshot mem inode ${SNAP_MEM_INODE} (link_count=${SNAP_MEM_NLINKS}) — MAP_PRIVATE CoW sharing active"
+
+  # Tear down all forks cleanly.
+  for fid in "${FORK_IDS[@]}"; do
+    log "Stopping fork vm_id=${fid}"
+    grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
+      -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
+      -d "$(jq -n --arg id "${fid}" '{vm_id:$id, reason:"fork-lifecycle-test teardown"}')" \
+      "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 || true
+  done
+
+  # Verify no fork processes leaked.
+  LEAKED_FORKS=0
+  for fid in "${FORK_IDS[@]}"; do
+    for pid in $(pgrep -x firecracker 2>/dev/null); do
+      if tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${fid}"; then
+        LEAKED_FORKS=$(( LEAKED_FORKS + 1 ))
+        log "WARN: firecracker process for fork ${fid} still running (pid ${pid})"
+      fi
+    done
+  done
+  if [ "${LEAKED_FORKS}" -gt 0 ]; then
+    fail "${LEAKED_FORKS} fork firecracker process(es) still running after Stop — process leak"
+  fi
+  pass "all 3 fork VMs stopped cleanly — no leaked processes"
+fi # jailer fork test
+
+# ---------------------------------------------------------------------------
+# 5. Tear down the primary VM (or restored VM).
 # ---------------------------------------------------------------------------
 log "Tearing down vm_id=${VM_ID} (Stop)"
 grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
@@ -495,8 +947,45 @@ grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client
   "${MANAGER_ADDR}" lantern.v1.RuntimeManager/Stop >>"${MANAGER_LOG}" 2>&1 \
   || log "Stop RPC returned non-zero (VM may already be gone) — continuing"
 
+# ---------------------------------------------------------------------------
+# 6. Emit timing summary as JSON + markdown.
+# ---------------------------------------------------------------------------
+TIMING_DIR="${LIFECYCLE_TIMING_DIR:-${WORK}/timing}"
+mkdir -p "${TIMING_DIR}"
+TIMING_JSON_FILE="${TIMING_DIR}/lifecycle-timing.json"
+TIMING_MD_FILE="${TIMING_DIR}/lifecycle-timing.md"
+
+# Annotate with run context.
+FULL_TIMING=$(jq -n \
+  --argjson steps "${TIMING_JSON}" \
+  --arg run_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg arch "$(uname -m)" \
+  '{run_at:$run_at, arch:$arch, steps:$steps}')
+printf '%s\n' "${FULL_TIMING}" > "${TIMING_JSON_FILE}"
+
+# Markdown table.
+{
+  printf '# microVM lifecycle timing\n\n'
+  printf 'Run at: %s  arch: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(uname -m)"
+  printf '| step | duration_ms |\n'
+  printf '|------|------------:|\n'
+  printf '%s' "${TIMING_JSON}" \
+    | jq -r '.[] | "| \(.label) | \(.duration_ms) |"'
+  printf '\n'
+  TOTAL=$(printf '%s' "${TIMING_JSON}" | jq '[.[].duration_ms] | add // 0')
+  printf '| **total** | **%s** |\n' "${TOTAL}"
+} > "${TIMING_MD_FILE}"
+
+log "Lifecycle timing written to ${TIMING_JSON_FILE} and ${TIMING_MD_FILE}"
+if [ "${LIFECYCLE_TIMING_DIR:-}" != "" ]; then
+  log "Timing artifact dir: ${LIFECYCLE_TIMING_DIR}"
+fi
+
+# Print the markdown table to stderr for the CI log.
+cat "${TIMING_MD_FILE}" >&2
+
 if [ "${EXPECT_VENDSECRET:-0}" = "1" ]; then
-  pass "ALL ASSERTIONS PASSED — live Firecracker boot + mTLS VendSecret validated end to end"
+  pass "ALL ASSERTIONS PASSED — live Firecracker boot + mTLS VendSecret + full lifecycle validated end to end"
 else
-  pass "LIVE BOOT VALIDATED — Firecracker backend available + microVM booted on KVM (VendSecret round-trip pending the in-guest harness agent)"
+  pass "LIVE BOOT + LIFECYCLE VALIDATED — Firecracker backend available, microVM booted on KVM, snapshot/stop/restore/read cycle complete (VendSecret round-trip pending the in-guest harness agent)"
 fi

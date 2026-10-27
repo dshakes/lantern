@@ -25,6 +25,7 @@
 // tracked in `tls.rs` ("Remaining work").
 
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result};
 use tokio::io::AsyncReadExt;
@@ -100,9 +101,13 @@ async fn run_exec(
         .kill_on_drop(true);
     // `vm exec` runs as the workload, never as PID 1's root.
     crate::supervisor::as_workload(&mut cmd);
+    // Increment before spawn so zombie_reaper does not call waitpid(-1) while
+    // we are waiting for this child (same race guard as tool_runner::shell_exec).
+    crate::signals::ACTIVE_TOOL_CHILDREN.fetch_add(1, Ordering::AcqRel);
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
+            crate::signals::ACTIVE_TOOL_CHILDREN.fetch_sub(1, Ordering::AcqRel);
             let _ = tx
                 .send(Err(Status::internal(format!(
                     "exec: failed to spawn '{command}': {e}"
@@ -124,6 +129,7 @@ async fn run_exec(
         stderr.map(|pipe| tokio::spawn(pump(pipe, tx.clone(), /* is_stdout */ false)));
 
     let status = child.wait().await;
+    crate::signals::ACTIVE_TOOL_CHILDREN.fetch_sub(1, Ordering::AcqRel);
 
     if let Some(t) = out_task {
         let _ = t.await;
