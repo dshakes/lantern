@@ -67,6 +67,21 @@ the start of every run, so there is no silent fallback confusion.
   caller's tenant. True cross-tenant isolation (a second tenant probing the
   first) needs a second seeded tenant and is **not** covered here yet.
 
+## §0 spend notes
+
+- **Model pinning is advisory until W1-H lands.** The inline run executor
+  currently ignores the agent's `model` field; all runs go through whatever
+  provider the server picks. The `$0.50/day hard-fail budget` is therefore
+  what actually bounds spend — not the pinned model. Once W1-H wires the
+  model field through, the pinned cheap model (`reasoning-small` /
+  `chat-small` / `fast`) will additionally lower per-run token cost.
+- **The quickstart suite posts 3 runs per invocation** (one per example
+  agent, in sequence against the same `e2e-quickstart` slot). The per-agent
+  cap is 15 runs/day, so **~5 full suite runs per day** before the ceiling.
+  Hitting the cap causes the next run to fail with the message:
+  `e2e daily budget exhausted for e2e-quickstart (cap working; rerun after local midnight)`.
+  This is intentional — it proves the spend guard is wired.
+
 ## Known contract notes
 
 - `POST /v1/runtime/schedule` returns **201 Created** (not 200).

@@ -73,9 +73,16 @@ const (
 	defaultPassword = "lantern"
 )
 
-// DefaultBase returns the API base URL from env or the default.
+// DefaultBase returns the API base URL.
+// Env priority: LANTERN_E2E_API_URL (canonical) → LANTERN_API_URL (alias) → localhost:8080.
+// Identical precedence to e2e/runtime's baseURL() — keep them in sync.
 func DefaultBase() string {
-	return strings.TrimRight(EnvOr("LANTERN_E2E_API_URL", defaultBaseURL), "/")
+	for _, key := range []string{"LANTERN_E2E_API_URL", "LANTERN_API_URL"} {
+		if v := os.Getenv(key); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return defaultBaseURL
 }
 
 // DefaultEmail returns the login email from env or the default.
@@ -404,7 +411,12 @@ func resolveModel(k *Kit) (string, error) {
 	if hasOpenAI {
 		return modelOpenAI, nil
 	}
-	return "", fmt.Errorf("no LLM provider configured for the dev tenant — configure anthropic or openai via POST /v1/settings/llm-providers")
+	// Empty provider list: keys may be configured via env vars on the API
+	// process (ANTHROPIC_API_KEY / OPENAI_API_KEY) and won't appear in
+	// /v1/settings/llm-providers.  Fall back to "fast" and let the server's
+	// capability resolver pick the cheapest available model.
+	// ponytail: switch to "fast" unconditionally once W1-G lands
+	return "fast", nil
 }
 
 func (k *Kit) putBudget(name string) error {

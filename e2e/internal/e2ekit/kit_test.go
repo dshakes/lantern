@@ -270,6 +270,16 @@ func TestModelPin_AnthropicPreferred(t *testing.T) {
 	}
 }
 
+func TestModelPin_NoProviders_FallsBackToFast(t *testing.T) {
+	// Empty slice (not nil) — simulates env-configured keys that don't
+	// appear in /v1/settings/llm-providers.  Must fall back to "fast".
+	srv := newFake(t, fakeOpts{providers: []map[string]any{}})
+	k := kitFor(t, srv)
+	if k.model != "fast" {
+		t.Fatalf("model = %q, want %q (empty provider list should fall back to fast)", k.model, "fast")
+	}
+}
+
 // ---- Connect: stack-down behaviour ----
 
 func TestConnect_StackDown_Fatal(t *testing.T) {
