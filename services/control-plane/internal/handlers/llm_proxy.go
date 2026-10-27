@@ -213,14 +213,30 @@ func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provi
 }
 
 // resolveModelForTenant is the tenant-aware version of resolveModel. It maps
-// "auto" against the tenant's actually-configured providers so the router
-// picks from what the user set up in Settings, not just the process env.
+// "auto" and OptimizeTarget values ("fast", "cheap", "best", "balanced")
+// against the tenant's actually-configured providers so the router picks from
+// what the user set up in Settings, not just the process env.
 func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, capability string) (string, string) {
-	if capability == "auto" || capability == "" {
+	switch capability {
+	case "auto", "", "balanced":
 		return resolveAutoModel(
 			h.providerAvailable(ctx, tenantID, "anthropic"),
 			h.providerAvailable(ctx, tenantID, "openai"),
 		)
+	case "fast", "cheap":
+		// ponytail: "fast"/"cheap" are OptimizeTarget values from the SDKs; they
+		// must never silently resolve to gpt-4o (the expensive default). Always
+		// pick the cheapest tier of whichever provider the tenant actually has.
+		return resolveCheapModel(
+			h.providerAvailable(ctx, tenantID, "anthropic"),
+			h.providerAvailable(ctx, tenantID, "openai"),
+		)
+	case "best":
+		// "best" → highest-quality model available to this tenant.
+		if h.providerAvailable(ctx, tenantID, "anthropic") {
+			return "anthropic", opusModel()
+		}
+		return "openai", "gpt-4o"
 	}
 	return resolveModel(capability)
 }
@@ -574,17 +590,42 @@ func currentModelCatalog() []modelOption {
 // it pointing at the dynamic catalog so they pick up env overrides.
 var modelCatalog = currentModelCatalog()
 
+// resolveCheapModel returns the cheapest available model tier: Haiku when the
+// tenant has Anthropic, gpt-4o-mini when they have OpenAI, gpt-4o-mini as the
+// fallback when neither flag is set (caller will get a "no key" error anyway).
+// Used by the "fast" and "cheap" OptimizeTarget capabilities so they never
+// silently route to an expensive model (invariant #6).
+func resolveCheapModel(hasAnthropic, hasOpenAI bool) (string, string) {
+	if hasAnthropic {
+		return "anthropic", haikuModel()
+	}
+	return "openai", "gpt-4o-mini"
+}
+
 // resolveModel maps a capability name to a concrete provider + model.
 // "auto" requires tenant context so we can consult llm_provider_configs — use
 // (*LlmProxyHandler).resolveModelForTenant for that case. This plain form
 // handles only named capabilities and delegates "auto" to an env-only default.
 func resolveModel(capability string) (provider, model string) {
 	switch capability {
-	case "auto", "":
+	case "auto", "", "balanced":
 		return resolveAutoModel(
 			os.Getenv("ANTHROPIC_API_KEY") != "",
 			os.Getenv("OPENAI_API_KEY") != "",
 		)
+	case "fast", "cheap":
+		// OptimizeTarget values — must resolve to the cheapest available tier,
+		// never silently to gpt-4o (invariant #6; fixes the e2e spend trap).
+		return resolveCheapModel(
+			os.Getenv("ANTHROPIC_API_KEY") != "",
+			os.Getenv("OPENAI_API_KEY") != "",
+		)
+	case "best":
+		// OptimizeTarget "best" → highest quality model available.
+		if os.Getenv("ANTHROPIC_API_KEY") != "" {
+			return "anthropic", opusModel()
+		}
+		return "openai", "gpt-4o"
 	case "chat-large":
 		return "openai", "gpt-4o"
 	case "reasoning-frontier":

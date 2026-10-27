@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -204,6 +205,106 @@ func TestResolveModel_AutoUsesEnv(t *testing.T) {
 	p, _ = resolveModel("auto")
 	if p != "anthropic" {
 		t.Errorf("auto with only Anthropic env should pick anthropic, got %s", p)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveCheapModel — "fast" / "cheap" capability gate
+// ---------------------------------------------------------------------------
+
+// expensiveModels is the set of models that must NEVER be returned for the
+// "fast" or "cheap" OptimizeTarget capabilities (the e2e spend trap).
+var expensiveModels = map[string]bool{
+	"gpt-4o":          true,
+	"claude-opus-4-8": true,
+	// Sonnet is also not the cheap tier.
+	"claude-sonnet-4-6": true,
+}
+
+func isExpensive(model string) bool {
+	if expensiveModels[model] {
+		return true
+	}
+	// Catch env-overridden Opus/Sonnet names.
+	for m := range expensiveModels {
+		if model == m {
+			return true
+		}
+	}
+	// Any Opus or Sonnet model string is expensive.
+	return strings.Contains(model, "opus") || strings.Contains(model, "sonnet")
+}
+
+// TestResolveCheapModel_NeverExpensive is the table test the plan requires:
+// for every provider combination, "fast" and "cheap" must never resolve to
+// an expensive model.
+func TestResolveCheapModel_NeverExpensive(t *testing.T) {
+	tests := []struct {
+		name         string
+		hasAnthropic bool
+		hasOpenAI    bool
+		wantProvider string
+	}{
+		{"anthropic-only", true, false, "anthropic"},
+		{"openai-only", false, true, "openai"},
+		{"both", true, true, "anthropic"}, // Haiku preferred when Anthropic available
+		{"neither", false, false, "openai"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prov, model := resolveCheapModel(tc.hasAnthropic, tc.hasOpenAI)
+			if prov != tc.wantProvider {
+				t.Errorf("resolveCheapModel(%v,%v) provider=%q want %q", tc.hasAnthropic, tc.hasOpenAI, prov, tc.wantProvider)
+			}
+			if isExpensive(model) {
+				t.Errorf("resolveCheapModel(%v,%v) returned expensive model %q — must be haiku or gpt-4o-mini tier", tc.hasAnthropic, tc.hasOpenAI, model)
+			}
+		})
+	}
+}
+
+// TestResolveModel_OptimizeTargets covers the SDK-advertised OptimizeTarget
+// values so they don't fall through to the expensive default.
+func TestResolveModel_OptimizeTargets(t *testing.T) {
+	tests := []struct {
+		capability   string
+		anthropicEnv string // empty = not set
+		openaiEnv    string
+		wantProvider string
+		neverModel   string // if non-empty, assert the model is NOT this
+	}{
+		// "fast" with Anthropic → Haiku, never gpt-4o
+		{"fast", "ant-key", "", "anthropic", "gpt-4o"},
+		// "fast" with OpenAI only → gpt-4o-mini, never gpt-4o
+		{"fast", "", "oai-key", "openai", "gpt-4o"},
+		// "fast" with both → Anthropic (Haiku) preferred
+		{"fast", "ant-key", "oai-key", "anthropic", "gpt-4o"},
+		// "cheap" same routing as "fast"
+		{"cheap", "ant-key", "", "anthropic", "gpt-4o"},
+		{"cheap", "", "oai-key", "openai", "gpt-4o"},
+		// "balanced" behaves like "auto" (picks a provider that's available)
+		{"balanced", "", "oai-key", "openai", ""},
+		{"balanced", "ant-key", "", "anthropic", ""},
+		// "best" → most capable; Opus when Anthropic is available
+		{"best", "ant-key", "", "anthropic", ""},
+		{"best", "", "oai-key", "openai", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.capability+"/ant="+tc.anthropicEnv+"/oai="+tc.openaiEnv, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", tc.anthropicEnv)
+			t.Setenv("OPENAI_API_KEY", tc.openaiEnv)
+
+			prov, model := resolveModel(tc.capability)
+			if prov != tc.wantProvider {
+				t.Errorf("resolveModel(%q) provider=%q want %q (model=%q)", tc.capability, prov, tc.wantProvider, model)
+			}
+			if tc.neverModel != "" && model == tc.neverModel {
+				t.Errorf("resolveModel(%q) returned forbidden model %q — must not be %q", tc.capability, model, tc.neverModel)
+			}
+			if (tc.capability == "fast" || tc.capability == "cheap") && isExpensive(model) {
+				t.Errorf("resolveModel(%q) returned expensive model %q", tc.capability, model)
+			}
+		})
 	}
 }
 
