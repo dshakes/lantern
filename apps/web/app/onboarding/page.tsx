@@ -31,6 +31,7 @@ import {
   decideAgentCreate,
   decideProviderSave,
   decideRunDisplay,
+  afterRun,
   decideSandbox,
   describeEvent,
   firstRunInput,
@@ -364,11 +365,14 @@ export default function OnboardingPage() {
     }
     setRunDisplay(display);
     setBusy(null);
+    const next = afterRun(base, display, !!runId);
+    if (next.state !== base) await persist(next.state);
+    // Persisting a step is not moving to it — advance the UI too (the flow
+    // used to deadlock here after a successful first run).
+    goTo(next.step);
     if (display.kind === "succeeded") {
-      await persist({ ...base, runStatus: "succeeded", step: "sandbox" });
       void explain(runOutputText(display.output), "");
     } else if (display.kind === "failed") {
-      if (runId) await persist({ ...base, runStatus: "failed" });
       setFailure({ step: "run", fix: suggestFix(parseApiError(new Error(display.error)), "run") });
       void explain("", display.error);
     }

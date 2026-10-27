@@ -20,6 +20,7 @@ import {
   describeEvent,
   decideSandbox,
   starterSpec,
+  afterRun,
   type OnboardingState,
   type AgentSpecDraft,
 } from "./onboarding-logic.ts";
@@ -222,4 +223,26 @@ test("decideSandbox: a stub scheduler is unavailable, never a pass", () => {
     stdout: "hello",
     exitCode: 0,
   });
+});
+
+test("afterRun: a succeeded first run persists AND advances to the sandbox step", () => {
+  const base: OnboardingState = { spec, specApproved: true, agentCreated: true, agentName: "standup-writer", runId: "r1", step: "run" };
+  const ok = afterRun(base, { kind: "succeeded", output: { text: "hi" } }, true);
+  assert.equal(ok.step, "sandbox", "UI must move on (it used to stay on run forever)");
+  assert.equal(ok.state.runStatus, "succeeded");
+  assert.equal(ok.state.step, "sandbox");
+  assert.equal(resumeStep(ok.state), ok.step, "persisted state and UI step agree");
+  assert.equal(canEnter(ok.step, ok.state, false), true);
+
+  const failed = afterRun(base, { kind: "failed", error: "401" }, true);
+  assert.equal(failed.step, "run");
+  assert.equal(failed.state.runStatus, "failed");
+
+  // Run never created (POST /v1/runs threw): nothing new to persist.
+  const notCreated = afterRun(base, { kind: "failed", error: "boom" }, false);
+  assert.equal(notCreated.state, base);
+  assert.equal(notCreated.step, "run");
+
+  // Sandbox already decided earlier → straight to done.
+  assert.equal(afterRun({ ...base, sandbox: "skipped" }, { kind: "succeeded", output: "x" }, true).step, "done");
 });

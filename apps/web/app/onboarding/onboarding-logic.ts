@@ -207,6 +207,27 @@ export function resumeStep(s: OnboardingState | null | undefined): Step {
   return "goal";
 }
 
+/**
+ * What a finished first run does to the flow: the state to persist and the
+ * step the UI must move to. Returns the same `state` object when nothing
+ * needs saving. Pure, so "persisted but never advanced" can't come back.
+ */
+export function afterRun(
+  state: OnboardingState,
+  display: RunDisplay,
+  runCreated: boolean,
+): { state: OnboardingState; step: Step } {
+  if (display.kind === "succeeded") {
+    const next: OnboardingState = { ...state, runStatus: "succeeded" };
+    const step = resumeStep(next);
+    return { state: { ...next, step }, step };
+  }
+  if (display.kind === "failed" && runCreated) {
+    return { state: { ...state, runStatus: "failed", step: "run" }, step: "run" };
+  }
+  return { state, step: "run" };
+}
+
 /** Gate: may the flow enter `step` given the facts so far? */
 export function canEnter(step: Step, s: OnboardingState, providerVerified: boolean): boolean {
   switch (step) {
