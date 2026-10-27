@@ -620,6 +620,13 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 				zap.String("agent", body.AgentName),
 				zap.String("reason", bc.Reason),
 			)
+			if bc.Unavailable {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":  "budget check unavailable; retry shortly",
+					"reason": bc.Reason,
+				})
+				return
+			}
 			middleware.RecordBudgetBlock(r.Context(), body.AgentName)
 			writeJSON(w, http.StatusPaymentRequired, map[string]any{
 				"error":  "agent budget limit reached: " + bc.Reason,
@@ -1947,19 +1954,24 @@ func postBridgeSendSelf(base, token, tenantID, message string) error {
 var errWorkflowBudgetExceeded = errors.New("budget limit exceeded")
 
 // meteredLLMCall wraps one workflow LLM call with the same budget discipline as
-// the single-call executor: CheckBudget before (hard-fail blocks, no spend),
-// RecordUsageSpend after with the call's real tokens/cost (runs_count untouched). Usage is recorded even
-// when the call errors after spending. Covers ai-steps and the self-consistency
-// confidence votes, which share Deps.CallLLM.
-func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName string,
+// the single-call executor: CheckRunBudget before (hard-fail blocks, no spend;
+// includes the per-run cap against what this run has spent so far), then
+// RecordUsageSpend + AccrueRunSpend after with the call's real tokens/cost
+// (runs_count untouched). Usage is recorded even when the call errors after
+// spending. Covers ai-steps and the self-consistency confidence votes, which
+// share Deps.CallLLM.
+func meteredLLMCall(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, agentName, runID string,
 	call func() (text string, tokensIn, tokensOut int64, costUsd float64, err error)) (string, error) {
-	if bc := CheckBudget(ctx, pool, tenantID, agentName, 0); !bc.Allowed && bc.HardFail {
+	if bc := CheckRunBudget(ctx, pool, tenantID, agentName, runID); !bc.Allowed && bc.HardFail {
 		return "", fmt.Errorf("%w: %s", errWorkflowBudgetExceeded, bc.Reason)
 	}
 	text, tin, tout, cost, err := call()
 	if tin > 0 || tout > 0 || cost > 0 {
 		if recErr := RecordUsageSpend(ctx, pool, tenantID, agentName, tin, tout, cost); recErr != nil {
 			logger.Warn("workflow llm: RecordUsage failed", zap.String("agent", agentName), zap.Error(recErr))
+		}
+		if accErr := AccrueRunSpend(ctx, pool, tenantID, runID, tin, tout, cost); accErr != nil {
+			logger.Warn("workflow llm: run spend accrual failed", zap.String("run_id", runID), zap.Error(accErr))
 		}
 	}
 	return text, err
@@ -2001,7 +2013,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			if err != nil {
 				return "", err
 			}
-			text, llmErr := meteredLLMCall(ctx, h.srv.Pool, h.logger(), tenantID, agentName,
+			text, llmErr := meteredLLMCall(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID,
 				func() (string, int64, int64, float64, error) {
 					return h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
 				})

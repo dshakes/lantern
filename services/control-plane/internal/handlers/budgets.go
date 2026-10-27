@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -316,12 +317,34 @@ func (h *BudgetHandler) DeleteTenantBudget(w http.ResponseWriter, r *http.Reques
 
 // BudgetCheckResult is the return value of CheckBudget.
 type BudgetCheckResult struct {
-	Allowed    bool
-	HardFail   bool
-	Reason     string
-	SpentToday float64
-	RunsToday  int
-	Budget     *loadedBudget
+	Allowed  bool
+	HardFail bool
+	// Unavailable means the budget could not be read (a DB error, not "no
+	// budget configured") and the check failed closed. Callers answer 503
+	// rather than 402: the agent may well be under budget.
+	Unavailable bool
+	Reason      string
+	SpentToday  float64
+	RunsToday   int
+	Budget      *loadedBudget
+}
+
+// budgetLookupFailed is the fail-closed result for a budget read that errored
+// with anything other than pgx.ErrNoRows. hardFail is the budget's own policy
+// when the row was read; when the row itself could not be read it is unknown,
+// so the caller passes true: a hard-fail budget must never be silently skipped
+// because the DB hiccuped. The error text stays in the log, never the Reason
+// (which reaches HTTP clients).
+func budgetLookupFailed(ctx context.Context, check, tenantID, agentName string, hardFail bool, err error) BudgetCheckResult {
+	zap.L().Error("budget check failed closed: lookup error",
+		zap.String("check", check),
+		zap.String("tenant_id", tenantID),
+		zap.String("agent", agentName),
+		zap.Bool("hard_fail", hardFail),
+		zap.Error(err),
+	)
+	middleware.RecordBudgetCheckError(ctx, check, agentName)
+	return BudgetCheckResult{HardFail: hardFail, Unavailable: true, Reason: "budget check unavailable"}
 }
 
 // CheckBudget evaluates whether an agent may dispatch a new run right now.
@@ -329,6 +352,7 @@ type BudgetCheckResult struct {
 //
 // If no budget is configured, Allowed=true, HardFail=false.
 // If configured and violating, Allowed=false and Reason explains.
+// If a budget can't be read (DB error), Allowed=false, Unavailable=true.
 //
 // The tenant-wide cap (agent_budgets row with agent_name = TenantBudgetAgent)
 // is checked first, against spend summed across every agent.
@@ -336,11 +360,44 @@ type BudgetCheckResult struct {
 // exceeded must not mask the agent's own hard-fail limit (callers block only
 // on !Allowed && HardFail).
 func CheckBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64) BudgetCheckResult {
-	tc := CheckTenantBudget(ctx, pool, tenantID, estCostUsd)
+	return combineBudgets(CheckTenantBudget(ctx, pool, tenantID, estCostUsd), func() BudgetCheckResult {
+		return checkAgentBudget(ctx, pool, tenantID, agentName, estCostUsd, true)
+	})
+}
+
+// CheckRunBudget is the mid-run check: call it before each model call of an
+// already-admitted run. It enforces max_cost_usd_per_run against the spend the
+// run has accrued so far (runs.cost_usd, fed by AccrueRunSpend) plus the
+// tenant and agent daily cost/token caps. It skips max_runs_per_day: the run
+// was admitted, and other runs finishing must not stop it halfway.
+func CheckRunBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName, runID string) BudgetCheckResult {
+	return combineBudgets(CheckTenantBudget(ctx, pool, tenantID, 0), func() BudgetCheckResult {
+		res := checkAgentBudget(ctx, pool, tenantID, agentName, 0, false)
+		if !res.Allowed || res.Budget == nil || res.Budget.MaxCostUsdPerRun <= 0 {
+			return res
+		}
+		var accrued float64
+		err := pool.QueryRow(ctx, `
+			SELECT COALESCE(cost_usd, 0)::float8 FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, tenantID).Scan(&accrued)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return budgetLookupFailed(ctx, "run", tenantID, agentName, res.HardFail, err)
+		}
+		if accrued >= res.Budget.MaxCostUsdPerRun {
+			res.Allowed = false
+			res.Reason = fmt.Sprintf("run spend $%.4f reached per-run limit $%.4f", accrued, res.Budget.MaxCostUsdPerRun)
+		}
+		return res
+	})
+}
+
+// combineBudgets merges the tenant-wide result with the agent's (evaluated
+// only when the tenant cap doesn't already hard-block).
+func combineBudgets(tc BudgetCheckResult, agent func() BudgetCheckResult) BudgetCheckResult {
 	if !tc.Allowed && tc.HardFail {
 		return tc
 	}
-	ac := checkAgentBudget(ctx, pool, tenantID, agentName, estCostUsd)
+	ac := agent()
 	if !ac.Allowed && ac.HardFail {
 		return ac
 	}
@@ -359,21 +416,31 @@ const TenantBudgetAgent = "*"
 
 // CheckTenantBudget enforces the tenant-wide max_cost_usd_per_day against
 // SUM(agent_usage_daily.cost_usd) over all agents (incl. "__agentless__").
-// No row / no cap / query error -> allowed (unlimited, unchanged behavior).
+// No row / no cap -> allowed (unlimited, unchanged behavior); a lookup error
+// fails closed (see budgetLookupFailed).
 func CheckTenantBudget(ctx context.Context, pool *pgxpool.Pool, tenantID string, estCostUsd float64) BudgetCheckResult {
 	var maxCost *float64
 	var hardFail bool
-	if err := pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 		SELECT max_cost_usd_per_day::float8, hard_fail
 		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
-	`, tenantID, TenantBudgetAgent).Scan(&maxCost, &hardFail); err != nil || maxCost == nil || *maxCost <= 0 {
+	`, tenantID, TenantBudgetAgent).Scan(&maxCost, &hardFail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BudgetCheckResult{Allowed: true}
+	}
+	if err != nil {
+		return budgetLookupFailed(ctx, "tenant", tenantID, "", true, err)
+	}
+	if maxCost == nil || *maxCost <= 0 {
 		return BudgetCheckResult{Allowed: true}
 	}
 	var spent float64
-	_ = pool.QueryRow(ctx, `
+	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(cost_usd),0)::float8 FROM agent_usage_daily
 		WHERE tenant_id = $1 AND usage_date = $2
-	`, tenantID, usageDate(time.Now())).Scan(&spent)
+	`, tenantID, usageDate(time.Now())).Scan(&spent); err != nil {
+		return budgetLookupFailed(ctx, "tenant", tenantID, "", hardFail, err)
+	}
 	res := BudgetCheckResult{Allowed: true, HardFail: hardFail, SpentToday: spent}
 	if spent+estCostUsd > *maxCost {
 		res.Allowed = false
@@ -382,7 +449,9 @@ func CheckTenantBudget(ctx context.Context, pool *pgxpool.Pool, tenantID string,
 	return res
 }
 
-func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64) BudgetCheckResult {
+// checkAgentBudget evaluates the agent's own limits. checkRuns gates
+// max_runs_per_day, which only applies when admitting a new run.
+func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, estCostUsd float64, checkRuns bool) BudgetCheckResult {
 	var b loadedBudget
 	var toolLimitsJSON []byte
 	var maxCostPerDayRaw, maxCostPerRunRaw *float64
@@ -396,8 +465,11 @@ func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNa
 		&maxCostPerDayRaw, &maxCostPerRunRaw, &maxTokensPerDayRaw, &maxRunsPerDayRaw,
 		&toolLimitsJSON, &b.HardFail, &b.NotifyAtPct,
 	)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return BudgetCheckResult{Allowed: true}
+	}
+	if err != nil {
+		return budgetLookupFailed(ctx, "agent", tenantID, agentName, true, err)
 	}
 	if maxCostPerDayRaw != nil {
 		b.MaxCostUsdPerDay = *maxCostPerDayRaw
@@ -414,12 +486,16 @@ func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNa
 
 	var spent float64
 	var runs int
+	var tokens int64
 	today := usageDate(time.Now())
-	_ = pool.QueryRow(ctx, `
-		SELECT COALESCE(cost_usd,0)::float8, COALESCE(runs_count,0)
+	err = pool.QueryRow(ctx, `
+		SELECT COALESCE(cost_usd,0)::float8, COALESCE(runs_count,0), COALESCE(tokens_in + tokens_out,0)::bigint
 		FROM agent_usage_daily
 		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = $3
-	`, tenantID, agentName, today).Scan(&spent, &runs)
+	`, tenantID, agentName, today).Scan(&spent, &runs, &tokens)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return budgetLookupFailed(ctx, "agent", tenantID, agentName, b.HardFail, err)
+	}
 
 	res := BudgetCheckResult{
 		Allowed:    true,
@@ -438,7 +514,12 @@ func checkAgentBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNa
 		res.Reason = fmt.Sprintf("daily spend would reach $%.4f exceeding limit $%.4f", spent+estCostUsd, b.MaxCostUsdPerDay)
 		return res
 	}
-	if b.MaxRunsPerDay > 0 && runs >= b.MaxRunsPerDay {
+	if b.MaxTokensPerDay > 0 && tokens >= b.MaxTokensPerDay {
+		res.Allowed = false
+		res.Reason = fmt.Sprintf("daily token limit reached (%d/%d)", tokens, b.MaxTokensPerDay)
+		return res
+	}
+	if checkRuns && b.MaxRunsPerDay > 0 && runs >= b.MaxRunsPerDay {
 		res.Allowed = false
 		res.Reason = fmt.Sprintf("daily run limit reached (%d/%d)", runs, b.MaxRunsPerDay)
 		return res
@@ -454,8 +535,11 @@ func CheckToolBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 		SELECT tool_limits, hard_fail
 		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
 	`, tenantID, agentName).Scan(&toolLimitsJSON, &hardFail)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return BudgetCheckResult{Allowed: true}
+	}
+	if err != nil {
+		return budgetLookupFailed(ctx, "tool", tenantID, agentName, true, err)
 	}
 	var limits map[string]int
 	if len(toolLimitsJSON) > 0 {
@@ -468,11 +552,14 @@ func CheckToolBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 
 	var used int
 	today := usageDate(time.Now())
-	_ = pool.QueryRow(ctx, `
+	err = pool.QueryRow(ctx, `
 		SELECT COALESCE((tool_counts->>$4)::int, 0)
 		FROM agent_usage_daily
 		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = $3
 	`, tenantID, agentName, today, toolName).Scan(&used)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return budgetLookupFailed(ctx, "tool", tenantID, agentName, hardFail, err)
+	}
 
 	if used >= limit {
 		return BudgetCheckResult{
@@ -482,6 +569,24 @@ func CheckToolBudget(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 		}
 	}
 	return BudgetCheckResult{Allowed: true, HardFail: hardFail}
+}
+
+// AccrueRunSpend adds one intra-run model call's tokens and cost onto the run
+// row so CheckRunBudget sees what the run has spent so far. The workflow path
+// finishes without overwriting cost_usd, so the accrual is also the run's
+// recorded cost. Daily rollups are separate (RecordUsageSpend).
+func AccrueRunSpend(ctx context.Context, pool *pgxpool.Pool, tenantID, runID string, tokensIn, tokensOut int64, costUsd float64) error {
+	_, err := pool.Exec(ctx, `
+		UPDATE runs SET
+		  tokens_in  = COALESCE(tokens_in, 0) + $3,
+		  tokens_out = COALESCE(tokens_out, 0) + $4,
+		  cost_usd   = COALESCE(cost_usd, 0) + $5
+		WHERE id = $1 AND tenant_id = $2
+	`, runID, tenantID, tokensIn, tokensOut, costUsd)
+	if err != nil {
+		return fmt.Errorf("accrue run spend %s: %w", runID, err)
+	}
+	return nil
 }
 
 // RecordUsage upserts one run's worth of spend into the daily rollup.
