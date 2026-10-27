@@ -52,7 +52,10 @@ func TestVmLifecycleCommands(t *testing.T) {
 		{"resume wrong state surfaces 409", []string{"resume", "vm-busy"}, "409", nil, ""},
 		{"fork default count", []string{"fork", "vm-1"}, "", []string{"snap-2", "vm-a"}, `{"count":1}`},
 		{"fork partial failure exits non-zero", []string{"fork", "vm-1", "--count", "2"}, "1 of 2 forks failed", []string{"vm-b", "boot failed"}, `{"count":2}`},
-		{"fork count out of range", []string{"fork", "vm-1", "--count", "11"}, "between 1 and 10", nil, ""},
+		{"fork count below 1 rejected locally", []string{"fork", "vm-1", "--count", "0"}, "at least 1", nil, ""},
+		// Above 10 is the server's call (LANTERN_MAX_FORK_COUNT, default 100):
+		// the CLI must send it, not refuse it.
+		{"fork count above 10 reaches the API", []string{"fork", "vm-1", "--count", "11"}, "", nil, `{"count":11}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
