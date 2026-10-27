@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, Loader2, ArrowRight } from "lucide-react";
+import { AlertCircle, Loader2, ArrowRight, MailCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { LanternMark } from "@/components/lantern-mark";
+import { Turnstile, TURNSTILE_SITE_KEY } from "@/components/turnstile";
 
 function GoogleIcon() {
   return (
@@ -61,7 +63,14 @@ export default function LoginPage() {
   // otherwise loops /login <-> the gated route forever (blank screen). Detect it.
   const bounced = searchParams.get("from") !== null || searchParams.get("next") !== null;
 
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  // An invite link (?invite=<code>) opens straight into sign-up with the code
+  // prefilled; invite-only deployments reject sign-ups without it (ADR 0027).
+  const inviteParam = searchParams.get("invite") ?? "";
+  const [mode, setMode] = useState<"signin" | "signup">(inviteParam ? "signup" : "signin");
+  const [inviteCode, setInviteCode] = useState(inviteParam);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const onCaptcha = useCallback((t: string) => setCaptchaToken(t), []);
+  const [checkEmail, setCheckEmail] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -142,19 +151,35 @@ export default function LoginPage() {
       if (!name.trim()) { setError("Enter your name."); return; }
       if (password.length < 12) { setError("Use a password of at least 12 characters."); return; }
       if (password !== confirmPassword) { setError("The passwords don't match."); return; }
+      if (TURNSTILE_SITE_KEY && !captchaToken) { setError("Complete the check above the button."); return; }
     }
 
     setLoading(true);
     try {
       if (mode === "signup") {
-        await signup(email, password, name);
+        const { verificationRequired } = await signup(email, password, name, {
+          inviteCode: inviteCode.trim() || undefined,
+          captchaToken: captchaToken || undefined,
+        });
+        if (verificationRequired) {
+          setCheckEmail(true);
+          return;
+        }
         router.replace("/onboarding");
       } else {
         await login(email, password);
         router.replace(nextPath);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't sign in. Check your email and password.");
+      const message = err instanceof Error ? err.message : "";
+      // Surface the server's own reason (closed, invite, captcha, 429) on sign-up.
+      const server = message.match(/API (\d+): (.*)/);
+      let reason = message || "Couldn't sign in. Check your email and password.";
+      if (server?.[1] === "429") reason = "Too many attempts. Wait a while and try again.";
+      else if (server) {
+        try { reason = JSON.parse(server[2]).error || reason; } catch { /* keep message */ }
+      }
+      setError(reason);
     } finally {
       setLoading(false);
     }
@@ -181,6 +206,16 @@ export default function LoginPage() {
         </div>
 
         {/* Card */}
+        {checkEmail ? (
+          <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-5 text-sm text-zinc-400">
+            <div className="mb-2 flex items-center gap-2 font-medium text-zinc-100">
+              <MailCheck className="h-4 w-4 text-lantern-400" />
+              Check your email
+            </div>
+            We sent a verification link to <span className="text-zinc-200">{email}</span>. Open it to
+            finish setting up your account, then sign in.
+          </div>
+        ) : (
         <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-5">
           {/* Error */}
           {error && (
@@ -269,11 +304,19 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === "signup" ? "At least 6 characters" : "••••••••"}
+                placeholder={mode === "signup" ? "At least 12 characters" : "••••••••"}
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
               />
             </div>
+
+            {mode === "signin" && (
+              <div className="-mt-1.5 text-right">
+                <Link href="/auth/forgot" className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-300">
+                  Forgot password?
+                </Link>
+              </div>
+            )}
 
             {mode === "signup" && (
               <div>
@@ -289,6 +332,24 @@ export default function LoginPage() {
                 />
               </div>
             )}
+
+            {mode === "signup" && (
+              <div>
+                <label htmlFor="invite" className="mb-1 block text-xs font-medium text-zinc-400">
+                  Invite code <span className="text-zinc-600">(if you have one)</span>
+                </label>
+                <input
+                  id="invite"
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                />
+              </div>
+            )}
+
+            {mode === "signup" && <Turnstile onToken={onCaptcha} />}
 
             <button
               type="submit"
@@ -324,6 +385,7 @@ export default function LoginPage() {
             )}
           </div>
         </div>
+        )}
 
         {/* Demo mode — only when explicitly enabled at build time. Off by
             default so production never advertises a client-minted demo login. */}
