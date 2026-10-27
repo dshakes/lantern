@@ -538,6 +538,10 @@ func main() {
 	httpMux.HandleFunc("POST /v1/agents/generate-spec", authHandler.WithScope(handlers.ScopeAgentsWrite, llmProxyHandler.GenerateAgentSpec))
 	httpMux.HandleFunc("POST /v1/agents/generate-code", authHandler.WithScope(handlers.ScopeAgentsWrite, llmProxyHandler.GenerateAgentCode))
 
+	// Agentic onboarding: resumable state (tenants.settings->onboarding) + the
+	// onboarding agent's run explanation.
+	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
 	httpMux.HandleFunc("GET /v1/settings/llm-providers", llmProxyHandler.ListLlmProviders)

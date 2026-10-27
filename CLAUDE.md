@@ -156,6 +156,7 @@ Budgets · Experiments · Eval Suites · Marketplace
 
 - `/embed` — webchat install center (W10)
 - `/proof` — public receipt verifier (W8) — _no auth required_
+- `/onboarding` — agentic first-agent flow, a conversation plus a progress rail (see "Agentic onboarding")
 
 Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
 
@@ -277,6 +278,39 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `DELETE` | `/v1/agents/{name}`        | Delete agent                            |
 | `POST`   | `/v1/agents/generate-spec` | AI-generate agent spec from description |
 | `POST`   | `/v1/agents/generate-code` | AI-generate agent code                  |
+
+`generate-spec` returns the **parsed spec object** (`name`, `description`,
+`systemPrompt`, `firstInput`, `rationale`, `model`, `steps`, …), not the
+completion envelope. It goes through `CompleteInternalWithUsage` (failover +
+model-router seam, model `auto`) and normalizes the result: kebab-case name,
+capability-only model, grounded defaults. Typed errors:
+`400 {code:"no_provider"}`, `502 {code:"bad_spec"|"llm_failed"}`.
+
+### Agentic onboarding
+
+The dashboard `/onboarding` page and `lantern onboard` share one flow: goal →
+LLM-designed spec (generate-spec) → approve/edit → provider key **test call** →
+create → first run streamed over SSE → optional sandbox run (schedule + exec,
+reported as unavailable on the stub scheduler) → next steps. Every step
+advances only on a real 2xx or a terminal status. The pure state machine,
+error-to-fix mapping and labelled basic-design fallback live in
+`apps/web/app/onboarding/onboarding-logic.ts` (unit-tested). Resume state is
+server-side in `tenants.settings->'onboarding'`; there is no new table because
+`tenants` is RLS-exempt, the state is scoped by the auth tenant id, and the
+document is a whitelisted struct (including a typed spec DTO — no free-form
+nested maps), so a key can never be persisted. Scopes are wired in
+`OnboardingHandler.RegisterRoutes` (under test). The page
+derives the resume step from recorded facts (`resumeStep`) and re-verifies the
+provider every session. The CLI's `--yes` or a non-TTY stdin never prompts.
+`lantern doctor` has a soft "Sandbox runtime" section (stub vs. real
+scheduler, scheduler/manager reachability, KVM/Firecracker).
+
+| Method   | Path                      | Description                                                         |
+| -------- | ------------------------- | ------------------------------------------------------------------- |
+| `GET`    | `/v1/onboarding`          | Resume document (`{}` when none); `read`                            |
+| `PUT`    | `/v1/onboarding`          | Replace it (`settings:write`; unknown fields dropped)               |
+| `DELETE` | `/v1/onboarding`          | Start over                                                          |
+| `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
 
 ### Runs
 

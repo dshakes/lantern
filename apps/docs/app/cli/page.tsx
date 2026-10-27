@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Concept } from "../_components/Concept";
 
 export default function CliPage() {
@@ -29,18 +30,27 @@ lantern --version`}</code>
 
       <h2 id="onboard">onboard</h2>
       <p>
-        First-run wizard: health check → auth → provider key → create agent →
-        run. Gets you from a running stack to a working agent in under a minute.
+        First-run wizard: health check, sign-in, provider key (with a real test
+        call), then the agentic part. It asks what you want the agent to do, the
+        control plane designs it, you confirm, and the first run streams live. With{" "}
+        <code>--yes</code> or a non-terminal stdin it never prompts (CI). See{" "}
+        <Link href="/quickstart#cli">Get started</Link>.
       </p>
       <pre>
-        <code>{`lantern onboard`}</code>
+        <code>{`lantern onboard                     # interactive
+lantern onboard --yes --provider anthropic --api-key "$KEY" \\
+  --description "Triage support tickets"   # CI`}</code>
       </pre>
 
       <h2 id="doctor">doctor</h2>
       <p>
         Runs a sequence of readiness checks against the local stack and prints
         a pass/fail line for each one. Exits non-zero if any hard check fails.
-        Always run this before reporting a bug.
+        Always run this before reporting a bug. The <em>Sandbox runtime</em>{" "}
+        section, which never fails the run, reports whether the API uses a real
+        scheduler or the stub, whether the scheduler and runtime manager are
+        reachable, and whether KVM and Firecracker are present. Each failing
+        check prints its fix.
       </p>
       <pre>
         <code>{`lantern doctor`}</code>
