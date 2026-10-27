@@ -10,3 +10,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     lastModified: new Date(),
   }));
 }
+
+export const dynamic = "force-static";

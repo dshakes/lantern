@@ -2,15 +2,16 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lantern.run";
-const title = "Lantern: the self-hosted runtime for AI agents";
+const title = "Lantern: run the code your agents write, keep your keys out of it";
 const description =
-  "The agent loop runs on your control plane. Code the agent writes runs in a Firecracker or Kata microVM. Crash-resume from the journal, budgets that return 402, signed receipts. Self-hosted, Apache-2.0.";
+  "Open-source runtime for AI agents. Agent-written code runs in a Firecracker or Kata microVM in your cloud; prompts and model keys stay on your control plane. Durable runs, budgets that return 402, signed receipts. Apache-2.0.";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(baseUrl),
+  // Origin only: Next already prefixes file-based og:image URLs with the basePath.
+  metadataBase: new URL(new URL(baseUrl).origin),
   title,
   description,
-  alternates: { canonical: "/" },
+  alternates: { canonical: `${baseUrl}/` },
   // og:image / twitter:image come from app/opengraph-image.tsx + app/twitter-image.tsx.
   openGraph: { title, description, type: "website", url: baseUrl, siteName: "Lantern" },
   twitter: { card: "summary_large_image", title, description },
