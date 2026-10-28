@@ -91,6 +91,9 @@ export default function LoginPage() {
   //     races ahead of it.
   // The one-shot ref bounds this to a single repair+redirect per mount.
   const redirecting = useRef(false);
+  // Sign-up sets this before auth flips, so the effect below sends a brand-new
+  // user to onboarding instead of racing the explicit replace to nextPath.
+  const destination = useRef<string | null>(null);
   useEffect(() => {
     if (isLoading || !isAuthenticated || redirecting.current) return;
     redirecting.current = true;
@@ -98,7 +101,7 @@ export default function LoginPage() {
     void (async () => {
       if (bounced) await api.syncCookie();
       await api.whenCookieSynced();
-      if (!cancelled) router.replace(nextPath);
+      if (!cancelled) router.replace(destination.current ?? nextPath);
     })();
     return () => { cancelled = true; };
   }, [isLoading, isAuthenticated, bounced, nextPath, router]);
@@ -157,6 +160,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (mode === "signup") {
+        destination.current = "/onboarding";
         const { verificationRequired } = await signup(email, password, name, {
           inviteCode: inviteCode.trim() || undefined,
           captchaToken: captchaToken || undefined,
@@ -171,6 +175,7 @@ export default function LoginPage() {
         router.replace(nextPath);
       }
     } catch (err) {
+      destination.current = null;
       const message = err instanceof Error ? err.message : "";
       // Surface the server's own reason (closed, invite, captcha, 429) on sign-up.
       const server = message.match(/API (\d+): (.*)/);
