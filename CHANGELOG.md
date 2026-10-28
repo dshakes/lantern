@@ -10,6 +10,7 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.
 - **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `lantern demo` start the stack with Docker only and no API
   key: each visitor gets an ephemeral, auto-deleted tenant (30 minutes) with sample agents, answers come from the
   `llm-replay` fixture server, RLS and scope enforcement are on. `lantern demo --down` / `make demo-down` delete
