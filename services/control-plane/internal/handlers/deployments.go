@@ -538,7 +538,7 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 	// The "deployed" URL is the A2A invoke endpoint. In local dev, this is
 	// the control-plane HTTP server. In production, it would be the gateway.
-	publicURL := "http://localhost:8080/v1/agents/" + name + "/a2a/invoke"
+	publicURL := derivePublicURL(r) + "/v1/agents/" + name + "/a2a/invoke"
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":          deployID,
