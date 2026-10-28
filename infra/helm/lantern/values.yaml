@@ -5,14 +5,6 @@ global:
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
-  # Bitnami subcharts (postgresql/redis/minio, v1.5.x+ image-verification guard)
-  # refuse to render when their image is overridden to a non-Bitnami container.
-  # Lantern intentionally runs `pgvector/pgvector` for the Postgres subchart (the
-  # pgvector extension is a hard requirement), so the guard must be relaxed for
-  # the in-cluster dev/self-host path. Has no effect on managed-infra deployments
-  # (postgresql.enabled=false etc.).
-  security:
-    allowInsecureImages: true
 
 gateway:
   replicas: 2
@@ -142,33 +134,58 @@ dashboard:
     type: ClusterIP
     port: 3000
 
+# -- In-cluster dependencies (dev / kind / evaluation) vs managed (production) --
+#
+# postgresql + minio are small first-party templates, enabled by default so
+# `helm install` works on a bare cluster. Production sets both enabled=false and
+# points at managed Postgres/S3 through externalDatabase / externalS3 below.
+# Passwords come from `secrets.postgresPassword` / `secrets.minioPassword`.
 postgresql:
   enabled: true
-  auth:
-    username: lantern
-    password: ""  # set via secret
-    database: lantern
-  primary:
-    persistence:
-      size: 10Gi
   image:
-    repository: pgvector/pgvector
-    tag: pg16
+    repository: pgvector/pgvector      # pgvector is a hard requirement
+    tag: 0.8.0-pg16
+  auth:                                # also the user/db names used with externalDatabase
+    username: lantern
+    database: lantern
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
 
+externalDatabase:                      # used when postgresql.enabled=false
+  host: ""
+  port: 5432
+  sslmode: require
+
+# redis stays on the Bitnami subchart.
 redis:
   enabled: true
   architecture: standalone
   auth:
     enabled: false
 
-minio:
+minio:                                 # S3-compatible store (SeaweedFS image; name kept for compatibility)
   enabled: true
+  image:
+    repository: chrislusf/seaweedfs
+    tag: "3.80"
   auth:
-    rootUser: lantern
-    rootPassword: ""  # set via secret
+    rootUser: lantern                  # secret key is secrets.minioPassword
   defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev,lantern-backups"
   persistence:
     size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+
+externalS3:                            # used when minio.enabled=false
+  endpoint: ""                         # e.g. https://s3.us-east-1.amazonaws.com
+  accessKeyId: ""                      # secret key is secrets.minioPassword
+  bucket: lantern-dev
 
 ingress:
   enabled: false

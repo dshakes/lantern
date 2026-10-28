@@ -169,9 +169,11 @@ jobs:
       - name: helm lint + template (dev, ci, prod) + kubeconform
         run: |
           set -euo pipefail
+          # prod points at managed Postgres/S3, which the chart requires you to name
+          LINT_SETS="--set backup.s3Bucket=lint --set externalDatabase.host=db.example --set externalS3.endpoint=https://s3.example --set externalS3.accessKeyId=k"
           for v in dev ci prod; do
-            helm lint "$CHART" -f "$CHART/values-$v.yaml" --set backup.s3Bucket=lint
-            helm template lantern "$CHART" -f "$CHART/values-$v.yaml" --set backup.s3Bucket=lint \
+            helm lint "$CHART" -f "$CHART/values-$v.yaml" $LINT_SETS
+            helm template lantern "$CHART" -f "$CHART/values-$v.yaml" $LINT_SETS \
               > "/tmp/render-$v.yaml"
           done
           for v in dev ci prod; do
@@ -206,8 +208,6 @@ jobs:
         run: |
           set -euo pipefail
           pw="$(openssl rand -hex 16)"
-          PW="$pw" envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
-          kubectl rollout status deploy/lantern-postgresql deploy/lantern-minio --timeout=180s
           helm install lantern "$CHART" -f "$CHART/values-ci.yaml" \
             --set "secrets.postgresPassword=$pw" --set "secrets.minioPassword=$pw" \
             --set "secrets.grpcServiceToken=$(openssl rand -hex 16)" \

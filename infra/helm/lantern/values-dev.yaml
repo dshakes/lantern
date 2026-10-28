@@ -109,17 +109,8 @@ dashboard:
 # -- Infrastructure with dev credentials --
 
 postgresql:
-  enabled: true
-  auth:
-    username: lantern
-    password: lantern-dev
-    database: lantern
-  primary:
-    persistence:
-      size: 1Gi
-  image:
-    repository: pgvector/pgvector
-    tag: pg16
+  persistence:
+    size: 1Gi
 
 redis:
   enabled: true
@@ -128,11 +119,6 @@ redis:
     enabled: false
 
 minio:
-  enabled: true
-  auth:
-    rootUser: lantern
-    rootPassword: lantern-dev-secret
-  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev"
   persistence:
     size: 1Gi
 

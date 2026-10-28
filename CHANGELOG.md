@@ -15,7 +15,14 @@ This project is pre-1.0; there are no stable release branches yet.
 - Control-plane Prometheus `/metrics` on `:8080`; the control-plane SLO alert group is now enabled.
 - `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
+### Changed
+- Helm: Postgres (pgvector) and the S3-compatible store are now first-party templates instead of Bitnami
+  subcharts, enabled by default for dev/kind and disabled in `values-prod.yaml` in favour of
+  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart. `Chart.lock` removed.
+
 ### Fixed
+- Helm: the default in-cluster Postgres crash-looped (Bitnami chart on the pgvector image) and the Bitnami
+  MinIO images were no longer pullable, so a default `helm install` did not come up.
 - `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
   they now use the published `ghcr.io/dshakes/lantern/<name>` images.
 

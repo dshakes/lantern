@@ -29,7 +29,8 @@ maintainers:
 # ---------------------------------------------------------------------------
 # Subchart dependencies
 #
-# The in-cluster Postgres / Redis / MinIO are provided by the Bitnami charts.
+# Redis is the only Bitnami subchart. Postgres (pgvector) and the S3-compatible store are
+# first-party templates (templates/postgresql, templates/minio).
 # Versions are pinned exactly; run `helm dependency build` (uses Chart.lock) to
 # vendor the matching .tgz into charts/ before `helm install`/`helm template`.
 #
@@ -38,15 +39,7 @@ maintainers:
 # object storage). For this all-in-one chart they default to enabled.
 # ---------------------------------------------------------------------------
 dependencies:
-  - name: postgresql
-    version: 18.7.6
-    repository: https://charts.bitnami.com/bitnami
-    condition: postgresql.enabled
   - name: redis
     version: 27.0.10
     repository: https://charts.bitnami.com/bitnami
     condition: redis.enabled
-  - name: minio
-    version: 17.0.21
-    repository: https://charts.bitnami.com/bitnami
-    condition: minio.enabled
