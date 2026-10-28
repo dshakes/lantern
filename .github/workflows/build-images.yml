@@ -54,6 +54,9 @@ jobs:
           - image: gateway
             context: services/gateway
             file: services/gateway/Dockerfile
+          - image: surface-gateway
+            context: services/surface-gateway
+            file: services/surface-gateway/Dockerfile
           - image: model-router
             context: services/model-router
             file: services/model-router/Dockerfile

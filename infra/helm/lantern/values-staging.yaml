@@ -85,7 +85,6 @@ controlPlane:
   # REQUIRED for a prod-class LANTERN_ENV (staging) — the control-plane refuses
   # to start without these (runStartupGuards / grpcTLSCreds). Besides the
   # `secrets:` values listed at the top, supply per environment:
-  #   LANTERN_SCHEDULER_GRPC_ADDR        runtime-scheduler gRPC addr (stub is fatal)
   #   LANTERN_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
   #   LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
   # e.g.
