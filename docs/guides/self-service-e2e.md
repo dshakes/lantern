@@ -330,6 +330,6 @@ These features exist in the code but are off by default:
 | Model-router cutover | `LANTERN_USE_MODEL_ROUTER=1` | Enables routing completions through the model-router service |
 | Confidence gate | `LANTERN_CONFIDENCE_GATE=1` | Routes low-confidence side-effecting nodes to human approval |
 | Confidence calibration | `LANTERN_CONFIDENCE_CALIBRATE=1` | Wraps the estimator with regret-based score adjustment |
-| Immigration sentinel | `LANTERN_IMMIGRATION_SENTINEL=1` | USCIS deadline derivation from PDFs + email |
+| Document deadline sentinel | `LANTERN_IMMIGRATION_SENTINEL=1` | Derives deadlines from personal documents + email (owner-only, off by default) |
 
 See [CLAUDE.md](../../CLAUDE.md) for the complete env-var reference.
