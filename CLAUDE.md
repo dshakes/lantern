@@ -913,7 +913,10 @@ The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METR
 expose through the ingress). The `lantern-instrumented-slos` alert group in
 `infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
 `pg_dump` CronJob to S3/MinIO (off by default in `values-prod.yaml`; enabling it requires
-`backup.s3Bucket`); runbook `docs/runbooks/db-restore.md`.
+`backup.s3Bucket`); restore drill: `scripts/db-restore-drill.sh`, runbook
+`docs/runbooks/db-restore.md`. `scripts/check-app-grants.sh` verifies the `lantern_app` GRANTs.
+CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`)
+restores the CronJob's real dump from in-cluster S3 and checks a marker table survived.
 
 ### Human takeover (W11a)
 
