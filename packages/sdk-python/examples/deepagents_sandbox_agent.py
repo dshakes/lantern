@@ -1,6 +1,6 @@
 """deepagents agent running on a Lantern microVM sandbox.
 
-Requires: pip install lantern-sdk[deepagents]
+Requires: pip install "./packages/sdk-python[deepagents]"  (from a repo checkout)
 Env: LANTERN_API_URL, LANTERN_API_KEY
 
 Demonstrates:
