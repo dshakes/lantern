@@ -610,6 +610,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.StopSession))
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.DeleteSession))
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+	handlers.RegisterSupportDeskRoutes(httpMux, srv, authHandler, llmProxyHandler, sessionHandler) // knowledge base + session handoff (W2-X1)
 
 	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
 	httpMux.HandleFunc("POST /v1/life-events", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.CreateLifeEvent))

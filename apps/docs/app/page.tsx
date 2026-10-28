@@ -44,6 +44,8 @@ const features = [
 
 // Shipped after v0.2.0. Keep in step with CHANGELOG [Unreleased].
 const recent = [
+  { icon: Plug, title: "Knowledge base & handoff", href: "/knowledge", desc: "Upload docs for cited answers, and hand a chat to a human with a Slack ping." },
+  { icon: Plug, title: "Examples", href: "/examples", desc: "Runnable end-to-end examples, starting with a support desk." },
   { icon: Webhook, title: "Webhook triggers", href: "/triggers", desc: "A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated." },
   { icon: UserPlus, title: "Accounts & sign-up", href: "/accounts", desc: "Gated sign-up, email verification, password reset, invite codes, captcha, data export and workspace deletion." },
   { icon: ShieldCheck, title: "Budgets, enforced", href: "/budgets#matrix", desc: "Tokens per day, per-run caps inside workflows, per-tool limits, and fail-closed 503 when a hard-fail budget cannot be read." },
