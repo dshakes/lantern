@@ -51,7 +51,7 @@ lantern vm exec <vm-id> -- ls /workspace
 lantern vm ls <vm-id>
 ```
 
-The demo spec pins a placeholder `image_digest`: build the image from `examples/headless-agents/01-hello/` and point the spec at it first, or the VM fails on image pull. Firecracker needs Linux with `/dev/kvm`. On Apple Silicon (M3+, macOS 15+), [`infra/lima/`](infra/lima/) provisions a guest with nested KVM. Full walkthrough: [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md).
+The demo spec pins a placeholder `image_digest`: build the image from `examples/headless-agents/01-hello/` and point the spec at it first, or the VM fails on image pull. Firecracker needs Linux with `/dev/kvm`. On Apple Silicon (M3+, macOS 15+), [`infra/lima/`](infra/lima/) provisions a guest with nested KVM. `make lima-up && make lima-e2e` boots real Firecracker microVMs there in one command each. Full walkthrough: [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md).
 
 <details>
 <summary>Other ways to run the stack</summary>

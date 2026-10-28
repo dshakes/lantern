@@ -297,9 +297,11 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		"lantern.required_connectors": tpl.Connectors,
 		"lantern.required_surfaces":   tpl.Surfaces,
 	})
+	//    CreateAgent stores nil labels as JSON null, which COALESCE doesn't
+	//    catch and `null || {...}` turns into an array — hence the NULLIF.
 	_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
-			`UPDATE agents SET system_prompt = $1, model = $2, labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
+			`UPDATE agents SET system_prompt = $1, model = $2, labels = COALESCE(NULLIF(labels, 'null'::jsonb), '{}'::jsonb) || $5::jsonb
 			 WHERE name = $3 AND tenant_id = $4`,
 			tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
 		)

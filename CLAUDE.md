@@ -220,7 +220,7 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `tenants`               | Multi-tenant root                                                                                                                                                                                | `id`, `slug`, `tier`, `k8s_namespace`, `settings` (JSONB)                                                                    |
 | `users`                 | Auth, linked to tenant                                                                                                                                                                           | `tenant_id`, `email`, `auth_provider`, `password_hash`, `role`                                                               |
-| `agents`                | Agent definitions                                                                                                                                                                                | `tenant_id`, `name`, `current_version_id`, `labels` (JSONB)                                                                  |
+| `agents`                | Agent definitions. `model` (capability like `fast`/`reasoning-small` or a vendor id; set via POST/PATCH `/v1/agents`) heads the failover chain for that agent's runs, sessions and `auto` workflow ai-steps; NULL/`auto` = default chain; a cheap-tier model fails over only to the other provider's cheap tier (never sonnet/gpt-4o/opus — fails instead) (`preferModel`, migration 0025) | `tenant_id`, `name`, `current_version_id`, `labels` (JSONB), `model`                                                         |
 | `agent_versions`        | Immutable versioned bundles                                                                                                                                                                      | `agent_id`, `version`, `digest`, `bundle_uri`, `manifest` (JSONB)                                                            |
 | `runs`                  | Run lifecycle                                                                                                                                                                                    | `tenant_id`, `agent_id`, `status`, `input`/`output` (JSONB), `cost_usd`, `tokens_in`/`out`                                   |
 | `journal_events`        | Event-sourced run log                                                                                                                                                                            | `run_id`, `seq`, `kind`, `step_id`, `payload` (PK: `run_id, seq`)                                                            |
@@ -540,8 +540,11 @@ directory lists only `is_public` agents.
 **Metering coverage.** Workflow `ai-step` and confidence-vote LLM calls and the
 built-in `web_search` are checked against budgets and recorded via `CheckBudget`
 / `RecordUsageSpend` (`internal/handlers/budgets.go`) — the latter accrues tokens
-and cost WITHOUT bumping `runs_count`, so workflow spend does not inflate the
-runs/day limit. Streaming and no-tools Anthropic paths send the system prompt
+and cost WITHOUT bumping `runs_count`, so per-step spend does not inflate the
+runs/day limit. Each workflow run itself is counted once toward runs/day when
+it succeeds (same as an inline run), so `maxRunsPerDay` limits workflow agents
+too. The forecaster's history (`/v1/runs/forecast`) averages the agent's
+`succeeded` runs over the last 30 days. Streaming and no-tools Anthropic paths send the system prompt
 with prompt caching (`anthropicSystemWithCache`).
 
 **Enforced limits.** `maxCostUsdPerDay`, `maxTokensPerDay`, `maxRunsPerDay` and the

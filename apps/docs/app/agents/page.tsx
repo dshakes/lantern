@@ -133,6 +133,64 @@ say so rather than making things up.`}</code>
           that understand images
         </li>
       </ul>
+      <h4 id="agent-model">The agent&apos;s <code>model</code> field</h4>
+      <p>
+        Set <code>model</code> on the agent and every run, session turn and
+        workflow <code>ai-step</code> without its own capability tries that
+        model first. Pin a cheap model on a high-volume agent so it stays
+        cheap; pin a stronger one where quality matters.
+      </p>
+      <pre>
+        <code>{`POST /v1/agents
+{ "name": "triage", "model": "fast" }
+
+PATCH /v1/agents/triage
+{ "model": "reasoning-large" }      # "" or "auto" resets
+
+GET /v1/agents/triage               # → { ..., "model": "reasoning-large" }`}</code>
+      </pre>
+      <table>
+        <thead>
+          <tr><th>Allowed value</th><th>Examples</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Default</td><td><code>&quot;&quot;</code>, <code>auto</code> — today&apos;s routing, unchanged</td></tr>
+          <tr><td>Cost/speed target</td><td><code>fast</code>, <code>cheap</code>, <code>balanced</code>, <code>best</code></td></tr>
+          <tr><td>Capability</td><td><code>reasoning-frontier</code>, <code>reasoning-large</code>, <code>reasoning-small</code>, <code>chat-large</code>, <code>chat-small</code>, <code>chat-edge</code>, <code>vision-large</code>, <code>vision-small</code>, <code>code-large</code>, <code>code-small</code></td></tr>
+          <tr><td>Vendor model id</td><td><code>gpt-*</code>, <code>o1*</code>, <code>o3*</code>, <code>claude-*</code> (lowercase, ≤100 chars)</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Anything else returns <strong>400</strong>, including embedding,
+        rerank and speech capabilities (agents run text completions). The error
+        never repeats the value you sent.
+      </p>
+      <p>
+        <strong>Failover.</strong> The agent&apos;s model goes first; on a
+        429, 402 or 5xx Lantern moves on:
+      </p>
+      <ul>
+        <li>
+          <strong>Cheap model</strong> (<code>fast</code>, <code>cheap</code>,{" "}
+          <code>reasoning-small</code>, <code>chat-small</code>, Haiku,{" "}
+          <code>*-mini</code>) — tries the other provider&apos;s cheap tier,
+          then fails. It never escalates to a Sonnet, gpt-4o or Opus class
+          model, so a cheap agent can&apos;t run up a bigger bill during an
+          outage.
+        </li>
+        <li>
+          <strong>Any other model</strong> — the default chain follows, across
+          providers.
+        </li>
+        <li>
+          <strong>Provider not keyed</strong> for your tenant — the agent uses
+          the default chain.
+        </li>
+      </ul>
+      <p>
+        The model that answered is shown on the run&apos;s{" "}
+        <code>llm:main</code> step.
+      </p>
       <p>
         See <Link href="/models">Models</Link> for a full list of capabilities and
         how to configure providers.

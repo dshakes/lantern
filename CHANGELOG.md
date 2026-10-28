@@ -32,6 +32,13 @@ This project is pre-1.0; there are no stable release branches yet.
 - **Docs** — new pages for webhook triggers, accounts, end-to-end tests and
   running real Firecracker microVMs on a Mac (Lima); budgets rewritten around an
   enforcement matrix; models page lists every capability name per provider.
+- **Per-agent model** — `POST`/`PATCH /v1/agents` accept a `model` (SDK
+  capability such as `fast` / `reasoning-small`, or a vendor id) and `GET`
+  returns it. Runs, sessions and `auto` workflow ai-steps try it first; unset
+  or `auto` keeps the default chain. A cheap-tier agent fails over only to the
+  other provider's cheap tier and never to a Sonnet / gpt-4o / Opus class model
+  — it fails instead (migration 0025, `agents.model`). Docs: Agents → Model
+  selection, Models → Per-agent model.
 
 ### Fixed
 - **Data export redacts credentials structurally** (#330) — any column with a
@@ -43,6 +50,10 @@ This project is pre-1.0; there are no stable release branches yet.
   averages `succeeded` runs, so the per-run and daily-cost checks run.
 - **Workflow runs count toward runs/day** (#330) — once each, on success.
   Failed runs still do not count.
+- Agents created from a template now keep their system prompt and labels. The
+  template-create and prompt back-fill UPDATEs wrote a column that did not
+  exist, failed, and the error was discarded.
+- `/v1/completions` honours the request's `model` on its failover paths.
 
 ### Changed
 - **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
