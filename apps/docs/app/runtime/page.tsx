@@ -4,6 +4,9 @@ import { Diagram } from "../_components/Diagram";
 import { Concept } from "../_components/Concept";
 import { RuntimeArchitectureMap } from "../_components/RuntimeArchitectureMap";
 import { Sequence } from "../_components/interactive/Sequence";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/runtime");
 
 // Tier comparison — reuses .prose table styles, no new CSS needed.
 function TierTable() {

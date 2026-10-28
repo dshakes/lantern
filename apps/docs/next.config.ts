@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
   trailingSlash: true, // emit dir/index.html so deep links resolve on static hosts
   images: { unoptimized: true }, // no Image Optimization server in a static export
   // The landing page is a separate app one level up (/lantern/docs -> /lantern/).
-  env: { NEXT_PUBLIC_HOME_URL: process.env.LANTERN_HOME_URL ?? `${basePath.replace(/\/docs$/, "")}/` },
+  env: { NEXT_PUBLIC_BASE_PATH: basePath, NEXT_PUBLIC_HOME_URL: process.env.LANTERN_HOME_URL ?? `${basePath.replace(/\/docs$/, "")}/` },
 };
 
 export default nextConfig;

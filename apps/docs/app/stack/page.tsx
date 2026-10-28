@@ -1,4 +1,7 @@
 import { Concept } from "../_components/Concept";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/stack");
 
 export default function StackPage() {
   return (

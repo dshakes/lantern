@@ -2,6 +2,9 @@ import Link from "next/link";
 import { Concept } from "../_components/Concept";
 import { Flow } from "../_components/Flow";
 import { CodeTabs } from "../_components/CodeTabs";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/triggers");
 
 export default function TriggersPage() {
   return (

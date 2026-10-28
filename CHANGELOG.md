@@ -10,6 +10,8 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
+  `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
 - **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `lantern demo` start the stack with Docker only and no API
   key: each visitor gets an ephemeral, auto-deleted tenant (30 minutes) with sample agents, answers come from the
   `llm-replay` fixture server, RLS and scope enforcement are on. `lantern demo --down` / `make demo-down` delete
