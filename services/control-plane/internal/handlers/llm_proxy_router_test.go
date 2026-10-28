@@ -150,7 +150,7 @@ func TestModelRouterFlagOff_DirectPath_RouterNeverDialed(t *testing.T) {
 
 	msgs := []map[string]any{{"role": "user", "content": "hi"}}
 	_, _, _, _, _, _, err := h.callLLMWithFailover(
-		context.Background(), tenantID, msgs, nil, nil, nil, nil, 1, true,
+		context.Background(), tenantID, "", msgs, nil, nil, nil, nil, 1, true,
 	)
 	// No keys → direct chain returns an error. The point is the SHAPE: the
 	// router was bypassed entirely.
@@ -188,7 +188,7 @@ func TestModelRouterFlagOn_OK_MapsResponse(t *testing.T) {
 
 	msgs := []map[string]any{{"role": "user", "content": "ping"}}
 	text, _, usedProvider, usedModel, tin, tout, err := h.callLLMWithFailover(
-		context.Background(), tenantID, msgs, nil, nil, nil, nil, 1, true,
+		context.Background(), tenantID, "", msgs, nil, nil, nil, nil, 1, true,
 	)
 	if err != nil {
 		t.Fatalf("expected router success, got err: %v", err)
@@ -258,7 +258,7 @@ func TestModelRouterFlagOn_Error_FallsBackToDirectPath(t *testing.T) {
 	}
 
 	_, _, _, _, _, _, err := h.callLLMWithFailover(
-		context.Background(), tenantID,
+		context.Background(), tenantID, "",
 		[]map[string]any{{"role": "user", "content": "ping"}},
 		nil, nil, nil, nil, 1, true,
 	)

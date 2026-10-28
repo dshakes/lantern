@@ -376,10 +376,11 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// producing an out-of-persona reply; the generic fallback is kept for
 	// non-bridge agents so no existing behaviour is broken.
 	var storedPrompt *string
+	var agentModel string // preferred model for the failover chain; ""/"auto" = default
 	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
-		`, agentName, tenantID).Scan(&storedPrompt)
+			SELECT system_prompt, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2
+		`, agentName, tenantID).Scan(&storedPrompt, &agentModel)
 	})
 
 	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
@@ -627,7 +628,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		// non-streaming); for those, we fall to the branch below and emit
 		// message_completed without deltas. Documented limitation.
 		result, usedProvider, usedModel, tokensIn, tokensOut, llmErr = h.llmProxy.streamWithFailover(
-			ctx, tenantID, promptMessages, onDelta, onAttempt, userFacing,
+			ctx, tenantID, agentModel, promptMessages, onDelta, onAttempt, userFacing,
 		)
 	} else {
 		// Non-streaming tool loop — up to 5 turns of tool use.
@@ -635,7 +636,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		toolCtx, spend := withToolUsage(ctx)
 		toolSpend = spend
 		result, invs, usedProvider, usedModel, tokensIn, tokensOut, llmErr = h.llmProxy.callLLMWithFailover(
-			toolCtx, tenantID,
+			toolCtx, tenantID, agentModel,
 			promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
 		)
 		_ = invs

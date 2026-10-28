@@ -9,6 +9,21 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ## [Unreleased]
 
+### Added
+- **Per-agent model** — `POST`/`PATCH /v1/agents` accept a `model` (SDK
+  capability such as `fast` / `reasoning-small`, or a vendor id) and `GET`
+  returns it. Runs, sessions and `auto` workflow ai-steps try it first; unset
+  or `auto` keeps the default chain. A cheap-tier agent fails over only to the
+  other provider's cheap tier and never to a Sonnet / gpt-4o / Opus class model
+  — it fails instead (migration 0025, `agents.model`). Docs: Agents → Model
+  selection, Models → Per-agent model.
+
+### Fixed
+- Agents created from a template now keep their system prompt and labels. The
+  template-create and prompt back-fill UPDATEs wrote a column that did not
+  exist, failed, and the error was discarded.
+- `/v1/completions` honours the request's `model` on its failover paths.
+
 ## [0.2.0] - 2026-10-27
 
 The sandbox runtime release: credentials kept out of the VM, idle VMs that
