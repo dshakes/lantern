@@ -70,6 +70,12 @@ func main() {
 		}
 	}()
 
+	// --- Prometheus /metrics (OTel instruments bridged; served on the HTTP port) ---
+	metricsHandler, err := telemetry.InitMetrics()
+	if err != nil {
+		logger.Warn("metrics init failed; /metrics disabled", zap.Error(err))
+	}
+
 	// --- Postgres ---
 	pgCfg, err := parsePgxPoolConfig(cfg.DatabaseURL)
 	if err != nil {
@@ -400,6 +406,9 @@ func main() {
 			llmMode, rlsEnforce, appPoolActive, lanternAppRoleExists,
 		)
 	})
+	if metricsHandler != nil {
+		httpMux.Handle("/metrics", metricsHandler)
+	}
 	httpMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
