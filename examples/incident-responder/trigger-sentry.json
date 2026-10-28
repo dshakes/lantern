@@ -1,0 +1,10 @@
+{
+  "provider": "sentry",
+  "inputTemplate": {
+    "organization": "acme",
+    "issueId": "{{payload.data.event.issue_id}}",
+    "incidentId": "PABC123",
+    "from": "oncall@acme.test",
+    "slackChannel": "C0123"
+  }
+}

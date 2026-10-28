@@ -1,0 +1,3 @@
+[
+  {"match": "[incident-summary]", "reply": "TypeError spiking in the API since the last deploy, 128 events and urgency high - suggest rolling back the last release"}
+]

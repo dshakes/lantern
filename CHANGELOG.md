@@ -10,6 +10,19 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Examples: PR triage + incident responder** (`examples/pr-triage-webhook`, `examples/incident-responder`) — signed
+  GitHub/Sentry/PagerDuty webhooks drive workflow graphs (GitHub comment + Slack thread; Sentry/PagerDuty lookup,
+  Slack, approval node, PagerDuty note). `make test-e2e-examples` runs them on a throwaway fixture stack
+  (`scripts/e2e-examples.sh`, `e2e/examples`). Docs: `/examples`.
+- PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
+
+### Fixed
+- Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
+- A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
+- Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.
+- After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
+
+### Added
 
 - Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
   (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run

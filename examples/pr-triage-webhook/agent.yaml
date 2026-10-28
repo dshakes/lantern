@@ -1,0 +1,17 @@
+name: pr-triage-webhook
+version: "0.1.0"
+description: Triages every opened GitHub pull request - reads the PR, comments a risk assessment, and threads the verdict in Slack
+model: auto
+isolation:
+  class: trusted
+triggers:
+  - kind: webhook
+    provider: github
+    events: [pull_request]
+limits:
+  timeout: 5m
+  max_tokens: 20000
+  max_cost_usd: 0.10
+labels:
+  category: engineering
+  example: x2
