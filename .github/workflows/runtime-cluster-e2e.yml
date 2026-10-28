@@ -237,9 +237,24 @@ jobs:
       - name: Backup CronJob produces a restorable dump
         run: |
           set -euo pipefail
+          # Marker rows so "restored" means the data came back, not just the schema.
+          kubectl exec sts/lantern-postgresql -- psql -U lantern -d lantern -v ON_ERROR_STOP=1 -qc \
+            "CREATE TABLE ci_restore_marker AS SELECT g AS id FROM generate_series(1, 42) g"
           kubectl create job --from=cronjob/lantern-postgres-backup backup-ci
           kubectl wait --for=condition=complete job/backup-ci --timeout=300s
           kubectl logs job/backup-ci -c upload | grep -E '^uploaded s3://.*[.]sql[.]gz'
+          # Fetch the real artifact from the in-cluster S3 and restore THAT.
+          kubectl port-forward svc/lantern-minio 19000:9000 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          export AWS_ACCESS_KEY_ID=lantern AWS_SECRET_ACCESS_KEY="$PGPASSWORD" AWS_DEFAULT_REGION=us-east-1
+          for _ in $(seq 30); do curl -s -o /dev/null localhost:19000 && break; sleep 1; done
+          key="$(aws --endpoint-url http://localhost:19000 s3 ls s3://lantern-backups/postgres/ | awk '{print $4}' | sort | tail -1)"
+          test -n "$key"
+          aws --endpoint-url http://localhost:19000 s3 cp "s3://lantern-backups/postgres/$key" /tmp/ci-backup.sql.gz
+          DRILL_EXPECT_TABLES="agents runs journal_events ci_restore_marker" \
+            scripts/db-restore-drill.sh /tmp/ci-backup.sql.gz | tee /tmp/drill.txt
+          grep -Eq 'ci_restore_marker +42 rows' /tmp/drill.txt
           scripts/db-restore-drill.sh --self-test
 
       - name: Diagnostics on failure

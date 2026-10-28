@@ -17,7 +17,7 @@ spec:
         {{- include "lantern.componentLabels" (dict "root" . "component" "control-plane") | nindent 8 }}
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "9464"
         prometheus.io/path: /metrics
     spec:
       serviceAccountName: {{ include "lantern.serviceAccountName" . }}
@@ -52,6 +52,9 @@ spec:
               protocol: TCP
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9464
               protocol: TCP
           env:
             - name: LISTEN_ADDR
@@ -117,6 +120,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern.fullname" . }}-config
                   key: S3_ENDPOINT
+            - name: S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: S3_REGION
             - name: S3_BUCKET
               valueFrom:
                 configMapKeyRef:
@@ -132,6 +140,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: minio-password
+            # Prod/staging refuse to start on the stub scheduler (CheckSchedulerAddr).
+            - name: LANTERN_SCHEDULER_GRPC_ADDR
+              value: "{{ include "lantern.fullname" . }}-runtime-scheduler:{{ .Values.runtimeScheduler.service.grpcPort }}"
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

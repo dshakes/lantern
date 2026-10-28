@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BASE="${1:-https://dshakes.github.io/lantern}"
+BASE="${1:-https://dshakes.github.io/lantern/docs}"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 

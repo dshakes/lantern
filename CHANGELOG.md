@@ -10,6 +10,28 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Webhook triggers** (ADR 0028, #323) — a public `POST /v1/hooks/{id}` URL per
+  agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run. The
+  signature is the only credential; duplicate deliveries return
+  `200 {"duplicate":true}` and start no run. Managed over REST, the TS/Python/Go
+  SDKs, `lantern hooks` and the dashboard (`/agents/[name]/triggers`). Docs:
+  `/triggers`.
+- **Account lifecycle** (ADR 0027, #318) — `LANTERN_SIGNUP_MODE`
+  (`open`/`invite`/`closed`, closed by default in prod), email verification,
+  password reset, HMAC invite codes, Turnstile captcha, Redis rate limits on the
+  pre-auth routes, owner-only data export (`GET /v1/tenants/{id}/export`) and
+  workspace deletion from Settings. Pluggable mailer (`LANTERN_MAILER` =
+  `log`/`smtp`/`http`). Docs: `/accounts`.
+- **Connector actions** (#316) — Slack `reply_thread`, GitHub `comment_pr`,
+  Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector.
+  Recorded test mode: `LANTERN_CONNECTOR_BASEURL_*` points a connector at the
+  `connector-replay` fixture server; refused in production.
+- **End-to-end kit** (#317) — `make test-e2e` against a live stack with a spend
+  policy enforced in code (reserved `e2e-*` agents, hard-fail budget per agent,
+  cheapest model tier) and `make e2e-clean`. Docs: `/testing`.
+- **Docs** — new pages for webhook triggers, accounts, end-to-end tests and
+  running real Firecracker microVMs on a Mac (Lima); budgets rewritten around an
+  enforcement matrix; models page lists every capability name per provider.
 - **Per-agent model** — `POST`/`PATCH /v1/agents` accept a `model` (SDK
   capability such as `fast` / `reasoning-small`, or a vendor id) and `GET`
   returns it. Runs, sessions and `auto` workflow ai-steps try it first; unset
@@ -25,9 +47,20 @@ This project is pre-1.0; there are no stable release branches yet.
 ### Changed
 - Helm: Postgres (pgvector) and the S3-compatible store are now first-party templates instead of Bitnami
   subcharts, enabled by default for dev/kind and disabled in `values-prod.yaml` in favour of
-  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart. `Chart.lock` removed.
+  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart (`Chart.lock` pins it). Not an in-place upgrade from the
+  Bitnami-based chart (StatefulSet selectors differ): dump, uninstall, install, restore.
+  `externalS3.region` sets the S3 signing region (default `us-east-1`).
 
 ### Fixed
+- **Data export redacts credentials structurally** (#330) — any column with a
+  secret/token/key/password/hash/enc segment is left out, including webhook
+  trigger secrets (`agent_triggers.secret_enc`) and `data_planes.reg_token_hash`,
+  which were previously exported.
+- **Cost forecast works** (#330) — it read run history with
+  `status = 'completed'`, which no run has, so it never estimated cost; it now
+  averages `succeeded` runs, so the per-run and daily-cost checks run.
+- **Workflow runs count toward runs/day** (#330) — once each, on success.
+  Failed runs still do not count.
 - Agents created from a template now keep their system prompt and labels. The
   template-create and prompt back-fill UPDATEs wrote a column that did not
   exist, failed, and the error was discarded.
@@ -36,6 +69,35 @@ This project is pre-1.0; there are no stable release branches yet.
   MinIO images were no longer pullable, so a default `helm install` did not come up.
 - `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
   they now use the published `ghcr.io/dshakes/lantern/<name>` images.
+- **Balanced default picks Sonnet** (#326) — `auto`/`balanced` routing picked
+  Opus because price was only a capped bonus; price is now a real penalty, so the
+  default is Sonnet (GPT-4o when only OpenAI is keyed).
+
+### Changed
+- **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
+  workflow runs re-check the tenant cap, daily caps and `maxCostUsdPerRun`
+  before every `ai-step` and confidence vote; `toolLimits` gate workflow `tool`
+  and `connector` nodes. A budget lookup error now fails closed for hard-fail
+  budgets (503 `budget check unavailable; retry shortly` at run create, 402
+  elsewhere) instead of allowing the call. Still not enforced: the per-run cap on
+  single-call paths and projected cost at run creation.
+- **`web_search` tool nodes honour the per-run cap** (#324) — they check
+  `maxCostUsdPerRun` against the run's accrued spend and add their LLM cost to
+  the run, like ai-steps.
+- **Fast restore** (#325) — after resume or fork the runtime-manager holds the
+  first exec until the restored harness has re-identified and heartbeated
+  (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s) instead of the caller
+  retrying; first exec after restore p50 2.9 s on nested-virt Lima (was 4.2 s).
+- **Workflow tool nodes execute** (#319) — `tool` nodes dispatch to the sandbox
+  runtime or the built-in `web_search` and fail loudly when the runtime is not
+  wired, instead of returning a placeholder; side effects carry an idempotency
+  key per loop iteration.
+- **Capability resolution** (#320) — unknown capability names route to the
+  balanced default (logged once) instead of a hardcoded model; `fast` and
+  `cheap` resolve to the cheap tier.
+- **Disk snapshots** (#322) — Firecracker snapshots capture the VM's writable
+  disk alongside memory and vmstate; resume, idle wake and fork stage from it, so
+  files written before a snapshot survive restore.
 
 ## [0.2.0] - 2026-10-27
 

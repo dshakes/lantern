@@ -83,11 +83,9 @@ controlPlane:
   # REQUIRED for a prod-class LANTERN_ENV (production) — the control-plane refuses
   # to start without these (runStartupGuards / grpcTLSCreds). Besides the
   # `secrets:` values listed at the top, supply per environment:
-  #   LANTERN_SCHEDULER_GRPC_ADDR        runtime-scheduler gRPC addr (stub is fatal)
   #   LANTERN_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
   #   LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
-  extraEnv:
-    - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "lantern-runtime-scheduler:50055"}
+  # LANTERN_SCHEDULER_GRPC_ADDR is wired by the chart (in-cluster scheduler svc).
   # The TLS inputs below are operator-supplied Secrets (the chart cannot mint
   # them); the control-plane refuses to boot in prod until they are mounted.
   # extraEnv (append):
@@ -186,12 +184,14 @@ networkPolicy:
 
 # In-cluster logical backup is a floor; managed Postgres + PITR is the GA path
 # (docs/runbooks/db-restore.md). If you self-host Postgres, ship dumps to managed S3.
+# Disabled until you set a bucket: enable with
+#   --set backup.enabled=true --set backup.s3Bucket=<bucket>
 backup:
-  enabled: true
+  enabled: false
   useChartMinio: false
   existingSecret: lantern-backup-s3   # keys: access-key-id, secret-access-key
   s3Endpoint: ""                      # "" = AWS S3
-  s3Bucket: ""                        # REQUIRED
+  s3Bucket: ""                        # REQUIRED when enabled
 
 dashboard:
   replicas: 2
@@ -226,6 +226,7 @@ minio:
   enabled: false
 externalS3:
   endpoint: ""        # REQUIRED, e.g. https://s3.us-west-2.amazonaws.com
+  region: us-east-1   # set to the bucket region (e.g. us-west-2) or SigV4 requests are rejected
   accessKeyId: ""     # REQUIRED; secret key is secrets.minioPassword
   bucket: lantern-prod
 

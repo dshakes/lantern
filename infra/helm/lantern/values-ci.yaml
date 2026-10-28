@@ -22,8 +22,6 @@ controlPlane:
   autoscaling: {enabled: false}
   env:
     LANTERN_ENV: "development"   # prod guards need TLS Secrets the chart cannot mint
-  extraEnv:
-    - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "lantern-runtime-scheduler:50055"}
 
 runtimeScheduler:
   replicas: 1

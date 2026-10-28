@@ -56,7 +56,7 @@ spec:
       - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
       - key: app.kubernetes.io/component
         operator: In
-        values: [control-plane, model-router, workflow-engine, surface-gateway, postgres-backup]
+        values: [control-plane, model-router, workflow-engine, runtime-scheduler, runtime-manager, surface-gateway, postgres-backup]
   policyTypes: [Egress]
   egress:
     # LLM providers, connector APIs, channel APIs, S3. Private ranges stay closed
@@ -99,7 +99,7 @@ spec:
                 values: [{{ join ", " $callers }}]
 {{- end }}
 ---
-# Scrape path: Prometheus -> control-plane :8080 and scheduler :8085.
+# Scrape path: Prometheus -> control-plane :9464 (LANTERN_METRICS_ADDR) and scheduler :8085.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -116,7 +116,7 @@ spec:
     - from:
         {{- toYaml .Values.networkPolicy.metricsFrom | nindent 8 }}
       ports:
-        - {port: 8080, protocol: TCP}
+        - {port: 9464, protocol: TCP}
         - {port: 8085, protocol: TCP}
 ---
 # Public entrypoints: ingress controller (or anyone, if ingressFrom is empty).

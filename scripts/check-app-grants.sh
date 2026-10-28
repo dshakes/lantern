@@ -12,7 +12,7 @@ set -euo pipefail
 missing="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtAX <<'SQL'
 SELECT t.name || ' lacks ' || p.priv
 FROM (VALUES ('agents'), ('runs'), ('journal_events'), ('run_locks'), ('step_state')) AS t(name)
-CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE')) AS p(priv)
+CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) AS p(priv)
 WHERE (to_regclass('public.' || t.name) IS NOT NULL OR t.name <> 'step_state')
   AND NOT COALESCE(has_table_privilege('lantern_app', 'public.' || t.name, p.priv), false)
 ORDER BY 1;

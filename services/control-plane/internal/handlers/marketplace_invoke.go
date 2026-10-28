@@ -242,6 +242,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// a BUYER request checks the SELLER's budget — cross-tenant by design.
 	sellerBudgetCheck := CheckBudget(sellerBudgetCtx, h.srv.Pool, sellerTenant, agentName, 0)
 	if !sellerBudgetCheck.Allowed && sellerBudgetCheck.HardFail {
+		middleware.RecordBudgetBlock(ctx, agentName)
 		writeJSON(w, http.StatusPaymentRequired, map[string]any{
 			"error":  "seller agent budget limit reached: " + sellerBudgetCheck.Reason,
 			"reason": sellerBudgetCheck.Reason,

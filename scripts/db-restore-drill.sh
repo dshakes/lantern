@@ -11,7 +11,9 @@
 # monthly and after any schema/major-version change (docs/runbooks/db-restore.md).
 #
 # Env: DRILL_PG_IMAGE (default pgvector/pgvector:pg16, must match the server major version)
-#      DRILL_EXPECT_TABLES (space-separated, default "agents runs journal_events")
+#      DRILL_EXPECT_TABLES (space-separated, default "agents runs journal_events"): must EXIST in the restore
+#      DRILL_REQUIRE_ROWS=1 also fail on an empty table (use when the source is known to have data;
+#                           default off so a fresh or low-traffic DB's valid dump passes)
 set -euo pipefail
 
 IMAGE="${DRILL_PG_IMAGE:-pgvector/pgvector:pg16}"
@@ -32,10 +34,16 @@ start() { # <container>
 psql_in() { docker exec -i "$1" psql -U postgres -v ON_ERROR_STOP=1 -qtAX "${@:2}"; }
 
 GZ=0
+case "${1:-}" in "" | -h | --help)
+  sed -n 2,13p "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+  ;;
+esac
 start "$NAME"
 case "${1:-}" in
   --self-test)
     EXPECT="drill_items"
+    DRILL_REQUIRE_ROWS=1
     start "$SRC"
     psql_in "$SRC" <<'SQL'
 CREATE TABLE drill_items (id serial PRIMARY KEY, body text NOT NULL);
@@ -45,10 +53,6 @@ SQL
     docker exec "$SRC" sh -c 'pg_dump -U postgres --no-owner --no-privileges --clean --if-exists postgres | gzip -9 > /tmp/restore.dump'
     docker cp "$SRC:/tmp/restore.dump" - | docker cp - "$NAME:/tmp/"
     GZ=1
-    ;;
-  "" | -h | --help)
-    sed -n 2,11p "$0" | sed 's/^# \{0,1\}//'
-    exit 2
     ;;
   *)
     [ -s "$1" ] || { echo "FAIL: $1 missing or empty" >&2; exit 1; }
@@ -60,7 +64,7 @@ esac
 docker exec "$NAME" createdb -U postgres restored
 # --exit-on-error: a restore that "mostly worked" is not a restore.
 if [ "$GZ" = 1 ]; then
-  docker exec "$NAME" sh -c 'gunzip -c /tmp/restore.dump | psql -U postgres -d restored -v ON_ERROR_STOP=1 -q -o /dev/null'
+  docker exec "$NAME" bash -c 'set -o pipefail; gunzip -c /tmp/restore.dump | psql -U postgres -d restored -v ON_ERROR_STOP=1 -q -o /dev/null'
 else
   docker exec "$NAME" pg_restore -U postgres -d restored --no-owner --exit-on-error /tmp/restore.dump
 fi
@@ -69,7 +73,7 @@ fail=0
 for t in $EXPECT; do
   n="$(psql_in "$NAME" -d restored -c "SELECT count(*) FROM public.\"$t\"" 2>/dev/null || echo MISSING)"
   printf '  %-20s %s rows\n' "$t" "$n"
-  case "$n" in MISSING | 0) fail=1 ;; esac
+  case "$n" in MISSING) fail=1 ;; 0) [ "${DRILL_REQUIRE_ROWS:-0}" = 1 ] && fail=1 ;; esac
 done
 if [ "${1:-}" = "--self-test" ]; then
   want="$(psql_in "$SRC" -c 'SELECT count(*) FROM drill_items')"
