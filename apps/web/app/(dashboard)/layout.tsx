@@ -7,6 +7,7 @@ import { Notifications } from "@/components/notifications";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 import { DemoModeBanner } from "@/components/demo-mode-banner";
+import { KioskTour, useKioskSession } from "@/components/kiosk-tour";
 import { MobileNav } from "@/components/mobile-nav";
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
 import { User, Search, AlertTriangle, Settings, LogOut, HelpCircle } from "lucide-react";
@@ -23,6 +24,7 @@ export default function DashboardLayout({
   const router = useRouter();
   const { user, logout, isDemoMode } = useAuth();
   const { isConfigured, loading: modelsLoading } = useModels();
+  const kiosk = useKioskSession();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -147,9 +149,10 @@ export default function DashboardLayout({
         {/* "Some data is simulated" banner — fires when api.ts catches fall
             back to mock data so the dashboard never silently lies. */}
         <DemoModeBanner />
+        <KioskTour />
 
         {/* LLM Provider banner */}
-        {!modelsLoading && !isConfigured && (
+        {!kiosk && !modelsLoading && !isConfigured && (
           <div className="flex items-center gap-3 border-b border-amber-500/20 bg-amber-500/5 px-6 py-2.5">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
             <p className="text-sm text-amber-300">

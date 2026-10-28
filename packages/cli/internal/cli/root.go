@@ -62,6 +62,7 @@ dashboard — not yet as CLI subcommands.`,
 	root.AddCommand(newInfraCommand())
 	root.AddCommand(newTestCommand())
 	root.AddCommand(newDevCommand())
+	root.AddCommand(newDemoCommand())
 	root.AddCommand(newHooksCommand())
 
 	// Auth commands.

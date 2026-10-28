@@ -1,0 +1,63 @@
+# Kiosk / demo overlay (ADR 0029). Use via `lantern demo` or `make demo`:
+#   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml up
+#
+# What it changes versus the dev stack:
+#   - LANTERN_KIOSK=1: POST /v1/kiosk/session mints ephemeral, auto-deleted tenants.
+#   - RLS + authz enforcement ON, sign-up closed, mailer driver `log`.
+#   - No dev seed (the well-known admin account does not exist in kiosk mode).
+#   - LLM calls go to the llm-replay fixture server. The OPENAI/ANTHROPIC "keys"
+#     below are inert placeholders: the control-plane refuses to boot in kiosk mode
+#     if a key is set without its fixture base URL, and the fixture URL means the
+#     placeholder can only ever reach llm-replay.
+#
+# LANTERN_ENV is deliberately NOT set to staging/prod: the LLM base-URL override
+# (W2-0) is fatal in prod-like environments. The kiosk compensates with its own
+# fail-closed guards (CheckKioskConfig) instead.
+#
+# DEPENDENCY: services/control-plane/cmd/llm-replay and LANTERN_LLM_BASEURL_*
+# come from W2-0 (branch ga/w2-0-llm-fixture). This overlay needs that merged.
+#
+# For anything beyond a local booth, set KIOSK_JWT_SECRET to a strong random value.
+
+x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:-lantern-kiosk-local-booth-secret-change-for-public-hosts}
+
+services:
+  postgres:
+    volumes:
+      - ./kiosk/postgres-init.sql:/docker-entrypoint-initdb.d/10-kiosk-app-role.sql:ro
+
+  llm-replay:
+    image: golang:1.23-alpine
+    working_dir: /src/services/control-plane
+    volumes:
+      - ../..:/src:ro
+    # ponytail: `go run` keeps this overlay free of a new Dockerfile; bake a binary image if boot time matters.
+    command: ["go", "run", "./cmd/llm-replay", "-addr", ":9090", "-rules", "/src/infra/docker/kiosk/llm-replay-rules.json"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  control-plane:
+    environment:
+      JWT_SECRET: *kiosk-jwt
+      LANTERN_KIOSK: "1"
+      LANTERN_RLS_ENFORCE: "1"
+      LANTERN_AUTHZ_ENFORCE: "1"
+      LANTERN_APP_DB_PASSWORD: kiosk-app-role-local-only
+      LANTERN_SIGNUP_MODE: closed
+      LANTERN_MAILER: log
+      LANTERN_CORS_ORIGINS: http://localhost:3001
+      LANTERN_KIOSK_IP_PER_HOUR: "60" # a booth is one machine; raise/lower per venue
+      LANTERN_LLM_BASEURL_OPENAI: http://llm-replay:9090
+      LANTERN_LLM_BASEURL_ANTHROPIC: http://llm-replay:9090
+      OPENAI_API_KEY: kiosk-replay-placeholder
+      ANTHROPIC_API_KEY: kiosk-replay-placeholder
+    depends_on:
+      llm-replay:
+        condition: service_healthy
+
+  gateway:
+    environment:
+      JWT_SECRET: *kiosk-jwt
