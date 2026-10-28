@@ -10,6 +10,7 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.
 - **Examples: daily digest, Telegram assistant, voice receptionist** — three
   runnable agents under `examples/` (spec, workflow, schedule/number, README with
   a fixture path and a real-account path) and `make test-e2e-examples`, which

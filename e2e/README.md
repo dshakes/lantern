@@ -5,6 +5,20 @@ auth, real Postgres rows, no mocks, no `httptest`. They automate the manual
 flows the `examples/` guides document, so "did the control path regress?" is
 one command instead of a curl checklist.
 
+## Test tiers
+
+| Tier | Command | Needs | CI |
+| ---- | ------- | ----- | -- |
+| Unit | `make test` | toolchains | `sdlc-qa.yml` |
+| Fixture e2e (examples) | `make test-e2e-examples` (`scripts/e2e-examples.sh`) | go, cargo, psql, python3, Postgres + Redis; no provider key | `sdlc-e2e.yml` job `examples` |
+| Fixture e2e (deploy CLI) | `LANTERN_E2E_API_URL=... go test -tags e2e ./...` in `e2e/deploy` against a running control-plane | Postgres + Redis | `sdlc-e2e.yml` job `deploy-cli` |
+| Browser | `cd apps/web && npm run test:e2e` | node, chromium, go, psql | `sdlc-e2e.yml` job `browser` |
+| Live real-LLM | `make test-e2e-llm` | a dev stack on a real provider key; spend-capped (see below) | no, local gate only |
+| KVM full-stack | `microvm-integration.yml` | a KVM runner (`vars.MICROVM_RUNNER_LABEL`) | not provisioned yet |
+
+CI runs the fixture tier only. There is no skip path in CI: the workflow fails if any
+`--- SKIP` appears in the examples/deploy logs or Playwright reports skipped specs.
+
 ## Suites
 
 | Dir        | What it covers                                                                                                                                                                                                      |
