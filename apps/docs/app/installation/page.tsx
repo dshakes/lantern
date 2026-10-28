@@ -6,7 +6,8 @@ export default function InstallationPage() {
     <>
       <h1>Installation</h1>
       <p>
-        Clone, start the stack, verify it&apos;s healthy.
+        Clone, start the stack, verify it&apos;s healthy. Only want to look around? <code>make demo</code>{" "}
+        needs Docker and no API key; see <Link href="/demo">Demo mode</Link>.
       </p>
 
       <Concept>
@@ -50,7 +51,7 @@ cd lantern`}</code></pre>
           <pre><code>{`(cd packages/cli && go install ./cmd/lantern)   # installs the lantern CLI
 lantern dev`}</code></pre>
           <p>Or run services individually for faster iteration:</p>
-          <pre><code>{`# Terminal 1 — Postgres, Redis, MinIO
+          <pre><code>{`# Terminal 1 — Postgres and Redis only (no MinIO; lantern dev --infra-only adds it)
 make dev-infra
 
 # Terminal 2 — control-plane API on :8080
@@ -116,7 +117,7 @@ make dev-doctor   # probes every service and reports status`}</code></pre>
         <thead><tr><th>Target</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>make dev</code></td><td>Full docker-compose stack</td></tr>
-          <tr><td><code>make dev-infra</code></td><td>Postgres + Redis + MinIO only (daily driver)</td></tr>
+          <tr><td><code>make dev-infra</code></td><td>Postgres + Redis only, no MinIO (<code>lantern dev --infra-only</code> adds it)</td></tr>
           <tr><td><code>make dev-doctor</code></td><td>Health-check every service</td></tr>
           <tr><td><code>make run-api</code></td><td>Control-plane on <code>:8080</code></td></tr>
           <tr><td><code>make dashboard-dev</code></td><td>Next.js dashboard on <code>:3001</code></td></tr>

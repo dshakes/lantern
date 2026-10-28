@@ -124,7 +124,7 @@ check_redis() {
 
 check_minio() {
   if ! port_listen 9000; then
-    warn "minio :9000" "no listener" "Run \`make dev-infra\` if you need bundle storage"
+    warn "minio :9000" "no listener" "Run \`lantern dev --infra-only\` or \`make dev\` if you need bundle storage (\`make dev-infra\` starts only Postgres and Redis)"
     return
   fi
   local code

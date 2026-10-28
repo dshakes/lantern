@@ -24,7 +24,7 @@ demo:
 demo-down:
 	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo down -v
 
-dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
+dev-infra: ## Start only infrastructure (Postgres, Redis; no MinIO)
 	docker compose -f infra/docker/docker-compose.yml up -d postgres redis
 
 dev-doctor: ## Health-check every service + infra (run this when things feel weird)

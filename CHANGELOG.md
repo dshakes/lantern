@@ -10,20 +10,19 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `lantern demo` start the stack with Docker only and no API
+  key: each visitor gets an ephemeral, auto-deleted tenant (30 minutes) with sample agents, answers come from the
+  `llm-replay` fixture server, RLS and scope enforcement are on. `lantern demo --down` / `make demo-down` delete
+  all demo data. Docs: `/demo`.
+- **Playwright dashboard tier** (#343) — headless-Chromium specs for auth, onboarding, settings and theme against a
+  private throwaway stack (own Postgres DB, Redis index, log mailer, fixture LLM). Run `npm run test:e2e` from
+  `apps/web` (`apps/web/e2e/README.md`). Docs: `/testing`.
+- Docs: `lantern demo` and `lantern hooks` in the CLI reference.
 - **Examples: PR triage + incident responder** (`examples/pr-triage-webhook`, `examples/incident-responder`) — signed
   GitHub/Sentry/PagerDuty webhooks drive workflow graphs (GitHub comment + Slack thread; Sentry/PagerDuty lookup,
   Slack, approval node, PagerDuty note). `make test-e2e-examples` runs them on a throwaway fixture stack
   (`scripts/e2e-examples.sh`, `e2e/examples`). Docs: `/examples`.
 - PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
-
-### Fixed
-- Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
-- A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
-- Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.
-- After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
-
-### Added
-
 - Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
   (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
   creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
@@ -73,14 +72,20 @@ This project is pre-1.0; there are no stable release branches yet.
 - Control-plane Prometheus `/metrics` on `:8080`; the control-plane SLO alert group is now enabled.
 - `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
-### Changed
-- Helm: Postgres (pgvector) and the S3-compatible store are now first-party templates instead of Bitnami
-  subcharts, enabled by default for dev/kind and disabled in `values-prod.yaml` in favour of
-  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart (`Chart.lock` pins it). Not an in-place upgrade from the
-  Bitnami-based chart (StatefulSet selectors differ): dump, uninstall, install, restore.
-  `externalS3.region` sets the S3 signing region (default `us-east-1`).
-
 ### Fixed
+- New sign-ups now land on `/onboarding`: the authenticated-redirect effect raced the explicit redirect and sent them
+  to `/agents`.
+- Password reset and the other `/auth/*` recovery pages work for logged-out visitors: a 401 from the global
+  model-context fetch no longer bounces them off the page.
+- Docs: install steps no longer point at registry packages that do not exist (`@lantern/sdk` is not on npm; the
+  PyPI name `lantern-sdk` belongs to an unrelated project), broken `dshakes.github.io/lantern/<page>/` README links
+  now include `/docs/`, and `make dev-infra` is documented as Postgres and Redis only (no MinIO).
+- `@lantern/sdk` built output threw `module is not defined` on import under Node ESM (the runner's
+  `require.main === module` check); it now checks `process.argv` only.
+- Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
+- A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
+- Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.
+- After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
 - **Data export redacts credentials structurally** (#330) — any column with a
   secret/token/key/password/hash/enc segment is left out, including webhook
   trigger secrets (`agent_triggers.secret_enc`) and `data_planes.reg_token_hash`,
@@ -103,6 +108,11 @@ This project is pre-1.0; there are no stable release branches yet.
   default is Sonnet (GPT-4o when only OpenAI is keyed).
 
 ### Changed
+- Helm: Postgres (pgvector) and the S3-compatible store are now first-party templates instead of Bitnami
+  subcharts, enabled by default for dev/kind and disabled in `values-prod.yaml` in favour of
+  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart (`Chart.lock` pins it). Not an in-place upgrade from the
+  Bitnami-based chart (StatefulSet selectors differ): dump, uninstall, install, restore.
+  `externalS3.region` sets the S3 signing region (default `us-east-1`).
 - **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
   workflow runs re-check the tenant cap, daily caps and `maxCostUsdPerRun`
   before every `ai-step` and confidence vote; `toolLimits` gate workflow `tool`

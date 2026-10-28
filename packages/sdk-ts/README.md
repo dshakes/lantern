@@ -2,8 +2,11 @@
 
 The official TypeScript SDK for [Lantern](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
+Registry packages are not published yet: `npm install @lantern/sdk` fails. Install from a checkout of the repo:
+
 ```bash
-npm install @lantern/sdk
+( cd packages/sdk-ts && npm install && npm run build )
+npm install /path/to/lantern/packages/sdk-ts      # in your project
 ```
 
 ## Quick start

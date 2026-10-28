@@ -37,7 +37,7 @@ Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors
 
 **Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
 
-**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under Lantern's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install with `pip install "lantern-sdk[deepagents]"`; conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
+**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under Lantern's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install from a checkout with `pip install "./packages/sdk-python[deepagents]"` (registry packages are not published yet, and the PyPI name `lantern-sdk` belongs to an unrelated project); conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
 
 **Known endpoint fixes (2026-06)**:
 - `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
@@ -67,7 +67,7 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 ### Starting the dev stack
 
 ```bash
-# Infrastructure only (Postgres, Redis, MinIO) -- typical workflow
+# Infrastructure only (Postgres, Redis; no MinIO) -- typical workflow
 make dev-infra
 
 # Run the control-plane API locally (terminal 1)
@@ -2061,7 +2061,7 @@ The four-Makefile-target dance below still works for power users, but
 | Target                     | Purpose                                                   |
 | -------------------------- | --------------------------------------------------------- |
 | `make dev`                 | Full docker-compose stack (containerized API + dashboard) |
-| `make dev-infra`           | Postgres + Redis + MinIO only                             |
+| `make dev-infra`           | Postgres + Redis only (no MinIO)                          |
 | `make run-api`             | Control-plane with dev env vars on `:8080` (host go run)  |
 | `make dashboard-dev`       | Next.js dashboard on `:3001`                              |
 | `make run-whatsapp-bridge` | WhatsApp bridge on `:3100`                                |
