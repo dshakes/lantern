@@ -83,3 +83,43 @@ Usage: include "lantern.image" (dict "root" . "component" .Values.gateway)
 {{- printf "%s/%s:%s" $repository $name $tag -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Database connection. In-cluster (postgresql.enabled) or externalDatabase.* (managed
+Postgres). User and database names always come from postgresql.auth.*; the password
+from secrets.postgresPassword (env POSTGRES_PASSWORD on every consumer).
+*/}}
+{{- define "lantern.dbHost" -}}
+{{- if .Values.postgresql.enabled -}}
+{{ include "lantern.fullname" . }}-postgresql
+{{- else -}}
+{{ required "externalDatabase.host is required when postgresql.enabled=false" .Values.externalDatabase.host }}
+{{- end -}}
+{{- end }}
+
+{{- define "lantern.dbPort" -}}
+{{- if .Values.postgresql.enabled }}5432{{ else }}{{ .Values.externalDatabase.port | default 5432 }}{{ end -}}
+{{- end }}
+
+{{- define "lantern.dbSslmode" -}}
+{{- if .Values.postgresql.enabled }}disable{{ else }}{{ .Values.externalDatabase.sslmode | default "require" }}{{ end -}}
+{{- end }}
+
+{{- define "lantern.databaseURL" -}}
+postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern.dbHost" . }}:{{ include "lantern.dbPort" . }}/{{ .Values.postgresql.auth.database }}?sslmode={{ include "lantern.dbSslmode" . }}
+{{- end }}
+
+{{/*
+S3-compatible object store: the in-cluster one (minio.enabled) or externalS3.*.
+*/}}
+{{- define "lantern.s3Endpoint" -}}
+{{- if .Values.minio.enabled -}}
+http://{{ include "lantern.fullname" . }}-minio:9000
+{{- else -}}
+{{ required "externalS3.endpoint is required when minio.enabled=false" .Values.externalS3.endpoint }}
+{{- end -}}
+{{- end }}
+
+{{- define "lantern.s3AccessKey" -}}
+{{- if .Values.minio.enabled }}{{ .Values.minio.auth.rootUser }}{{ else }}{{ required "externalS3.accessKeyId is required when minio.enabled=false" .Values.externalS3.accessKeyId }}{{ end -}}
+{{- end }}

@@ -166,5 +166,5 @@ spec:
               - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
               - key: app.kubernetes.io/component
                 operator: In
-                values: [control-plane, workflow-engine, runtime-scheduler, runtime-manager, model-router, surface-gateway, postgres-backup]
+                values: [control-plane, workflow-engine, runtime-scheduler, runtime-manager, model-router, surface-gateway, postgres-backup, s3-init]
 {{- end }}

@@ -211,6 +211,24 @@ dashboard:
       cpu: 500m
       memory: 512Mi
 
+# -- Managed dependencies --
+# Production runs managed Postgres (pgvector extension + point-in-time recovery)
+# and managed S3; the in-cluster single-pod dev stores are off. Set the endpoints
+# per environment (--set or an overlay); the chart fails to render without them.
+# Also provision the `lantern_app` role (infra/db/least-privilege.sql).
+postgresql:
+  enabled: false
+externalDatabase:
+  host: ""            # REQUIRED, e.g. lantern.xxxx.us-west-2.rds.amazonaws.com
+  port: 5432
+  sslmode: require
+minio:
+  enabled: false
+externalS3:
+  endpoint: ""        # REQUIRED, e.g. https://s3.us-west-2.amazonaws.com
+  accessKeyId: ""     # REQUIRED; secret key is secrets.minioPassword
+  bucket: lantern-prod
+
 secrets:
   # Also supplied at deploy time: jwtSecret, credentialKey, receiptSecret,
   # grpcServiceToken, schedulerNodeToken (the scheduler refuses to start without it).
