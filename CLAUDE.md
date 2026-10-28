@@ -510,6 +510,22 @@ with a scope it could not itself exercise (privilege escalation;
 `internal/handlers/api_keys.go`); JWT owner/admin sessions are exempt. Several
 previously unscoped mutators now carry `WithScope` annotations.
 
+### Kiosk / demo mode (ADR 0029)
+
+`lantern demo` / `make demo` run the stack with `infra/docker/docker-compose.kiosk.yml`
+(project `lantern-demo`). `POST /v1/kiosk/session` exists only when `LANTERN_KIOSK=1`
+(404 otherwise; unscoped by design, listed in `routes_scope_test.go`). It creates a
+`kiosk-<rand>` tenant (marker in `tenants.settings`, no migration), seeds agents/runs
+in `handlers/kiosk.go`, and returns a JWT with role `kiosk` + explicit scopes
+(`HasScope` treats `kiosk` like a scoped service key, so `LANTERN_AUTHZ_ENFORCE=1`
+bites). `RunKioskSweep` purges expired sessions via `purgeTenantRows` (extracted from
+`gdpr.go`; walks the catalog, no hardcoded table list). `CheckKioskConfig` is fatal in
+prod without `LANTERN_KIOSK_ALLOW_PROD=1`, without RLS+authz enforcement, or with a
+provider key lacking its `LANTERN_LLM_BASEURL_*`. Kiosk never seeds the dev admin.
+LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `LANTERN_KIOSK`,
+`_ALLOW_PROD`, `_TTL_MIN` (30), `_SWEEP_SEC` (60), `_MAX_SESSIONS` (20),
+`_IP_PER_HOUR` (3). Dashboard: public `/kiosk` start page, `components/kiosk-tour.tsx`.
+
 ### Deployments
 
 | Method   | Path                       | Description                    |

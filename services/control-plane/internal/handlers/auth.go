@@ -1138,10 +1138,12 @@ func isWriteScope(s Scope) bool {
 //   - API key with empty scopes list: always allowed (legacy / unrestricted key).
 //   - API key with non-empty scopes: see scopeImplies for the full lattice.
 func HasScope(claims *LanternClaims, required Scope) bool {
-	if claims.Role != "service" {
+	// Role "kiosk" (ADR 0029) is scope-limited like a service key, so
+	// LANTERN_AUTHZ_ENFORCE=1 actually constrains an anonymous demo visitor.
+	if claims.Role != "service" && claims.Role != kioskRole {
 		return true
 	}
-	if len(claims.Scopes) == 0 {
+	if len(claims.Scopes) == 0 && claims.Role != kioskRole {
 		return true
 	}
 	for _, s := range claims.Scopes {

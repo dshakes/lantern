@@ -105,6 +105,24 @@ make test-e2e    # terminal 2`}</code></pre>
       </p>
       <pre><code>{`LANTERN_E2E_API_URL=http://localhost:8080 make e2e-clean`}</code></pre>
 
+      <h2 id="browser">Browser tier (Playwright)</h2>
+      <p>
+        <code>apps/web/e2e</code> drives the real dashboard in headless Chromium: sign-up, forgot/reset password
+        (the reset link is read from the log mailer), onboarding (template gallery and the free-text path through the
+        fixture LLM to a succeeded first run), the settings danger zone, and the light/dark theme.
+      </p>
+      <pre><code>{`cd apps/web
+npm ci && npx playwright install chromium
+npm run test:e2e`}</code></pre>
+      <p>
+        It boots its own stack on spare ports (web 3411, API 8411, llm-replay 9412): a throwaway Postgres database, a
+        private Redis db index, the control-plane (with <code>LANTERN_CORS_ORIGINS</code> set to the dashboard origin),
+        llm-replay and <code>next dev</code>. It never touches :8080, :3001 or the shared <code>lantern</code> database,
+        and tears everything down afterwards. Needs Go, <code>psql</code>, and Postgres and Redis reachable (the{" "}
+        <code>make dev-infra</code> defaults work; override with <code>E2E_PG_ADMIN_URL</code>,{" "}
+        <code>E2E_REDIS_*</code>). Details and kiosk-spec hooks: <code>apps/web/e2e/README.md</code>.
+      </p>
+
       <h2 id="ci">CI</h2>
       <p>
         No workflow under <code>.github/workflows</code> runs <code>make test-e2e</code> today. A pipeline without a
@@ -123,7 +141,7 @@ make test-e2e    # terminal 2`}</code></pre>
         <strong>Why.</strong> CI and kiosk mode need the same answer every time and must not need a provider key or
         spend money. Token usage is still reported, so budgets and cost metering run for real.
       </p>
-      <p><strong>How.</strong> The default reply is <code>fixture: </code> plus the first 60 characters of the last user message. A rules file scripts the rest; the first rule whose <code>match</code> is a substring of the user text wins.</p>
+      <p><strong>How.</strong> The default reply is <code>fixture: </code> plus the first 60 characters of the last user message. A rules file scripts the rest; the first rule whose <code>match</code> is a substring of the system prompt or the last user message wins (this is how the demo kiosk tells its agents apart). <code>GET /healthz</code> returns 200.</p>
       <pre><code>{`[
   {"match": "refund", "reply": "Refund issued."},
   {"match": "weather", "tool": {"name": "get_weather", "args": {"city": "Austin"}}}

@@ -7,7 +7,8 @@
 // Reply policy, per request:
 //   - last message is a tool result  -> "fixture: tool result: <first 60 chars>"
 //     (so a scripted tool loop always terminates)
-//   - else first rule whose Match is a substring of the last user text wins:
+//   - else first rule whose Match is a substring of the system prompt or the last
+//     user text wins (OpenAI system-role messages, Anthropic top-level `system`):
 //     Reply -> that text; Tool -> a tool call (only when the request declares tools)
 //   - else "fixture: <first 60 chars of last user text>".
 //
@@ -93,12 +94,12 @@ type decision struct {
 	tool *ToolCall
 }
 
-func (s *Server) decide(lastUser string, isToolResult, hasTools bool) decision {
+func (s *Server) decide(lastUser, system string, isToolResult, hasTools bool) decision {
 	if isToolResult {
 		return decision{text: "fixture: tool result: " + clip(lastUser)}
 	}
 	for _, r := range s.rules {
-		if strings.Contains(lastUser, r.Match) {
+		if strings.Contains(system, r.Match) || strings.Contains(lastUser, r.Match) {
 			if r.Tool != nil && hasTools {
 				return decision{tool: r.Tool}
 			}
@@ -130,6 +131,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == "/__requests" {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.Requests())
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 8<<20))
@@ -221,16 +226,19 @@ func (s *Server) openai(w http.ResponseWriter, body []byte) {
 	}
 	var last, lastUser string
 	var lastRole string
+	var sys []string
 	for _, m := range req.Messages {
 		t := text(m.Content)
 		lastRole, last = m.Role, t
 		if m.Role == "user" {
 			lastUser = t
+		} else if m.Role == "system" || m.Role == "developer" {
+			sys = append(sys, t)
 		}
 	}
-	d := s.decide(lastUser, false, len(req.Tools) > 0)
+	d := s.decide(lastUser, strings.Join(sys, "\n"), false, len(req.Tools) > 0)
 	if lastRole == "tool" {
-		d = s.decide(last, true, false)
+		d = s.decide(last, "", true, false)
 	}
 	in := tokens(len(body))
 	out := tokens(len(d.text))
@@ -275,9 +283,10 @@ func (s *Server) openai(w http.ResponseWriter, body []byte) {
 
 func (s *Server) anthropic(w http.ResponseWriter, body []byte) {
 	var req struct {
-		Model    string `json:"model"`
-		Stream   bool   `json:"stream"`
-		Tools    []any  `json:"tools"`
+		Model    string          `json:"model"`
+		Stream   bool            `json:"stream"`
+		Tools    []any           `json:"tools"`
+		System   json.RawMessage `json:"system"`
 		Messages []struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -293,7 +302,7 @@ func (s *Server) anthropic(w http.ResponseWriter, body []byte) {
 		last = text(req.Messages[n-1].Content)
 		isResult = strings.Contains(string(req.Messages[n-1].Content), `"tool_result"`)
 	}
-	d := s.decide(last, isResult, len(req.Tools) > 0)
+	d := s.decide(last, text(req.System), isResult, len(req.Tools) > 0)
 	in := tokens(len(body))
 	out := tokens(len(d.text))
 	var content []map[string]any
