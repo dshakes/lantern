@@ -247,7 +247,7 @@ networkPolicy:
   # Peers allowed to reach the public entrypoints (gateway, dashboard,
   # surface-gateway). Empty = any source (ingress controllers vary).
   ingressFrom: []
-  # Peers allowed to scrape /metrics (control-plane :8080, scheduler :8085).
+  # Peers allowed to scrape /metrics (control-plane :9464, scheduler :8085).
   metricsFrom:
     - namespaceSelector:
         matchLabels:

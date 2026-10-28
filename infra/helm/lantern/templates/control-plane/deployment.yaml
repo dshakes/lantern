@@ -17,7 +17,7 @@ spec:
         {{- include "lantern.componentLabels" (dict "root" . "component" "control-plane") | nindent 8 }}
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "9464"
         prometheus.io/path: /metrics
     spec:
       serviceAccountName: {{ include "lantern.serviceAccountName" . }}
@@ -52,6 +52,9 @@ spec:
               protocol: TCP
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9464
               protocol: TCP
           env:
             - name: LISTEN_ADDR
