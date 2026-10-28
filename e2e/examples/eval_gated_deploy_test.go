@@ -213,12 +213,13 @@ func TestEvalGatedDeploy(t *testing.T) {
 		t.Fatalf("receipt re-pointed at another run verified: %v", v)
 	}
 
-	// Probe, not an assertion: the same signature over an edited payload field.
-	// verify's DB path compares only the stored signature for a known run id.
+	// An edited payload carrying the original signature must fail (#349).
 	edited := map[string]any{}
 	for k, v := range payload {
 		edited[k] = v
 	}
 	edited["costUsd"] = 99.0
-	t.Logf("verify with costUsd edited but signature untouched -> %v", verify(map[string]any{"payload": edited, "algorithm": receipt["algorithm"], "signature": sig}))
+	if v := verify(map[string]any{"payload": edited, "algorithm": receipt["algorithm"], "signature": sig}); v["valid"] != false {
+		t.Fatalf("receipt with an edited costUsd and the original signature verified: %v", v)
+	}
 }
