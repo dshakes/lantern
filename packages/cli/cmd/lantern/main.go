@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -20,6 +21,10 @@ func main() {
 		// The root command sets SilenceErrors so cobra doesn't print;
 		// that makes it our job to surface the error instead of exiting mute.
 		fmt.Fprintln(os.Stderr, "Error:", err)
+		var ee *cli.ExitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.Code)
+		}
 		os.Exit(1)
 	}
 }

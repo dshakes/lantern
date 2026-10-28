@@ -14,6 +14,12 @@ This project is pre-1.0; there are no stable release branches yet.
   spec, explainer agent) and `e2e/examples/data_analyst_test.go`: CSV in, exec analysis, JSON +
   PNG out, egress denied, fixture-LLM explanation. Docker tier runs in CI; the files API and
   `ExecTool` are Firecracker-only, so that tier is the KVM nightly.
+- **`lantern deploy` is real** (W2-D) — reads `agent.yaml`, creates the agent or
+  updates its prompt/model (`PATCH /v1/agents/{name}`), saves an optional
+  `workflow` (`PUT .../workflow`), then `POST /v1/agents/{name}/deploy`. `--json`
+  prints the API response, `--dry-run` makes no mutating call. Non-2xx maps to
+  exit codes 3 (auth) / 4 (402) / 5 (404) / 6 (5xx). Replaces the simulated
+  output. New e2e: `e2e/deploy`. Docs: `/cli#deploy`.
 - **Fixture LLM tier** — `LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}` re-points every
   provider call (completions, streaming, tool loop, web_search) at
   `cmd/llm-replay`, a deterministic OpenAI/Anthropic wire-format server with
