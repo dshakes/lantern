@@ -125,9 +125,13 @@ npm run test:e2e`}</code></pre>
 
       <h2 id="ci">CI</h2>
       <p>
-        No workflow under <code>.github/workflows</code> runs <code>make test-e2e</code> today. A pipeline without a
-        live stack should set <code>E2E_ALLOW_SKIP=1</code>, otherwise the run fails by design. Never point the suites
-        at a stack with real tenant data: they delete every agent named <code>e2e-*</code> in the logged-in tenant.
+        <code>.github/workflows/sdlc-e2e.yml</code> runs the fixture tier on every pull request and push to master, with
+        Postgres (pgvector) and Redis service containers and no provider key. Three jobs: <code>examples</code>{" "}
+        (<code>scripts/e2e-examples.sh</code>), <code>browser</code> (Playwright; report and traces are uploaded on
+        failure) and <code>deploy-cli</code> (<code>e2e/deploy</code> against a control-plane started in the job). There
+        is no skip path: a skipped test fails the job. The real-LLM suites (<code>make test-e2e-llm</code>) are a local
+        gate only, because they need a provider key and spend money. Never point the suites at a stack with real tenant
+        data: they delete every agent named <code>e2e-*</code> in the logged-in tenant.
       </p>
 
       <h2 id="fixture-llm">Fixture LLM tier</h2>
@@ -201,7 +205,7 @@ scripts/e2e-examples.sh -run TestVoice          # extra args go to go test`}</co
       <ul>
         <li>Connector and LLM replies are recorded fixtures; this proves the wiring and the security gates, not model quality or vendor API drift. Real-account runs are in each example&apos;s README.</li>
         <li>The gateway creates runs over gRPC, which the control-plane&apos;s recovery sweep drives; the script sets <code>LANTERN_RECOVERY_INTERVAL=2s</code> so a reply takes seconds, not up to 30.</li>
-        <li>Needs <code>go</code>, <code>cargo</code>, <code>psql</code>/<code>createdb</code> and <code>python3</code> on the PATH. Not wired into CI yet.</li>
+        <li>Needs <code>go</code>, <code>cargo</code>, <code>psql</code>/<code>createdb</code> and <code>python3</code> on the PATH.  Runs in CI as the <code>examples</code> job.</li>
       </ul>
 
       <h2 id="limits">Not covered</h2>
