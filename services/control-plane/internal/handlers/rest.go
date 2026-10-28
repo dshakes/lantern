@@ -2055,7 +2055,9 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 	var wfRaw []byte
 	var agentModel string
 	// rls-exempt: inline executor — agents read self-scoped by explicit
-	// `tenant_id = $2`; detached goroutine ctx.
+	// `tenant_id = $2`; detached goroutine ctx. read as ::text: a bytea cast
+	// parses backslashes, so a workflow with an escaped quote (\")
+	// in a prompt failed to load and the run silently fell to the plain-LLM path.
 	err := h.srv.Pool.QueryRow(ctx,
 		`SELECT COALESCE(workflow, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
@@ -2117,10 +2119,16 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
 			payload, _ := json.Marshal(ev.Payload)
 			// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
+			// A re-drive after an approval park restarts seq at 1: replayed events dedup
+			// on (run_id, seq), but the resumed node's outcome lands on the seq the park
+			// used for step_waiting, so it must replace that marker, not be dropped.
 			_, err := h.srv.Pool.Exec(ctx,
 				`INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
 				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT (run_id, seq) DO NOTHING`,
+				 ON CONFLICT (run_id, seq) DO UPDATE
+				   SET kind = EXCLUDED.kind, step_id = EXCLUDED.step_id,
+				       attempt = EXCLUDED.attempt, payload = EXCLUDED.payload
+				   WHERE journal_events.kind = 'step_waiting'`,
 				runID, ev.Seq, ev.Kind, ev.StepID, ev.Attempt, payload,
 			)
 			return err
@@ -2143,6 +2151,23 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			`, runID, stepID).Scan(&grantedNotes)
 			if grantCheckErr == nil {
 				return workflow.ApprovalDisposition{Granted: true, Reason: grantedNotes}, nil
+			}
+
+			// A denied row for this (run, step) fails the node: the interpreter
+			// turns Granted=false into step_failed. Checked before parking so a
+			// re-drive after Deny does not create a second pending request.
+			var deniedNotes string
+			// rls-exempt: inline executor — takeover_requests keyed by run_id.
+			if h.srv.Pool.QueryRow(ctx, `
+				SELECT COALESCE(notes, '')
+				FROM takeover_requests
+				WHERE run_id = $1
+				  AND (step_id = $2 OR step_id IS NULL OR step_id = '')
+				  AND status = 'denied'
+				ORDER BY created_at DESC
+				LIMIT 1
+			`, runID, stepID).Scan(&deniedNotes) == nil {
+				return workflow.ApprovalDisposition{Granted: false, Reason: deniedNotes}, nil
 			}
 
 			// Park: create a pending takeover row so the dashboard can surface
@@ -2420,6 +2445,10 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 		return executeNotion(cfg, action, params)
 	case "linear":
 		return executeLinear(cfg, action, params)
+	case "sentry":
+		return executeSentry(cfg, action, params)
+	case "pagerduty":
+		return executePagerDuty(cfg, action, params)
 	default:
 		// Every other connector (google-calendar, sentry, pagerduty, ...) goes
 		// through the shared executor, which also refreshes OAuth tokens.

@@ -170,6 +170,57 @@ func (h *TakeoverHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- Deny ----------
+
+// Deny rejects a pending takeover request. The parked run is re-driven, the
+// approval node sees the denied row and fails (step_failed), so the run ends
+// failed instead of waiting out the request's expiry.
+func (h *TakeoverHandler) Deny(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	runID := r.PathValue("id")
+	id := r.PathValue("takeoverId")
+	var body grantBody
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	var rowsAffected int64
+	var runWasWaiting bool
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			UPDATE takeover_requests
+			SET status = 'denied',
+			    released_at = now(),
+			    notes = COALESCE(NULLIF($4, ''), notes)
+			WHERE id = $1 AND tenant_id = $2 AND run_id = $3 AND status = 'pending'
+		`, id, tenantID, runID, body.Notes)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		if rowsAffected > 0 {
+			t2, e2 := tx.Exec(ctx, `UPDATE runs SET status = 'queued' WHERE id = $1 AND status = 'waiting'`, runID)
+			runWasWaiting = e2 == nil && t2.RowsAffected() > 0
+		}
+		return nil
+	})
+	if err != nil {
+		h.logger().Error("deny takeover failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to deny takeover"})
+		return
+	}
+	if rowsAffected == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not found or not pending"})
+		return
+	}
+	if runWasWaiting && h.rest != nil {
+		h.rest.redriveParkedRun(runID, tenantID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "status": "denied"})
+}
+
 // ---------- SDP answer (WebRTC handshake completion) ----------
 
 type answerBody struct {

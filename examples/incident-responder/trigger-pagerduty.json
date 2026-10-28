@@ -1,0 +1,10 @@
+{
+  "provider": "pagerduty",
+  "inputTemplate": {
+    "organization": "acme",
+    "issueId": "1001",
+    "incidentId": "{{payload.event.data.id}}",
+    "from": "oncall@acme.test",
+    "slackChannel": "C0123"
+  }
+}

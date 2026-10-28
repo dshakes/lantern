@@ -72,14 +72,14 @@ func postTelegram(t *testing.T, secret string, update string) int {
 // X6: a signed Telegram update through surface-gateway runs the agent and the
 // answer comes back as a Bot API sendMessage to the same chat.
 func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
-	k := connect(t)
+	s := connect(t)
+	k := s.kit
 	secret := e2ekit.EnvOr("LANTERN_E2E_TELEGRAM_SECRET", "e2e-telegram-secret")
 	need(t, "LANTERN_E2E_REPLAY_URL")
 	fx := startTelegramFixture(t)
 
-	installConnector(t, k, "google-calendar", map[string]any{"accessToken": "ya29.fixture"})
-	a := k.CreateAgent(t, "e2e-assistant", readExample(t, "../../examples/telegram-assistant/spec.json"))
-	putWorkflow(t, k, "e2e-assistant", readExample(t, "../../examples/telegram-assistant/workflow.json"))
+	s.installConnector(t, "google-calendar", "accessToken")
+	a := agentFromManifest(t, k, "e2e-assistant", "telegram-assistant")
 	// An agent gets its first promoted version from its first REST run; the
 	// gateway creates runs over gRPC, which refuses an unpromoted agent
 	// ("agent has no promoted version"). Prime it once, as the README says.

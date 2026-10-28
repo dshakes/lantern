@@ -8,9 +8,7 @@ gateway rejecting forged webhooks before anything runs.
 
 | File | Role |
 | --- | --- |
-| `agent.yaml` | Agent manifest for `lantern deploy` (**simulated** today; use the REST steps) |
-| `spec.json` | Body for `POST /v1/agents` |
-| `workflow.json` | `trigger -> google-calendar.list_events -> ai-step -> end`; the message is `{{input.text}}` |
+| `agent.yaml` | The manifest `lantern deploy` reads: `system_prompt` and the `workflow` (`trigger -> google-calendar.list_events -> ai-step -> end`; the message is `{{input.text}}`) |
 
 ## Try it with fixtures (no accounts, no keys)
 
@@ -26,8 +24,9 @@ WhatsApp's `X-Hub-Signature-256` negatives: `cargo test` in `services/surface-ga
 ## Try it with your accounts
 
 1. Create the bot with `@BotFather`; pick a random `TELEGRAM_SECRET_TOKEN`.
-2. Create the agent, save the workflow, install the calendar (OAuth: Connectors page, "Sign in with Google"), then
-   **run the agent once** (`POST /v1/runs`, or Run in the dashboard) so it has a promoted version.
+2. `lantern deploy` from this directory, install the calendar (OAuth: Connectors page, "Sign in with Google"), then
+   **run the agent once** (`POST /v1/runs`, or Run in the dashboard). Deploy does not give the agent the promoted
+   version the gateway's gRPC `CreateRun` needs; the first REST run does, which is why this step stays.
 3. Run the gateway with a public HTTPS URL:
    ```bash
    LISTEN_ADDR=0.0.0.0:8444 REDIS_URL=redis://localhost:6379 CONTROL_PLANE_ADDR=http://localhost:50051 \
@@ -48,7 +47,7 @@ For WhatsApp Cloud set `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP
 - The gateway only creates the run; the control-plane recovery sweep (`LANTERN_RECOVERY_INTERVAL`, default 30 s) or the
   workflow engine drives it, so a reply can take up to ~30 s on a single-process dev stack.
 - The agent needs a promoted version first (see step 2) or the gateway logs `agent has no promoted version`.
-- Live facts like "is it raining" need a `web_search` tool node in `workflow.json` (workflow tool nodes support it);
+- Live facts like "is it raining" need a `web_search` tool node in the `workflow` of `agent.yaml` (workflow tool nodes support it);
   it is not included because it cannot run on the fixture stack.
 - One agent and one tenant per gateway (`LANTERN_AGENT_NAME`, `LANTERN_TENANT_ID`); every chat message starts a new run
   (no conversation memory).

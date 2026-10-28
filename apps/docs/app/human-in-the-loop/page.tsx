@@ -46,6 +46,10 @@ GET /v1/runs/{id}/takeover
 POST /v1/runs/{id}/takeover/{tkId}/grant
 { "notes": "ok to send", "sdpOffer": "v=0\r\n..." }
 
+# Operator denies: the approval node fails (step_failed) and so does the run
+POST /v1/runs/{id}/takeover/{tkId}/deny
+{ "notes": "not now" }
+
 # Browser-side SDP answer (for live WebRTC session)
 POST /v1/runs/{id}/takeover/{tkId}/answer
 { "sdpAnswer": "v=0\r\n..." }

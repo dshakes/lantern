@@ -46,18 +46,18 @@ func twilioSig(token, fullURL string, form url.Values) string {
 // X7: signed Twilio webhooks -> TwiML, over-budget -> <Reject>, status
 // callback reconciles the connect-time estimate into agent_usage_daily.
 func TestVoice_InboundBudgetAndCostReconcile(t *testing.T) {
-	k := connect(t)
+	k := connect(t).kit
 	db := openDB(t)
 	base := e2ekit.DefaultBase()
 	ctx := context.Background()
 
-	k.CreateAgent(t, "e2e-voice", readExample(t, "../../examples/voice-receptionist/spec.json"))
+	agentFromManifest(t, k, "e2e-voice", "voice-receptionist")
 
 	number := fmt.Sprintf("+1555%07d", time.Now().UnixNano()%10_000_000)
 	var created struct {
 		ID string `json:"id"`
 	}
-	numCfg := readExample(t, "../../examples/voice-receptionist/number.json")
+	numCfg := readJSON(t, "voice-receptionist/number.json")
 	numCfg["agentName"] = "e2e-voice"
 	numCfg["phoneNumber"] = number
 	numCfg["providerConfig"] = map[string]any{"accountSid": "ACe2e", "authToken": twilioToken}

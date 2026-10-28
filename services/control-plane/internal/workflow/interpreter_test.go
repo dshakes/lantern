@@ -1485,3 +1485,24 @@ func TestParseParams_FreeTextIsJSONEscaped(t *testing.T) {
 		t.Fatalf("raw JSON substitution regressed: %#v", got)
 	}
 }
+
+// Regression: map-form params must render {{...}} templates. Before, only the
+// JSON-string form did, and that breaks on a value containing a quote/newline.
+func TestParseParams_MapFormRendersTemplates(t *testing.T) {
+	vars := map[string]any{
+		"input": map[string]any{"title": `Fix "retry" storm`, "n": float64(42)},
+		"steps": map[string]any{"fetch": map[string]any{"ts": "1.2"}},
+	}
+	got := parseParams(map[string]any{
+		"text":   "PR: {{input.title}}",
+		"number": "{{input.n}}",
+		"nested": map[string]any{"thread_ts": "{{steps.fetch.ts}}"},
+		"keep":   float64(7),
+	}, vars)
+	if got["text"] != `PR: Fix "retry" storm` || got["number"] != "42" || got["keep"] != float64(7) {
+		t.Fatalf("got %#v", got)
+	}
+	if n, _ := got["nested"].(map[string]any); n["thread_ts"] != "1.2" {
+		t.Fatalf("nested not rendered: %#v", got["nested"])
+	}
+}

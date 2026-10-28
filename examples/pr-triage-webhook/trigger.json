@@ -1,0 +1,13 @@
+{
+  "provider": "github",
+  "inputTemplate": {
+    "owner": "{{payload.repository.owner.login}}",
+    "repo": "{{payload.repository.name}}",
+    "number": "{{payload.number}}",
+    "title": "{{payload.pull_request.title}}",
+    "url": "{{payload.pull_request.html_url}}",
+    "author": "{{payload.pull_request.user.login}}",
+    "action": "{{payload.action}}",
+    "slackChannel": "C0123"
+  }
+}

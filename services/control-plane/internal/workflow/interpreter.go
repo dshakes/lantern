@@ -809,7 +809,9 @@ func parseParams(raw any, vars map[string]any) map[string]any {
 	}
 	switch v := raw.(type) {
 	case map[string]any:
-		return v
+		// Render {{...}} in string leaves so map-form params can template values
+		// (a JSON-string form breaks as soon as a value holds a quote or newline).
+		return renderMapTemplates(v, vars)
 	case string:
 		if v == "" {
 			return map[string]any{}
@@ -830,6 +832,21 @@ func parseParams(raw any, vars map[string]any) map[string]any {
 		return map[string]any{"input": rendered}
 	}
 	return map[string]any{}
+}
+
+func renderMapTemplates(m map[string]any, vars map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		switch t := v.(type) {
+		case string:
+			out[k] = renderTemplate(t, vars)
+		case map[string]any:
+			out[k] = renderMapTemplates(t, vars)
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func formatOutput(v any) string {

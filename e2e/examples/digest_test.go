@@ -14,18 +14,18 @@ import (
 // X4: a schedule fires -> the scheduler creates a run -> the workflow reads
 // GitHub, writes the digest with the (fixture) LLM and posts it to Slack.
 func TestDigest_ScheduleFiresAndPostsToSlack(t *testing.T) {
-	k := connect(t)
+	s := connect(t)
+	k := s.kit
 	db := openDB(t)
 	need(t, "LANTERN_E2E_REPLAY_URL")
 
-	installConnector(t, k, "slack", map[string]any{"botToken": "xoxb-fixture"})
-	installConnector(t, k, "github", map[string]any{"personalAccessToken": "ghp_fixture"})
+	s.installConnector(t, "slack", "botToken")
+	s.installConnector(t, "github", "personalAccessToken")
 
-	k.CreateAgent(t, "e2e-digest", readExample(t, "../../examples/daily-digest/spec.json"))
-	putWorkflow(t, k, "e2e-digest", readExample(t, "../../examples/daily-digest/workflow.json"))
+	agentFromManifest(t, k, "e2e-digest", "daily-digest")
 
 	// Create the schedule from the committed example, pointed at the e2e agent.
-	sched := readExample(t, "../../examples/daily-digest/schedule.json")
+	sched := readJSON(t, "daily-digest/schedule.json")
 	sched["agentName"] = "e2e-digest"
 	var created struct {
 		ID         string    `json:"id"`
@@ -138,7 +138,7 @@ func TestDigest_ScheduleFiresAndPostsToSlack(t *testing.T) {
 
 // An invalid IANA timezone is a 400, never a silently-UTC schedule.
 func TestDigest_InvalidTimezoneIsRejected(t *testing.T) {
-	k := connect(t)
+	k := connect(t).kit
 	st, _ := k.DoAuth(t, http.MethodPost, "/v1/schedules", map[string]any{
 		"agentName": "e2e-digest", "cronExpr": "0 9 * * *", "timezone": "Mars/Olympus",
 	}, nil)

@@ -1,6 +1,6 @@
 name: daily-digest
 version: "0.1.0"
-description: Weekday morning engineering digest -- open PRs summarised by an LLM and posted to Slack
+description: "Weekday morning engineering digest: open PRs summarised and posted to Slack."
 model: auto
 isolation:
   class: trusted
@@ -10,3 +10,74 @@ limits:
   max_cost_usd: 0.25
 labels:
   category: reporting
+system_prompt: "You write a short morning engineering digest for a team channel from the data you are given. Be faithful to the data, never invent work, and keep it under 120 words."
+workflow: 
+  {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "data": {
+          "label": "Schedule fires"
+        }
+      },
+      {
+        "id": "prs",
+        "type": "connector",
+        "data": {
+          "label": "List open PRs",
+          "connector": "github",
+          "action": "list_prs",
+          "inputMapping": "{\"owner\":\"{{input.owner}}\",\"repo\":\"{{input.repo}}\",\"state\":\"open\"}"
+        }
+      },
+      {
+        "id": "digest",
+        "type": "ai-step",
+        "data": {
+          "label": "Write the digest",
+          "capability": "auto",
+          "prompt": "Write today's engineering digest for {{input.owner}}/{{input.repo}}. Lead with what needs a reviewer. Open pull requests (JSON):\n{{steps.prs}}"
+        }
+      },
+      {
+        "id": "post",
+        "type": "connector",
+        "data": {
+          "label": "Post to Slack",
+          "connector": "slack",
+          "action": "post_message",
+          "inputMapping": "{\"channel\":\"{{input.channel}}\",\"text\":\"{{steps.digest}}\"}"
+        }
+      },
+      {
+        "id": "end",
+        "type": "end",
+        "data": {
+          "outputExpression": "{{steps.digest}}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "prs"
+      },
+      {
+        "id": "e2",
+        "source": "prs",
+        "target": "digest"
+      },
+      {
+        "id": "e3",
+        "source": "digest",
+        "target": "post"
+      },
+      {
+        "id": "e4",
+        "source": "post",
+        "target": "end"
+      }
+    ]
+  }

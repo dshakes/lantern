@@ -40,7 +40,7 @@ make test-e2e    # terminal 2`}</code></pre>
         <tbody>
           <tr><td><code>e2e/runtime</code></td><td><code>/v1/runtime/*</code> control path: auth gates, schedule (201 + vm_id), tenant-scoped list, detail and audit, logs SSE, terminate, quota 402.</td></tr>
           <tr><td><code>e2e/quickstart</code></td><td>The <code>examples/quickstart/</code> agents: create from <code>spec.json</code>, post <code>run.json</code>, poll to <code>succeeded</code>, assert an output shape; incident-summarizer also issues and verifies a receipt. Real LLM calls.</td></tr>
-          <tr><td><code>e2e/examples</code></td><td>The daily-digest, telegram-assistant and voice-receptionist examples against a <a href="#examples">fixture stack</a>: no provider key, no SaaS account. Started by <code>make test-e2e-examples</code>, not part of <code>make test-e2e</code>.</td></tr>
+          
         </tbody>
       </table>
 
@@ -156,11 +156,11 @@ curl -s 127.0.0.1:9192/__requests                         # what the control-pla
 
       <h2 id="examples">Example suites on a fixture stack</h2>
       <p>
-        <strong>What.</strong> <code>make test-e2e-examples</code> runs <code>scripts/e2e-examples-stack.sh</code>: it
-        creates a throwaway database, picks free ports, starts <code>llm-replay</code>,{" "}
+        <strong>What.</strong> <code>make test-e2e-examples</code> runs <code>scripts/e2e-examples.sh</code>: it
+        creates a throwaway database, starts <code>llm-replay</code>,{" "}
         <code>connector-replay</code>, the control-plane (pointed at both) and the surface-gateway, runs{" "}
         <code>e2e/examples</code>, and tears everything down. It never touches <code>:8080</code> or your dev database.
-        Needs Postgres and Redis from <code>make dev-infra</code> (the gateway uses Redis DB 9).
+        Needs Postgres and Redis from <code>make dev-infra</code> (a random Redis DB 1-14 is used).
       </p>
       <p><strong>What it asserts.</strong></p>
       <table>
@@ -177,8 +177,8 @@ curl -s 127.0.0.1:9192/__requests                         # what the control-pla
       <pre><code>{`make dev-infra
 make test-e2e-examples                 # ~70 s, mostly the scheduler's 60 s poll
 
-HOLD=1 scripts/e2e-examples-stack.sh   # leave the stack up and print the env to run a single test
-KEEP_LOGS=1 make test-e2e-examples     # keep service logs (path printed)`}</code></pre>
+E2E_EXAMPLES_SERVE=1 scripts/e2e-examples.sh   # leave the stack up, no tests (debugging)
+scripts/e2e-examples.sh -run TestVoice          # extra args go to go test`}</code></pre>
       <p><strong>Limits.</strong></p>
       <ul>
         <li>Connector and LLM replies are recorded fixtures; this proves the wiring and the security gates, not model quality or vendor API drift. Real-account runs are in each example&apos;s README.</li>

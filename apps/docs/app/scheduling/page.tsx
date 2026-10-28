@@ -116,9 +116,8 @@ Response: 204 No Content`}</code>
       <h2 id="example-digest">Example: weekday digest to Slack</h2>
       <p>
         <code>examples/daily-digest</code> is a workflow (GitHub open PRs, an AI step, a Slack post) on the schedule{" "}
-        <code>0 9 * * 1-5</code> in <code>America/New_York</code>. Create the agent from <code>spec.json</code>, save{" "}
-        <code>workflow.json</code> with <code>PUT /v1/agents/&#123;name&#125;/workflow</code>, install the Slack and
-        GitHub connectors, then post <code>schedule.json</code> to <code>POST /v1/schedules</code>. The response&apos;s{" "}
+        <code>0 9 * * 1-5</code> in <code>America/New_York</code>. Run <code>lantern deploy</code> in that directory
+        (the manifest carries the prompt and workflow), install the Slack and GitHub connectors, then post <code>schedule.json</code> to <code>POST /v1/schedules</code>. The response&apos;s{" "}
         <code>nextFireAt</code> is the next weekday 09:00 New York time.
       </p>
       <p>
