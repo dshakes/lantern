@@ -102,6 +102,9 @@ This project is pre-1.0; there are no stable release branches yet.
 - `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
 ### Fixed
+- `lantern test` now works against a real API: `POST /v1/runs` answers 201 and runs asynchronously, but the CLI required
+  200 and read the output immediately. It now polls `GET /v1/runs/{id}` to a terminal status (`--timeout`, default 2m per
+  case); a failed run or a timeout scores as a failed case with its error. `--rehearse` had the same bug and is fixed too.
 - New sign-ups now land on `/onboarding`: the authenticated-redirect effect raced the explicit redirect and sent them
   to `/agents`.
 - Password reset and the other `/auth/*` recovery pages work for logged-out visitors: a 401 from the global

@@ -149,7 +149,10 @@ lantern runs cancel <run-id> [--reason "..."]`}</code>
         the baseline. Wire it into CI to gate merges. <code>--set-baseline</code>{" "}
         pins the run as the branch baseline. <code>--rehearse</code> replays
         past failed or low-score production runs instead of a suite
-        (<code>--window</code>, default 7d).
+        (<code>--window</code>, default 7d). Runs execute
+        asynchronously on the control plane, so each case waits for its run to
+        finish; <code>--timeout</code> (default 2m) bounds that wait per case,
+        and a failed or timed-out run scores as a failed case with its error.
       </p>
       <pre>
         <code>{`lantern test --agent my-agent --suite factual-accuracy

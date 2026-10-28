@@ -60,7 +60,7 @@ DELETE /v1/eval-suites/{id}        — delete suite`}</code>
 
       <h2 id="eval-runs">Recording a run + CI gate</h2>
       <p>
-        Run the agent on each case yourself (or use <code>lantern test</code>),
+        Run the agent on each case yourself (or use <code>lantern test</code>, which waits for each run to finish; <code>--timeout</code> caps the wait, default 2m),
         then post the per-case results. The server computes the score (mean of
         case scores) and compares it with the branch baseline. A regression
         returns <strong>HTTP 422</strong>, which fails a CI step.
