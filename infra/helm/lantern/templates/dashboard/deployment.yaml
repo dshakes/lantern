@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "lantern.componentLabels" (dict "root" . "component" "dashboard") | nindent 4 }}
 spec:
+  {{- if not .Values.dashboard.autoscaling.enabled }}
   replicas: {{ .Values.dashboard.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "dashboard") | nindent 6 }}

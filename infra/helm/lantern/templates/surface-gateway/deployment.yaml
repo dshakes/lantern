@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern.fullname" . }}-surface-gateway
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "surface-gateway") | nindent 4 }}
+spec:
+  replicas: {{ .Values.surfaceGateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "surface-gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern.componentLabels" (dict "root" . "component" "surface-gateway") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern.serviceAccountName" . }}
+      containers:
+        - name: surface-gateway
+          image: {{ include "lantern.image" (dict "root" . "component" .Values.surfaceGateway) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8444
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: "0.0.0.0:8444"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: LANTERN_ENV
+              value: {{ .Values.surfaceGateway.env.LANTERN_ENV | default "production" | quote }}
+            # The control-plane REST port (:8080); the token must match its
+            # LANTERN_GRPC_SERVICE_TOKEN.
+            # gRPC, not REST: control_plane.rs is a tonic client (see its header).
+            - name: CONTROL_PLANE_ADDR
+              value: "http://{{ include "lantern.fullname" . }}-control-plane:{{ .Values.controlPlane.service.grpcPort }}"
+            - name: LANTERN_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: grpc-service-token
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: REDIS_URL
+          {{- with .Values.surfaceGateway.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.surfaceGateway.resources | nindent 12 }}

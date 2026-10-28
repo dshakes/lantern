@@ -77,5 +77,9 @@ Usage: include "lantern.image" (dict "root" . "component" .Values.gateway)
 {{- $repository := .root.Values.global.image.repository -}}
 {{- $tag := default .root.Values.global.image.tag .component.image.tag -}}
 {{- $name := .component.image.name -}}
+{{- if $registry -}}
 {{- printf "%s/%s/%s:%s" $registry $repository $name $tag -}}
+{{- else -}}
+{{- printf "%s/%s:%s" $repository $name $tag -}}
+{{- end -}}
 {{- end }}

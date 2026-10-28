@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "lantern.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 4 }}
 spec:
+  {{- if not .Values.workflowEngine.autoscaling.enabled }}
   replicas: {{ .Values.workflowEngine.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "workflow-engine") | nindent 6 }}
