@@ -22,7 +22,7 @@ The agent loop stays on your control plane. Code the agent writes runs in a Fire
 
 - **The agent is outside the sandbox. The code is inside.** Code an agent writes or downloads runs in a Firecracker or Kata microVM, never a bare pod. The loop that holds the prompt and the model keys runs on the control plane, so a compromised workload has nothing to steal and nothing to steer.
 - **Credentials stay on the host (broker mode).** Set `LANTERN_EGRESS_MODE=broker` (opt-in, Firecracker only) and the VM boots with no network device. Egress crosses vsock to a broker on the host that checks the allowlist and injects the credential from a `lantern.secret/...` ref. The default mode routes egress through an in-guest CONNECT proxy; enforcement needs the image's iptables REDIRECT rule, and production refuses to boot without it when egress is declared.
-- **Idle sandboxes give their compute back; forks share memory.** Set `idleTimeoutSecs` and an idle VM is snapshotted and stopped, then resumed on the next request. Forks hard-link one read-only memory file and copy on write: on a real KVM run, three forks shared one inode and each spawned in 131–160 ms ([Lima nested-virt, indicative](docs/benchmarks/runtime-latency.md)).
+- **Idle sandboxes give their compute back; forks share memory.** Set `idleTimeoutSecs` and an idle VM is snapshotted and stopped, then resumed on the next request. Forks hard-link one read-only memory file and copy on write: on a real KVM run, three forks shared one inode and each spawned in 131–160 ms ([Lima nested-virt, indicative](docs/benchmarks/runtime-latency.md); measured 2026-10-27 at 93cf2870, before snapshots captured the VM disk in #322, so memory-only, re-measure pending).
 - **The rest of production is already here.** Crash-resume from the step journal. Budgets that return HTTP 402 before the run, not after the bill. Models addressed by capability. Eval suites that fail CI with HTTP 422. Signed run receipts (Ed25519 when `LANTERN_RECEIPT_ED25519_SEED` is set) that anyone can verify against the published key. All of it self-hosted in your VPC.
 
 ## Quickstart
@@ -162,17 +162,22 @@ comparison has two halves.
 **The sandbox.** This is ACE's whole product, and on isolation it is ahead of
 Lantern by default: its sandbox never holds a credential and all egress leaves
 through a proxy on the host, backed by Google's hardware root of trust. Lantern
-can do the same, but only in its opt-in broker mode on Firecracker, and has been
-validated on nested KVM, not at Google's scale.
+comes closest in its opt-in broker mode on Firecracker (injected credentials stay
+on the host), but vended `spec.secrets` still enter the guest, there is no
+hardware root of trust, and it has been validated on nested KVM, not at Google's
+scale.
 
 | The sandbox | **Lantern** | Google ACE | E2B | Modal |
 |---|---|---|---|---|
-| Hardware-isolated microVM per sandbox | ✅ Firecracker / Kata | ✅ | ✅ | partial (gVisor) |
-| Agent loop runs outside the sandbox | ✅ | ✅ | partial (you host the loop) | partial (you host the loop) |
-| Credentials never enter the sandbox | partial (broker mode, opt-in) | ✅ by default | ❌ | ❌ |
-| Egress allowlist enforced outside the guest | partial (broker mode, opt-in) | ✅ by default | partial | partial (IP/CIDR) |
-| Idle auto-suspend, resume on demand | ✅ | ✅ | partial | partial |
-| Snapshot and fork | ✅ (shared-memory fork) | ✅ | partial | partial |
+| Hardware-isolated microVM per sandbox | ✅ Firecracker / Kata (needs KVM) | ✅ | ✅ | partial (gVisor or VM runtime) |
+| Platform runs the agent loop for you | ✅ | partial (your harness: "each team writes and trusts its own harness") | ❌ (you host the loop) | ❌ (you host the loop) |
+| Credentials never enter the sandbox | partial (injected headers only; opt-in broker mode, Firecracker) | ✅ by default | partial (header injection, beta) | partial (experimental) |
+| Egress allowlist enforced outside the guest | partial (broker mode, opt-in) | ✅ by default | partial (CIDR + domain on HTTP/TLS, at E2B's firewall) | partial (CIDR; domain allowlist in beta) |
+| No network interface in the sandbox by default | partial (broker mode only; guest mode attaches a TAP NIC) | ✅ by default | not documented | not documented |
+| Data-loss-prevention policy on egress | ❌ | ✅ (per Google) | not documented | not documented |
+| Idle auto-suspend, resume on demand | ✅ (Firecracker only, opt-in per VM) | ✅ | ✅ (opt-in) | partial |
+| Snapshot and fork | ✅ (Firecracker only; shared-memory fork) | ✅ | ✅ | partial |
+| Fork fan-out per call | up to 1,000 (default 100); validated with 3 forks on Lima | thousands, memory-deduplicated (per Google) | up to 20 | no fork |
 | Hardware root of trust / attestation | partial (measurement recorded, not verified) | ✅ (Titan) | ❌ | ❌ |
 | Proven at scale | Lima nested-KVM + CI only | the infrastructure behind Gemini's agents (per Google) | production | production |
 
@@ -183,7 +188,7 @@ them; on Google Cloud they come from other products.
 | The platform | **Lantern** | Google ACE | E2B | Modal |
 |---|---|---|---|---|
 | Durable agent runs with crash-resume | ✅ | out of scope | ❌ | ❌ |
-| Budgets that return HTTP 402 before the model call | partial (cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced) | out of scope | ❌ | partial |
+| Budgets enforced before the model call | partial (cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced; a mid-workflow breach fails the step) | out of scope | ❌ | partial |
 | Multi-provider model routing with failover | ✅ | out of scope | ❌ | ❌ |
 | Signed, offline-verifiable run receipts | partial (Ed25519 with a configured seed) | out of scope | ❌ | ❌ |
 | Self-host in your VPC or on-prem | ✅ Apache-2.0 | ❌ Google Cloud only | partial | ❌ |
@@ -196,9 +201,13 @@ on-prem, with the sandbox, durable execution, spend limits and audit trail in
 one stack you control.
 
 Competitor columns reflect each vendor's public docs and announcements as of
-October 2026; the Google column follows Google's [Agent Compute Engine deep
+2026-10-28 (E2B: [egress and secrets](https://docs.e2b.dev/sandbox/internet-access),
+[auto-resume](https://docs.e2b.dev/sandbox/auto-resume),
+[fork](https://docs.e2b.dev/sandbox/fork); Modal:
+[sandbox networking](https://modal.com/docs/guide/sandbox-networking),
+[Sandbox reference](https://modal.com/docs/reference/modal.Sandbox)); the Google column follows Google's [Agent Compute Engine deep
 dive](https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive)
-(Oct 22, 2026). ❌ means not offered or not announced. Open an issue if a cell is
+(Oct 22, 2026). ❌ means not offered or not announced; "not documented" means the docs we read don't say. Open an issue if a cell is
 out of date.
 
 ## Use it from code

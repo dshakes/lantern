@@ -13,20 +13,23 @@ type Cell = string;
 type Row = { row: string; cells: [Cell, Cell, Cell, Cell] };
 // Mirrors README "How Lantern compares": ACE leads on the sandbox; the platform half is out of its scope.
 const SANDBOX: Row[] = [
-  { row: "Hardware-isolated microVM per sandbox", cells: ["yes: Firecracker / Kata", "yes", "yes", "partial: gVisor"] },
-  { row: "Agent loop runs outside the sandbox", cells: ["yes", "yes", "partial: you host the loop", "partial: you host the loop"] },
-  { row: "Credentials never enter the sandbox", cells: ["partial: broker mode, opt-in", "yes: by default", "no", "no"] },
-  { row: "Egress allowlist enforced outside the guest", cells: ["partial: broker mode, opt-in", "yes: by default", "partial", "partial: IP/CIDR"] },
-  { row: "Idle auto-suspend, resume on demand", cells: ["yes", "yes", "partial", "partial"] },
-  { row: "Snapshot and fork", cells: ["yes: shared-memory fork", "yes", "partial", "partial"] },
+  { row: "Hardware-isolated microVM per sandbox", cells: ["yes: Firecracker / Kata (needs KVM)", "yes", "yes", "partial: gVisor or VM runtime"] },
+  { row: "Platform runs the agent loop for you", cells: ["yes", "partial: your harness (\u201ceach team writes and trusts its own harness\u201d)", "no: you host the loop", "no: you host the loop"] },
+  { row: "Credentials never enter the sandbox", cells: ["partial: injected headers only; opt-in broker mode, Firecracker", "yes: by default", "partial: header injection (beta)", "partial: experimental"] },
+  { row: "Egress allowlist enforced outside the guest", cells: ["partial: broker mode, opt-in", "yes: by default", "partial: CIDR + domain on HTTP/TLS, at E2B\u2019s firewall", "partial: CIDR; domain allowlist in beta"] },
+  { row: "No network interface in the sandbox by default", cells: ["partial: broker mode only; guest mode attaches a TAP NIC", "yes: by default", "not documented", "not documented"] },
+  { row: "Data-loss-prevention policy on egress", cells: ["no", "yes: per Google", "not documented", "not documented"] },
+  { row: "Idle auto-suspend, resume on demand", cells: ["yes: Firecracker only, opt-in per VM", "yes", "yes: opt-in", "partial"] },
+  { row: "Snapshot and fork", cells: ["yes: Firecracker only; shared-memory fork", "yes", "yes", "partial"] },
+  { row: "Fork fan-out per call", cells: ["up to 1,000 (default 100); validated with 3 forks on Lima", "thousands, memory-deduplicated (per Google)", "up to 20", "no fork"] },
   { row: "Hardware root of trust / attestation", cells: ["partial: measurement recorded, not verified", "yes: Titan", "no", "no"] },
   { row: "Proven at scale", cells: ["Lima nested-KVM + CI only", "The infrastructure behind Gemini's agents (per Google)", "Production", "Production"] },
 ];
 const PLATFORM: Row[] = [
   { row: "Durable agent runs with crash-resume", cells: ["yes", "out of scope", "no", "no"] },
   {
-    row: "Budgets that return HTTP 402 before the model call",
-    cells: ["partial: cost, runs and tokens per day and tenant daily cost; per-run and per-tool caps on workflow runs only (a single-call run's per-run cap is checked only by the opt-in forecast)", "out of scope", "no", "partial"],
+    row: "Budgets enforced before the model call",
+    cells: ["partial: cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced; a mid-workflow breach fails the step", "out of scope", "no", "partial"],
   },
   { row: "Multi-provider model routing with failover", cells: ["yes", "out of scope", "no", "no"] },
   { row: "Signed, offline-verifiable run receipts", cells: ["partial: only with a signing key configured", "out of scope", "no", "no"] },
@@ -143,7 +146,7 @@ export default function ComparePage() {
         <CompareTable
           id="cmp-sandbox"
           title="The sandbox"
-          intro="This is ACE's whole product, and on isolation it is ahead of Lantern by default: its sandbox never holds a credential and all egress leaves through a proxy on the host, backed by Google's hardware root of trust. Lantern can do the same only in its opt-in broker mode on Firecracker, validated on nested KVM, not at Google's scale."
+          intro="This is ACE's whole product, and on isolation it is ahead of Lantern by default: its sandbox never holds a credential and all egress leaves through a proxy on the host, backed by Google's hardware root of trust. Lantern comes closest only in its opt-in broker mode on Firecracker: injected credentials stay on the host, but vended spec.secrets still enter the guest, there is no hardware root of trust, and it is validated on nested KVM, not at Google's scale."
           rows={SANDBOX}
         />
         <CompareTable
@@ -163,12 +166,17 @@ export default function ComparePage() {
           </ul>
         </div>
         <p className="mt-10 max-w-3xl text-sm leading-relaxed text-ink-3">
-          Competitor columns reflect each vendor&rsquo;s public docs and announcements as of October 2026; the Google
+          Competitor columns reflect each vendor&rsquo;s public docs and announcements as of 2026-10-28, per vendor docs; the Google
           column follows Google&rsquo;s{" "}
           <a className="link" href="https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive">
             Agent Compute Engine deep dive
           </a>{" "}
-          (Oct 22, 2026). A cross means not offered or not announced. If a cell is out of date,{" "}
+          (Oct 22, 2026). E2B:{" "}
+          <a className="link" href="https://docs.e2b.dev/sandbox/internet-access">egress and secrets</a>,{" "}
+          <a className="link" href="https://docs.e2b.dev/sandbox/auto-resume">auto-resume</a>,{" "}
+          <a className="link" href="https://docs.e2b.dev/sandbox/fork">fork</a>. Modal:{" "}
+          <a className="link" href="https://modal.com/docs/guide/sandbox-networking">sandbox networking</a>,{" "}
+          <a className="link" href="https://modal.com/docs/reference/modal.Sandbox">Sandbox reference</a>. A cross means not offered or not announced; &ldquo;not documented&rdquo; means the docs we read don&rsquo;t say. If a cell is out of date,{" "}
           <a className="link" href={`${GITHUB}/issues`}>
             open an issue
           </a>
