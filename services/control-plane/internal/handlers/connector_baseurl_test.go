@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,6 +118,9 @@ func TestConnectorActionsAgainstReplay(t *testing.T) {
 		{"pagerduty update_incident", func() (any, error) {
 			return executePagerDuty(tokCfg("apiKey"), "update_incident", map[string]any{"incident_id": "PABC123", "status": "acknowledged", "from": "oncall@acme.test"})
 		}, "/incidents/PABC123", map[string]any{"incident": map[string]any{"status": "acknowledged"}}, `"acknowledged"`},
+		{"pagerduty add_note", func() (any, error) {
+			return executePagerDuty(tokCfg("apiKey"), "add_note", map[string]any{"incident_id": "PABC123", "content": "rollback approved", "from": "oncall@acme.test"})
+		}, "/incidents/PABC123/notes", map[string]any{"note": map[string]any{"content": "rollback approved"}}, `"PNOTE1"`},
 		{"gcal create_event", func() (any, error) {
 			return executeGoogleCalendar(tokCfg("accessToken"), "create_event", map[string]any{
 				"summary": "Sync", "start": "2026-11-02T15:00:00-08:00", "end": "2026-11-02T15:30:00-08:00",
@@ -217,5 +222,37 @@ func TestConnectorActionErrors(t *testing.T) {
 				t.Fatal("token leaked into error")
 			}
 		})
+	}
+}
+
+// Regression: a workflow `connector` node dispatches in-process via
+// dispatchConnectorInProc, which once lacked sentry/pagerduty ("dispatch not
+// yet wired") even though the REST execute path served them.
+func TestDispatchConnectorInProc_SentryPagerDuty(t *testing.T) {
+	pool := openTestPool(t)
+	replayEnv(t)
+	ctx := context.Background()
+	const tenant = "00000000-0000-0000-0000-000000000001" // seeded dev tenant
+	for id, field := range map[string]string{"sentry": "authToken", "pagerduty": "apiKey"} {
+		cfg, _ := json.Marshal(map[string]string{field: replayToken})
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, config)
+			VALUES ($1, $2, 'dispatch test', 'connected', $3::jsonb)
+			ON CONFLICT (tenant_id, connector_id) DO UPDATE SET status='connected', config=EXCLUDED.config`,
+			tenant, id, string(cfg)); err != nil {
+			t.Fatalf("seed %s install: %v", id, err)
+		}
+		id := id
+		t.Cleanup(func() {
+			_, _ = pool.Exec(ctx, `DELETE FROM connector_installs WHERE tenant_id=$1 AND connector_id=$2 AND display_name='dispatch test'`, tenant, id)
+		})
+	}
+	out, err := dispatchConnectorInProc(ctx, pool, tenant, "sentry", "get_issue", map[string]any{"organization": "acme", "issue_id": "1001"})
+	if err != nil || !strings.Contains(fmt.Sprint(out), "lastSeen") {
+		t.Fatalf("sentry: %v %v", out, err)
+	}
+	out, err = dispatchConnectorInProc(ctx, pool, tenant, "pagerduty", "add_note", map[string]any{"incident_id": "PABC123", "content": "x", "from": "a@b.test"})
+	if err != nil || !strings.Contains(fmt.Sprint(out), "PNOTE1") {
+		t.Fatalf("pagerduty: %v %v", out, err)
 	}
 }

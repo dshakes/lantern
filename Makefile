@@ -1,4 +1,4 @@
-.PHONY: demo demo-down help lima-up lima-image lima-e2e lima-broker-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: demo demo-down test-e2e-examples help lima-up lima-image lima-e2e lima-broker-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -211,6 +211,9 @@ test-e2e: ## Run live-stack e2e suites (FAILS when stack is down; set E2E_ALLOW_
 	cd e2e/quickstart && go test -tags e2e -count=1 -p 1 -v ./...
 	cd e2e/examples && go test -tags e2e -count=1 -p 1 -v ./...
 	cd e2e/deploy && go test -tags e2e -count=1 -v ./...
+
+test-e2e-examples: ## Webhook examples (pr-triage-webhook, incident-responder) on a throwaway fixture stack - no keys, own DB
+	bash scripts/e2e-examples.sh
 
 test-e2e-llm: ## Alias for test-e2e (real-LLM e2e suite under §0 spend caps)
 	$(MAKE) test-e2e

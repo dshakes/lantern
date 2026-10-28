@@ -1,0 +1,1 @@
+{"action":"opened","number":42,"pull_request":{"number":42,"title":"Fix retry storm","html_url":"https://github.com/acme/api/pull/42","user":{"login":"octocat"}},"repository":{"name":"api","full_name":"acme/api","owner":{"login":"acme"}}}

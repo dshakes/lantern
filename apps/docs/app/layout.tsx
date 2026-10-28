@@ -83,8 +83,8 @@ const sections: NavSection[] = [
     { href: "/knowledge", label: "Knowledge & handoff", icon: Plug, subs: [
       { href: "/knowledge#documents", label: "Documents" }, { href: "/knowledge#retrieval", label: "Retrieval" }, { href: "/knowledge#handoff", label: "Human handoff" },
     ]},
-    { href: "/examples", label: "Examples", icon: Plug, subs: [
-      { href: "/examples#support-desk", label: "Support desk" },
+    { href: "/examples", label: "Examples", icon: Webhook, subs: [
+      { href: "/examples#support-desk", label: "Support desk" }, { href: "/examples#pr-triage-webhook", label: "PR triage" }, { href: "/examples#incident-responder", label: "Incident responder" },
     ]},
     { href: "/triggers", label: "Webhook triggers", icon: Webhook, subs: [
       { href: "/triggers#create", label: "Create a trigger" }, { href: "/triggers#providers", label: "Provider setup" }, { href: "/triggers#responses", label: "Responses" }, { href: "/triggers#idempotency", label: "Duplicate deliveries" }, { href: "/triggers#security", label: "Security notes" },

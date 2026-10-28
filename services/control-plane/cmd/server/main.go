@@ -696,6 +696,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Request))
 	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Grant))
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/deny", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Deny))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Answer))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Release))
 
