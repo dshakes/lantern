@@ -225,7 +225,6 @@ export default function EnvVarsPage() {
           <tr><td><code>LANTERN_MEMORY_INGEST_INTERVAL</code></td><td><code>15m (min 1m)</code></td><td>Ingest period.</td></tr>
           <tr><td><code>LANTERN_MEMORY_DISTILL</code></td><td>off</td><td><code>1</code>/<code>true</code>/<code>on</code> enables LLM memory distillation.</td></tr>
           <tr><td><code>LANTERN_MEMORY_DISTILL_INTERVAL</code></td><td><code>6h (min 1m)</code></td><td>Distillation period.</td></tr>
-          <tr><td><code>LANTERN_IMMIGRATION_SENTINEL</code></td><td>off</td><td><code>1</code>/<code>true</code>/<code>on</code> enables the document-deadline sentinel; off is fully inert.</td></tr>
         </tbody>
       </table>
       <h2 id="scheduler">Cron scheduler</h2>
