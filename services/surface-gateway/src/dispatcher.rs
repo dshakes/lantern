@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::adapter::SurfaceAdapter;
-use crate::control_plane::ControlPlaneClient;
+use crate::control_plane::{ControlPlaneClient, RunOutcome};
 use crate::error::AppError;
 use crate::session::SessionStore;
 use crate::tenant_resolver::TenantResolver;
@@ -124,6 +124,22 @@ impl Dispatcher {
             .await?;
 
         tracing::info!(run_id = %run_id, "created new run");
+
+        // Close the loop: nothing else carries a run's output back to the chat.
+        // Text-chat surfaces only (a Twilio voice event must not get an SMS).
+        if matches!(event.surface, SurfaceId::Telegram | SurfaceId::WhatsApp)
+            && let Some(adapter) = self.adapters.get(&event.surface).cloned()
+        {
+            tokio::spawn(deliver_reply(
+                self.control_plane.clone(),
+                self.sessions.clone(),
+                adapter,
+                event.surface,
+                event.user_id.clone(),
+                event.tenant_id.clone(),
+                run_id,
+            ));
+        }
         Ok(())
     }
 
@@ -221,5 +237,53 @@ impl Dispatcher {
         self.control_plane
             .create_run(tenant_id, agent_name, session_id, input)
             .await
+    }
+}
+
+const REPLY_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+const REPLY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Poll the run until it is terminal, send its output to the user, and clear the
+/// session's active run so the next message starts a fresh run instead of
+/// signalling a finished one. Failures are logged, never panics.
+async fn deliver_reply(
+    control_plane: ControlPlaneClient,
+    sessions: SessionStore,
+    adapter: Arc<dyn SurfaceAdapter>,
+    surface: SurfaceId,
+    external_user_id: String,
+    tenant_id: String,
+    run_id: String,
+) {
+    let started = std::time::Instant::now();
+    let text = loop {
+        match control_plane.get_run(&tenant_id, &run_id).await {
+            Ok(RunOutcome::Succeeded(t)) if !t.is_empty() => break t,
+            Ok(RunOutcome::Succeeded(_)) => {
+                break "(the agent finished without a reply)".to_string();
+            }
+            Ok(RunOutcome::Failed) => break "Sorry, I couldn't complete that.".to_string(),
+            Ok(RunOutcome::Pending) => {}
+            Err(e) => tracing::warn!(run_id = %run_id, error = %e, "reply poll failed"),
+        }
+        if started.elapsed() > REPLY_DEADLINE {
+            tracing::warn!(run_id = %run_id, "gave up waiting for run; no reply sent");
+            let _ = sessions.clear_active_run(surface, &external_user_id).await;
+            return;
+        }
+        tokio::time::sleep(REPLY_POLL).await;
+    };
+
+    let msg = SurfaceMessage {
+        text,
+        blocks: vec![],
+        attachments: vec![],
+    };
+    let channel = format!("{surface}:{external_user_id}");
+    if let Err(e) = adapter.send_message(&channel, &msg).await {
+        tracing::error!(run_id = %run_id, error = %e, "failed to send reply");
+    }
+    if let Err(e) = sessions.clear_active_run(surface, &external_user_id).await {
+        tracing::error!(run_id = %run_id, error = %e, "failed to clear active run");
     }
 }

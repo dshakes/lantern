@@ -1420,7 +1420,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		var outputJSON []byte
 		// rls-exempt: inline executor — runs read keyed by id (authorized run).
 		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
+			`SELECT COALESCE(output, '{}'::jsonb)::text FROM runs WHERE id = $1`, runID,
 		).Scan(&outputJSON)
 		var outMap map[string]any
 		if len(outputJSON) > 0 {
@@ -1447,7 +1447,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// rls-exempt: inline executor — agents read self-scoped by explicit
 	// `tenant_id = $2`; runs in a detached goroutine ctx.
 	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON, &agentModel)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
@@ -2055,11 +2055,11 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 	var wfRaw []byte
 	var agentModel string
 	// rls-exempt: inline executor — agents read self-scoped by explicit
-	// `tenant_id = $2`; detached goroutine ctx. convert_to, not ::text::bytea:
-	// bytea input parses backslashes, so a workflow with an escaped quote (\")
+	// `tenant_id = $2`; detached goroutine ctx. read as ::text: a bytea cast
+	// parses backslashes, so a workflow with an escaped quote (\")
 	// in a prompt failed to load and the run silently fell to the plain-LLM path.
 	err := h.srv.Pool.QueryRow(ctx,
-		`SELECT convert_to(COALESCE(workflow, '{}'::jsonb)::text, 'UTF8'), COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT COALESCE(workflow, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&wfRaw, &agentModel)
 	if err != nil || len(wfRaw) == 0 {
@@ -2228,7 +2228,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			var outputJSON []byte
 			// rls-exempt: inline executor — read the child run's output by id.
 			_ = h.srv.Pool.QueryRow(childCtx,
-				`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, childRunID,
+				`SELECT COALESCE(output, '{}'::jsonb)::text FROM runs WHERE id = $1`, childRunID,
 			).Scan(&outputJSON)
 			var out map[string]any
 			if len(outputJSON) > 0 {
@@ -2329,7 +2329,7 @@ func (h *RESTHandler) redriveParkedRun(runID, tenantID string) {
 		// rls-exempt: run-redrive path — keyed by run_id + explicit tenant_id filter.
 		_ = h.srv.Pool.QueryRow(ctx, `
 			SELECT COALESCE(a.name, ''),
-			       COALESCE(r.input, '{}'::jsonb)::text::bytea
+			       COALESCE(r.input, '{}'::jsonb)::text
 			FROM runs r
 			LEFT JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 			WHERE r.id = $1 AND r.tenant_id = $2
@@ -2407,8 +2407,8 @@ func (h *RESTHandler) journalCompletedStep(stepCtx context.Context, stepRunID, s
 func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, connectorID, action string, params map[string]any) (any, error) {
 	var configRaw, oauthRaw []byte
 	err := pool.QueryRow(ctx,
-		`SELECT COALESCE(config, '{}'::jsonb)::text::bytea,
-		        COALESCE(oauth_token_encrypted, '{}'::jsonb)::text::bytea
+		`SELECT COALESCE(config, '{}'::jsonb)::text,
+		        COALESCE(oauth_token_encrypted, '{}'::jsonb)::text
 		 FROM connector_installs
 		 WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'`,
 		tenantID, connectorID,
@@ -2450,7 +2450,9 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 	case "pagerduty":
 		return executePagerDuty(cfg, action, params)
 	default:
-		return nil, fmt.Errorf("workflow-connector dispatch not yet wired for %s", connectorID)
+		// Every other connector (google-calendar, sentry, pagerduty, ...) goes
+		// through the shared executor, which also refreshes OAuth tokens.
+		return executeConnectorAction(ctx, pool, tenantID, connectorID, action, params)
 	}
 }
 

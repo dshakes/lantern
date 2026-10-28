@@ -40,6 +40,7 @@ make test-e2e    # terminal 2`}</code></pre>
         <tbody>
           <tr><td><code>e2e/runtime</code></td><td><code>/v1/runtime/*</code> control path: auth gates, schedule (201 + vm_id), tenant-scoped list, detail and audit, logs SSE, terminate, quota 402.</td></tr>
           <tr><td><code>e2e/quickstart</code></td><td>The <code>examples/quickstart/</code> agents: create from <code>spec.json</code>, post <code>run.json</code>, poll to <code>succeeded</code>, assert an output shape; incident-summarizer also issues and verifies a receipt. Real LLM calls.</td></tr>
+          
         </tbody>
       </table>
 
@@ -169,6 +170,38 @@ curl -s 127.0.0.1:9192/__requests                         # what the control-pla
         <li>A provider key must still exist (database or <code>OPENAI_API_KEY</code>/<code>ANTHROPIC_API_KEY</code>); any dummy value works.</li>
         <li>Only <code>/v1/chat/completions</code> and <code>/v1/messages</code> are served. Other provider endpoints (embeddings, speech, transcription) return 404.</li>
         <li>No model quality: it echoes and follows rules. It cannot validate prompts.</li>
+      </ul>
+
+      <h2 id="examples">Example suites on a fixture stack</h2>
+      <p>
+        <strong>What.</strong> <code>make test-e2e-examples</code> runs <code>scripts/e2e-examples.sh</code>: it
+        creates a throwaway database, starts <code>llm-replay</code>,{" "}
+        <code>connector-replay</code>, the control-plane (pointed at both) and the surface-gateway, runs{" "}
+        <code>e2e/examples</code>, and tears everything down. It never touches <code>:8080</code> or your dev database.
+        Needs Postgres and Redis from <code>make dev-infra</code> (a random Redis DB 1-14 is used).
+      </p>
+      <p><strong>What it asserts.</strong></p>
+      <table>
+        <thead>
+          <tr><th>Test</th><th>Flow</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>TestDigest_*</code></td><td>Schedule with <code>America/New_York</code> returns a 09:00 New York <code>nextFireAt</code>; made due, the scheduler creates the run; GitHub is read and exactly one multi-line <code>chat.postMessage</code> reaches the Slack fixture with the digest intact; the schedule advances to the next 09:00. A bad timezone is a 400.</td></tr>
+          <tr><td><code>TestTelegram_*</code></td><td>Missing or wrong <code>X-Telegram-Bot-Api-Secret-Token</code> is a 401 and sends nothing; a signed update runs the workflow (Google Calendar fixture read) and a <code>sendMessage</code> with the answer reaches the Telegram fixture for the right chat; a second message gets its own reply. WhatsApp <code>X-Hub-Signature-256</code> negatives live in <code>services/surface-gateway/tests</code>.</td></tr>
+          <tr><td><code>TestVoice_*</code></td><td>Unsigned and wrong-token webhooks and status callbacks are 403 and change nothing; a signed inbound call gets TwiML and reserves $0.05 in <code>agent_usage_daily</code>; the status callback (61 s) reconciles it to $0.06, replays are no-ops, a never-connected call refunds to zero; over a hard-fail budget the call gets <code>&lt;Reject/&gt;</code> with no row and no spend.</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Try it.</strong></p>
+      <pre><code>{`make dev-infra
+make test-e2e-examples                 # ~70 s, mostly the scheduler's 60 s poll
+
+E2E_EXAMPLES_SERVE=1 scripts/e2e-examples.sh   # leave the stack up, no tests (debugging)
+scripts/e2e-examples.sh -run TestVoice          # extra args go to go test`}</code></pre>
+      <p><strong>Limits.</strong></p>
+      <ul>
+        <li>Connector and LLM replies are recorded fixtures; this proves the wiring and the security gates, not model quality or vendor API drift. Real-account runs are in each example&apos;s README.</li>
+        <li>The gateway creates runs over gRPC, which the control-plane&apos;s recovery sweep drives; the script sets <code>LANTERN_RECOVERY_INTERVAL=2s</code> so a reply takes seconds, not up to 30.</li>
+        <li>Needs <code>go</code>, <code>cargo</code>, <code>psql</code>/<code>createdb</code> and <code>python3</code> on the PATH. Not wired into CI yet.</li>
       </ul>
 
       <h2 id="limits">Not covered</h2>

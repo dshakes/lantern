@@ -12,7 +12,7 @@ one command instead of a curl checklist.
 | `runtime/` | W12 headless-runtime control path (`/v1/runtime/*`): auth gates, schedule (201 + vm_id), tenant-scoped list, detail + per-VM audit, logs SSE, terminate state transition, quota hard-fail 402, audit trail. Automates `examples/headless-agents/MANUAL-TEST.md`. |
 | `quickstart/` | The `examples/quickstart/` runnable agents stay real: each test creates the agent from its committed `spec.json`, posts its `run.json`, polls to `succeeded`, and asserts an output-shape invariant (pr-triage → JSON with a `risk` key; incident-summarizer → markdown sections **plus** issue+verify a receipt through the public no-auth verifier; daily-standup-digest → digest sections). Needs an LLM provider configured for the dev tenant. |
 
-| `examples/` | Webhook examples (`pr-triage-webhook`, `incident-responder`): signed GitHub/Sentry/PagerDuty delivery -> run -> connector calls recorded by `cmd/connector-replay`; replay dedup, 401, 402, approval grant/deny. Needs the fixture stack: run `make test-e2e-examples` (own DB + ports, never `:8080`). |
+| `examples/` | Webhook examples (`pr-triage-webhook`, `incident-responder`): signed GitHub/Sentry/PagerDuty delivery -> run -> connector calls recorded by `cmd/connector-replay`; replay dedup, 401, 402, approval grant/deny. Needs the fixture stack: run `make test-e2e-examples` (own DB + ports, never `:8080`). Also `daily-digest` (schedule fires -> Slack post), `telegram-assistant` (signed update -> `sendMessage` reply via the real surface-gateway) and `voice-receptionist` (signed Twilio webhooks -> TwiML / `<Reject>` / cost reconciled in `agent_usage_daily`); these need `DATABASE_URL` (set by the script). |
 
 ## Running
 

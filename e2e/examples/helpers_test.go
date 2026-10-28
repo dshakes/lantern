@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -127,8 +128,20 @@ type stack struct {
 	tok       string // cached login token (login is rate limited)
 }
 
+var (
+	stackMu     sync.Mutex
+	cachedStack *stack
+)
+
+// connect logs in once per test binary: the API rate-limits logins (429) and
+// seven tests would otherwise exceed it.
 func connect(t *testing.T) *stack {
 	t.Helper()
+	stackMu.Lock()
+	defer stackMu.Unlock()
+	if cachedStack != nil {
+		return cachedStack
+	}
 	k := e2ekit.Connect(t)
 	s := &stack{
 		kit:       k,
@@ -138,6 +151,7 @@ func connect(t *testing.T) *stack {
 	// Both must be up: a run against anything else would hit real SaaS / a real model.
 	fetchReplay(t, s.connector)
 	fetchReplay(t, s.llm)
+	cachedStack = s
 	return s
 }
 

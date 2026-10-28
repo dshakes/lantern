@@ -18,6 +18,18 @@ This project is pre-1.0; there are no stable release branches yet.
   private throwaway stack (own Postgres DB, Redis index, log mailer, fixture LLM). Run `npm run test:e2e` from
   `apps/web` (`apps/web/e2e/README.md`). Docs: `/testing`.
 - Docs: `lantern demo` and `lantern hooks` in the CLI reference.
+- **Examples: daily digest, Telegram assistant, voice receptionist** — three
+  runnable agents under `examples/` (spec, workflow, schedule/number, README with
+  a fixture path and a real-account path) and `make test-e2e-examples`, which
+  boots a private fixture stack and asserts: schedule fires -> Slack post;
+  signed Telegram update -> reply; signed Twilio webhooks -> TwiML, `<Reject>`
+  over budget, cost reconciled in `agent_usage_daily`. Signature negatives for
+  Telegram and WhatsApp in `services/surface-gateway/tests`. Docs: `/testing`,
+  `/surfaces`, `/scheduling`.
+- **Surface-gateway replies** — a Telegram or WhatsApp message now gets the
+  run's output back in the chat (the gateway polls the run and sends it, then
+  frees the session). Before, the run was created and the answer was dropped.
+  `TELEGRAM_API_BASE_URL` points Bot API calls at a fixture (refused in prod).
 - **Examples: PR triage + incident responder** (`examples/pr-triage-webhook`, `examples/incident-responder`) — signed
   GitHub/Sentry/PagerDuty webhooks drive workflow graphs (GitHub comment + Slack thread; Sentry/PagerDuty lookup,
   Slack, approval node, PagerDuty note). `make test-e2e-examples` runs them on a throwaway fixture stack
@@ -86,6 +98,21 @@ This project is pre-1.0; there are no stable release branches yet.
 - A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
 - Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.
 - After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
+- **Workflows silently skipped** — agent workflow JSON, run input/output and
+  connector configs were read with `jsonb::text::bytea`, which fails on any
+  backslash (`\n`, `\"`); the error was swallowed, so such workflows ran as a
+  plain LLM call and crash-recovery could not re-drive runs whose input held a
+  quote or newline. Now read as `::text`.
+- **Voice cost reconciliation** — `AdjustUsageCost` let Postgres infer the delta
+  as INTEGER, truncating every sub-dollar adjustment to 0, so a call's
+  duration-based cost (and refund) never reached `agent_usage_daily`.
+- **Workflow connector nodes** — only gmail/slack/github/notion/linear worked;
+  google-calendar, sentry, pagerduty and the rest failed with "not yet wired".
+  They now use the shared executor (including OAuth refresh).
+- **Templated free text in `inputMapping`** — a multi-line or quoted LLM reply
+  spliced into a JSON `inputMapping` made the params invalid (connector got no
+  `text`); values are now JSON-escaped when the raw render does not parse.
+- **Voice call record failures** are logged instead of swallowed.
 - **Data export redacts credentials structurally** (#330) — any column with a
   secret/token/key/password/hash/enc segment is left out, including webhook
   trigger secrets (`agent_triggers.secret_enc`) and `data_planes.reg_token_hash`,

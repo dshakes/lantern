@@ -362,7 +362,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		// phone_number across all tenants), so it must run on the privileged pool.
 		err := h.srv.Pool.QueryRow(ctx, `
 			SELECT tenant_id::text, id::text, agent_name,
-			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			       COALESCE(provider_config, '{}'::jsonb)::text
 			FROM voice_numbers
 			WHERE phone_number = $1 AND status = 'active'
 			LIMIT 1
@@ -378,7 +378,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		// yet) on the privileged pool.
 		err := h.srv.Pool.QueryRow(ctx, `
 			SELECT tenant_id::text, id::text, agent_name,
-			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			       COALESCE(provider_config, '{}'::jsonb)::text
 			FROM voice_numbers
 			WHERE provider = $1 AND status = 'active'
 			ORDER BY created_at
@@ -441,7 +441,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// the provider's status callback hits when the call ends. The tenant was
 	// just resolved from the number lookup; inject it so the INSERT is RLS-scoped.
 	insertCtx := middleware.InjectTenantID(ctx, tenantID)
-	_ = h.srv.WithTenant(insertCtx, func(tx pgx.Tx) error {
+	if err := h.srv.WithTenant(insertCtx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(insertCtx, `
 			INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
 			                          direction, from_number, to_number,
@@ -449,7 +449,11 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 			VALUES ($1, $2, $3, 'inbound', $4, $5, $6, 'ringing')
 		`, tenantID, numberID, agentName, meta.FromNumber, meta.ToNumber, meta.ProviderCallID)
 		return e
-	})
+	}); err != nil {
+		// Without the row the status callback cannot find the call, so the
+		// connect-time reservation below would never be reconciled.
+		h.logger().Error("record voice call failed", zap.String("call", meta.ProviderCallID), zap.Error(err))
+	}
 
 	// Accrue the estimated cost into the daily rollup immediately so the
 	// budget reflects in-flight voice spend (reconciled to actual on call end).
@@ -511,7 +515,7 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	var agentName string
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text
 			FROM voice_numbers
 			WHERE tenant_id = $1 AND provider = 'livekit' AND status = 'active'
 			ORDER BY created_at
@@ -621,7 +625,7 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT vc.id::text, vc.tenant_id::text, vc.agent_name, vc.status,
 		       to_char(vc.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
-		       COALESCE(vn.provider_config, '{}'::jsonb)::text::bytea
+		       COALESCE(vn.provider_config, '{}'::jsonb)::text
 		FROM voice_calls vc
 		JOIN voice_numbers vn ON vn.id = vc.voice_number_id
 		WHERE vc.provider_call_id = $1 AND vn.provider = $2

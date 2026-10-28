@@ -156,7 +156,7 @@ func findOrphanedRuns(ctx context.Context, pool *pgxpool.Pool) ([]orphanedRun, e
 		SELECT r.id::text,
 		       r.tenant_id::text,
 		       COALESCE(a.name, '') AS agent_name,
-		       COALESCE(r.input, '{}'::jsonb)::text::bytea AS input_json
+		       COALESCE(r.input, '{}'::jsonb)::text AS input_json
 		FROM   runs r
 		LEFT   JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 		LEFT   JOIN run_locks rl ON rl.run_id = r.id
