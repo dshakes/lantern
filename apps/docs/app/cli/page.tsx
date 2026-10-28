@@ -12,9 +12,9 @@ export default function CliPage() {
       </p>
 
       <Concept>
-        Starting out? Two commands cover it: <code>lantern dev</code> boots
-        the stack and <code>lantern onboard</code> walks you through your first
-        agent.
+        Just looking? <code>lantern demo</code> needs Docker and no API key. To
+        build your own, <code>lantern dev</code> boots the stack and{" "}
+        <code>lantern onboard</code> walks you through your first agent.
       </Concept>
 
       <h3>Install</h3>
@@ -23,6 +23,24 @@ export default function CliPage() {
 cd packages/cli && go install ./cmd/lantern
 
 lantern --version`}</code>
+      </pre>
+
+      <h2 id="demo">demo</h2>
+      <p>
+        Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a
+        private workspace with sample agents that is deleted after 30 minutes; answers are recorded
+        replays from a local fixture server. Run it from inside a Lantern checkout. It builds and starts
+        Postgres, Redis, the control plane, the dashboard and the replay server as the compose project{" "}
+        <code>lantern-demo</code>, waits for <code>/healthz</code> and the demo page (up to 5 minutes), then
+        opens <code>http://localhost:3001/kiosk</code>. Flags: <code>--no-open</code> (don&apos;t open the
+        browser), <code>--down</code> (stop and delete all demo data). Host ports default to 8080 and 3001;
+        override with <code>KIOSK_API_PORT</code> and <code>KIOSK_WEB_PORT</code>. See{" "}
+        <Link href="/demo">Demo mode</Link>.
+      </p>
+      <pre>
+        <code>{`lantern demo            # start (first run builds images)
+lantern demo --no-open  # start without opening the browser
+lantern demo --down     # stop and delete all demo data`}</code>
       </pre>
 
       <h2 id="onboard">onboard</h2>
@@ -201,6 +219,25 @@ $ lantern --api-url http://localhost:8080 deploy --json
   "tenantId": "<tenant-id>",
   "url": "http://localhost:8080/v1/agents/demo-bot/a2a/invoke"
 }`}</code>
+      </pre>
+
+      <h2 id="hooks">hooks</h2>
+      <p>
+        Manage inbound webhook triggers: a public <code>POST /v1/hooks/&#123;id&#125;</code> URL bound to an
+        agent, so GitHub, Sentry, PagerDuty or any HMAC-signing sender starts a run. Aliased as{" "}
+        <code>hook</code> and <code>triggers</code>. See <Link href="/triggers">Webhook triggers</Link>.
+        <code> create</code> prints the signing secret once; <code>--secret-stdin</code> reads one from
+        stdin instead (Sentry and PagerDuty generate their own). <code>--template</code> maps the payload
+        into run input. <code>update</code> needs at least one of its flags; <code>--enable</code> /{" "}
+        <code>--disable</code> and <code>--template</code> / <code>--clear-template</code> are mutually
+        exclusive, and a disabled trigger answers deliveries with 404.
+      </p>
+      <pre>
+        <code>{`lantern hooks create <agent> [--provider generic|github|sentry|pagerduty] [--template '{"pr":"{{payload.number}}"}'] [--secret-stdin]
+lantern hooks list <agent>
+lantern hooks get <trigger-id>
+lantern hooks update <trigger-id> [--enable | --disable] [--template JSON | --clear-template] [--secret-stdin]
+lantern hooks delete <trigger-id>`}</code>
       </pre>
 
       <h2 id="infra">infra</h2>

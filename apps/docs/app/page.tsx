@@ -8,10 +8,16 @@ import { ArchitectureExplorer } from "./_components/interactive/ArchitectureExpl
 
 const paths = [
   {
+    href: "/demo",
+    color: "var(--lx-flame)",
+    title: "Try the demo",
+    body: "make demo: Docker only, no API key. A private sample workspace at localhost:3001/kiosk with recorded answers.",
+  },
+  {
     href: "/quickstart",
     color: "var(--lx-ink-2)",
-    title: "Run it locally",
-    body: "make dev, then lantern onboard: a running agent and the dashboard on localhost:3001.",
+    title: "Run your own agent",
+    body: "With a provider key: make dev, then lantern onboard: a running agent and the dashboard on localhost:3001.",
   },
   {
     href: "/runtime/quickstart",
@@ -44,6 +50,7 @@ const features = [
 
 // Shipped after v0.2.0. Keep in step with CHANGELOG [Unreleased].
 const recent = [
+  { icon: Laptop, title: "Demo mode", href: "/demo", desc: "make demo or lantern demo: Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes." },
   { icon: Plug, title: "Knowledge base & handoff", href: "/knowledge", desc: "Upload docs for cited answers, and hand a chat to a human with a Slack ping." },
   { icon: Plug, title: "Examples", href: "/examples", desc: "Runnable end-to-end examples, starting with a support desk." },
   { icon: Webhook, title: "Webhook triggers", href: "/triggers", desc: "A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated." },
@@ -59,7 +66,7 @@ const recent = [
 const reference = [
   { icon: Code, title: "REST API", href: "/api", desc: "Every endpoint on the control plane." },
   { icon: FileCode, title: "SDKs", href: "/sdk", desc: "TypeScript, Python and Go." },
-  { icon: Terminal, title: "CLI", href: "/cli", desc: "onboard, doctor, run, vm and more." },
+  { icon: Terminal, title: "CLI", href: "/cli", desc: "onboard, doctor, demo, run, vm, hooks and more." },
 ];
 
 export default function DocsHome() {

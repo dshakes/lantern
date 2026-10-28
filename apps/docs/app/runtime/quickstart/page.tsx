@@ -134,6 +134,7 @@ spec:
         <li><Link href="/runtime/isolation">Isolation classes</Link> — pick the right boundary for the workload</li>
         <li><Link href="/runtime/durable-execution">Durable execution</Link> — what happens when a node dies mid-run</li>
         <li><Link href="/runtime/identity">Identity &amp; secrets</Link> — vend a real secret into the workload (demo 02)</li>
+        <li><code>examples/data-analyst</code> — upload a CSV, run pandas in the sandbox, egress denied by default (docker tier in CI, Firecracker nightly)</li>
         <li><Link href="/runtime/observability">Observability</Link> — wire an OTel collector and read the trace</li>
       </ul>
     </>

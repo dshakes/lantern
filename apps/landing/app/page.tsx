@@ -8,7 +8,7 @@ import { Actions, BASE, BLOB, DOCS, Footer, Nav, wrap } from "./_components/site
 // Landing page. Every claim maps to code on master, the README, or a recorded run;
 // opt-in features say so where they are claimed.
 
-const CLONE = "git clone https://github.com/dshakes/lantern.git && cd lantern && make dev";
+const CLONE = "git clone https://github.com/dshakes/lantern.git && cd lantern && make demo";
 
 export default function LandingPage() {
   return (
@@ -276,7 +276,7 @@ type Mark = "yes" | "no" | "partial" | "na";
 const SUMMARY: { row: string; lantern: [Mark, string]; managed: [Mark, string] }[] = [
   { row: "Runs in your VPC or on-prem", lantern: ["yes", "Apache-2.0"], managed: ["no", "ACE is Google Cloud only; E2B partly"] },
   { row: "Crash-resume for agent runs", lantern: ["yes", "Journaled steps"], managed: ["na", "Out of scope for a sandbox"] },
-  { row: "Spend caps before the model call", lantern: ["yes", "Daily cost, runs and tokens"], managed: ["na", "Out of scope; Modal partly"] },
+  { row: "Spend caps before the model call", lantern: ["partial", "Daily caps; per-run cap on workflows only"], managed: ["na", "Out of scope; Modal partly"] },
   { row: "Model routing with failover", lantern: ["yes", "Across providers"], managed: ["na", "Out of scope for a sandbox"] },
   {
     row: "Credentials kept outside the sandbox",
@@ -356,6 +356,7 @@ function Compare() {
 }
 
 const SAMPLE = `const lantern = new LanternClient({
+  baseUrl: "http://localhost:8080",
   apiKey: process.env.LANTERN_API_KEY,
 });
 
@@ -446,7 +447,7 @@ function Start() {
           Clone it. Run it on your own machines.
         </h2>
         <div className="mt-10 w-full max-w-3xl text-left">
-          <CopyCommand command={CLONE} label="Clone and start Lantern locally" />
+          <CopyCommand command={CLONE} label="Clone and start the Lantern demo (Docker, no API key)" />
         </div>
         <div className="mt-6">
           <Actions center />

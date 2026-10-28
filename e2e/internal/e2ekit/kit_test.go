@@ -4,6 +4,7 @@ package e2ekit
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -392,6 +393,47 @@ func TestCreateAgent_OverridesModel(t *testing.T) {
 
 	if capturedModel != modelAnthropic {
 		t.Fatalf("spec model sent = %q, want %q (kit must override)", capturedModel, modelAnthropic)
+	}
+}
+
+// ---- DoAuthRaw: raw bytes, not JSON-encoded ----
+
+func TestDoAuthRaw_SendsBytesVerbatim(t *testing.T) {
+	// A byte sequence that is NOT valid UTF-8/JSON-string-safe as-is, to prove
+	// it reaches the server unmodified rather than being JSON string-quoted
+	// and escaped (which is what k.doAuth(method, path, string(body), nil)
+	// would do).
+	payload := []byte("a,b,c\n1,\"x\\y\",3\n")
+
+	var gotBody []byte
+	var gotContentType string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		fwrite(w, http.StatusOK, map[string]any{"token": "tok", "user": map[string]any{"tenantId": "t1"}})
+	})
+	mux.HandleFunc("/v1/settings/llm-providers", func(w http.ResponseWriter, r *http.Request) {
+		fwrite(w, http.StatusOK, []map[string]any{{"provider": "anthropic"}})
+	})
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = b
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	k := kitFor(t, srv)
+
+	st, _ := k.DoAuthRaw(t, http.MethodPut, "/upload", payload)
+	if st != http.StatusOK {
+		t.Fatalf("DoAuthRaw: HTTP %d", st)
+	}
+	if string(gotBody) != string(payload) {
+		t.Fatalf("server received %q, want %q (raw bytes must not be JSON-encoded)", gotBody, payload)
+	}
+	if gotContentType == "application/json" {
+		t.Error("DoAuthRaw must not set Content-Type: application/json for a raw byte body")
 	}
 }
 

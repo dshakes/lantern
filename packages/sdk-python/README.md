@@ -11,10 +11,11 @@ HTTP surface.
 
 ## Install
 
-The package is pre-release. Install from the repo:
+Registry packages are not published yet, and the `lantern-sdk` name on PyPI belongs to an
+unrelated project: do not `pip install lantern-sdk`. Install from the repo:
 
 ```bash
-pip install -e "path/to/lantern/packages/sdk-python"
+pip install "path/to/lantern/packages/sdk-python"          # add [deepagents] for the extra below
 # or in CI:
 pip install "git+https://github.com/dshakes/lantern.git#subdirectory=packages/sdk-python"
 ```
@@ -272,7 +273,7 @@ lantern-runner --agent hello-world --input '{"name": "World"}'
 
 ## deepagents integration
 
-`pip install "lantern-sdk[deepagents]"` adds a
+`pip install "path/to/lantern/packages/sdk-python[deepagents]"` adds a
 [deepagents](https://github.com/langchain-ai/deepagents) sandbox backend that runs
 the agent's shell and filesystem inside a Lantern microVM instead of on the host.
 Egress allowlist, secret vending, and per-tenant quota are enforced by the runtime,

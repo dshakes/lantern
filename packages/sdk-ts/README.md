@@ -2,8 +2,11 @@
 
 The official TypeScript SDK for [Lantern](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
+Registry packages are not published yet: `npm install @lantern/sdk` fails. Install from a checkout of the repo:
+
 ```bash
-npm install @lantern/sdk
+( cd packages/sdk-ts && npm install && npm run build )
+npm install /path/to/lantern/packages/sdk-ts      # in your project
 ```
 
 ## Quick start
@@ -53,7 +56,7 @@ const run = await lantern.runs.create({
 | `lantern.experiments.create(...)` | Deterministic A/B splits. Auto-promote on >2% lift. |
 | `lantern.marketplace.*` | Publish / fork / star agents across tenants. |
 | `lantern.sessions.*` | Interactive multi-turn agent sessions (create, send message, SSE events). |
-| `lantern.connectors.*` | Install, execute, and test the 17 first-party connector actions. |
+| `lantern.connectors.*` | Install, execute, and test first-party connector actions. |
 | `lantern.mcp.*` | Browse the curated MCP server registry and attach servers to an agent. |
 | `lantern.receipts.*` | Issue and verify Ed25519-signed proof-of-execution receipts. |
 | `lantern.feedback.*` | Submit and aggregate per-run RLHF reactions (1-5 score). |
@@ -64,7 +67,6 @@ const run = await lantern.runs.create({
 - **`@lantern/sdk`** — HTTP client (this package)
 - **`@lantern/sdk/runtime`** — in-process agent runtime (run an agent locally, or inside a microVM)
 - **`@lantern/sdk/runner`** — CLI entrypoint used by the runtime manager to execute bundled agents
-- **`@lantern/sdk/connectors`** — typed wrappers for the 17 first-party API connectors (Gmail, Slack, Linear, Stripe, …)
 
 ## Building an agent
 

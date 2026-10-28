@@ -20,9 +20,23 @@ export default function DemoPage() {
       </Concept>
 
       <h2 id="try-it">Try it</h2>
-      <pre><code>{`lantern demo            # builds, starts, opens http://localhost:3001/kiosk
-lantern demo --down     # stop and delete all demo data
-make demo               # same stack without the CLI`}</code></pre>
+      <pre><code>{`# From a Lantern checkout. Needs Docker; make demo also needs openssl.
+make demo               # builds, starts; prints "demo: http://localhost:3001/kiosk"
+make demo-down          # stop and delete all demo data
+
+# Same stack through the CLI (go install ./cmd/lantern from packages/cli):
+lantern demo            # builds, waits until healthy, opens the browser (--no-open to skip)
+lantern demo --down     # stop and delete all demo data`}</code></pre>
+      <p>
+        The stack is a separate compose project named <code>lantern-demo</code> and starts only
+        Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router,
+        workflow engine or MinIO). The first run builds images, so it takes a while.
+        The control plane is published on <code>:8080</code> and the dashboard on <code>:3001</code>, the same
+        host ports as <code>make dev</code>: stop one before starting the other, or set{" "}
+        <code>KIOSK_API_PORT</code> and <code>KIOSK_WEB_PORT</code> (both <code>lantern demo</code> and{" "}
+        <code>make demo</code> honour them). If something fails to start, use{" "}
+        <code>docker compose -p lantern-demo logs</code>.
+      </p>
       <p>
         Press <strong>Start demo</strong>. The tour has five steps over real pages:
         the inbox, running an agent (watch the step waterfall), a budget that returns

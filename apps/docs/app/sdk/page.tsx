@@ -25,9 +25,21 @@ export default function SdkReferencePage() {
       <h2 id="typescript">TypeScript SDK</h2>
 
       <h3>Installation</h3>
+      <div className="callout callout-warning">
+        <strong>Registry packages are not published yet.</strong> <code>@lantern/sdk</code>{" "}
+        is not on npm, so <code>npm install @lantern/sdk</code> fails. Install from a checkout.
+      </div>
       <pre>
-        <code>{`npm install @lantern/sdk`}</code>
+        <code>{`# in your checkout of github.com/dshakes/lantern
+( cd packages/sdk-ts && npm install && npm run build )
+
+# in your project: a file path, not the registry
+npm install /path/to/lantern/packages/sdk-ts`}</code>
       </pre>
+      <p>
+        After that, <code>import &#123; LanternClient &#125; from &quot;@lantern/sdk&quot;</code> resolves to
+        the built <code>dist/</code>. Rebuild after pulling changes.
+      </p>
 
       <h3>Client setup</h3>
       <pre>
@@ -159,13 +171,18 @@ try {
         <strong>Status.</strong> The Python management client is usable today.
         The in-agent runtime context (<code>ctx.llm</code>, <code>ctx.tools</code>,{" "}
         <code>ctx.mem</code> and the rest) raises <code>NotImplementedError</code>;
-        write agent logic in TypeScript for now. Install from the repo; this
-        page does not claim a PyPI release.
+        write agent logic in TypeScript for now. Install from the repo: the{" "}
+        <code>lantern-sdk</code> name on PyPI belongs to an unrelated project, so{" "}
+        <code>pip install lantern-sdk</code> installs the wrong package.
       </div>
 
       <h3>Installation</h3>
       <pre>
-        <code>{`pip install ./packages/sdk-python`}</code>
+        <code>{`# from the root of your checkout
+pip install ./packages/sdk-python
+
+# optional: LangChain deepagents sandbox backend (lantern.integrations.deepagents_sandbox)
+pip install "./packages/sdk-python[deepagents]"`}</code>
       </pre>
 
       <h3>Client setup</h3>
