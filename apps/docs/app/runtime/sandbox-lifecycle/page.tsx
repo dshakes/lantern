@@ -46,9 +46,81 @@ export default function RuntimeSandboxLifecyclePage() {
       </p>
 
       <Concept>
-        Forks share the parent snapshot&apos;s memory copy-on-write, so N forks cost one snapshot plus whatever each
-        child writes. The per-call cap defaults to 100 and is set with <code>LANTERN_MAX_FORK_COUNT</code> (ceiling 1000).
+        Forks share the parent snapshot&apos;s memory copy-on-write, so N forks cost one snapshot&apos;s memory plus
+        whatever each child writes; each fork gets its own private copy of the captured disk. The per-call cap defaults
+        to 100 and is set with <code>LANTERN_MAX_FORK_COUNT</code> (ceiling 1000).
       </Concept>
+
+      <h2 id="snapshots">Snapshots</h2>
+      <p>
+        A snapshot captures the VM&apos;s guest memory, its vmstate <em>and its writable disk</em>. The disk is copied
+        while the VM is paused for the memory snapshot, so memory and disk describe the same instant (a restored guest&apos;s
+        page cache matches the disk underneath it). Every snapshot is stored as three artifacts:
+      </p>
+      <ul>
+        <li><code>snapshot</code> — Firecracker vmstate</li>
+        <li><code>mem</code> — guest memory (as large as the VM&apos;s RAM)</li>
+        <li><code>rootfs</code> — the captured disk</li>
+      </ul>
+      <p>
+        <strong>Restore and fork stage from the captured disk.</strong> Resume, idle wake and each fork copy the
+        snapshot&apos;s <code>rootfs</code> to a per-VM writable path (or into the jail), so files written before the
+        snapshot are still there and writes after it stay private to that VM. A legacy snapshot taken before disks were
+        captured has no <code>rootfs</code>; it restores onto the base image, which does not match its memory, so
+        re-snapshot long-lived VMs.
+      </p>
+
+      <h3 id="snapshot-storage">Where snapshots are stored</h3>
+      <p>
+        The runtime-manager&apos;s snapshot store keeps the canonical copy on local disk and optionally mirrors it to
+        S3/MinIO. All reads go through the local tier and fall back to S3 when the local copy is gone.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Env var (runtime-manager)</th><th>Default</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>SNAPSHOT_DIR</code></td><td><code>/var/lib/lantern/snapshots</code></td><td>Local tier root, laid out <code>&lt;agent_version_id&gt;/&lt;vm_id&gt;/&lt;snapshot_id&gt;/</code></td></tr>
+          <tr><td><code>S3_ENDPOINT</code> + <code>S3_BUCKET</code></td><td>unset (S3 tier off)</td><td>Enable the S3/MinIO mirror under <code>snapshots/&lt;agent_version_id&gt;/&lt;vm_id&gt;/&lt;snapshot_id&gt;/</code></td></tr>
+          <tr><td><code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code></td><td>unset</td><td>S3 credentials (same variables the control-plane uses)</td></tr>
+        </tbody>
+      </table>
+      <p>
+        An S3 upload failure is logged and does not fail the snapshot; the local copy is already safe. Retention is
+        applied after every write: the newest 3 snapshots per VM are kept and anything older than 7 days is deleted.
+      </p>
+
+      <h3 id="snapshot-cost">Cost</h3>
+      <p>
+        Each snapshot stores <code>mem</code> (up to the VM&apos;s RAM) plus a full copy of the disk, and every
+        restore or fork copies the disk again. Disk capture happens while the VM is paused, so it adds to pause time
+        (the copy reflinks on XFS/btrfs and byte-copies elsewhere). On the jailed path forks share the memory file via
+        a hard link, so only the disk is copied per fork. Indicative numbers from{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/benchmarks/runtime-latency.md">
+          docs/benchmarks/runtime-latency.md
+        </a>
+        , measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). They are not
+        bare-metal numbers:
+      </p>
+      <table>
+        <thead>
+          <tr><th>Step</th><th>Indicative</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Memory snapshot (128 MiB, 134 MB written; measured before disk capture)</td><td>634 ms</td></tr>
+          <tr><td>Restore (Spawn RPC)</td><td>138 ms</td></tr>
+          <tr><td>Fork spawn (hard-linked memory + per-VM rootfs copy)</td><td>131–160 ms</td></tr>
+          <tr><td>First exec after restore (p50 of 5 runs)</td><td>2,857 ms</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The snapshot row predates disk capture, so add the rootfs copy (reflinked on XFS/btrfs, a full copy
+        elsewhere) to snapshot time. The doc estimates the per-VM rootfs copy at ~5–50 ms for a 20–100 MiB image.
+        After a restore the runtime-manager holds the first exec until the restored harness has re-identified and
+        sent its first heartbeat (<code>LANTERN_HARNESS_READY_TIMEOUT_MS</code>, default 5 s), so a caller makes one
+        call instead of retrying. On Lima that first exec lands in 2.6–3.1 s, almost all of it slow CPU-bound guest
+        work under nested virtualization; bare-metal KVM has not been measured.
+      </p>
 
       <Recording
         name="lifecycle-kvm"

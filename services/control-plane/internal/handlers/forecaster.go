@@ -223,7 +223,7 @@ func (h *ForecastHandler) historical(ctx context.Context, tenantID, agentName st
 				COALESCE(AVG(cost_usd), 0) AS avg_cost
 			FROM runs r
 			JOIN agents a ON a.id = r.agent_id
-			WHERE r.tenant_id = $1 AND a.name = $2 AND r.status = 'completed'
+			WHERE r.tenant_id = $1 AND a.name = $2 AND r.status = 'succeeded'
 			  AND r.created_at > now() - INTERVAL '30 days'
 		`, tenantID, agentName).Scan(&s.runs, &s.avgTokensIn, &s.avgTokensOut, &s.avgCostUsd)
 	})

@@ -304,17 +304,39 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 
 // exportRedacted reports whether a column holds credential material that must
 // not leave the system, even to its owner: password/key hashes, anything
-// encrypted at rest, and the provider/connector config blobs that embed keys.
+// encrypted at rest, webhook/signing secrets, and the provider/connector config
+// blobs that embed keys. The rule is structural — any `_`-separated name
+// segment in exportSecretSegments redacts the column — so a new credential
+// column is excluded by default instead of leaking until someone adds it to a
+// list. TestExportRedacted_Catalog pins the classification of every
+// tenant-table column that trips the pattern.
 func exportRedacted(table, column string) bool {
 	switch {
-	case column == "password_hash", column == "key_hash", column == "token_hash", column == "provider_config":
-		return true
-	case strings.HasSuffix(column, "_encrypted"):
+	case column == "provider_config":
 		return true
 	case table == "connector_installs" && column == "config":
 		return true
+	case exportNotSecret[column]:
+		return false
+	}
+	for _, seg := range strings.Split(column, "_") {
+		if exportSecretSegments[seg] {
+			return true
+		}
 	}
 	return false
+}
+
+var exportSecretSegments = map[string]bool{
+	"secret": true, "secrets": true, "password": true, "passwd": true,
+	"hash": true, "enc": true, "encrypted": true, "ciphertext": true,
+	"token": true, "credential": true, "credentials": true, "key": true,
+}
+
+// exportNotSecret: columns whose name has a "key" segment but which are the
+// tenant's own non-credential data (dedup keys, the displayed key prefix).
+var exportNotSecret = map[string]bool{
+	"idempotency_key": true, "idem_key": true, "replay_key": true, "key_prefix": true,
 }
 
 // ExportTenant handles GET /v1/tenants/{id}/export: every row of every table

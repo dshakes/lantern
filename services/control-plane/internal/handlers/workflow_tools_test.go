@@ -71,21 +71,27 @@ type toolFixture struct {
 // a running run, and a RESTHandler (dispatcher nil = no runtime wired).
 func newToolFixture(t *testing.T, node map[string]any, dispatcher MicroVMDispatcher) *toolFixture {
 	t.Helper()
+	return newToolChainFixture(t, []map[string]any{node}, dispatcher)
+}
+
+// newToolChainFixture chains nodes as trigger → n1 → n2 → … → end.
+func newToolChainFixture(t *testing.T, chain []map[string]any, dispatcher MicroVMDispatcher) *toolFixture {
+	t.Helper()
 	pool := openTestPool(t)
 	ctx := context.Background()
 	agentName := fmt.Sprintf("wf-tool-%d", time.Now().UnixNano())
-	node["id"] = "n1"
-	wf, _ := json.Marshal(map[string]any{
-		"nodes": []any{
-			map[string]any{"id": "t", "type": "trigger", "data": map[string]any{}},
-			node,
-			map[string]any{"id": "z", "type": "end", "data": map[string]any{}},
-		},
-		"edges": []any{
-			map[string]any{"id": "e1", "source": "t", "target": "n1"},
-			map[string]any{"id": "e2", "source": "n1", "target": "z"},
-		},
-	})
+	nodes := []any{map[string]any{"id": "t", "type": "trigger", "data": map[string]any{}}}
+	var edges []any
+	prev := "t"
+	for i, n := range chain {
+		n["id"] = fmt.Sprintf("n%d", i+1)
+		nodes = append(nodes, n)
+		edges = append(edges, map[string]any{"id": "e" + prev, "source": prev, "target": n["id"]})
+		prev = n["id"].(string)
+	}
+	nodes = append(nodes, map[string]any{"id": "z", "type": "end", "data": map[string]any{}})
+	edges = append(edges, map[string]any{"id": "e" + prev, "source": prev, "target": "z"})
+	wf, _ := json.Marshal(map[string]any{"nodes": nodes, "edges": edges})
 	var agentID string
 	if err := pool.QueryRow(ctx, `INSERT INTO agents (tenant_id, name, description, workflow)
 		VALUES ($1, $2, 'tool node test', $3::jsonb) RETURNING id::text`,
@@ -349,5 +355,48 @@ func TestWorkflowTool_ResumeSkipsCompletedTool(t *testing.T) {
 	}
 	if n := len(rt.calls()); n != 0 {
 		t.Fatalf("completed tool node re-dispatched %d time(s) on resume", n)
+	}
+}
+
+// TestWorkflowTool_WebSearchPerRunCap: web_search spend accrues onto the run,
+// so once the run is over its per-run cap the next web_search is blocked before
+// any spend.
+func TestWorkflowTool_WebSearchPerRunCap(t *testing.T) {
+	orig := workflowBuiltinTools["web_search"]
+	t.Cleanup(func() { workflowBuiltinTools["web_search"] = orig })
+	var calls int
+	workflowBuiltinTools["web_search"] = func(ctx context.Context, _ *pgxpool.Pool, _ string, _ map[string]any) (any, error) {
+		calls++
+		addToolUsage(ctx, "anthropic", "claude-sonnet-4-6", 1_000_000, 0)
+		return "result", nil
+	}
+	ws := func() map[string]any {
+		return map[string]any{"type": "tool", "data": map[string]any{"tool": "web_search", "parameters": map[string]any{"query": "q"}}}
+	}
+	f := newToolChainFixture(t, []map[string]any{ws(), ws()}, nil)
+	if _, err := f.pool.Exec(context.Background(), `INSERT INTO agent_budgets (tenant_id, agent_name, max_cost_usd_per_run, hard_fail)
+		VALUES ($1, $2, 0.01, true)`, recoveryTestDevTenantID, f.agentName); err != nil {
+		t.Fatalf("insert budget: %v", err)
+	}
+	f.run(t)
+
+	st, msg := f.status(t)
+	if st != "failed" || !strings.Contains(msg, "budget limit exceeded") {
+		t.Fatalf("status=%q msg=%q, want failed with budget limit exceeded", st, msg)
+	}
+	if calls != 1 {
+		t.Fatalf("web_search calls = %d, want 1 (second blocked by per-run cap)", calls)
+	}
+	var stepID string
+	_ = f.pool.QueryRow(context.Background(), `SELECT COALESCE(error->>'stepId', '') FROM runs WHERE id = $1`, f.runID).Scan(&stepID)
+	if stepID != "n2" {
+		t.Errorf("failed at %q, want n2", stepID)
+	}
+	var cost float64
+	if err := f.pool.QueryRow(context.Background(), `SELECT COALESCE(cost_usd, 0)::float8 FROM runs WHERE id = $1`, f.runID).Scan(&cost); err != nil {
+		t.Fatalf("read run cost: %v", err)
+	}
+	if cost <= 0.01 {
+		t.Errorf("run cost_usd = %v, want the first web_search accrued over the $0.01 cap", cost)
 	}
 }
