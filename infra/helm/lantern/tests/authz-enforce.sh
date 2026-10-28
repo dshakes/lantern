@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Asserts the prod/staging overlays render LANTERN_AUTHZ_ENFORCE=1 on the
 # control-plane, and the base values leave it empty (default off).
-# Usage: infra/helm/lantern/tests/authz-enforce.sh   (needs helm; deps built)
+# Usage: infra/helm/lantern/tests/authz-enforce.sh   (needs helm)
 set -euo pipefail
 C="$(cd "$(dirname "$0")/.." && pwd)"
+helm dependency build "$C" >/dev/null  # CI checks out without charts/; render needs the subchart
 SETS=(--set backup.s3Bucket=lint --set externalDatabase.host=db.example
       --set externalS3.endpoint=https://s3.example --set externalS3.accessKeyId=k)
 val() { # $1=values file or "" ; prints the rendered LANTERN_AUTHZ_ENFORCE value
