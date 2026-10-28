@@ -80,6 +80,9 @@ const sections: NavSection[] = [
     { href: "/connectors", label: "Connectors", icon: Plug, subs: [
       { href: "/connectors#available", label: "Available connectors" }, { href: "/connectors#new-actions", label: "Newer actions" }, { href: "/connectors#recorded-test-mode", label: "Recorded test mode" }, { href: "/connectors#slack", label: "Setting up a connector" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
     ]},
+    { href: "/examples", label: "Examples", icon: Webhook, subs: [
+      { href: "/examples#pr-triage-webhook", label: "PR triage" }, { href: "/examples#incident-responder", label: "Incident responder" },
+    ]},
     { href: "/triggers", label: "Webhook triggers", icon: Webhook, subs: [
       { href: "/triggers#create", label: "Create a trigger" }, { href: "/triggers#providers", label: "Provider setup" }, { href: "/triggers#responses", label: "Responses" }, { href: "/triggers#idempotency", label: "Duplicate deliveries" }, { href: "/triggers#security", label: "Security notes" },
     ]},

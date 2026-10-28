@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {"id": "trigger", "type": "trigger", "data": {"label": "GitHub pull_request"}},
+    {"id": "fetch", "type": "connector", "data": {
+      "label": "Fetch PR", "connector": "github", "action": "get_pr",
+      "inputMapping": {"owner": "{{input.owner}}", "repo": "{{input.repo}}", "number": "{{input.number}}"}}},
+    {"id": "triage", "type": "ai-step", "data": {
+      "label": "Triage",
+      "prompt": "[pr-triage] You review pull requests for a small team. PR #{{input.number}} \"{{input.title}}\" by {{input.author}}. GitHub says: {{steps.fetch}}. Reply with ONE plain-text line under 300 characters: risk (low, med or high), then the single most important thing a reviewer should check. No markdown."}},
+    {"id": "comment", "type": "connector", "data": {
+      "label": "Comment on PR", "connector": "github", "action": "comment_pr",
+      "inputMapping": {"owner": "{{input.owner}}", "repo": "{{input.repo}}", "number": "{{input.number}}", "body": "Lantern triage: {{steps.triage}}"}}},
+    {"id": "announce", "type": "connector", "data": {
+      "label": "Announce in Slack", "connector": "slack", "action": "post_message",
+      "inputMapping": {"channel": "{{input.slackChannel}}", "text": "New PR #{{input.number}}: {{input.title}} ({{input.url}})"}}},
+    {"id": "thread", "type": "connector", "data": {
+      "label": "Thread the verdict", "connector": "slack", "action": "reply_thread",
+      "inputMapping": {"channel": "{{input.slackChannel}}", "thread_ts": "{{steps.announce.ts}}", "text": "{{steps.triage}}"}}}
+  ],
+  "edges": [
+    {"id": "e1", "source": "trigger", "target": "fetch"},
+    {"id": "e2", "source": "fetch", "target": "triage"},
+    {"id": "e3", "source": "triage", "target": "comment"},
+    {"id": "e4", "source": "comment", "target": "announce"},
+    {"id": "e5", "source": "announce", "target": "thread"}
+  ]
+}

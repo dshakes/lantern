@@ -1,0 +1,1 @@
+{"event":{"id":"01EVENT0001","event_type":"incident.triggered","resource_type":"incident","data":{"id":"PABC123","title":"API latency high"}}}

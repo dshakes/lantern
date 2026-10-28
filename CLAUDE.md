@@ -447,7 +447,7 @@ server `services/control-plane/cmd/connector-replay` (`go run ./cmd/connector-re
 with any override set is a startup error (`CheckConnectorBaseURLOverrides`), and the transport ignores
 overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` on `post_message`), GitHub
 `comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
-(`list_incidents`, `get_incident`, `create_incident`, `update_incident`; key in `apiKey`).
+(`list_incidents`, `get_incident`, `create_incident`, `update_incident`, `add_note`; key in `apiKey`).
 
 #### Fixture LLM tier (`LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}`)
 
@@ -946,6 +946,7 @@ are fully wired today.
 | `POST` | `/v1/runs/{id}/takeover/{id}/grant`   | Operator approves; optional SDP offer |
 | `POST` | `/v1/runs/{id}/takeover/{id}/answer`  | Browser-side SDP answer               |
 | `POST` | `/v1/runs/{id}/takeover/{id}/release` | Workflow resumes                      |
+| `POST` | `/v1/runs/{id}/takeover/{id}/deny`    | Operator denies; approval node fails (`step_failed`) |
 
 ### Marketplace commerce (W11c)
 

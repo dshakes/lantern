@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {"id": "trigger", "type": "trigger", "data": {"label": "Sentry alert / PagerDuty incident"}},
+    {"id": "issue", "type": "connector", "data": {
+      "label": "Fetch Sentry issue", "connector": "sentry", "action": "get_issue",
+      "inputMapping": {"organization": "{{input.organization}}", "issue_id": "{{input.issueId}}"}}},
+    {"id": "incident", "type": "connector", "data": {
+      "label": "Fetch PagerDuty incident", "connector": "pagerduty", "action": "get_incident",
+      "inputMapping": {"incident_id": "{{input.incidentId}}"}}},
+    {"id": "summary", "type": "ai-step", "data": {
+      "label": "Summarize + suggest runbook step",
+      "prompt": "[incident-summary] You are an on-call assistant. Sentry issue: {{steps.issue}}. PagerDuty incident: {{steps.incident}}. Reply with ONE plain-text line under 400 characters: what is failing, how bad, and the single runbook step you suggest (roll back the last release if it started after a deploy). No markdown."}},
+    {"id": "notify", "type": "connector", "data": {
+      "label": "Post to Slack", "connector": "slack", "action": "post_message",
+      "inputMapping": {"channel": "{{input.slackChannel}}", "text": "Incident {{input.incidentId}}: {{steps.summary}} - suggested: roll back. Approve or deny in the Lantern dashboard (Runs -> this run)."}}},
+    {"id": "approve", "type": "approval", "data": {
+      "label": "Approve rollback", "reason": "Roll back the last release?"}},
+    {"id": "note", "type": "connector", "data": {
+      "label": "Note decision on PagerDuty", "connector": "pagerduty", "action": "add_note",
+      "inputMapping": {"incident_id": "{{input.incidentId}}", "from": "{{input.from}}", "content": "Rollback approved by an operator via Lantern. Summary: {{steps.summary}}"}}}
+  ],
+  "edges": [
+    {"id": "e1", "source": "trigger", "target": "issue"},
+    {"id": "e2", "source": "issue", "target": "incident"},
+    {"id": "e3", "source": "incident", "target": "summary"},
+    {"id": "e4", "source": "summary", "target": "notify"},
+    {"id": "e5", "source": "notify", "target": "approve"},
+    {"id": "e6", "source": "approve", "target": "note"}
+  ]
+}

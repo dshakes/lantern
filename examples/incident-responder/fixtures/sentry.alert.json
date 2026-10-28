@@ -1,0 +1,1 @@
+{"action":"triggered","data":{"event":{"issue_id":"1001","title":"TypeError: undefined is not a function"},"triggered_rule":"High error rate"}}
