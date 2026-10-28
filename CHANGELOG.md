@@ -18,6 +18,10 @@ This project is pre-1.0; there are no stable release branches yet.
   private throwaway stack (own Postgres DB, Redis index, log mailer, fixture LLM). Run `npm run test:e2e` from
   `apps/web` (`apps/web/e2e/README.md`). Docs: `/testing`.
 - Docs: `lantern demo` and `lantern hooks` in the CLI reference.
+- **Data analyst sandbox example (X5)** — `examples/data-analyst` (pandas image, sandbox
+  spec, explainer agent) and `e2e/examples/data_analyst_test.go`: CSV in, exec analysis, JSON +
+  PNG out, egress denied, fixture-LLM explanation. Docker tier runs in CI; the files API and
+  `ExecTool` are Firecracker-only, so that tier is the KVM nightly.
 - **Examples: daily digest, Telegram assistant, voice receptionist** — three
   runnable agents under `examples/` (spec, workflow, schedule/number, README with
   a fixture path and a real-account path) and `make test-e2e-examples`, which
