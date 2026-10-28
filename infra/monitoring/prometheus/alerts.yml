@@ -288,6 +288,23 @@ groups:
           summary: "control-plane 5xx rate >5% (5m)"
           runbook: "docs/runbooks/control-plane-5xx.md"
 
+      - alert: ControlPlane403RateElevated
+        # Scope enforcement (LANTERN_AUTHZ_ENFORCE=1): a mis-scoped API key shows
+        # up as a 403 burst. No per-route label exists on this metric; find the
+        # route from traces (http.route + status 403) and the "API key missing
+        # required scope" response body. Runbook: ga-staged-rollout.md.
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{job="lantern-control-plane",http_response_status_code="403"}[10m]))
+            /
+            clamp_min(sum(rate(http_server_request_duration_seconds_count{job="lantern-control-plane"}[10m])), 0.001)
+          ) > 0.02
+        for: 10m
+        labels: { severity: warning, service: control-plane }
+        annotations:
+          summary: "control-plane 403 rate >2% (10m) — a key may need re-scoping"
+          runbook: "docs/runbooks/ga-staged-rollout.md"
+
       - alert: RunFailureRateHigh
         # Inline executor only (rest.go RecordRunTotal); microVM-tier runs are not counted yet.
         expr: |
