@@ -1565,6 +1565,11 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     }
   }
 
+  /** Raw template list for the onboarding gallery; throws so the caller can hide the gallery. */
+  async listStarterTemplates(): Promise<unknown> {
+    return this.request("/v1/agents/templates");
+  }
+
   async createAgentFromTemplate(templateId: string, name?: string): Promise<{
     agent: { id: string; name: string; description: string };
     templateId: string;

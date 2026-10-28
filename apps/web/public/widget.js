@@ -15,6 +15,10 @@
  *   3. Each message creates / continues a Lantern session via the real
  *      /v1/sessions + /v1/sessions/{id}/messages endpoints, streaming
  *      replies over SSE through /v1/sessions/{id}/events.
+ *   4. Support-desk agents (label handoff=human) can hand the conversation to
+ *      a person: the widget shows "Connecting you to a human…", stops waiting
+ *      for the agent, and renders the operator's replies as they arrive. KB
+ *      answers show the documents they were drawn from under the reply.
  *
  * Security: the API key is visible in the browser. Scope it tightly
  *   (sessions: create + read, messages: send) and rate-limit it on the
@@ -112,6 +116,12 @@
     "#lantern-widget-messages .msg.assistant{align-self:flex-start;background:" + palette.surface + ";color:" + palette.text + ";border-bottom-left-radius:4px;}",
     "#lantern-widget-messages .msg.assistant.streaming::after{content:'\\25CF';margin-left:4px;opacity:.6;animation:lanternPulse 1s infinite;}",
     "@keyframes lanternPulse{0%,100%{opacity:.3;}50%{opacity:1;}}",
+    "#lantern-widget-messages .msg.operator{align-self:flex-start;background:" + palette.bg + ";color:" + palette.text + ";",
+    "border:1px solid " + palette.accent + ";border-bottom-left-radius:4px;}",
+    "#lantern-widget-messages .msg .sources{margin-top:6px;font-size:11px;color:" + palette.textMuted + ";}",
+    "#lantern-widget-status{display:none;padding:6px 16px;font-size:12px;text-align:center;",
+    "background:" + palette.surface + ";color:" + palette.textMuted + ";border-bottom:1px solid " + palette.border + ";}",
+    "#lantern-widget-status.show{display:block;}",
     "#lantern-widget-messages .greeting{color:" + palette.textMuted + ";text-align:center;padding:24px 12px;font-size:13px;}",
 
     "#lantern-widget-input{display:flex;gap:8px;padding:12px;border-top:1px solid " + palette.border + ";",
@@ -151,6 +161,7 @@
     '<button aria-label="Close" id="lantern-widget-close">' +
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
     '</button></div>' +
+    '<div id="lantern-widget-status"></div>' +
     '<div id="lantern-widget-messages"><div class="greeting">' + escapeHtml(greeting) + '</div></div>' +
     '<div id="lantern-widget-input">' +
     '<textarea placeholder="Type a message…" rows="1" id="lantern-widget-textarea"></textarea>' +
@@ -164,7 +175,10 @@
   // ---- Behavior ---------------------------------------------------------
   var sessionId = null;
   var inflight = false;
+  var stream = null; // one EventSource for the session's lifetime
+  var turn = null; // the in-flight agent turn, if any
   var messagesEl = panel.querySelector("#lantern-widget-messages");
+  var statusEl = panel.querySelector("#lantern-widget-status");
   var textareaEl = panel.querySelector("#lantern-widget-textarea");
   var sendEl = panel.querySelector("#lantern-widget-send");
 
@@ -200,6 +214,11 @@
     return el;
   }
 
+  function setStatus(text) {
+    statusEl.textContent = text || "";
+    statusEl.className = text ? "show" : "";
+  }
+
   function send() {
     var text = textareaEl.value.trim();
     if (!text || inflight) return;
@@ -213,8 +232,19 @@
 
     ensureSession()
       .then(function (id) {
-        return postMessage(id, text).then(function () {
-          return streamReply(id, streamingEl);
+        // The stream is open (and subscribed) before the message is posted, so
+        // the reply cannot be published into the void.
+        return openStream(id).then(function () {
+          var t = newTurn(streamingEl);
+          return postMessage(id, text).then(function (res) {
+            if (res && res.status === "handoff") {
+              // A human has the conversation: no agent reply is coming.
+              abandonTurn(t);
+              streamingEl.remove();
+              return;
+            }
+            return t.promise;
+          });
         });
       })
       .catch(function (err) {
@@ -251,86 +281,107 @@
     }).then(handleJson);
   }
 
-  // Stream the agent reply via SSE on /v1/sessions/{id}/events.
-  // Handles both the legacy agent.message event and the new token-streaming
-  // protocol (message_delta / message_completed / message_error named events).
-  // Unknown event kinds are silently ignored so old and new servers both work.
-  function streamReply(id, el) {
+  // ---- Turn bookkeeping --------------------------------------------------
+  function newTurn(el) {
+    var t = { el: el, acc: "" };
+    t.promise = new Promise(function (resolve, reject) {
+      t.resolve = resolve;
+      t.reject = reject;
+    });
+    t.timer = setTimeout(function () {
+      failTurn(new Error("timeout"));
+    }, 60000);
+    turn = t;
+    return t;
+  }
+  function abandonTurn(t) {
+    clearTimeout(t.timer);
+    if (turn === t) turn = null;
+  }
+  function finishTurn(text, sources) {
+    if (!turn) return;
+    var t = turn;
+    abandonTurn(t);
+    t.el.textContent = typeof text === "string" ? text : t.acc;
+    if (sources && sources.length) {
+      var src = document.createElement("div");
+      src.className = "sources";
+      src.textContent = "Sources: " + sources.map(function (s) { return s.title || s.id; }).join(", ");
+      t.el.appendChild(src);
+    }
+    t.resolve();
+  }
+  function failTurn(err) {
+    if (!turn) return;
+    var t = turn;
+    abandonTurn(t);
+    t.reject(err);
+  }
+
+  // Open the session event stream once. Handles the token-streaming protocol
+  // (message_delta / message_completed / message_error named events), the legacy
+  // agent.message event, and the human-handoff events (session.handoff /
+  // operator.message / session.resolved). Unknown kinds are ignored so old and
+  // new servers both work.
+  function openStream(id) {
+    if (stream) return Promise.resolve();
     return new Promise(function (resolve, reject) {
-      var url = apiBase + "/v1/sessions/" + encodeURIComponent(id) + "/events";
-      // EventSource doesn't support Authorization headers, so we pass the
-      // key as a query param. The control-plane accepts ?token=... on SSE
-      // endpoints. (See sessions handler.)
+      // EventSource doesn't support Authorization headers, so the key goes in
+      // as a query param; the control-plane accepts ?token=... on SSE endpoints.
       var es;
       try {
-        es = new EventSource(url + "?token=" + encodeURIComponent(apiKey));
+        es = new EventSource(apiBase + "/v1/sessions/" + encodeURIComponent(id) + "/events?token=" + encodeURIComponent(apiKey));
       } catch (err) {
         reject(err);
         return;
       }
-      var timeout = setTimeout(function () {
-        es.close();
-        reject(new Error("timeout"));
-      }, 60_000);
+      stream = es;
+      var ready = false;
+      function parse(e) {
+        try { return JSON.parse(e.data); } catch (err) { return null; }
+      }
 
-      // Accumulated token-streaming content for this turn.
-      var accumulated = "";
-
-      // Named event: one token delta arrives.
       es.addEventListener("message_delta", function (e) {
-        try {
-          var evt = JSON.parse(e.data);
-          if (typeof evt.delta === "string") {
-            accumulated += evt.delta;
-            el.textContent = accumulated;
-          }
-        } catch (err) { /* ignore malformed */ }
-      });
-
-      // Named event: turn is complete; finalize with the authoritative text.
-      es.addEventListener("message_completed", function (e) {
-        try {
-          var evt = JSON.parse(e.data);
-          clearTimeout(timeout);
-          el.textContent = typeof evt.text === "string" ? evt.text : accumulated;
-          es.close();
-          resolve();
-        } catch (err) { /* ignore malformed */ }
-      });
-
-      // Named event: server-side error during the turn.
-      es.addEventListener("message_error", function (e) {
-        try {
-          var evt = JSON.parse(e.data);
-          clearTimeout(timeout);
-          es.close();
-          reject(new Error(evt.error || "stream error"));
-        } catch (err) {
-          clearTimeout(timeout);
-          es.close();
-          reject(new Error("stream error"));
+        var evt = parse(e);
+        if (turn && evt && typeof evt.delta === "string") {
+          turn.acc += evt.delta;
+          turn.el.textContent = turn.acc;
         }
       });
-
-      // Default (unnamed) event — legacy agent.message path; kept for
-      // backward compat with servers that don't send named events yet.
+      es.addEventListener("message_completed", function (e) {
+        var evt = parse(e);
+        if (evt) finishTurn(evt.text, evt.sources);
+      });
+      es.addEventListener("message_error", function (e) {
+        var evt = parse(e);
+        failTurn(new Error((evt && evt.error) || "stream error"));
+      });
       es.onmessage = function (e) {
-        try {
-          var evt = JSON.parse(e.data);
-          if (evt.type === "agent.message" && evt.data && evt.data.content) {
-            clearTimeout(timeout);
-            el.textContent = evt.data.content;
-            es.close();
-            resolve();
-          }
-        } catch (err) {
-          /* ignore malformed */
+        var evt = parse(e);
+        if (!evt) return;
+        if (evt.type === "connected" && !ready) {
+          ready = true;
+          resolve();
+        } else if (evt.type === "agent.message" && evt.data && evt.data.content) {
+          finishTurn(evt.data.content);
+        } else if (evt.type === "session.handoff") {
+          setStatus((evt.data && evt.data.message) || "Connecting you to a human…");
+        } else if (evt.type === "operator.message" && evt.data && evt.data.content) {
+          setStatus("You're chatting with a human teammate.");
+          appendMessage("operator", evt.data.content);
+        } else if (evt.type === "session.resolved") {
+          setStatus("");
         }
       };
       es.onerror = function () {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("stream error"));
+        // EventSource reconnects by itself; only fail what is waiting on us.
+        if (!ready) {
+          stream = null;
+          es.close();
+          reject(new Error("stream error"));
+        } else {
+          failTurn(new Error("stream error"));
+        }
       };
     });
   }

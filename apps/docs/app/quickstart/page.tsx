@@ -33,6 +33,12 @@ export default function QuickStartPage() {
 
       <h2 id="dashboard">In the dashboard</h2>
       <p>
+        Where email verification is required (see <Link href="/accounts">Accounts</Link>), creating a run before
+        you verify returns <code>403</code> with <code>code: &quot;email_unverified&quot;</code>; onboarding shows a
+        <strong> Resend verification email</strong> button and an <strong>I&apos;ve verified, try again</strong> button
+        instead of failing silently.
+      </p>
+      <p>
         Open <a href="http://localhost:3001/onboarding" target="_blank" rel="noopener noreferrer">localhost:3001/onboarding</a>{" "}
         and sign in (dev: <code>admin@lantern.dev</code> / <code>lantern</code>). The page is a conversation on
         the right and a progress rail on the left. Each step moves on only after the platform confirms it
@@ -44,6 +50,17 @@ export default function QuickStartPage() {
           <p>
             Write a sentence or two, for example <em>&quot;Turn my rough meeting notes into a short summary with action
             items.&quot;</em>
+          </p>
+        </div>
+        <div className="step" id="starters">
+          <h3>Or start from a template</h3>
+          <p>
+            Below the goal box is a gallery of six starters: support desk, PR triage, incident responder, daily
+            digest, data analyst and a Telegram assistant. Each card says which connectors or channels it needs
+            (for example Slack, or the Telegram channel) and uses a <code>fast</code> or <code>balanced</code>{" "}
+            capability model. Picking one skips the design call and opens the same review step, so you can edit
+            it before approving. A starter needing a connector you have not installed will tell you so in its
+            first run rather than pretend.
           </p>
         </div>
         <div className="step" id="step2">

@@ -31,7 +31,11 @@ type SessionHandler struct {
 	auth         *AuthHandler
 	llmProxy     *LlmProxyHandler
 	vmTerminator SessionVMTerminator // optional; set via SetSessionVMTerminator
+	kb           *KnowledgeHandler   // optional; set via SetKnowledge (W2-X1)
 }
+
+// SetKnowledge wires knowledge-base retrieval into session context. nil-safe.
+func (h *SessionHandler) SetKnowledge(k *KnowledgeHandler) { h.kb = k }
 
 // SetSessionVMTerminator wires the microVM teardown hook. nil-safe.
 func (h *SessionHandler) SetSessionVMTerminator(t SessionVMTerminator) { h.vmTerminator = t }
@@ -244,10 +248,11 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if status != "active" {
+	if status != "active" && status != "handoff" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is not active"})
 		return
 	}
+	inHandoff := status == "handoff"
 
 	// Parse existing messages.
 	var messages []sessionMessage
@@ -269,7 +274,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	updatedMsgs, _ := json.Marshal(messages)
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
-			UPDATE sessions SET messages = $1::jsonb, status = 'processing', updated_at = now()
+			UPDATE sessions SET messages = $1::jsonb, status = CASE WHEN status = 'handoff' THEN 'handoff' ELSE 'processing' END, updated_at = now()
 			WHERE id = $2 AND tenant_id = $3
 		`, string(updatedMsgs), sessionID, tenantID)
 		return e
@@ -285,6 +290,13 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		"content":   body.Content,
 		"timestamp": userMsg.Timestamp,
 	})
+
+	// A session waiting on a human records the customer's message and stays
+	// silent: no LLM turn until the operator resolves the handoff.
+	if inHandoff {
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "handoff"})
+		return
+	}
 
 	// Return immediately — the LLM call happens asynchronously.
 	writeJSON(w, http.StatusAccepted, map[string]string{
@@ -377,10 +389,11 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// non-bridge agents so no existing behaviour is broken.
 	var storedPrompt *string
 	var agentModel string // preferred model for the failover chain; ""/"auto" = default
+	var labelsRaw []byte
 	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT system_prompt, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2
-		`, agentName, tenantID).Scan(&storedPrompt, &agentModel)
+			SELECT system_prompt, COALESCE(model, ''), COALESCE(labels, '{}'::jsonb) FROM agents WHERE name = $1 AND tenant_id = $2
+		`, agentName, tenantID).Scan(&storedPrompt, &agentModel, &labelsRaw)
 	})
 
 	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
@@ -399,6 +412,23 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	}
 	if systemHint != "" {
 		systemPrompt = systemHint
+	}
+
+	// Knowledge base (W2-X1): retrieve for the newest user message and append
+	// the excerpts. A no-op (one EXISTS query) for agents with no documents;
+	// retrieval errors degrade to an answer without context, never a failed turn.
+	var kbHits []KBHit
+	if h.kb != nil && len(messages) > 0 {
+		hits, kerr := h.kb.Retrieve(ctx, tenantID, agentName, messages[len(messages)-1].Content, 0)
+		if kerr != nil {
+			h.logger().Warn("session: knowledge retrieval failed", zap.String("agent", agentName), zap.Error(kerr))
+		}
+		kbHits = hits
+		systemPrompt += kbContextBlock(hits)
+	}
+	handoffOn, handoffSlack := handoffConfig(labelsRaw)
+	if handoffOn {
+		systemPrompt += "\n\nIf the customer asks for a person, or the knowledge base excerpts do not let you answer confidently, call the handoff_to_human tool instead of guessing."
 	}
 
 	// Build the message list in the OpenAI tool-aware shape (any-valued
@@ -494,9 +524,18 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		}
 	}
 
+	// Handoff agents (label handoff=human) expose exactly one tool — a public
+	// webchat key must not reach the connector catalog.
+	if handoffOn {
+		tools = []map[string]any{handoffTool()}
+	}
+
 	// Dispatch function closes over the tenant + pool so the tool-call
 	// loop can invoke connector actions without re-resolving credentials.
 	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
+		if handoffOn && name == handoffToolName {
+			return h.handoffDispatch(dispatchCtx, tenantID, sessionID, agentName, handoffSlack, args)
+		}
 		// rls-exempt: shared connector-dispatch helper takes a *Pool and
 		// self-scopes by tenantID; reused identically across handlers.
 		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
@@ -684,7 +723,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 
 	// Publish message_completed (new contract) before the legacy agent.message
 	// so clients that listen for named events receive complete usage metadata.
-	h.publishDeltaEvent(sessionID, "message_completed", map[string]any{
+	completed := map[string]any{
 		"sessionId": sessionID,
 		"turnId":    turnID,
 		"text":      result,
@@ -693,7 +732,19 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 			"tokensOut": tokensOut,
 			"costUsd":   costUsd,
 		},
-	})
+	}
+	if len(kbHits) > 0 {
+		seen := map[string]bool{}
+		sources := []map[string]string{}
+		for _, k := range kbHits {
+			if !seen[k.DocumentID] {
+				seen[k.DocumentID] = true
+				sources = append(sources, map[string]string{"id": k.DocumentID, "title": k.Title})
+			}
+		}
+		completed["sources"] = sources
+	}
+	h.publishDeltaEvent(sessionID, "message_completed", completed)
 
 	// Append assistant message (with any persisted tool calls) and publish.
 	h.appendAssistantMessageWithTools(ctx, sessionID, result, persisted)
@@ -738,7 +789,7 @@ func (h *SessionHandler) appendAssistantMessageWithTools(ctx context.Context, se
 		_, e := tx.Exec(ctx, `
 			UPDATE sessions
 			SET messages = messages || $1::jsonb,
-			    status = 'active',
+			    status = CASE WHEN status = 'handoff' THEN 'handoff' ELSE 'active' END,
 			    updated_at = now()
 			WHERE id = $2
 		`, string(msgJSON), sessionID)
@@ -1011,10 +1062,10 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		rows, qErr := tx.Query(ctx, `
 			SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
 			FROM sessions
-			WHERE tenant_id = $1
+			WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
 			ORDER BY updated_at DESC
 			LIMIT 100
-		`, tenantID)
+		`, tenantID, r.URL.Query().Get("status"))
 		if qErr != nil {
 			return qErr
 		}

@@ -295,6 +295,83 @@ export function starterSpec(goal: string): AgentSpecDraft {
   };
 }
 
+// ---- Starter gallery (templates served by GET /v1/agents/templates) ---------
+
+export interface StarterTemplate {
+  id: string;
+  name: string;
+  pitch: string;
+  model: "fast" | "balanced";
+  systemPrompt: string;
+  firstInput: string;
+  connectors: string[];
+  surfaces: string[];
+}
+
+/**
+ * Keep only complete gallery templates. A card must never promise something the
+ * server did not send, so anything missing a prompt/pitch or carrying a
+ * non-capability model is dropped rather than patched up.
+ */
+export function parseStarterGallery(raw: unknown): StarterTemplate[] {
+  if (!Array.isArray(raw)) return [];
+  const out: StarterTemplate[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const t = r as Record<string, unknown>;
+    const str = (k: string) => (typeof t[k] === "string" ? (t[k] as string).trim() : "");
+    const list = (k: string) => (Array.isArray(t[k]) ? (t[k] as unknown[]).filter((x): x is string => typeof x === "string") : []);
+    const model = str("model");
+    if (t.gallery !== true || !str("id") || !str("pitch") || !str("systemPrompt") || (model !== "fast" && model !== "balanced")) continue;
+    out.push({
+      id: str("id"),
+      name: str("name") || str("id"),
+      pitch: str("pitch"),
+      model,
+      systemPrompt: str("systemPrompt"),
+      firstInput: str("firstInput") || "Introduce yourself in two sentences and show one example of what you do.",
+      connectors: list("connectors"),
+      surfaces: list("surfaces"),
+    });
+  }
+  return out;
+}
+
+const NEED_LABELS: Record<string, string> = {
+  github: "GitHub",
+  pagerduty: "PagerDuty",
+  sentry: "Sentry",
+  slack: "Slack",
+  gmail: "Gmail",
+  "google-calendar": "Google Calendar",
+  telegram: "Telegram",
+  webchat: "Webchat",
+};
+
+const needLabel = (id: string) => NEED_LABELS[id] ?? id.replace(/-/g, " ");
+
+/** Honest requirement line for a card: exactly what the template needs to do its job. */
+export function templateNeeds(t: StarterTemplate): string {
+  const parts = [
+    ...t.connectors.map((c) => `${needLabel(c)} connector`),
+    ...t.surfaces.map((s) => `${needLabel(s)} channel`),
+  ];
+  return parts.length ? `Needs: ${parts.join(", ")}` : "No connectors needed";
+}
+
+/** The gallery pick as a design the user then reviews and approves like any other. */
+export function specFromTemplate(t: StarterTemplate): AgentSpecDraft {
+  return {
+    name: t.name,
+    description: t.pitch,
+    systemPrompt: t.systemPrompt,
+    firstInput: { prompt: t.firstInput },
+    rationale: `This is the “${t.name}” starter. ${templateNeeds(t)}. Edit anything before approving.`,
+    model: t.model,
+    steps: [{ name: "respond", type: "llm", description: "Answer the input using the instructions above" }],
+  };
+}
+
 /** First-run input: the spec's suggestion, or a safe default. */
 export function firstRunInput(spec: AgentSpecDraft | undefined): Record<string, unknown> {
   const fi = spec?.firstInput;
@@ -350,6 +427,7 @@ export type FixAction =
   | "rename_agent"
   | "open_budgets"
   | "login"
+  | "verify_email"
   | "check_api";
 
 export interface FixSuggestion {
@@ -374,6 +452,12 @@ export function suggestFix(f: ApiFailure, step: Step): FixSuggestion {
   }
   if (f.status === 401) {
     return { summary: "Your session expired. Sign in again to pick up where you left off.", fix: { label: "Sign in", action: "login" } };
+  }
+  if (f.code === "email_unverified") {
+    return {
+      summary: "Verify your email to run agents. Check your inbox for the link we sent, or ask for a new one, then try again.",
+      fix: { label: "Resend verification email", action: "verify_email" },
+    };
   }
   if (f.code === "no_provider" || /no (llm )?provider|no api key|api key configured/.test(msg)) {
     return {

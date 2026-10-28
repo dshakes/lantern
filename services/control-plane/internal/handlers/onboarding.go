@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -93,7 +94,7 @@ func (s *onboardingSpec) validate() error {
 	if s.Name != "" && !onboardingAgentName.MatchString(s.Name) {
 		return errors.New("spec.name must be lowercase letters, digits and hyphens")
 	}
-	if s.Model != "" && !specCapabilityModels[s.Model] {
+	if s.Model != "" && !specCapabilityModels[s.Model] && s.Model != "fast" && s.Model != "balanced" {
 		return errors.New("spec.model must be a capability name (auto, chat-small, …), never a vendor model")
 	}
 	if len(s.Description) > 500 || len(s.SystemPrompt) > 8000 || len(s.Rationale) > 1000 ||
@@ -202,18 +203,23 @@ func (h *OnboardingHandler) PutState(w http.ResponseWriter, r *http.Request) {
 	}
 	// rls-exempt: tenants is the tenant root (documented exempt set); scoped by
 	// the auth tenant's own id.
-	tag, err := h.srv.Pool.Exec(r.Context(),
-		`UPDATE tenants SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{onboarding}', $2::jsonb) WHERE id = $1`,
-		tenantID, doc)
+	var prev *string
+	err = h.srv.Pool.QueryRow(r.Context(), `
+		WITH old AS (SELECT settings->'onboarding'->>'step' AS s FROM tenants WHERE id = $1),
+		upd AS (UPDATE tenants SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{onboarding}', $2::jsonb)
+		        WHERE id = $1 RETURNING 1)
+		SELECT (SELECT s FROM old) FROM upd`,
+		tenantID, doc).Scan(&prev)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		return
+	}
 	if err != nil {
 		h.srv.Logger.Error("onboarding: put state", zap.String("tenant_id", tenantID), zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
-		return
-	}
+	recordOnboardingTransition(r.Context(), prev, st.Step)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -296,4 +302,24 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
+}
+
+// recordOnboardingTransition emits step metrics when the saved step changes:
+// the new step is "reached", the one it left is "completed". Re-saving the same
+// step (autosave) emits nothing, so counts are per transition, not per PUT.
+func recordOnboardingTransition(ctx context.Context, prev *string, next string) {
+	p := ""
+	if prev != nil {
+		p = *prev
+	}
+	if p == next {
+		return
+	}
+	if p != "" {
+		middleware.RecordOnboardingStep(ctx, p, "completed")
+	}
+	middleware.RecordOnboardingStep(ctx, next, "reached")
+	if next == "done" {
+		middleware.RecordOnboardingStep(ctx, next, "completed")
+	}
 }
