@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Concept } from "../_components/Concept";
 import { pageMeta } from "../_meta";
 
@@ -90,7 +91,7 @@ Response: 422 Unprocessable Entity — regressed vs. baseline
 
       <p>
         A complete pipeline (run, post, stop on 422, deploy, receipt) is in the{" "}
-        <a href="/examples#eval-gated-deploy">Eval-gated deploy</a> example.
+        <Link href="/examples#eval-gated-deploy">Eval-gated deploy</Link> example.
       </p>
 
       <h3>Other eval-run endpoints</h3>

@@ -108,6 +108,29 @@ export default function RuntimeIdentityPage() {
         <li><strong>SO_PEERCRED peer-auth, short-TTL secret vending</strong> via harness Unix socket.</li>
         <li><strong>Reference-form secrets</strong> resolved inside the isolation boundary — raw values never touch the image, env, logs, or run state.</li>
       </ul>
+
+      <h2 id="operating">Operating notes</h2>
+      <ul>
+        <li>
+          <strong>The manager never holds the decryption key.</strong> <code>LANTERN_CREDENTIAL_KEY</code> lives only on the control plane,
+          which resolves a <code>lantern.secret/</code> ref over <code>POST /v1/runtime/secrets/resolve</code>. A compromised manager node cannot decrypt a tenant&apos;s secrets on its own.
+        </li>
+        <li>
+          <strong>The relay is fail-closed.</strong> It needs the pre-shared <code>LANTERN_RUNTIME_SECRET_TOKEN</code> on both the control plane and the manager (unset on the control plane: <code>403</code>), and is not reachable with an end-user JWT.
+        </li>
+        <li>
+          <strong>Per-VM mTLS.</strong> The manager binds the <code>vm_id</code> reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
+        </li>
+        <li>
+          <strong>Dev stub.</strong> Without a manager, the harness reads secrets from its own environment when{" "}
+          <code>LANTERN_ALLOW_SECRET_STUB=1</code>. Never set it in production.
+        </li>
+        <li>
+          <strong>Credential encryption.</strong> Provider keys and connector tokens are AES-256-GCM encrypted at rest with{" "}
+          <code>LANTERN_CREDENTIAL_KEY</code>; the control plane refuses to start in production without it. See{" "}
+          <Link href="/env-vars">Environment variables</Link>.
+        </li>
+      </ul>
     </>
   );
 }
