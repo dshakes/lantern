@@ -22,6 +22,8 @@
    "response": {"incident": {"id": "PABC123", "title": "API latency high", "status": "triggered", "urgency": "high"}}},
   {"method": "POST", "path": "/incidents", "status": 201,
    "response": {"incident": {"id": "PNEW456", "title": "recorded", "status": "triggered"}}},
+  {"method": "POST", "path": "/incidents/PABC123/notes", "status": 201,
+   "response": {"note": {"id": "PNOTE1", "content": "recorded", "user": {"summary": "oncall"}}}},
   {"method": "PUT", "path": "/incidents/PABC123", "status": 200,
    "response": {"incident": {"id": "PABC123", "status": "acknowledged"}}},
 
