@@ -1041,6 +1041,34 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
 | `LANTERN_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
 
+### Surface-gateway reply loop + example suites (W2-X3)
+
+`services/surface-gateway` creates a run over gRPC (`RunService.CreateRun`, which only
+inserts a `queued` row; the control-plane recovery sweep or the workflow engine drives
+it) and, for **Telegram and WhatsApp**, `dispatcher::deliver_reply` polls
+`RunService.GetRun` (500 ms, 180 s cap), sends the output (`result`/`text`/`output`/
+`response` string of the run output) through the adapter's `sendMessage`, and clears the
+session's `active_run_id`. Before this the answer was dropped. The agent must already have
+a promoted version (first REST run creates it) or CreateRun returns `FailedPrecondition`.
+`TELEGRAM_API_BASE_URL` re-points the Bot API at a fixture; the gateway refuses to start
+with it when `LANTERN_ENV` is prod/production/staging (same stance as
+`LANTERN_LLM_BASEURL_*`). Signature negatives (Telegram secret token, WhatsApp
+`X-Hub-Signature-256`) boot the real binary: `services/surface-gateway/tests/`.
+
+`make test-e2e-examples` (`scripts/e2e-examples-stack.sh`) runs `e2e/examples` on a private
+fixture stack (throwaway DB, free ports, `llm-replay` + `connector-replay`, Redis DB 9):
+daily-digest (schedule -> Slack post), telegram-assistant (signed update -> reply),
+voice-receptionist (signed Twilio webhooks -> TwiML / `<Reject>` / `agent_usage_daily`
+reconciled). Not part of `make test-e2e`. Examples live in `examples/{daily-digest,
+telegram-assistant,voice-receptionist}` (`agent.yaml` for `lantern deploy`, `spec.json` +
+`workflow.json` for the REST path the tests use).
+
+Pitfalls fixed here, worth remembering: never read `jsonb` with `::text::bytea` (a JSON
+backslash is invalid bytea input; `TestNoJSONBTextBytea` guards it); a reused SQL param
+next to a literal (`GREATEST($4, 0)`) is inferred INTEGER, so cast it (`$4::float8`);
+a workflow `end` node without `outputExpression` returns an arbitrary step's output
+(`lastStep` iterates a map), so examples set `outputExpression`.
+
 ### Immigration / USCIS deadline sentinel (Phase 3)
 
 An agent that REASONS over the family's immigration PDFs + arriving USCIS/attorney

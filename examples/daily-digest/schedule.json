@@ -1,0 +1,6 @@
+{
+  "agentName": "daily-digest",
+  "cronExpr": "0 9 * * 1-5",
+  "timezone": "America/New_York",
+  "inputTemplate": { "owner": "acme", "repo": "api", "channel": "C0123" }
+}

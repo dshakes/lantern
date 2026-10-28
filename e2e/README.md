@@ -11,6 +11,7 @@ one command instead of a curl checklist.
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `runtime/` | W12 headless-runtime control path (`/v1/runtime/*`): auth gates, schedule (201 + vm_id), tenant-scoped list, detail + per-VM audit, logs SSE, terminate state transition, quota hard-fail 402, audit trail. Automates `examples/headless-agents/MANUAL-TEST.md`. |
 | `quickstart/` | The `examples/quickstart/` runnable agents stay real: each test creates the agent from its committed `spec.json`, posts its `run.json`, polls to `succeeded`, and asserts an output-shape invariant (pr-triage → JSON with a `risk` key; incident-summarizer → markdown sections **plus** issue+verify a receipt through the public no-auth verifier; daily-standup-digest → digest sections). Needs an LLM provider configured for the dev tenant. |
+| `examples/` | Wave 2 examples (`daily-digest`, `telegram-assistant`, `voice-receptionist`) on a **private fixture stack** (own DB/ports, `llm-replay` + `connector-replay`, real surface-gateway). Run with `make test-e2e-examples`; it is not part of `make test-e2e`. Schedule fires -> Slack post; signed Telegram update -> `sendMessage` reply; signed Twilio webhooks -> TwiML / `<Reject>` / cost reconciled in `agent_usage_daily`. |
 
 ## Running
 

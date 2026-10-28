@@ -1,0 +1,12 @@
+name: daily-digest
+version: "0.1.0"
+description: Weekday morning engineering digest -- open PRs summarised by an LLM and posted to Slack
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 5m
+  max_tokens: 20000
+  max_cost_usd: 0.25
+labels:
+  category: reporting

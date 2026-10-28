@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    { "id": "start", "type": "trigger", "data": { "label": "Chat message" } },
+    {
+      "id": "calendar",
+      "type": "connector",
+      "data": {
+        "label": "Read calendar",
+        "connector": "google-calendar",
+        "action": "list_events",
+        "inputMapping": { "calendarId": "primary", "limit": 10 }
+      }
+    },
+    {
+      "id": "reply",
+      "type": "ai-step",
+      "data": {
+        "label": "Answer",
+        "capability": "auto",
+        "prompt": "The user wrote in chat: {{input.text}}\n\nTheir upcoming calendar events (JSON):\n{{steps.calendar}}\n\nAnswer the question using only that calendar data. Plain text, at most three sentences."
+      }
+    },
+    { "id": "end", "type": "end", "data": { "outputExpression": "{{steps.reply}}" } }
+  ],
+  "edges": [
+    { "id": "e1", "source": "start", "target": "calendar" },
+    { "id": "e2", "source": "calendar", "target": "reply" },
+    { "id": "e3", "source": "reply", "target": "end" }
+  ]
+}

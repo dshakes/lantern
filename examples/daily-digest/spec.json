@@ -1,0 +1,5 @@
+{
+  "name": "daily-digest",
+  "description": "Weekday morning engineering digest: open PRs summarised and posted to Slack.",
+  "systemPrompt": "You write a short morning engineering digest for a team channel from the data you are given. Be faithful to the data, never invent work, and keep it under 120 words."
+}

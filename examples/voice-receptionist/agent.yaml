@@ -1,0 +1,11 @@
+name: voice-receptionist
+version: "0.1.0"
+description: Phone receptionist -- answers inbound Twilio calls under a hard spend cap
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 10m
+  max_cost_usd: 1.00
+labels:
+  category: voice

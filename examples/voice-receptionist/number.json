@@ -1,0 +1,8 @@
+{
+  "agentName": "voice-receptionist",
+  "provider": "twilio",
+  "phoneNumber": "+15125550100",
+  "displayName": "Front desk",
+  "greeting": "Thanks for calling. How can I help?",
+  "providerConfig": { "accountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "authToken": "<twilio-auth-token>" }
+}

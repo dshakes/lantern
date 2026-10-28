@@ -1,0 +1,12 @@
+name: telegram-assistant
+version: "0.1.0"
+description: Personal assistant on Telegram (and WhatsApp Cloud) -- answers from your Google Calendar
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 2m
+  max_tokens: 8000
+  max_cost_usd: 0.10
+labels:
+  category: assistant
