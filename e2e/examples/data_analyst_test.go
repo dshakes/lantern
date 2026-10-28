@@ -106,13 +106,13 @@ func TestDataAnalystSandbox(t *testing.T) {
 
 	csv := exampleFile(t, "sales.csv")
 	if fc {
-		st, raw := k.DoAuth(t, http.MethodPut, "/v1/runtime/vms/"+vm+"/files/content?path=sales.csv", string(csv), nil)
+		st, raw := k.DoAuthRaw(t, http.MethodPut, "/v1/runtime/vms/"+vm+"/files/content?path=sales.csv", csv)
 		if st != http.StatusOK {
 			t.Fatalf("files upload: HTTP %d: %s", st, raw)
 		}
 	} else {
 		// Known gap, pinned: the docker backend has no harness tool registry.
-		st, raw := k.DoAuth(t, http.MethodPut, "/v1/runtime/vms/"+vm+"/files/content?path=sales.csv", string(csv), nil)
+		st, raw := k.DoAuthRaw(t, http.MethodPut, "/v1/runtime/vms/"+vm+"/files/content?path=sales.csv", csv)
 		if st != http.StatusServiceUnavailable || !strings.Contains(string(raw), "docker") {
 			t.Fatalf("files API on docker backend: HTTP %d %s (want 503 naming docker)", st, raw)
 		}
