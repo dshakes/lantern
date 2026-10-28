@@ -66,7 +66,7 @@ make demo               # same stack without the CLI`}</code></pre>
           <tr><td><code>LANTERN_KIOSK_SWEEP_SEC</code></td><td>60</td><td>How often expired sessions are purged.</td></tr>
           <tr><td><code>LANTERN_KIOSK_MAX_SESSIONS</code></td><td>20</td><td>Live-session cap; over it returns 503.</td></tr>
           <tr><td><code>LANTERN_KIOSK_IP_PER_HOUR</code></td><td>3</td><td>Sessions per client address per hour; over it returns 429.</td></tr>
-          <tr><td><code>KIOSK_JWT_SECRET</code></td><td>local default</td><td>Compose overlay only. Set a strong value for any host others can reach.</td></tr>
+          <tr><td><code>KIOSK_JWT_SECRET</code></td><td>random per start</td><td>Compose overlay. Required; <code>make demo</code> and <code>lantern demo</code> generate a random one. The control-plane refuses to start kiosk mode with an empty or dev-default <code>JWT_SECRET</code>.</td></tr>
         </tbody>
       </table>
       <p>

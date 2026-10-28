@@ -234,7 +234,7 @@ func TestCheckKioskConfig(t *testing.T) {
 		}
 		return func(k string) string { return m[k] }
 	}
-	good := []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1"}
+	good := []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1", "JWT_SECRET", "a-real-random-secret"}
 	cases := []struct {
 		name  string
 		prod  bool
@@ -248,6 +248,8 @@ func TestCheckKioskConfig(t *testing.T) {
 		{"RLS off refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_AUTHZ_ENFORCE", "1"}, true},
 		{"authz off refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1"}, true},
 		{"provider key without fixture URL refused", false, append(append([]string{}, good...), "OPENAI_API_KEY", "x"), true},
+		{"missing JWT secret refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1"}, true},
+		{"dev-default JWT secret refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1", "JWT_SECRET", devJWTSecret}, true},
 		{"provider key pinned to fixture ok", false, append(append([]string{}, good...), "OPENAI_API_KEY", "x", "LANTERN_LLM_BASEURL_OPENAI", "http://llm-replay:9090"), false},
 	}
 	for _, c := range cases {

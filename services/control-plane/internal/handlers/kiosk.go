@@ -74,6 +74,11 @@ func CheckKioskConfig(isProdEnv bool, getenv func(string) string) (fatal bool, m
 	if !on("LANTERN_RLS_ENFORCE") || !on("LANTERN_AUTHZ_ENFORCE") {
 		return true, "LANTERN_KIOSK=1 requires LANTERN_RLS_ENFORCE=1 and LANTERN_AUTHZ_ENFORCE=1 — anonymous tenants must be isolated by the database, not by handler discipline"
 	}
+	// A missing or dev-default JWT secret is public, so anyone could mint an
+	// owner token for any tenant and step around RLS entirely.
+	if secret := strings.TrimSpace(getenv("JWT_SECRET")); secret == "" || secret == devJWTSecret {
+		return true, "LANTERN_KIOSK=1 requires an explicit, non-default JWT_SECRET — the dev default is public and would let anyone forge owner tokens"
+	}
 	for key, override := range map[string]string{"OPENAI_API_KEY": "LANTERN_LLM_BASEURL_OPENAI", "ANTHROPIC_API_KEY": "LANTERN_LLM_BASEURL_ANTHROPIC"} {
 		if getenv(key) != "" && getenv(override) == "" {
 			return true, key + " is set in kiosk mode without " + override + " — kiosk must never hold a provider key that can reach a real provider"

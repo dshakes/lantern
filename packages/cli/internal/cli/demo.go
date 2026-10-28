@@ -7,6 +7,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,6 +71,15 @@ no provider key is read, stored, or required.
 			}
 			c := exec.CommandContext(cmd.Context(), "docker", demoComposeArgs(root, action...)...)
 			c.Stdout, c.Stderr, c.Dir = os.Stdout, os.Stderr, root
+			c.Env = os.Environ()
+			if os.Getenv("KIOSK_JWT_SECRET") == "" {
+				// Sessions are ephemeral, so a fresh random secret per start loses nothing.
+				b := make([]byte, 32)
+				if _, err := rand.Read(b); err != nil {
+					return fmt.Errorf("generate kiosk secret: %w", err)
+				}
+				c.Env = append(c.Env, "KIOSK_JWT_SECRET="+hex.EncodeToString(b))
+			}
 			start := time.Now()
 			if err := c.Run(); err != nil {
 				return fmt.Errorf("docker compose: %w", err)

@@ -20,9 +20,10 @@
 # DEPENDENCY: services/control-plane/cmd/llm-replay and LANTERN_LLM_BASEURL_*
 # come from W2-0 (branch ga/w2-0-llm-fixture). This overlay needs that merged.
 #
-# For anything beyond a local booth, set KIOSK_JWT_SECRET to a strong random value.
+# KIOSK_JWT_SECRET is required. `make demo` / `lantern demo` generate a random one per start
+# (demo sessions are ephemeral, so a fresh secret each start loses nothing).
 
-x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:-lantern-kiosk-local-booth-secret-change-for-public-hosts}
+x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:?KIOSK_JWT_SECRET must be set; make demo and lantern demo generate one}
 
 services:
   # Host ports are env-driven so a second stack can run beside a dev one:

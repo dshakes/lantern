@@ -1057,9 +1057,6 @@ func runStartupGuards(logger *zap.Logger) {
 	if fatal, msg := handlers.CheckKioskConfig(prod, os.Getenv); fatal {
 		logger.Fatal(msg)
 	}
-	if handlers.KioskEnabled() && os.Getenv("JWT_SECRET") == "" {
-		logger.Fatal("LANTERN_KIOSK=1 requires an explicit non-default JWT_SECRET")
-	}
 
 	// H1 — Receipt signing secret
 	receiptSecret := os.Getenv("LANTERN_RECEIPT_SECRET")
