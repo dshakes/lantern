@@ -1,0 +1,43 @@
+package telemetry_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/telemetry"
+)
+
+// The alert rules in infra/monitoring/prometheus/alerts.yml query these exact
+// series; this test pins the names so a rename breaks here, not silently in prod.
+func TestInitMetricsExposesAlertedSeries(t *testing.T) {
+	h, err := telemetry.InitMetrics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	middleware.RecordBudgetBlock(context.Background(), "a")
+	middleware.RecordRunTotal(context.Background(), "a", "shared", "failed")
+	api := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(500)
+	}), "t")
+	api.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		"lantern_run_budget_blocks_total",
+		`lantern_run_total{lantern_agent_name`,
+		`http_server_request_duration_seconds_count{`,
+		`http_response_status_code="500"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics:\n%s", want, body)
+		}
+	}
+}
