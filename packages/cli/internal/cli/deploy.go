@@ -43,7 +43,7 @@ type agentManifest struct {
 }
 
 func newDeployCommand() *cobra.Command {
-	var watch, dryRun, jsonOut bool
+	var dryRun, jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
@@ -69,9 +69,6 @@ Exit codes: 0 ok, 3 unauthorized, 4 quota/budget (402), 5 not found,
 			if strings.TrimSpace(m.Name) == "" {
 				return fmt.Errorf("agent.yaml: name is required")
 			}
-			if watch {
-				printInfo("--watch is not implemented; deploying once")
-			}
 
 			res, err := runDeploy(restClient(), &m, dryRun)
 			if err != nil {
@@ -92,7 +89,6 @@ Exit codes: 0 ok, 3 unauthorized, 4 quota/budget (402), 5 not found,
 		},
 	}
 
-	cmd.Flags().BoolVar(&watch, "watch", false, "Watch for changes and re-deploy (not implemented)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would change without calling mutating endpoints")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print the result as JSON (same as -o json)")
 	return cmd
