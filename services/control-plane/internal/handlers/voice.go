@@ -416,6 +416,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// rls-exempt: shared budget helper takes a *Pool and self-scopes by the
 	// resolved tenantID arg; reused identically across handlers.
 	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		middleware.RecordBudgetBlock(ctx, agentName)
 		h.logger().Warn("voice call blocked by budget",
 			zap.String("agent", agentName), zap.String("reason", bc.Reason))
 		if providerName == "twilio" {
@@ -526,6 +527,7 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// budget. No token → the LiveKit Agents worker can't join → no media spend.
 	// rls-exempt: shared budget helper takes a *Pool and self-scopes by tenantID.
 	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		middleware.RecordBudgetBlock(ctx, agentName)
 		h.logger().Warn("livekit token denied by budget",
 			zap.String("agent", agentName), zap.String("reason", bc.Reason))
 		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "agent voice budget exhausted: " + bc.Reason})

@@ -1289,17 +1289,17 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 
 	// Deferred lantern.run.total counter. Fires once per lease-held run at
 	// the actual function return so it sees the final outErr value.
-	// ponytail: workflow step failures set DB status='failed' but return
-	// outErr=nil here (runWorkflowIfPresent manages its own DB writes); those
-	// runs are counted as "succeeded" by this metric. Per-step metrics
-	// (lantern.run.step.duration outcome=failed) capture step-level failures
-	// accurately. Fix when runWorkflowIfPresent returns a richer result.
+	// The workflow path writes status='failed' itself and returns outErr=nil,
+	// so a nil error is not proof of success: read the row back.
 	defer func() {
-		status := "succeeded"
-		if outErr != nil {
-			status = "failed"
+		var dbStatus string
+		if outErr == nil {
+			// rls-exempt: detached read on context.Background() (no tenant);
+			// keyed by the authorized run id, same as the safety net below.
+			_ = h.srv.Pool.QueryRow(context.Background(),
+				`SELECT status FROM runs WHERE id = $1`, runID).Scan(&dbStatus)
 		}
-		middleware.RecordRunTotal(ctx, agentName, "shared", status)
+		middleware.RecordRunTotal(ctx, agentName, "shared", runTotalStatus(outErr, dbStatus))
 	}()
 
 	// 1c. Deferred safety net: if this function returns with an error and the
@@ -3027,4 +3027,13 @@ func runToMap(r *lanternv1.Run) map[string]any {
 		}
 	}
 	return m
+}
+
+// runTotalStatus is the lantern.run.total status label. A nil error is not
+// proof of success: the workflow path marks the row 'failed' and returns nil.
+func runTotalStatus(outErr error, dbStatus string) string {
+	if outErr != nil || dbStatus == "failed" {
+		return "failed"
+	}
+	return "succeeded"
 }

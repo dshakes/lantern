@@ -908,7 +908,7 @@ per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PD
 default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
 rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Prod TLS/mTLS
 Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
-The control-plane serves Prometheus `/metrics` on `:8080` (OTel instruments bridged by
+The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
 `internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
 expose through the ingress). The `lantern-instrumented-slos` alert group in
 `infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
