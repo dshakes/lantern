@@ -937,6 +937,61 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool, userFacing bool) []stru
 	return out
 }
 
+// preferModel puts the caller's model (an agent's configured capability or
+// vendor model id) at the head of the failover chain, resolved against the
+// tenant's providers. ""/"auto" returns the chain untouched — the bridges and
+// every agent without a model rely on that. The rest of the chain stays as the
+// failover tail (minus the duplicate), so a retryable error on the preferred
+// model still falls over to the other providers.
+//
+// A cheap-tier preference must not turn into a bigger bill on failover: the
+// tail is the OTHER provider's cheap tier, then any other cheap-tier entries
+// of the default chain — never a sonnet/gpt-4o/opus-class model. If nothing
+// cheap is left, the call fails.
+func (h *LlmProxyHandler) preferModel(ctx context.Context, tenantID, preferred string, chain []struct{ Provider, Model string }) []struct{ Provider, Model string } {
+	if preferred == "" || preferred == "auto" {
+		return chain
+	}
+	provider, model := h.resolveModelForTenant(ctx, tenantID, preferred)
+	if !h.providerAvailable(ctx, tenantID, provider) {
+		h.logger().Info("preferred model's provider not configured; using default chain",
+			zap.String("preferred", preferred), zap.String("provider", provider))
+		return chain
+	}
+	out := make([]struct{ Provider, Model string }, 0, len(chain)+2)
+	out = append(out, struct{ Provider, Model string }{provider, model})
+	cheap := isCheapTierModel(model)
+	if cheap {
+		switch {
+		case provider == "anthropic" && h.providerAvailable(ctx, tenantID, "openai"):
+			out = append(out, struct{ Provider, Model string }{"openai", "gpt-4o-mini"})
+		case provider == "openai" && h.providerAvailable(ctx, tenantID, "anthropic"):
+			out = append(out, struct{ Provider, Model string }{"anthropic", haikuModel()})
+		}
+	}
+	for _, c := range chain {
+		if cheap && !isCheapTierModel(c.Model) {
+			continue
+		}
+		dup := false
+		for _, o := range out {
+			dup = dup || o == c
+		}
+		if !dup {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// isCheapTierModel reports whether a concrete model id is a small/cheap tier
+// (haiku, *-mini) — what "fast", "cheap", "reasoning-small", "chat-small"
+// and friends resolve to.
+func isCheapTierModel(model string) bool {
+	return model == haikuModel() || strings.Contains(model, "haiku") ||
+		strings.HasSuffix(model, "-mini") || strings.Contains(model, "-mini-")
+}
+
 // ---------- Complete endpoint ----------
 
 // callLLMStreamingNoTools is the real-token-streaming variant.
@@ -1328,17 +1383,17 @@ func (h *LlmProxyHandler) callLLMStreamingMessages(
 // backoff is applied once per candidate, matching callLLMWithFailover.
 func (h *LlmProxyHandler) streamWithFailover(
 	ctx context.Context,
-	tenantID string,
+	tenantID, preferredModel string,
 	messages []map[string]any,
 	onDelta func(string),
 	onAttempt func(candidateAttempt),
 	userFacing bool,
 ) (fullText, usedProvider, usedModel string, tokensIn, tokensOut int64, err error) {
-	chain := resolveCandidateChain(
+	chain := h.preferModel(ctx, tenantID, preferredModel, resolveCandidateChain(
 		h.providerAvailable(ctx, tenantID, "anthropic"),
 		h.providerAvailable(ctx, tenantID, "openai"),
 		userFacing,
-	)
+	))
 	if len(chain) == 0 {
 		return "", "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
@@ -1448,7 +1503,7 @@ func (h *LlmProxyHandler) completeSSE(
 	const userFacing = false // agentless completions are developer tools, not end-user
 	msgs := messagesToAny(req.Messages)
 	fullText, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.streamWithFailover(
-		ctx, tenantID, msgs, onDelta, nil, userFacing,
+		ctx, tenantID, req.Model, msgs, onDelta, nil, userFacing,
 	)
 	if llmErr != nil {
 		h.logger().Error("completeSSE: streaming failed", zap.Error(llmErr))
@@ -1744,7 +1799,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// reply to an end-user contact. claude-code may serve it.
 	if req.AgentName == "" && !req.Stream {
 		text, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.callLLMWithFailover(
-			ctx, tenantID,
+			ctx, tenantID, req.Model,
 			messagesToAny(req.Messages), nil, nil, nil, nil, 1, false,
 		)
 		if llmErr != nil {
@@ -3768,9 +3823,12 @@ type candidateAttempt struct {
 //
 // onAttempt is called for every attempt (success OR retryable failure) so
 // callers can stream UI events. Pass nil to skip.
+//
+// preferredModel is the agent's (or request's) model; it heads the chain via
+// preferModel. ""/"auto" keeps the default chain exactly.
 func (h *LlmProxyHandler) callLLMWithFailover(
 	ctx context.Context,
-	tenantID string,
+	tenantID, preferredModel string,
 	messages []map[string]any,
 	tools []map[string]any,
 	dispatch func(ctx context.Context, name string, args map[string]any) (any, error),
@@ -3785,11 +3843,11 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	tokensIn, tokensOut int64,
 	err error,
 ) {
-	chain := resolveCandidateChain(
+	chain := h.preferModel(ctx, tenantID, preferredModel, resolveCandidateChain(
 		h.providerAvailable(ctx, tenantID, "anthropic"),
 		h.providerAvailable(ctx, tenantID, "openai"),
 		userFacing,
-	)
+	))
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
@@ -3932,7 +3990,7 @@ func (h *LlmProxyHandler) CompleteInternalWithUsage(ctx context.Context, tenantI
 	}
 	const userFacing = true
 	var provider, model string
-	text, _, provider, model, tokensIn, tokensOut, err = h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1, userFacing)
+	text, _, provider, model, tokensIn, tokensOut, err = h.callLLMWithFailover(ctx, tenantID, "", messages, nil, nil, nil, nil, 1, userFacing)
 	if err != nil {
 		return "", 0, 0, 0, err
 	}

@@ -338,7 +338,7 @@ func TestStreamWithFailover_BeforeFirstDelta(t *testing.T) {
 
 	var deltas []string
 	full, _, _, _, _, err := h.streamWithFailover(
-		context.Background(), "tenant1",
+		context.Background(), "tenant1", "",
 		[]map[string]any{{"role": "user", "content": "hi"}},
 		func(chunk string) { deltas = append(deltas, chunk) },
 		nil,

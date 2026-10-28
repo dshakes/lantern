@@ -1296,7 +1296,7 @@ func TestOversizeRetry_SucceedsAfterTruncation(t *testing.T) {
 	}
 
 	text, _, _, _, _, _, err := h.callLLMWithFailover(
-		context.Background(), "00000000-0000-0000-0000-000000000001",
+		context.Background(), "00000000-0000-0000-0000-000000000001", "",
 		msgs, nil, nil, nil, nil, 1, true,
 	)
 	if err != nil {
@@ -1337,7 +1337,7 @@ func TestHappyPath_NoTruncationNoExtraCall(t *testing.T) {
 		{"role": "user", "content": "hi"},
 	}
 	text, _, _, _, _, _, err := h.callLLMWithFailover(
-		context.Background(), "00000000-0000-0000-0000-000000000001",
+		context.Background(), "00000000-0000-0000-0000-000000000001", "",
 		msgs, nil, nil, nil, nil, 1, true,
 	)
 	if err != nil {
@@ -1371,7 +1371,7 @@ func TestOversizePersistent_FailsCleanly(t *testing.T) {
 		{"role": "user", "content": "some content"},
 	}
 	_, _, _, _, _, _, err := h.callLLMWithFailover(
-		context.Background(), "00000000-0000-0000-0000-000000000001",
+		context.Background(), "00000000-0000-0000-0000-000000000001", "",
 		msgs, nil, nil, nil, nil, 1, true,
 	)
 	if err == nil {
