@@ -39,11 +39,6 @@ import (
 	"github.com/dshakes/lantern/e2e/internal/e2ekit"
 )
 
-func TestMain(m *testing.M) {
-	e2ekit.Sweep(e2ekit.DefaultBase(), e2ekit.DefaultEmail(), e2ekit.DefaultPassword())
-	os.Exit(m.Run())
-}
-
 const (
 	agentName     = "e2e-support" // e2ekit's reserved slot for the support example
 	slackChannel  = "support-handoffs"
@@ -54,7 +49,7 @@ const (
 
 func exampleDir() string { return filepath.Join("..", "..", "examples", "support-desk") }
 
-func readJSON(t *testing.T, name string, out any) {
+func readSupportJSON(t *testing.T, name string, out any) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(exampleDir(), name))
 	if err != nil {
@@ -199,7 +194,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 	base, token := e2ekit.DefaultBase(), login(t, e2ekit.DefaultBase())
 
 	var spec map[string]any
-	readJSON(t, "spec.json", &spec)
+	readSupportJSON(t, "spec.json", &spec)
 	if labels, _ := spec["labels"].(map[string]any); labels["handoff"] != "human" || labels["handoff_slack_channel"] != slackChannel {
 		t.Fatalf("spec.json labels = %v, want handoff=human and handoff_slack_channel=%s", labels, slackChannel)
 	}
@@ -211,7 +206,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 
 	// Seed the knowledge base with the example's documents (fixed ids).
 	var docs []struct{ ID, Title, File string }
-	readJSON(t, "knowledge.json", &docs)
+	readSupportJSON(t, "knowledge.json", &docs)
 	for _, d := range docs {
 		raw, err := os.ReadFile(filepath.Join(exampleDir(), d.File))
 		if err != nil {

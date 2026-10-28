@@ -30,8 +30,10 @@ createdb -h localhost -U lantern "$DB"
 python3 - "$tmp/rules.json" <<'PY'
 import json, sys
 rules = []
-for ex in ("pr-triage-webhook", "incident-responder"):
-    rules += json.load(open(f"examples/{ex}/fixtures/llm-rules.json"))
+for path in ("pr-triage-webhook/fixtures/llm-rules.json",
+             "incident-responder/fixtures/llm-rules.json",
+             "support-desk/rules.json"):
+    rules += json.load(open(f"examples/{path}"))
 json.dump(rules, open(sys.argv[1], "w"))
 PY
 
