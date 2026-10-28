@@ -125,7 +125,7 @@ Each hop is authenticated: JWT or scoped API key at the edge; a shared service t
 **Reliability and cost**
 - Durable steps with crash-resume from the journal; idempotency keys from `(run_id, step_id, attempt)` on LLM calls and external deliveries, so a replay does not double-send
 - Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching; an unknown name falls back to the balanced default, never a hardcoded model ([docs](https://dshakes.github.io/lantern/models/#capabilities))
-- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. Not yet: the per-run cap on single-call runs (the forecast's cost check currently never runs), and runs/day for workflow runs ([what is enforced where](https://dshakes.github.io/lantern/budgets/#matrix))
+- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. On single-call runs the per-run cap is checked only by the opt-in pre-run forecast (`/v1/runs/forecast`), and failed runs do not count toward runs/day ([what is enforced where](https://dshakes.github.io/lantern/budgets/#matrix))
 - Eval suites with per-branch baselines that fail CI with HTTP 422; rehearsals replay past failures; A/B experiments with auto-promotion
 
 **Security and governance**

@@ -134,7 +134,7 @@ printf '%s' "$SECRET" | lantern hooks create my-agent --provider generic --secre
       <ul>
         <li>
           If you omit <code>secret</code>, Lantern generates one (<code>whsec_</code> plus 64 hex characters) and returns
-          it in the create response only. List and get never return it. The one other place it appears is the owner data export, which currently includes it (see <Link href="/accounts#export">Accounts</Link>; fix in progress).
+          it in the create response only. List and get never return it. The owner data export leaves it out too.
         </li>
         <li>
           If you supply one, it must be at least 16 characters and is not echoed back.
@@ -400,7 +400,7 @@ curl -i -X POST "$HOOK" \\
         </li>
         <li>
           <strong>Secret storage.</strong> Stored encrypted with AES-256-GCM when <code>LANTERN_CREDENTIAL_KEY</code> is
-          set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged. The owner data export currently includes it (see <Link href="/accounts#export">Accounts</Link>; fix in progress).
+          set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner <Link href="/accounts#export">data export</Link>.
         </li>
         <li>
           <strong>Tenant scoping.</strong> Trigger CRUD runs under row-level security by tenant; get, update and delete of

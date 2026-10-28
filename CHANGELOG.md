@@ -33,6 +33,17 @@ This project is pre-1.0; there are no stable release branches yet.
   running real Firecracker microVMs on a Mac (Lima); budgets rewritten around an
   enforcement matrix; models page lists every capability name per provider.
 
+### Fixed
+- **Data export redacts credentials structurally** (#330) — any column with a
+  secret/token/key/password/hash/enc segment is left out, including webhook
+  trigger secrets (`agent_triggers.secret_enc`) and `data_planes.reg_token_hash`,
+  which were previously exported.
+- **Cost forecast works** (#330) — it read run history with
+  `status = 'completed'`, which no run has, so it never estimated cost; it now
+  averages `succeeded` runs, so the per-run and daily-cost checks run.
+- **Workflow runs count toward runs/day** (#330) — once each, on success.
+  Failed runs still do not count.
+
 ### Changed
 - **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
   workflow runs re-check the tenant cap, daily caps and `maxCostUsdPerRun`

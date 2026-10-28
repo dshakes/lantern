@@ -263,13 +263,18 @@ echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTE
         <code>tables</code> has one array per table that has a{" "}
         <code>tenant_id</code> column (discovered from the database catalog, so
         new tables are included automatically), plus the tenant row. Credential
-        material is left out: <code>password_hash</code>, <code>key_hash</code>,{" "}
-        <code>token_hash</code>, <code>provider_config</code>, any column ending{" "}
-        <code>_encrypted</code>, and <code>connector_installs.config</code>.
-        Webhook-trigger secrets (<code>agent_triggers.secret_enc</code>) are
-        currently <strong>included</strong>, in plaintext when{" "}
-        <code>LANTERN_CREDENTIAL_KEY</code> is unset; a fix is in progress, so
-        treat an export as secret material until it lands. The
+        columns are left out by name: any column with a <code>secret</code>,{" "}
+        <code>token</code>, <code>key</code>, <code>password</code>,{" "}
+        <code>hash</code>, <code>enc</code>/<code>encrypted</code>,{" "}
+        <code>ciphertext</code> or <code>credential(s)</code> segment (for
+        example <code>password_hash</code>,{" "}
+        <code>agent_triggers.secret_enc</code>,{" "}
+        <code>data_planes.reg_token_hash</code>), plus{" "}
+        <code>provider_config</code> and <code>connector_installs.config</code>.
+        Dedup keys (<code>idempotency_key</code>, <code>idem_key</code>,{" "}
+        <code>replay_key</code>) and <code>key_prefix</code> are exported. The
+        rule is structural, so a new credential column is excluded by
+        default. The
         document is built in memory, so very large workspaces produce a large
         response.
       </p>
