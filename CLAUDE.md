@@ -451,6 +451,19 @@ overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` o
 `comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
 (`list_incidents`, `get_incident`, `create_incident`, `update_incident`; key in `apiKey`).
 
+#### Fixture LLM tier (`LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}`)
+
+Dev/test only. `LANTERN_LLM_BASEURL_OPENAI` / `LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192`
+re-point `api.openai.com` / `api.anthropic.com` (scheme+host only) for EVERY control-plane provider call
+(`internal/handlers/llm_baseurl.go` wraps `http.DefaultTransport` once, so completions, streaming, tool
+loop, `web_search`, and any future call site route through it; embeddings/speech reach the fixture host but 404). Target:
+`services/control-plane/cmd/llm-replay` (`go run ./cmd/llm-replay [-addr] [-rules rules.json]`): OpenAI
+chat-completions + Anthropic messages, JSON and SSE, text and tool calls, deterministic
+`fixture: <first 60 chars of last user text>` replies, `len/4` token usage, rules file
+`[{"match","reply"|"tool":{"name","args"}}]`, recorded calls at `GET /__requests`. A provider key is still
+needed in the DB or env (any dummy value). **Refused in prod**: `CheckLLMBaseURLOverrides` is a startup
+error and the transport ignores overrides regardless.
+
 ### Settings
 
 | Method | Path                                         | Description               |

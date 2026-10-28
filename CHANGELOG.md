@@ -15,6 +15,11 @@ This project is pre-1.0; there are no stable release branches yet.
   (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
   creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
   sign-up, and the `lantern.onboarding.step.total` counter.
+- **Fixture LLM tier** — `LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}` re-points every
+  provider call (completions, streaming, tool loop, web_search) at
+  `cmd/llm-replay`, a deterministic OpenAI/Anthropic wire-format server with
+  scriptable replies and tool calls and realistic token usage, so CI and kiosk
+  mode need no provider key. Refused in production. Docs: `/testing`.
 - **Webhook triggers** (ADR 0028, #323) — a public `POST /v1/hooks/{id}` URL per
   agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run. The
   signature is the only credential; duplicate deliveries return

@@ -55,6 +55,14 @@ A reachable API with broken dev credentials is always a failure, never a skip.
 Both suites (`runtime/` and `quickstart/`) print the resolved target URL at
 the start of every run, so there is no silent fallback confusion.
 
+## Fixture LLM tier (no provider key)
+
+For CI and kiosk mode, run the control-plane against the deterministic fixture LLM instead of a real
+provider: `go run ./cmd/llm-replay` (in `services/control-plane`, `127.0.0.1:9192`), then start the API with
+`LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192` and
+any dummy `OPENAI_API_KEY`. Replies are `fixture: <first 60 chars of the user message>` with realistic token
+counts; `-rules rules.json` scripts replies and tool calls. Refused in prod. See the docs `/testing` page.
+
 ## Conventions
 
 - Go tests behind the `e2e` build tag (`//go:build e2e`) in a standalone
