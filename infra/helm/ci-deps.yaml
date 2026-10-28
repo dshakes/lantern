@@ -1,0 +1,55 @@
+# CI-only stand-ins for the chart Bitnami Postgres/MinIO subcharts (used with
+# postgresql.enabled=false / minio.enabled=false in values-ci.yaml). The Bitnami
+# Postgres chart crash-loops on the pgvector image, and no MinIO image (Bitnami,
+# docker.io, quay.io) is pullable any more, so CI runs plain pgvector plus an
+# S3-compatible mock (SeaweedFS S3, no identities configured so any credentials work). Service names/labels
+# match what the chart and its NetworkPolicies expect for release "lantern".
+# Apply with: PW=... envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: lantern-postgresql, labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: postgresql}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: postgresql}}
+  template:
+    metadata: {labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: postgresql}}
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          env:
+            - {name: POSTGRES_USER, value: lantern}
+            - {name: POSTGRES_DB, value: lantern}
+            - {name: POSTGRES_PASSWORD, value: "${PW}"}
+          ports: [{containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -U, lantern]}, periodSeconds: 3}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lantern-postgresql}
+spec:
+  selector: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: postgresql}
+  ports: [{port: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: lantern-minio, labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}}
+  template:
+    metadata: {labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}}
+    spec:
+      containers:
+        - name: s3
+          image: chrislusf/seaweedfs:latest
+          args: [server, -dir=/data, -s3]
+          ports: [{containerPort: 8333}]
+          readinessProbe: {tcpSocket: {port: 8333}, periodSeconds: 3}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lantern-minio}
+spec:
+  selector: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: minio}
+  ports: [{port: 9000, targetPort: 8333}]
