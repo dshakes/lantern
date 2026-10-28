@@ -278,9 +278,9 @@ function Platform() {
     [
       "Building agents",
       [
-        "Visual workflow graphs that execute (tool nodes not yet wired)",
+        "Visual workflow graphs that execute, tool nodes included",
         "Sessions with SSE streaming, cron schedules, human approval",
-        "17 connectors to real APIs, an MCP registry, A2A cards",
+        "18 connectors to real APIs, an MCP registry, A2A cards",
         "TypeScript, Python and Go SDKs and the lantern CLI",
       ],
     ],

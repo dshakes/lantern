@@ -42,6 +42,14 @@ export default function ApiReferencePage() {
         endpoint—you deploy the control-plane yourself.
       </div>
 
+      <h2 id="accounts">Accounts</h2>
+      <p>
+        Sign-up, login, email verification, password reset, data export and
+        workspace deletion (<code>/auth/*</code> and{" "}
+        <code>/v1/tenants/{"{"}id{"}"}</code>) are documented on{" "}
+        <Link href="/accounts">Accounts &amp; sign-up</Link>.
+      </p>
+
       <h2 id="agents">Agents</h2>
 
       <h3>List agents</h3>
@@ -375,6 +383,20 @@ DELETE /v1/schedules/{id}        — delete`}</code>
         overrides it.
       </div>
 
+      <h2 id="triggers">Triggers</h2>
+      <p>
+        Inbound webhook triggers start a run of one agent when GitHub, Sentry, PagerDuty or a signed generic sender posts
+        to a public URL. Setup, signatures and status codes are on <Link href="/triggers">Webhook triggers</Link>.
+      </p>
+      <pre>
+        <code>{`POST   /v1/agents/{name}/triggers   — create {provider, secret?, inputTemplate?}; 201, secret shown once
+GET    /v1/agents/{name}/triggers   — list (bare array, no secrets)
+GET    /v1/triggers/{id}            — get
+PATCH  /v1/triggers/{id}            — {enabled?, secret?, inputTemplate?}
+DELETE /v1/triggers/{id}            — 204
+POST   /v1/hooks/{id}               — public receiver, authenticated by HMAC signature, not a token`}</code>
+      </pre>
+
       <h2 id="settings">LLM providers</h2>
       <pre>
         <code>{`POST /v1/settings/llm-providers
@@ -422,7 +444,7 @@ POST /v1/settings/llm-providers/{provider}/test  — test the key`}</code>
 
       <div className="callout callout-info">
         <strong>No rate-limit tiers or X-RateLimit headers.</strong> Spend and
-        run limits are per-agent (cost/day and runs/day enforced; cost/run checked at forecast; tokens/day stored, not enforced){" "}
+        run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see{" "}
         <a href="/budgets">budgets</a>.
       </div>
     </>

@@ -8,7 +8,7 @@ export default function ConnectorsPage() {
       <h1>Connectors</h1>
       <p>
         A connector gives an agent hands: search a Gmail inbox, open a GitHub
-        issue, post to Slack. Lantern ships 17, each with a fixed set of
+        issue, post to Slack. Lantern ships 18, each with a fixed set of
         actions. Connect once; credentials are stored per tenant.
       </p>
 
@@ -16,13 +16,13 @@ export default function ConnectorsPage() {
         Without connectors an agent can only think and answer. Connect a
         service once (usually an OAuth &quot;Allow&quot; screen) and the agent
         can call its actions. Per-tool limits can be stored on a{" "}
-        <Link href="/budgets">budget</Link> but are not enforced yet.
+        <Link href="/budgets">budget</Link> and are enforced on workflow tool and connector nodes only.
       </Concept>
 
       <BrandGrid items={[
         { name: "Gmail", sub: "list · search · send", href: "#email-calendar" },
-        { name: "Google Calendar", sub: "list events", href: "#email-calendar" },
-        { name: "Slack", sub: "post · list channels", href: "#communication" },
+        { name: "Google Calendar", sub: "list · create events", href: "#email-calendar" },
+        { name: "Slack", sub: "post · reply in thread · channels", href: "#communication" },
         { name: "GitHub", sub: "repos · PRs · issues", href: "#dev-tools" },
         { name: "Notion", sub: "search · databases", href: "#docs-storage" },
         { name: "Stripe", sub: "charges · customers", href: "#commerce" },
@@ -30,13 +30,13 @@ export default function ConnectorsPage() {
         { name: "Jira", sub: "list · create issues", href: "#dev-tools" },
       ]} />
 
-      <h2 id="available">Available connectors (17)</h2>
+      <h2 id="available">Available connectors (18)</h2>
 
       <h3 id="communication">Communication</h3>
       <ul>
         <li>
           <strong>Slack</strong> (<code>slack</code>) -- list channels and
-          users, post messages; OAuth or bot token
+          users, post messages, reply in threads; OAuth or bot token
         </li>
         <li>
           <strong>Discord</strong> (<code>discord</code>) -- list guilds, send
@@ -61,7 +61,7 @@ export default function ConnectorsPage() {
         </li>
         <li>
           <strong>Google Calendar</strong> (<code>google-calendar</code>) --
-          list events; Google OAuth
+          list and create events; Google OAuth
         </li>
       </ul>
 
@@ -85,8 +85,8 @@ export default function ConnectorsPage() {
       <ul>
         <li>
           <strong>GitHub</strong> (<code>github</code>) -- list repos, list and
-          get PRs, list and get issues, create issues; OAuth or personal access
-          token
+          get PRs, list and get issues, create issues, comment on PRs; OAuth or
+          personal access token
         </li>
         <li>
           <strong>Linear</strong> (<code>linear</code>) -- list and create
@@ -97,8 +97,14 @@ export default function ConnectorsPage() {
           email + API token + domain, or OAuth
         </li>
         <li>
-          <strong>Sentry</strong> (<code>sentry</code>) -- list issues; auth
-          token
+          <strong>Sentry</strong> (<code>sentry</code>) -- list and get
+          issues; auth token
+        </li>
+        <li>
+          <strong>PagerDuty</strong> (<code>pagerduty</code>) -- list and get
+          incidents, create and update incidents; REST API key. No dashboard
+          card yet; install over the API (see{" "}
+          <a href="#new-actions">Newer actions</a>)
         </li>
         <li>
           <strong>Vercel</strong> (<code>vercel</code>) -- list projects and
@@ -137,6 +143,214 @@ export default function ConnectorsPage() {
         in <code>connector_executor.go</code> in the control plane. There is
         no plug-in interface yet.
       </div>
+
+      <h2 id="new-actions">Newer actions</h2>
+      <p>
+        Four actions and one connector (PagerDuty, four actions) were added after the original set.
+        All run through{" "}
+        <code>POST /v1/connectors/&#123;id&#125;/execute?action=&lt;action&gt;</code>{" "}
+        with a JSON body of params (the connector must be installed and
+        connected first). A successful call returns{" "}
+        <code>{"{"}&quot;connector&quot;, &quot;action&quot;, &quot;data&quot;{"}"}</code>;
+        a failed vendor call returns 502 with{" "}
+        <code>{"{"}&quot;error&quot;, &quot;connector&quot;, &quot;action&quot;{"}"}</code>;
+        an uninstalled connector returns 404.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Connector / action</th>
+            <th>Params (<strong>required</strong> in bold)</th>
+            <th>Credential (config field)</th>
+            <th>Class</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>slack</code> / <code>reply_thread</code></td>
+            <td><strong><code>channel</code></strong>, <strong><code>text</code></strong>, <strong><code>thread_ts</code></strong></td>
+            <td>OAuth, or <code>botToken</code></td>
+            <td>write</td>
+          </tr>
+          <tr>
+            <td><code>github</code> / <code>comment_pr</code></td>
+            <td><strong><code>owner</code></strong>, <strong><code>repo</code></strong>, <strong><code>number</code></strong>, <strong><code>body</code></strong></td>
+            <td>OAuth, or <code>personalAccessToken</code></td>
+            <td>write</td>
+          </tr>
+          <tr>
+            <td><code>sentry</code> / <code>get_issue</code></td>
+            <td><strong><code>organization</code></strong>, <strong><code>issue_id</code></strong></td>
+            <td><code>authToken</code></td>
+            <td>read-only</td>
+          </tr>
+          <tr>
+            <td><code>google-calendar</code> / <code>create_event</code></td>
+            <td><strong><code>summary</code></strong>, <strong><code>start</code></strong>, <strong><code>end</code></strong> (RFC3339); optional <code>calendarId</code> (default <code>primary</code>), <code>timeZone</code>, <code>description</code>, <code>location</code>, <code>attendees</code> (array of emails)</td>
+            <td>Google OAuth</td>
+            <td>write</td>
+          </tr>
+          <tr>
+            <td><code>pagerduty</code> / <code>list_incidents</code></td>
+            <td>optional <code>status</code> (<code>triggered</code>, <code>acknowledged</code>, <code>resolved</code>), <code>limit</code> (default 25)</td>
+            <td><code>apiKey</code> (REST API key)</td>
+            <td>read-only</td>
+          </tr>
+          <tr>
+            <td><code>pagerduty</code> / <code>get_incident</code></td>
+            <td><strong><code>incident_id</code></strong></td>
+            <td><code>apiKey</code></td>
+            <td>read-only</td>
+          </tr>
+          <tr>
+            <td><code>pagerduty</code> / <code>create_incident</code></td>
+            <td><strong><code>title</code></strong>, <strong><code>service_id</code></strong>, <strong><code>from</code></strong> (acting user&apos;s email); optional <code>details</code></td>
+            <td><code>apiKey</code></td>
+            <td>write</td>
+          </tr>
+          <tr>
+            <td><code>pagerduty</code> / <code>update_incident</code></td>
+            <td><strong><code>incident_id</code></strong>, <strong><code>from</code></strong>, <strong><code>status</code></strong> (<code>acknowledged</code> or <code>resolved</code>)</td>
+            <td><code>apiKey</code></td>
+            <td>write</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Slack <code>post_message</code> also accepts an optional{" "}
+        <code>thread_ts</code>; <code>reply_thread</code> is the same call with{" "}
+        <code>thread_ts</code> required. &quot;Read-only&quot; is the
+        allowlist in <code>connector_safety.go</code>; anything not on it,
+        including every action on an unknown connector, is treated as
+        side-effecting.
+      </p>
+      <p>
+        PagerDuty has no dashboard card yet. Install it over the API, then
+        call it. Agents get <code>list_incidents</code> and{" "}
+        <code>get_incident</code> as tools;{" "}
+        <code>create_incident</code> and <code>update_incident</code> are
+        REST-only.
+      </p>
+      <pre>
+        <code>{`# install PagerDuty (config.apiKey = a REST API key)
+curl -X POST http://localhost:8080/v1/connectors/install \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connectorId": "pagerduty", "displayName": "PagerDuty", "config": {"apiKey": "..."}}'
+
+# read an incident
+curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=get_incident" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"incident_id": "PABC123"}'
+
+# acknowledge it (write; "from" is required by PagerDuty)
+curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=update_incident" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"incident_id": "PABC123", "from": "oncall@example.com", "status": "acknowledged"}'
+
+# reply in a Slack thread
+curl -X POST "http://localhost:8080/v1/connectors/slack/execute?action=reply_thread" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"channel": "C0123", "thread_ts": "1700000000.000100", "text": "On it."}'`}</code>
+      </pre>
+
+      <h2 id="recorded-test-mode">Recorded test mode</h2>
+      <p>
+        Run connector actions without a real SaaS account by pointing a vendor
+        at a local fixture server. This is dev and test only.
+      </p>
+      <p>
+        <strong>1. Start the fixture server</strong> from{" "}
+        <code>services/control-plane</code>. It listens on loopback and serves
+        recorded responses for Slack, GitHub, Sentry, PagerDuty and Google
+        Calendar:
+      </p>
+      <pre>
+        <code>{`go run ./cmd/connector-replay            # 127.0.0.1:9191
+go run ./cmd/connector-replay -addr 127.0.0.1:9292`}</code>
+      </pre>
+      <p>
+        <strong>2. Point the control plane at it</strong> before starting it
+        (<code>LANTERN_ENV</code> must not be prod, production or staging):
+      </p>
+      <pre>
+        <code>{`export LANTERN_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_GITHUB=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_SENTRY=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_GOOGLE=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_PAGERDUTY=http://127.0.0.1:9191
+make run-api`}</code>
+      </pre>
+      <p>
+        <strong>3. Check it worked</strong>: install a connector with any
+        non-empty token, execute an action, then read what the server saw:
+      </p>
+      <pre>
+        <code>{`curl -s http://127.0.0.1:9191/__requests`}</code>
+      </pre>
+      <p>
+        Each recorded call has <code>method</code>, <code>path</code>,{" "}
+        <code>query</code>, <code>header</code>, <code>body</code>,{" "}
+        <code>hasAuth</code>, <code>matched</code> and <code>status</code>.
+        The <code>Authorization</code> header is never stored, only whether it
+        was set.
+      </p>
+
+      <h3 id="baseurl-vars">Override variables</h3>
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Vendor host replaced</th><th>Connectors affected</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>LANTERN_CONNECTOR_BASEURL_SLACK</code></td><td><code>slack.com</code></td><td>Slack</td></tr>
+          <tr><td><code>LANTERN_CONNECTOR_BASEURL_GITHUB</code></td><td><code>api.github.com</code></td><td>GitHub</td></tr>
+          <tr><td><code>LANTERN_CONNECTOR_BASEURL_SENTRY</code></td><td><code>sentry.io</code></td><td>Sentry</td></tr>
+          <tr><td><code>LANTERN_CONNECTOR_BASEURL_GOOGLE</code></td><td><code>www.googleapis.com</code></td><td>Google Calendar, Google Drive</td></tr>
+          <tr><td><code>LANTERN_CONNECTOR_BASEURL_PAGERDUTY</code></td><td><code>api.pagerduty.com</code></td><td>PagerDuty</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The value must be an absolute <code>http</code> or <code>https</code>{" "}
+        URL with a host. Only scheme and host are replaced; the vendor path is
+        kept, so the fixture server serves real paths such as{" "}
+        <code>/api/chat.postMessage</code>. An unmatched request gets 404{" "}
+        <code>{"{"}&quot;error&quot;: &quot;no recorded fixture for METHOD PATH&quot;{"}"}</code>.
+      </p>
+      <p>
+        Fixtures are exact method + path matches in{" "}
+        <code>internal/connectorreplay/fixtures.json</code> (embedded in the
+        binary): Slack <code>conversations.list</code> and{" "}
+        <code>chat.postMessage</code>; GitHub <code>acme/api</code> pulls list,
+        PR 42, and a comment on 42; Sentry org <code>acme</code> issues list
+        and issue <code>1001</code>; PagerDuty incidents list, get{" "}
+        <code>PABC123</code>, create, update; Google Calendar{" "}
+        <code>primary</code> events list and insert. Use those owner, repo,
+        org and ids in your test params.
+      </p>
+
+      <h3 id="prod-guard">Refused in production</h3>
+      <p>
+        A bearer token must never be sent to an arbitrary host, so overrides
+        are blocked twice:
+      </p>
+      <ul>
+        <li>
+          <strong>Startup:</strong> with <code>LANTERN_ENV</code> set to{" "}
+          <code>prod</code>, <code>production</code> or <code>staging</code>,
+          the control plane exits if any override variable is set:{" "}
+          <code>LANTERN_CONNECTOR_BASEURL_X set in production — connector base-URL overrides are test-only and would redirect tenant credentials to another host; unset them</code>{" "}
+          (names of every variable set are listed). In any environment a
+          malformed value is also fatal:{" "}
+          <code>LANTERN_CONNECTOR_BASEURL_X is malformed: must be an absolute http(s) URL, got &quot;...&quot;</code>.
+        </li>
+        <li>
+          <strong>Request time:</strong> the outbound transport ignores
+          overrides whenever the environment is prod, even if one slipped in.
+        </li>
+      </ul>
 
       <h2 id="slack">Setting up a connector</h2>
 

@@ -70,7 +70,7 @@ export function SystemDiagram() {
         </Link>
         <Link href="/connectors" className="sys-actor">
           <Database className="h-4 w-4 text-flame" />
-          <div><div className="sys-actor-name">Your APIs &amp; data</div><div className="sys-actor-sub">17 connectors · in your network</div></div>
+          <div><div className="sys-actor-name">Your APIs &amp; data</div><div className="sys-actor-sub">18 connectors · in your network</div></div>
         </Link>
       </div>
     </div>
