@@ -88,6 +88,26 @@
   --font-mono: var(--lx-font-mono);
 }
 
+/* The broker console is a terminal: it stays night-dark in both themes, so its
+   palette is fixed rather than theme-mapped. */
+:root {
+  --dm-bg: #060b15;
+  --dm-pane: #0a1222;
+  --dm-ink: #e6edf6;
+  --dm-ink-2: #9fb0c6;
+  --dm-ink-3: #8394ad;
+  --dm-line: #1d2a42;
+  --dm-flame: #ffb547;
+  --dm-glass: #7cc4e8;
+  --dm-patina: #4fc1a6;
+  --dm-signal: #ff7262;
+  --on-flame: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --on-flame: #1a0f00; }
+}
+:root[data-theme="dark"] { --on-flame: #1a0f00; }
+
 html {
   scroll-behavior: smooth;
   scroll-padding-top: 4.5rem;
@@ -98,6 +118,7 @@ body {
   font-family: var(--lx-font-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
 }
 ::selection {
   background: var(--lx-flame-soft);
@@ -112,83 +133,509 @@ body {
 .display {
   font-family: var(--lx-font-display);
   font-variation-settings: "opsz" 96;
+  letter-spacing: -0.03em;
+  line-height: 0.92;
+  font-weight: 800;
+  text-wrap: balance;
+}
+.h2 {
+  font-family: var(--lx-font-display);
+  font-variation-settings: "opsz" 72;
+  font-weight: 700;
   letter-spacing: -0.035em;
-  line-height: 0.95;
+  line-height: 1;
+  font-size: clamp(2.25rem, 5.2vw, 4rem);
+  text-wrap: balance;
+}
+.lede {
+  font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+  line-height: 1.6;
+  color: var(--lx-ink-2);
+  max-width: 38rem;
 }
 
 /* Buttons: one primary, one quiet. */
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   border-radius: var(--lx-radius-m);
-  padding: 0.7rem 1.1rem;
-  font-weight: 500;
+  padding: 0.8rem 1.25rem;
+  font-weight: 600;
   font-size: 0.95rem;
-  transition: background-color var(--lx-dur-ui) var(--lx-ease), border-color var(--lx-dur-ui) var(--lx-ease);
+  transition: background-color var(--lx-dur-ui) var(--lx-ease), border-color var(--lx-dur-ui) var(--lx-ease),
+    transform var(--lx-dur-ui) var(--lx-ease);
 }
+.btn:active { transform: translateY(1px); }
 .btn-primary {
-  background: var(--lx-ink);
-  color: var(--lx-bg);
+  background: var(--lx-flame);
+  color: var(--on-flame);
 }
-.btn-primary:hover {
-  background: var(--lx-ink-2);
-}
+.btn-primary:hover { background: color-mix(in oklab, var(--lx-flame) 88%, var(--lx-ink)); }
 .btn-quiet {
   border: 1px solid var(--lx-line);
   color: var(--lx-ink);
+  background: color-mix(in oklab, var(--lx-surface) 60%, transparent);
 }
-.btn-quiet:hover {
-  border-color: var(--lx-ink-3);
+.btn-quiet:hover { border-color: var(--lx-ink-3); }
+
+.link {
+  text-decoration: underline;
+  text-decoration-color: var(--lx-line);
+  text-underline-offset: 4px;
+}
+.link:hover { text-decoration-color: var(--lx-ink); color: var(--lx-ink); }
+
+/* Hero: the flame's warmth pooling behind the proof. The only ambient light. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+  color: var(--lx-ink-2);
+}
+.eyebrow::before {
+  content: "";
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--lx-flame);
+  box-shadow: 0 0 10px var(--lx-flame);
+}
+/* The page starts and ends lit: warm light behind the proof and the closing CTA. */
+.proof-glow {
+  position: absolute;
+  inset: -38% -30% -42% -30%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 30%, transparent) 55%, transparent 100%);
 }
 
-/* Code / terminal block */
-.term {
-  background: var(--lx-surface);
+/* Copyable command */
+.cmd {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   border: 1px solid var(--lx-line);
+  background: var(--lx-surface);
   border-radius: var(--lx-radius-m);
+  padding: 0.35rem 0.35rem 0.35rem 1rem;
   font-family: var(--lx-font-mono);
   font-size: 0.85rem;
-  line-height: 1.7;
+  min-width: 0;
+}
+.cmd code {
+  overflow-x: auto;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  scrollbar-width: none;
+  padding: 0.45rem 0;
+  mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+.cmd button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: var(--lx-radius-s);
+  padding: 0.45rem 0.65rem;
+  font-family: var(--lx-font-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--lx-ink-2);
+  background: var(--lx-surface-2);
+}
+.cmd button:hover { color: var(--lx-ink); }
+
+/* ── The broker console ─────────────────────────────────────────────── */
+.console {
+  position: relative;
+  background: var(--dm-bg);
+  color: var(--dm-ink);
+  border-radius: 20px;
+  border: 1px solid #22314d;
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.06) inset, 0 40px 80px -30px rgb(3 8 20 / 0.55),
+    0 0 0 1px rgb(0 0 0 / 0.2);
+  overflow: hidden;
+  font-family: var(--lx-font-mono);
+}
+.console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--dm-line);
+  font-size: 0.75rem;
+  color: var(--dm-ink-3);
+}
+.console-bar { font-family: var(--lx-font-text); color: var(--dm-ink-2); }
+.console-bar span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.75rem minmax(0, 1fr);
+  font-size: 0.72rem;
+  color: var(--dm-ink-3);
+  font-family: var(--lx-font-text);
+  padding: 0.85rem 1.1rem 0.25rem;
+}
+.console-cols { font-size: 0.78rem; }
+.console-cols span:first-child { color: var(--dm-flame); }
+.console-cols span:last-child { color: var(--dm-patina); }
+.console-body { position: relative; padding: 0.4rem 1.1rem 1rem; }
+/* The glass wall: the VM's only way out is vsock through it. */
+.console-wall {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 0.825rem);
+  width: 1.65rem;
+  border-inline: 1px solid color-mix(in oklab, var(--dm-glass) 55%, transparent);
+  background: linear-gradient(90deg, rgb(124 196 232 / 0.04), rgb(124 196 232 / 0.16) 50%, rgb(124 196 232 / 0.04));
+  box-shadow: 0 0 24px rgb(124 196 232 / 0.18);
+}
+.console-wall::after {
+  content: "vsock";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--dm-glass);
+  opacity: 0.85;
+}
+.console-flame {
+  position: absolute;
+  left: -6rem;
+  bottom: -9rem;
+  width: 26rem;
+  height: 22rem;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgb(255 181 71 / 0.16), transparent);
+}
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.75rem minmax(0, 1fr);
+  align-items: center;
+  min-height: 5.25rem;
+  padding: 0.9rem 0;
+  border-top: 1px dashed rgb(255 255 255 / 0.05);
+  transition: opacity 300ms var(--lx-ease);
+}
+.row:first-child { border-top: 0; }
+.row .req { font-family: var(--lx-font-text); font-size: 0.98rem; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; padding-right: 0.5rem; }
+.row .req .dim { color: var(--dm-ink-3); }
+.row .verdict { display: flex; gap: 0.6rem; align-items: flex-start; padding-left: 0.6rem; }
+.row .pass { font-size: 0.86rem; line-height: 1.45; color: var(--dm-ink-2); font-family: var(--lx-font-text); }
+.chip {
+  flex: none;
+  display: inline-block;
+  min-width: 3.4rem;
+  text-align: center;
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid currentColor;
+}
+.chip-ok { color: var(--dm-patina); background: rgb(79 193 166 / 0.1); }
+.chip-no { color: var(--dm-signal); background: rgb(255 114 98 / 0.1); }
+.chip-info { color: var(--dm-glass); background: rgb(124 196 232 / 0.08); }
+.packet {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--dm-flame);
+  box-shadow: 0 0 12px var(--dm-flame);
+  opacity: 0;
+}
+.console[data-anim="on"] .row[data-state="hidden"] { opacity: 0; }
+.console[data-anim="on"] .row[data-state="live"] .verdict { opacity: 0; animation: verdict-in 300ms var(--lx-ease) 900ms forwards; }
+.console[data-anim="on"] .row[data-state="live"] .packet { animation: cross 1000ms var(--lx-ease) forwards; }
+.console[data-anim="on"] .row[data-state="live"] .packet.deny { animation-name: cross-deny; }
+@keyframes cross {
+  0% { left: 30%; opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; background: var(--dm-patina); box-shadow: 0 0 12px var(--dm-patina); }
+  100% { left: 60%; opacity: 0; background: var(--dm-patina); }
+}
+@keyframes cross-deny {
+  0% { left: 30%; opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; background: var(--dm-signal); box-shadow: 0 0 12px var(--dm-signal); }
+  100% { left: 56%; opacity: 0; background: var(--dm-signal); }
+}
+@keyframes verdict-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.console-final {
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--dm-line);
+  padding-top: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--dm-patina);
+  transition: opacity 300ms var(--lx-ease);
+}
+.console[data-anim="on"] .console-final[data-state="hidden"] { opacity: 0; }
+.console-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  border-top: 1px solid var(--dm-line);
+  padding: 0.6rem 1rem;
+  font-family: var(--lx-font-text);
+  font-size: 0.72rem;
+  color: var(--dm-ink-3);
+}
+.console-foot a { color: var(--dm-ink-2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--dm-line); }
+.console-foot a:hover { color: var(--dm-ink); }
+.console-btn {
+  color: var(--dm-ink-2);
+  border: 1px solid var(--dm-line);
+  border-radius: 6px;
+  padding: 0.2rem 0.55rem;
+  font-family: var(--lx-font-text);
+  font-size: 0.72rem;
+}
+.console-btn:hover { color: var(--dm-ink); border-color: var(--dm-ink-3); }
+
+/* Under 640px the three columns become a stack: request, then verdict. */
+@media (max-width: 640px) {
+  .console-cols, .console-wall { display: none; }
+  .row { grid-template-columns: 1fr; gap: 0.5rem; padding: 0.8rem 0; min-height: 0; }
+  .row .packet-lane { display: none; }
+  .row .verdict { padding-left: 0.75rem; border-left: 2px solid var(--dm-glass); }
 }
 
-/* ── Diagram roles for inline SVG (mirrors the lx-style block) ── */
-.fx text { font-family: var(--lx-font-text); fill: var(--lx-ink); }
-.fx .mono { font-family: var(--lx-font-mono); }
-.fx .t-h { font-size: 15px; font-weight: 600; }
-.fx .t-b { font-size: 13px; fill: var(--lx-ink-2); }
-.fx .t-s { font-size: 12px; fill: var(--lx-ink-3); }
-.fx .t-flame { fill: var(--lx-flame); }
-.fx .t-glass { fill: var(--lx-glass); }
-.fx .t-patina { fill: var(--lx-patina); }
-.fx .t-signal { fill: var(--lx-signal); }
-.fx .node { fill: var(--lx-surface); stroke: var(--lx-line); stroke-width: 1.5; }
-.fx .node-guest { fill: var(--lx-flame-soft); stroke: var(--lx-flame); stroke-width: 1.5; }
-.fx .node-host { fill: var(--lx-patina-soft); stroke: var(--lx-patina); stroke-width: 1.5; }
-.fx .node-deny { fill: var(--lx-signal-soft); stroke: var(--lx-signal); stroke-width: 1.5; }
-.fx .wall { fill: none; stroke: var(--lx-glass); stroke-width: 2.5; }
-.fx .zone { fill: none; stroke: var(--lx-ink-3); stroke-width: 1.25; stroke-dasharray: 6 5; }
-.fx .edge { fill: none; stroke: var(--lx-line); stroke-width: 2; }
-.fx .edge-flame { fill: none; stroke: var(--lx-flame); stroke-width: 1.75; opacity: 0.55; }
-.fx .edge-patina { fill: none; stroke: var(--lx-patina); stroke-width: 1.75; opacity: 0.55; }
-.fx .edge-deny { fill: none; stroke: var(--lx-signal); stroke-width: 1.75; stroke-dasharray: 4 4; opacity: 0.7; }
-.fx .pk-ink { fill: var(--lx-ink); }
-.fx .pk-flame { fill: var(--lx-flame); }
-.fx .pk-patina { fill: var(--lx-patina); }
-.fx .pk-signal { fill: var(--lx-signal); }
-.fx .flame { fill: var(--lx-flame); }
-.fx .state { fill: var(--lx-surface); stroke: var(--lx-line); stroke-width: 1.5; }
+/* ── Sections ───────────────────────────────────────────────────────── */
+.section { padding-block: clamp(3.5rem, 8vw, 7rem); }
 
-/* Step captions that follow the hero packet (8s loop). */
-.step-cap {
-  border-top: 2px solid var(--lx-line);
-  color: var(--lx-ink-3);
-  cursor: pointer;
+/* How it works: the microVM cell is the lantern's glass, and the hop between
+   cells names the only channel that crosses it. */
+.vm-cell {
+  background: linear-gradient(180deg, var(--lx-flame-soft), var(--lx-surface) 70%);
+  box-shadow: inset 0 0 0 2px var(--lx-glass);
 }
-.step-cap[aria-pressed="true"] { border-top-color: var(--cap); color: var(--lx-ink); }
-.step-cap:hover { color: var(--lx-ink); }
-.step-cap:focus-visible { outline: 2px solid var(--lx-glass); outline-offset: 4px; }
+/* The lantern's flame, burning inside the glass: the signature of the page. */
+.vm-flame {
+  position: absolute;
+  inset: auto 10% -2rem 10%;
+  height: 70%;
+  pointer-events: none;
+  background: radial-gradient(closest-side at 50% 85%, color-mix(in oklab, var(--lx-flame) 34%, transparent), transparent);
+  animation: flicker 5s ease-in-out infinite alternate;
+}
+@keyframes flicker {
+  0% { opacity: 0.75; transform: scale(0.97); }
+  60% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0.85; transform: scale(1); }
+}
+/* One request travels the wire: control plane, then VM, then host, then out. */
+.wire {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lx-flame) 70%, transparent) 12%, color-mix(in oklab, var(--lx-flame) 70%, transparent) 88%, transparent);
+}
+.spark {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lx-flame);
+  box-shadow: 0 0 14px 2px var(--lx-flame);
+  opacity: 0;
+  animation: travel 4s linear infinite;
+  z-index: 0;
+}
+/* One continuous run across the three cards; it slides under the hop pills, never over their text. */
+@keyframes travel {
+  0% { left: 1%; opacity: 0; }
+  5% { opacity: 1; }
+  95% { left: 98%; opacity: 1; }
+  100% { left: 99%; opacity: 0; }
+}
+/* The host's verdict lands while the pulse waits on it. */
+.cred-badge {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--lx-patina);
+  background: color-mix(in oklab, var(--lx-patina) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--lx-patina) 40%, transparent);
+  animation: cred 4s linear infinite;
+}
+@keyframes cred {
+  0%, 72% { opacity: 0; transform: translateY(3px); }
+  78%, 97% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+/* The one full-bleed band: the section people screenshot. */
+.band {
+  position: relative;
+  background:
+    radial-gradient(60rem 22rem at 50% 0%, color-mix(in oklab, var(--lx-flame) 12%, transparent), transparent 70%),
+    color-mix(in oklab, var(--lx-surface) 55%, var(--lx-bg));
+  border-block: 1px solid color-mix(in oklab, var(--lx-flame) 30%, var(--lx-line));
+}
+@media (max-width: 767px) { .wire { display: none; } }
+
+/* Pain to fix cards; the flame warms the one you are on. */
+.pain-card {
+  position: relative;
+  border: 1px solid var(--lx-line);
+  border-radius: var(--lx-radius-l);
+  background: var(--lx-surface);
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  transition: border-color var(--lx-dur-ui) var(--lx-ease), box-shadow var(--lx-dur-ui) var(--lx-ease);
+}
+.pain-card:hover {
+  border-color: var(--lx-flame);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--lx-flame) 25%, transparent),
+    0 24px 60px -30px color-mix(in oklab, var(--lx-flame) 55%, transparent);
+}
+
+/* Summary comparison: a table on wide screens, stacked cards on phones. */
+.sum { width: 100%; text-align: left; font-size: 0.95rem; border: 1px solid var(--lx-line); border-radius: var(--lx-radius-l); border-collapse: separate; border-spacing: 0; overflow: hidden; background: var(--lx-surface); }
+.sum th, .sum td { padding: 1rem 1.25rem; border-top: 1px solid var(--lx-line); vertical-align: top; }
+.sum thead th { border-top: 0; font-weight: 600; color: var(--lx-ink-2); }
+.sum tbody th { font-weight: 500; color: var(--lx-ink); width: 38%; }
+.sum td { color: var(--lx-ink-2); }
+.sum .sum-us { background: var(--lx-glass-soft); color: var(--lx-ink); }
+.sum thead .sum-us { font-family: var(--lx-font-display); font-size: 1.05rem; }
+@media (max-width: 640px) {
+  .sum, .sum tbody, .sum tr, .sum th, .sum td { display: block; width: auto; }
+  .sum { border: 0; background: none; }
+  .sum thead { display: none; }
+  .sum tbody tr { border: 1px solid var(--lx-line); border-radius: var(--lx-radius-l); background: var(--lx-surface); overflow: hidden; margin-bottom: 0.75rem; }
+  .sum tbody th { border-top: 0; padding-bottom: 0.5rem; width: auto; }
+  .sum td { border-top: 1px solid var(--lx-line); padding-block: 0.75rem; }
+  .sum td::before { content: attr(data-label); display: block; font-size: 0.75rem; color: var(--lx-ink-3); margin-bottom: 0.25rem; }
+}
+
+.hop {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  top: 0;
+  transform: translate(50%, -50%);
+  border: 1px solid var(--lx-line);
+  background: var(--lx-bg);
+  color: var(--lx-ink-2);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-family: var(--lx-font-mono);
+  font-size: 0.72rem;
+}
+@media (max-width: 767px) {
+  .hop { right: auto; left: 1.5rem; top: auto; bottom: 0; transform: translateY(50%); }
+}
+/* Section dividers are the same amber wire the request travels on. */
+.rule { position: relative; }
+.rule::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(1240px, 100%);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--lx-flame) 55%, transparent) 20%, color-mix(in oklab, var(--lx-flame) 55%, transparent) 80%, transparent);
+}
+
+/* Timing chart bars */
+.bar {
+  height: 0.9rem;
+  border-radius: 3px;
+  background: var(--lx-glass);
+  transform-origin: left;
+}
+.bar-fork { background: var(--lx-patina); }
+.bar-snap { background: var(--lx-flame); }
+
+/* Code sample */
+.code {
+  background: var(--dm-bg);
+  color: var(--dm-ink);
+  border-radius: 16px;
+  border: 1px solid #22314d;
+  font-family: var(--lx-font-mono);
+  font-size: 0.8rem;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+/* Phones: code keeps its lines and scrolls; the right edge fades to say so. */
+@media (max-width: 640px) {
+  .code { mask-image: linear-gradient(90deg, #000 88%, transparent); padding-right: 2.5rem; }
+}
+.response-bar { display: flex; align-items: center; gap: 0.75rem; font-family: var(--lx-font-mono); font-size: 0.8rem; color: var(--lx-ink-2); }
+.status-pill {
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-weight: 600;
+  color: var(--lx-signal);
+  background: color-mix(in oklab, var(--lx-signal) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--lx-signal) 45%, transparent);
+}
+.response-body { margin-top: 0.6rem; color: var(--dm-ink-2); font-size: 0.76rem; }
+/* "indicative" sits right on the number it qualifies. */
+.ind {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 0.35rem 0.3rem 0;
+  border: 1px solid var(--lx-line);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  font-family: var(--lx-font-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+  color: var(--lx-ink-2);
+  background: var(--lx-surface);
+}
+.site-foot { padding-bottom: calc(3rem + env(safe-area-inset-bottom)); }
+.console-rec { display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.console-rec img { width: 96px; height: auto; border-radius: 3px; border: 1px solid var(--dm-line); }
+.code .k { color: #c7a6ff; }
+.code .s { color: #9fd8a8; }
+.code .c { color: var(--dm-ink-3); }
+.code .n { color: var(--dm-flame); }
+
+/* Closing lantern: the one other place the flame glows. */
+.closing-glow {
+  position: absolute;
+  inset: auto 0 -20rem 0;
+  height: 36rem;
+  pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--lx-flame) 26%, transparent), transparent);
+}
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

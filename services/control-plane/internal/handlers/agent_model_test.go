@@ -49,7 +49,7 @@ func TestPreferModel(t *testing.T) {
 	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
 	type cand = struct{ Provider, Model string }
 	var (
-		opus   = cand{"anthropic", opusModel()}
+		sonnet = cand{"anthropic", sonnetModel()}
 		haiku  = cand{"anthropic", haikuModel()}
 		gpt4o  = cand{"openai", "gpt-4o"}
 		mini   = cand{"openai", "gpt-4o-mini"}
@@ -71,9 +71,11 @@ func TestPreferModel(t *testing.T) {
 		{name: "reasoning-small", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-small", want: []cand{haiku, mini}},
 		{name: "chat-small", hasAnthropic: true, hasOpenAI: true, preferred: "chat-small", want: []cand{mini, haiku}},
 		{name: "vendor cheap id", hasAnthropic: true, hasOpenAI: true, preferred: "gpt-4o-mini", want: []cand{mini, haiku}},
-		// Non-cheap preference keeps the whole default chain as its tail.
-		{name: "reasoning-large keeps full tail", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-large", want: []cand{{"anthropic", sonnetModel()}, opus, haiku, gpt4o, mini}},
-		{name: "vendor frontier passthrough", hasAnthropic: true, hasOpenAI: true, preferred: "claude-opus-4-1", want: []cand{custom, opus, haiku, gpt4o, mini}},
+		// Non-cheap preference keeps the whole default chain as its tail. Since
+		// #326 the balanced default heads with Sonnet (one top model per
+		// provider + its cheaper fallback), so Opus is no longer in the tail.
+		{name: "reasoning-large keeps full tail", hasAnthropic: true, hasOpenAI: true, preferred: "reasoning-large", want: []cand{sonnet, haiku, gpt4o, mini}},
+		{name: "vendor frontier passthrough", hasAnthropic: true, hasOpenAI: true, preferred: "claude-opus-4-1", want: []cand{custom, sonnet, haiku, gpt4o, mini}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
