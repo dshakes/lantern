@@ -148,6 +148,7 @@ Each hop is authenticated: JWT or scoped API key at the edge; a shared service t
 **Personal surfaces**
 - WhatsApp and iMessage assistants that reply in the owner's voice, behind commitment and grounding gates that hold money promises and unverifiable claims for the owner
 - Slack, Telegram, Discord, voice (Twilio, LiveKit), email and webchat surfaces
+- **Built on Lantern:** the founder runs a personal assistant on iMessage and WhatsApp on this platform, in daily use. It exercises sessions, model routing, the memory API and the web-search tool. Replies pass a multi-stage check pipeline, and the last two stages hold any reply that commits money or asserts what it cannot verify. [Architecture and safety model](https://dshakes.github.io/lantern/docs/personal/)
 - Setup: [`docs/personal/BOT-SETUP.md`](docs/personal/BOT-SETUP.md)
 
 ## How Lantern compares

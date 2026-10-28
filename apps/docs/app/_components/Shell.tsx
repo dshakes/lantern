@@ -89,8 +89,8 @@ const sections: NavSection[] = [
     { href: "/surfaces", label: "Surfaces", icon: MessageSquare, subs: [
       { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
     ]},
-    { href: "/personal", label: "Personal harness", icon: Smartphone, subs: [
-      { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
+    { href: "/personal", label: "Built on Lantern", icon: Smartphone, subs: [
+      { href: "/personal#architecture", label: "Architecture" }, { href: "/personal#pipeline", label: "Reply pipeline" }, { href: "/personal#features", label: "Platform features" }, { href: "/personal#safety", label: "Safety model" }, { href: "/personal#quality", label: "Quality loop" }, { href: "/personal#limits", label: "Limits" },
     ]},
     { href: "/models", label: "Models", icon: Brain, subs: [
       { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#resolution-rules", label: "Resolution rules" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" }, { href: "/models#router", label: "Model-router service" },
