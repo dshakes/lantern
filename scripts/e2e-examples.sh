@@ -80,9 +80,11 @@ if [ -n "${E2E_EXAMPLES_SERVE:-}" ]; then   # debugging: keep the stack up, no t
   echo "stack up: LANTERN_E2E_API_URL=http://127.0.0.1:$API_PORT (ctrl-c to stop)"; wait "${pids[2]}"; exit
 fi
 cd "$root/e2e/examples"
+# TestDataAnalystSandbox needs a real runtime (scheduler + manager); this stack has
+# only the stub scheduler, so it runs from `make test-e2e-analyst` (see its README).
 LANTERN_E2E_API_URL="http://127.0.0.1:$API_PORT" \
 LANTERN_E2E_CONNECTOR_REPLAY_URL="$conn" LANTERN_E2E_LLM_REPLAY_URL="$llm" \
 DATABASE_URL="postgres://lantern:lantern@localhost:5432/$DB?sslmode=disable" \
 LANTERN_E2E_REPLAY_URL="$conn" LANTERN_E2E_GATEWAY_URL="http://127.0.0.1:$GW_PORT" \
 LANTERN_E2E_TELEGRAM_FIXTURE_ADDR="127.0.0.1:$TG_PORT" LANTERN_E2E_TELEGRAM_SECRET="e2e-telegram-secret" \
-  go test -tags e2e -count=1 -p 1 -v "${@:-./...}" || { echo "--- control-plane log tail ---"; tail -40 "$tmp/server.log" "$tmp/gateway.log"; exit 1; }
+  go test -tags e2e -count=1 -p 1 -v -skip 'TestDataAnalystSandbox' "${@:-./...}" || { echo "--- control-plane log tail ---"; tail -40 "$tmp/server.log" "$tmp/gateway.log"; exit 1; }

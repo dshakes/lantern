@@ -38,7 +38,7 @@ docker build -t lantern-analyst:dev examples/data-analyst
 # manager: RUNTIME_BACKEND=docker AGENT_IMAGE=lantern-analyst:dev (+ scheduler, control-plane,
 #   llm-replay -rules examples/data-analyst/replay-rules.json,
 #   LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:<replay port>, an openai provider key seeded)
-cd e2e/examples && LANTERN_E2E_API_URL=http://127.0.0.1:28080 go test -tags e2e -count=1 -v ./...
+cd e2e/examples && LANTERN_E2E_API_URL=http://127.0.0.1:28080 go test -tags e2e -count=1 -v -run TestDataAnalystSandbox ./...   # or: make test-e2e-analyst
 ```
 
 The workflow `tool` node (W1-B) dispatches to the same `ExecTool` path, so an agent
