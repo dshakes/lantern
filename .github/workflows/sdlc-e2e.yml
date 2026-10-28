@@ -1,0 +1,166 @@
+# E2E — fixture tier only. No provider key in CI: the LLM is cmd/llm-replay, connectors are
+# cmd/connector-replay, so every run is deterministic and costs nothing. There is NO skip
+# path: a missing stack or a skipped test fails the job. The real-LLM tier is the local
+# `make test-e2e-llm` gate (see e2e/README.md).
+# Job names (examples / browser / deploy-cli) are stable so they can be marked required.
+name: "sdlc · e2e (fixture tier)"
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdlc-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PGPASSWORD: lantern
+
+jobs:
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/control-plane/go.mod
+          cache-dependency-path: |
+            services/control-plane/go.sum
+            e2e/examples/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94"
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            services/surface-gateway/target
+          key: e2e-cargo-${{ runner.os }}-${{ hashFiles('services/surface-gateway/Cargo.lock') }}
+          restore-keys: e2e-cargo-${{ runner.os }}-
+      - name: Install protoc + psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler postgresql-client
+      - name: Run example suites (fixture stack)
+        run: |
+          set -o pipefail
+          bash scripts/e2e-examples.sh 2>&1 | tee "$RUNNER_TEMP/examples.log"
+          ! grep -q -- "--- SKIP" "$RUNNER_TEMP/examples.log"   # skip = fail
+
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/control-plane/go.mod
+          cache-dependency-path: services/control-plane/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Install web deps + Chromium
+        working-directory: apps/web
+        run: |
+          npm ci --no-audit
+          npx playwright install --with-deps chromium
+      - name: Playwright
+        working-directory: apps/web
+        env:
+          E2E_RUN_DIR: ${{ runner.temp }}/lantern-e2e-run   # report, traces, service logs
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee "$RUNNER_TEMP/pw.log"
+          ! grep -qE "^ +[0-9]+ (skipped|did not run)" "$RUNNER_TEMP/pw.log"   # skip = fail
+      - name: Upload report + traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ github.run_id }}
+          path: ${{ runner.temp }}/lantern-e2e-run
+          if-no-files-found: warn
+          retention-days: 7
+
+  deploy-cli:
+    name: deploy-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: lantern, POSTGRES_PASSWORD: lantern, POSTGRES_DB: lantern }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lantern" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/control-plane/go.mod
+          cache-dependency-path: |
+            services/control-plane/go.sum
+            packages/cli/go.sum
+      # Same control-plane env the fixture tier uses; the seeded dev user (admin@lantern.dev) is
+      # what the test logs in as. Own DB so it never shares state with the other jobs' databases.
+      - name: Start control-plane
+        working-directory: services/control-plane
+        env:
+          DATABASE_URL: postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          HTTP_ADDR: ":18480"
+          LISTEN_ADDR: ":18451"
+          LOG_LEVEL: warn
+          OPENAI_API_KEY: fixture-key
+        run: |
+          go build -o "$RUNNER_TEMP/server" ./cmd/server
+          nohup "$RUNNER_TEMP/server" >"$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 60); do curl -fs http://127.0.0.1:18480/healthz >/dev/null && exit 0; sleep 1; done
+          tail -40 "$RUNNER_TEMP/server.log"; exit 1
+      - name: Deploy e2e (no skip)
+        working-directory: e2e/deploy
+        env:
+          LANTERN_E2E_API_URL: http://127.0.0.1:18480
+        run: go test -tags e2e -count=1 -v ./... 2>&1 | tee "$RUNNER_TEMP/deploy.log"; test "${PIPESTATUS[0]}" -eq 0 && ! grep -q -- "--- SKIP" "$RUNNER_TEMP/deploy.log"
+      - name: Control-plane log on failure
+        if: failure()
+        run: tail -60 "$RUNNER_TEMP/server.log" || true

@@ -12,6 +12,7 @@ This project is pre-1.0; there are no stable release branches yet.
 ### Added
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
   `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
+- **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.
 - **Kiosk demo mode** (ADR 0029, #342) — `make demo` / `lantern demo` start the stack with Docker only and no API
   key: each visitor gets an ephemeral, auto-deleted tenant (30 minutes) with sample agents, answers come from the
   `llm-replay` fixture server, RLS and scope enforcement are on. `lantern demo --down` / `make demo-down` delete
@@ -41,6 +42,16 @@ This project is pre-1.0; there are no stable release branches yet.
   Slack, approval node, PagerDuty note). `make test-e2e-examples` runs them on a throwaway fixture stack
   (`scripts/e2e-examples.sh`, `e2e/examples`). Docs: `/examples`.
 - PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
+
+### Fixed
+- **Receipt verification now detects an edited payload.** With a stored receipt, `POST /v1/runs/receipts/verify` compared only the signature string, so a receipt whose `costUsd`/`status` had been changed but that carried the original signature verified as `valid: true`. It now also requires the payload to match the issued one (canonical compare), which keeps receipts valid across key rotation.
+- Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
+- A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
+- Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.
+- After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
+
+### Added
+
 - Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
   (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
   creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
