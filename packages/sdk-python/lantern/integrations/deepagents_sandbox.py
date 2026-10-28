@@ -19,7 +19,7 @@ Composes with deepagents' own ``CompositeBackend`` — e.g. mount a
 ``StoreBackend`` at ``/memories/`` for state that outlives the VM, while
 everything else executes inside the microVM.
 
-Requires ``pip install lantern-sdk[deepagents]``.
+Requires ``pip install "./packages/sdk-python[deepagents]"  (from a repo checkout)``.
 """
 
 from __future__ import annotations

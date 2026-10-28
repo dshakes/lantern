@@ -27,11 +27,20 @@ The agent loop stays on your control plane. Code the agent writes runs in a Fire
 
 ## Quickstart
 
-You need Docker. Go 1.25+ builds the CLI.
+**Try it first: no API key, Docker only.** `make demo` starts the control plane, dashboard and a recorded-answer LLM fixture server in kiosk mode (it also needs `openssl` to generate a throwaway session secret). Every visitor gets a private workspace with sample agents, deleted after 30 minutes. Nothing calls a model provider.
 
 ```bash
 git clone https://github.com/dshakes/lantern.git && cd lantern
-make dev                                         # Postgres, Redis, MinIO, control plane, dashboard
+make demo         # first run builds images; prints "demo: http://localhost:3001/kiosk"
+make demo-down    # stop and delete all demo data
+```
+
+Open **http://localhost:3001/kiosk** and press Start demo. The demo binds `:8080` and `:3001`, the same ports as `make dev`, so stop one before starting the other (or set `KIOSK_API_PORT` / `KIOSK_WEB_PORT`). If you have built the CLI (below), `lantern demo` does the same, waits until the stack is healthy and opens the browser; `lantern demo --down` stops it. Details: [docs: demo mode](https://dshakes.github.io/lantern/docs/demo/).
+
+**Then run your own agent.** This needs Docker, Go 1.25+ to build the CLI, and an OpenAI or Anthropic key:
+
+```bash
+make dev                                         # Postgres, Redis, MinIO, control plane, dashboard, and the rest of the stack
 ( cd packages/cli && go install ./cmd/lantern )  # the `lantern` CLI
 lantern doctor                                   # health, auth, LLM provider, a live run
 lantern onboard                                  # describe an agent in one line, get a running agent
@@ -42,7 +51,7 @@ Dashboard: **http://localhost:3001**, sign in as `admin@lantern.dev` / `lantern`
 Run code in a sandbox. This uses host processes instead of `make dev` (both bind `:8080`), one per terminal:
 
 ```bash
-make dev-infra             # Postgres, Redis, MinIO
+make dev-infra             # Postgres, Redis (no MinIO: use `lantern dev --infra-only` or `make dev` if you need it)
 make run-runtime-manager   # :50054, Docker backend on macOS
 make run-scheduler         # :50055
 make run-api-runtime       # control plane on :8080, wired to the scheduler
@@ -59,7 +68,7 @@ The demo spec pins a placeholder `image_digest`: build the image from `examples/
 ```bash
 lantern dev                 # hot-reload: infra in Docker, API + dashboard + bridges on the host
 lantern dev --infra-only    # just Postgres + Redis + MinIO
-make dev-infra              # à la carte: then make run-api, make dashboard-dev
+make dev-infra              # Postgres + Redis only; then make run-api, make dashboard-dev
 make run-api-free           # route LLM calls through your local `claude` CLI at $0 in dev
 ```
 
@@ -111,28 +120,28 @@ Each hop is authenticated: JWT or scoped API key at the edge; a shared service t
 - Firecracker and Kata microVMs, gVisor and runc tiers chosen per workload by isolation class; fail-closed, never downgraded to a bare pod ([ADR 0002](docs/adr/0002-runtime-class-per-workload.md), [0009](docs/adr/0009-kubernetes-default-runtime-substrate.md))
 - Two tiers, one journal: trusted runs inline, untrusted runs in the microVM tier ([ADR 0022](docs/adr/0022-two-tier-agent-runtime.md))
 - Streaming exec (`text/event-stream`), sandbox file API under `/workspace` (list, read, write), session-scoped VMs
-- Pause, resume and fork; idle auto-suspend (`idleTimeoutSecs`) with transparent resume; operator-paused VMs are never auto-resumed. Snapshots capture the VM's disk with its memory, so files survive restore and fork ([docs](https://dshakes.github.io/lantern/runtime/sandbox-lifecycle/#snapshots))
-- Real Firecracker on an Apple Silicon Mac through a Lima guest with nested KVM: `make lima-up`, then `make lima-e2e` ([`infra/lima/`](infra/lima/README.md), [docs](https://dshakes.github.io/lantern/runtime/local-microvms/))
+- Pause, resume and fork; idle auto-suspend (`idleTimeoutSecs`) with transparent resume; operator-paused VMs are never auto-resumed. Snapshots capture the VM's disk with its memory, so files survive restore and fork ([docs](https://dshakes.github.io/lantern/docs/runtime/sandbox-lifecycle/#snapshots))
+- Real Firecracker on an Apple Silicon Mac through a Lima guest with nested KVM: `make lima-up`, then `make lima-e2e` ([`infra/lima/`](infra/lima/README.md), [docs](https://dshakes.github.io/lantern/docs/runtime/local-microvms/))
 - Host egress broker over vsock (opt-in, `LANTERN_EGRESS_MODE=broker`, Firecracker only); default mode routes egress through an in-guest proxy (enforced when the image installs the iptables REDIRECT rule)
 
 **Agent platform**
 - Workflow graphs from the visual editor execute: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `loop`, `approval`, `subagent`, `end`. `tool` nodes run `web_search` in the control plane and everything else in the run's microVM, and fail loudly when no runtime is wired
-- Webhook triggers: a signed public URL per agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run, duplicates deduplicated ([ADR 0028](docs/adr/0028-inbound-webhook-triggers.md), [docs](https://dshakes.github.io/lantern/triggers/))
+- Webhook triggers: a signed public URL per agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run, duplicates deduplicated ([ADR 0028](docs/adr/0028-inbound-webhook-triggers.md), [docs](https://dshakes.github.io/lantern/docs/triggers/))
 - Sessions with SSE streaming, cron schedules with time zones, human takeover on approval nodes
 - 18 connectors that call the real APIs (OAuth or API key), MCP server registry, A2A agent cards, a forkable agent marketplace
 - SDKs: TypeScript (primary), Python, Go; the `lantern` CLI; an embeddable webchat (`/widget.js`)
 
 **Reliability and cost**
 - Durable steps with crash-resume from the journal; idempotency keys from `(run_id, step_id, attempt)` on LLM calls and external deliveries, so a replay does not double-send
-- Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching; an unknown name falls back to the balanced default, never a hardcoded model ([docs](https://dshakes.github.io/lantern/models/#capabilities))
-- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. On single-call runs the per-run cap is checked only by the opt-in pre-run forecast (`/v1/runs/forecast`), and failed runs do not count toward runs/day ([what is enforced where](https://dshakes.github.io/lantern/budgets/#matrix))
+- Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching; an unknown name falls back to the balanced default, never a hardcoded model ([docs](https://dshakes.github.io/lantern/docs/models/#capabilities))
+- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. On single-call runs the per-run cap is checked only by the opt-in pre-run forecast (`/v1/runs/forecast`), and failed runs do not count toward runs/day ([what is enforced where](https://dshakes.github.io/lantern/docs/budgets/#matrix))
 - Eval suites with per-branch baselines that fail CI with HTTP 422; rehearsals replay past failures; A/B experiments with auto-promotion
 
 **Security and governance**
 - Multi-tenant by default: `tenant_id` on every row and gRPC call, RLS on every tenant table, staged enforcement via `LANTERN_RLS_ENFORCE`
 - Signed run receipts over the journal hash: Ed25519 when `LANTERN_RECEIPT_ED25519_SEED` is set (verifiable offline against the key at `/.well-known/lantern-receipts`), HMAC-SHA256 dev fallback otherwise
 - Per-instance Ed25519 agent identity, per-VM certificates, scoped API keys, AES-256-GCM credentials at rest
-- Account lifecycle: sign-up closed by default in production (or invite-only), email verification, password reset, captcha, rate-limited auth routes, data export and workspace deletion ([ADR 0027](docs/adr/0027-public-signup-verification-abuse.md), [docs](https://dshakes.github.io/lantern/accounts/))
+- Account lifecycle: sign-up closed by default in production (or invite-only), email verification, password reset, captcha, rate-limited auth routes, data export and workspace deletion ([ADR 0027](docs/adr/0027-public-signup-verification-abuse.md), [docs](https://dshakes.github.io/lantern/docs/accounts/))
 - OpenTelemetry: control-plane and step spans carry `tenant_id`, `run_id`, `step_id`; trace context propagates through scheduler and manager into the harness
 - Confidential compute v1: launch measurement recorded, not yet verified ([ADR 0023](docs/adr/0023-confidential-compute.md))
 
@@ -193,17 +202,27 @@ out of date.
 
 ## Use it from code
 
+Registry packages are not published yet: `@lantern/sdk` is not on npm, and the `lantern-sdk` name on PyPI belongs to an unrelated project, so do not `npm install @lantern/sdk` or `pip install lantern-sdk`. Install from a checkout:
+
+```bash
+( cd packages/sdk-ts && npm install && npm run build )   # builds dist/
+npm install /path/to/lantern/packages/sdk-ts             # in your project; a file: path, not the registry
+pip install "/path/to/lantern/packages/sdk-python"       # add [deepagents] for the LangChain deepagents sandbox backend
+```
+
 ```ts
 import { LanternClient } from "@lantern/sdk";
 
 const lantern = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.LANTERN_API_KEY });
 
 await lantern.agents.create({ name: "triage", description: "Classifies support emails" });
-await lantern.budgets.upsert("triage", { maxCostUsdPerDay: 25, maxCostUsdPerRun: 0.1, hardFail: true });
+await lantern.budgets.upsert("triage", { maxCostUsdPerDay: 25, hardFail: true });
 
 const forecast = await lantern.runs.forecast({ agentName: "triage", input: "my invoice is wrong again" });
-const run = await lantern.runs.create({ agent: "triage", input: { email: "..." } });  // 402 if over budget
+const run = await lantern.runs.create({ agent: "triage", input: { email: "..." } });  // 402 if over the daily cap
 ```
+
+The client defaults to `https://api.lantern.run`, which is not your self-hosted stack: pass `baseUrl` (as above) or set `LANTERN_API_URL`.
 
 Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,write_file}`. Go: `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile`, `WriteFile`.
 

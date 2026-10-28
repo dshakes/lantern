@@ -11,6 +11,12 @@ export default function QuickStartPage() {
         about five minutes.
       </p>
 
+      <div className="callout callout-info">
+        <strong>No API key yet?</strong> Run <code>make demo</code> from a checkout. It needs Docker only, answers
+        from recorded replays and opens at <code>http://localhost:3001/kiosk</code>. See{" "}
+        <Link href="/demo">Demo mode</Link>. The rest of this page runs your own agent against your own key.
+      </div>
+
       <Concept>
         Three words you&apos;ll see everywhere in Lantern. An <em>agent</em> is an AI worker with a name and
         instructions. A <em>run</em> is one execution of that agent: you give it input, it works, it returns
@@ -21,7 +27,7 @@ export default function QuickStartPage() {
       <h2 id="prerequisites">Before you start</h2>
       <ul>
         <li>
-          A running stack: <code>lantern dev</code> (or <code>make dev-infra</code> + <code>make run-api</code> +{" "}
+          A running stack: <code>lantern dev</code> (or <code>make dev-infra</code>, which starts Postgres and Redis only, + <code>make run-api</code> +{" "}
           <code>make dashboard-dev</code>). See <Link href="/installation">Installation</Link>.
         </li>
         <li>An OpenAI or Anthropic API key. You can add it during onboarding.</li>

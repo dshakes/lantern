@@ -82,7 +82,7 @@ export function Actions({ center = false }: { center?: boolean }) {
       <a href={GITHUB} className="btn btn-quiet">
         Star on GitHub
       </a>
-      <span className="w-full text-sm text-ink-3 sm:w-auto sm:pl-2">Needs Docker. Apache-2.0.</span>
+      <span className="w-full text-sm text-ink-3 sm:w-auto sm:pl-2">Needs Docker, no API key. Apache-2.0.</span>
     </div>
   );
 }

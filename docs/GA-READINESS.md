@@ -1,7 +1,7 @@
 # Lantern GA Readiness — validation matrix
 
 A faithful go/no-go checklist: what is validated, how, and what still needs a human
-hand before a true "ship to the world" claim. Updated 2026-10-23 to reflect GA phases 0–3 and the `ga-nextgen` hardening wave (roadmap: `docs/roadmap/2026-10-nextgen-sandbox-and-harness.md`).
+hand before a true "ship to the world" claim. Updated 2026-10-28 (W3-G: e2e CI lane + docs truth); previously 2026-10-23, reflecting GA phases 0–3 and the `ga-nextgen` hardening wave (roadmap: `docs/roadmap/2026-10-nextgen-sandbox-and-harness.md`).
 
 The guiding rule: **"compiles" ≠ "validated."** A green build that still 404s in a
 browser (as the docs basePath bug did) is not validated. Each row says how the
@@ -46,6 +46,19 @@ claim was actually checked.
 | Dashboard HttpOnly JWT cookie (server-side token) | ✅ | Bridge tokens proxied via Next.js server route; auth JWT set as HttpOnly cookie |
 | Dashboard durable run resume (crash-replay primitives) | ✅ | `durable_replay.go` — `journalCompletedStep` wired into workflow interpreter; RESUME path driven from journal on crash |
 
+## End-to-end tiers
+
+| Tier | Status | Where it runs |
+|---|---|---|
+| Unit / package tests | ✅ | `make test`, CI `qa` (`.github/workflows/sdlc-qa.yml`) |
+| Fixture e2e: webhook examples (`e2e/examples`, real control-plane + surface-gateway, fixture LLM + connectors) | 🟡 CI job `examples` added; local run green (15 tests, 0 skips) | `scripts/e2e-examples.sh`; `.github/workflows/sdlc-e2e.yml` |
+| Fixture e2e: `lantern deploy` CLI (`e2e/deploy`) | 🟡 CI job `deploy-cli` added; local run green | `.github/workflows/sdlc-e2e.yml` |
+| Browser: Playwright (`apps/web/e2e`, 8 specs, fixture LLM) | 🟡 CI job `browser` added; local run green (8 passed) | `.github/workflows/sdlc-e2e.yml` |
+| Real-LLM e2e (`e2e/quickstart`, `e2e/runtime`) | 🔴 local only | `make test-e2e-llm`; needs a provider key and spends money (capped, see `e2e/README.md`). Not in CI by owner decision |
+| KVM full-stack (Firecracker boot) | 🔴 not running | `microvm-integration.yml` needs a provisioned KVM runner |
+
+The three new CI jobs are 🟡 until they have been observed green on GitHub; they were run locally with the same commands. None may skip: skip = fail.
+
 ## SDKs & surfaces
 
 | Area | Status | How validated |
@@ -88,6 +101,7 @@ claim was actually checked.
 | Lane | Status | Note |
 |---|---|---|
 | qa, review, vuln, classify, cluster-e2e | ✅ | green on recent PRs |
+| e2e (`examples`, `browser`, `deploy-cli`) | 🟡 new | `.github/workflows/sdlc-e2e.yml`; pending first GitHub run; not yet a required check (owner action) |
 | `security` (Claude review) | ✅ fixed | was hitting `error_max_turns` at 16 turns on large diffs → raised to 30 turns / $4 budget |
 | `audit` (Codex cross-audit) | ✅ resilient | now **degrades gracefully** — a Codex quota/infra error posts a transparent "skipped" notice and the lane stays green instead of hard-failing the PR. It is a *supplementary* second opinion; the blocking gates (`review`, `security`, `vuln`) are unaffected. Top up the Codex quota to re-enable the actual second opinion. |
 
@@ -103,9 +117,11 @@ claim was actually checked.
 6. **Firecracker / KVM end-to-end** — 🔴 spawn contract, privilege drop, and pause/resume/fork are unit-tested but no microVM has been booted on a Linux/KVM host with this code, including guest network re-identify after restore.
 7. **Python SDK `AgentContext`** — management surface parity is done (97 tests); the runtime context (`step()`, `ctx.llm`) still raises `NotImplementedError`. Not on PyPI.
 8. **Real-cluster `helm install`** — 🔴 charts render for values / staging / prod, but have not been installed on a live cluster.
-9. **Pixel QA** — 🔴 needs a browser eyeball (also covers the dashboard VM Pause/Resume/Fork UI).
+9. **Pixel QA** — 🔴 Playwright now covers behaviour in a real browser (`apps/web/e2e`) but not visual layout; needs a browser eyeball (also covers the dashboard VM Pause/Resume/Fork UI).
 10. **Bridges runtime** — 🔴 needs the owner's live paired channels and validation in real logs.
-11. **Exhaustive per-feature coverage** — the breadth (17 connectors, voice, MCP marketplace, A2A, receipts, workflows) is largely test-backed but not individually re-exercised this cycle.
+11. **SDK registry publishing** — Python (`lantern-sdk`) and TypeScript SDKs are not published to PyPI/npm and `release.yml` has no publish step.
+12. **Real-account SaaS tiers** — connectors/providers are exercised against recorded fixtures in CI; live-account runs are manual (per-example READMEs). The real-LLM e2e tier is local-only.
+13. **Exhaustive per-feature coverage** — the breadth (17 connectors, voice, MCP marketplace, A2A, receipts, workflows) is largely test-backed but not individually re-exercised this cycle.
 
 ## Verdict
 
