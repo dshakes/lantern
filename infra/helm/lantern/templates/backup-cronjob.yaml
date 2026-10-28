@@ -100,7 +100,9 @@ spec:
                 - |
                   ts="$(cat /dump/.ts)"
                   ep=""; [ -n "$S3_ENDPOINT" ] && ep="--endpoint-url $S3_ENDPOINT"
+{{- if .Values.backup.useChartMinio }}
                   aws $ep s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null || aws $ep s3 mb "s3://$S3_BUCKET"
+{{- end }}
                   aws $ep s3 cp "/dump/lantern-${ts}.sql.gz" "s3://$S3_BUCKET/postgres/lantern-${ts}.sql.gz"
                   echo "uploaded s3://$S3_BUCKET/postgres/lantern-${ts}.sql.gz"
                   # Prune dumps older than RETENTION_DAYS (ISO dates compare lexically).

@@ -125,3 +125,24 @@ A backup you've never restored is a hope, not a backup. Quarterly:
 Target SLOs to write down for your deployment: **RPO ≤ 5 min** (PITR) / **RTO ≤ 30 min**.
 The in-cluster logical-backup path cannot meet RPO ≤ 5 min — that's the reason Topology A
 is the GA recommendation.
+
+### Scripted drill (umbrella chart, `backup.enabled=true`)
+
+The `lantern` umbrella chart ships the same CronJob (`<release>-postgres-backup`, dumps to
+`s3://<s3Bucket>/postgres/lantern-<ts>.sql.gz`). The drill is scripted -- needs only docker, touches
+no live database:
+
+```bash
+aws s3 cp s3://<bucket>/postgres/<newest>.sql.gz ./latest.sql.gz
+scripts/db-restore-drill.sh ./latest.sql.gz        # restores into a throwaway container
+scripts/db-restore-drill.sh --self-test            # exercises the script itself (CI runs this)
+```
+
+It restores with `ON_ERROR_STOP` (a corrupt gzip fails the drill) and requires `agents`, `runs`,
+`journal_events` to exist (`DRILL_EXPECT_TABLES`). Empty tables pass, so a fresh or low-traffic
+database is fine; set `DRILL_REQUIRE_ROWS=1` to also fail on empty tables when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the
+server major version. A dump contains no roles: after a real restore recreate `lantern_app` and
+its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling
+`LANTERN_RLS_ENFORCE=1`. Take a dump on demand with
+`kubectl create job --from=cronjob/<release>-postgres-backup backup-manual-1`.
+A failing drill means the backups are not usable until it passes.

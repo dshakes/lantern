@@ -39,6 +39,10 @@ This project is pre-1.0; there are no stable release branches yet.
   other provider's cheap tier and never to a Sonnet / gpt-4o / Opus class model
   — it fails instead (migration 0025, `agents.model`). Docs: Agents → Model
   selection, Models → Per-agent model.
+- Helm: `runtime-scheduler` and `surface-gateway` templates, per-tier HPA, PodDisruptionBudgets, default-deny
+  `NetworkPolicy` with the required allow flows, an opt-in Postgres backup CronJob, and `values-ci.yaml`.
+- Control-plane Prometheus `/metrics` on `:8080`; the control-plane SLO alert group is now enabled.
+- `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
 ### Fixed
 - **Data export redacts credentials structurally** (#330) — any column with a
@@ -54,6 +58,8 @@ This project is pre-1.0; there are no stable release branches yet.
   template-create and prompt back-fill UPDATEs wrote a column that did not
   exist, failed, and the error was discarded.
 - `/v1/completions` honours the request's `model` on its failover paths.
+- `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
+  they now use the published `ghcr.io/dshakes/lantern/<name>` images.
 - **Balanced default picks Sonnet** (#326) — `auto`/`balanced` routing picked
   Opus because price was only a capped bonus; price is now a real penalty, so the
   default is Sonnet (GPT-4o when only OpenAI is keyed).

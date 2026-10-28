@@ -42,6 +42,10 @@ on:
       - "infra/**"
       - "services/runtime-manager/**"
       - "services/harness/**"
+      - "services/control-plane/**"
+      - "services/runtime-scheduler/**"
+      - "scripts/db-restore-drill.sh"
+      - "scripts/check-app-grants.sh"
       - ".github/workflows/runtime-cluster-e2e.yml"
   workflow_dispatch: {}
 
@@ -131,6 +135,138 @@ jobs:
 
           # Also echo to the log so the note is visible without opening the summary tab.
           echo "::notice title=Sandbox execution legs skipped::gVisor/Kata EXECUTION not validated on hosted runner (no runsc/Kata, no /dev/kvm). Fail-closed refusal + NetworkPolicy + securityContext + PSA validated for real. See job summary. Run the execution legs via workflow_dispatch with a CLUSTER_E2E_KUBECONFIG_B64 secret."
+
+  # ---------------------------------------------------------------------------
+  # helm-install: the umbrella chart installs and the platform comes up on a real
+  # cluster. kind + Calico, so the chart's default-deny NetworkPolicies are
+  # ENFORCED (a missing allow rule shows up here as a not-ready pod, not in prod).
+  # Only control-plane + runtime-scheduler images are built (Go, fast); the rest of
+  # the chart renders + lints but runs 0 replicas (values-ci.yaml).
+  # NOT covered: prod TLS/mTLS material, HPA (needs metrics-server), Rust services.
+  # ---------------------------------------------------------------------------
+  helm-install:
+    name: helm-install (kind + calico)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_CLUSTER_NAME: "lantern-ci"
+      CALICO_MANIFEST: "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
+      CHART: infra/helm/lantern
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.2
+
+      - name: Vendor chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build "$CHART"
+
+      # Static gates first: cheap, and they cover every template incl. the ones that run 0 replicas.
+      - name: helm lint + template (dev, ci, prod) + kubeconform
+        run: |
+          set -euo pipefail
+          for v in dev ci prod; do
+            helm lint "$CHART" -f "$CHART/values-$v.yaml" --set backup.s3Bucket=lint
+            helm template lantern "$CHART" -f "$CHART/values-$v.yaml" --set backup.s3Bucket=lint \
+              > "/tmp/render-$v.yaml"
+          done
+          for v in dev ci prod; do
+            docker run --rm -v /tmp:/tmp ghcr.io/yannh/kubeconform:v0.6.7 \
+              -strict -summary -ignore-missing-schemas "/tmp/render-$v.yaml"
+          done
+
+      - name: Create kind cluster (default CNI disabled)
+        uses: helm/kind-action@99576bfa6ddf9a8e612d83b513da5a75875caced # v1.9.0
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
+          config: infra/k8s/kind-cluster.yaml
+          wait: "0s"
+
+      - name: Install Calico
+        run: |
+          set -euo pipefail
+          kubectl apply -f "$CALICO_MANIFEST"
+          kubectl -n kube-system rollout status ds/calico-node --timeout=300s
+          kubectl wait node --all --for=condition=Ready --timeout=180s
+          kubectl -n kube-system rollout status deploy/coredns --timeout=180s
+
+      - name: Build + load control-plane and runtime-scheduler images
+        run: |
+          set -euo pipefail
+          for svc in control-plane runtime-scheduler; do
+            docker build -t "lantern/$svc:ci" -f "services/$svc/Dockerfile" .
+            kind load docker-image "lantern/$svc:ci" --name "$KIND_CLUSTER_NAME"
+          done
+
+      - name: helm install (values-ci, generated secrets)
+        run: |
+          set -euo pipefail
+          pw="$(openssl rand -hex 16)"
+          PW="$pw" envsubst '${PW}' < infra/helm/ci-deps.yaml | kubectl apply -f -
+          kubectl rollout status deploy/lantern-postgresql --timeout=180s
+          kubectl rollout status deploy/lantern-minio --timeout=180s
+          helm install lantern "$CHART" -f "$CHART/values-ci.yaml" \
+            --set "secrets.postgresPassword=$pw" --set "secrets.minioPassword=$pw" \
+            --set "secrets.grpcServiceToken=$(openssl rand -hex 16)" \
+            --set "secrets.schedulerNodeToken=$(openssl rand -hex 16)" \
+            --wait --timeout 10m
+          echo "PGPASSWORD=$pw" >> "$GITHUB_ENV"
+
+      - name: Smoke - health, /metrics, RLS grants
+        run: |
+          set -euo pipefail
+          kubectl port-forward svc/lantern-control-plane 18080:8080 &
+          kubectl port-forward deploy/lantern-control-plane 19464:9464 &   # /metrics moved off the API port
+          kubectl port-forward svc/lantern-runtime-scheduler 18085:8085 &
+          kubectl port-forward svc/lantern-postgresql 15432:5432 &
+          sleep 5
+          curl -fsS localhost:18080/readyz
+          curl -fsS localhost:18085/healthz
+          # one real request first so the HTTP histogram has a sample
+          curl -fsS localhost:18080/healthz >/dev/null
+          # grep -q on a pipe closes it early and makes curl exit 23 under pipefail, so fetch first
+          curl -fsS localhost:19464/metrics -o /tmp/cp-metrics.txt
+          grep -q '^http_server_request_duration_seconds_count' /tmp/cp-metrics.txt
+          curl -fsS localhost:18085/metrics -o /tmp/sched-metrics.txt
+          grep -q '^lantern_scheduler_' /tmp/sched-metrics.txt
+          DATABASE_URL="postgres://lantern:${PGPASSWORD}@localhost:15432/lantern?sslmode=disable" \
+            scripts/check-app-grants.sh
+
+      - name: Backup CronJob produces a restorable dump
+        run: |
+          set -euo pipefail
+          # Marker rows so "restored" means the data came back, not just the schema.
+          kubectl exec deploy/lantern-postgresql -- psql -U lantern -d lantern -v ON_ERROR_STOP=1 -qc \
+            "CREATE TABLE ci_restore_marker AS SELECT g AS id FROM generate_series(1, 42) g"
+          kubectl create job --from=cronjob/lantern-postgres-backup backup-ci
+          kubectl wait --for=condition=complete job/backup-ci --timeout=300s
+          kubectl logs job/backup-ci -c upload | grep -E '^uploaded s3://.*[.]sql[.]gz'
+          # Fetch the real artifact from the in-cluster S3 and restore THAT.
+          kubectl port-forward svc/lantern-minio 19000:9000 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          export AWS_ACCESS_KEY_ID=ci AWS_SECRET_ACCESS_KEY=ci AWS_DEFAULT_REGION=us-east-1
+          for _ in $(seq 30); do curl -s -o /dev/null localhost:19000 && break; sleep 1; done
+          key="$(aws --endpoint-url http://localhost:19000 s3 ls s3://lantern-backups/postgres/ | awk '{print $4}' | sort | tail -1)"
+          test -n "$key"
+          aws --endpoint-url http://localhost:19000 s3 cp "s3://lantern-backups/postgres/$key" /tmp/ci-backup.sql.gz
+          DRILL_EXPECT_TABLES="agents runs journal_events ci_restore_marker" \
+            scripts/db-restore-drill.sh /tmp/ci-backup.sql.gz | tee /tmp/drill.txt
+          grep -Eq 'ci_restore_marker +42 rows' /tmp/drill.txt
+          scripts/db-restore-drill.sh --self-test
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide || true
+          for p in $(kubectl get pods -o name); do echo "== $p"; kubectl logs "$p" --all-containers --tail=40 || true; done
+          kubectl describe pods || true
+          kubectl get netpol || true
+          kubectl logs -l app.kubernetes.io/part-of=lantern --all-containers --tail=100 --prefix || true
 
   # ---------------------------------------------------------------------------
   # Execution legs (g/h/i): untrusted-runs-on-gVisor, hostile-in-Kata-microVM,
