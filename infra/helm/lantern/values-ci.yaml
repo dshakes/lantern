@@ -7,7 +7,7 @@
 # Passwords are generated per run and passed with --set; nothing secret lives here.
 #
 #   helm install lantern infra/helm/lantern -f values.yaml -f values-ci.yaml \
-#     --set secrets.postgresPassword=$PW --set postgresql.auth.password=$PW ...
+#     --set secrets.postgresPassword=$PW --set secrets.minioPassword=$PW ...
 
 global:
   image:
@@ -42,18 +42,18 @@ backup:
   enabled: true
   retentionDays: 1
 
-# Bitnami subcharts off: CI supplies plain Postgres/MinIO (infra/helm/ci-deps.yaml).
+# In-cluster Postgres/S3 are the chart's own templates; keep them small for CI.
 postgresql:
-  enabled: false
-  auth: {username: lantern, database: lantern}
+  persistence:
+    size: 1Gi
 redis:
   enabled: true
   architecture: standalone
   auth:
     enabled: false
 minio:
-  enabled: false
-  auth: {rootUser: lantern}
+  persistence:
+    size: 1Gi
 
 secrets:
   jwtSecret: "ci-jwt-secret-not-for-production"

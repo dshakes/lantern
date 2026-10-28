@@ -32,7 +32,11 @@ spec:
               image: {{ .Values.backup.image | quote }}
               env:
                 - name: PGHOST
-                  value: {{ $fn }}-postgresql
+                  value: {{ include "lantern.dbHost" . }}
+                - name: PGPORT
+                  value: {{ include "lantern.dbPort" . | quote }}
+                - name: PGSSLMODE
+                  value: {{ include "lantern.dbSslmode" . }}
                 - name: PGUSER
                   value: {{ .Values.postgresql.auth.username | quote }}
                 - name: PGDATABASE

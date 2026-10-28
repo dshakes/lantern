@@ -5,9 +5,10 @@ metadata:
   labels:
     {{- include "lantern.labels" . | nindent 4 }}
 data:
-  DATABASE_URL: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+  DATABASE_URL: {{ include "lantern.databaseURL" . | quote }}
   REDIS_URL: "redis://{{ include "lantern.fullname" . }}-redis-master:6379"
-  S3_ENDPOINT: "http://{{ include "lantern.fullname" . }}-minio:9000"
-  S3_BUCKET: "lantern-dev"
+  S3_ENDPOINT: {{ include "lantern.s3Endpoint" . | quote }}
+  S3_REGION: {{ .Values.externalS3.region | default "us-east-1" | quote }}
+  S3_BUCKET: {{ .Values.externalS3.bucket | default "lantern-dev" | quote }}
   LOG_LEVEL: {{ .Values.global.logLevel | quote }}
-  AWS_ACCESS_KEY_ID: {{ .Values.minio.auth.rootUser | quote }}
+  AWS_ACCESS_KEY_ID: {{ include "lantern.s3AccessKey" . | quote }}

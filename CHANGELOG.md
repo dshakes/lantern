@@ -44,6 +44,13 @@ This project is pre-1.0; there are no stable release branches yet.
 - Control-plane Prometheus `/metrics` on `:8080`; the control-plane SLO alert group is now enabled.
 - `scripts/db-restore-drill.sh` and `scripts/check-app-grants.sh`; a kind + Calico `helm-install` CI job.
 
+### Changed
+- Helm: Postgres (pgvector) and the S3-compatible store are now first-party templates instead of Bitnami
+  subcharts, enabled by default for dev/kind and disabled in `values-prod.yaml` in favour of
+  `externalDatabase` / `externalS3`. Redis remains a Bitnami subchart (`Chart.lock` pins it). Not an in-place upgrade from the
+  Bitnami-based chart (StatefulSet selectors differ): dump, uninstall, install, restore.
+  `externalS3.region` sets the S3 signing region (default `us-east-1`).
+
 ### Fixed
 - **Data export redacts credentials structurally** (#330) — any column with a
   secret/token/key/password/hash/enc segment is left out, including webhook
@@ -58,6 +65,8 @@ This project is pre-1.0; there are no stable release branches yet.
   template-create and prompt back-fill UPDATEs wrote a column that did not
   exist, failed, and the error was discarded.
 - `/v1/completions` honours the request's `model` on its failover paths.
+- Helm: the default in-cluster Postgres crash-looped (Bitnami chart on the pgvector image) and the Bitnami
+  MinIO images were no longer pullable, so a default `helm install` did not come up.
 - `values-prod.yaml` and `values-staging.yaml` rendered unpullable image references (`/lantern/lantern-gateway:tag`);
   they now use the published `ghcr.io/dshakes/lantern/<name>` images.
 - **Balanced default picks Sonnet** (#326) — `auto`/`balanced` routing picked
