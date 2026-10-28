@@ -1,14 +1,14 @@
-{
-  "_comment": "Rule file for cmd/llm-replay (W2-0). UNVERIFIED against the merged W2-0 schema: the shape here (match on system-prompt substring, canned text) is the documented intent; adjust field names to the merged server when it lands.",
-  "rules": [
-    {
-      "match": { "system_contains": "triage support tickets" },
-      "respond": { "text": "Category: billing. Urgency: medium. Draft reply: Thanks for flagging this - I can see a duplicate charge on your October invoice and have asked finance to refund it within 3 business days." }
-    },
-    {
-      "match": { "system_contains": "five-bullet research briefs" },
-      "respond": { "text": "- Firecracker microVMs boot in about 125ms\n- Egress is allow-listed per run\n- Secrets are vended short-lived, never baked into images\n- Snapshots enable pause, resume and fork\n- Every run can issue a signed receipt" }
-    }
-  ],
-  "default": { "text": "(replay) This demo answers from recorded responses. Try the support-triage or research-brief agents." }
-}
+[
+ {
+  "match": "triage support tickets",
+  "reply": "Category: billing. Urgency: medium. Draft reply: Thanks for flagging this - I can see a duplicate charge on your October invoice and have asked finance to refund it within 3 business days."
+ },
+ {
+  "match": "five-bullet research briefs",
+  "reply": "- Firecracker microVMs boot in about 125ms\n- Egress is allow-listed per run\n- Secrets are vended short-lived, never baked into images\n- Snapshots enable pause, resume and fork\n- Every run can issue a signed receipt"
+ },
+ {
+  "match": "You answer briefly",
+  "reply": "Hello."
+ }
+]

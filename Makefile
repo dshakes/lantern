@@ -18,14 +18,14 @@ dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
 
 # Kiosk demo (ADR 0029): full stack, ephemeral workspaces, recorded LLM answers.
 demo:
-	docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo up -d --build
+	docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo up -d --build postgres redis control-plane dashboard llm-replay
 	@echo "demo: http://localhost:3001/kiosk"
 
 demo-down:
 	docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo down -v
 
 dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
-	docker compose -f infra/docker/docker-compose.yml up -d postgres redis minio minio-init
+	docker compose -f infra/docker/docker-compose.yml up -d postgres redis
 
 dev-doctor: ## Health-check every service + infra (run this when things feel weird)
 	@bash scripts/dev-doctor.sh

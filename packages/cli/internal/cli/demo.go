@@ -16,10 +16,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	demoAPIHealth = "http://localhost:8080/healthz"
-	demoURL       = "http://localhost:3001/kiosk"
-)
+// demoPort reads the host-port override the compose overlay also honours.
+func demoPort(env, def string) string {
+	if v := os.Getenv(env); v != "" {
+		return v
+	}
+	return def
+}
+
+func demoURLs() (apiHealth, page string) {
+	return "http://localhost:" + demoPort("KIOSK_API_PORT", "8080") + "/healthz",
+		"http://localhost:" + demoPort("KIOSK_WEB_PORT", "3001") + "/kiosk"
+}
+
+// kioskServices is everything the demo needs; the rest of the dev stack (Rust
+// gateway/model-router builds, workflow-engine, landing) is skipped.
+var kioskServices = []string{"postgres", "redis", "control-plane", "dashboard", "llm-replay"}
 
 // demoComposeArgs builds the `docker compose` argv for the demo stack.
 func demoComposeArgs(root string, action ...string) []string {
@@ -51,7 +63,7 @@ no provider key is read, stored, or required.
 			if _, err := exec.LookPath("docker"); err != nil {
 				return fmt.Errorf("docker is required: %w", err)
 			}
-			action := []string{"up", "-d", "--build"}
+			action := append([]string{"up", "-d", "--build"}, kioskServices...)
 			if down {
 				action = []string{"down", "-v"}
 			}
@@ -65,9 +77,10 @@ no provider key is read, stored, or required.
 				fmt.Println("demo stopped, data deleted")
 				return nil
 			}
+			apiHealth, demoURL := demoURLs()
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
-			for _, u := range []string{demoAPIHealth, demoURL} {
+			for _, u := range []string{apiHealth, demoURL} {
 				if err := waitForHTTP(ctx, u, 5*time.Minute); err != nil {
 					return fmt.Errorf("waiting for %s: %w (see `docker compose -p lantern-demo logs`)", u, err)
 				}

@@ -4,6 +4,9 @@
 # What it changes versus the dev stack:
 #   - LANTERN_KIOSK=1: POST /v1/kiosk/session mints ephemeral, auto-deleted tenants.
 #   - RLS + authz enforcement ON, sign-up closed, mailer driver `log`.
+#   - Only the services the demo needs (no MinIO) are started (see `kioskServices` in
+#     packages/cli/internal/cli/demo.go and the Makefile): no gateway, model-router,
+#     workflow-engine or landing, and no infra host ports.
 #   - No dev seed (the well-known admin account does not exist in kiosk mode).
 #   - LLM calls go to the llm-replay fixture server. The OPENAI/ANTHROPIC "keys"
 #     below are inert placeholders: the control-plane refuses to boot in kiosk mode
@@ -22,17 +25,24 @@
 x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:-lantern-kiosk-local-booth-secret-change-for-public-hosts}
 
 services:
+  # Host ports are env-driven so a second stack can run beside a dev one:
+  # KIOSK_API_PORT / KIOSK_WEB_PORT (defaults 8080 / 3001). NEXT_PUBLIC_API_URL
+  # is baked at build time and must follow the API port.
   postgres:
+    ports: !override []
     volumes:
       - ./kiosk/postgres-init.sql:/docker-entrypoint-initdb.d/10-kiosk-app-role.sql:ro
 
+  redis:
+    ports: !override []
+
   llm-replay:
-    image: golang:1.23-alpine
+    image: golang:1.26-alpine
     working_dir: /src/services/control-plane
     volumes:
       - ../..:/src:ro
     # ponytail: `go run` keeps this overlay free of a new Dockerfile; bake a binary image if boot time matters.
-    command: ["go", "run", "./cmd/llm-replay", "-addr", ":9090", "-rules", "/src/infra/docker/kiosk/llm-replay-rules.json"]
+    command: ["go", "run", "./cmd/llm-replay", "-addr", "0.0.0.0:9090", "-rules", "/src/infra/docker/kiosk/llm-replay-rules.json"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz || exit 1"]
       interval: 5s
@@ -40,6 +50,8 @@ services:
       retries: 60
 
   control-plane:
+    ports: !override
+      - "${KIOSK_API_PORT:-8080}:8080"
     environment:
       JWT_SECRET: *kiosk-jwt
       LANTERN_KIOSK: "1"
@@ -48,16 +60,25 @@ services:
       LANTERN_APP_DB_PASSWORD: kiosk-app-role-local-only
       LANTERN_SIGNUP_MODE: closed
       LANTERN_MAILER: log
-      LANTERN_CORS_ORIGINS: http://localhost:3001
+      LANTERN_CORS_ORIGINS: http://localhost:${KIOSK_WEB_PORT:-3001}
       LANTERN_KIOSK_IP_PER_HOUR: "60" # a booth is one machine; raise/lower per venue
       LANTERN_LLM_BASEURL_OPENAI: http://llm-replay:9090
       LANTERN_LLM_BASEURL_ANTHROPIC: http://llm-replay:9090
       OPENAI_API_KEY: kiosk-replay-placeholder
       ANTHROPIC_API_KEY: kiosk-replay-placeholder
-    depends_on:
+    # No MinIO: the demo stores no files, and MinIO's Docker Hub images are no
+    # longer pullable. The control-plane runs without object storage.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       llm-replay:
         condition: service_healthy
 
-  gateway:
-    environment:
-      JWT_SECRET: *kiosk-jwt
+  dashboard:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${KIOSK_API_PORT:-8080}
+    ports: !override
+      - "${KIOSK_WEB_PORT:-3001}:3000"
