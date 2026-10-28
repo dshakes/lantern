@@ -74,6 +74,9 @@ jobs:
       # disableDefaultCNI=true + Calico's pod subnet, so NetworkPolicy is
       # enforced for real once we install Calico below. kind-action does NOT
       # install a CNI when the config disables the default — exactly what we want.
+      - name: values-prod renders LANTERN_AUTHZ_ENFORCE=1
+        run: infra/helm/lantern/tests/authz-enforce.sh
+
       - name: Create kind cluster (default CNI disabled)
         uses: helm/kind-action@99576bfa6ddf9a8e612d83b513da5a75875caced # v1.9.0
         with:
