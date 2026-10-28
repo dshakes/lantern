@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "lantern.componentLabels" (dict "root" . "component" "model-router") | nindent 4 }}
 spec:
+  {{- if not .Values.modelRouter.autoscaling.enabled }}
   replicas: {{ .Values.modelRouter.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "model-router") | nindent 6 }}

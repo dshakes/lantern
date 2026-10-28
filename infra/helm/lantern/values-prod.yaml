@@ -13,8 +13,11 @@
 
 global:
   image:
-    registry: ""
-    repository: lantern
+    # Published images: ghcr.io/dshakes/lantern/<name> (build-images.yml). The
+    # per-component image.name comes from values.yaml; an empty registry used to
+    # render "/lantern/lantern-gateway:tag", which no runtime can pull.
+    registry: ghcr.io
+    repository: dshakes/lantern
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
@@ -31,8 +34,11 @@ global:
 
 gateway:
   replicas: 2
-  image:
-    name: lantern-gateway
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
   service:
     type: ClusterIP
     port: 8443
@@ -51,8 +57,11 @@ gateway:
 
 controlPlane:
   replicas: 2
-  image:
-    name: lantern-control-plane
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
   service:
     type: ClusterIP
     grpcPort: 50051
@@ -77,9 +86,11 @@ controlPlane:
   #   LANTERN_SCHEDULER_GRPC_ADDR        runtime-scheduler gRPC addr (stub is fatal)
   #   LANTERN_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
   #   LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
-  # e.g.
-  # extraEnv:
-  #   - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "runtime-scheduler:50055"}
+  extraEnv:
+    - {name: LANTERN_SCHEDULER_GRPC_ADDR, value: "lantern-runtime-scheduler:50055"}
+  # The TLS inputs below are operator-supplied Secrets (the chart cannot mint
+  # them); the control-plane refuses to boot in prod until they are mounted.
+  # extraEnv (append):
   #   - {name: LANTERN_CONTROL_PLANE_TLS_CERT, value: /etc/lantern/tls/tls.crt}
   #   - {name: LANTERN_CONTROL_PLANE_TLS_KEY, value: /etc/lantern/tls/tls.key}
   #   - {name: LANTERN_RUNTIME_MANAGER_TLS_CA, value: /etc/lantern/manager-tls/ca.crt}
@@ -94,8 +105,11 @@ controlPlane:
 
 workflowEngine:
   replicas: 2
-  image:
-    name: lantern-workflow-engine
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   resources:
     requests:
       cpu: 200m
@@ -114,8 +128,11 @@ workflowEngine:
 
 modelRouter:
   replicas: 2
-  image:
-    name: lantern-model-router
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
   resources:
     requests:
       cpu: 100m
@@ -129,8 +146,6 @@ modelRouter:
 
 runtimeManager:
   replicas: 1
-  image:
-    name: lantern-runtime-manager
   resources:
     requests:
       cpu: 200m
@@ -142,10 +157,49 @@ runtimeManager:
     LOG_LEVEL: "info"
     LANTERN_ENV: "production"
 
+runtimeScheduler:
+  replicas: 2
+  env:
+    LANTERN_ENV: "production"
+  # The scheduler dials the manager over mTLS in prod; mount the client cert like
+  # controlPlane.extraVolumes and set LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+surfaceGateway:
+  replicas: 2
+  env:
+    LANTERN_ENV: "production"
+  # Secret with SLACK_SIGNING_SECRET, TELEGRAM_SECRET_TOKEN, ... (create it out of band)
+  existingSecret: ""
+
+networkPolicy:
+  enabled: true
+  # Narrow to your ingress controller's namespace, e.g.
+  # ingressFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]
+  ingressFrom: []
+
+# In-cluster logical backup is a floor; managed Postgres + PITR is the GA path
+# (docs/runbooks/db-restore.md). If you self-host Postgres, ship dumps to managed S3.
+backup:
+  enabled: true
+  useChartMinio: false
+  existingSecret: lantern-backup-s3   # keys: access-key-id, secret-access-key
+  s3Endpoint: ""                      # "" = AWS S3
+  s3Bucket: ""                        # REQUIRED
+
 dashboard:
   replicas: 2
-  image:
-    name: lantern-dashboard
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
   service:
     type: ClusterIP
     port: 3000
@@ -158,6 +212,8 @@ dashboard:
       memory: 512Mi
 
 secrets:
+  # Also supplied at deploy time: jwtSecret, credentialKey, receiptSecret,
+  # grpcServiceToken, schedulerNodeToken (the scheduler refuses to start without it).
   # Supplied at deploy time — never committed. See the runbook.
   #   --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD"
   # This is the credential for the lantern_app role that RLS policies apply to;

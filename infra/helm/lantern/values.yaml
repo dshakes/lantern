@@ -16,6 +16,11 @@ global:
 
 gateway:
   replicas: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   image:
     name: gateway
   service:
@@ -33,6 +38,11 @@ gateway:
 
 controlPlane:
   replicas: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   image:
     name: control-plane
   service:
@@ -59,6 +69,11 @@ controlPlane:
 
 modelRouter:
   replicas: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   image:
     name: model-router
   service:
@@ -76,6 +91,11 @@ modelRouter:
 
 workflowEngine:
   replicas: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   image:
     name: workflow-engine
   service:
@@ -111,6 +131,11 @@ runtimeManager:
 
 dashboard:
   replicas: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
   image:
     name: web
   service:
@@ -141,7 +166,7 @@ minio:
   auth:
     rootUser: lantern
     rootPassword: ""  # set via secret
-  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev"
+  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev,lantern-backups"
   persistence:
     size: 10Gi
 
@@ -162,6 +187,92 @@ ingress:
           service: dashboard
   tls: []
 
+# Stateless gRPC/HTTP service in front of the runtime-manager nodes. Leader
+# election (Postgres advisory lock) makes 2 replicas safe.
+runtimeScheduler:
+  replicas: 2
+  image:
+    name: runtime-scheduler
+  service:
+    type: ClusterIP
+    grpcPort: 50055
+    httpPort: 8085
+  env:
+    LANTERN_ENV: "production"
+  # runtime-manager address the scheduler dials; empty -> this release's
+  # runtime-manager Service. Prod also needs LANTERN_RUNTIME_MANAGER_TLS_*
+  # (extraEnv + extraVolumes, same shape as controlPlane).
+  defaultManagerAddr: ""
+  # /healthz is liveness-only; /readyz fails while no runtime-manager node has
+  # registered, which blocks `helm --wait` on a fresh install. Switch to
+  # /readyz once nodes register if you want that signal on the Service.
+  readinessPath: /healthz
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  extraEnv: []
+  extraVolumeMounts: []
+  extraVolumes: []
+
+# Inbound webhooks (Slack/Telegram/Twilio/WhatsApp/Discord). Channel
+# credentials come from an operator-managed Secret, never from values.
+surfaceGateway:
+  replicas: 1
+  image:
+    name: surface-gateway
+  service:
+    type: ClusterIP
+    port: 8444
+  env:
+    LANTERN_ENV: "production"
+  # Existing Secret whose keys are the gateway's env var names
+  # (SLACK_SIGNING_SECRET, TELEGRAM_SECRET_TOKEN, ...). Optional.
+  existingSecret: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# Default-deny NetworkPolicy for every pod in the release plus the allow rules
+# the platform needs. Needs a CNI that enforces policy (Calico/Cilium).
+networkPolicy:
+  enabled: false
+  # Peers allowed to reach the public entrypoints (gateway, dashboard,
+  # surface-gateway). Empty = any source (ingress controllers vary).
+  ingressFrom: []
+  # Peers allowed to scrape /metrics (control-plane :8080, scheduler :8085).
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+  # Extra egress rules appended to the egress allow policy, e.g. a managed
+  # Postgres/Redis on private IPs: [{to: [{ipBlock: {cidr: 10.20.0.0/24}}]}]
+  extraEgress: []
+
+# Logical backup of the in-cluster Postgres (same shape as the lantern-control-plane
+# chart): gzip'd pg_dump -> S3/MinIO, with retention pruning. Floor, not PITR; prod
+# should use managed Postgres. Restore + drill: docs/runbooks/db-restore.md
+backup:
+  enabled: false
+  schedule: "0 2 * * *"            # 02:00 daily (cluster TZ)
+  image: pgvector/pgvector:pg16    # must match the server major version
+  uploaderImage: amazon/aws-cli:2.15.17
+  s3Bucket: lantern-backups
+  s3Endpoint: ""                   # "" = AWS S3; with useChartMinio=true the release's MinIO is used
+  s3Region: us-east-1
+  retentionDays: 14
+  # true: upload to this release's MinIO with its credentials.
+  # false: credentials come from existingSecret (keys access-key-id, secret-access-key).
+  useChartMinio: true
+  existingSecret: ""
+
 secrets:
   # These should be overridden via --set or external secrets
   jwtSecret: ""
@@ -171,6 +282,8 @@ secrets:
   credentialKey: ""
   receiptSecret: ""
   grpcServiceToken: ""
+  # Required in prod by the scheduler (REST heartbeat auth).
+  schedulerNodeToken: ""
   appDbPassword: ""
   postgresPassword: "lantern"
   minioPassword: "lanternsecret"

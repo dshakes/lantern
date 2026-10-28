@@ -28,8 +28,8 @@
 
 global:
   image:
-    registry: ""
-    repository: lantern
+    registry: ghcr.io          # published images: ghcr.io/dshakes/lantern/<name> (build-images.yml)
+    repository: dshakes/lantern
     tag: staging
     pullPolicy: IfNotPresent
   logLevel: info
@@ -46,8 +46,6 @@ global:
 
 gateway:
   replicas: 2
-  image:
-    name: lantern-gateway
   service:
     type: ClusterIP
     port: 8443
@@ -66,8 +64,6 @@ gateway:
 
 controlPlane:
   replicas: 2
-  image:
-    name: lantern-control-plane
   service:
     type: ClusterIP
     grpcPort: 50051
@@ -109,8 +105,6 @@ controlPlane:
 
 workflowEngine:
   replicas: 2
-  image:
-    name: lantern-workflow-engine
   resources:
     requests:
       cpu: 200m
@@ -129,8 +123,6 @@ workflowEngine:
 
 modelRouter:
   replicas: 2
-  image:
-    name: lantern-model-router
   resources:
     requests:
       cpu: 100m
@@ -144,8 +136,6 @@ modelRouter:
 
 runtimeManager:
   replicas: 1
-  image:
-    name: lantern-runtime-manager
   resources:
     requests:
       cpu: 200m
@@ -159,8 +149,6 @@ runtimeManager:
 
 dashboard:
   replicas: 2
-  image:
-    name: lantern-dashboard
   service:
     type: ClusterIP
     port: 3000
