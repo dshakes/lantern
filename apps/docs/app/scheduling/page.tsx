@@ -113,6 +113,22 @@ Response: 204 No Content`}</code>
         local midnight in that zone.
       </p>
 
+      <h2 id="example-digest">Example: weekday digest to Slack</h2>
+      <p>
+        <code>examples/daily-digest</code> is a workflow (GitHub open PRs, an AI step, a Slack post) on the schedule{" "}
+        <code>0 9 * * 1-5</code> in <code>America/New_York</code>. Run <code>lantern deploy</code> in that directory
+        (the manifest carries the prompt and workflow), install the Slack and GitHub connectors, then post <code>schedule.json</code> to <code>POST /v1/schedules</code>. The response&apos;s{" "}
+        <code>nextFireAt</code> is the next weekday 09:00 New York time.
+      </p>
+      <p>
+        The scheduler polls every 60 seconds, so a due schedule fires within a minute. To test without waiting for
+        09:00, set the row due (<code>UPDATE schedules SET next_fire_at = now() WHERE id = ...</code>) and watch{" "}
+        <code>GET /v1/runs?agent=...</code>; the e2e suite does exactly this against fixtures (see{" "}
+        <Link href="/testing#examples">testing</Link>). An agent over its hard-fail budget does not fire at all, so an
+        unattended schedule cannot run past its cap. Setting <code>deliveryEmail</code> also mails the run output; that
+        path is not covered by the fixture suite.
+      </p>
+
       <div className="callout callout-info">
         <strong>Surfaces trigger runs too.</strong> Inbound messages on a
         channel start runs. They are not schedules but follow the same run

@@ -1,0 +1,10 @@
+[
+  {
+    "match": "engineering digest",
+    "reply": "Morning digest for acme/api\n- #42 \"Fix retry storm\" (octocat) is open and needs a reviewer."
+  },
+  {
+    "match": "what's on tomorrow",
+    "reply": "Tomorrow you have Design review at 10:00. No rain is forecast."
+  }
+]
