@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,7 @@ func newTestCommand() *cobra.Command {
 		jsonOut  bool
 		rehearse bool
 		window   string
+		timeout  time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -96,7 +98,7 @@ Example:
 				if agent == "" {
 					return fmt.Errorf("--agent is required")
 				}
-				return runRehearsal(cmd.Context(), base, token, agent, window, jsonOut)
+				return runRehearsal(cmd.Context(), base, token, agent, window, jsonOut, timeout)
 			}
 			if agent == "" || suite == "" {
 				return fmt.Errorf("--agent and --suite are required")
@@ -119,7 +121,7 @@ Example:
 			results := make([]caseResult, 0, len(s.Cases))
 			totalCost := 0.0
 			for _, c := range s.Cases {
-				cr := runCase(cmd.Context(), base, token, agent, c)
+				cr := runCase(cmd.Context(), base, token, agent, c, timeout)
 				results = append(results, cr)
 				totalCost += cr.CostUsd
 				if !jsonOut {
@@ -184,6 +186,7 @@ Example:
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON results")
 	cmd.Flags().BoolVar(&rehearse, "rehearse", false, "Replay past failed/low-score production runs instead of a suite")
 	cmd.Flags().StringVar(&window, "window", "7d", "Time window for --rehearse (e.g. 24h, 7d, 4w)")
+	cmd.Flags().DurationVar(&timeout, "timeout", 2*time.Minute, "Max time to wait for each run to finish (runs execute asynchronously)")
 	return cmd
 }
 
@@ -206,7 +209,7 @@ type rehearseResp struct {
 // agent, reporting pass/fail. A case "passes" if the replayed run succeeds —
 // rehearsal has no hand-written assertion, only "does this input still
 // break the agent".
-func runRehearsal(ctx context.Context, base, token, agent, window string, jsonOut bool) error {
+func runRehearsal(ctx context.Context, base, token, agent, window string, jsonOut bool, timeout time.Duration) error {
 	reqBody, _ := json.Marshal(map[string]any{"agentName": agent, "window": window})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/runs/rehearse", bytes.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -231,20 +234,8 @@ func runRehearsal(ctx context.Context, base, token, agent, window string, jsonOu
 
 	failed := 0
 	for _, c := range rr.Cases {
-		runBody, _ := json.Marshal(map[string]any{"agentName": agent, "input": c.Input})
-		rreq, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/runs", bytes.NewReader(runBody))
-		rreq.Header.Set("Authorization", "Bearer "+token)
-		rreq.Header.Set("Content-Type", "application/json")
-		rres, err := (&http.Client{Timeout: 120 * time.Second}).Do(rreq)
+		_, err := execRun(ctx, base, token, map[string]any{"agentName": agent, "input": c.Input}, timeout)
 		ok := err == nil
-		if ok {
-			var run struct {
-				Status string `json:"status"`
-			}
-			b, _ := io.ReadAll(rres.Body)
-			rres.Body.Close()
-			ok = rres.StatusCode == 200 && json.Unmarshal(b, &run) == nil && run.Status == "succeeded"
-		}
 		mark := "PASS"
 		if !ok {
 			mark = "FAIL"
@@ -293,31 +284,16 @@ func fetchSuite(ctx context.Context, base, token, agent, name string) (*evalSuit
 	return nil, fmt.Errorf("suite %q not found for agent %q", name, agent)
 }
 
-func runCase(ctx context.Context, base, token, agent string, c evalCase) caseResult {
+func runCase(ctx context.Context, base, token, agent string, c evalCase, timeout time.Duration) caseResult {
 	start := time.Now()
-	body := map[string]any{
+	run, err := execRun(ctx, base, token, map[string]any{
 		"agentName": agent,
 		"input":     map[string]string{"prompt": c.Input},
-	}
-	buf, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/runs", bytes.NewReader(buf))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	res, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	}, timeout)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		return caseResult{Name: c.Name, Score: 0, Error: err.Error(), LatencyMs: latency, Expected: c.Expected}
 	}
-	defer res.Body.Close()
-	raw, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 200 {
-		return caseResult{Name: c.Name, Score: 0, Error: fmt.Sprintf("%d: %s", res.StatusCode, string(raw)), LatencyMs: latency, Expected: c.Expected}
-	}
-	var run struct {
-		Output  map[string]any `json:"output"`
-		CostUsd float64        `json:"costUsd"`
-	}
-	_ = json.Unmarshal(raw, &run)
 	actual := extractText(run.Output)
 	passed, score := scoreCase(c, actual)
 	return caseResult{
@@ -329,6 +305,102 @@ func runCase(ctx context.Context, base, token, agent string, c evalCase) caseRes
 		LatencyMs: latency,
 		CostUsd:   run.CostUsd,
 	}
+}
+
+// runDoc is the subset of a run (POST /v1/runs, GET /v1/runs/{id}) the CLI uses.
+type runDoc struct {
+	ID      string         `json:"id"`
+	Status  string         `json:"status"`
+	Output  map[string]any `json:"output"`
+	CostUsd float64        `json:"costUsd"`
+	Error   *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (r *runDoc) terminal() bool {
+	switch r.Status {
+	case "succeeded", "failed", "cancelled", "canceled":
+		return true
+	}
+	return false
+}
+
+// execRun creates a run and waits for it to finish. The control plane answers
+// POST /v1/runs with 201 and executes asynchronously, so the create response
+// carries no output: poll GET /v1/runs/{id} until a terminal status. 200 is
+// accepted too (older servers answered synchronously). A failed or cancelled
+// run is returned as an error; timeout bounds the whole create+wait.
+func execRun(ctx context.Context, base, token string, body map[string]any, timeout time.Duration) (*runDoc, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	wrap := func(err error) error {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out after %s waiting for run to finish (raise --timeout)", timeout)
+		}
+		return err
+	}
+
+	buf, _ := json.Marshal(body)
+	var run runDoc
+	status, raw, err := doRunJSON(ctx, http.MethodPost, base+"/v1/runs", token, buf, &run)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return nil, fmt.Errorf("%d: %s", status, string(raw))
+	}
+	// ponytail: fixed-cap backoff, no jitter; a single CLI process polling one run.
+	for delay := 200 * time.Millisecond; !run.terminal(); delay = min(delay*3/2, 2*time.Second) {
+		if run.ID == "" {
+			return nil, fmt.Errorf("create run: response has no id: %s", string(raw))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, wrap(ctx.Err())
+		case <-time.After(delay):
+		}
+		status, raw, err = doRunJSON(ctx, http.MethodGet, base+"/v1/runs/"+run.ID, token, nil, &run)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("poll run %s: %d: %s", run.ID, status, string(raw))
+		}
+	}
+	switch run.Status {
+	case "succeeded":
+		return &run, nil
+	case "failed":
+		if run.Error != nil {
+			return nil, fmt.Errorf("run failed: %s: %s", run.Error.Code, run.Error.Message)
+		}
+		return nil, errors.New("run failed")
+	default:
+		return nil, errors.New("run " + run.Status)
+	}
+}
+
+func doRunJSON(ctx context.Context, method, url, token string, body []byte, out *runDoc) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusCreated {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return res.StatusCode, raw, fmt.Errorf("decode run: %w", err)
+		}
+	}
+	return res.StatusCode, raw, nil
 }
 
 // scoreCase implements a tiny assertion engine:
