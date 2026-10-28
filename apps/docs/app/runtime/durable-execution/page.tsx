@@ -2,6 +2,9 @@ import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
 import { Sequence } from "../../_components/interactive/Sequence";
 import { Concept } from "../../_components/Concept";
+import { pageMeta } from "../../_meta";
+
+export const metadata = pageMeta("/runtime/durable-execution");
 
 export default function RuntimeDurableExecutionPage() {
   return (

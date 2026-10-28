@@ -1,6 +1,9 @@
 import { ArchitectureExplorer } from "../_components/interactive/ArchitectureExplorer";
 import { LifecycleMachine } from "../_components/interactive/LifecycleMachine";
 import { Sequence } from "../_components/interactive/Sequence";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/architecture");
 
 export default function ArchitecturePage() {
   return (

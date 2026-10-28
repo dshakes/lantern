@@ -3,6 +3,9 @@ import { Concept } from "../_components/Concept";
 import { PersonalHarnessArchitecture } from "../_components/PersonalHarnessArchitecture";
 import { PersonalHarnessDiagram } from "../_components/PersonalHarnessDiagram";
 import { AgentLoop } from "../_components/AgentLoop";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/personal");
 
 export default function PersonalHarnessPage() {
   return (

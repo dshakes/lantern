@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/examples");
 
 export default function ExamplesPage() {
   return (
@@ -91,7 +94,7 @@ curl -X POST $API/v1/schedules -H "Authorization: Bearer $TOKEN" -d @schedule.js
       <p>
         <strong>What:</strong> message a Telegram bot (or WhatsApp Cloud number) and a workflow reads your Google
         Calendar and answers in the same chat. <strong>Uses:</strong> the surface-gateway,{" "}
-        <a href="/surfaces#telegram">Telegram</a> secret-token and WhatsApp <code>X-Hub-Signature-256</code> checks, the
+        <Link href="/surfaces#telegram">Telegram</Link> secret-token and WhatsApp <code>X-Hub-Signature-256</code> checks, the
         calendar <code>list_events</code> action. Path: <code>examples/telegram-assistant/</code>.
       </p>
       <pre><code>{`cd examples/telegram-assistant
@@ -108,7 +111,7 @@ curl -X POST $API/v1/runs -H "Authorization: Bearer $TOKEN" -d '{"agentName":"te
         <strong>What:</strong> a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an
         over-budget call is declined with <code>&lt;Reject/&gt;</code> before it connects, and the status callback
         reconciles the $0.05 reservation to the real per-started-minute cost. Path:{" "}
-        <code>examples/voice-receptionist/</code>; details in <a href="/surfaces#twilio">Voice</a>.
+        <code>examples/voice-receptionist/</code>; details in <Link href="/surfaces#twilio">Voice</Link>.
       </p>
       <pre><code>{`cd examples/voice-receptionist
 lantern deploy

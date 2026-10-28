@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Diagram } from "../../_components/Diagram";
 import { Concept } from "../../_components/Concept";
+import { pageMeta } from "../../_meta";
+
+export const metadata = pageMeta("/runtime/observability");
 
 export default function RuntimeObservabilityPage() {
   return (

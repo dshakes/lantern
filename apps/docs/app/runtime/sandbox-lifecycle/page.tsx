@@ -4,6 +4,9 @@ import { Diagram } from "../../_components/Diagram";
 import { Recording } from "../../_components/Recording";
 import { LifecycleMachine } from "../../_components/interactive/LifecycleMachine";
 import { Sequence } from "../../_components/interactive/Sequence";
+import { pageMeta } from "../../_meta";
+
+export const metadata = pageMeta("/runtime/sandbox-lifecycle");
 
 export default function RuntimeSandboxLifecyclePage() {
   return (

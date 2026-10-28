@@ -3,6 +3,9 @@ import { Concept } from "../../_components/Concept";
 import { Diagram } from "../../_components/Diagram";
 import { Recording } from "../../_components/Recording";
 import { Sequence } from "../../_components/interactive/Sequence";
+import { pageMeta } from "../../_meta";
+
+export const metadata = pageMeta("/runtime/egress");
 
 export default function RuntimeEgressPage() {
   return (

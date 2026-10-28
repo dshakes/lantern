@@ -2,6 +2,9 @@ import Link from "next/link";
 import { Clock, ShieldCheck, Layers, BarChart2, FlaskConical, Zap, Code, FileCode, Terminal, Webhook, UserPlus, Laptop, Brain, Plug, Camera } from "lucide-react";
 import { Diagram } from "./_components/Diagram";
 import { ArchitectureExplorer } from "./_components/interactive/ArchitectureExplorer";
+import { pageMeta } from "./_meta";
+
+export const metadata = pageMeta("/");
 
 // Docs home: get a reader onto the right path in one click, then show the
 // shape of the system. Every claim maps to code on master.

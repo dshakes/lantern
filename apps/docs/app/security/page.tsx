@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Concept } from "../_components/Concept";
 import { Diagram } from "../_components/Diagram";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/security");
 
 export default function SecurityPage() {
   return (

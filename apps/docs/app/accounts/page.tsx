@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Concept } from "../_components/Concept";
 import { Flow } from "../_components/Flow";
+import { pageMeta } from "../_meta";
+
+export const metadata = pageMeta("/accounts");
 
 export default function AccountsPage() {
   return (
