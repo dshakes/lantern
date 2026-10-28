@@ -28,7 +28,7 @@ export default function PrivacyPage() {
     <main className="min-h-screen bg-bg text-ink">
       <article className="mx-auto max-w-3xl px-6 py-20">
         <a
-          href="/"
+          href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`}
           className="text-sm text-ink-3 hover:text-ink transition-colors"
         >
           ← {BRAND.name}
@@ -195,7 +195,7 @@ export default function PrivacyPage() {
         </div>
 
         <p className="mt-16 text-sm text-ink-3">
-          <a href="/terms" className="underline underline-offset-4">
+          <a href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/terms/`} className="underline underline-offset-4">
             Terms of Service
           </a>
         </p>

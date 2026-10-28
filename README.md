@@ -9,7 +9,7 @@ The agent loop stays on your control plane. Code the agent writes runs in a Fire
 [![Go](https://img.shields.io/badge/Go-1.26+-17785f?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![Rust](https://img.shields.io/badge/Rust-2024-a85e06?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-44546a?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Docs](https://img.shields.io/badge/docs-dshakes.github.io%2Flantern-0f1b2d?style=flat-square)](https://dshakes.github.io/lantern/)
+[![Docs](https://img.shields.io/badge/docs-dshakes.github.io%2Flantern%2Fdocs-0f1b2d?style=flat-square)](https://dshakes.github.io/lantern/docs/)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/hero-flow-dark.gif">
@@ -211,7 +211,7 @@ Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,writ
 
 | Start here | |
 |---|---|
-| Docs site | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/) (`make docs-dev` serves it on `:3002`) |
+| Website and docs | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/), docs at [/lantern/docs](https://dshakes.github.io/lantern/docs/) (`make docs-dev` serves the docs on `:3002`) |
 | Agent runtime: tiers, durability, observability | [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md) |
 | Headless quickstart and demo agents | [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md), [`examples/headless-agents/`](examples/headless-agents/) |
 | Isolation classes, identity and secrets | [`docs/guides/isolation-classes.md`](docs/guides/isolation-classes.md), [`docs/guides/identity-and-secrets.md`](docs/guides/identity-and-secrets.md) |

@@ -445,7 +445,7 @@ POST /v1/settings/llm-providers/{provider}/test  — test the key`}</code>
       <div className="callout callout-info">
         <strong>No rate-limit tiers or X-RateLimit headers.</strong> Spend and
         run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see{" "}
-        <a href="/budgets">budgets</a>.
+        <Link href="/budgets">budgets</Link>.
       </div>
     </>
   );

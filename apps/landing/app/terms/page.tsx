@@ -28,7 +28,7 @@ export default function TermsPage() {
     <main className="min-h-screen bg-bg text-ink">
       <article className="mx-auto max-w-3xl px-6 py-20">
         <a
-          href="/"
+          href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`}
           className="text-sm text-ink-3 hover:text-ink transition-colors"
         >
           ← {BRAND.name}
@@ -162,7 +162,7 @@ export default function TermsPage() {
         </div>
 
         <p className="mt-16 text-sm text-ink-3">
-          <a href="/privacy" className="underline underline-offset-4">
+          <a href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/privacy/`} className="underline underline-offset-4">
             Privacy Policy
           </a>
         </p>

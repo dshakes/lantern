@@ -11,7 +11,7 @@ import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network,
+  Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network, Home,
   Webhook, UserPlus, Laptop, FlaskConical,
 } from "lucide-react";
 
@@ -276,6 +276,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
             {/* Footer */}
             <div className="px-5 py-3 border-t border-line space-y-2">
+              <a href={process.env.NEXT_PUBLIC_HOME_URL} className="flex items-center gap-2 text-xs text-ink-2 hover:text-ink">
+                <Home className="h-3 w-3" /> Lantern home
+              </a>
               <a href="https://github.com/dshakes/lantern" target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-xs text-ink-2 hover:text-ink">
                 <ExternalLink className="h-3 w-3" /> GitHub

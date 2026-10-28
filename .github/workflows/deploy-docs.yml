@@ -1,12 +1,14 @@
-# Build the docs site (apps/docs) as a static export and deploy to GitHub Pages.
-# The site is pure static prose (next.config: output "export"), so this produces
-# plain HTML served from Pages — no server, free hosting.
-name: "deploy docs (github pages)"
+# Build the public site and deploy it to GitHub Pages as one artifact:
+#   https://dshakes.github.io/lantern/       <- apps/landing (static export)
+#   https://dshakes.github.io/lantern/docs/  <- apps/docs    (static export)
+# Both are plain HTML (next.config: output "export") — no server, free hosting.
+name: "deploy site (github pages)"
 
 on:
   push:
     branches: [master]
     paths:
+      - "apps/landing/**"
       - "apps/docs/**"
       - "docs/assets/diagrams/**"
       - "docs/media/*.gif"
@@ -26,6 +28,7 @@ concurrency:
 
 jobs:
   build:
+    name: build landing + docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -33,18 +36,30 @@ jobs:
         with:
           node-version: "20"
       - name: Install deps
-        run: cd apps/docs && npm ci
-      - name: Build static export
+        run: |
+          (cd apps/landing && npm ci)
+          (cd apps/docs && npm ci)
+      # Repo is github.com/dshakes/lantern → Pages at /lantern. For a custom
+      # domain, drop the /lantern prefix from both base paths and the site URL.
+      - name: Build landing (site root)
         env:
-          # Repo is github.com/dshakes/lantern → Pages at /lantern. Unset for a custom domain.
           PAGES_BASE_PATH: /lantern
+          NEXT_PUBLIC_SITE_URL: https://dshakes.github.io/lantern
+        run: cd apps/landing && npm run build
+      - name: Build docs (/docs)
+        env:
+          PAGES_BASE_PATH: /lantern/docs
         run: cd apps/docs && npm run build
-      - name: Disable Jekyll (serve _next/* dirs)
-        run: touch apps/docs/out/.nojekyll
+      - name: Assemble one Pages tree
+        run: |
+          mkdir -p site
+          cp -R apps/landing/out/. site/
+          cp -R apps/docs/out site/docs
+          touch site/.nojekyll  # serve the _next/* dirs
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
-          path: apps/docs/out
+          path: site
 
   deploy:
     needs: build
