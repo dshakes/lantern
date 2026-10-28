@@ -282,6 +282,8 @@ Redis rate-limited per IP (+ email), fail-open on Redis errors;
 `LANTERN_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
 `apps/docs/app/accounts/page.tsx`.
 
+**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `LANTERN_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `LANTERN_FREE_TIER_MAX_VMS` (2), `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
+
 ### Agents
 
 | Method   | Path                       | Description                             |
