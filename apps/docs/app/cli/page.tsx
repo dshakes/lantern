@@ -165,14 +165,42 @@ lantern vm cluster               # node load + warm-pool capacity (owner only)`}
 
       <h2 id="deploy">deploy</h2>
       <p>
-        <strong>Simulated today.</strong> <code>lantern deploy</code> reads{" "}
-        <code>agent.yaml</code> and prints the pipeline steps, but the build and
-        upload are not wired to the backend and nothing ships; it says so on
-        every run. To run an agent for real, use <code>lantern run</code> or
-        the dashboard Deploy button.
+        Reads <code>agent.yaml</code> from the current directory, creates the
+        agent on the control plane (or updates its system prompt and model if
+        it already exists), saves the optional <code>workflow</code> graph, then
+        calls <code>POST /v1/agents/{"{name}"}/deploy</code>. Manifest keys used:{" "}
+        <code>name</code> (required), <code>description</code>,{" "}
+        <code>model</code>, <code>system_prompt</code>, <code>labels</code>{" "}
+        (set on create only; the update endpoint cannot change description or
+        labels) and <code>workflow</code>. Other keys are ignored. Uses REST, so
+        pass the HTTP address or let it derive one from the gRPC address.
+      </p>
+      <p>
+        Flags: <code>--json</code> (print the API response; same as{" "}
+        <code>-o json</code>), <code>--dry-run</code> (one read-only lookup,
+        reports <code>create</code> or <code>update</code>, changes nothing).
+        Exit codes: <code>0</code> ok, <code>3</code> unauthorized (401/403),{" "}
+        <code>4</code> quota or budget (402), <code>5</code> not found (404),{" "}
+        <code>6</code> server error (5xx), <code>1</code> anything else.
       </p>
       <pre>
-        <code>{`lantern deploy [--watch]   # --watch is not implemented`}</code>
+        <code>{`$ cat agent.yaml
+name: demo-bot
+description: demo
+model: auto
+system_prompt: You are terse.
+
+$ lantern --api-url http://localhost:8080 deploy --json
+{
+  "agent": "created",
+  "agentName": "demo-bot",
+  "deployedAt": "...",
+  "environment": "cloud",
+  "id": "<deployment-id>",
+  "status": "live",
+  "tenantId": "<tenant-id>",
+  "url": "http://localhost:8080/v1/agents/demo-bot/a2a/invoke"
+}`}</code>
       </pre>
 
       <h2 id="infra">infra</h2>

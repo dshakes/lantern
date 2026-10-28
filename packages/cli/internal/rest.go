@@ -60,6 +60,24 @@ func (c *RESTClient) newRequest(method, path string, body interface{}) (*http.Re
 	return req, nil
 }
 
+// APIError is a non-2xx response. Error() keeps the historical "API <code>: <body>"
+// text (some callers string-match it); errors.As exposes Status.
+type APIError struct {
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("API %d: %s", e.Status, e.Body) }
+
+// Call performs one JSON request and decodes a 2xx body into out (may be nil).
+func (c *RESTClient) Call(method, path string, body, out interface{}) error {
+	req, err := c.newRequest(method, path, body)
+	if err != nil {
+		return err
+	}
+	return c.do(req, out)
+}
+
 func (c *RESTClient) do(req *http.Request, out interface{}) error {
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -73,7 +91,7 @@ func (c *RESTClient) do(req *http.Request, out interface{}) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("API %d: %s", resp.StatusCode, string(respBody))
+		return &APIError{Status: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out != nil && len(respBody) > 0 {

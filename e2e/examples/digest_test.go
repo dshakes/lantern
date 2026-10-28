@@ -21,11 +21,11 @@ func TestDigest_ScheduleFiresAndPostsToSlack(t *testing.T) {
 	installConnector(t, k, "slack", map[string]any{"botToken": "xoxb-fixture"})
 	installConnector(t, k, "github", map[string]any{"personalAccessToken": "ghp_fixture"})
 
-	k.CreateAgent(t, "e2e-digest", readJSON(t, "../../examples/daily-digest/spec.json"))
-	putWorkflow(t, k, "e2e-digest", readJSON(t, "../../examples/daily-digest/workflow.json"))
+	k.CreateAgent(t, "e2e-digest", readExample(t, "../../examples/daily-digest/spec.json"))
+	putWorkflow(t, k, "e2e-digest", readExample(t, "../../examples/daily-digest/workflow.json"))
 
 	// Create the schedule from the committed example, pointed at the e2e agent.
-	sched := readJSON(t, "../../examples/daily-digest/schedule.json")
+	sched := readExample(t, "../../examples/daily-digest/schedule.json")
 	sched["agentName"] = "e2e-digest"
 	var created struct {
 		ID         string    `json:"id"`
@@ -61,7 +61,7 @@ func TestDigest_ScheduleFiresAndPostsToSlack(t *testing.T) {
 	}
 
 	var run map[string]any
-	waitFor(t, 100*time.Second, "scheduler-created run to succeed", func() bool {
+	waitUntil(t, 100*time.Second, "scheduler-created run to succeed", func() bool {
 		for _, r := range runsFor(t, k, "e2e-digest") {
 			switch r["status"] {
 			case "succeeded":

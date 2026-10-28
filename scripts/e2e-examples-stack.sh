@@ -84,7 +84,7 @@ rc=0
 LANTERN_E2E_API_URL="http://127.0.0.1:$CP_HTTP" DATABASE_URL="$PG/$DB?sslmode=disable" \
   LANTERN_E2E_REPLAY_URL="http://127.0.0.1:$REPLAY" LANTERN_E2E_GATEWAY_URL="http://127.0.0.1:$GW" \
   LANTERN_E2E_TELEGRAM_FIXTURE_ADDR="127.0.0.1:$TG_FIXTURE" LANTERN_E2E_TELEGRAM_SECRET="e2e-telegram-secret" \
-  go test -tags e2e -count=1 -p 1 -v ./... || rc=$?
+  go test -tags e2e -count=1 -p 1 -v -run 'TestDigest|TestTelegram|TestVoice' ./... || rc=$?
 if [ "$rc" -ne 0 ]; then
   tail -n 40 "$TMP/control-plane.log" "$TMP/surface-gateway.log" >&2
   KEEP_LOGS=1

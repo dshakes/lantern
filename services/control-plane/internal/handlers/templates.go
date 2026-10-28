@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,6 +50,12 @@ type templateDef struct {
 	MaxCostRun    float64
 	Connectors    []string // shown to the user as "you'll need: gmail, …"
 	Surfaces      []string // ditto: "delivery via: whatsapp"
+
+	// Starter-gallery fields (W2-S). GalleryOrder > 0 puts the template in the
+	// dashboard onboarding gallery, sorted ascending; 0 keeps it out.
+	GalleryOrder int
+	Pitch        string // one-line pitch shown on the card
+	FirstInput   string // prompt for the first run (the "try it" input)
 }
 
 var templates = map[string]templateDef{
@@ -198,6 +205,69 @@ FORMAT RULES
 		Connectors:    []string{"gmail", "google-calendar"},
 		Surfaces:      []string{"whatsapp"},
 	},
+	// ---- Starter gallery (examples X1-X6) ----------------------------------
+	// Models are capability names only ("fast"/"balanced"). Every connector or
+	// surface an agent needs is listed — the UI shows them, and each prompt
+	// tells the agent to say so when a tool is missing instead of inventing.
+	"support-desk": {
+		ID: "support-desk", Name: "support-desk", GalleryOrder: 1,
+		Pitch:         "Answers customer questions in a webchat widget and pings Slack when a human should take over.",
+		Description:   "Support desk for your webchat widget with human handoff via Slack.",
+		Model:         "balanced",
+		SystemPrompt:  `You are a customer support agent in a website chat widget. Answer only from facts the user or your tools give you. If you are not confident, or the customer asks for a person, say a teammate will follow up and post a one-line summary of the issue to Slack with the slack tool. If the slack tool is unavailable, say so plainly. Never invent policies, prices or order status. Keep replies under 80 words.`,
+		FirstInput:    "Hi, I was charged twice for my last order. Can you help?",
+		MaxCostUsdDay: 1.00, MaxCostRun: 0.05,
+		Connectors: []string{"slack"}, Surfaces: []string{"webchat"},
+	},
+	"pr-triage": {
+		ID: "pr-triage", Name: "pr-triage", GalleryOrder: 2,
+		Pitch:         "Reads a pull request, summarises risk and suggests reviewers, then posts the summary to Slack.",
+		Description:   "GitHub pull-request triage that reports to Slack.",
+		Model:         "balanced",
+		SystemPrompt:  `You triage GitHub pull requests. Given a repo and PR number, fetch the PR and its changed files with the github tool, then reply with: one-sentence purpose, risk (low/medium/high with the reason), and what a reviewer should check first. Post the same summary to Slack with the slack tool. If github or slack is not connected, say which one and stop. Never claim you read files you did not fetch.`,
+		FirstInput:    "Triage pull request 1 in the repo I connected.",
+		MaxCostUsdDay: 1.00, MaxCostRun: 0.10,
+		Connectors: []string{"github", "slack"},
+	},
+	"incident-responder": {
+		ID: "incident-responder", Name: "incident-responder", GalleryOrder: 3,
+		Pitch:         "Summarises a Sentry issue, suggests a runbook step, and notes it on the PagerDuty incident.",
+		Description:   "Incident summariser for Sentry and PagerDuty, with Slack updates.",
+		Model:         "balanced",
+		SystemPrompt:  `You are an incident responder. Given a Sentry issue id, fetch it with the sentry tool and write: what is failing, since when, how many users, and ONE suggested next step. Post the summary to Slack with the slack tool and add it as a note on the PagerDuty incident with the pagerduty tool. You only suggest; a human performs any rollback. If a tool is not connected, name it and stop. Never guess at stack traces you did not fetch.`,
+		FirstInput:    "Summarise Sentry issue PROJECT-1 and update the incident.",
+		MaxCostUsdDay: 1.00, MaxCostRun: 0.10,
+		Connectors: []string{"sentry", "pagerduty", "slack"},
+	},
+	"daily-digest": {
+		ID: "daily-digest", Name: "daily-digest", GalleryOrder: 4,
+		Pitch:       "Every weekday morning, a short digest of your unread email and today's calendar.",
+		Description: "Weekday morning digest from Gmail and Google Calendar.",
+		Model:       "fast", CronExpr: "0 8 * * 1-5",
+		SystemPrompt:  `You write a morning digest. Use the gmail tool for unread mail from the last day and the google-calendar tool for today's events. Reply with at most 5 bullets, most urgent first, under 600 characters. If a source is not connected, say which and digest the other. Never invent messages or events.`,
+		FirstInput:    "Write my digest for today.",
+		MaxCostUsdDay: 0.50, MaxCostRun: 0.05,
+		Connectors: []string{"gmail", "google-calendar"},
+	},
+	"data-analyst": {
+		ID: "data-analyst", Name: "data-analyst", GalleryOrder: 5,
+		Pitch:         "Answers a data question by running analysis code inside an isolated microVM sandbox.",
+		Description:   "Data analyst that runs code in a sandbox. Needs the sandbox runtime to be available.",
+		Model:         "balanced",
+		SystemPrompt:  `You are a data analyst. Answer questions by writing and running Python in the sandbox (shell and file tools), never by estimating. Show the result and the one-line method. If the sandbox is unavailable say so and stop; do not fabricate numbers.`,
+		FirstInput:    "Generate 1000 random numbers, report the mean and standard deviation, and say how you computed them.",
+		MaxCostUsdDay: 1.00, MaxCostRun: 0.15,
+	},
+	"telegram-assistant": {
+		ID: "telegram-assistant", Name: "telegram-assistant", GalleryOrder: 6,
+		Pitch:         "A personal assistant in Telegram that can search the web and check your calendar.",
+		Description:   "Telegram personal assistant with web search and Google Calendar.",
+		Model:         "fast",
+		SystemPrompt:  `You are a personal assistant chatting on Telegram. Keep replies short. Use web_search for anything that changes (news, hours, weather) and the google-calendar tool for schedule questions. If the calendar is not connected, say so. Never invent facts you could look up.`,
+		FirstInput:    "What's on my calendar tomorrow, and what's the weather like?",
+		MaxCostUsdDay: 0.50, MaxCostRun: 0.05,
+		Connectors: []string{"google-calendar"}, Surfaces: []string{"telegram"},
+	},
 }
 
 // ---- HTTP ----
@@ -206,9 +276,28 @@ FORMAT RULES
 // Public-shape data only (no secret). Auth not required since these are
 // just static template descriptors.
 func (h *TemplateHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
-	out := make([]map[string]any, 0, len(templates))
+	ordered := make([]templateDef, 0, len(templates))
 	for _, t := range templates {
-		out = append(out, map[string]any{
+		ordered = append(ordered, t)
+	}
+	// Gallery templates first (by GalleryOrder), then the rest; ID breaks ties
+	// so the response is stable.
+	sort.Slice(ordered, func(i, j int) bool {
+		a, b := ordered[i], ordered[j]
+		if (a.GalleryOrder > 0) != (b.GalleryOrder > 0) {
+			return a.GalleryOrder > 0
+		}
+		if a.GalleryOrder != b.GalleryOrder {
+			return a.GalleryOrder < b.GalleryOrder
+		}
+		return a.ID < b.ID
+	})
+	out := make([]map[string]any, 0, len(ordered))
+	for _, t := range ordered {
+		item := map[string]any{
+			"gallery":          t.GalleryOrder > 0,
+			"pitch":            t.Pitch,
+			"firstInput":       t.FirstInput,
 			"id":               t.ID,
 			"name":             t.Name,
 			"description":      t.Description,
@@ -218,7 +307,11 @@ func (h *TemplateHandler) ListTemplates(w http.ResponseWriter, r *http.Request) 
 			"maxCostUsdPerRun": t.MaxCostRun,
 			"connectors":       t.Connectors,
 			"surfaces":         t.Surfaces,
-		})
+		}
+		if t.GalleryOrder > 0 { // gallery prompts feed onboarding's spec step; others stay unexposed
+			item["systemPrompt"] = t.SystemPrompt
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

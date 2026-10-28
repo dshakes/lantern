@@ -51,13 +51,13 @@ func TestVoice_InboundBudgetAndCostReconcile(t *testing.T) {
 	base := e2ekit.DefaultBase()
 	ctx := context.Background()
 
-	k.CreateAgent(t, "e2e-voice", readJSON(t, "../../examples/voice-receptionist/spec.json"))
+	k.CreateAgent(t, "e2e-voice", readExample(t, "../../examples/voice-receptionist/spec.json"))
 
 	number := fmt.Sprintf("+1555%07d", time.Now().UnixNano()%10_000_000)
 	var created struct {
 		ID string `json:"id"`
 	}
-	numCfg := readJSON(t, "../../examples/voice-receptionist/number.json")
+	numCfg := readExample(t, "../../examples/voice-receptionist/number.json")
 	numCfg["agentName"] = "e2e-voice"
 	numCfg["phoneNumber"] = number
 	numCfg["providerConfig"] = map[string]any{"accountSid": "ACe2e", "authToken": twilioToken}

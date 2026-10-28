@@ -1,9 +1,10 @@
 //go:build e2e
 
-// Package examples_e2e drives the three Wave 2 examples (daily-digest,
-// telegram-assistant, voice-receptionist) against a live local stack whose LLM
-// and SaaS connectors are fixtures (see README.md in this directory and
+// Helpers for digest_test.go, telegram_test.go and voice_test.go, which drive the
+// daily-digest, telegram-assistant and voice-receptionist examples against a
+// live local stack whose LLM and SaaS connectors are fixtures (see
 // scripts/e2e-examples-stack.sh). Nothing here reaches a real provider.
+// TestMain lives in support_desk_test.go.
 package examples_e2e
 
 import (
@@ -22,11 +23,6 @@ import (
 
 	"github.com/dshakes/lantern/e2e/internal/e2ekit"
 )
-
-func TestMain(m *testing.M) {
-	e2ekit.Sweep(e2ekit.DefaultBase(), e2ekit.DefaultEmail(), e2ekit.DefaultPassword())
-	os.Exit(m.Run())
-}
 
 var (
 	kitOnce sync.Once
@@ -69,7 +65,7 @@ func openDB(t *testing.T) *pgx.Conn {
 	return conn
 }
 
-func readJSON(t *testing.T, rel string) map[string]any {
+func readExample(t *testing.T, rel string) map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(rel)
 	if err != nil {
@@ -139,8 +135,8 @@ func putWorkflow(t *testing.T, k *e2ekit.Kit, agent string, wf map[string]any) {
 	}
 }
 
-// waitFor polls fn every 500ms until it returns true or the deadline passes.
-func waitFor(t *testing.T, d time.Duration, what string, fn func() bool) {
+// waitUntil polls fn every 500ms until it returns true or the deadline passes.
+func waitUntil(t *testing.T, d time.Duration, what string, fn func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {

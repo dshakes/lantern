@@ -78,8 +78,8 @@ func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
 	fx := startTelegramFixture(t)
 
 	installConnector(t, k, "google-calendar", map[string]any{"accessToken": "ya29.fixture"})
-	a := k.CreateAgent(t, "e2e-assistant", readJSON(t, "../../examples/telegram-assistant/spec.json"))
-	putWorkflow(t, k, "e2e-assistant", readJSON(t, "../../examples/telegram-assistant/workflow.json"))
+	a := k.CreateAgent(t, "e2e-assistant", readExample(t, "../../examples/telegram-assistant/spec.json"))
+	putWorkflow(t, k, "e2e-assistant", readExample(t, "../../examples/telegram-assistant/workflow.json"))
 	// An agent gets its first promoted version from its first REST run; the
 	// gateway creates runs over gRPC, which refuses an unpromoted agent
 	// ("agent has no promoted version"). Prime it once, as the README says.
@@ -121,7 +121,7 @@ func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
 	// (LANTERN_RECOVERY_INTERVAL in the stack script) drives it; the gateway
 	// polls it to completion and replies.
 	var reply map[string]any
-	waitFor(t, 60*time.Second, "Telegram sendMessage", func() bool {
+	waitUntil(t, 60*time.Second, "Telegram sendMessage", func() bool {
 		if m := fx.messages(); len(m) > 0 {
 			reply = m[0]
 			return true
@@ -144,5 +144,5 @@ func TestTelegram_SignedWebhookGetsAReply(t *testing.T) {
 	if st := postTelegram(t, secret, update(ask)); st != http.StatusOK {
 		t.Fatalf("second update: HTTP %d", st)
 	}
-	waitFor(t, 60*time.Second, "second reply", func() bool { return len(fx.messages()) >= 2 })
+	waitUntil(t, 60*time.Second, "second reply", func() bool { return len(fx.messages()) >= 2 })
 }
