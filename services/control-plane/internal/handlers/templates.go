@@ -399,7 +399,7 @@ func (h *TemplateHandler) SetupStatus(w http.ResponseWriter, r *http.Request) {
 	var labelsBytes []byte
 	err = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents
+			`SELECT COALESCE(labels, '{}'::jsonb)::text FROM agents
 			 WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
 			tenantID, name,
 		).Scan(&labelsBytes)

@@ -1468,3 +1468,20 @@ func sliceEqual(a, b []string) bool {
 }
 
 func strPtr(s string) *string { return &s }
+
+// A multi-line LLM reply spliced into a quoted inputMapping field used to make
+// the JSON invalid, so the connector got {"input": ...} and no `text`.
+func TestParseParams_FreeTextIsJSONEscaped(t *testing.T) {
+	reply := "## Digest\n\"quoted\" line\\path"
+	vars := map[string]any{"steps": map[string]any{"digest": reply}}
+	got := parseParams(`{"channel":"C1","text":"{{steps.digest}}"}`, vars)
+	if got["text"] != reply || got["channel"] != "C1" {
+		t.Fatalf("params = %#v, want text=%q", got, reply)
+	}
+	// Raw JSON substitution (object/number) still works untouched.
+	vars["steps"] = map[string]any{"n": map[string]any{"a": 1}}
+	got = parseParams(`{"obj": {{steps.n}}}`, vars)
+	if _, ok := got["obj"].(map[string]any); !ok {
+		t.Fatalf("raw JSON substitution regressed: %#v", got)
+	}
+}

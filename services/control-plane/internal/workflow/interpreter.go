@@ -752,6 +752,12 @@ func labelOf(node Node) string {
 //	{{steps.<id>}}       — read a prior step's output (stringified)
 //	{{steps.<id>.field}} — read a field of a prior step's map output
 func renderTemplate(s string, vars map[string]any) string {
+	return renderTemplateWith(s, vars, nil)
+}
+
+// renderTemplateWith is renderTemplate with an optional escape applied to every
+// substituted value (used to splice free text into a JSON string literal).
+func renderTemplateWith(s string, vars map[string]any, escape func(string) string) string {
 	if !strings.Contains(s, "{{") {
 		return s
 	}
@@ -767,9 +773,18 @@ func renderTemplate(s string, vars map[string]any) string {
 		}
 		path := strings.TrimSpace(out[start+2 : start+end])
 		replacement := resolvePath(path, vars)
+		if escape != nil {
+			replacement = escape(replacement)
+		}
 		out = out[:start] + replacement + out[start+end+2:]
 	}
 	return out
+}
+
+// jsonStringEscape escapes s for use INSIDE a JSON string literal.
+func jsonStringEscape(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1])
 }
 
 func resolvePath(path string, vars map[string]any) string {
@@ -802,6 +817,11 @@ func parseParams(raw any, vars map[string]any) map[string]any {
 		rendered := renderTemplate(v, vars)
 		var m map[string]any
 		if err := json.Unmarshal([]byte(rendered), &m); err == nil {
+			return m
+		}
+		// Free text (a multi-line LLM reply) spliced into a quoted JSON field
+		// breaks the raw render above; retry with the values JSON-escaped.
+		if err := json.Unmarshal([]byte(renderTemplateWith(v, vars, jsonStringEscape)), &m); err == nil {
 			return m
 		}
 		// Couldn't parse — return the raw string under a known key so
