@@ -75,47 +75,49 @@ The full integration test (boot + snapshot/stop/restore + fork×3 + timing) runs
 inside the Lima guest where `/dev/kvm` is available.  The repo is mounted
 read-only at the same host path inside the guest.
 
+This is exactly what `make lima-e2e` runs (`infra/lima/lima.sh`). The repo
+mount is read-only, so cargo output goes under the guest's home via
+`--target-dir`.
+
 ```bash
 # Inside the guest (limactl shell firecracker-dev):
 cd /path/to/repo
+T="$HOME/.cache/lantern-lima/target" IMG="$HOME/.cache/lantern-lima/image"
+MUSL="$(uname -m)-unknown-linux-musl"
 
-# Install build deps (first time only).
-sudo apt-get install -y musl-tools e2fsprogs jq curl protobuf-compiler
-rustup target add aarch64-unknown-linux-musl
+# Install build deps (first time only; grpcurl comes from its GitHub release).
+sudo apt-get install -y musl-tools e2fsprogs jq curl openssl protobuf-compiler busybox-static build-essential
+rustup target add "$MUSL"
 
-# Build the harness (musl, static).
-cargo build --release --target aarch64-unknown-linux-musl \
-  --manifest-path services/harness/Cargo.toml
-HARNESS_BIN="$PWD/services/harness/target/aarch64-unknown-linux-musl/release/lantern-harness"
+# Build the harness (musl, static) and the runtime-manager.
+cargo build --release --locked --bin lantern-harness --target "$MUSL" \
+  --manifest-path services/harness/Cargo.toml --target-dir "$T"
+cargo build --release --locked \
+  --manifest-path services/runtime-manager/Cargo.toml --target-dir "$T"
 
-# Build the kernel + rootfs (needs sudo for loop-mount; pass harness via env
-# so sudo does not need cargo on its PATH).
-sudo FC_HARNESS_BIN="$HARNESS_BIN" \
-  bash infra/firecracker/build-image.sh /tmp/fc-image
+# Build the kernel + rootfs (needs sudo for loop-mount; pass the harness via
+# env so sudo does not need cargo on its PATH).
+sudo FC_HARNESS_BIN="$T/$MUSL/release/lantern-harness" ARCH="$(uname -m)" \
+  bash infra/firecracker/build-image.sh "$IMG"
 
-# Build the runtime-manager.
-cargo build --release --manifest-path services/runtime-manager/Cargo.toml
-MANAGER_BIN="$PWD/services/runtime-manager/target/release/lantern-runtime-manager"
-
-# Run the test.  Needs root for TAP + firecracker + loop devices.
-sudo \
-  FC_KERNEL_PATH=/tmp/fc-image/vmlinux \
-  FC_ROOTFS_PATH=/tmp/fc-image/rootfs.ext4 \
-  RUNTIME_BACKEND=firecracker \
-  LANTERN_RUNTIME_BACKEND=firecracker \
-  MANAGER_BIN="$MANAGER_BIN" \
-  EXPECT_VENDSECRET=1 \
-  LIFECYCLE_TIMING_DIR=/tmp/fc-timing \
+# Run the test, jailed. Needs root for TAP + firecracker + loop devices.
+# Without FIRECRACKER_JAILER_PATH the fork step SKIPs (bare Firecracker
+# cannot fork a VM), so set all four jailer vars.
+sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+sudo FC_KERNEL_PATH="$IMG/vmlinux" FC_ROOTFS_PATH="$IMG/rootfs.ext4" \
+  RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+  MANAGER_BIN="$T/release/lantern-runtime-manager" EXPECT_VENDSECRET=1 \
+  FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
+  FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
+  LIFECYCLE_TIMING_DIR="$HOME/.cache/lantern-lima/timing" \
   bash infra/firecracker/integration-test.sh
 
 # Timing summary (markdown table printed to stderr during the run too).
-cat /tmp/fc-timing/lifecycle-timing.md
+cat "$HOME"/.cache/lantern-lima/timing/lifecycle-timing.md
 ```
 
-The fork test also needs the jailer binary installed (the provision script
-installs it automatically from the v1.15.1 tarball alongside `firecracker`).
-If it is absent the test skips with `[SKIP]` — set `FIRECRACKER_JAILER_PATH`
-to the jailer binary path to override.
+The provision script installs `jailer` from the v1.15.1 tarball alongside
+`firecracker`.
 
 ## Running the Lantern runtime stack against it
 
