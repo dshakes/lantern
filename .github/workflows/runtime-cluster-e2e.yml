@@ -226,8 +226,11 @@ jobs:
           curl -fsS localhost:18085/healthz
           # one real request first so the HTTP histogram has a sample
           curl -fsS localhost:18080/healthz >/dev/null
-          curl -fsS localhost:18080/metrics | grep -q '^http_server_request_duration_seconds_count'
-          curl -fsS localhost:18085/metrics | grep -q '^lantern_scheduler_'
+          # grep -q on a pipe closes it early and makes curl exit 23 under pipefail, so fetch first
+          curl -fsS localhost:18080/metrics -o /tmp/cp-metrics.txt
+          grep -q '^http_server_request_duration_seconds_count' /tmp/cp-metrics.txt
+          curl -fsS localhost:18085/metrics -o /tmp/sched-metrics.txt
+          grep -q '^lantern_scheduler_' /tmp/sched-metrics.txt
           DATABASE_URL="postgres://lantern:${PGPASSWORD}@localhost:15432/lantern?sslmode=disable" \
             scripts/check-app-grants.sh
 
