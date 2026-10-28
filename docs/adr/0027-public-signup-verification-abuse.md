@@ -122,8 +122,14 @@ lock owners out, and captcha + verification still stand.
 - `GET /v1/tenants/{id}/export` (owner JWT, `admin` scope) returns every row
   of every table with a `tenant_id` column, discovered from the catalog so new
   tables are included automatically, read through `WithTenant`. Credential
-  columns (`password_hash`, `key_hash`, `*_encrypted`, `provider_config`,
-  `connector_installs.config`) are removed. Another tenant's id returns 404.
+  columns are removed by name, structurally: any column with a `secret`,
+  `token`, `key`, `password`, `hash`, `enc`/`encrypted` or `credential(s)`
+  segment (e.g. `password_hash`, `agent_triggers.secret_enc`,
+  `*_encrypted`), plus `provider_config` and `connector_installs.config`.
+  Dedup keys (`idempotency_key`, `idem_key`, `replay_key`) and `key_prefix`
+  are exported. `TestExportRedacted_Catalog` fails when a new
+  credential-looking column appears, so each one gets an explicit decision.
+  Another tenant's id returns 404.
 - `DELETE /v1/tenants/{id}` (existing GDPR purge) is now behind
   `WithScope(admin)` and is reachable from the dashboard danger zone.
 - **S3:** the control plane writes no tenant-keyed objects. The only objects

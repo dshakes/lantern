@@ -5,9 +5,8 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine
-WORKDIR /app
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Static export (next.config: output "export"): any file server will do.
+FROM busybox:1.37
+COPY --from=builder /app/out /www
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["httpd", "-f", "-p", "3000", "-h", "/www"]

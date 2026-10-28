@@ -36,7 +36,7 @@ spec:
             # The control-plane REST port (:8080); the token must match its
             # LANTERN_GRPC_SERVICE_TOKEN.
             - name: CONTROL_PLANE_ADDR
-              value: "http://{{ include "lantern.fullname" . }}-control-plane:{{ .Values.controlPlane.service.httpPort }}"
+              value: "http://{{ include "lantern.fullname" . }}-control-plane:{{ .Values.controlPlane.service.grpcPort }}"
             - name: LANTERN_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:

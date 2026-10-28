@@ -1,30 +1,29 @@
-import { Check, Minus, X } from "lucide-react";
-import { HeroFlow } from "./_components/HeroFlow";
-import { Lifecycle } from "./_components/Lifecycle";
+import { ArrowRight, Check, Minus, X } from "lucide-react";
+import Link from "next/link";
+import { BrokerDemo } from "./_components/BrokerDemo";
+import { CopyCommand } from "./_components/CopyCommand";
 import { LanternMark } from "./_components/Logo";
-import { ThemeToggle } from "./_components/ThemeToggle";
+import { Actions, BASE, BLOB, DOCS, Footer, Nav, wrap } from "./_components/site";
 
-// Landing page. Every claim maps to code on master or the egress-broker stack (opt-in).
+// Landing page. Every claim maps to code on master, the README, or a recorded run;
+// opt-in features say so where they are claimed.
 
-const GITHUB = "https://github.com/dshakes/lantern";
-const DOCS = "https://dshakes.github.io/lantern/";
+const CLONE = "git clone https://github.com/dshakes/lantern.git && cd lantern && make dev";
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen">
-      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 btn btn-primary">
+      <a href="#main" className="btn btn-primary sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50">
         Skip to content
       </a>
       <Nav />
       <main id="main">
         <Hero />
-        <Why />
-        <Egress />
-        <LifecycleSection />
-        <Security />
-        <Cost />
-        <Platform />
+        <How />
+        <PainFix />
+        <Measured />
         <Compare />
+        <Code />
         <Start />
       </main>
       <Footer />
@@ -32,449 +31,427 @@ export default function LandingPage() {
   );
 }
 
-function Section({ id, title, lede, children }: { id: string; title: string; lede?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <section id={id} aria-labelledby={`${id}-h`} className="border-t border-line px-4 py-20 sm:px-6 md:py-28">
-      <div className="mx-auto max-w-6xl">
-        <h2 id={`${id}-h`} className="display max-w-3xl text-4xl font-bold md:text-5xl">
-          {title}
-        </h2>
-        {lede && <p className="mt-5 max-w-2xl text-lg leading-relaxed text-ink-2">{lede}</p>}
-        <div className="mt-12">{children}</div>
-      </div>
-    </section>
-  );
-}
-
-function Nav() {
-  const links = [
-    ["#egress", "How it works"],
-    ["#lifecycle", "Lifecycle"],
-    ["#security", "Security"],
-    ["#compare", "Compare"],
-  ];
-  return (
-    <header className="sticky top-0 z-40 border-b border-line bg-bg/90 backdrop-blur-sm">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-        <a href="/" className="flex items-center gap-2 font-semibold" aria-label="Lantern home">
-          <LanternMark />
-          <span className="text-[17px] tracking-tight">Lantern</span>
-        </a>
-        <nav aria-label="Primary" className="hidden items-center gap-1 text-sm text-ink-2 md:flex">
-          {links.map(([href, label]) => (
-            <a key={href} href={href} className="rounded-md px-3 py-1.5 hover:text-ink">
-              {label}
-            </a>
-          ))}
-          <a href={DOCS} className="rounded-md px-3 py-1.5 hover:text-ink">
-            Docs
-          </a>
-        </nav>
-        <div className="flex items-center gap-1">
-          <ThemeToggle />
-          <a href={GITHUB} className="btn btn-quiet !py-1.5 text-sm">
-            GitHub
-          </a>
-        </div>
-      </div>
-    </header>
-  );
-}
-
 function Hero() {
   return (
-    <section className="px-4 pb-20 pt-16 sm:px-6 md:pt-24">
-      <div className="mx-auto max-w-6xl">
-        <h1 className="display max-w-4xl text-[clamp(2.75rem,8vw,5.5rem)] font-extrabold">
-          The agent runs outside. Its code runs in a microVM.
-        </h1>
-        <p className="mt-7 max-w-2xl text-lg leading-relaxed text-ink-2 md:text-xl">
-          Lantern is an open-source runtime for AI agents that you host in your own cloud. The loop, the prompt and the
-          model keys stay on your control plane. Code the agent writes runs in a Firecracker or Kata microVM. Every step
-          is journaled, every agent has a budget, and every completed run can be signed.
+    <section className="relative overflow-hidden" aria-labelledby="hero-h">
+      <div
+        className={`${wrap} relative grid grid-cols-1 gap-12 pb-16 pt-12 md:pb-24 md:pt-16 lg:grid-cols-[minmax(0,6.4fr)_minmax(0,5.6fr)] lg:items-center lg:gap-12`}
+      >
+        <div>
+          <p className="eyebrow">Agents now write and run code, mostly on someone else&rsquo;s machine.</p>
+          <h1 id="hero-h" className="display mt-5 text-[clamp(2.75rem,5.5vw,5rem)]">
+            <span className="block whitespace-nowrap">Run your agents</span>
+            <span className="block whitespace-nowrap">in your own cloud.</span>
+          </h1>
+          <div className="mt-7">
+            <p className="lede !text-[clamp(1.1rem,1.5vw,1.3rem)]">
+              Lantern runs agent code in a microVM and gives it the rest of production: crash-resume, spend caps, model
+              routing and signed receipts. In your VPC, Apache-2.0.
+            </p>
+            <div className="mt-8">
+              <Actions />
+            </div>
+          </div>
+        </div>
+        <div className="relative">
+          <div className="proof-glow" aria-hidden="true" />
+          <BrokerDemo recording={`${BLOB}/docs/media/egress-broker-kvm.gif`} poster={`${BASE}/media/broker-run-poster.webp`} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function How() {
+  const steps = [
+    {
+      where: "Control plane",
+      tone: "var(--lx-ink)",
+      hop: "one tool call",
+      title: "Your agent thinks here",
+      body: "The agent loop, its prompts and your model keys stay on the control plane. When a step needs to run code, it sends one tool call to the VM.",
+    },
+    {
+      where: "microVM",
+      tone: "var(--lx-flame)",
+      hop: "to the host",
+      title: "Its code runs here",
+      body: "A Firecracker or Kata microVM with its own kernel. The code runs as an unprivileged user and never sees a model key or a service token.",
+    },
+    {
+      where: "Host",
+      tone: "var(--lx-patina)",
+      hop: "",
+      title: "The host decides what leaves",
+      body: "In broker mode (opt-in, Firecracker) the VM has no network card. The host checks every request against the allowlist and adds the credential. Without it, the allowlist is enforced inside the VM.",
+    },
+  ];
+  return (
+    <section id="how" className="section band" aria-labelledby="how-h">
+      <div className={wrap}>
+        <div className="mx-auto max-w-3xl text-center">
+          <h2 id="how-h" className="h2">
+            The VM asks. The host decides.
+          </h2>
+          <p className="lede mx-auto mt-6">
+            Three places, three jobs. The agent thinks outside the box, its code runs inside it, and the host decides
+            what leaves.
+          </p>
+        </div>
+        <ol className="flow relative mt-12 grid grid-cols-1 gap-px rounded-[var(--lx-radius-l)] border border-line bg-line md:mt-14 md:grid-cols-3">
+          <span className="wire" aria-hidden="true">
+            <span className="spark" />
+          </span>
+          {steps.map((s, i) => (
+            <li
+              key={s.where}
+              className={`relative p-6 first:rounded-t-[var(--lx-radius-l)] last:rounded-b-[var(--lx-radius-l)] md:p-8 md:first:rounded-l-[var(--lx-radius-l)] md:first:rounded-tr-none md:last:rounded-r-[var(--lx-radius-l)] md:last:rounded-bl-none ${
+                s.where === "microVM" ? "vm-cell" : "bg-surface"
+              }`}
+            >
+              {s.where === "microVM" && <span className="vm-flame" aria-hidden="true" />}
+              {s.where === "Host" && (
+                <span className="cred-badge">
+                  <Check className="h-3.5 w-3.5" aria-hidden="true" /> credential added
+                </span>
+              )}
+              {s.hop && (
+                <span className="hop" aria-label={`then over ${s.hop}`}>
+                  {s.hop}
+                </span>
+              )}
+              <div className="relative flex items-center gap-3">
+                <span
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold"
+                  style={{ background: `color-mix(in oklab, ${s.tone} 14%, transparent)`, color: s.tone }}
+                >
+                  {i + 1}
+                </span>
+                <span className="text-sm font-medium" style={{ color: s.tone }}>
+                  {s.where}
+                </span>
+              </div>
+              <h3 className="relative mt-6 font-display text-2xl font-bold tracking-tight">{s.title}</h3>
+              <p className="relative mt-3 leading-relaxed text-ink-2">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-6 text-sm text-ink-3">
+          See every hop and credential in the{" "}
+          <a className="link" href={`${DOCS}architecture/`}>
+            interactive architecture explorer
+          </a>
+          .
         </p>
-        <div className="mt-9 flex flex-wrap gap-3">
-          <a href={`${GITHUB}#quickstart`} className="btn btn-primary">
-            Run it locally
-          </a>
-          <a href={DOCS} className="btn btn-quiet">
-            Read the docs
-          </a>
-        </div>
-        <div className="mt-16">
-          <HeroFlow explore={`${DOCS}architecture/`} />
-        </div>
       </div>
     </section>
   );
 }
 
-function Why() {
-  const items = [
+function PainFix() {
+  const cards = [
     {
-      color: "var(--lx-glass)",
-      title: "Untrusted code gets its own kernel",
-      body: "Code an agent writes or downloads runs in a Firecracker or Kata microVM, never a bare pod. If the required runtime is missing, the run is refused, not quietly downgraded.",
+      pain: "It runs on someone else’s cloud.",
+      fix: "Next to your data.",
+      body: "Apache-2.0, deployed in your VPC or on-prem. The data plane dials out to the control plane, so the sandboxes and the run data stay in your account.",
     },
     {
-      color: "var(--lx-flame)",
-      title: "The loop is out of reach",
-      body: "Prompts, model keys and the run journal live on the control plane. The sandbox receives one tool call, not the conversation. A compromised workload has nothing to steal and nothing to steer.",
+      pain: "A crash starts the run over.",
+      fix: "It resumes.",
+      body: "Every step is journaled. After a crash the run is picked up again and the steps that already finished are skipped, not repeated.",
     },
     {
-      color: "var(--lx-patina)",
-      title: "Your cloud, your keys",
-      body: "Apache-2.0. The data plane runs in your VPC and dials out to the control plane. No paywalled tier, no feature gates.",
+      pain: "Nothing stops the spend.",
+      fix: "Refused before the call.",
+      body: "Daily caps on cost, runs and tokens return HTTP 402 before the model is called, not after the bill arrives.",
+    },
+    {
+      pain: "Nobody can prove what ran.",
+      fix: "A signed receipt.",
+      body: "Every finished run can get a receipt that anyone can verify offline, once you configure a signing key.",
     },
   ];
   return (
-    <section aria-label="Why Lantern" className="border-t border-line px-4 py-16 sm:px-6">
-      <div className="mx-auto grid max-w-6xl gap-10 md:grid-cols-3">
-        {items.map((it) => (
-          <div key={it.title} className="border-l-2 pl-5" style={{ borderColor: it.color }}>
-            <h2 className="text-lg font-semibold">{it.title}</h2>
-            <p className="mt-2 leading-relaxed text-ink-2">{it.body}</p>
-          </div>
-        ))}
+    <section className="section rule" aria-labelledby="pain-h">
+      <div className={wrap}>
+        <h2 id="pain-h" className="h2 max-w-4xl">
+          The sandbox is one part.
+        </h2>
+        <ul className="mt-12 grid grid-cols-1 gap-4 md:mt-14 md:grid-cols-2">
+          {cards.map((c) => (
+            <li key={c.pain} className="pain-card">
+              <p className="text-ink-3">
+                <span className="sr-only">Without a runtime: </span>
+                {c.pain}
+              </p>
+              <p className="mt-3 flex items-baseline gap-3 font-display text-[clamp(1.75rem,3.2vw,2.5rem)] font-bold leading-tight tracking-tight">
+                <ArrowRight className="h-6 w-6 shrink-0 translate-y-0.5 text-flame" aria-hidden="true" />
+                <span>
+                  <span className="sr-only">With Lantern: </span>
+                  {c.fix}
+                </span>
+              </p>
+              <p className="mt-4 leading-relaxed text-ink-2">{c.body}</p>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-8 text-sm text-ink-3">
+          Plus model routing with failover, eval suites that gate CI, sessions, schedules and 18 connectors.{" "}
+          <a className="link" href={DOCS}>
+            Everything, in the docs
+          </a>
+        </p>
       </div>
     </section>
   );
 }
 
-function Egress() {
-  const hops = [
-    ["Workload", "Sends traffic to 127.0.0.1:3128 like any HTTP proxy. No SDK, no code change."],
-    ["Harness", "PID 1 in the VM. Forwards the request over vsock, the VM's only link to the host."],
-    ["Host broker", "Runs in the runtime-manager. Checks the destination against this sandbox's allowlist."],
-    ["Credential", "Resolved from a lantern.secret/… ref and attached on the host. The VM never sees it."],
-    ["Upstream", "Gets an authenticated request. Refused requests go to the audit stream."],
-  ];
-  return (
-    <Section
-      id="egress"
-      title="The VM asks. The host decides."
-      lede="A microVM is only as safe as its way out. Turn on the host egress broker (LANTERN_EGRESS_MODE=broker, opt-in, Firecracker only) and the guest boots with no network device. Every request crosses vsock to a broker on the host, which holds the allowlist and the credentials. Without it, the allowlist is enforced inside the guest."
-    >
-      <ol className="grid gap-px overflow-hidden rounded-[var(--lx-radius-l)] border border-line bg-line md:grid-cols-5">
-        {hops.map(([t, b], n) => (
-          <li key={t} className="bg-surface p-5">
-            <span className="font-mono text-xs text-ink-3">{n + 1}</span>
-            <p className="mt-2 font-medium">{t}</p>
-            <p className="mt-1 text-sm leading-relaxed text-ink-2">{b}</p>
-          </li>
-        ))}
-      </ol>
-    </Section>
-  );
-}
-
-function LifecycleSection() {
-  return (
-    <Section
-      id="lifecycle"
-      title="Idle sandboxes give their compute back."
-      lede="Sandboxes keep their state. Set idleTimeoutSecs and an idle one is snapshotted and stopped, freeing its compute and quota slot. The next exec or file request wakes it. Fork one to try several paths at once: on a real KVM run, three forks shared one memory file and each spawned in 131–160 ms."
-    >
-      <Lifecycle />
-      <p className="mt-8 text-sm text-ink-3">
-        Numbers from a Lima nested-virt run on an Apple M4 Max, aarch64. Indicative, not bare metal:{" "}
-        <a className="underline decoration-line underline-offset-4 hover:text-ink" href={`${GITHUB}/blob/master/docs/benchmarks/runtime-latency.md`}>
-          docs/benchmarks/runtime-latency.md
-        </a>
-        .
-      </p>
-    </Section>
-  );
-}
-
-function Security() {
-  const rows: { what: string; how: string; where: string }[] = [
-    {
-      what: "Your credentials",
-      how: "Broker mode (opt-in): attached at the host broker from a lantern.secret ref, so the VM never holds the token. Default mode vends secrets into the VM over a peer-authenticated socket.",
-      where: "runtime-manager egress broker (opt-in)",
-    },
-    {
-      what: "A network device",
-      how: "In broker mode (opt-in, Firecracker only): the VM has no NIC; the only way out is vsock to the broker, which enforces the per-sandbox allowlist and audits refusals.",
-      where: "harness forwarder, host broker (opt-in)",
-    },
-    {
-      what: "The agent's prompt or model keys",
-      how: "The loop and the model router run on the control plane. The VM receives one tool call over ExecTool.",
-      where: "workflow-engine step_executor.go",
-    },
-    {
-      what: "Someone else's identity",
-      how: "Each VM gets its own certificate and Ed25519 agent identity. The manager refuses VM certificates on its control methods.",
-      where: "ADR 0025, runtime-manager authz.rs",
-    },
-    {
-      what: "Another tenant's rows",
-      how: "tenant_id on every row and gRPC call, a service token on every internal port, and row-level security on every tenant table.",
-      where: "ADR 0011, grpcauth",
-    },
-    {
-      what: "A way to rewrite history",
-      how: "A completed run's journal is hashed into a signed receipt: Ed25519 when LANTERN_RECEIPT_ED25519_SEED is set (HMAC-SHA256 dev fallback otherwise). Anyone can check an Ed25519 receipt against the published key.",
-      where: "/.well-known/lantern-receipts",
-    },
-  ];
-  return (
-    <Section id="security" title="What the workload never gets." lede="Each row is something the sandbox does not have, and the place outside it that enforces that.">
-      <dl className="divide-y divide-line border-y border-line">
-        {rows.map((r) => (
-          <div key={r.what} className="grid gap-2 py-6 md:grid-cols-[minmax(0,4fr)_minmax(0,6fr)_minmax(0,3fr)] md:gap-8">
-            <dt className="font-semibold">{r.what}</dt>
-            <dd className="leading-relaxed text-ink-2">{r.how}</dd>
-            <dd className="font-mono text-xs text-ink-3 md:text-right">{r.where}</dd>
-          </div>
-        ))}
-      </dl>
-    </Section>
-  );
-}
-
-function Cost() {
-  const items = [
-    {
-      title: "Pay for work, not waiting",
-      body: "A sandbox with no activity for idleTimeoutSecs is snapshotted and stopped. The next request wakes it; the first exec waits a few seconds for the in-guest channel to reconnect (~4 s in our Lima benchmark).",
-    },
-    {
-      title: "Budgets that stop the run",
-      body: "Per-agent caps on cost per day and runs per day, plus a tenant-wide daily cost cap. Over a hard cap the call returns HTTP 402 before a model is called. Forecast a run's cost, and check the per-run cap, before you send it.",
-    },
-    {
-      title: "Models by capability",
-      body: "Ask for model: \"auto\" or \"reasoning-large\". The model router picks a provider by target (cheap, fast, best, balanced) and fails over on retryable errors.",
-    },
-  ];
-  return (
-    <Section id="cost" title="Spend stays where you can see it.">
-      <div className="grid gap-10 md:grid-cols-3">
-        {items.map((it) => (
-          <div key={it.title}>
-            <h3 className="text-lg font-semibold">{it.title}</h3>
-            <p className="mt-2 leading-relaxed text-ink-2">{it.body}</p>
-          </div>
-        ))}
-      </div>
-    </Section>
-  );
-}
-
-function Platform() {
-  const groups: [string, string[]][] = [
-    [
-      "Reliability",
-      [
-        "Durable steps that resume from the journal after a crash",
-        "Idempotency keys from (run_id, step_id, attempt), so a replay does not double-send",
-        "Eval suites that fail CI on regression (HTTP 422)",
-        "Rehearsals that replay past failures before traffic flips",
-      ],
-    ],
-    [
-      "Building agents",
-      [
-        "Visual workflow graphs that execute (tool nodes not yet wired)",
-        "Sessions with SSE streaming, cron schedules, human approval",
-        "17 connectors to real APIs, an MCP registry, A2A cards",
-        "TypeScript, Python and Go SDKs and the lantern CLI",
-      ],
-    ],
-    [
-      "Runtime",
-      [
-        "Firecracker, Kata, gVisor and runc tiers by isolation class",
-        "Streaming exec and a file API under /workspace",
-        "Session-scoped VMs, pause, resume and fork",
-        "One trace per spawn, control plane to harness",
-      ],
-    ],
-    [
-      "Surfaces",
-      [
-        "Slack, Telegram, Discord, voice and an embeddable webchat",
-        "WhatsApp and iMessage assistants that reply in your voice",
-        "Commitment and grounding gates hold risky replies for you",
-        "Signed receipts for completed runs, checkable at /proof",
-      ],
-    ],
-  ];
-  return (
-    <Section id="platform" title="The rest of production, included.">
-      <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
-        {groups.map(([g, items]) => (
-          <div key={g}>
-            <h3 className="font-semibold">{g}</h3>
-            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-ink-2">
-              {items.map((i) => (
-                <li key={i}>{i}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
-    </Section>
-  );
-}
-
-type Cell = "yes" | "partial" | "no" | string;
-const COMPARE: { row: string; cells: [Cell, Cell, Cell, Cell] }[] = [
-  { row: "Hardware-isolated microVM per sandbox", cells: ["yes", "yes", "yes", "partial: gVisor"] },
-  { row: "Agent loop outside the sandbox", cells: ["yes", "not stated", "partial: you host the loop", "partial: you host the loop"] },
-  { row: "Credentials never enter the sandbox", cells: ["partial: broker mode, opt-in", "yes", "no", "no"] },
-  { row: "Egress allowlist enforced outside the guest", cells: ["partial: broker mode, opt-in", "yes", "partial", "partial: IP/CIDR"] },
-  { row: "Idle auto-suspend, resume on demand", cells: ["yes", "yes", "partial", "partial"] },
-  { row: "Snapshot and fork", cells: ["yes", "yes", "partial", "partial"] },
-  { row: "Durable runs with crash-resume", cells: ["yes", "no", "no", "no"] },
-  { row: "Hard budgets and cost forecast", cells: ["yes", "no", "no", "partial"] },
-  { row: "Multi-provider model routing", cells: ["yes", "no", "no", "no"] },
-  { row: "Signed, offline-verifiable receipts", cells: ["partial: Ed25519 with a configured seed", "no", "no", "no"] },
-  { row: "Hardware root of trust", cells: ["partial: recorded, not verified", "yes", "no", "no"] },
-  { row: "Self-host, open source", cells: ["yes", "no", "partial", "no"] },
+// docs/benchmarks/runtime-latency.md, jailed Firecracker on Lima nested KVM.
+const TIMINGS: { step: string; ms: number; kind: "snap" | "base" | "fork" }[] = [
+  { step: "Snapshot", ms: 634, kind: "snap" },
+  { step: "Stop", ms: 207, kind: "base" },
+  { step: "Restore", ms: 138, kind: "base" },
+  { step: "Fork 1", ms: 131, kind: "fork" },
+  { step: "Fork 2", ms: 145, kind: "fork" },
+  { step: "Fork 3", ms: 160, kind: "fork" },
 ];
 
-function Mark({ c }: { c: Cell }) {
-  if (c === "yes")
-    return (
-      <span className="inline-flex items-center gap-1.5 text-patina">
-        <Check className="h-4 w-4" aria-hidden="true" />
-        <span className="sr-only">Yes</span>
-      </span>
-    );
-  if (c === "no")
-    return (
-      <span className="inline-flex items-center text-ink-3">
-        <X className="h-4 w-4" aria-hidden="true" />
-        <span className="sr-only">No</span>
-      </span>
-    );
-  if (c !== "partial" && !c.startsWith("partial: ")) return <span className="text-xs text-ink-3">{c}</span>;
-  const note = c.startsWith("partial: ") ? c.slice(9) : "";
+function Measured() {
+  const max = 700;
   return (
-    <span className="inline-flex items-start gap-1.5 text-flame">
-      <Minus className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <span className="text-xs text-ink-2">{note || "Partial"}</span>
-    </span>
+    <section id="measured" className="section rule" aria-labelledby="measured-h">
+      <span id="lifecycle" aria-hidden="true" />
+      <div className={`${wrap} grid grid-cols-1 gap-12 lg:grid-cols-[minmax(0,6fr)_minmax(0,6fr)] lg:items-center`}>
+        <div>
+          <h2 id="measured-h" className="h2 !text-[clamp(2rem,3.6vw,3.25rem)]">
+            Snapshot an idle agent in 634&nbsp;ms.{" "}
+            <span className="ind">indicative, nested KVM on an M4 Max</span> Fork it in under 160&nbsp;ms.
+          </h2>
+          <p className="lede mt-6">
+            An idle sandbox is snapshotted and stopped, so it gives its compute back, and wakes on the next request. Fork
+            one to try several paths at once: three forks shared one memory snapshot, with no copy.
+          </p>
+          <p className="mt-6 text-sm leading-relaxed text-ink-3">
+            One Firecracker run, 1 vCPU and 128 MiB per VM, on a laptop rather than bare metal.{" "}
+            <a className="link" href={`${BLOB}/docs/benchmarks/runtime-latency.md`}>
+              Full benchmark
+            </a>
+            {", "}
+            <a className="link" href={`${BLOB}/docs/media/lifecycle-kvm.gif`}>
+              watch the recording
+            </a>
+          </p>
+        </div>
+        <figure className="rounded-[var(--lx-radius-l)] border border-line bg-surface p-6 md:p-8">
+          <figcaption className="text-sm font-medium text-ink">Milliseconds, one run</figcaption>
+          <table className="mt-5 w-full text-sm">
+            <caption className="sr-only">Lifecycle step durations in milliseconds</caption>
+            <tbody>
+              {TIMINGS.map((t) => (
+                <tr key={t.step}>
+                  <th scope="row" className="w-24 py-1.5 pr-3 text-left font-normal text-ink-2">
+                    {t.step}
+                  </th>
+                  <td className="py-1.5">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`bar ${t.kind === "fork" ? "bar-fork" : t.kind === "snap" ? "bar-snap" : ""}`}
+                        style={{ width: `${(t.ms / max) * 100}%` }}
+                        aria-hidden="true"
+                      />
+                      <span className="font-display text-lg font-bold tabular-nums">{t.ms}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </figure>
+      </div>
+    </section>
+  );
+}
+
+type Mark = "yes" | "no" | "partial" | "na";
+const SUMMARY: { row: string; lantern: [Mark, string]; managed: [Mark, string] }[] = [
+  { row: "Runs in your VPC or on-prem", lantern: ["yes", "Apache-2.0"], managed: ["no", "ACE is Google Cloud only; E2B partly"] },
+  { row: "Crash-resume for agent runs", lantern: ["yes", "Journaled steps"], managed: ["na", "Out of scope for a sandbox"] },
+  { row: "Spend caps before the model call", lantern: ["yes", "Daily cost, runs and tokens"], managed: ["na", "Out of scope; Modal partly"] },
+  { row: "Model routing with failover", lantern: ["yes", "Across providers"], managed: ["na", "Out of scope for a sandbox"] },
+  {
+    row: "Credentials kept outside the sandbox",
+    lantern: ["partial", "Opt-in broker mode"],
+    managed: ["partial", "ACE by default; E2B and Modal no"],
+  },
+];
+
+function MarkIcon({ m }: { m: Mark }) {
+  const Icon = m === "yes" ? Check : m === "no" ? X : Minus;
+  const tone = m === "yes" ? "text-patina" : m === "partial" ? "text-flame" : "text-ink-3";
+  return (
+    <>
+      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone}`} aria-hidden="true" />
+      <span className="sr-only">{{ yes: "Yes", no: "No", partial: "Partly", na: "Not applicable" }[m]}: </span>
+    </>
   );
 }
 
 function Compare() {
-  const cols = ["Lantern", "Google Agent Compute Engine", "E2B", "Modal"];
   return (
-    <Section
-      id="compare"
-      title="How it compares."
-      lede="Google announced Agent Compute Engine on October 22, 2026: a microVM per agent, credentials kept outside it. Lantern runs that shape today, in your cloud, under Apache-2.0, with durable runs, budgets, model routing and receipts around it."
-    >
-      <div className="relative overflow-x-auto rounded-[var(--lx-radius-l)] border border-line">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <caption className="sr-only">Feature comparison of Lantern, Google Agent Compute Engine, E2B and Modal</caption>
+    <section id="compare" className="section rule" aria-labelledby="compare-h">
+      <div className={wrap}>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-end">
+          <h2 id="compare-h" className="h2">
+            A runtime, not a rented sandbox.
+          </h2>
+          <p className="lede lg:justify-self-end">
+            On sandbox isolation Google ACE leads: credentials and egress stay outside its sandbox by default, on
+            Google&rsquo;s hardware root of trust. Lantern matches that only in opt-in broker mode. Where it differs is
+            everything around the sandbox.
+          </p>
+        </div>
+        <table className="sum mt-12">
+          <caption className="sr-only">Lantern compared with managed sandboxes (Google ACE, E2B, Modal)</caption>
           <thead>
-            <tr className="border-b border-line bg-surface">
-              <th scope="col" className="p-4 font-medium text-ink-2">
+            <tr>
+              <th scope="col">
                 <span className="sr-only">Capability</span>
               </th>
-              {cols.map((c, n) => (
-                <th key={c} scope="col" className={`p-4 font-semibold ${n === 0 ? "text-ink" : "text-ink-2"}`}>
-                  {c}
-                </th>
-              ))}
+              <th scope="col" className="sum-us">
+                <span className="flex items-center gap-2">
+                  <LanternMark className="h-5 w-5" /> Lantern
+                </span>
+              </th>
+              <th scope="col">Managed sandboxes (ACE, E2B, Modal)</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
-            {COMPARE.map((r) => (
+          <tbody>
+            {SUMMARY.map((r) => (
               <tr key={r.row}>
-                <th scope="row" className="p-4 font-normal text-ink">
-                  {r.row}
-                </th>
-                {r.cells.map((c, n) => (
-                  <td key={n} className={`p-4 align-top ${n === 0 ? "bg-surface/60" : ""}`}>
-                    <Mark c={c} />
-                  </td>
-                ))}
+                <th scope="row">{r.row}</th>
+                <td className="sum-us" data-label="Lantern">
+                  <span className="flex items-start gap-2">
+                    <MarkIcon m={r.lantern[0]} />
+                    {r.lantern[1]}
+                  </span>
+                </td>
+                <td data-label="Managed sandboxes">
+                  <span className="flex items-start gap-2">
+                    <MarkIcon m={r.managed[0]} />
+                    {r.managed[1]}
+                  </span>
+                </td>
               </tr>
             ))}
-            <tr>
-              <th scope="row" className="p-4 font-normal text-ink">
-                Availability
-              </th>
-              <td className="bg-surface/60 p-4 text-xs text-ink-2">Open source today</td>
-              <td className="p-4 text-xs text-ink-2">Announced; rolling out</td>
-              <td className="p-4 text-xs text-ink-2">Generally available</td>
-              <td className="p-4 text-xs text-ink-2">Generally available</td>
-            </tr>
           </tbody>
         </table>
+        <p className="mt-6">
+          <Link href="/compare/" className="link inline-flex items-center gap-1.5 font-medium text-ink">
+            Full comparison, column by column <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </p>
       </div>
-      <p className="mt-4 max-w-3xl text-sm text-ink-3">
-        A cross means not offered or not announced; &ldquo;not stated&rdquo; means the public material doesn&rsquo;t say.
-        Other columns reflect each vendor&rsquo;s public docs and announcements as of October 2026; the Google column is per launch coverage (SiliconANGLE, Oct 22 2026), as Google&rsquo;s own documentation was not yet published. If one is out of date,{" "}
-        <a className="underline decoration-line underline-offset-4 hover:text-ink" href={`${GITHUB}/issues`}>
-          open an issue
-        </a>
-        .
-      </p>
-    </Section>
+    </section>
+  );
+}
+
+const SAMPLE = `const lantern = new LanternClient({
+  apiKey: process.env.LANTERN_API_KEY,
+});
+
+await lantern.agents.create({ name: "triage" });
+await lantern.budgets.upsert("triage", {
+  maxCostUsdPerDay: 25,
+  hardFail: true,
+});
+
+await lantern.runs.create({ agent: "triage", input });`;
+
+// The body POST /v1/runs writes when a hard cap blocks the run (rest.go, CheckBudget's
+// reason string). Only the dollar amounts are an example.
+const REASON = "daily spend would reach $25.0318 exceeding limit $25.0000";
+const RESPONSE = `{
+  "error": "agent budget limit reached: ${REASON}",
+  "reason": "${REASON}"
+}`;
+
+// ponytail: a four-rule highlighter for one fixed snippet, not a general tokenizer.
+const TOKEN = /(\/\/.*$)|("[^"]*")|\b(const|new|await|true)\b|\b(\d+(?:\.\d+)?)\b/gm;
+function highlight(src: string) {
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of src.matchAll(TOKEN)) {
+    out.push(src.slice(last, m.index));
+    const cls = m[1] ? "c" : m[2] ? "s" : m[3] ? "k" : "n";
+    out.push(
+      <span key={m.index} className={cls}>
+        {m[0]}
+      </span>,
+    );
+    last = m.index + m[0].length;
+  }
+  out.push(src.slice(last));
+  return out;
+}
+
+function Code() {
+  return (
+    <section className="section rule" aria-labelledby="code-h">
+      <div className={`${wrap} grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3.4fr)_minmax(0,8.6fr)] lg:items-center`}>
+        <div>
+          <h2 id="code-h" className="h2">
+            A budget before the first token.
+          </h2>
+          <p className="lede mt-6">Cap what an agent may spend. Over the cap, the run is refused before the bill.</p>
+          <p className="mt-4 text-sm leading-relaxed text-ink-2">
+            Enforced today: per-agent daily cost, runs and tokens, and a tenant-wide daily cost cap. Workflow runs also
+            stop mid-run at a per-run cost cap and at per-tool limits.
+          </p>
+          <p className="mt-4 text-sm text-ink-3">
+            TypeScript shown; Python and Go too.{" "}
+            <a className="link" href={DOCS}>
+              SDK docs
+            </a>
+          </p>
+        </div>
+        <div className="min-w-0">
+          <pre className="code p-5 sm:p-7" aria-label="TypeScript SDK example" tabIndex={0}>
+            <code>{highlight(SAMPLE)}</code>
+          </pre>
+          <figure className="response mt-3" aria-label="The response when the cap is reached">
+            <div className="response-bar">
+              <span className="status-pill">402 Payment Required</span>
+              <span>POST /v1/runs</span>
+            </div>
+            <pre className="code response-body p-5 sm:px-7" tabIndex={0}>
+              <code>{RESPONSE}</code>
+            </pre>
+            <figcaption className="mt-3 text-sm text-ink-3">
+              No model call is made. The fields and wording are the handler&rsquo;s; the dollar amounts are an example.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
   );
 }
 
 function Start() {
   return (
-    <Section id="start" title="Run it on your laptop." lede="You need Docker, and Go 1.25+ for the CLI.">
-      <div className="grid gap-10 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start">
-        <pre className="term overflow-x-auto p-5" aria-label="Quickstart commands">
-          <code>
-            <span className="text-ink-3">$ </span>git clone https://github.com/dshakes/lantern.git && cd lantern{"\n"}
-            <span className="text-ink-3">$ </span>make dev{"\n"}
-            <span className="text-ink-3">$ </span>( cd packages/cli && go install ./cmd/lantern ){"\n"}
-            <span className="text-ink-3">$ </span>lantern doctor{"\n"}
-            <span className="text-ink-3">$ </span>lantern onboard
-          </code>
-        </pre>
-        <div>
-          <p className="leading-relaxed text-ink-2">
-            <code className="font-mono text-sm text-ink">make dev</code> starts Postgres, Redis, MinIO, the control plane and
-            the dashboard on localhost:3001. <code className="font-mono text-sm text-ink">lantern doctor</code> checks the
-            stack end to end. <code className="font-mono text-sm text-ink">lantern onboard</code> turns a one-line
-            description into a running agent.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <a href={`${GITHUB}#quickstart`} className="btn btn-primary">
-              Read the quickstart
-            </a>
-            <a href={GITHUB} className="btn btn-quiet">
-              Star on GitHub
-            </a>
-          </div>
+    <section id="start" className="section rule relative overflow-hidden" aria-labelledby="start-h">
+      <div className="closing-glow" aria-hidden="true" />
+      <div className={`${wrap} relative flex flex-col items-center text-center`}>
+        <LanternMark className="h-14 w-14" />
+        <h2 id="start-h" className="display mt-8 max-w-4xl text-[clamp(2.5rem,7vw,5.5rem)]">
+          Clone it. Run it on your own machines.
+        </h2>
+        <div className="mt-10 w-full max-w-3xl text-left">
+          <CopyCommand command={CLONE} label="Clone and start Lantern locally" />
+        </div>
+        <div className="mt-6">
+          <Actions center />
         </div>
       </div>
-    </Section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="border-t border-line px-4 py-10 sm:px-6">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 text-sm text-ink-3">
-        <span className="flex items-center gap-2">
-          <LanternMark className="h-5 w-5" /> Lantern is open source under Apache-2.0.
-        </span>
-        <nav aria-label="Footer" className="flex gap-5">
-          <a href={DOCS} className="hover:text-ink">
-            Docs
-          </a>
-          <a href={GITHUB} className="hover:text-ink">
-            GitHub
-          </a>
-          <a href="/privacy" className="hover:text-ink">
-            Privacy
-          </a>
-        </nav>
-      </div>
-    </footer>
+    </section>
   );
 }

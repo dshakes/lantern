@@ -716,3 +716,50 @@ func TestRecordUsage_NilToolCalls_StillRecords(t *testing.T) {
 		t.Errorf("got runs=%d in=%d, want 2/150", runs, tokensIn)
 	}
 }
+
+// TestCreateRun_WorkflowRunCountsTowardMaxRunsPerDay: a workflow run used to
+// record only per-step spend (RecordUsageSpend, which never bumps runs_count),
+// so maxRunsPerDay never limited workflow agents. With a hard-fail limit of 1,
+// the second workflow run must be refused with 402.
+func TestCreateRun_WorkflowRunCountsTowardMaxRunsPerDay(t *testing.T) {
+	h, auth := newBudgetTestHandler(t)
+	h.llmProxy = NewLlmProxyHandler(h.srv, auth)
+	tenantID := devTenantID
+	agentName := "budget-workflow-runs-" + t.Name()
+
+	cleanup := ensureAgentForBudgetTest(t, h, tenantID, agentName)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() {
+		deleteBudgetDirect(t, h, tenantID, agentName)
+		deleteUsageDirect(t, h, tenantID, agentName)
+	})
+	deleteUsageDirect(t, h, tenantID, agentName)
+	// trigger → end: no LLM, connector or tool, so no step records spend.
+	wf := `{"nodes":[{"id":"t","type":"trigger","data":{}},{"id":"e","type":"end","data":{}}],"edges":[{"id":"te","source":"t","target":"e"}]}`
+	if _, err := h.srv.Pool.Exec(context.Background(),
+		`UPDATE agents SET workflow = $3::jsonb WHERE tenant_id = $1 AND name = $2`, tenantID, agentName, wf); err != nil {
+		t.Fatalf("set workflow: %v", err)
+	}
+	upsertBudgetDirect(t, h, tenantID, agentName, 1, true)
+
+	if rr := postRunHTTP(t, h, auth, tenantID, agentName); rr.Code == http.StatusPaymentRequired || rr.Code >= 500 {
+		t.Fatalf("first run: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	h.inFlightRuns.Wait()
+
+	var status string
+	if err := h.srv.Pool.QueryRow(context.Background(), `
+		SELECT r.status FROM runs r JOIN agents a ON a.id = r.agent_id
+		WHERE a.tenant_id = $1 AND a.name = $2 ORDER BY r.created_at DESC LIMIT 1`,
+		tenantID, agentName).Scan(&status); err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("workflow run status = %q, want succeeded", status)
+	}
+
+	rr := postRunHTTP(t, h, auth, tenantID, agentName)
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("second workflow run: got %d, want 402; body: %s", rr.Code, rr.Body.String())
+	}
+}

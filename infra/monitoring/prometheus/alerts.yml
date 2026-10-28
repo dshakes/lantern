@@ -128,7 +128,7 @@ groups:
     rules:
       - alert: ControlPlaneDown
         # `up` for the control-plane scrape job. If you have no /metrics on the
-        # control-plane yet (it does now — /metrics on :8080), point this job at a
+        # control-plane yet (it does now — /metrics on :9464), point this job at a
         # blackbox-exporter probe of http://<cp>:8080/readyz instead and alert on
         # probe_success == 0. Keep ONE of the two, not both.
         expr: up{job="lantern-control-plane"} == 0
@@ -268,7 +268,7 @@ groups:
           runbook: "docs/runbooks/scheduler-not-firing.md"
 
   # =========================================================================
-  # REAL — control-plane /metrics (internal/telemetry/metrics.go, :8080).
+  # REAL — control-plane /metrics (internal/telemetry/metrics.go, :9464 via LANTERN_METRICS_ADDR).
   # OTel instruments bridged to Prometheus. Series pinned by
   # internal/telemetry/metrics_test.go — rename there and here together.
   # =========================================================================
