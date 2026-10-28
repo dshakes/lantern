@@ -138,8 +138,9 @@ scripts/db-restore-drill.sh ./latest.sql.gz        # restores into a throwaway c
 scripts/db-restore-drill.sh --self-test            # exercises the script itself (CI runs this)
 ```
 
-It restores with `ON_ERROR_STOP` and requires `agents`, `runs`, `journal_events` to exist and be
-non-empty (`DRILL_EXPECT_TABLES`). `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the
+It restores with `ON_ERROR_STOP` (a corrupt gzip fails the drill) and requires `agents`, `runs`,
+`journal_events` to exist (`DRILL_EXPECT_TABLES`). Empty tables pass, so a fresh or low-traffic
+database is fine; set `DRILL_REQUIRE_ROWS=1` to also fail on empty tables when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the
 server major version. A dump contains no roles: after a real restore recreate `lantern_app` and
 its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling
 `LANTERN_RLS_ENFORCE=1`. Take a dump on demand with

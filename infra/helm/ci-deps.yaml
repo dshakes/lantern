@@ -4,7 +4,7 @@
 # docker.io, quay.io) is pullable any more, so CI runs plain pgvector plus an
 # S3-compatible mock (SeaweedFS S3, no identities configured so any credentials work). Service names/labels
 # match what the chart and its NetworkPolicies expect for release "lantern".
-# Apply with: PW=... envsubst < infra/helm/ci-deps.yaml | kubectl apply -f -
+# Apply with: PW=... envsubst '${PW}' < infra/helm/ci-deps.yaml | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: lantern-postgresql, labels: {app.kubernetes.io/instance: lantern, app.kubernetes.io/name: postgresql}}
