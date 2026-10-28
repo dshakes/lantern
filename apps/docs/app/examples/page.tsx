@@ -14,7 +14,7 @@ export default function ExamplesPage() {
       <p>
         A webchat agent that answers from your docs (with the source shown), and hands the conversation to a human
         when it cannot answer, pinging Slack. Path: <code>examples/support-desk/</code>. See{" "}
-        <a href="/knowledge">Knowledge base &amp; human handoff</a> for the APIs.
+        <Link href="/knowledge">Knowledge base &amp; human handoff</Link> for the APIs.
       </p>
       <pre><code>{`make dev-infra && make run-api          # terminal 1
 python3 examples/support-desk/setup.py   # creates the agent, uploads the docs

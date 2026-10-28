@@ -130,8 +130,8 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
               <span>
                 Install:&nbsp;
                 <code className="font-mono text-zinc-400">
-                  {active === "ts" && "npm i @lantern/sdk"}
-                  {active === "python" && "pip install lantern-sdk"}
+                  {active === "ts" && "npm install ./packages/sdk-ts  # from a Lantern checkout; not on npm yet"}
+                  {active === "python" && "pip install ./packages/sdk-python  # from a Lantern checkout; not on PyPI yet"}
                   {active === "go" && "go get github.com/dshakes/lantern/packages/sdk-go"}
                   {active === "curl" && "—"}
                 </code>

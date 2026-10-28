@@ -257,9 +257,10 @@ export async function main(): Promise<void> {
 }
 
 // Auto-run when executed as a script.
-const isMainModule = typeof require !== "undefined"
-  ? require.main === module
-  : process.argv[1]?.endsWith("runner.js") || process.argv[1]?.endsWith("runner.ts");
+// Package is ESM ("type": "module"); tsup shims `require` there, so a
+// `require.main === module` check throws on import. argv is the reliable signal.
+const isMainModule =
+  process.argv[1]?.endsWith("runner.js") || process.argv[1]?.endsWith("runner.ts");
 
 if (isMainModule) {
   main();
