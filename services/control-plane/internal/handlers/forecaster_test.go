@@ -11,9 +11,11 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -118,5 +120,57 @@ func TestForecastZeroHistory_HTTP(t *testing.T) {
 	}
 	if resp.Confidence != 0 {
 		t.Errorf("zero-history forecast: Confidence must be 0, got %f (old fabricated-0.3 floor)", resp.Confidence)
+	}
+}
+
+// TestForecastHistory_SucceededRuns: runs finish as 'succeeded', and the
+// history query once filtered on 'completed' — a status runs never take — so
+// every forecast was uncalibrated and the per-run cap never fired. Seeds
+// succeeded runs (plus a failed one that must not count) and expects a
+// calibrated forecast that a hard-fail per-run cap blocks with 402.
+func TestForecastHistory_SucceededRuns(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	h := NewForecastHandler(srv, NewAuthHandler(srv, testJWTSecret))
+
+	tenantID := seedA2ATenant(t, pool, "forecast-succeeded-tenant")
+	const agent = "forecast-history-agent"
+	seedA2AAgentWithVersion(t, pool, tenantID, agent, false)
+	for _, status := range []string{"succeeded", "succeeded", "failed"} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input, tokens_in, tokens_out, cost_usd)
+			SELECT tenant_id, id, current_version_id, $3, 'api', '{}'::jsonb, 100000, 50000, 1.5
+			FROM agents WHERE tenant_id = $1 AND name = $2`, tenantID, agent, status); err != nil {
+			t.Fatalf("seed %s run: %v", status, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agent_budgets (tenant_id, agent_name, max_cost_usd_per_run, hard_fail, notify_at_pct)
+		VALUES ($1, $2, 0.01, true, 80)`, tenantID, agent); err != nil {
+		t.Fatalf("seed budget: %v", err)
+	}
+
+	hist, err := h.historical(tenantCtx(tenantID), tenantID, agent)
+	if err != nil {
+		t.Fatalf("historical: %v", err)
+	}
+	if hist.runs != 2 || hist.avgTokensIn != 100000 {
+		t.Fatalf("historical = %+v, want 2 succeeded runs averaging 100000 tokens in", hist)
+	}
+
+	body, _ := json.Marshal(forecastRequest{AgentName: agent, Input: "hello"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/runs/forecast", bytes.NewReader(body))
+	req.Header.Set("Authorization", bearerHeader(mintTestToken(t, tenantID, "user-fcast", "owner")))
+	w := httptest.NewRecorder()
+	h.Forecast(w, req)
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("forecast: got %d, want 402 (per-run cap); body: %s", w.Code, w.Body.String())
+	}
+	var resp forecastResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.Calibrated || !strings.Contains(resp.BlockReason, "per-run cost") {
+		t.Fatalf("forecast = calibrated %v, reason %q; want calibrated per-run block", resp.Calibrated, resp.BlockReason)
 	}
 }

@@ -526,8 +526,11 @@ directory lists only `is_public` agents.
 **Metering coverage.** Workflow `ai-step` and confidence-vote LLM calls and the
 built-in `web_search` are checked against budgets and recorded via `CheckBudget`
 / `RecordUsageSpend` (`internal/handlers/budgets.go`) — the latter accrues tokens
-and cost WITHOUT bumping `runs_count`, so workflow spend does not inflate the
-runs/day limit. Streaming and no-tools Anthropic paths send the system prompt
+and cost WITHOUT bumping `runs_count`, so per-step spend does not inflate the
+runs/day limit. Each workflow run itself is counted once toward runs/day when
+it succeeds (same as an inline run), so `maxRunsPerDay` limits workflow agents
+too. The forecaster's history (`/v1/runs/forecast`) averages the agent's
+`succeeded` runs over the last 30 days. Streaming and no-tools Anthropic paths send the system prompt
 with prompt caching (`anthropicSystemWithCache`).
 
 ### Eval suites + CI gating (wedge #2)
