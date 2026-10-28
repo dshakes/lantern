@@ -274,14 +274,14 @@ function Measured() {
 
 type Mark = "yes" | "no" | "partial" | "na";
 const SUMMARY: { row: string; lantern: [Mark, string]; managed: [Mark, string] }[] = [
-  { row: "Runs in your VPC or on-prem", lantern: ["yes", "Apache-2.0"], managed: ["no", "ACE is Google Cloud only; E2B partly"] },
+  { row: "Runs in your VPC or on-prem", lantern: ["yes", "Apache-2.0"], managed: ["partial", "ACE is Google Cloud only; E2B partly"] },
   { row: "Crash-resume for agent runs", lantern: ["yes", "Journaled steps"], managed: ["na", "Out of scope for a sandbox"] },
   { row: "Spend caps before the model call", lantern: ["partial", "Daily caps; per-run cap on workflows only"], managed: ["na", "Out of scope; Modal partly"] },
   { row: "Model routing with failover", lantern: ["yes", "Across providers"], managed: ["na", "Out of scope for a sandbox"] },
   {
     row: "Credentials kept outside the sandbox",
     lantern: ["partial", "Opt-in broker mode"],
-    managed: ["partial", "ACE by default; E2B and Modal no"],
+    managed: ["partial", "ACE by default; E2B (beta) and Modal (experimental) opt-in"],
   },
 ];
 
@@ -306,7 +306,7 @@ function Compare() {
           </h2>
           <p className="lede lg:justify-self-end">
             On sandbox isolation Google ACE leads: credentials and egress stay outside its sandbox by default, on
-            Google&rsquo;s hardware root of trust. Lantern matches that only in opt-in broker mode. Where it differs is
+            Google&rsquo;s hardware root of trust. Lantern comes closest only in opt-in broker mode. Where it differs is
             everything around the sandbox.
           </p>
         </div>
