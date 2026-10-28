@@ -33,6 +33,7 @@ This project is pre-1.0; there are no stable release branches yet.
 - PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
 
 ### Fixed
+- **Receipt verification now detects an edited payload.** With a stored receipt, `POST /v1/runs/receipts/verify` compared only the signature string, so a receipt whose `costUsd`/`status` had been changed but that carried the original signature verified as `valid: true`. It now also requires the payload to match the issued one (canonical compare), which keeps receipts valid across key rotation.
 - Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
 - A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).
 - Map-form workflow params (`inputMapping`/`parameters`) now render `{{...}}` templates.

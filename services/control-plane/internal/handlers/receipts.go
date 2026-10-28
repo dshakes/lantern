@@ -24,6 +24,7 @@ package handlers
 //   - issuedAt timestamp
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
@@ -251,19 +252,30 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	// Strategy 1: re-fetch persisted signature from DB when run_id is known.
 	if runID != "" && h.srv != nil && h.srv.Pool != nil {
 		var storedSig string
+		var storedBody []byte
 		// rls-exempt: PUBLIC receipt-verification endpoint (no auth, no tenant
-		// context). Re-fetches the issued signature by run_id to compare against
+		// context). Re-fetches the issued receipt by run_id to compare against
 		// the client-supplied one; the receipt is publicly verifiable by design.
 		err := h.srv.Pool.QueryRow(ctx,
-			`SELECT signature FROM run_receipts WHERE run_id = $1`,
+			`SELECT signature, payload::text FROM run_receipts WHERE run_id = $1`,
 			runID,
-		).Scan(&storedSig)
+		).Scan(&storedSig, &storedBody)
 		if err == nil && storedSig != "" {
 			// Constant-time compare: client-supplied signature vs. what we actually issued.
 			if !hmac.Equal([]byte(storedSig), []byte(req.Signature)) {
 				writeJSON(w, http.StatusOK, map[string]any{
 					"valid":  false,
 					"reason": "signature mismatch",
+				})
+				return
+			}
+			// The signature alone proves nothing about the payload sent with it:
+			// an edited payload (costUsd, status, …) carrying the original
+			// signature must fail. Compare canonically against what was issued.
+			if !payloadMatchesIssued(storedBody, req.Payload) {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"valid":  false,
+					"reason": "payload does not match the issued receipt",
 				})
 				return
 			}
@@ -352,6 +364,18 @@ func (h *ReceiptHandler) WellKnown(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ---------- Internal ----------
+
+// payloadMatchesIssued reports whether the client-supplied payload is the one
+// that was issued (stored is the persisted signedReceipt JSON).
+func payloadMatchesIssued(stored []byte, got receiptPayload) bool {
+	var issued signedReceipt
+	if err := json.Unmarshal(stored, &issued); err != nil {
+		return false
+	}
+	a, err1 := canonicalJSON(issued.Payload)
+	b, err2 := canonicalJSON(got)
+	return err1 == nil && err2 == nil && bytes.Equal(a, b)
+}
 
 var errRunNotFound = fmt.Errorf("run not found")
 
