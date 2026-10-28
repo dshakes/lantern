@@ -900,21 +900,16 @@ executors (`internal/engine/step_executor.go`) do real dispatch:
   fabricating a result. (Regression-guarded: it once journaled a fake
   `child_started`/`child_completed` pair and returned a placeholder output.)
 
-### Ops: Helm completeness, metrics, backups (W1-D)
+### Ops: control-plane metrics + SLO alerts (W1-D)
 
-`infra/helm/lantern` now ships every service `values-prod.yaml` needs: `runtime-scheduler`
-(2 replicas, leader election; needs `secrets.schedulerNodeToken`) and `surface-gateway`, an HPA
-per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PDBs, and
-default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
-rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Prod TLS/mTLS
-Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
-The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
-`internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
-expose through the ingress). The `lantern-instrumented-slos` alert group in
-`infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
-`pg_dump` CronJob to S3/MinIO; restore drill: `scripts/db-restore-drill.sh`, runbook
-`docs/runbooks/db-restore.md`. `scripts/check-app-grants.sh` verifies the `lantern_app` GRANTs.
-CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`).
+The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METRICS_ADDR`
+(default `:9464`, never the `:8080` API port). OTel instruments are bridged by
+`internal/telemetry/metrics.go`. The endpoint is unauthenticated and its labels carry agent names,
+so keep `:9464` cluster-internal and reachable only by Prometheus — never expose it through an
+ingress. The `lantern-instrumented-slos` alert group (`RunFailureRateHigh`, `BudgetDenied402Surge`) in `infra/monitoring/prometheus/alerts.yml`
+is enabled against those series: `lantern_run_total` counts a run `failed` when the executor
+errors OR the row ends `failed` (the workflow path), and `lantern_run_budget_blocks_total` counts
+every hard-fail 402 (runs, completions, marketplace, voice).
 
 ### Human takeover (W11a)
 
