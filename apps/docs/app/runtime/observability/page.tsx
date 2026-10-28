@@ -221,6 +221,19 @@ LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint`}</code></pre>
         <strong>No Prometheus histograms yet for gateway / model-router.</strong> Latency SLOs live in your tracing backend (Tempo / Jaeger / Honeycomb). Alert rules that would cover p99 latency are parked in the <code>lantern-TODO-needs-instrumentation</code> group in <code>infra/monitoring/prometheus/alerts.yml</code> until the histogram metric ships.
       </div>
 
+      <h2 id="find-a-run">Find a run, its logs and its audit trail</h2>
+      <p>Every control-plane span carries <code>lantern.run_id</code>, so one run is one query in your trace backend:</p>
+      <pre><code>{`# Jaeger:  service=lantern-control-plane lantern.run_id=<run_id>
+# Tempo:   { span.lantern.run_id = "<run_id>" }
+# Honeycomb: WHERE lantern.run_id = "<run_id>"`}</code></pre>
+      <p>VM logs and the runtime audit trail (spawn, terminate, secret vend, egress deny, 403s) are plain API calls:</p>
+      <pre><code>{`lantern vm logs <vm-id>                                    # or: GET /v1/runtime/vms/{id}/logs (SSE)
+curl "$API/v1/runtime/audit?limit=50" -H "Authorization: Bearer $TOKEN"`}</code></pre>
+      <p>
+        Logs are stored in <code>runtime_vm_logs</code> with a retention sweep (<code>LANTERN_RUNTIME_LOG_RETENTION_DAYS</code>,
+        see <Link href="/env-vars">Environment variables</Link>). Audit events are also attached to the trace as span events.
+      </p>
+
       <h2 id="alerts">Prometheus alerts, dashboards, runbooks</h2>
       <p>Production monitoring artifacts live in <code>infra/monitoring/</code>:</p>
       <table>

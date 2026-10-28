@@ -150,6 +150,21 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
         credentials. Kata and Kubernetes backends do not support broker mode. See{" "}
         <Link href="/runtime/egress">Egress and credentials</Link>.
       </p>
+
+      <h2 id="kubernetes">Kubernetes backend hardening</h2>
+      <p>
+        On the Kubernetes backend each workload Job is created with <code>automountServiceAccountToken: false</code> and a
+        default-deny-egress <code>NetworkPolicy</code> (DNS on port 53 is the only exception) that is applied
+        before the Job starts and removed with it. The in-VM harness then enforces the declared egress allowlist on top, so
+        the host policy and the guest allowlist are two independent fences.
+      </p>
+      <pre><code>{`make k8s-validate   # throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop`}</code></pre>
+      <p>
+        The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with
+        those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional
+        cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in{" "}
+        <code>infra/helm/lantern-data-plane/</code> and are off by default.
+      </p>
     </>
   );
 }
