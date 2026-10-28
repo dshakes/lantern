@@ -1766,11 +1766,11 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	// Record actual usage in the daily rollup so CheckBudget gates future
 	// runs correctly.  Called once here — only the single-LLM-call path
 	// reaches this point; the workflow path returns earlier via
-	// runWorkflowIfPresent and the crash-replay path returns from the
-	// checkCachedLLMStep branch, both without recording (workflow nodes
-	// may record individually; the replay cost was already recorded on
-	// the original run).  So there is exactly one RecordUsage per
-	// successful inline run.
+	// runWorkflowIfPresent (which counts the run itself on success; its
+	// nodes record their spend individually) and the crash-replay path
+	// returns from the checkCachedLLMStep branch without recording (the
+	// replay cost was already recorded on the original run).  So there is
+	// exactly one RecordUsage per successful inline run.
 	if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, tokensIn, tokensOut, costUsd, map[string]int{}); recErr != nil {
 		h.logger().Warn("inline executor: RecordUsage failed",
 			zap.String("run_id", runID), zap.Error(recErr))
@@ -2209,6 +2209,12 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb WHERE id = $1`,
 		runID, string(outputJSON),
 	)
+	// Count the run once toward maxRunsPerDay, like a successful inline run.
+	// Per-step spend was already accrued by RecordUsageSpend (which never
+	// bumps runs_count), so this adds the run and zero spend.
+	if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, 0, 0, 0, map[string]int{}); recErr != nil {
+		h.logger().Warn("workflow run: RecordUsage failed", zap.String("run_id", runID), zap.Error(recErr))
+	}
 	h.logger().Info("workflow run completed",
 		zap.String("run_id", runID),
 		zap.Int("steps_ran", res.StepsRan),
