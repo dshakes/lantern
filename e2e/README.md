@@ -98,3 +98,7 @@ counts; `-rules rules.json` scripts replies and tool calls. Refused in prod. See
 - `PUT /v1/runtime/quota` clamps non-positive ceilings back to defaults, so
   "quota = 0" is impossible by design; the 402 test pins
   `maxConcurrentVms` to the current live-VM count instead.
+
+## Support desk (`examples/`)
+
+`e2e/examples` drives `examples/support-desk` (KB answer with a cited source, refund question handed to a human, Slack ping, operator reply over SSE). Setup for the fixture tier and the env vars (`LANTERN_E2E_FIXTURE_LLM`, `LANTERN_E2E_SLACK_FIXTURE_ADDR`) are in `examples/support-desk/README.md`.

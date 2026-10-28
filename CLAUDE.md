@@ -282,6 +282,8 @@ Redis rate-limited per IP (+ email), fail-open on Redis errors;
 `LANTERN_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
 `apps/docs/app/accounts/page.tsx`.
 
+**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `LANTERN_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `LANTERN_FREE_TIER_MAX_VMS` (2), `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
+
 ### Agents
 
 | Method   | Path                       | Description                             |
@@ -661,6 +663,20 @@ Reuses the eval-in-CI baseline machinery to gate merges.
 | Method | Path                | Description                                                                            |
 | ------ | ------------------- | -------------------------------------------------------------------------------------- |
 | `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
+
+### Knowledge base + human handoff (W2-X1, support desk)
+
+Per-agent docs in `agent_documents` / `agent_document_chunks` (migration 0027, RLS; ids are unique per `(tenant, agent)`). Chunks are embedded via `EmbedText` (pgvector cosine; Postgres full-text fallback with no OpenAI key; floor `LANTERN_KB_MIN_SCORE`, default 0.2). `SessionHandler.processMessage` appends retrieved excerpts to the system prompt (fenced as data) and puts `sources` on `message_completed`. An agent labelled `handoff=human` (+ optional `handoff_slack_channel`) gets ONLY the `handoff_to_human` tool: it sets `sessions.status='handoff'`, emits `session.handoff`, pings Slack once (the status transition is the idempotency guard); in handoff the LLM is silent and `appendAssistantMessage` keeps the status. Operator endpoints need the coarse `write` scope so a public widget key (`runs:execute`) cannot act as the operator. Example: `examples/support-desk/`; e2e: `e2e/examples`. The fixture `llm-replay` serves a deterministic `/v1/embeddings`.
+
+| Method | Path | Scope |
+| ------ | ---- | ----- |
+| `POST` | `/v1/agents/{name}/documents` | agents:write |
+| `GET` | `/v1/agents/{name}/documents`, `/{id}` | agents:read |
+| `DELETE` | `/v1/agents/{name}/documents/{id}` | agents:write |
+| `POST` | `/v1/agents/{name}/documents/search` | agents:read |
+| `POST` | `/v1/sessions/{id}/handoff` | runs:execute |
+| `POST` | `/v1/sessions/{id}/operator-messages`, `/resolve` | write |
+| `GET` | `/v1/sessions?status=handoff` | (list) |
 
 ### Webchat embed (W10)
 

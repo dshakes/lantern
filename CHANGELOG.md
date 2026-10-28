@@ -23,6 +23,11 @@ This project is pre-1.0; there are no stable release branches yet.
 - After an approval park, the resumed node's `step_completed`/`step_failed` was dropped from the journal (seq collision with `step_waiting`).
 
 ### Added
+
+- Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
+  (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
+  creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
+  sign-up, and the `lantern.onboarding.step.total` counter.
 - **`lantern deploy` is real** (W2-D) — reads `agent.yaml`, creates the agent or
   updates its prompt/model (`PATCH /v1/agents/{name}`), saves an optional
   `workflow` (`PUT .../workflow`), then `POST /v1/agents/{name}/deploy`. `--json`

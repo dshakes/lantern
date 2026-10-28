@@ -641,6 +641,10 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.auth.requireVerifiedEmail(w, r) {
+		return
+	}
+
 	// Per-tenant spawn-storm guard (phase 3): a burst of run creations from one
 	// tenant is throttled to protect shared capacity. 429 carries no work side-effect.
 	if h.spawnLimiter != nil {

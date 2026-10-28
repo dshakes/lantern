@@ -11,6 +11,10 @@
 //     Reply -> that text; Tool -> a tool call (only when the request declares tools)
 //   - else "fixture: <first 60 chars of last user text>".
 //
+// POST /v1/embeddings returns a deterministic 1536-d hashed bag-of-words vector
+// (L2-normalised), so texts that share words are close in cosine distance and
+// pgvector retrieval can be exercised end to end with no provider.
+//
 // Token usage is len/4 (min 1) of the request body / reply, so budgets and cost
 // metering still run.
 package llmreplay
@@ -18,7 +22,9 @@ package llmreplay
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -133,6 +139,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.openai(w, body)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 		s.anthropic(w, body)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/embeddings":
+		s.embeddings(w, body)
 	default:
 		status = http.StatusNotFound
 		w.Header().Set("Content-Type", "application/json")
@@ -328,4 +336,69 @@ func (s *Server) anthropic(w http.ResponseWriter, body []byte) {
 	sse(w, "message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop},
 		"usage": map[string]any{"output_tokens": out}})
 	sse(w, "message_stop", map[string]any{"type": "message_stop"})
+}
+
+// embedDim matches the control-plane's pgvector column (text-embedding-3-small).
+const embedDim = 1536
+
+var embedStop = map[string]bool{"the": true, "and": true, "for": true, "you": true, "with": true, "what": true,
+	"how": true, "can": true, "are": true, "your": true, "this": true, "that": true, "does": true, "from": true,
+	"have": true, "will": true, "was": true, "not": true, "but": true, "our": true, "its": true}
+
+// embed hashes each lower-cased alphanumeric word (>=3 chars, naive plural
+// strip, minus a tiny stopword set) into a bucket and L2-normalises.
+func embed(s string) []float64 {
+	v := make([]float64, embedDim)
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(w) > 3 && strings.HasSuffix(w, "s") {
+			w = w[:len(w)-1]
+		}
+		if len(w) < 3 || embedStop[w] {
+			continue
+		}
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(w))
+		v[h.Sum32()%embedDim]++
+	}
+	var n float64
+	for _, x := range v {
+		n += x * x
+	}
+	if n == 0 {
+		v[0] = 1 // empty/stopword-only text: a fixed unit vector keeps the API total
+		return v
+	}
+	n = math.Sqrt(n)
+	for i := range v {
+		v[i] /= n
+	}
+	return v
+}
+
+func (s *Server) embeddings(w http.ResponseWriter, body []byte) {
+	var req struct {
+		Model string          `json:"model"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, `{"error":{"message":"invalid json"}}`, http.StatusBadRequest)
+		return
+	}
+	var inputs []string
+	var one string
+	if json.Unmarshal(req.Input, &one) == nil {
+		inputs = []string{one}
+	} else if json.Unmarshal(req.Input, &inputs) != nil {
+		http.Error(w, `{"error":{"message":"input must be a string or array of strings"}}`, http.StatusBadRequest)
+		return
+	}
+	data := make([]map[string]any, len(inputs))
+	for i, in := range inputs {
+		data[i] = map[string]any{"object": "embedding", "index": i, "embedding": embed(in)}
+	}
+	n := tokens(len(body))
+	writeJSON(w, map[string]any{"object": "list", "data": data, "model": req.Model,
+		"usage": map[string]any{"prompt_tokens": n, "total_tokens": n}})
 }

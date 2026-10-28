@@ -5,9 +5,28 @@ export default function ExamplesPage() {
     <>
       <h1>Examples</h1>
       <p>
-        Runnable agents that start from someone else&apos;s event. Each lives under <code>examples/</code> in the repo, ships a
-        signed fixture payload, and has an end-to-end test that runs it against recorded GitHub, Sentry, PagerDuty and
-        Slack servers (<code>make test-e2e-examples</code>), so you can try it with no SaaS account and no model key.
+        Runnable, end-to-end agents. Each lives under <code>examples/</code> in the repo with a README and an
+        end-to-end test that runs it against recorded GitHub, Sentry, PagerDuty and Slack servers and a fixture model
+        (<code>make test-e2e-examples</code>), so you can try it with no SaaS account and no model key.
+      </p>
+
+      <h2 id="support-desk">Support desk</h2>
+      <p>
+        A webchat agent that answers from your docs (with the source shown), and hands the conversation to a human
+        when it cannot answer, pinging Slack. Path: <code>examples/support-desk/</code>. See{" "}
+        <a href="/knowledge">Knowledge base &amp; human handoff</a> for the APIs.
+      </p>
+      <pre><code>{`make dev-infra && make run-api          # terminal 1
+python3 examples/support-desk/setup.py   # creates the agent, uploads the docs
+# create an API key with scope runs:execute, then open examples/support-desk/demo.html`}</code></pre>
+      <p>
+        Try it: ask <em>How do I reset my password?</em> (a cited answer), then <em>I want a refund</em> (the widget
+        shows &quot;Connecting you to a human&quot;). An operator replies with{" "}
+        <code>POST /v1/sessions/{"{id}"}/operator-messages</code> and the reply appears in the widget.
+      </p>
+      <p>
+        <code>setup.py</code> deploys over REST because it also uploads the documents and mints the widget key;{" "}
+        <code>lantern deploy</code> from the example directory deploys the agent on its own.
       </p>
 
       <h2 id="pr-triage-webhook">PR triage to a Slack thread</h2>

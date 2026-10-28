@@ -24,6 +24,7 @@ var (
 	mBudgetBlock metric.Int64Counter     // lantern.run.budget.blocks
 	mBudgetErr   metric.Int64Counter     // lantern.budget.check.errors
 	mRunTotal    metric.Int64Counter     // lantern.run.total
+	mOnboard     metric.Int64Counter     // lantern.onboarding.step.total
 )
 
 func ensureMetrics() {
@@ -49,6 +50,9 @@ func ensureMetrics() {
 		)
 		mRunTotal, _ = m.Int64Counter("lantern.run.total",
 			metric.WithDescription("Total agent runs dispatched through the inline executor"),
+		)
+		mOnboard, _ = m.Int64Counter("lantern.onboarding.step.total",
+			metric.WithDescription("Onboarding steps reached / completed"),
 		)
 	})
 }
@@ -121,5 +125,16 @@ func RecordRunTotal(ctx context.Context, agentName, tier, status string) {
 		attribute.String("lantern.agent_name", agentName),
 		attribute.String("lantern.tier", tier),
 		attribute.String("lantern.status", status),
+	))
+}
+
+// RecordOnboardingStep increments lantern.onboarding.step.total. step is one of
+// the fixed onboarding steps (goal|spec|provider|create|run|sandbox|done)
+// and event is "reached" or "completed" — a bounded label set, no tenant ids.
+func RecordOnboardingStep(ctx context.Context, step, event string) {
+	ensureMetrics()
+	mOnboard.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("lantern.onboarding_step", step),
+		attribute.String("lantern.onboarding_event", event),
 	))
 }
