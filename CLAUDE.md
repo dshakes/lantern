@@ -664,6 +664,20 @@ Reuses the eval-in-CI baseline machinery to gate merges.
 | ------ | ------------------- | -------------------------------------------------------------------------------------- |
 | `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
 
+### Knowledge base + human handoff (W2-X1, support desk)
+
+Per-agent docs in `agent_documents` / `agent_document_chunks` (migration 0027, RLS; ids are unique per `(tenant, agent)`). Chunks are embedded via `EmbedText` (pgvector cosine; Postgres full-text fallback with no OpenAI key; floor `LANTERN_KB_MIN_SCORE`, default 0.2). `SessionHandler.processMessage` appends retrieved excerpts to the system prompt (fenced as data) and puts `sources` on `message_completed`. An agent labelled `handoff=human` (+ optional `handoff_slack_channel`) gets ONLY the `handoff_to_human` tool: it sets `sessions.status='handoff'`, emits `session.handoff`, pings Slack once (the status transition is the idempotency guard); in handoff the LLM is silent and `appendAssistantMessage` keeps the status. Operator endpoints need the coarse `write` scope so a public widget key (`runs:execute`) cannot act as the operator. Example: `examples/support-desk/`; e2e: `e2e/examples`. The fixture `llm-replay` serves a deterministic `/v1/embeddings`.
+
+| Method | Path | Scope |
+| ------ | ---- | ----- |
+| `POST` | `/v1/agents/{name}/documents` | agents:write |
+| `GET` | `/v1/agents/{name}/documents`, `/{id}` | agents:read |
+| `DELETE` | `/v1/agents/{name}/documents/{id}` | agents:write |
+| `POST` | `/v1/agents/{name}/documents/search` | agents:read |
+| `POST` | `/v1/sessions/{id}/handoff` | runs:execute |
+| `POST` | `/v1/sessions/{id}/operator-messages`, `/resolve` | write |
+| `GET` | `/v1/sessions?status=handoff` | (list) |
+
 ### Webchat embed (W10)
 
 Static JS widget served at `/widget.js` from the same origin. Embed with
