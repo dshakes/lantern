@@ -71,6 +71,10 @@ import (
 type VMStateInfo struct {
 	State  string
 	Reason string
+	// SoftwareMeasurement is the host-asserted SHA-256 measurement stamped by
+	// the runtime-manager at spawn time (ADR 0030). Empty until spawn
+	// completes; backfilled into runtime_vms by the reconciler.
+	SoftwareMeasurement string
 }
 
 // SchedulerClient is the thin abstraction the runtime handler talks to.
@@ -543,8 +547,9 @@ func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (
 			continue
 		}
 		out[h.GetVmId()] = VMStateInfo{
-			State:  vmStateString(item.GetState()),
-			Reason: item.GetReason(),
+			State:               vmStateString(item.GetState()),
+			Reason:              item.GetReason(),
+			SoftwareMeasurement: h.GetSoftwareMeasurement(),
 		}
 	}
 	return out, nil
@@ -1441,13 +1446,19 @@ func (h *RuntimeHandler) reconcileOnce() {
 				// COALESCE keeps a previously-recorded reason when the
 				// scheduler reports none, so an explanation is never
 				// overwritten with blank on a later sweep.
+				// software_measurement is written once (when the scheduler has
+				// it after spawn completes) and never cleared — NULLIF keeps
+				// an already-recorded value across future reconcile sweeps.
 				_, e := tx.Exec(tctx, `
 					UPDATE runtime_vms
 					SET state = $1,
-					    state_reason = COALESCE(NULLIF($4, ''), state_reason)
+					    state_reason = COALESCE(NULLIF($4, ''), state_reason),
+					    software_measurement = COALESCE(software_measurement, NULLIF($5, ''))
 					WHERE vm_id = $2 AND tenant_id = $3
-					  AND (state <> $1 OR (state_reason IS DISTINCT FROM $4 AND $4 <> ''))
-				`, info.State, vmID, tenantID, info.Reason)
+					  AND (state <> $1
+					       OR (state_reason IS DISTINCT FROM $4 AND $4 <> '')
+					       OR (software_measurement IS DISTINCT FROM $5 AND $5 <> ''))
+				`, info.State, vmID, tenantID, info.Reason, info.SoftwareMeasurement)
 				return e
 			})
 			if err != nil {

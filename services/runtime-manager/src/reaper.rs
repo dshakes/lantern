@@ -265,6 +265,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         }
     }
 

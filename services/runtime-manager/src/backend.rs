@@ -196,6 +196,16 @@ pub trait RuntimeBackend: Send + Sync {
         None
     }
 
+    /// Host-asserted software measurement for `handle_id`'s boot (ADR 0030).
+    ///
+    /// SHA-256 hex over the canonical inputs the manager booted from (kernel,
+    /// rootfs, harness, boot args, spawn contract sans secrets). Default
+    /// `None`; only Firecracker returns a value — other backends do not
+    /// control the image stack at this granularity.
+    fn software_measurement(&self, _handle_id: &str) -> Option<String> {
+        None
+    }
+
     /// Whether restoring a snapshot while its SOURCE VM still runs on this
     /// node would collide on host resources the snapshot pins (bare
     /// Firecracker: the source's vsock UDS and cert image paths). The service

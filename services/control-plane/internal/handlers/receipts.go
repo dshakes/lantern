@@ -81,6 +81,12 @@ type receiptPayload struct {
 	// the canonical signed payload for every non-confidential run, so existing
 	// receipts are byte-identical and their signatures unchanged.
 	ConfidentialCompute *confidentialComputeBlock `json:"confidentialCompute,omitempty"`
+	// SoftwareMeasurement is the host-asserted SHA-256 over (kernel, rootfs,
+	// harness, boot args, spawn contract minus secrets) computed by the
+	// runtime-manager at spawn time (ADR 0030). Absent for runs that did not
+	// use a microVM, or when measurement was not configured. Additive:
+	// omitempty keeps existing receipts byte-identical.
+	SoftwareMeasurement string `json:"softwareMeasurement,omitempty"`
 }
 
 // confidentialComputeBlock is the recorded CC evidence for a run. `attested` is
@@ -428,14 +434,15 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 	var ccRequested bool
 	var ccTech *string
 	var attestation []byte
+	var softwareMeasurement *string
 	ccErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT COALESCE(confidential, false), cc_tech, attestation
+			SELECT COALESCE(confidential, false), cc_tech, attestation, software_measurement
 			FROM runtime_vms
 			WHERE run_id = $1 AND tenant_id = $2
 			ORDER BY created_at DESC
 			LIMIT 1
-		`, runID, tenantID).Scan(&ccRequested, &ccTech, &attestation)
+		`, runID, tenantID).Scan(&ccRequested, &ccTech, &attestation, &softwareMeasurement)
 	})
 	if ccErr != nil && !errors.Is(ccErr, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("query runtime_vms for confidential-compute evidence: %w", ccErr)
@@ -456,6 +463,13 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 			}
 		}
 		p.ConfidentialCompute = block
+	}
+	// Host-asserted software measurement (ADR 0030). Present for any run that
+	// used a microVM and where the manager computed the measurement at spawn.
+	// Independent of the confidential-compute block: a non-confidential VM can
+	// still have a recorded measurement.
+	if softwareMeasurement != nil && *softwareMeasurement != "" {
+		p.SoftwareMeasurement = *softwareMeasurement
 	}
 
 	journalHash, err := h.hashJournal(ctx, runID)

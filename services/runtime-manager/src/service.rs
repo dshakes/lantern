@@ -691,6 +691,7 @@ impl RuntimeManagerGrpc {
         let tenant_id = req.tenant_id.clone();
         let cert_sha256 = backend.identity_pin(&handle.id);
         let exec_token = backend.exec_token(&handle.id);
+        let software_measurement = backend.software_measurement(&handle.id);
 
         // Register the handle. `declared_secret_uris` is sourced from the
         // manager's own spawn record (via `req.secrets`) — never from
@@ -713,6 +714,7 @@ impl RuntimeManagerGrpc {
             // the snapshot a restore came from) cannot act as the VM.
             cert_sha256,
             exec_token,
+            software_measurement,
         });
 
         tracing::info!(
@@ -724,9 +726,10 @@ impl RuntimeManagerGrpc {
         );
 
         Ok(Response::new(proto::ScheduleResponse {
-            handle_id: handle.id,
+            handle_id: handle.id.clone(),
             node_name: handle.node_name,
             cold_start_ms: handle.cold_start_ms,
+            software_measurement: backend.software_measurement(&handle.id),
         }))
     }
 
@@ -1041,6 +1044,7 @@ impl RuntimeManagerGrpc {
             agent_version_id: String::new(),
             cert_sha256: self.backend.identity_pin(&handle.id),
             exec_token: self.backend.exec_token(&handle.id),
+            software_measurement: self.backend.software_measurement(&handle.id),
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -1576,8 +1580,12 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 vm_id = %h.vm_id,
                 "spawn: idempotent return — vm_id already registered"
             );
+            let mut idempotent_handle = h.clone();
+            if let Some(m) = existing.software_measurement.clone() {
+                idempotent_handle.software_measurement = m;
+            }
             return Ok(Response::new(pb::SpawnResponse {
-                handle: Some(h.clone()),
+                handle: Some(idempotent_handle),
                 boot_duration: Some(prost_types::Duration {
                     seconds: 0,
                     nanos: 0,
@@ -1621,9 +1629,11 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // handle. Without this, the registry only knows the docker
         // container id and Stop(vm-uuid) silently no-ops.
         let backend_handle_id = resp.handle_id.clone();
+        let measurement = resp.software_measurement.clone().unwrap_or_default();
         let vm_handle = match pre_handle {
-            Some(h) if !h.vm_id.is_empty() => {
+            Some(mut h) if !h.vm_id.is_empty() => {
                 self.registry.rekey(&backend_handle_id, &h.vm_id);
+                h.software_measurement = measurement;
                 h
             }
             _ => pb::VmHandle {
@@ -1631,6 +1641,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 node: resp.node_name,
                 availability_zone: String::new(),
                 created_at: None,
+                software_measurement: measurement,
             },
         };
 
@@ -3292,6 +3303,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3474,6 +3486,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3538,6 +3551,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         // Rekey so the wire vm_id resolves to the backend handle_id.
         svc.registry.rekey(handle_id, vm_id);
@@ -3739,6 +3753,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         svc.registry.rekey(handle_id, vm_id);
         svc
@@ -4074,6 +4089,7 @@ mod tests {
                 node: "node-1".to_string(),
                 availability_zone: String::new(),
                 created_at: None,
+                software_measurement: String::new(),
             }),
             spec: Some(pb::AgentSpec {
                 image_digest: "sha256:idem".to_string(),
@@ -4556,7 +4572,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -4611,6 +4628,7 @@ mod tests {
             "vm-rep",
             &ca.cert.pem(),
             &ca.key_pair.serialize_pem(),
+            None,
         )
         .unwrap();
         let der = rustls_pemfile::certs(&mut std::io::BufReader::new(std::io::Cursor::new(
@@ -4661,7 +4679,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -4698,7 +4717,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -5411,6 +5431,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: Some("tok-b".to_string()),
+            software_measurement: None,
         });
         // No heartbeat address needed: a broker VM has no NIC to dial.
         svc.harness_ready.mark_ready("vm-b");

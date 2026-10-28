@@ -315,8 +315,9 @@ pub fn generate_vm_client_cert(
     vm_id: &str,
     ca_cert_pem: &str,
     ca_key_pem: &str,
+    software_measurement: Option<&str>,
 ) -> anyhow::Result<IssuedVmCert> {
-    use rcgen::{CertificateParams, DnType, KeyPair};
+    use rcgen::{CertificateParams, CustomExtension, DnType, KeyPair};
 
     if vm_id.is_empty() {
         return Err(anyhow::anyhow!("cannot issue cert for empty vm_id"));
@@ -347,6 +348,23 @@ pub fn generate_vm_client_cert(
     let now = time::OffsetDateTime::now_utc();
     leaf_params.not_before = now;
     leaf_params.not_after = now + time::Duration::days(VM_CERT_TTL_DAYS);
+
+    // Bind the host-asserted software measurement (ADR 0030) into the cert so
+    // a receipt verifier can correlate the cert identity to the booted image.
+    // Extension value is a DER UTF8String (tag 0x0C) containing the 64-char hex.
+    // Not critical — a relying party that doesn't know about ADR 0030 can skip it.
+    if let Some(m) = software_measurement {
+        let s = m.as_bytes();
+        // Single-byte DER length is correct for <= 127 bytes; a SHA-256 hex is
+        // always exactly 64 chars, well within that range.
+        let mut der_value = Vec::with_capacity(2 + s.len());
+        der_value.push(0x0C); // UTF8String tag
+        der_value.push(s.len() as u8); // length (64 < 128, so definite short form)
+        der_value.extend_from_slice(s);
+        let ext =
+            CustomExtension::from_oid_content(crate::measurement::MEASUREMENT_CERT_OID, der_value);
+        leaf_params.custom_extensions = vec![ext];
+    }
 
     let leaf_key = KeyPair::generate().map_err(|e| anyhow::anyhow!("generate leaf key: {e}"))?;
     let leaf_cert = leaf_params
@@ -555,8 +573,8 @@ mod tests {
     fn pin_accepts_only_the_current_incarnations_cert() {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("ca");
         let (ca_pem, ca_key) = (ca.cert.pem(), ca.key_pair.serialize_pem());
-        let old = generate_vm_client_cert("vm-x", &ca_pem, &ca_key).expect("old");
-        let new = generate_vm_client_cert("vm-x", &ca_pem, &ca_key).expect("new");
+        let old = generate_vm_client_cert("vm-x", &ca_pem, &ca_key, None).expect("old");
+        let new = generate_vm_client_cert("vm-x", &ca_pem, &ca_key, None).expect("new");
         let der = |pem: &str| {
             rustls_pemfile::certs(&mut Cursor::new(pem.as_bytes()))
                 .next()
@@ -714,8 +732,8 @@ mod tests {
         let (ca_cert, ca_key) = make_ca("manager-ca");
         let vm_id = "vm-issue-001";
 
-        let issued =
-            generate_vm_client_cert(vm_id, &ca_cert, &ca_key).expect("cert issuance must succeed");
+        let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key, None)
+            .expect("cert issuance must succeed");
 
         // The leaf parses and its CN/SAN matches the vm_id.
         let der = pem_to_der(issued.cert_pem.as_bytes());
@@ -737,7 +755,7 @@ mod tests {
         let (ca_cert_pem, ca_key) = make_ca("manager-ca-signer");
         let vm_id = "vm-signed-by-ca";
 
-        let issued = generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key).expect("issuance");
+        let issued = generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key, None).expect("issuance");
 
         let leaf_der = pem_to_der(issued.cert_pem.as_bytes());
         let ca_der = pem_to_der(ca_cert_pem.as_bytes());
@@ -762,7 +780,7 @@ mod tests {
     #[test]
     fn vm_cert_marker_distinguishes_guest_from_service() {
         let (ca_cert, ca_key) = make_ca("manager-ca-ou");
-        let issued = generate_vm_client_cert("vm-ou", &ca_cert, &ca_key).unwrap();
+        let issued = generate_vm_client_cert("vm-ou", &ca_cert, &ca_key, None).unwrap();
         assert!(is_vm_client_cert(&pem_to_der(issued.cert_pem.as_bytes())));
 
         let service = rcgen::generate_simple_self_signed(vec!["scheduler".into()]).unwrap();
@@ -774,7 +792,7 @@ mod tests {
     /// Issuance with bad CA PEM fails cleanly (no panic).
     #[test]
     fn generate_vm_cert_rejects_bad_ca() {
-        let err = generate_vm_client_cert("vm-x", "not-a-pem", "also-not-a-pem");
+        let err = generate_vm_client_cert("vm-x", "not-a-pem", "also-not-a-pem", None);
         assert!(err.is_err(), "expected Err for invalid CA PEM");
     }
 
@@ -782,7 +800,65 @@ mod tests {
     #[test]
     fn generate_vm_cert_rejects_empty_vm_id() {
         let (ca_cert, ca_key) = make_ca("ca");
-        assert!(generate_vm_client_cert("", &ca_cert, &ca_key).is_err());
+        assert!(generate_vm_client_cert("", &ca_cert, &ca_key, None).is_err());
+    }
+
+    /// A cert issued WITH a measurement embeds the custom OID
+    /// `1.3.6.1.4.1.99999.3` and its value round-trips as a UTF8String.
+    ///
+    /// We scan the raw DER for the known UTF8String encoding: tag 0x0C,
+    /// length (64), then the 64 ASCII bytes of the hex measurement. This is
+    /// robust and avoids the x509_parser OID API which differs across versions.
+    #[test]
+    fn generate_vm_cert_embeds_measurement_oid() {
+        let measurement = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let (ca_cert, ca_key) = make_ca("ca-meas");
+        let issued = generate_vm_client_cert("vm-meas-test", &ca_cert, &ca_key, Some(measurement))
+            .expect("cert issuance with measurement");
+        let der = pem_to_der(issued.cert_pem.as_bytes());
+
+        // Find the UTF8String encoding of the measurement in the DER.
+        // UTF8String tag = 0x0C, length = 64, then 64 bytes of hex ASCII.
+        let needle: Vec<u8> = std::iter::once(0x0Cu8)
+            .chain(std::iter::once(measurement.len() as u8))
+            .chain(measurement.bytes())
+            .collect();
+        assert!(
+            der.windows(needle.len()).any(|w| w == needle.as_slice()),
+            "DER cert must contain UTF8String-encoded measurement: {measurement}"
+        );
+
+        // Also verify via x509_parser that the extension count is > base.
+        let issued_none = generate_vm_client_cert("vm-meas-base", &ca_cert, &ca_key, None)
+            .expect("cert without measurement");
+        let base_der = pem_to_der(issued_none.cert_pem.as_bytes());
+        let (_, parsed) =
+            x509_parser::parse_x509_certificate(&der).expect("parse cert with measurement");
+        let (_, base) = x509_parser::parse_x509_certificate(&base_der).expect("parse base cert");
+        assert!(
+            parsed.extensions().len() > base.extensions().len(),
+            "cert WITH measurement must have more extensions than cert WITHOUT"
+        );
+    }
+
+    /// A cert issued WITHOUT a measurement does NOT contain the UTF8String
+    /// encoding of any 64-byte measurement in its DER.
+    #[test]
+    fn generate_vm_cert_without_measurement_has_no_oid() {
+        let measurement = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let (ca_cert, ca_key) = make_ca("ca-no-meas");
+        let issued = generate_vm_client_cert("vm-no-meas", &ca_cert, &ca_key, None)
+            .expect("cert issuance without measurement");
+        let der = pem_to_der(issued.cert_pem.as_bytes());
+
+        let needle: Vec<u8> = std::iter::once(0x0Cu8)
+            .chain(std::iter::once(measurement.len() as u8))
+            .chain(measurement.bytes())
+            .collect();
+        assert!(
+            !der.windows(needle.len()).any(|w| w == needle.as_slice()),
+            "DER cert WITHOUT measurement must not contain UTF8String-encoded measurement bytes"
+        );
     }
 
     // ---------------------------------------------------------------------------
@@ -795,7 +871,7 @@ mod tests {
     fn authorize_accepts_matching_cert() {
         let (ca_cert, ca_key) = make_ca("ca");
         let vm_id = "vm-match";
-        let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key).unwrap();
+        let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key, None).unwrap();
         let der = pem_to_der(issued.cert_pem.as_bytes());
 
         assert!(
@@ -809,7 +885,7 @@ mod tests {
     fn authorize_rejects_wrong_cn_cert() {
         let (ca_cert, ca_key) = make_ca("ca");
         // Cert minted for one VM, presented while claiming to be another.
-        let issued = generate_vm_client_cert("vm-OTHER", &ca_cert, &ca_key).unwrap();
+        let issued = generate_vm_client_cert("vm-OTHER", &ca_cert, &ca_key, None).unwrap();
         let der = pem_to_der(issued.cert_pem.as_bytes());
 
         let result = authorize_vm_cert("vm-EXPECTED", Some(&der));
@@ -839,7 +915,7 @@ mod tests {
     fn write_vm_cert_files_produces_expected_paths_and_perms() {
         let (ca_cert, ca_key) = make_ca("ca");
         let vm_id = "vm-write-001";
-        let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key).unwrap();
+        let issued = generate_vm_client_cert(vm_id, &ca_cert, &ca_key, None).unwrap();
 
         let tmp = std::env::temp_dir().join(format!("lantern-tls-test-{}", uuid::Uuid::new_v4()));
         let paths = write_vm_cert_files(&tmp, vm_id, &issued, &ca_cert).expect("write");

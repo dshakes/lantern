@@ -349,6 +349,8 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
   LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" \
   LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
+  LANTERN_MEASUREMENT_GATE="${LANTERN_MEASUREMENT_GATE:-warn}" \
+  LANTERN_VM_CERT_DIR="${WORK}/vm-certs" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
 # Recorded BEFORE the handshake so an early failure still has something to kill:

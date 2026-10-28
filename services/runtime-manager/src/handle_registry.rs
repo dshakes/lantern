@@ -35,6 +35,11 @@ pub struct HandleInfo {
     /// (minted per spawn/restore; never logged). The manager's exec client
     /// sends it; a superseded incarnation's token is rejected by the guest.
     pub exec_token: Option<String>,
+    /// Host-asserted software measurement for this VM's boot (ADR 0030).
+    /// SHA-256 hex over: kernel image → rootfs → harness → boot args →
+    /// spawn.json (sans secrets). `None` for non-Firecracker backends or when
+    /// measurement computation failed (fail-open; error is warn-logged).
+    pub software_measurement: Option<String>,
 }
 
 /// Thread-safe registry of all active sandbox handles.
@@ -252,6 +257,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         }
     }
 
@@ -499,6 +505,7 @@ mod change_notify_tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         }
     }
 

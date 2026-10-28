@@ -846,8 +846,11 @@ type VmHandle struct {
 	Node             string                 `protobuf:"bytes,2,opt,name=node,proto3" json:"node,omitempty"`             // assigned node
 	AvailabilityZone string                 `protobuf:"bytes,3,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"`
 	CreatedAt        *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Host-asserted software measurement (ADR 0030): SHA-256 hex over the five
+	// canonical inputs the manager booted from. Empty when not available.
+	SoftwareMeasurement string `protobuf:"bytes,5,opt,name=software_measurement,json=softwareMeasurement,proto3" json:"software_measurement,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *VmHandle) Reset() {
@@ -906,6 +909,13 @@ func (x *VmHandle) GetCreatedAt() *timestamppb.Timestamp {
 		return x.CreatedAt
 	}
 	return nil
+}
+
+func (x *VmHandle) GetSoftwareMeasurement() string {
+	if x != nil {
+		return x.SoftwareMeasurement
+	}
+	return ""
 }
 
 type StatusEvent struct {

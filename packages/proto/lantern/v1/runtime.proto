@@ -163,6 +163,11 @@ message VmHandle {
   string node         = 2;   // assigned node
   string availability_zone = 3;
   google.protobuf.Timestamp created_at = 4;
+  // Host-asserted software measurement (ADR 0030): SHA-256 hex over the five
+  // canonical inputs the manager booted from (kernel, rootfs, harness, boot
+  // args, spawn contract sans secrets). Empty when not computed or not
+  // available (non-Firecracker backends).
+  string software_measurement = 5;
 }
 
 message StatusEvent {

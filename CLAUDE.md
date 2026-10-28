@@ -1248,6 +1248,16 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 `LANTERN_EGRESS_MODE=broker`, `LANTERN_EGRESS_CA_PEM`,
 `LANTERN_EGRESS_VSOCK_PORT`, `LANTERN_MANAGER_VSOCK_PORT`.
 
+**Host-asserted software measurement env vars (runtime-manager; ADR 0030):**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` = record only; `warn` = log mismatch, proceed; `enforce` = refuse VM on mismatch. |
+| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected SHA-256 hex measurements. Empty = no comparison made. |
+| `FC_HARNESS_PATH` | _(unset)_ | Path to a separately-installed harness binary for measurement. 32 zero bytes when unset (harness baked into rootfs). |
+
+The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads. It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). The measurement is embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3`), the `runtime_vms.software_measurement` column (written by the reconciler after spawn completes), and signed run receipts (`softwareMeasurement` field).
+
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets, `idleTimeoutSecs`). Returns `vm_id`. 402 if quota exceeded |

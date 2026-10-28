@@ -519,9 +519,14 @@ impl VmConfig {
         //   LANTERN_VM_ID, LANTERN_VM_TLS_CERT/KEY, LANTERN_MANAGER_TLS_CA.
         // Note: per-VM cert generation is a paired follow-up.  We thread
         // the paths here so the boot-args contract is stable.
-        let tls_cert_path = format!("/run/lantern/certs/{vm_id}/tls.crt");
-        let tls_key_path = format!("/run/lantern/certs/{vm_id}/tls.key");
-        let manager_ca_path = "/run/lantern/certs/manager-ca.crt".to_string();
+        //
+        // LANTERN_VM_CERT_DIR overrides the default /run/lantern/certs so that
+        // non-root dev environments (tests, CI, Lima) can write cert files.
+        let cert_root = std::env::var(crate::tls::ENV_VM_CERT_DIR)
+            .unwrap_or_else(|_| crate::tls::DEFAULT_VM_CERT_DIR.to_string());
+        let tls_cert_path = format!("{cert_root}/{vm_id}/tls.crt");
+        let tls_key_path = format!("{cert_root}/{vm_id}/tls.key");
+        let manager_ca_path = format!("{cert_root}/manager-ca.crt");
 
         // Point-to-point /30 for this VM; the guest learns it via ip= below.
         let network = VmNetwork::allocate();
@@ -567,7 +572,7 @@ impl VmConfig {
             tls_cert_path,
             tls_key_path,
             manager_ca_path,
-            certs_image_path: format!("/run/lantern/certs/{vm_id}/certs.img"),
+            certs_image_path: format!("{cert_root}/{vm_id}/certs.img"),
             network,
             spawn_contract,
             egress_mode,
@@ -971,7 +976,7 @@ pub fn broker_boot_args(args: &str) -> String {
 /// CA is expected to be configured.)
 ///
 /// LINUX-ONLY in practice: only reached after `firecracker_available()`.
-fn provision_vm_cert(cfg: &VmConfig) -> Result<String> {
+fn provision_vm_cert(cfg: &VmConfig, software_measurement: Option<&str>) -> Result<String> {
     use std::path::Path;
 
     let (ca_cert_pem, ca_key_pem) = crate::tls::load_signing_ca()?.ok_or_else(|| {
@@ -987,8 +992,13 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<String> {
         )
     })?;
 
-    let issued = crate::tls::generate_vm_client_cert(&cfg.vm_id, &ca_cert_pem, &ca_key_pem)
-        .with_context(|| format!("issue client cert for vm '{}'", cfg.vm_id))?;
+    let issued = crate::tls::generate_vm_client_cert(
+        &cfg.vm_id,
+        &ca_cert_pem,
+        &ca_key_pem,
+        software_measurement,
+    )
+    .with_context(|| format!("issue client cert for vm '{}'", cfg.vm_id))?;
     let pin = crate::tls::cert_pem_sha256(&issued.cert_pem)
         .ok_or_else(|| anyhow::anyhow!("issued cert for vm '{}' is unparseable", cfg.vm_id))?;
 
@@ -1018,6 +1028,52 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<String> {
         "provisioned per-VM client cert (CN=vm_id) + packed cert image"
     );
     Ok(pin)
+}
+
+/// Compute and gate-check the host-asserted software measurement (ADR 0030).
+///
+/// Returns `Ok(Some(hex))` on success, `Ok(None)` if file-hashing fails
+/// (the VM still boots — fail-open for compute errors), or `Err` if the
+/// Inputs bundled for the blocking measurement task (avoids the 8-argument
+/// clippy lint on `compute_and_check_measurement`).
+struct MeasurementInput {
+    kernel_path: String,
+    rootfs_path: String,
+    harness_path: Option<String>,
+    boot_args: String,
+    contract: SpawnContract,
+    reference_measurements: Vec<String>,
+    gate: crate::measurement::MeasurementGate,
+    vm_id: String,
+}
+
+/// Compute and gate-check the host-asserted software measurement (ADR 0030).
+///
+/// Returns `Ok(Some(hex))` on success, `Ok(None)` when the computation itself
+/// fails (fail-open so a missing image file doesn't prevent boot), or `Err` when
+/// gate is `Enforce` and the measurement does not match any reference value.
+///
+/// Intended to be called from `tokio::task::spawn_blocking`.
+fn compute_and_check_measurement(inp: MeasurementInput) -> Result<Option<String>> {
+    let m = match crate::measurement::compute(
+        &inp.kernel_path,
+        &inp.rootfs_path,
+        inp.harness_path.as_deref(),
+        &inp.boot_args,
+        &inp.contract,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(
+                vm_id = inp.vm_id,
+                error = %e,
+                "software measurement computation failed; continuing without measurement"
+            );
+            return Ok(None);
+        }
+    };
+    crate::measurement::check(&m, &inp.reference_measurements, inp.gate, &inp.vm_id)?;
+    Ok(Some(m))
 }
 
 /// Build the `mke2fs` argv that packs `src_dir` into a small ext4 image at
@@ -2929,6 +2985,14 @@ pub struct FirecrackerBackend {
     /// vm_id -> this incarnation's broker (listener tasks + vsock UDS).
     /// Presence = the VM has no NIC; exec dials it over vsock.
     broker_vms: Arc<Mutex<HashMap<String, BrokerVm>>>,
+    /// Optional separately-installed harness binary path (`FC_HARNESS_PATH`).
+    /// When `None` the harness is baked into the rootfs; its measurement
+    /// component is 32 zero bytes.
+    harness_path: Option<String>,
+    /// Software measurement gate (ADR 0030). `LANTERN_MEASUREMENT_GATE`.
+    measurement_gate: crate::measurement::MeasurementGate,
+    /// Known-good measurement hex strings (`LANTERN_REFERENCE_MEASUREMENTS`).
+    reference_measurements: Vec<String>,
 }
 
 /// A broker-mode VM's host-side state (ADR 0026).
@@ -2945,6 +3009,8 @@ struct BrokerVm {
 struct Incarnation {
     cert_sha256: String,
     exec_token: String,
+    /// Host-asserted software measurement computed at spawn/restore (ADR 0030).
+    software_measurement: Option<String>,
 }
 
 /// A fresh exec-server bearer token: 244 bits from the OS CSPRNG.
@@ -2985,6 +3051,12 @@ impl FirecrackerBackend {
             );
         }
 
+        let harness_path = std::env::var("FC_HARNESS_PATH")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let measurement_gate = crate::measurement::MeasurementGate::from_env();
+        let reference_measurements = crate::measurement::reference_measurements_from_env();
+
         FirecrackerBackend {
             kernel_image_path,
             rootfs_path,
@@ -2999,6 +3071,9 @@ impl FirecrackerBackend {
             egress_mode: EgressMode::from_env(),
             broker_deps: None,
             broker_vms: Arc::default(),
+            harness_path,
+            measurement_gate,
+            reference_measurements,
         }
     }
 
@@ -3182,18 +3257,26 @@ impl FirecrackerBackend {
     }
 
     /// Issue this VM's cert + pack its cert image (blocking I/O off the
-    /// executor) and record the identity pin.
-    async fn provision_identity(&self, cfg: &VmConfig) -> Result<()> {
+    /// executor) and record the identity pin + software measurement (ADR 0030).
+    async fn provision_identity(
+        &self,
+        cfg: &VmConfig,
+        software_measurement: Option<String>,
+    ) -> Result<()> {
         let cfg_clone = cfg.clone();
-        let pin = tokio::task::spawn_blocking(move || provision_vm_cert(&cfg_clone))
-            .await
-            .context("cert provisioning task join")?
-            .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
+        let m_for_cert = software_measurement.clone();
+        let pin = tokio::task::spawn_blocking(move || {
+            provision_vm_cert(&cfg_clone, m_for_cert.as_deref())
+        })
+        .await
+        .context("cert provisioning task join")?
+        .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
         self.set_incarnation(
             &cfg.vm_id,
             Some(Incarnation {
                 cert_sha256: pin,
                 exec_token: cfg.spawn_contract.exec_token.clone(),
+                software_measurement,
             }),
         );
         Ok(())
@@ -3258,7 +3341,7 @@ impl FirecrackerBackend {
     ///
     /// LINUX-ONLY: steps 1-2 and the actual HTTP calls require Linux + KVM.
     /// Integration-tested on a Linux host.
-    async fn boot_vm(&self, cfg: &VmConfig) -> Result<()> {
+    async fn boot_vm(&self, cfg: &VmConfig, software_measurement: Option<String>) -> Result<()> {
         let binary = self
             .binary_path
             .as_deref()
@@ -3272,7 +3355,7 @@ impl FirecrackerBackend {
         //
         // provision_vm_cert uses std::fs + std::process::Command; wrap in
         // spawn_blocking so we don't block the async executor.
-        self.provision_identity(cfg).await?;
+        self.provision_identity(cfg, software_measurement).await?;
 
         // Step 0.5: ensure the host runtime dirs for the API socket and the
         // vsock UDS exist. Firecracker binds the vsock host-side Unix socket
@@ -3530,7 +3613,24 @@ impl FirecrackerBackend {
             shared_mem,
             "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
-        self.provision_identity(&cfg).await?;
+        // Compute host-asserted software measurement before provisioning
+        // identity (ADR 0030). Same fail-open semantics as schedule().
+        let measurement = {
+            let inp = MeasurementInput {
+                kernel_path: cfg.kernel_image_path.clone(),
+                rootfs_path: cfg.rootfs_path.clone(),
+                harness_path: self.harness_path.clone(),
+                boot_args: cfg.boot_args.clone(),
+                contract: cfg.spawn_contract.clone(),
+                gate: self.measurement_gate,
+                reference_measurements: self.reference_measurements.clone(),
+                vm_id: vm_id.clone(),
+            };
+            tokio::task::spawn_blocking(move || compute_and_check_measurement(inp))
+                .await
+                .context("measurement task join (restore)")??
+        };
+        self.provision_identity(&cfg, measurement).await?;
 
         // Broker mode (ADR 0026): no NIC — no TAP, no network override.
         let broker = cfg.egress_mode == EgressMode::Broker;
@@ -3733,7 +3833,26 @@ impl RuntimeBackend for FirecrackerBackend {
             "Firecracker: booting microVM (LINUX-ONLY)"
         );
 
-        if let Err(e) = self.boot_vm(&cfg).await {
+        // Compute host-asserted software measurement before boot (ADR 0030).
+        // Enforce gate returns Err here and refuses the spawn; Warn logs and
+        // continues; Off always succeeds. Computation errors are non-fatal.
+        let measurement = {
+            let inp = MeasurementInput {
+                kernel_path: cfg.kernel_image_path.clone(),
+                rootfs_path: cfg.rootfs_path.clone(),
+                harness_path: self.harness_path.clone(),
+                boot_args: cfg.boot_args.clone(),
+                contract: cfg.spawn_contract.clone(),
+                gate: self.measurement_gate,
+                reference_measurements: self.reference_measurements.clone(),
+                vm_id: vm_id.clone(),
+            };
+            tokio::task::spawn_blocking(move || compute_and_check_measurement(inp))
+                .await
+                .context("measurement task join")??
+        };
+
+        if let Err(e) = self.boot_vm(&cfg, measurement).await {
             // No VM, no identity: never leave a pin for a cert nothing presents.
             self.set_incarnation(&vm_id, None);
             return Err(e.context(format!(
@@ -4088,6 +4207,11 @@ impl RuntimeBackend for FirecrackerBackend {
 
     fn exec_token(&self, handle_id: &str) -> Option<String> {
         self.incarnation(handle_id).map(|i| i.exec_token)
+    }
+
+    fn software_measurement(&self, handle_id: &str) -> Option<String> {
+        self.incarnation(handle_id)
+            .and_then(|i| i.software_measurement)
     }
 
     /// Bare restores reuse the snapshot's host paths (vsock UDS, cert image)
@@ -6516,6 +6640,7 @@ mod tests {
         let inc = |pin: &str, tok: &str| Incarnation {
             cert_sha256: pin.into(),
             exec_token: tok.into(),
+            software_measurement: None,
         };
         assert_eq!(backend.identity_pin(WIRE), None);
         assert_eq!(backend.exec_token(WIRE), None);

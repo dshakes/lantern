@@ -10,6 +10,22 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Host-asserted software measurement (ADR 0030, ACE A5)** — at every Firecracker
+  spawn and restore the runtime-manager computes a SHA-256 over the five canonical
+  inputs it directly controls: kernel image, rootfs image, harness binary (32 zero
+  bytes when baked into rootfs), kernel boot arguments, and the spawn contract with
+  secret fields zeroed. The 64-character hex measurement is:
+  - Embedded in the per-VM X.509 cert as a custom extension (OID `1.3.6.1.4.1.99999.3`).
+  - Stored in `runtime_vms.software_measurement` (migration `0028_software_measurement`)
+    via the reconciler after spawn completes.
+  - Included in signed run receipts as `softwareMeasurement` (additive; omitempty
+    keeps existing receipts byte-identical and their signatures valid).
+  - Returned in `VmHandle.software_measurement` (proto field 5) so orchestrators
+    can consume it without a DB query.
+  Gate control: `LANTERN_MEASUREMENT_GATE` (`off` | `warn` [default] | `enforce`).
+  Reference values: `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated hex).
+  **HOST-ASSERTED only** — proves what the host recorded it launched, NOT
+  what ran inside the VM; hardware attestation (ADR 0023) remains UNVERIFIED.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
   `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
 - **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.

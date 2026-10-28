@@ -598,10 +598,20 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 		Reason: "spawn dispatched to " + handle.Node,
 	})
 
-	_, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{
+	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{
 		Spec:   spec,
 		Handle: handle,
 	})
+	if err == nil && resp != nil && resp.Handle != nil && resp.Handle.SoftwareMeasurement != "" {
+		// Stamp the host-asserted measurement onto the handle (ADR 0030).
+		// handle is a pointer held by the cluster store — the write is visible
+		// to anyone who reads the VM after this point (heartbeats, list, receipt).
+		handle.SoftwareMeasurement = resp.Handle.SoftwareMeasurement
+		s.Logger.Info("software measurement recorded",
+			zap.String("vm_id", handle.VmId),
+			zap.String("measurement", resp.Handle.SoftwareMeasurement),
+		)
+	}
 	if err != nil {
 		s.Logger.Error("spawn dispatch failed",
 			zap.String("vm_id", handle.VmId),
