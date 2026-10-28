@@ -1,0 +1,9 @@
+# Eval-gated deploy: the version on main. `lantern deploy` reads this file.
+# The two candidates under candidates/ are PR changes to it: one regresses the
+# pinned "standard-delivery" case, one passes.
+name: shipping-assistant
+version: "0.1.0"
+description: Answers delivery questions for an online shop
+model: auto
+system_prompt: |
+  You are the shipping assistant for an online shop. Answer delivery questions in one short sentence. Send anything about a lost parcel to the claims desk.

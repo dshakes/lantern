@@ -35,7 +35,8 @@ import json, sys
 rules = []
 for path in ("pr-triage-webhook/fixtures/llm-rules.json",
              "incident-responder/fixtures/llm-rules.json",
-             "support-desk/rules.json"):
+             "support-desk/rules.json",
+             "eval-gated-deploy/fixtures/llm-rules.json"):
     rules += json.load(open(f"examples/{path}"))
 rules += json.load(open("e2e/examples/testdata/llm-rules.json"))   # digest + telegram
 json.dump(rules, open(sys.argv[1], "w"))

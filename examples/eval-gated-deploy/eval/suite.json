@@ -1,0 +1,9 @@
+{
+  "name": "release-gate",
+  "description": "Delivery questions the shipping assistant must keep answering correctly",
+  "cases": [
+    {"name": "standard-delivery", "input": "How many days does standard delivery take?", "assert": {"contains": "3-5 business days"}},
+    {"name": "track-order", "input": "Where can I track my parcel?", "assert": {"contains": "Orders page"}},
+    {"name": "lost-parcel", "input": "My parcel never arrived", "assert": {"contains": "claims desk"}}
+  ]
+}
