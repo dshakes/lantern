@@ -185,8 +185,8 @@ const sections: NavSection[] = [
     ]},
   ]},
   { label: "Showcase", items: [
-    { href: "/personal", label: "Built on Lantern: personal assistant", icon: Smartphone, subs: [
-      { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
+    { href: "/personal", label: "Built on Lantern", icon: Smartphone, subs: [
+      { href: "/personal#architecture", label: "Architecture" }, { href: "/personal#pipeline", label: "Reply pipeline" }, { href: "/personal#features", label: "Platform features" }, { href: "/personal#safety", label: "Safety model" }, { href: "/personal#quality", label: "Quality loop" }, { href: "/personal#limits", label: "Limits" },
     ]},
   ]},
 ];

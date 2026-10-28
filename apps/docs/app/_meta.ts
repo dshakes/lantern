@@ -26,7 +26,7 @@ export const PAGES: Record<string, { title: string; description: string }> = {
   "/marketplace": { title: "Marketplace & A2A", description: "Publish an agent, fork someone else's into your tenant, or call a published agent without forking it." },
   "/models": { title: "Models", description: "Agents ask for a capability such as reasoning-large. Lantern maps it to a concrete model from the providers you have keyed." },
   "/operations": { title: "Operations", description: "After helm install: scrape metrics, wire alerts, keep backups you have restored, run the restore drill, upgrade from the Bitnami-based chart, and run demo mode." },
-  "/personal": { title: "Personal harness — your phone, your bot", description: "The iMessage + WhatsApp bridges run on your own Mac and answer as you." },
+  "/personal": { title: "Built on Lantern: a personal assistant in production", description: "How the founder's iMessage and WhatsApp assistant is built on Lantern: the reply pipeline, the gates that hold risky replies, and the quality loop." },
   "/quickstart": { title: "Get started", description: "Describe what you want your agent to do in plain language. Lantern's onboarding agent designs it, checks your model key with a real call, creates it, and..." },
   "/runtime": { title: "Agent runtime", description: "Every Lantern run executes in one of two tiers — shared (inline executor inside the control-plane) or microVM (W12 Kubernetes/Firecracker/Kata stack) —..." },
   "/runtime/durable-execution": { title: "Durable execution", description: "A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice." },
