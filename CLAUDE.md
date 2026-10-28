@@ -906,7 +906,7 @@ The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METR
 (default `:9464`, never the `:8080` API port). OTel instruments are bridged by
 `internal/telemetry/metrics.go`. The endpoint is unauthenticated and its labels carry agent names,
 so keep `:9464` cluster-internal and reachable only by Prometheus — never expose it through an
-ingress. The `lantern-instrumented-slos` alert group in `infra/monitoring/prometheus/alerts.yml`
+ingress. The `lantern-instrumented-slos` alert group (`RunFailureRateHigh`, `BudgetDenied402Surge`) in `infra/monitoring/prometheus/alerts.yml`
 is enabled against those series: `lantern_run_total` counts a run `failed` when the executor
 errors OR the row ends `failed` (the workflow path), and `lantern_run_budget_blocks_total` counts
 every hard-fail 402 (runs, completions, marketplace, voice).
