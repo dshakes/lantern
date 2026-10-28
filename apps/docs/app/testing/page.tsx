@@ -140,7 +140,7 @@ npm run test:e2e`}</code></pre>
         <strong>Why.</strong> CI and kiosk mode need the same answer every time and must not need a provider key or
         spend money. Token usage is still reported, so budgets and cost metering run for real.
       </p>
-      <p><strong>How.</strong> The default reply is <code>fixture: </code> plus the first 60 characters of the last user message. A rules file scripts the rest; the first rule whose <code>match</code> is a substring of the user text wins.</p>
+      <p><strong>How.</strong> The default reply is <code>fixture: </code> plus the first 60 characters of the last user message. A rules file scripts the rest; the first rule whose <code>match</code> is a substring of the system prompt or the last user message wins (this is how the demo kiosk tells its agents apart). <code>GET /healthz</code> returns 200.</p>
       <pre><code>{`[
   {"match": "refund", "reply": "Refund issued."},
   {"match": "weather", "tool": {"name": "get_weather", "args": {"city": "Austin"}}}

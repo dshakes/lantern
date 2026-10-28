@@ -449,7 +449,7 @@ server `services/control-plane/cmd/connector-replay` (`go run ./cmd/connector-re
 with any override set is a startup error (`CheckConnectorBaseURLOverrides`), and the transport ignores
 overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` on `post_message`), GitHub
 `comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
-(`list_incidents`, `get_incident`, `create_incident`, `update_incident`; key in `apiKey`).
+(`list_incidents`, `get_incident`, `create_incident`, `update_incident`, `add_note`; key in `apiKey`).
 
 #### Fixture LLM tier (`LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}`)
 
@@ -509,6 +509,22 @@ fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
 with a scope it could not itself exercise (privilege escalation;
 `internal/handlers/api_keys.go`); JWT owner/admin sessions are exempt. Several
 previously unscoped mutators now carry `WithScope` annotations.
+
+### Kiosk / demo mode (ADR 0029)
+
+`lantern demo` / `make demo` run the stack with `infra/docker/docker-compose.kiosk.yml`
+(project `lantern-demo`). `POST /v1/kiosk/session` exists only when `LANTERN_KIOSK=1`
+(404 otherwise; unscoped by design, listed in `routes_scope_test.go`). It creates a
+`kiosk-<rand>` tenant (marker in `tenants.settings`, no migration), seeds agents/runs
+in `handlers/kiosk.go`, and returns a JWT with role `kiosk` + explicit scopes
+(`HasScope` treats `kiosk` like a scoped service key, so `LANTERN_AUTHZ_ENFORCE=1`
+bites). `RunKioskSweep` purges expired sessions via `purgeTenantRows` (extracted from
+`gdpr.go`; walks the catalog, no hardcoded table list). `CheckKioskConfig` is fatal in
+prod without `LANTERN_KIOSK_ALLOW_PROD=1`, without RLS+authz enforcement, or with a
+provider key lacking its `LANTERN_LLM_BASEURL_*`. Kiosk never seeds the dev admin.
+LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `LANTERN_KIOSK`,
+`_ALLOW_PROD`, `_TTL_MIN` (30), `_SWEEP_SEC` (60), `_MAX_SESSIONS` (20),
+`_IP_PER_HOUR` (3). Dashboard: public `/kiosk` start page, `components/kiosk-tour.tsx`.
 
 ### Deployments
 
@@ -663,6 +679,20 @@ Reuses the eval-in-CI baseline machinery to gate merges.
 | Method | Path                | Description                                                                            |
 | ------ | ------------------- | -------------------------------------------------------------------------------------- |
 | `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
+
+### Knowledge base + human handoff (W2-X1, support desk)
+
+Per-agent docs in `agent_documents` / `agent_document_chunks` (migration 0027, RLS; ids are unique per `(tenant, agent)`). Chunks are embedded via `EmbedText` (pgvector cosine; Postgres full-text fallback with no OpenAI key; floor `LANTERN_KB_MIN_SCORE`, default 0.2). `SessionHandler.processMessage` appends retrieved excerpts to the system prompt (fenced as data) and puts `sources` on `message_completed`. An agent labelled `handoff=human` (+ optional `handoff_slack_channel`) gets ONLY the `handoff_to_human` tool: it sets `sessions.status='handoff'`, emits `session.handoff`, pings Slack once (the status transition is the idempotency guard); in handoff the LLM is silent and `appendAssistantMessage` keeps the status. Operator endpoints need the coarse `write` scope so a public widget key (`runs:execute`) cannot act as the operator. Example: `examples/support-desk/`; e2e: `e2e/examples`. The fixture `llm-replay` serves a deterministic `/v1/embeddings`.
+
+| Method | Path | Scope |
+| ------ | ---- | ----- |
+| `POST` | `/v1/agents/{name}/documents` | agents:write |
+| `GET` | `/v1/agents/{name}/documents`, `/{id}` | agents:read |
+| `DELETE` | `/v1/agents/{name}/documents/{id}` | agents:write |
+| `POST` | `/v1/agents/{name}/documents/search` | agents:read |
+| `POST` | `/v1/sessions/{id}/handoff` | runs:execute |
+| `POST` | `/v1/sessions/{id}/operator-messages`, `/resolve` | write |
+| `GET` | `/v1/sessions?status=handoff` | (list) |
 
 ### Webchat embed (W10)
 
@@ -948,6 +978,7 @@ are fully wired today.
 | `POST` | `/v1/runs/{id}/takeover/{id}/grant`   | Operator approves; optional SDP offer |
 | `POST` | `/v1/runs/{id}/takeover/{id}/answer`  | Browser-side SDP answer               |
 | `POST` | `/v1/runs/{id}/takeover/{id}/release` | Workflow resumes                      |
+| `POST` | `/v1/runs/{id}/takeover/{id}/deny`    | Operator denies; approval node fails (`step_failed`) |
 
 ### Marketplace commerce (W11c)
 

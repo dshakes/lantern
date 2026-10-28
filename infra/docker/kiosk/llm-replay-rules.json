@@ -1,0 +1,14 @@
+[
+ {
+  "match": "triage support tickets",
+  "reply": "Category: billing. Urgency: medium. Draft reply: Thanks for flagging this - I can see a duplicate charge on your October invoice and have asked finance to refund it within 3 business days."
+ },
+ {
+  "match": "five-bullet research briefs",
+  "reply": "- Firecracker microVMs boot in about 125ms\n- Egress is allow-listed per run\n- Secrets are vended short-lived, never baked into images\n- Snapshots enable pause, resume and fork\n- Every run can issue a signed receipt"
+ },
+ {
+  "match": "You answer briefly",
+  "reply": "Hello."
+ }
+]

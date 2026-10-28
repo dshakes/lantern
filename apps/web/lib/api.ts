@@ -3,6 +3,7 @@
 // Types only — we intentionally don't import any mock data runtime here.
 // Every method below either returns real API data, returns empty/null, or
 // throws. No fabricated rows leak into the UI as fake runs.
+import { isNoSessionPath } from "./no-session-paths";
 import type {
   Agent,
   Run,
@@ -557,10 +558,7 @@ class LanternAPI {
       if (
         typeof window !== "undefined" &&
         !path.startsWith("/auth/") &&
-        !window.location.pathname.startsWith("/login") &&
-        // Logged-out recovery pages (forgot/reset/verify) are public: the global
-        // model-context fetch 401s there and must not bounce the visitor away.
-        !window.location.pathname.startsWith("/auth/")
+        !isNoSessionPath(window.location.pathname)
       ) {
         this.setToken(null);
         const next = encodeURIComponent(

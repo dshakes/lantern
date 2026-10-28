@@ -1,0 +1,20 @@
+name: incident-responder
+version: "0.1.0"
+description: On a Sentry alert or PagerDuty incident - summarizes it, suggests a runbook step in Slack, waits for a human to approve the rollback, then notes the decision on the PagerDuty incident
+model: auto
+isolation:
+  class: trusted
+triggers:
+  - kind: webhook
+    provider: sentry
+    events: [event_alert]
+  - kind: webhook
+    provider: pagerduty
+    events: [incident.triggered]
+limits:
+  timeout: 30m
+  max_tokens: 20000
+  max_cost_usd: 0.10
+labels:
+  category: operations
+  example: x3

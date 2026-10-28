@@ -12,6 +12,8 @@ one command instead of a curl checklist.
 | `runtime/` | W12 headless-runtime control path (`/v1/runtime/*`): auth gates, schedule (201 + vm_id), tenant-scoped list, detail + per-VM audit, logs SSE, terminate state transition, quota hard-fail 402, audit trail. Automates `examples/headless-agents/MANUAL-TEST.md`. |
 | `quickstart/` | The `examples/quickstart/` runnable agents stay real: each test creates the agent from its committed `spec.json`, posts its `run.json`, polls to `succeeded`, and asserts an output-shape invariant (pr-triage → JSON with a `risk` key; incident-summarizer → markdown sections **plus** issue+verify a receipt through the public no-auth verifier; daily-standup-digest → digest sections). Needs an LLM provider configured for the dev tenant. |
 
+| `examples/` | Webhook examples (`pr-triage-webhook`, `incident-responder`): signed GitHub/Sentry/PagerDuty delivery -> run -> connector calls recorded by `cmd/connector-replay`; replay dedup, 401, 402, approval grant/deny. Needs the fixture stack: run `make test-e2e-examples` (own DB + ports, never `:8080`). |
+
 ## Running
 
 ```bash
@@ -96,3 +98,7 @@ counts; `-rules rules.json` scripts replies and tool calls. Refused in prod. See
 - `PUT /v1/runtime/quota` clamps non-positive ceilings back to defaults, so
   "quota = 0" is impossible by design; the 402 test pins
   `maxConcurrentVms` to the current live-VM count instead.
+
+## Support desk (`examples/`)
+
+`e2e/examples` drives `examples/support-desk` (KB answer with a cited source, refund question handed to a human, Slack ping, operator reply over SSE). Setup for the fixture tier and the env vars (`LANTERN_E2E_FIXTURE_LLM`, `LANTERN_E2E_SLACK_FIXTURE_ADDR`) are in `examples/support-desk/README.md`.
