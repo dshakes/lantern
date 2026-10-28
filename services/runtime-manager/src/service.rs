@@ -1,6 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use dashmap::DashMap;
@@ -54,6 +54,66 @@ pub type HeartbeatCache = Arc<DashMap<String, (pb::ResourceUsage, Instant)>>;
 
 /// Shared harness dial-back map: `vm_id → guest IP` (from the Heartbeat peer).
 pub type HarnessAddrs = Arc<DashMap<String, std::net::IpAddr>>;
+
+/// Per-VM "this incarnation's harness has heartbeated" flag. Exec into a
+/// Firecracker guest waits on it (bounded) instead of failing while a just
+/// spawned/resumed/forked guest is still re-identifying and reconnecting.
+// ponytail: an entry whose VM vanished without a Stop lingers (one bool per
+// VM id); sweep with the registry if that ever matters.
+#[derive(Clone, Default)]
+pub struct HarnessReady(Arc<DashMap<String, tokio::sync::watch::Sender<bool>>>);
+
+impl HarnessReady {
+    fn subscribe(&self, vm_id: &str) -> tokio::sync::watch::Receiver<bool> {
+        self.0
+            .entry(vm_id.to_string())
+            .or_insert_with(|| tokio::sync::watch::channel(false).0)
+            .subscribe()
+    }
+
+    /// Record a cert-pinned heartbeat. `true` on the not-ready → ready edge.
+    pub fn mark_ready(&self, vm_id: &str) -> bool {
+        if let Some(tx) = self.0.get(vm_id) {
+            return tx.send_if_modified(|r| !std::mem::replace(r, true));
+        }
+        self.0
+            .entry(vm_id.to_string())
+            .or_insert_with(|| tokio::sync::watch::channel(false).0)
+            .send_if_modified(|r| !std::mem::replace(r, true))
+    }
+
+    /// The incarnation is gone (Stop): the next one must heartbeat afresh.
+    pub fn reset(&self, vm_id: &str) {
+        if let Some(tx) = self.0.get(vm_id) {
+            tx.send_replace(false);
+        }
+        self.0.remove_if(vm_id, |_, tx| tx.receiver_count() == 0);
+    }
+
+    /// Wait up to `timeout` for the harness; `true` once it is ready.
+    /// Dropping the future (caller cancelled) stops the wait.
+    pub async fn wait(&self, vm_id: &str, timeout: Duration) -> bool {
+        let mut rx = self.subscribe(vm_id);
+        matches!(
+            tokio::time::timeout(timeout, rx.wait_for(|r| *r)).await,
+            Ok(Ok(_))
+        )
+    }
+}
+
+/// How long exec waits for a guest's harness to (re)connect before giving up
+/// (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5000). Covers resume/fork:
+/// restore ~100 ms + re-identify (≤ 250 ms poll + drive reload) + mTLS
+/// reconnect — measured 2.2–2.8 s on nested-virt Lima, where 3 s was too tight.
+const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(5000);
+
+fn harness_ready_timeout() -> Duration {
+    std::env::var("LANTERN_HARNESS_READY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_HARNESS_READY_TIMEOUT)
+}
 
 /// Port the in-guest harness exec server listens on. Must match the
 /// harness's `LANTERN_HARNESS_EXEC_ADDR` (default `0.0.0.0:50056`).
@@ -186,6 +246,8 @@ pub struct RuntimeManagerGrpc {
     /// Firecracker VMs is forwarded to the in-guest harness at the IP recorded
     /// from the Heartbeat stream's peer.
     pub(crate) harness_addrs: HarnessAddrs,
+    /// Harness readiness shared with `RuntimeHarnessGrpc` (see [`HarnessReady`]).
+    pub(crate) harness_ready: HarnessReady,
     /// Per-VM idle-suspend activity cache shared with `RuntimeHarnessGrpc`.
     /// Written by the harness-heartbeat handler; read by scheduler_heartbeat.
     pub(crate) activity_cache: crate::scheduler_heartbeat::ActivityCache,
@@ -214,6 +276,7 @@ impl RuntimeManagerGrpc {
             snapshot_store,
             heartbeat_cache,
             harness_addrs,
+            harness_ready: HarnessReady::default(),
             activity_cache,
         }
     }
@@ -222,14 +285,17 @@ impl RuntimeManagerGrpc {
     /// heartbeat cache.  Call this after `new()` to get the paired harness
     /// service that writes into the same cache the manager reads from.
     pub fn harness_service(&self, mtls_enabled: bool) -> RuntimeHarnessGrpc {
-        RuntimeHarnessGrpc::new(
-            Arc::clone(&self.registry),
-            Arc::clone(&self.secret_resolver),
-            Arc::clone(&self.heartbeat_cache),
-            Arc::clone(&self.harness_addrs),
-            mtls_enabled,
-            Arc::clone(&self.activity_cache),
-        )
+        RuntimeHarnessGrpc {
+            harness_ready: self.harness_ready.clone(),
+            ..RuntimeHarnessGrpc::new(
+                Arc::clone(&self.registry),
+                Arc::clone(&self.secret_resolver),
+                Arc::clone(&self.heartbeat_cache),
+                Arc::clone(&self.harness_addrs),
+                mtls_enabled,
+                Arc::clone(&self.activity_cache),
+            )
+        }
     }
 
     /// Expose the activity cache so `main.rs` can wire it into the scheduler
@@ -259,25 +325,52 @@ impl RuntimeManagerGrpc {
     /// Firecracker VMs cannot be exec'd through the backend (the manager has
     /// no host-side channel into the guest), so they route to the in-guest
     /// harness at the address learned from its Heartbeat peer. A firecracker
-    /// VM whose harness has never connected yields `FAILED_PRECONDITION`.
+    /// VM first waits (bounded, [`harness_ready_timeout`]) for its current
+    /// incarnation's harness to heartbeat — right after spawn/resume/fork the
+    /// guest is still re-identifying — then a TAP VM whose harness never
+    /// connected yields `FAILED_PRECONDITION`.
     /// Every other backend keeps the existing `backend.exec_command` path.
     // `Status` is ~176 bytes by design (tonic uses it everywhere); a one-shot
     // routing helper isn't going to gain anything from boxing it.
     #[allow(clippy::result_large_err)]
-    fn route_exec(&self, vm_id: &str) -> Result<ExecRoute, Status> {
-        let info = self
-            .registry
-            .get(vm_id)
-            .ok_or_else(|| Status::not_found(format!("vm {vm_id} not found")))?;
-
+    async fn route_exec(&self, vm_id: &str) -> Result<ExecRoute, Status> {
+        let lookup = || {
+            self.registry
+                .get(vm_id)
+                .ok_or_else(|| Status::not_found(format!("vm {vm_id} not found")))
+        };
+        let info = lookup()?;
         if info.backend != "firecracker" {
             return Ok(ExecRoute::Backend {
                 handle_id: info.handle_id,
             });
         }
 
+        let timeout = harness_ready_timeout();
+        let started = Instant::now();
+        let ready = self.harness_ready.wait(vm_id, timeout).await;
+        if !ready {
+            tracing::warn!(
+                vm_id,
+                tenant_id = %info.tenant_id,
+                timeout_ms = timeout.as_millis() as u64,
+                "exec: harness did not heartbeat within the readiness timeout"
+            );
+        } else if started.elapsed() > Duration::from_millis(1) {
+            tracing::info!(
+                vm_id,
+                tenant_id = %info.tenant_id,
+                waited_ms = started.elapsed().as_millis() as u64,
+                "exec: waited for the harness to (re)connect"
+            );
+        }
+        // Re-read: a restore during the wait re-registers a new exec token.
+        let info = lookup()?;
+
         // Broker-mode VM (ADR 0026): no NIC, so dial the harness over
-        // host-initiated vsock. Same exec token as the IP path.
+        // host-initiated vsock. Same exec token as the IP path. Dialed even
+        // when not ready: vsock needs no learned address, so the exec server
+        // gives the authoritative answer.
         if let Some(uds) = self.backend.guest_vsock(&info.handle_id) {
             return Ok(ExecRoute::Harness {
                 endpoint: HarnessTarget::Vsock {
@@ -294,9 +387,10 @@ impl RuntimeManagerGrpc {
             .map(|entry| *entry.value())
             .ok_or_else(|| {
                 Status::failed_precondition(format!(
-                    "harness not connected for vm '{vm_id}': no heartbeat-derived guest \
-                     address yet — exec into a firecracker guest requires the in-VM \
-                     harness to have opened its Heartbeat stream"
+                    "harness not connected for vm '{vm_id}' after waiting {} ms: no \
+                     heartbeat-derived guest address — exec into a firecracker guest \
+                     requires the in-VM harness to have opened its Heartbeat stream",
+                    timeout.as_millis()
                 ))
             })?;
 
@@ -1593,6 +1687,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 // the caller's retry loop converges as soon as the restored
                 // harness re-establishes its heartbeat stream (~0.5–5 s).
                 self.harness_addrs.remove(&req.vm_id);
+                self.harness_ready.reset(&req.vm_id);
                 Ok(Response::new(pb::StopResponse {
                     ok: true,
                     detail: format!("vm {} stopped", req.vm_id),
@@ -1715,7 +1810,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
         // Resolve wire vm_id → dispatch target. Firecracker VMs forward to
         // the in-guest harness; everything else goes through the backend.
-        let route = self.route_exec(&first.vm_id)?;
+        let route = self.route_exec(&first.vm_id).await?;
 
         let handle_id = match route {
             ExecRoute::Harness { endpoint, token } => {
@@ -1912,7 +2007,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         }
 
         // Same routing as exec: vsock for broker-mode VMs, else guest IP.
-        let endpoint = match self.route_exec(&vm_id) {
+        let endpoint = match self.route_exec(&vm_id).await {
             Ok(ExecRoute::Harness { endpoint, .. }) => endpoint,
             _ => {
                 return Ok(Response::new(pb::ExecToolResponse {
@@ -2194,6 +2289,8 @@ pub struct RuntimeHarnessGrpc {
     /// handler records the stream's peer IP per `vm_id`; the exec dispatch
     /// dials it to forward `lantern vm exec` into Firecracker guests.
     harness_addrs: HarnessAddrs,
+    /// Set on the first cert-pinned heartbeat; exec waits on it.
+    harness_ready: HarnessReady,
     /// When true, VendSecret enforces the client-cert ↔ vm_id identity check.
     /// Mirrors whether the manager's gRPC server is serving mTLS. In dev
     /// (plaintext) the check is skipped because no peer cert exists; in
@@ -2241,6 +2338,7 @@ impl RuntimeHarnessGrpc {
             secret_resolver,
             heartbeat_cache,
             harness_addrs,
+            harness_ready: HarnessReady::default(),
             mtls_enabled,
             report_client,
             report_forward_config,
@@ -2270,6 +2368,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         let cache = Arc::clone(&self.heartbeat_cache);
         let registry = Arc::clone(&self.registry);
         let harness_addrs = Arc::clone(&self.harness_addrs);
+        let harness_ready = self.harness_ready.clone();
         let activity_cache = Arc::clone(&self.activity_cache);
 
         let (tx, rx) = mpsc::channel::<Result<pb::HeartbeatAck, Status>>(64);
@@ -2359,6 +2458,16 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                         // broker VM has no NIC, so exec cannot dial back.
                         if let Some(ip) = peer_ip.filter(|ip| !ip.is_loopback()) {
                             harness_addrs.insert(hb.vm_id.clone(), ip);
+                        }
+                        // After the address: a released exec must find it.
+                        if harness_ready.mark_ready(&hb.vm_id) {
+                            tracing::info!(
+                                vm_id = %hb.vm_id,
+                                tenant_id = %info.tenant_id,
+                                harness_ready_ms = (chrono::Utc::now() - info.created_at)
+                                    .num_milliseconds(),
+                                "heartbeat: harness ready for this incarnation"
+                            );
                         }
 
                         // Send an ack (no overrides in this implementation).
@@ -3638,11 +3747,13 @@ mod tests {
     /// A firecracker VM whose harness has never heartbeated cannot be exec'd:
     /// the dispatch must fail with FAILED_PRECONDITION, not fall through to
     /// the backend (which has no guest channel).
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn exec_route_firecracker_without_harness_is_failed_precondition() {
         let svc = manager_with_backend_vm("firecracker", "vm-fc", "handle-fc");
+        let t0 = tokio::time::Instant::now();
         let err = svc
             .route_exec("vm-fc")
+            .await
             .expect_err("firecracker without harness addr must not route");
         assert_eq!(
             err.code(),
@@ -3653,6 +3764,61 @@ mod tests {
             err.message().contains("harness not connected"),
             "message should say the harness is not connected, got: {}",
             err.message()
+        );
+        assert_eq!(
+            t0.elapsed(),
+            DEFAULT_HARNESS_READY_TIMEOUT,
+            "gives up after the bounded readiness wait, not before"
+        );
+    }
+
+    /// Resume/fork: an exec issued before the restored harness reconnects is
+    /// held until its first heartbeat, then routed — not refused.
+    #[tokio::test(start_paused = true)]
+    async fn exec_route_waits_for_the_harness_to_reconnect() {
+        let svc = manager_with_backend_vm("firecracker", "vm-r", "handle-r");
+        let t0 = tokio::time::Instant::now();
+        let hb = svc.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            hb.harness_addrs
+                .insert("vm-r".into(), "192.168.127.9".parse().expect("ip"));
+            assert!(hb.harness_ready.mark_ready("vm-r"), "ready edge");
+            assert!(!hb.harness_ready.mark_ready("vm-r"), "edge fires once");
+        });
+        let route = svc.route_exec("vm-r").await.expect("routes once ready");
+        assert!(matches!(route, ExecRoute::Harness { .. }), "{route:?}");
+        assert_eq!(
+            t0.elapsed(),
+            Duration::from_millis(400),
+            "released on the heartbeat"
+        );
+    }
+
+    /// Stop resets readiness: the next incarnation must heartbeat afresh, and a
+    /// waiter in flight is not released by the previous one's state.
+    #[tokio::test(start_paused = true)]
+    async fn harness_ready_resets_per_incarnation() {
+        let r = HarnessReady::default();
+        assert!(r.mark_ready("vm"));
+        assert!(r.wait("vm", Duration::ZERO).await, "already ready");
+        r.reset("vm");
+        assert!(r.0.is_empty(), "no waiters → entry dropped");
+        assert!(
+            !r.wait("vm", Duration::from_millis(50)).await,
+            "times out cleanly"
+        );
+        let waiter = {
+            let r = r.clone();
+            tokio::spawn(async move { r.wait("vm", Duration::from_secs(3)).await })
+        };
+        tokio::task::yield_now().await;
+        r.reset("vm");
+        assert!(r.0.contains_key("vm"), "kept while a waiter holds it");
+        r.mark_ready("vm");
+        assert!(
+            waiter.await.expect("join"),
+            "released by the new incarnation"
         );
     }
 
@@ -3674,7 +3840,8 @@ mod tests {
         svc.registry.register(info);
         assert!(svc.registry.rekey("handle-fc2", "vm-fc2"));
 
-        match svc.route_exec("vm-fc2").expect("route must resolve") {
+        svc.harness_ready.mark_ready("vm-fc2");
+        match svc.route_exec("vm-fc2").await.expect("route must resolve") {
             ExecRoute::Harness { endpoint, token } => {
                 let expected = format!("http://192.168.127.5:{}", harness_exec_port());
                 assert_eq!(
@@ -3715,7 +3882,10 @@ mod tests {
 
         // Verify that route_exec resolves the address (pre-stop).
         assert!(
-            svc.route_exec("vm-stop1").is_ok(),
+            {
+                svc.harness_ready.mark_ready("vm-stop1");
+                svc.route_exec("vm-stop1").await.is_ok()
+            },
             "pre-condition: route_exec must succeed before Stop"
         );
 
@@ -3736,6 +3906,10 @@ mod tests {
             !svc.harness_addrs.contains_key("vm-stop1"),
             "harness_addrs must be evicted after Stop so a restore gets a fresh \
              heartbeat-derived address instead of timing out on the old stale IP"
+        );
+        assert!(
+            !svc.harness_ready.wait("vm-stop1", Duration::ZERO).await,
+            "readiness resets with the incarnation"
         );
     }
 
@@ -4250,7 +4424,11 @@ mod tests {
     #[tokio::test]
     async fn exec_route_docker_uses_backend_handle() {
         let svc = manager_with_backend_vm("docker", "vm-docker", "container-abc");
-        match svc.route_exec("vm-docker").expect("route must resolve") {
+        match svc
+            .route_exec("vm-docker")
+            .await
+            .expect("route must resolve")
+        {
             ExecRoute::Backend { handle_id } => {
                 assert_eq!(handle_id, "container-abc");
             }
@@ -4264,6 +4442,7 @@ mod tests {
         let svc = manager_with_backend_vm("firecracker", "vm-known", "handle-known");
         let err = svc
             .route_exec("vm-unknown")
+            .await
             .expect_err("unknown vm must not route");
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
@@ -5234,7 +5413,8 @@ mod tests {
             exec_token: Some("tok-b".to_string()),
         });
         // No heartbeat address needed: a broker VM has no NIC to dial.
-        match svc.route_exec("vm-b").expect("route") {
+        svc.harness_ready.mark_ready("vm-b");
+        match svc.route_exec("vm-b").await.expect("route") {
             ExecRoute::Harness { endpoint, token } => {
                 assert_eq!(
                     endpoint,

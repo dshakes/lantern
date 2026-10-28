@@ -85,7 +85,7 @@ func callWorkflowTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logge
 		return nil, err
 	}
 	if isBuiltin {
-		return callBuiltinTool(ctx, pool, logger, builtin, tenantID, agentName, tool, params)
+		return callBuiltinTool(ctx, pool, logger, builtin, runID, tenantID, agentName, tool, params)
 	}
 
 	args, err := structpb.NewStruct(params)
@@ -124,11 +124,12 @@ func callWorkflowTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logge
 	}
 }
 
-// callBuiltinTool runs an in-process tool, metering its own LLM spend.
+// callBuiltinTool runs an in-process tool, metering its own LLM spend against
+// the daily rollup and the run's accrued cost (per-run cap), like an ai-step.
 func callBuiltinTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger,
 	builtin func(context.Context, *pgxpool.Pool, string, map[string]any) (any, error),
-	tenantID, agentName, tool string, params map[string]any) (any, error) {
-	if bc := CheckBudget(ctx, pool, tenantID, agentName, 0); !bc.Allowed && bc.HardFail {
+	runID, tenantID, agentName, tool string, params map[string]any) (any, error) {
+	if bc := CheckRunBudget(ctx, pool, tenantID, agentName, runID); !bc.Allowed && bc.HardFail {
 		return nil, fmt.Errorf("%w: %s", errWorkflowBudgetExceeded, bc.Reason)
 	}
 	uctx, usage := withToolUsage(ctx)
@@ -137,6 +138,9 @@ func callBuiltinTool(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger
 	if in, o, cost := usage.totals(); in > 0 || o > 0 || cost > 0 {
 		if recErr := RecordUsageSpend(ctx, pool, tenantID, agentName, in, o, cost); recErr != nil {
 			logger.Warn("workflow: tool RecordUsage failed", zap.String("tool", tool), zap.Error(recErr))
+		}
+		if accErr := AccrueRunSpend(ctx, pool, tenantID, runID, in, o, cost); accErr != nil {
+			logger.Warn("workflow: tool run spend accrual failed", zap.String("run_id", runID), zap.Error(accErr))
 		}
 	}
 	if err != nil {
