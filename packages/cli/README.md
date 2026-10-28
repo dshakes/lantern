@@ -30,8 +30,9 @@ lantern test --agent=triage --suite=golden --against=last-green
 #   Exits non-zero on regression so CI blocks the merge.
 #   --set-baseline pins this run as the new baseline for the current branch.
 
-lantern deploy --agent=triage --env=production
-#   One-click managed-cloud deploy, or data-plane deploy if --data-plane=<id>.
+lantern deploy [--dry-run] [--json]
+#   Reads ./agent.yaml, creates/updates the agent, then POST /v1/agents/{name}/deploy.
+#   Exit codes: 3 auth, 4 quota/budget (402), 5 not found, 6 server error.
 ```
 
 ## Flags

@@ -1113,6 +1113,9 @@ func runStartupGuards(logger *zap.Logger) {
 	if fatal, msg := handlers.CheckConnectorBaseURLOverrides(prod, os.Getenv); fatal {
 		logger.Fatal(msg)
 	}
+	if fatal, msg := handlers.CheckLLMBaseURLOverrides(prod, os.Getenv); fatal {
+		logger.Fatal(msg)
+	}
 
 	// R1 — Runtime scheduler address (W12 microVM path).
 	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
