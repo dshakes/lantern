@@ -10,6 +10,10 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Data analyst sandbox example (X5)** — `examples/data-analyst` (pandas image, sandbox
+  spec, explainer agent) and `e2e/examples/data_analyst_test.go`: CSV in, exec analysis, JSON +
+  PNG out, egress denied, fixture-LLM explanation. Docker tier runs in CI; the files API and
+  `ExecTool` are Firecracker-only, so that tier is the KVM nightly.
 - **Fixture LLM tier** — `LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}` re-points every
   provider call (completions, streaming, tool loop, web_search) at
   `cmd/llm-replay`, a deterministic OpenAI/Anthropic wire-format server with
