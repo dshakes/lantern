@@ -43,8 +43,7 @@ export default function PersonalHarnessPage() {
         <strong>What is off by default.</strong> Draft-and-confirm
         (<code>LANTERN_DRAFT_CONFIRM</code> on iMessage,{" "}
         <code>LANTERN_DRAFT_HIGH_STAKES</code> on WhatsApp), concierge nudges
-        (<code>LANTERN_CONCIERGE</code>), the four bridge loops, the
-        immigration sentinel, the Mac app-usage signal
+        (<code>LANTERN_CONCIERGE</code>), the four bridge loops, the Mac app-usage signal
         (<code>LANTERN_MAC_USAGE</code>), voice cloning
         (<code>LANTERN_VOICE_CLONE</code>), the model-router cutover and RLS
         enforcement. Each is labeled where it appears below.
@@ -449,20 +448,6 @@ export default function PersonalHarnessPage() {
         <code>GET /v1/life-events/prefs</code>,{" "}
         <code>PUT /v1/life-events/prefs</code>. Deduped on{" "}
         <code>(tenant, idempotencyKey)</code>.
-      </p>
-
-      <h3 id="immigration-sentinel">Immigration sentinel</h3>
-      <p>
-        Off by default; <code>LANTERN_IMMIGRATION_SENTINEL=1</code> turns it on.
-        The sentinel reasons over the family&apos;s immigration PDFs and arriving USCIS /
-        attorney email to surface <em>derived</em> deadlines that nobody typed
-        in — EAD/AP expiry, I-485 windows, biometrics / RFE clocks. The LLM is
-        capability-addressed (never a hardcoded vendor), doc and mail PII are
-        never logged, and a deadline is dropped unless the LLM grounds it in a
-        non-blank <code>source_ref</code> with <code>confidence ≥ 0.6</code>.
-        Endpoints: <code>POST /v1/immigration/scan</code>,{" "}
-        <code>GET /v1/immigration/deadlines</code>. Unset means the scan is inert and endpoints return{" "}
-        <code>{`{"enabled":false}`}</code>.
       </p>
 
       <h2 id="reason">L3 · Reason — decisioning &amp; orchestration</h2>
