@@ -288,6 +288,16 @@ func (k *Kit) Do(t *testing.T, method, path string, body, out any) (int, []byte)
 	return k2.doAuth(method, path, body, out)
 }
 
+// DoAuthRaw issues an authenticated request with body sent verbatim as the
+// request body (no JSON marshaling) and returns (status, rawBody). Use for
+// endpoints that take a raw byte payload, e.g. PUT files/content — passing
+// such bodies through [Kit.DoAuth] would JSON-encode them as a quoted,
+// escaped string and corrupt the bytes on the wire.
+func (k *Kit) DoAuthRaw(t *testing.T, method, path string, body []byte) (int, []byte) {
+	t.Helper()
+	return k.doAuthRaw(method, path, body)
+}
+
 // ---- package-level logic (exported for testing) ----
 
 // ValidateName returns an error if name is not in AllowedNames.
@@ -486,6 +496,29 @@ func (k *Kit) doAuth(method, path string, body, out any) (int, []byte) {
 	if out != nil && len(raw) > 0 {
 		_ = json.Unmarshal(raw, out)
 	}
+	return resp.StatusCode, raw
+}
+
+// doAuthRaw is like doAuth but sends body verbatim as the request payload
+// instead of JSON-marshaling it.
+func (k *Kit) doAuthRaw(method, path string, body []byte) (int, []byte) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, k.base+path, rdr)
+	if err != nil {
+		return 0, []byte(err.Error())
+	}
+	if k.token != "" {
+		req.Header.Set("Authorization", "Bearer "+k.token)
+	}
+	resp, err := k.http.Do(req)
+	if err != nil {
+		return 0, []byte(err.Error())
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, raw
 }
 

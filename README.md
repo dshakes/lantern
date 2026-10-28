@@ -214,6 +214,7 @@ Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,writ
 | Website and docs | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/), docs at [/lantern/docs](https://dshakes.github.io/lantern/docs/) (`make docs-dev` serves the docs on `:3002`) |
 | Agent runtime: tiers, durability, observability | [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md) |
 | Headless quickstart and demo agents | [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md), [`examples/headless-agents/`](examples/headless-agents/) |
+| Data analyst in a sandbox (CSV, pandas, denied egress) | [`examples/data-analyst/`](examples/data-analyst/) |
 | Isolation classes, identity and secrets | [`docs/guides/isolation-classes.md`](docs/guides/isolation-classes.md), [`docs/guides/identity-and-secrets.md`](docs/guides/identity-and-secrets.md) |
 | Develop locally, ship to your cloud | [`docs/guides/local-to-prod.md`](docs/guides/local-to-prod.md), [`docs/guides/self-service-e2e.md`](docs/guides/self-service-e2e.md) |
 | Architecture and decisions | [`docs/architecture/`](docs/architecture/), [`docs/adr/`](docs/adr/) |

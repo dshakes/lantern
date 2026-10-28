@@ -1,0 +1,32 @@
+# Data analyst sandbox (example X5). Upload a CSV, run pandas in a microVM, get
+# JSON + a chart back. Schedule with:  POST /v1/runtime/schedule  (this spec,
+# camel-cased) or `lantern run`.  See README.md.
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+
+metadata:
+  name: data-analyst
+  labels:
+    example: "x5"
+
+spec:
+  # Build with the Dockerfile here; Docker tier uses it as the manager's AGENT_IMAGE.
+  image_digest: lantern/examples/data-analyst@sha256:0000000000000000000000000000000000000000000000000000000000000005
+  isolation: untrusted        # agent-written code: microVM only (invariant #5)
+
+  limits:
+    vcpu: "1"
+    memory: "512Mi"
+    timeout: 300s
+    scratch_size: "128Mi"
+    max_cost_usd: 0.05
+
+  # Deny-by-default egress: the only thing the sandbox may reach is the
+  # package index. Anything else is denied and audited (`egress` deny event).
+  network: allowlist_domain
+  egress_rules:
+    - pattern: "pypi.org"
+      http_methods: ["GET"]
+      rate_bps: 1048576
+
+  idle_timeout_secs: 600
