@@ -121,7 +121,6 @@ impl SessionStore {
     }
 
     /// Clear the active run for a session (run completed or failed).
-    #[allow(dead_code)]
     pub async fn clear_active_run(
         &self,
         surface: SurfaceId,

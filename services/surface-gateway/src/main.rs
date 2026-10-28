@@ -101,10 +101,21 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         // C3: pass secret_token for X-Telegram-Bot-Api-Secret-Token verification.
-        let adapter = adapters::telegram::TelegramAdapter::new(
+        let mut adapter = adapters::telegram::TelegramAdapter::new(
             bot_token.clone(),
             config.telegram_secret_token.clone(),
         );
+        if let Some(base) = &config.telegram_api_base_url {
+            if is_prod_env() {
+                anyhow::bail!(
+                    "TELEGRAM_API_BASE_URL is a test-only fixture override and is refused in \
+                     production (LANTERN_ENV={:?}) — it would send bot replies to an arbitrary host",
+                    std::env::var("LANTERN_ENV").unwrap_or_default()
+                );
+            }
+            tracing::warn!(base = %base, "TELEGRAM_API_BASE_URL set — Telegram calls go to a fixture, not api.telegram.org");
+            adapter = adapter.with_api_base(base);
+        }
         adapters.insert(SurfaceId::Telegram, Arc::new(adapter));
         tracing::info!(
             secret_token_configured = config.telegram_secret_token.is_some(),
