@@ -119,6 +119,24 @@ curl -X POST $API/v1/voice/numbers -d @number.json    # your SID, auth token, nu
         greeting; the realtime conversation needs the LiveKit media worker.
       </p>
 
+      <h2 id="eval-gated-deploy">Eval-gated deploy</h2>
+      <p>
+        <strong>What:</strong> a CI pipeline that cannot ship a worse agent. It runs an eval suite against the
+        candidate, records it with <code>POST /v1/eval-runs</code>, and a <code>422</code> (regressed vs. the pinned
+        baseline) stops the job before <code>lantern deploy --json</code>. A passing change is deployed, a receipt is
+        issued with <code>POST /v1/runs/{"{id}"}/receipt</code>, and verified at{" "}
+        <code>POST /v1/runs/receipts/verify</code>. Path: <code>examples/eval-gated-deploy/</code> (scripts plus a
+        sample GitHub Actions workflow). See <Link href="/evaluations#eval-runs">Recording a run + CI gate</Link>.
+      </p>
+      <pre><code>{`cd examples/eval-gated-deploy
+EVAL_PIN=1 scripts/eval.sh .                    # baseline: 3/3 cases, pinned for branch main
+scripts/eval.sh candidates/regressed; echo $?   # 1: HTTP 422, nothing deploys
+scripts/eval.sh candidates/improved && scripts/release.sh candidates/improved`}</code></pre>
+      <p>
+        The server stores the per-case results you post and compares the mean score; the script scores each case
+        (<code>assert.contains</code>) from the run output.
+      </p>
+
       <h2 id="limits">Limits</h2>
       <ul>
         <li>

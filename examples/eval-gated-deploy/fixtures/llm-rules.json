@@ -1,0 +1,6 @@
+[
+  {"match": "track my parcel", "reply": "Open the Orders page and press Track next to the parcel."},
+  {"match": "never arrived", "reply": "Sorry about that. Our claims desk will open a claim if you reply with your order number."},
+  {"match": "[policy-pack: legacy]", "reply": "Delivery times vary, please check the carrier website."},
+  {"match": "standard delivery", "reply": "Standard delivery takes 3-5 business days."}
+]

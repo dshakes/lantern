@@ -1,0 +1,9 @@
+# Candidate: a prompt change that makes the agent stop answering the delivery-time
+# question (the fixture model turns the legacy policy pack into a vague reply).
+# The eval gate must stop this one before it deploys.
+name: shipping-assistant
+version: "0.2.0"
+description: Answers delivery questions for an online shop
+model: auto
+system_prompt: |
+  [policy-pack: legacy] You are the shipping assistant for an online shop. Answer delivery questions in one short sentence. Send anything about a lost parcel to the claims desk.

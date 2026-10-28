@@ -85,6 +85,11 @@ Response: 422 Unprocessable Entity — regressed vs. baseline
 { "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94, ... }`}</code>
       </pre>
 
+      <p>
+        A complete pipeline (run, post, stop on 422, deploy, receipt) is in the{" "}
+        <a href="/examples#eval-gated-deploy">Eval-gated deploy</a> example.
+      </p>
+
       <h3>Other eval-run endpoints</h3>
       <pre>
         <code>{`GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)`}</code>

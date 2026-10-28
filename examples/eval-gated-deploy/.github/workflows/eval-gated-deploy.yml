@@ -1,0 +1,45 @@
+# SAMPLE. Copy to .github/workflows/ in your own repo (this copy is inert here).
+# Pull requests are evaluated against the baseline pinned on main; a regression
+# (HTTP 422 from POST /v1/eval-runs) fails the job, so the deploy job never starts.
+# Pushes to main re-run the gate, deploy, and attach a verified receipt.
+name: eval-gated-deploy
+on:
+  pull_request:
+    paths: ["agent.yaml", "eval/**"]
+  push:
+    branches: [main]
+    paths: ["agent.yaml", "eval/**"]
+
+env:
+  LANTERN_API_URL: ${{ vars.LANTERN_API_URL }}      # e.g. https://api.example.com
+  LANTERN_API_KEY: ${{ secrets.LANTERN_API_KEY }}   # scopes: agents:write, runs:execute, runs:write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run evals and record them (fails on regression)
+        run: ./scripts/eval.sh .
+        env:
+          EVAL_BRANCH: main
+          EVAL_PIN: ${{ github.ref == 'refs/heads/main' && '1' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: eval-result, path: .eval-result.json }
+
+  deploy:
+    needs: eval            # skipped when eval fails: the 422 stops the pipeline here
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      - run: go install github.com/dshakes/lantern/packages/cli/cmd/lantern@latest
+      - uses: actions/download-artifact@v4
+        with: { name: eval-result }
+      - name: Deploy, issue a receipt, verify it
+        run: ./scripts/release.sh .
+      - uses: actions/upload-artifact@v4
+        with: { name: receipt, path: .receipt.json }
