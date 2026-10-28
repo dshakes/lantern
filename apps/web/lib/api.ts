@@ -557,7 +557,10 @@ class LanternAPI {
       if (
         typeof window !== "undefined" &&
         !path.startsWith("/auth/") &&
-        !window.location.pathname.startsWith("/login")
+        !window.location.pathname.startsWith("/login") &&
+        // Logged-out recovery pages (forgot/reset/verify) are public: the global
+        // model-context fetch 401s there and must not bounce the visitor away.
+        !window.location.pathname.startsWith("/auth/")
       ) {
         this.setToken(null);
         const next = encodeURIComponent(

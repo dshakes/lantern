@@ -1,0 +1,7 @@
+[
+  {
+    "match": "E2E-GOAL",
+    "reply": "{\"name\":\"E2E Summarizer\",\"description\":\"Summarizes notes for the e2e suite\",\"systemPrompt\":\"You summarize notes into three bullets.\",\"firstInput\":{\"prompt\":\"E2E-RUN summarize: ship the harness\"},\"rationale\":\"Fixture design for the e2e suite.\",\"model\":\"auto\"}"
+  },
+  { "match": "E2E-RUN", "reply": "E2E-FIXTURE-OUTPUT: shipped the harness." }
+]
