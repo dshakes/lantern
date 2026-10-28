@@ -54,6 +54,9 @@ This project is pre-1.0; there are no stable release branches yet.
   template-create and prompt back-fill UPDATEs wrote a column that did not
   exist, failed, and the error was discarded.
 - `/v1/completions` honours the request's `model` on its failover paths.
+- **Balanced default picks Sonnet** (#326) — `auto`/`balanced` routing picked
+  Opus because price was only a capped bonus; price is now a real penalty, so the
+  default is Sonnet (GPT-4o when only OpenAI is keyed).
 
 ### Changed
 - **Budgets enforced further** (#315, #319) — `maxTokensPerDay` now blocks;
