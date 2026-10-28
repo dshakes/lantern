@@ -15,6 +15,9 @@ pub struct TelegramAdapter {
     /// only appropriate when the webhook URL itself is kept secret (not recommended
     /// for production). Set TELEGRAM_SECRET_TOKEN to enable verification.
     secret_token: Option<String>,
+    /// Bot API origin. Defaults to Telegram's; `TELEGRAM_API_BASE_URL` re-points
+    /// it at a fixture server for CI (refused in prod by main.rs).
+    api_base: String,
     http: reqwest::Client,
 }
 
@@ -24,12 +27,18 @@ impl TelegramAdapter {
         Self {
             bot_token,
             secret_token,
+            api_base: "https://api.telegram.org".to_string(),
             http: reqwest::Client::new(),
         }
     }
 
+    pub fn with_api_base(mut self, base: &str) -> Self {
+        self.api_base = base.trim_end_matches('/').to_string();
+        self
+    }
+
     fn api_url(&self, method: &str) -> String {
-        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
+        format!("{}/bot{}/{}", self.api_base, self.bot_token, method)
     }
 }
 
@@ -388,10 +397,7 @@ impl TelegramAdapter {
         };
 
         // Answer the callback query to dismiss the loading indicator.
-        let answer_url = format!(
-            "https://api.telegram.org/bot{}/answerCallbackQuery",
-            self.bot_token
-        );
+        let answer_url = self.api_url("answerCallbackQuery");
         let http = self.http.clone();
         let answer_body = serde_json::json!({ "callback_query_id": callback_id });
         tokio::spawn(async move {
@@ -502,6 +508,20 @@ mod tests {
         assert!(
             result.unwrap(),
             "no-token mode should accept (degraded — logged as warning)"
+        );
+    }
+
+    #[test]
+    fn api_base_override_and_default() {
+        let a = TelegramAdapter::new("t".into(), None);
+        assert_eq!(
+            a.api_url("sendMessage"),
+            "https://api.telegram.org/bott/sendMessage"
+        );
+        let a = a.with_api_base("http://127.0.0.1:1/");
+        assert_eq!(
+            a.api_url("sendMessage"),
+            "http://127.0.0.1:1/bott/sendMessage"
         );
     }
 

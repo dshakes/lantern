@@ -400,3 +400,18 @@ func TestWorkflowTool_WebSearchPerRunCap(t *testing.T) {
 		t.Errorf("run cost_usd = %v, want the first web_search accrued over the $0.01 cap", cost)
 	}
 }
+
+// Regression: a workflow whose JSON contains a backslash (an escaped quote in a
+// prompt) must still load. The loader once used ::text::bytea, whose input
+// parser rejects `\"`, so runWorkflowIfPresent returned false and the agent
+// silently ran as a plain LLM call instead of its workflow.
+func TestWorkflowLoads_WithEscapedQuoteInPrompt(t *testing.T) {
+	f := newToolFixture(t, map[string]any{
+		"type": "condition",
+		"data": map[string]any{"expression": `say "hi" \ there`},
+	}, nil)
+	f.run(t) // fails the test if the workflow was not run
+	if st, msg := f.status(t); st != "succeeded" {
+		t.Fatalf("status=%s err=%s", st, msg)
+	}
+}

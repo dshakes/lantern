@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acme Cloud — Support desk demo</title>
+</head>
+<body style="font-family: system-ui; max-width: 40rem; margin: 4rem auto; padding: 0 1rem">
+  <h1>Acme Cloud</h1>
+  <p>Click the chat bubble. Ask "How do I reset my password?" (answered from the docs, with its source),
+     then "I want a refund" (handed to a human).</p>
+
+  <!-- Replace lk_REPLACE_ME with an API key that has the runs:execute scope. -->
+  <script src="http://localhost:3001/widget.js"
+          data-api-key="lk_REPLACE_ME"
+          data-agent="support-desk"
+          data-api-base="http://localhost:8080"
+          data-brand="Acme Support"
+          data-greeting="Hi! Ask me about passwords, billing or exports."
+          async defer></script>
+</body>
+</html>

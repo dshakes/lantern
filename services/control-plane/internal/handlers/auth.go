@@ -237,6 +237,12 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := applyFreeTierDefaults(ctx, tx, tenantID); err != nil {
+		h.logger().Error("apply free tier failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
 	verifyToken, err := insertAuthToken(ctx, tx, tenantID, userID, purposeVerifyEmail, verifyTokenTTL)
 	if err != nil {
 		h.logger().Error("issue verify token failed", zap.Error(err))
@@ -690,12 +696,18 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		}
 
 		txErr = tx.QueryRow(ctx, `
-			INSERT INTO users (tenant_id, email, display_name, auth_provider, auth_subject)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO users (tenant_id, email, display_name, auth_provider, auth_subject, email_verified_at)
+			VALUES ($1, $2, $3, $4, $5, now())
 			RETURNING id
-		`, tenantID, email, displayName, providerName, email).Scan(&userID)
+		`, tenantID, email, displayName, providerName, email).Scan(&userID) // provider-verified email
 		if txErr != nil {
 			h.logger().Error("insert user failed", zap.Error(txErr))
+			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+			return
+		}
+
+		if txErr = applyFreeTierDefaults(ctx, tx, tenantID); txErr != nil {
+			h.logger().Error("apply free tier failed", zap.Error(txErr))
 			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
 			return
 		}
@@ -1126,10 +1138,12 @@ func isWriteScope(s Scope) bool {
 //   - API key with empty scopes list: always allowed (legacy / unrestricted key).
 //   - API key with non-empty scopes: see scopeImplies for the full lattice.
 func HasScope(claims *LanternClaims, required Scope) bool {
-	if claims.Role != "service" {
+	// Role "kiosk" (ADR 0029) is scope-limited like a service key, so
+	// LANTERN_AUTHZ_ENFORCE=1 actually constrains an anonymous demo visitor.
+	if claims.Role != "service" && claims.Role != kioskRole {
 		return true
 	}
-	if len(claims.Scopes) == 0 {
+	if len(claims.Scopes) == 0 && claims.Role != kioskRole {
 		return true
 	}
 	for _, s := range claims.Scopes {

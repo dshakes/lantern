@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/onboarding", "/api", "/auth"];
+const PUBLIC_PATHS = ["/login", "/onboarding", "/api", "/auth", "/kiosk"];
 
 // The control-plane base URL. Server-side env (LANTERN_API_URL) wins; the
 // public URL is the next.config rewrite target. Falls back to local dev.

@@ -37,11 +37,14 @@ import {
   firstRunInput,
   isTerminalRunStatus,
   normalizeAgentName,
+  parseStarterGallery,
   parseApiError,
   parseSSE,
   resumeStep,
   runOutputText,
+  specFromTemplate,
   starterSpec,
+  templateNeeds,
   suggestFix,
   validateSpec,
   type AgentSpecDraft,
@@ -50,6 +53,7 @@ import {
   type OnboardingState,
   type RunDisplay,
   type SandboxDisplay,
+  type StarterTemplate,
   type Step,
 } from "./onboarding-logic";
 import { AgentMessage, FixCard, Notice, ProgressRail, StepCard, UserMessage, ui } from "./parts";
@@ -98,6 +102,8 @@ export default function OnboardingPage() {
   const [explanation, setExplanation] = useState<string | null>(null);
   const [sandbox, setSandbox] = useState<SandboxDisplay | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  // Starter gallery (GET /v1/agents/templates). A failed fetch just hides it.
+  const [gallery, setGallery] = useState<StarterTemplate[]>([]);
 
   const headingRef = useRef<HTMLHeadingElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -151,6 +157,23 @@ export default function OnboardingPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listStarterTemplates()
+      .then((raw) => !cancelled && setGallery(parseStarterGallery(raw)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // A gallery pick skips the LLM design: it becomes the spec the user reviews.
+  const pickTemplate = async (t: StarterTemplate) => {
+    await persist({ goal: t.pitch, spec: specFromTemplate(t), specApproved: false, step: "spec" });
+    goTo("spec");
+  };
 
   // ---- goal → spec (LLM design) -------------------------------------------
 
@@ -467,6 +490,17 @@ export default function OnboardingPage() {
       case "login":
         router.push("/login?next=/onboarding");
         return;
+      case "verify_email":
+        void (async () => {
+          try {
+            const me = await api.getMe();
+            await api.resendVerification(me.email);
+            toast.success("Verification email sent. Open the link, then press “I've verified, try again”.");
+          } catch (err) {
+            toast.error(parseApiError(err).message);
+          }
+        })();
+        return;
       case "check_api":
       case "retry":
         setFailure(null);
@@ -500,7 +534,14 @@ export default function OnboardingPage() {
         onFix={() => applyFix(failure)}
         busy={busy !== null}
         secondary={
-          s === "goal" && doc.goal && failure.fix.fix.action !== "check_api" ? (
+          failure.fix.fix.action === "verify_email" ? (
+            <Button
+              variant="ghost"
+              onClick={() => applyFix({ ...failure, fix: { ...failure.fix, fix: { label: "Try again", action: "retry" } } })}
+            >
+              I&apos;ve verified, try again
+            </Button>
+          ) : s === "goal" && doc.goal && failure.fix.fix.action !== "check_api" ? (
             <Button
               variant="ghost"
               onClick={async () => {
@@ -538,7 +579,7 @@ export default function OnboardingPage() {
         {doc.goal ? (
           <UserMessage>{doc.goal}</UserMessage>
         ) : (
-          step === "goal" && <GoalCard ref={keyFormOpen ? undefined : headingRef} busy={busy === "design"} onSubmit={submitGoal} />
+          step === "goal" && <GoalCard ref={keyFormOpen ? undefined : headingRef} busy={busy === "design"} onSubmit={submitGoal} gallery={gallery} onPick={pickTemplate} />
         )}
         {step === "goal" && doc.goal && (
           <>
@@ -739,10 +780,14 @@ function GoalCard({
   ref,
   busy,
   onSubmit,
+  gallery,
+  onPick,
 }: {
   ref?: Ref<HTMLHeadingElement>;
   busy: boolean;
   onSubmit: (goal: string) => void;
+  gallery: StarterTemplate[];
+  onPick: (t: StarterTemplate) => void;
 }) {
   const [goal, setGoal] = useState("");
   const ok = goal.trim().length >= 8;
@@ -791,6 +836,29 @@ function GoalCard({
           </Button>
         </div>
       </form>
+      {gallery.length > 0 && (
+        <section className="mt-6 border-t border-zinc-800 pt-4" aria-labelledby="onb-gallery">
+          <h3 id="onb-gallery" className="text-sm font-medium text-zinc-50">
+            Or start from a template
+          </h3>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {gallery.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onPick(t)}
+                  className="h-full w-full rounded-lg border border-zinc-800 bg-surface-1 p-3 text-left transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40 disabled:opacity-50"
+                >
+                  <span className="block text-sm font-medium text-zinc-50">{t.name}</span>
+                  <span className="mt-1 block text-xs text-zinc-400">{t.pitch}</span>
+                  <span className="mt-2 block text-xs text-zinc-500">{templateNeeds(t)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </StepCard>
   );
 }

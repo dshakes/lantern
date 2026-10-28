@@ -22,6 +22,7 @@ package handlers
 // there is an immutable record even if the commit fails.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -92,7 +94,29 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		zap.String("initiated_by_user", claims.Subject),
 	)
 
-	// --- Cascade-delete in a single transaction ---
+	// --- Cascade-delete in a single transaction (shared with the kiosk sweep) ---
+	deleted, err := purgeTenantRows(ctx, h.srv.Pool, log, targetID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	log.Warn("GDPR tenant purge complete",
+		zap.String("tenant_id", targetID),
+		zap.String("initiated_by_user", claims.Subject),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant_id": targetID,
+		"deleted":   deleted,
+	})
+}
+
+// purgeTenantRows cascade-deletes every row of one tenant (leaf-to-root, then
+// the tenants row) in a single transaction on the privileged pool and returns
+// rows deleted per table. Shared by DELETE /v1/tenants/{id} and the kiosk
+// expiry sweep so both exercise the one erasure code path.
+func purgeTenantRows(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger, targetID string) (map[string]int64, error) {
 	//
 	// CRITICAL ordering: respect FK RESTRICT constraints from migrate.go:
 	//   runs.agent_id          → agents(id)          ON DELETE RESTRICT (line 144)
@@ -120,15 +144,15 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	// step runs a parameterised DELETE and records the count in deleted.
 	// tableName and col are internal constants (safe for fmt.Sprintf).
 	deleted := make(map[string]int64)
+	var failed error
 	// rls-exempt: admin/system GDPR erasure purges a whole tenant leaf-to-root
 	// (down to the tenants row itself). It must bypass RLS so the privileged
 	// pool can delete every tenant-scoped table; running under the app role
 	// would let RLS hide rows from the purge and leave PII behind.
-	tx, err := h.srv.Pool.Begin(ctx)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		log.Error("GDPR: failed to begin transaction", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -137,7 +161,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		tag, execErr := tx.Exec(ctx, q, args...)
 		if execErr != nil {
 			log.Error("GDPR: delete failed", zap.String("table", table), zap.Error(execErr))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			failed = execErr
 			return false
 		}
 		deleted[table] += tag.RowsAffected()
@@ -147,7 +171,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		tag, execErr := tx.Exec(ctx, sql, args...)
 		if execErr != nil {
 			log.Error("GDPR: delete failed", zap.String("table", table), zap.Error(execErr))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			failed = execErr
 			return false
 		}
 		deleted[table] += tag.RowsAffected()
@@ -158,12 +182,12 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	if !stepSQL("journal_events",
 		`DELETE FROM journal_events WHERE run_id IN (SELECT id FROM runs WHERE tenant_id = $1)`,
 		targetID) {
-		return
+		return nil, failed
 	}
 	if !stepSQL("run_locks",
 		`DELETE FROM run_locks WHERE run_id IN (SELECT id FROM runs WHERE tenant_id = $1)`,
 		targetID) {
-		return
+		return nil, failed
 	}
 
 	// ── 2. Other run-scoped tables with direct tenant_id ───────────────────
@@ -171,7 +195,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	//  takeover_requests has tenant_id and a run_id column but no hard FK on runs)
 	for _, t := range []string{"run_feedback", "run_receipts", "takeover_requests"} {
 		if !step(t, "tenant_id", targetID) {
-			return
+			return nil, failed
 		}
 	}
 
@@ -181,7 +205,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	if !stepSQL("runs",
 		`DELETE FROM runs WHERE tenant_id = $1`,
 		targetID) {
-		return
+		return nil, failed
 	}
 
 	// ── 4. Children of agents / agent_versions ─────────────────────────────
@@ -192,7 +216,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	if !stepSQL("agent_versions",
 		`DELETE FROM agent_versions WHERE agent_id IN (SELECT id FROM agents WHERE tenant_id = $1)`,
 		targetID) {
-		return
+		return nil, failed
 	}
 	// marketplace_agents: source_agent_id → agents ON DELETE CASCADE.
 	// Must be deleted before agents so we count it; the CASCADE would handle it
@@ -200,12 +224,12 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	if !stepSQL("marketplace_agents",
 		`DELETE FROM marketplace_agents WHERE source_tenant_id = $1`,
 		targetID) {
-		return
+		return nil, failed
 	}
 
 	// ── 5. agents ──────────────────────────────────────────────────────────
 	if !step("agents", "tenant_id", targetID) {
-		return
+		return nil, failed
 	}
 
 	// ── 6. Remaining tenant-scoped tables (no inter-table RESTRICT) ────────
@@ -213,7 +237,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	if !stepSQL("marketplace_invocations",
 		`DELETE FROM marketplace_invocations WHERE buyer_tenant_id = $1 OR seller_tenant_id = $1`,
 		targetID) {
-		return
+		return nil, failed
 	}
 
 	for _, t := range []string{
@@ -231,7 +255,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		"surface_configs", "connector_installs", "sessions",
 	} {
 		if !step(t, "tenant_id", targetID) {
-			return
+			return nil, failed
 		}
 	}
 
@@ -248,8 +272,7 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		ORDER BY c.relname`)
 	if err != nil {
 		log.Error("GDPR: list tenant tables failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+		return nil, err
 	}
 	var rest []string
 	for sweep.Next() {
@@ -265,41 +288,30 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Error("GDPR: read tenant tables failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+		return nil, err
 	}
 	for _, t := range rest {
 		// Identifier comes from the catalog, quoted by pgx — not user input.
 		if !stepSQL(t, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1`, pgx.Identifier{t}.Sanitize()), targetID) {
-			return
+			return nil, failed
 		}
 	}
 
 	// ── 7. users ────────────────────────────────────────────────────────────
 	if !step("users", "tenant_id", targetID) {
-		return
+		return nil, failed
 	}
 
 	// ── 8. tenant (root) ────────────────────────────────────────────────────
 	if !step("tenants", "id", targetID) {
-		return
+		return nil, failed
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		log.Error("GDPR: transaction commit failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+		return nil, err
 	}
-
-	log.Warn("GDPR tenant purge complete",
-		zap.String("tenant_id", targetID),
-		zap.String("initiated_by_user", claims.Subject),
-	)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant_id": targetID,
-		"deleted":   deleted,
-	})
+	return deleted, nil
 }
 
 // exportRedacted reports whether a column holds credential material that must

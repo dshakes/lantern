@@ -104,6 +104,24 @@ export default function SurfacesPage() {
         </li>
         <li>Assign the surface to an agent</li>
       </ol>
+      <p>
+        <strong>How a message becomes a reply.</strong> Telegram POSTs the update to the surface-gateway at{" "}
+        <code>/webhooks/telegram</code>. The gateway checks the{" "}
+        <code>X-Telegram-Bot-Api-Secret-Token</code> header against <code>TELEGRAM_SECRET_TOKEN</code> (a missing or
+        wrong token is a 401 and nothing runs), creates a run for <code>LANTERN_AGENT_NAME</code> in{" "}
+        <code>LANTERN_TENANT_ID</code>, waits for it to finish, and sends the run&apos;s output to the same chat with{" "}
+        <code>sendMessage</code>. The same loop serves WhatsApp Cloud, whose POSTs are verified with{" "}
+        <code>X-Hub-Signature-256</code> (<code>WHATSAPP_APP_SECRET</code>). Try it end to end with{" "}
+        <code>examples/telegram-assistant</code> (calendar-aware assistant) and see{" "}
+        <Link href="/testing#examples">the fixture suite</Link>.
+      </p>
+      <p>Limits:</p>
+      <ul>
+        <li>The agent needs a promoted version before the gateway can run it: run it once from the dashboard or <code>POST /v1/runs</code> first, otherwise the gateway logs <code>agent has no promoted version</code>.</li>
+        <li>Replies are plain text, sent once when the run ends (no token streaming to the chat). Replies are wired for Telegram and WhatsApp only; a Slack or Discord run completes but is not posted back.</li>
+        <li>A run that does not finish within 3 minutes gets no reply.</li>
+        <li><code>TELEGRAM_API_BASE_URL</code> re-points Bot API calls at a fixture server for tests; the gateway refuses to start with it when <code>LANTERN_ENV</code> is prod, production or staging.</li>
+      </ul>
 
       <h3 id="twilio">Voice (Twilio + LiveKit)</h3>
       <p>
@@ -132,6 +150,16 @@ export default function SurfacesPage() {
         is recorded on connect; the provider&apos;s status callback at{" "}
         <code>POST /v1/voice/calls/status/&#123;provider&#125;</code> reconciles
         to actual duration cost when the call ends.
+      </p>
+
+      <p>
+        Both Twilio endpoints verify <code>X-Twilio-Signature</code> (HMAC-SHA1 over the public URL plus the sorted form
+        fields, keyed with the number&apos;s auth token) and answer a bad or missing one with 403 before touching any
+        state, so a forged status callback cannot move a budget. Billing is by started minute: a 61-second call is two
+        minutes at $0.03, so the $0.05 connect-time reservation reconciles to $0.06; a call that never connects refunds
+        it to zero. Try it with <code>examples/voice-receptionist</code>; the signed-webhook flow is asserted in{" "}
+        <Link href="/testing#examples">the fixture suite</Link>. The inbound reply is a fixed greeting today; the
+        realtime conversation needs the LiveKit worker (media last mile).
       </p>
 
       <h4>Voice API</h4>

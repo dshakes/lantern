@@ -95,7 +95,9 @@ func main() {
 	// Run migrations. seedDev=true injects the fixed dev tenant + admin account
 	// so `make dev` works without manual bootstrapping. In prod (LANTERN_ENV set)
 	// we skip those rows — a static-password seed is a backdoor.
-	seedDev := !handlers.IsProd()
+	// Kiosk mode (ADR 0029) never seeds the well-known dev admin: the instance is
+	// reachable by anonymous visitors.
+	seedDev := !handlers.IsProd() && !handlers.KioskEnabled()
 	if seedDev {
 		logger.Info("dev mode: seeding dev tenant + admin user (set LANTERN_ENV=prod to disable)")
 	} else {
@@ -610,6 +612,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.StopSession))
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.DeleteSession))
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+	handlers.RegisterSupportDeskRoutes(httpMux, srv, authHandler, llmProxyHandler, sessionHandler) // knowledge base + session handoff (W2-X1)
 
 	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
 	httpMux.HandleFunc("POST /v1/life-events", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.CreateLifeEvent))
@@ -693,6 +696,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Request))
 	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Grant))
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/deny", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Deny))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Answer))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Release))
 
@@ -792,6 +796,13 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/tenants/{id}", authHandler.WithScope(handlers.ScopeAdmin, gdprHandler.DeleteTenant))
 	if err := handlers.RegisterAccountLifecycleRoutes(httpMux, authHandler, gdprHandler, handlers.IsProd()); err != nil {
 		logger.Fatal("account lifecycle (ADR 0027)", zap.Error(err))
+	}
+
+	// Kiosk demo mode (ADR 0029): route + expiry sweep exist only when LANTERN_KIOSK=1.
+	if handlers.KioskEnabled() {
+		kioskHandler := handlers.NewKioskHandler(srv, authHandler)
+		httpMux.HandleFunc("POST /v1/kiosk/session", kioskHandler.CreateSession)
+		go handlers.RunKioskSweep(ctx, kioskHandler)
 	}
 
 	// System health snapshot — peer-service TCP reachability for the dashboard.
@@ -1040,6 +1051,12 @@ func runStartupGuards(logger *zap.Logger) {
 	if !prod {
 		// Dev warning already printed to stderr by GetJWTSecret(); nothing more needed.
 		_ = jwtSecret
+	}
+
+	// Kiosk (ADR 0029): anonymous tenants + a forgeable (dev-default) JWT secret
+	// would be a free-for-all, so the instance refuses to boot that way.
+	if fatal, msg := handlers.CheckKioskConfig(prod, os.Getenv); fatal {
+		logger.Fatal(msg)
 	}
 
 	// H1 — Receipt signing secret

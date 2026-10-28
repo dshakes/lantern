@@ -1,0 +1,23 @@
+import type { Page } from "@playwright/test";
+
+export const PASSWORD = "e2e-correct-horse-battery";
+export const uniqueEmail = (tag: string) => `${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@e2e.lantern.test`;
+
+// Drive the real sign-up form (dev mode: no email verification gate).
+export async function signUp(page: Page, email: string, name = "E2E User") {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await page.getByLabel("Name").fill(name);
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
+  await page.getByLabel("Confirm password").fill(PASSWORD);
+  await page.getByRole("button", { name: /Create account/ }).click();
+  // Signed up == logged in: the app leaves /login (for onboarding). Cold `next dev`
+  // compiles the destination on first hit, hence the generous timeout.
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
+}
+
+export async function openOnboarding(page: Page) {
+  await page.goto("/onboarding");
+  await page.getByRole("heading", { name: "What should your agent do?" }).waitFor({ timeout: 60_000 });
+}

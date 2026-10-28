@@ -20,6 +20,9 @@ pub struct Config {
     /// Optional secret set via setWebhook — verified against
     /// X-Telegram-Bot-Api-Secret-Token on every inbound POST.
     pub telegram_secret_token: Option<String>,
+    /// Test-only: re-points Telegram Bot API calls at a fixture server.
+    /// Refused in prod/staging (main.rs).
+    pub telegram_api_base_url: Option<String>,
     // Twilio
     pub twilio_account_sid: Option<String>,
     pub twilio_auth_token: Option<String>,
@@ -84,6 +87,9 @@ impl Config {
             whatsapp_phone_number_id: std::env::var("WHATSAPP_PHONE_NUMBER_ID").ok(),
             telegram_bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
             telegram_secret_token: std::env::var("TELEGRAM_SECRET_TOKEN").ok(),
+            telegram_api_base_url: std::env::var("TELEGRAM_API_BASE_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
             twilio_account_sid: std::env::var("TWILIO_ACCOUNT_SID").ok(),
             twilio_auth_token: std::env::var("TWILIO_AUTH_TOKEN").ok(),
             twilio_phone_number: std::env::var("TWILIO_PHONE_NUMBER").ok(),

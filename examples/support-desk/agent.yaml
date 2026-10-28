@@ -1,0 +1,25 @@
+# Support desk: a webchat agent that answers from your docs and hands off to a human.
+# `lantern deploy` is still a simulated spike (packages/cli/internal/cli/deploy.go);
+# `python3 setup.py` deploys this agent for real over the REST API using spec.json.
+name: support-desk
+version: "0.1.0"
+description: Webchat support agent with a knowledge base and human handoff
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 5m
+  max_cost_usd: 0.50
+labels:
+  category: support
+  # handoff=human gives the agent one extra tool, handoff_to_human. It is the
+  # agent's ONLY tool: a public widget key never reaches your connectors.
+  handoff: human
+  # Slack channel (id or name) that gets a ping when a chat is handed off.
+  # Needs the Slack connector installed (Dashboard -> Integrations -> Slack).
+  handoff_slack_channel: support-handoffs
+# Documents uploaded to the agent's knowledge base (see knowledge.json for ids).
+knowledge:
+  - docs/password-reset.md
+  - docs/billing.md
+  - docs/data-export.md

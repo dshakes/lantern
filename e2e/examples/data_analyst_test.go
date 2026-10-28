@@ -31,11 +31,6 @@ import (
 	"github.com/dshakes/lantern/e2e/internal/e2ekit"
 )
 
-func TestMain(m *testing.M) {
-	e2ekit.Sweep(e2ekit.DefaultBase(), e2ekit.DefaultEmail(), e2ekit.DefaultPassword())
-	os.Exit(m.Run())
-}
-
 func exampleFile(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "data-analyst", name))

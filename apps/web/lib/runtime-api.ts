@@ -4,6 +4,7 @@
 // small + new + likely to evolve, so we keep it isolated here behind generic
 // get/post/del helpers that read auth from the same localStorage slot.
 
+import { isNoSessionPath } from "./no-session-paths";
 function baseUrl(): string {
   if (typeof window !== "undefined") {
     return (
@@ -56,8 +57,8 @@ function purgeTokenAndRedirect() {
   } catch {
     /* ignore */
   }
-  // Avoid bouncing back-and-forth if we're already on /login.
-  if (!window.location.pathname.startsWith("/login")) {
+  // Avoid bouncing back-and-forth if we're already on /login (or another no-session page).
+  if (!isNoSessionPath(window.location.pathname)) {
     const next = encodeURIComponent(
       window.location.pathname + window.location.search,
     );

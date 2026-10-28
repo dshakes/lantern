@@ -80,6 +80,12 @@ const sections: NavSection[] = [
     { href: "/connectors", label: "Connectors", icon: Plug, subs: [
       { href: "/connectors#available", label: "Available connectors" }, { href: "/connectors#new-actions", label: "Newer actions" }, { href: "/connectors#recorded-test-mode", label: "Recorded test mode" }, { href: "/connectors#slack", label: "Setting up a connector" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
     ]},
+    { href: "/knowledge", label: "Knowledge & handoff", icon: Plug, subs: [
+      { href: "/knowledge#documents", label: "Documents" }, { href: "/knowledge#retrieval", label: "Retrieval" }, { href: "/knowledge#handoff", label: "Human handoff" },
+    ]},
+    { href: "/examples", label: "Examples", icon: Webhook, subs: [
+      { href: "/examples#support-desk", label: "Support desk" }, { href: "/examples#pr-triage-webhook", label: "PR triage" }, { href: "/examples#incident-responder", label: "Incident responder" },
+    ]},
     { href: "/triggers", label: "Webhook triggers", icon: Webhook, subs: [
       { href: "/triggers#create", label: "Create a trigger" }, { href: "/triggers#providers", label: "Provider setup" }, { href: "/triggers#responses", label: "Responses" }, { href: "/triggers#idempotency", label: "Duplicate deliveries" }, { href: "/triggers#security", label: "Security notes" },
     ]},
@@ -137,6 +143,9 @@ const sections: NavSection[] = [
   { label: "Platform", items: [
     { href: "/security", label: "Security", icon: Shield, subs: [
       { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
+    ]},
+    { href: "/demo", label: "Demo mode", icon: UserPlus, subs: [
+      { href: "/demo#try-it", label: "Try it" }, { href: "/demo#isolation", label: "Isolation" }, { href: "/demo#reference", label: "Reference" },
     ]},
     { href: "/accounts", label: "Accounts & sign-up", icon: UserPlus, subs: [
       { href: "/accounts#modes", label: "Sign-up modes" }, { href: "/accounts#email-verification", label: "Email verification" }, { href: "/accounts#password-reset", label: "Password reset" }, { href: "/accounts#invite-codes", label: "Invite codes" }, { href: "/accounts#rate-limits", label: "Rate limits" }, { href: "/accounts#export", label: "Data export" }, { href: "/accounts#delete", label: "Workspace deletion" }, { href: "/accounts#mailer", label: "Mailer" },

@@ -752,6 +752,12 @@ func labelOf(node Node) string {
 //	{{steps.<id>}}       — read a prior step's output (stringified)
 //	{{steps.<id>.field}} — read a field of a prior step's map output
 func renderTemplate(s string, vars map[string]any) string {
+	return renderTemplateWith(s, vars, nil)
+}
+
+// renderTemplateWith is renderTemplate with an optional escape applied to every
+// substituted value (used to splice free text into a JSON string literal).
+func renderTemplateWith(s string, vars map[string]any, escape func(string) string) string {
 	if !strings.Contains(s, "{{") {
 		return s
 	}
@@ -767,9 +773,18 @@ func renderTemplate(s string, vars map[string]any) string {
 		}
 		path := strings.TrimSpace(out[start+2 : start+end])
 		replacement := resolvePath(path, vars)
+		if escape != nil {
+			replacement = escape(replacement)
+		}
 		out = out[:start] + replacement + out[start+end+2:]
 	}
 	return out
+}
+
+// jsonStringEscape escapes s for use INSIDE a JSON string literal.
+func jsonStringEscape(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1])
 }
 
 func resolvePath(path string, vars map[string]any) string {
@@ -794,7 +809,9 @@ func parseParams(raw any, vars map[string]any) map[string]any {
 	}
 	switch v := raw.(type) {
 	case map[string]any:
-		return v
+		// Render {{...}} in string leaves so map-form params can template values
+		// (a JSON-string form breaks as soon as a value holds a quote or newline).
+		return renderMapTemplates(v, vars)
 	case string:
 		if v == "" {
 			return map[string]any{}
@@ -804,12 +821,32 @@ func parseParams(raw any, vars map[string]any) map[string]any {
 		if err := json.Unmarshal([]byte(rendered), &m); err == nil {
 			return m
 		}
+		// Free text (a multi-line LLM reply) spliced into a quoted JSON field
+		// breaks the raw render above; retry with the values JSON-escaped.
+		if err := json.Unmarshal([]byte(renderTemplateWith(v, vars, jsonStringEscape)), &m); err == nil {
+			return m
+		}
 		// Couldn't parse — return the raw string under a known key so
 		// connectors that expect a single text param ("query", "text")
 		// still work.
 		return map[string]any{"input": rendered}
 	}
 	return map[string]any{}
+}
+
+func renderMapTemplates(m map[string]any, vars map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		switch t := v.(type) {
+		case string:
+			out[k] = renderTemplate(t, vars)
+		case map[string]any:
+			out[k] = renderMapTemplates(t, vars)
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func formatOutput(v any) string {

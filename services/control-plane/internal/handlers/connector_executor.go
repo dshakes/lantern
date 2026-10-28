@@ -1761,8 +1761,23 @@ func executePagerDuty(config map[string]any, action string, params map[string]an
 		}
 		return result, nil
 
+	case "add_note":
+		// https://developer.pagerduty.com/api-reference/3b9db5d0c8d4a-create-a-note-on-an-incident
+		id := stringParam(params, "incident_id")
+		content := stringParam(params, "content")
+		if id == "" || content == "" || from == "" {
+			return nil, fmt.Errorf("'incident_id', 'content', and 'from' (acting user's email) parameters are required")
+		}
+		payload, _ := json.Marshal(map[string]any{"note": map[string]string{"content": content}})
+		headers["From"] = from
+		result, err := doJSONRequest("POST", base+"/incidents/"+url.PathEscape(id)+"/notes", headers, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("PagerDuty add_note failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown PagerDuty action: %s (supported: list_incidents, get_incident, create_incident, update_incident)", action)
+		return nil, fmt.Errorf("unknown PagerDuty action: %s (supported: list_incidents, get_incident, create_incident, update_incident, add_note)", action)
 	}
 }
 

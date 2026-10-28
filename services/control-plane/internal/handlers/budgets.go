@@ -647,12 +647,14 @@ func AdjustUsageCost(ctx context.Context, pool *pgxpool.Pool, tenantID, agentNam
 	if date == "" {
 		date = usageDate(time.Now())
 	}
+	// $4 is cast explicitly: GREATEST($4, 0) alone makes Postgres infer INTEGER
+	// for the parameter, silently truncating every sub-dollar delta to 0.
 	_, err := pool.Exec(ctx, `
 		INSERT INTO agent_usage_daily
 		  (tenant_id, agent_name, usage_date, runs_count, tokens_in, tokens_out, cost_usd, tool_counts)
-		VALUES ($1, $2, $3, 0, 0, 0, GREATEST($4, 0), '{}'::jsonb)
+		VALUES ($1, $2, $3, 0, 0, 0, GREATEST($4::float8, 0), '{}'::jsonb)
 		ON CONFLICT (tenant_id, agent_name, usage_date) DO UPDATE SET
-		  cost_usd = GREATEST(agent_usage_daily.cost_usd + $4, 0)
+		  cost_usd = GREATEST(agent_usage_daily.cost_usd + $4::float8, 0)
 	`, tenantID, agentName, date, deltaUsd)
 	return err
 }

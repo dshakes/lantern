@@ -641,6 +641,10 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.auth.requireVerifiedEmail(w, r) {
+		return
+	}
+
 	// Per-tenant spawn-storm guard (phase 3): a burst of run creations from one
 	// tenant is throttled to protect shared capacity. 429 carries no work side-effect.
 	if h.spawnLimiter != nil {
@@ -1416,7 +1420,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		var outputJSON []byte
 		// rls-exempt: inline executor — runs read keyed by id (authorized run).
 		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
+			`SELECT COALESCE(output, '{}'::jsonb)::text FROM runs WHERE id = $1`, runID,
 		).Scan(&outputJSON)
 		var outMap map[string]any
 		if len(outputJSON) > 0 {
@@ -1443,7 +1447,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// rls-exempt: inline executor — agents read self-scoped by explicit
 	// `tenant_id = $2`; runs in a detached goroutine ctx.
 	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON, &agentModel)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
@@ -2051,9 +2055,11 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 	var wfRaw []byte
 	var agentModel string
 	// rls-exempt: inline executor — agents read self-scoped by explicit
-	// `tenant_id = $2`; detached goroutine ctx.
+	// `tenant_id = $2`; detached goroutine ctx. read as ::text: a bytea cast
+	// parses backslashes, so a workflow with an escaped quote (\")
+	// in a prompt failed to load and the run silently fell to the plain-LLM path.
 	err := h.srv.Pool.QueryRow(ctx,
-		`SELECT COALESCE(workflow, '{}'::jsonb)::text::bytea, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT COALESCE(workflow, '{}'::jsonb)::text, COALESCE(model, '') FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
 	).Scan(&wfRaw, &agentModel)
 	if err != nil || len(wfRaw) == 0 {
@@ -2113,10 +2119,16 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
 			payload, _ := json.Marshal(ev.Payload)
 			// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
+			// A re-drive after an approval park restarts seq at 1: replayed events dedup
+			// on (run_id, seq), but the resumed node's outcome lands on the seq the park
+			// used for step_waiting, so it must replace that marker, not be dropped.
 			_, err := h.srv.Pool.Exec(ctx,
 				`INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
 				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT (run_id, seq) DO NOTHING`,
+				 ON CONFLICT (run_id, seq) DO UPDATE
+				   SET kind = EXCLUDED.kind, step_id = EXCLUDED.step_id,
+				       attempt = EXCLUDED.attempt, payload = EXCLUDED.payload
+				   WHERE journal_events.kind = 'step_waiting'`,
 				runID, ev.Seq, ev.Kind, ev.StepID, ev.Attempt, payload,
 			)
 			return err
@@ -2139,6 +2151,23 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			`, runID, stepID).Scan(&grantedNotes)
 			if grantCheckErr == nil {
 				return workflow.ApprovalDisposition{Granted: true, Reason: grantedNotes}, nil
+			}
+
+			// A denied row for this (run, step) fails the node: the interpreter
+			// turns Granted=false into step_failed. Checked before parking so a
+			// re-drive after Deny does not create a second pending request.
+			var deniedNotes string
+			// rls-exempt: inline executor — takeover_requests keyed by run_id.
+			if h.srv.Pool.QueryRow(ctx, `
+				SELECT COALESCE(notes, '')
+				FROM takeover_requests
+				WHERE run_id = $1
+				  AND (step_id = $2 OR step_id IS NULL OR step_id = '')
+				  AND status = 'denied'
+				ORDER BY created_at DESC
+				LIMIT 1
+			`, runID, stepID).Scan(&deniedNotes) == nil {
+				return workflow.ApprovalDisposition{Granted: false, Reason: deniedNotes}, nil
 			}
 
 			// Park: create a pending takeover row so the dashboard can surface
@@ -2199,7 +2228,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			var outputJSON []byte
 			// rls-exempt: inline executor — read the child run's output by id.
 			_ = h.srv.Pool.QueryRow(childCtx,
-				`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, childRunID,
+				`SELECT COALESCE(output, '{}'::jsonb)::text FROM runs WHERE id = $1`, childRunID,
 			).Scan(&outputJSON)
 			var out map[string]any
 			if len(outputJSON) > 0 {
@@ -2300,7 +2329,7 @@ func (h *RESTHandler) redriveParkedRun(runID, tenantID string) {
 		// rls-exempt: run-redrive path — keyed by run_id + explicit tenant_id filter.
 		_ = h.srv.Pool.QueryRow(ctx, `
 			SELECT COALESCE(a.name, ''),
-			       COALESCE(r.input, '{}'::jsonb)::text::bytea
+			       COALESCE(r.input, '{}'::jsonb)::text
 			FROM runs r
 			LEFT JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 			WHERE r.id = $1 AND r.tenant_id = $2
@@ -2378,8 +2407,8 @@ func (h *RESTHandler) journalCompletedStep(stepCtx context.Context, stepRunID, s
 func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, connectorID, action string, params map[string]any) (any, error) {
 	var configRaw, oauthRaw []byte
 	err := pool.QueryRow(ctx,
-		`SELECT COALESCE(config, '{}'::jsonb)::text::bytea,
-		        COALESCE(oauth_token_encrypted, '{}'::jsonb)::text::bytea
+		`SELECT COALESCE(config, '{}'::jsonb)::text,
+		        COALESCE(oauth_token_encrypted, '{}'::jsonb)::text
 		 FROM connector_installs
 		 WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'`,
 		tenantID, connectorID,
@@ -2416,8 +2445,14 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 		return executeNotion(cfg, action, params)
 	case "linear":
 		return executeLinear(cfg, action, params)
+	case "sentry":
+		return executeSentry(cfg, action, params)
+	case "pagerduty":
+		return executePagerDuty(cfg, action, params)
 	default:
-		return nil, fmt.Errorf("workflow-connector dispatch not yet wired for %s", connectorID)
+		// Every other connector (google-calendar, sentry, pagerduty, ...) goes
+		// through the shared executor, which also refreshes OAuth tokens.
+		return executeConnectorAction(ctx, pool, tenantID, connectorID, action, params)
 	}
 }
 

@@ -58,11 +58,59 @@ struct SignalRunRequest {
 #[derive(Clone, PartialEq, Message)]
 struct SignalRunResponse {}
 
+#[derive(Clone, PartialEq, Message)]
+struct GetRunRequest {
+    #[prost(string, tag = "1")]
+    id: String,
+}
+
+/// Only the Run fields the reply path needs (tags per runs.proto `Run`).
+#[derive(Clone, PartialEq, Message)]
+struct GetRunResponse {
+    #[prost(int32, tag = "5")]
+    status: i32,
+    #[prost(message, optional, tag = "9")]
+    output: Option<Struct>,
+}
+
+/// RunStatus values from runs.proto.
+const RUN_SUCCEEDED: i32 = 4;
+const RUN_FAILED: i32 = 5;
+const RUN_CANCELLED: i32 = 6;
+
+/// A run's terminal state as seen by the reply path.
+#[derive(Debug, PartialEq)]
+pub enum RunOutcome {
+    Pending,
+    Succeeded(String),
+    Failed,
+}
+
+/// Pull the reply text out of a run's output Struct: the inline executor writes
+/// `{"result": "<text>"}`; fall back to a few common keys, then any string value.
+pub(crate) fn output_text(out: &Struct) -> Option<String> {
+    use prost_types::value::Kind;
+    let as_str = |k: &str| match out.fields.get(k).and_then(|v| v.kind.as_ref()) {
+        Some(Kind::StringValue(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    };
+    ["result", "text", "output", "response"]
+        .iter()
+        .find_map(|k| as_str(k))
+        .or_else(|| {
+            out.fields.values().find_map(|v| match &v.kind {
+                Some(Kind::StringValue(s)) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            })
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
 /// gRPC client for the subset of RunService the surface-gateway needs.
+#[derive(Clone)]
 pub struct ControlPlaneClient {
     channel: Channel,
     service_token: String,
@@ -150,6 +198,43 @@ impl ControlPlaneClient {
             ));
         }
         Ok(run.id)
+    }
+
+    /// Fetch a run's state via `RunService.GetRun` (tenant-scoped by metadata).
+    pub async fn get_run(&self, tenant_id: &str, run_id: &str) -> Result<RunOutcome, AppError> {
+        let mut request = Request::new(GetRunRequest {
+            id: run_id.to_string(),
+        });
+        self.inject_metadata(&mut request, tenant_id);
+
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/GetRun");
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        grpc.ready()
+            .await
+            .map_err(|e| AppError::Upstream(format!("control-plane gRPC not ready: {e}")))?;
+        let codec = tonic::codec::ProstCodec::<GetRunRequest, GetRunResponse>::default();
+        let run = grpc
+            .unary(request, path, codec)
+            .await
+            .map_err(|s| {
+                AppError::Upstream(format!(
+                    "RunService/GetRun failed ({:?}): {}",
+                    s.code(),
+                    s.message()
+                ))
+            })?
+            .into_inner();
+
+        Ok(match run.status {
+            RUN_SUCCEEDED => RunOutcome::Succeeded(
+                run.output
+                    .as_ref()
+                    .and_then(output_text)
+                    .unwrap_or_default(),
+            ),
+            RUN_FAILED | RUN_CANCELLED => RunOutcome::Failed,
+            _ => RunOutcome::Pending,
+        })
     }
 
     /// Signal an active run with a named signal and string key-value payload.
@@ -294,6 +379,23 @@ mod tests {
         let decoded = SignalRunRequest::decode(buf.as_slice()).unwrap();
         assert_eq!(decoded.run_id, "run-abc123");
         assert_eq!(decoded.signal_name, "surface_message");
+    }
+
+    #[test]
+    fn output_text_prefers_result_then_any_string() {
+        let s = |k: &str, v: &str| prost_types::Struct {
+            fields: [(
+                k.to_string(),
+                prost_types::Value {
+                    kind: Some(Kind::StringValue(v.to_string())),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        assert_eq!(output_text(&s("result", "hi")).as_deref(), Some("hi"));
+        assert_eq!(output_text(&s("weird", "yo")).as_deref(), Some("yo"));
+        assert_eq!(output_text(&Struct::default()), None);
     }
 
     /// The input bytes embedded in a CreateRunRequest must decode as a valid Struct.

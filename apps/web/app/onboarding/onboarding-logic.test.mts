@@ -21,6 +21,9 @@ import {
   decideSandbox,
   starterSpec,
   afterRun,
+  parseStarterGallery,
+  specFromTemplate,
+  templateNeeds,
   type OnboardingState,
   type AgentSpecDraft,
 } from "./onboarding-logic.ts";
@@ -245,4 +248,48 @@ test("afterRun: a succeeded first run persists AND advances to the sandbox step"
 
   // Sandbox already decided earlier → straight to done.
   assert.equal(afterRun({ ...base, sandbox: "skipped" }, { kind: "succeeded", output: "x" }, true).step, "done");
+});
+
+// ---- W2-S: starter gallery + verify-email step -----------------------------
+
+
+const tpl = (over: Record<string, unknown> = {}) => ({
+  id: "pr-triage", name: "pr-triage", gallery: true, pitch: "Triage PRs.", model: "balanced",
+  systemPrompt: "You triage PRs.", firstInput: "Triage PR 1", connectors: ["github", "slack"], surfaces: [], ...over,
+});
+
+test("parseStarterGallery keeps complete gallery templates only", () => {
+  const out = parseStarterGallery([
+    tpl(),
+    tpl({ id: "legacy", gallery: false }),
+    tpl({ id: "vendor", model: "gpt-5" }),
+    tpl({ id: "nopitch", pitch: "" }),
+    tpl({ id: "noprompt", systemPrompt: undefined }),
+    null,
+  ]);
+  assert.deepEqual(out.map((t) => t.id), ["pr-triage"]);
+  assert.deepEqual(parseStarterGallery("nope"), []);
+});
+
+test("templateNeeds lists every connector and channel honestly", () => {
+  const [t] = parseStarterGallery([tpl({ connectors: ["github", "slack"], surfaces: ["webchat"] })]);
+  assert.equal(templateNeeds(t), "Needs: GitHub connector, Slack connector, Webchat channel");
+  const [bare] = parseStarterGallery([tpl({ connectors: [], surfaces: [] })]);
+  assert.equal(templateNeeds(bare), "No connectors needed");
+});
+
+test("specFromTemplate yields a capability-model spec that passes validateSpec", () => {
+  const [t] = parseStarterGallery([tpl()]);
+  const spec = specFromTemplate(t);
+  assert.equal(validateSpec(spec), null);
+  assert.equal(spec.model, "balanced");
+  assert.deepEqual(spec.firstInput, { prompt: "Triage PR 1" });
+  assert.match(spec.rationale ?? "", /Needs: GitHub connector, Slack connector/);
+});
+
+test("unverified-email 403 maps to a verify step, not a silent failure", () => {
+  const f = parseApiError(new Error('API 403: {"error":"verify your email to run agents","code":"email_unverified"}'));
+  const fix = suggestFix(f, "run");
+  assert.equal(fix.fix.action, "verify_email");
+  assert.match(fix.summary, /Verify your email/);
 });

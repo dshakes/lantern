@@ -1,0 +1,3 @@
+[
+  {"match": "[pr-triage]", "reply": "risk: low - small retry-backoff change; check the jitter bounds in retry.go"}
+]

@@ -1,10 +1,12 @@
 package llmreplay
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -85,5 +87,62 @@ func TestLoadRules(t *testing.T) {
 	}
 	if _, err := LoadRules("/nonexistent/rules.json"); err == nil {
 		t.Error("missing file: want error")
+	}
+}
+
+func TestRulesMatchSystemPromptAndHealthz(t *testing.T) {
+	s := New([]Rule{{Match: "triage bot", Reply: "from system"}, {Match: "hello", Reply: "from user"}})
+	for name, c := range map[string]struct{ path, body string }{
+		"openai system role":      {"/v1/chat/completions", `{"messages":[{"role":"system","content":"You are a triage bot"},{"role":"user","content":"hello"}]}`},
+		"anthropic system string": {"/v1/messages", `{"system":"You are a triage bot","messages":[{"role":"user","content":"hello"}]}`},
+		"anthropic system blocks": {"/v1/messages", `{"system":[{"type":"text","text":"You are a triage bot"}],"messages":[{"role":"user","content":"hello"}]}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, body := post(t, s, c.path, c.body); !strings.Contains(body, "from system") {
+				t.Errorf("system prompt rule (listed first) should win: %s", body)
+			}
+		})
+	}
+	if _, body := post(t, s, "/v1/messages", `{"messages":[{"role":"user","content":"hello"}]}`); !strings.Contains(body, "from user") {
+		t.Errorf("user-text rule should still match: %s", body)
+	}
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Code != 200 {
+		t.Errorf("/healthz = %d", rr.Code)
+	}
+}
+
+func TestEmbeddings_DeterministicAndSimilar(t *testing.T) {
+	s := New(nil)
+	vec := func(text string) []float64 {
+		code, body := post(t, s, "/v1/embeddings", `{"model":"text-embedding-3-small","input":`+strconv.Quote(text)+`}`)
+		if code != 200 {
+			t.Fatalf("status %d: %s", code, body)
+		}
+		var out struct {
+			Data []struct {
+				Embedding []float64 `json:"embedding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil || len(out.Data) != 1 || len(out.Data[0].Embedding) != 1536 {
+			t.Fatalf("want one 1536-d vector, got %v (%v)", len(out.Data), err)
+		}
+		return out.Data[0].Embedding
+	}
+	dot := func(a, b []float64) (d float64) {
+		for i := range a {
+			d += a[i] * b[i]
+		}
+		return d
+	}
+	q := vec("How do I reset my password?")
+	if again := vec("How do I reset my password?"); dot(q, again) < 0.999 {
+		t.Error("embedding is not deterministic")
+	}
+	near := dot(q, vec("To reset your password, open Settings and choose Reset password."))
+	far := dot(q, vec("Invoices are issued on the first day of every month."))
+	if !(near > 0.3 && far < 0.05) {
+		t.Errorf("similarity near=%.2f far=%.2f, want near>0.3 and far<0.05", near, far)
 	}
 }

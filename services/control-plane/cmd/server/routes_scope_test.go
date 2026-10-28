@@ -42,6 +42,7 @@ var scopeExempt = map[string]string{
 
 	// Public by design.
 	"POST /v1/runs/receipts/verify": "public receipt verification",
+	"POST /v1/kiosk/session":        "anonymous by design; registered only when LANTERN_KIOSK=1 (ADR 0029)",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
 	"POST /v1/runtime/schedule":              "in-handler runtime:write",

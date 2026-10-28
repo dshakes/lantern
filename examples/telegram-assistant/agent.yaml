@@ -1,0 +1,71 @@
+name: telegram-assistant
+version: "0.1.0"
+description: "Personal assistant reachable from Telegram and WhatsApp Cloud."
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 2m
+  max_tokens: 8000
+  max_cost_usd: 0.10
+labels:
+  category: assistant
+system_prompt: "You are a concise personal assistant replying in a chat app. Answer in at most three short sentences, in plain text with no markup."
+workflow: 
+  {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "data": {
+          "label": "Chat message"
+        }
+      },
+      {
+        "id": "calendar",
+        "type": "connector",
+        "data": {
+          "label": "Read calendar",
+          "connector": "google-calendar",
+          "action": "list_events",
+          "inputMapping": {
+            "calendarId": "primary",
+            "limit": 10
+          }
+        }
+      },
+      {
+        "id": "reply",
+        "type": "ai-step",
+        "data": {
+          "label": "Answer",
+          "capability": "auto",
+          "prompt": "The user wrote in chat: {{input.text}}\n\nTheir upcoming calendar events (JSON):\n{{steps.calendar}}\n\nAnswer the question using only that calendar data. Plain text, at most three sentences."
+        }
+      },
+      {
+        "id": "end",
+        "type": "end",
+        "data": {
+          "outputExpression": "{{steps.reply}}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "calendar"
+      },
+      {
+        "id": "e2",
+        "source": "calendar",
+        "target": "reply"
+      },
+      {
+        "id": "e3",
+        "source": "reply",
+        "target": "end"
+      }
+    ]
+  }

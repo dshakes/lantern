@@ -214,6 +214,12 @@ export default function ConnectorsPage() {
             <td><code>apiKey</code></td>
             <td>write</td>
           </tr>
+          <tr>
+            <td><code>pagerduty</code> / <code>add_note</code></td>
+            <td><strong><code>incident_id</code></strong>, <strong><code>content</code></strong>, <strong><code>from</code></strong></td>
+            <td><code>apiKey</code></td>
+            <td>write</td>
+          </tr>
         </tbody>
       </table>
       <p>
@@ -228,8 +234,8 @@ export default function ConnectorsPage() {
         PagerDuty has no dashboard card yet. Install it over the API, then
         call it. Agents get <code>list_incidents</code> and{" "}
         <code>get_incident</code> as tools;{" "}
-        <code>create_incident</code> and <code>update_incident</code> are
-        REST-only.
+        <code>create_incident</code>, <code>update_incident</code> and{" "}
+        <code>add_note</code> are REST-only (and usable from workflow connector nodes).
       </p>
       <pre>
         <code>{`# install PagerDuty (config.apiKey = a REST API key)

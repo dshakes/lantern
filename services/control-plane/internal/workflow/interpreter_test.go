@@ -1468,3 +1468,41 @@ func sliceEqual(a, b []string) bool {
 }
 
 func strPtr(s string) *string { return &s }
+
+// A multi-line LLM reply spliced into a quoted inputMapping field used to make
+// the JSON invalid, so the connector got {"input": ...} and no `text`.
+func TestParseParams_FreeTextIsJSONEscaped(t *testing.T) {
+	reply := "## Digest\n\"quoted\" line\\path"
+	vars := map[string]any{"steps": map[string]any{"digest": reply}}
+	got := parseParams(`{"channel":"C1","text":"{{steps.digest}}"}`, vars)
+	if got["text"] != reply || got["channel"] != "C1" {
+		t.Fatalf("params = %#v, want text=%q", got, reply)
+	}
+	// Raw JSON substitution (object/number) still works untouched.
+	vars["steps"] = map[string]any{"n": map[string]any{"a": 1}}
+	got = parseParams(`{"obj": {{steps.n}}}`, vars)
+	if _, ok := got["obj"].(map[string]any); !ok {
+		t.Fatalf("raw JSON substitution regressed: %#v", got)
+	}
+}
+
+// Regression: map-form params must render {{...}} templates. Before, only the
+// JSON-string form did, and that breaks on a value containing a quote/newline.
+func TestParseParams_MapFormRendersTemplates(t *testing.T) {
+	vars := map[string]any{
+		"input": map[string]any{"title": `Fix "retry" storm`, "n": float64(42)},
+		"steps": map[string]any{"fetch": map[string]any{"ts": "1.2"}},
+	}
+	got := parseParams(map[string]any{
+		"text":   "PR: {{input.title}}",
+		"number": "{{input.n}}",
+		"nested": map[string]any{"thread_ts": "{{steps.fetch.ts}}"},
+		"keep":   float64(7),
+	}, vars)
+	if got["text"] != `PR: Fix "retry" storm` || got["number"] != "42" || got["keep"] != float64(7) {
+		t.Fatalf("got %#v", got)
+	}
+	if n, _ := got["nested"].(map[string]any); n["thread_ts"] != "1.2" {
+		t.Fatalf("nested not rendered: %#v", got["nested"])
+	}
+}
