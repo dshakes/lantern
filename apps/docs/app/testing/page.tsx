@@ -111,6 +111,48 @@ make test-e2e    # terminal 2`}</code></pre>
         at a stack with real tenant data: they delete every agent named <code>e2e-*</code> in the logged-in tenant.
       </p>
 
+      <h2 id="fixture-llm">Fixture LLM tier</h2>
+      <p>
+        <strong>What.</strong> <code>llm-replay</code> is a small stdlib server that speaks the OpenAI
+        chat-completions and Anthropic messages wire formats (JSON and SSE streaming, text and tool calls). Setting{" "}
+        <code>LANTERN_LLM_BASEURL_OPENAI</code> and/or <code>LANTERN_LLM_BASEURL_ANTHROPIC</code> sends every
+        control-plane provider call there instead of the real API.
+      </p>
+      <p>
+        <strong>Why.</strong> CI and kiosk mode need the same answer every time and must not need a provider key or
+        spend money. Token usage is still reported, so budgets and cost metering run for real.
+      </p>
+      <p><strong>How.</strong> The default reply is <code>fixture: </code> plus the first 60 characters of the last user message. A rules file scripts the rest; the first rule whose <code>match</code> is a substring of the user text wins.</p>
+      <pre><code>{`[
+  {"match": "refund", "reply": "Refund issued."},
+  {"match": "weather", "tool": {"name": "get_weather", "args": {"city": "Austin"}}}
+]`}</code></pre>
+      <p>
+        A <code>tool</code> rule fires only when the request declares tools. When the next request carries the tool
+        result, the reply is <code>fixture: tool result: &lt;first 60 chars&gt;</code>, so a scripted tool loop always
+        ends. Usage is about one token per 4 characters of the request body and the reply.
+      </p>
+
+      <h3 id="fixture-try">Try it</h3>
+      <pre><code>{`cd services/control-plane
+go run ./cmd/llm-replay -rules rules.json      # 127.0.0.1:9192
+
+LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 \
+LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192 \
+OPENAI_API_KEY=dummy make run-api
+
+curl -s localhost:8080/v1/completions -H "Authorization: Bearer $TOKEN" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'   # "fixture: hello"
+curl -s 127.0.0.1:9192/__requests                         # what the control-plane sent`}</code></pre>
+
+      <h3 id="fixture-limits">Limits</h3>
+      <ul>
+        <li>Dev and test only. The control-plane refuses to start with either variable set when <code>LANTERN_ENV</code> is prod, production or staging, and ignores them at request time.</li>
+        <li>A provider key must still exist (database or <code>OPENAI_API_KEY</code>/<code>ANTHROPIC_API_KEY</code>); any dummy value works.</li>
+        <li>Only <code>/v1/chat/completions</code> and <code>/v1/messages</code> are served. Other provider endpoints (embeddings, speech, transcription) return 404.</li>
+        <li>No model quality: it echoes and follows rules. It cannot validate prompts.</li>
+      </ul>
+
       <h2 id="limits">Not covered</h2>
       <ul>
         <li>True cross-tenant isolation (a second tenant probing the first) needs a second seeded tenant.</li>
