@@ -1420,3 +1420,32 @@ func TestWarnUnknownCapabilityOnce_Bounded(t *testing.T) {
 		t.Fatalf("warned set grew to %d, cap is %d", n, maxWarnedCapabilities)
 	}
 }
+
+// The "balanced" default (used by "auto", unset models and every
+// default-routed call, incl. the bridges) must pick the documented sweet spot
+// — Sonnet with Anthropic, GPT-4o with OpenAI only — never the frontier model
+// on price-blind scoring, and never the tool-shy mini tier.
+func TestResolveAutoModel_BalancedDefaultIsNotFrontier(t *testing.T) {
+	t.Setenv("LANTERN_ROUTE_STRATEGY", "")
+	cases := []struct {
+		name                string
+		anthropic, openai   bool
+		wantProv, wantModel string
+	}{
+		{"both keyed", true, true, "anthropic", sonnetModel()},
+		{"anthropic only", true, false, "anthropic", sonnetModel()},
+		{"openai only", false, true, "openai", "gpt-4o"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, m := resolveAutoModel(tc.anthropic, tc.openai)
+			if p != tc.wantProv || m != tc.wantModel {
+				t.Fatalf("balanced picked %s/%s, want %s/%s", p, m, tc.wantProv, tc.wantModel)
+			}
+			chain := resolveCandidateChain(tc.anthropic, tc.openai, false)
+			if len(chain) == 0 || chain[0].Model != tc.wantModel {
+				t.Fatalf("failover chain head = %+v, want %s", chain, tc.wantModel)
+			}
+		})
+	}
+}
