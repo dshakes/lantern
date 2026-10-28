@@ -219,6 +219,7 @@ jobs:
         run: |
           set -euo pipefail
           kubectl port-forward svc/lantern-control-plane 18080:8080 &
+          kubectl port-forward deploy/lantern-control-plane 19464:9464 &   # /metrics moved off the API port
           kubectl port-forward svc/lantern-runtime-scheduler 18085:8085 &
           kubectl port-forward svc/lantern-postgresql 15432:5432 &
           sleep 5
@@ -227,7 +228,7 @@ jobs:
           # one real request first so the HTTP histogram has a sample
           curl -fsS localhost:18080/healthz >/dev/null
           # grep -q on a pipe closes it early and makes curl exit 23 under pipefail, so fetch first
-          curl -fsS localhost:18080/metrics -o /tmp/cp-metrics.txt
+          curl -fsS localhost:19464/metrics -o /tmp/cp-metrics.txt
           grep -q '^http_server_request_duration_seconds_count' /tmp/cp-metrics.txt
           curl -fsS localhost:18085/metrics -o /tmp/sched-metrics.txt
           grep -q '^lantern_scheduler_' /tmp/sched-metrics.txt
