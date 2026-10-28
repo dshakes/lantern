@@ -4,6 +4,8 @@ import { PASSWORD, openOnboarding, signUp, uniqueEmail } from "../support/users"
 
 test("sign-up lands logged in (dev mode: auto-verified, no email gate)", async ({ page }) => {
   await signUp(page, uniqueEmail("signup"));
+  // A brand-new user goes to onboarding, not the agents list (redirect race, fixed).
+  await expect(page).toHaveURL(/\/onboarding/);
   // Logged in: the cookie-gated dashboard is reachable, and survives a reload.
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/settings/);

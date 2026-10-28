@@ -15,6 +15,7 @@ for (const t of ["dark", "light"] as const) {
 
 test("theme toggle flips, persists across reload", async ({ page }) => {
   await signUp(page, uniqueEmail("theme"));
+  await page.goto("/agents"); // the toggle lives in the dashboard top bar; sign-up lands on onboarding
   expect(await theme(page)).toBe("dark"); // dark is the default
   await page.getByRole("button", { name: "Switch to light theme" }).click();
   expect(await theme(page)).toBe("light");
