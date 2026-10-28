@@ -90,6 +90,29 @@ func TestLoadRules(t *testing.T) {
 	}
 }
 
+func TestRulesMatchSystemPromptAndHealthz(t *testing.T) {
+	s := New([]Rule{{Match: "triage bot", Reply: "from system"}, {Match: "hello", Reply: "from user"}})
+	for name, c := range map[string]struct{ path, body string }{
+		"openai system role":      {"/v1/chat/completions", `{"messages":[{"role":"system","content":"You are a triage bot"},{"role":"user","content":"hello"}]}`},
+		"anthropic system string": {"/v1/messages", `{"system":"You are a triage bot","messages":[{"role":"user","content":"hello"}]}`},
+		"anthropic system blocks": {"/v1/messages", `{"system":[{"type":"text","text":"You are a triage bot"}],"messages":[{"role":"user","content":"hello"}]}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, body := post(t, s, c.path, c.body); !strings.Contains(body, "from system") {
+				t.Errorf("system prompt rule (listed first) should win: %s", body)
+			}
+		})
+	}
+	if _, body := post(t, s, "/v1/messages", `{"messages":[{"role":"user","content":"hello"}]}`); !strings.Contains(body, "from user") {
+		t.Errorf("user-text rule should still match: %s", body)
+	}
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Code != 200 {
+		t.Errorf("/healthz = %d", rr.Code)
+	}
+}
+
 func TestEmbeddings_DeterministicAndSimilar(t *testing.T) {
 	s := New(nil)
 	vec := func(text string) []float64 {

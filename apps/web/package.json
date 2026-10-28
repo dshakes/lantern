@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --import=tsx/esm --test \"app/**/*.test.mts\""
+    "test": "node --import=tsx/esm --test \"app/**/*.test.mts\" \"lib/**/*.test.mts\""
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",

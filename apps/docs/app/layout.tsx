@@ -144,6 +144,9 @@ const sections: NavSection[] = [
     { href: "/security", label: "Security", icon: Shield, subs: [
       { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
     ]},
+    { href: "/demo", label: "Demo mode", icon: UserPlus, subs: [
+      { href: "/demo#try-it", label: "Try it" }, { href: "/demo#isolation", label: "Isolation" }, { href: "/demo#reference", label: "Reference" },
+    ]},
     { href: "/accounts", label: "Accounts & sign-up", icon: UserPlus, subs: [
       { href: "/accounts#modes", label: "Sign-up modes" }, { href: "/accounts#email-verification", label: "Email verification" }, { href: "/accounts#password-reset", label: "Password reset" }, { href: "/accounts#invite-codes", label: "Invite codes" }, { href: "/accounts#rate-limits", label: "Rate limits" }, { href: "/accounts#export", label: "Data export" }, { href: "/accounts#delete", label: "Workspace deletion" }, { href: "/accounts#mailer", label: "Mailer" },
     ]},
