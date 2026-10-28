@@ -8,7 +8,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ## Project in one sentence
 
-Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
+Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 18 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
 
 For the full vision read `README.md`. For the architecture read `docs/architecture/01-overview.md`.
 
@@ -263,10 +263,24 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 
 | Method | Path                     | Description          |
 | ------ | ------------------------ | -------------------- |
-| `POST` | `/auth/register`         | Register new user    |
+| `POST` | `/auth/signup`           | Register new user (gated by `LANTERN_SIGNUP_MODE`) |
 | `POST` | `/auth/login`            | Email+password login |
 | `GET`  | `/auth/me`               | Current user info    |
 | `GET`  | `/auth/oauth/google/...` | Google OAuth flow    |
+| `POST` | `/auth/verify`, `/auth/verify/resend` | Email verification (token / re-send) |
+| `POST` | `/auth/forgot`, `/auth/reset` | Password reset (never reveals whether the account exists) |
+| `GET`  | `/v1/tenants/{id}/export` | Owner-only data export (GDPR access) |
+| `DELETE` | `/v1/tenants/{id}`     | Owner-only workspace erasure (GDPR) |
+
+**Account lifecycle (ADR 0027).** `LANTERN_SIGNUP_MODE` = `open`/`invite`/`closed`
+(unset → `closed` in prod, `open` in dev; invalid → refuse to start). `invite` needs
+`LANTERN_SIGNUP_INVITE_SECRET`; `LANTERN_TURNSTILE_SECRET` enables captcha (required
+for `open` in prod). Mailer: `LANTERN_MAILER` = `log` (default) / `smtp` / `http` with
+`LANTERN_MAIL_FROM`, `LANTERN_SMTP_*`, `LANTERN_MAIL_HTTP_*`; prod with `open`/`invite`
+sign-up and `LANTERN_MAILER=log` refuses to start (`CheckSignupConfig`). Pre-auth routes are
+Redis rate-limited per IP (+ email), fail-open on Redis errors;
+`LANTERN_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
+`apps/docs/app/accounts/page.tsx`.
 
 ### Agents
 
@@ -526,9 +540,26 @@ directory lists only `is_public` agents.
 **Metering coverage.** Workflow `ai-step` and confidence-vote LLM calls and the
 built-in `web_search` are checked against budgets and recorded via `CheckBudget`
 / `RecordUsageSpend` (`internal/handlers/budgets.go`) — the latter accrues tokens
-and cost WITHOUT bumping `runs_count`, so workflow spend does not inflate the
-runs/day limit. Streaming and no-tools Anthropic paths send the system prompt
+and cost WITHOUT bumping `runs_count`, so per-step spend does not inflate the
+runs/day limit. Each workflow run itself is counted once toward runs/day when
+it succeeds (same as an inline run), so `maxRunsPerDay` limits workflow agents
+too. The forecaster's history (`/v1/runs/forecast`) averages the agent's
+`succeeded` runs over the last 30 days. Streaming and no-tools Anthropic paths send the system prompt
 with prompt caching (`anthropicSystemWithCache`).
+
+**Enforced limits.** `maxCostUsdPerDay`, `maxTokensPerDay`, `maxRunsPerDay` and the
+tenant cap block (402) at run create, session message and agent-scoped
+`/v1/completions`. Workflow runs re-check before every `ai-step`/vote/`web_search` node, including
+`maxCostUsdPerRun` against the run's accrued spend (runs/day skipped mid-run).
+`toolLimits` gate workflow `tool`/`connector` nodes only. A budget lookup error
+fails CLOSED for hard-fail budgets (and when the budget row itself can't be read):
+503 `budget check unavailable; retry shortly` at run create, 402 elsewhere.
+Not enforced: the per-run cap on single-call paths (only a post-run
+`anomaly_detected` event; the opt-in forecast checks it against the agent's
+`succeeded`-run history), projected cost at run create, failed runs toward
+runs/day (only successes count; a workflow run counts once on success),
+`toolLimits` outside workflows, `notifyAtPct` alerts. Matrix:
+`apps/docs/app/budgets/page.tsx`.
 
 ### Eval suites + CI gating (wedge #2)
 
@@ -877,7 +908,7 @@ per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PD
 default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
 rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Prod TLS/mTLS
 Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
-The control-plane serves Prometheus `/metrics` on `:8080` (OTel instruments bridged by
+The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
 `internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
 expose through the ingress). The `lantern-instrumented-slos` alert group in
 `infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a

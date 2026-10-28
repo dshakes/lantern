@@ -77,7 +77,7 @@ claim was actually checked.
 
 | Area | Status | How validated |
 |---|---|---|
-| Docs site builds + deploys (GitHub Pages) | ✅ | static export 24/24, live at `dshakes.github.io/lantern/` |
+| Docs site builds + deploys (GitHub Pages) | ✅ | static export 24/24, live at `dshakes.github.io/lantern/docs/` (landing at `/lantern/`) |
 | Internal links carry basePath | ✅ | built with `PAGES_BASE_PATH=/lantern`, generated HTML emits `/lantern/...`; verified on the live site |
 | Landing build | ✅ | `next build` green, 7/7 static |
 | Deployed docs serve correctly (routing + content) | ✅ | `make validate-docs-live` — all 21 live routes return 200 with real content (>800B), installation page renders `lantern dev`/ports/credentials |

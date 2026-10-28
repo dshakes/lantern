@@ -406,8 +406,23 @@ func main() {
 			llmMode, rlsEnforce, appPoolActive, lanternAppRoleExists,
 		)
 	})
+	// /metrics is unauthenticated and its labels carry agent names, so it gets
+	// its own listener instead of riding the public :8080 API port. Expose it
+	// to Prometheus only (NetworkPolicy metricsFrom), never via ingress.
 	if metricsHandler != nil {
-		httpMux.Handle("/metrics", metricsHandler)
+		metricsAddr := os.Getenv("LANTERN_METRICS_ADDR")
+		if metricsAddr == "" {
+			metricsAddr = ":9464"
+		}
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", metricsHandler)
+		go func() {
+			srv := &http.Server{Addr: metricsAddr, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second}
+			logger.Info("metrics listener", zap.String("addr", metricsAddr))
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("metrics listener failed", zap.Error(err))
+			}
+		}()
 	}
 	httpMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

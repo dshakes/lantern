@@ -212,6 +212,85 @@ func TestExportRedacted(t *testing.T) {
 	}
 }
 
+// TestExportRedacted_Catalog pins the export classification of every
+// tenant-table column whose name looks credential-ish. A new such column fails
+// here until it is listed — which forces someone to decide, rather than the
+// export quietly shipping it.
+func TestExportRedacted_Catalog(t *testing.T) {
+	h, _ := newLifecycleHandler(t)
+	want := map[string]bool{
+		"agent_triggers.secret_enc":                true,
+		"api_keys.key_hash":                        true,
+		"auth_tokens.token_hash":                   true,
+		"connector_installs.config":                true,
+		"connector_installs.oauth_token_encrypted": true,
+		"data_planes.reg_token_hash":               true,
+		"domain_records.fields_encrypted":          true,
+		"llm_provider_configs.api_key_encrypted":   true,
+		"users.password_hash":                      true,
+		"voice_numbers.provider_config":            true,
+		"agent_trigger_deliveries.replay_key":      false,
+		"agent_mcp_attachments.config":             false,
+		"data_planes.config":                       false,
+		"schedules.config":                         false,
+		"surface_configs.config":                   false,
+		"api_keys.key_prefix":                      false,
+		"commitments.idempotency_key":              false,
+		"domain_records.idempotency_key":           false,
+		"errands.idempotency_key":                  false,
+		"life_events.idempotency_key":              false,
+		"run_receipts.signature":                   false,
+		"side_effect_receipts.idem_key":            false,
+		"users.auth_provider":                      false,
+		"users.auth_subject":                       false,
+	}
+	rows, err := h.srv.Pool.Query(context.Background(), `
+		SELECT c.relname, a.attname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		WHERE n.nspname = 'public' AND c.relkind = 'r'
+		  AND EXISTS (SELECT 1 FROM pg_attribute t
+			WHERE t.attrelid = c.oid AND t.attname = 'tenant_id' AND NOT t.attisdropped)
+		  AND a.attname ~* '(secret|token(_|$)|key|passw|hash|(^|_)enc(_|$)|encrypted|cred|cipher|signature|auth_|(^|_)config$)'
+		  AND a.attname NOT LIKE 'tokens%' AND a.attname NOT LIKE 'max_tokens%' AND a.attname NOT LIKE 'estimated_tokens%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var table, col string
+		if err := rows.Scan(&table, &col); err != nil {
+			t.Fatal(err)
+		}
+		name := table + "." + col
+		seen[name] = true
+		redact, listed := want[name]
+		if !listed {
+			t.Errorf("%s (redacted=%v) is not classified: add it to this table after deciding whether it may be exported", name, exportRedacted(table, col))
+			continue
+		}
+		if got := exportRedacted(table, col); got != redact {
+			t.Errorf("%s: exportRedacted = %v, want %v", name, got, redact)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("%s listed but not in the catalog — drop it from this table", name)
+		}
+	}
+	// A future column the pattern must catch without anyone listing it.
+	for _, col := range []string{"webhook_secret", "bot_token", "signing_key", "refresh_token_enc", "client_credentials"} {
+		if !exportRedacted("future_table", col) {
+			t.Errorf("future_table.%s would be exported", col)
+		}
+	}
+}
+
 // fakeTurnstile answers siteverify with success when the token is "pass".
 func fakeTurnstile(t *testing.T) {
 	t.Helper()
@@ -500,6 +579,14 @@ func TestExportTenant(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	m.waitFor(t, email)
 	g := NewGDPRHandler(h.srv, h)
+	// A webhook trigger's signing secret (plaintext JSON when
+	// LANTERN_CREDENTIAL_KEY is unset) once rode along in the export.
+	const triggerSecret = "whsec-export-canary-7f3a"
+	if _, err := h.srv.Pool.Exec(context.Background(),
+		`INSERT INTO agent_triggers (tenant_id, agent_name, provider, secret_enc) VALUES ($1, 'export-agent', 'generic', to_jsonb($2::text))`,
+		resp.User.TenantID, triggerSecret); err != nil {
+		t.Fatalf("seed trigger: %v", err)
+	}
 
 	export := func(token, id string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/v1/tenants/"+id+"/export", nil)
@@ -535,6 +622,12 @@ func TestExportTenant(t *testing.T) {
 	}
 	if len(doc.Tables["tenants"]) != 1 {
 		t.Fatal("tenant row missing")
+	}
+	if trg := doc.Tables["agent_triggers"]; len(trg) != 1 || trg[0]["secret_enc"] != nil {
+		t.Fatalf("agent_triggers export = %v (want 1 row, secret_enc redacted)", trg)
+	}
+	if strings.Contains(got.Body.String(), triggerSecret) {
+		t.Fatal("trigger secret present in export")
 	}
 
 	if rr := export(resp.Token, "00000000-0000-0000-0000-000000000001"); rr.Code != http.StatusNotFound {

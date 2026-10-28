@@ -11,7 +11,8 @@ import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network,
+  Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network, Home,
+  Webhook, UserPlus, Laptop, FlaskConical,
 } from "lucide-react";
 
 // The Lantern mark: a flame held inside glass (docs/brand).
@@ -57,7 +58,7 @@ interface NavSection { label: string; items: NavItem[] }
 const sections: NavSection[] = [
   { label: "Overview", items: [
     { href: "/", label: "Getting Started", icon: BookOpen, subs: [
-      { href: "/#shape", label: "The shape of the system" }, { href: "/#features", label: "What the runtime gives you" }, { href: "/#reference", label: "Reference" },
+      { href: "/#shape", label: "The shape of the system" }, { href: "/#features", label: "What the runtime gives you" }, { href: "/#new", label: "New since 0.2.0" }, { href: "/#reference", label: "Reference" },
     ]},
     { href: "/installation", label: "Installation", icon: Download, subs: [
       { href: "/installation#prerequisites", label: "Prerequisites" }, { href: "/installation#clone", label: "Clone" }, { href: "/installation#one-command", label: "One-command stack" }, { href: "/installation#credentials", label: "Dev credentials" }, { href: "/installation#ports", label: "Service ports" },
@@ -74,10 +75,13 @@ const sections: NavSection[] = [
   ]},
   { label: "Build", items: [
     { href: "/agents", label: "Agents", icon: Bot, subs: [
-      { href: "/agents#create", label: "Creating agents" }, { href: "/agents#instructions", label: "Instructions & prompts" }, { href: "/agents#testing", label: "Testing" }, { href: "/agents#chat", label: "Conversations" }, { href: "/agents#visual", label: "Visual editor" },
+      { href: "/agents#create", label: "Creating agents" }, { href: "/agents#instructions", label: "Instructions & prompts" }, { href: "/agents#testing", label: "Testing" }, { href: "/agents#chat", label: "Conversations" }, { href: "/agents#visual", label: "Visual editor" }, { href: "/agents#tool-nodes", label: "Workflow tool nodes" },
     ]},
     { href: "/connectors", label: "Connectors", icon: Plug, subs: [
-      { href: "/connectors#gmail", label: "Gmail" }, { href: "/connectors#slack", label: "Slack" }, { href: "/connectors#github", label: "GitHub" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
+      { href: "/connectors#available", label: "Available connectors" }, { href: "/connectors#new-actions", label: "Newer actions" }, { href: "/connectors#recorded-test-mode", label: "Recorded test mode" }, { href: "/connectors#slack", label: "Setting up a connector" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
+    ]},
+    { href: "/triggers", label: "Webhook triggers", icon: Webhook, subs: [
+      { href: "/triggers#create", label: "Create a trigger" }, { href: "/triggers#providers", label: "Provider setup" }, { href: "/triggers#responses", label: "Responses" }, { href: "/triggers#idempotency", label: "Duplicate deliveries" }, { href: "/triggers#security", label: "Security notes" },
     ]},
     { href: "/surfaces", label: "Surfaces", icon: MessageSquare, subs: [
       { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
@@ -86,7 +90,7 @@ const sections: NavSection[] = [
       { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
     ]},
     { href: "/models", label: "Models", icon: Brain, subs: [
-      { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" },
+      { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#resolution-rules", label: "Resolution rules" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" }, { href: "/models#router", label: "Model-router service" },
     ]},
     { href: "/scheduling", label: "Scheduling", icon: Clock, subs: [
       { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#api", label: "Schedule API" }, { href: "/scheduling#timezone", label: "Timezone" },
@@ -112,7 +116,10 @@ const sections: NavSection[] = [
       { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
     ]},
     { href: "/runtime/sandbox-lifecycle", label: "Sandbox Lifecycle", icon: BarChart3, subs: [
-      { href: "/runtime/sandbox-lifecycle#states", label: "States" }, { href: "/runtime/sandbox-lifecycle#idle", label: "Idle suspend" }, { href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
+      { href: "/runtime/sandbox-lifecycle#states", label: "States" }, { href: "/runtime/sandbox-lifecycle#idle", label: "Idle suspend" }, { href: "/runtime/sandbox-lifecycle#snapshots", label: "Snapshots" }, { href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
+    ]},
+    { href: "/runtime/local-microvms", label: "Real microVMs on a Mac", icon: Laptop, subs: [
+      { href: "/runtime/local-microvms#requirements", label: "Requirements" }, { href: "/runtime/local-microvms#setup", label: "make lima-*" }, { href: "/runtime/local-microvms#manual", label: "Manual steps" }, { href: "/runtime/local-microvms#connect", label: "Point Lantern at it" }, { href: "/runtime/local-microvms#troubleshooting", label: "Troubleshooting" },
     ]},
     { href: "/runtime/egress", label: "Egress & Credentials", icon: Network, subs: [
       { href: "/runtime/egress#flow", label: "The path out" }, { href: "/runtime/egress#allowlist", label: "Allowlist" }, { href: "/runtime/egress#credentials", label: "Credential injection" },
@@ -131,6 +138,9 @@ const sections: NavSection[] = [
     { href: "/security", label: "Security", icon: Shield, subs: [
       { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
     ]},
+    { href: "/accounts", label: "Accounts & sign-up", icon: UserPlus, subs: [
+      { href: "/accounts#modes", label: "Sign-up modes" }, { href: "/accounts#email-verification", label: "Email verification" }, { href: "/accounts#password-reset", label: "Password reset" }, { href: "/accounts#invite-codes", label: "Invite codes" }, { href: "/accounts#rate-limits", label: "Rate limits" }, { href: "/accounts#export", label: "Data export" }, { href: "/accounts#delete", label: "Workspace deletion" }, { href: "/accounts#mailer", label: "Mailer" },
+    ]},
     { href: "/deployment", label: "Deployment", icon: Cloud, subs: [
       { href: "/deployment#architecture", label: "CP/DP split" }, { href: "/deployment#helm", label: "Helm charts" }, { href: "/deployment#terraform", label: "Terraform" }, { href: "/deployment#docker", label: "Docker Compose" },
     ]},
@@ -143,7 +153,7 @@ const sections: NavSection[] = [
   ]},
   { label: "Reference", items: [
     { href: "/api", label: "API Reference", icon: Code, subs: [
-      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" }, { href: "/api#schedules", label: "Schedules" }, { href: "/api#errors", label: "Errors" },
+      { href: "/api#auth", label: "Authentication" }, { href: "/api#accounts", label: "Accounts" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" }, { href: "/api#schedules", label: "Schedules" }, { href: "/api#triggers", label: "Triggers" }, { href: "/api#errors", label: "Errors" },
     ]},
     { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
       { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#agent-runtime", label: "Agent runtime" },
@@ -152,7 +162,10 @@ const sections: NavSection[] = [
       { href: "/cli#onboard", label: "onboard" }, { href: "/cli#doctor", label: "doctor" }, { href: "/cli#dev", label: "dev" }, { href: "/cli#agents", label: "agents" }, { href: "/cli#runs", label: "runs" }, { href: "/cli#vm", label: "vm" }, { href: "/cli#deploy", label: "deploy" }, { href: "/cli#auth", label: "login / whoami" },
     ]},
     { href: "/budgets", label: "Budgets", icon: BarChart3, subs: [
-      { href: "/budgets#policy", label: "Setting a budget" }, { href: "/budgets#forecast", label: "Cost forecast" }, { href: "/budgets#voice", label: "Voice gating" },
+      { href: "/budgets#policy", label: "Setting a budget" }, { href: "/budgets#matrix", label: "What is enforced where" }, { href: "/budgets#responses", label: "Blocked responses" }, { href: "/budgets#fail-closed", label: "Fail-closed" }, { href: "/budgets#forecast", label: "Cost forecast" }, { href: "/budgets#not-enforced", label: "Not enforced yet" },
+    ]},
+    { href: "/testing", label: "End-to-end tests", icon: FlaskConical, subs: [
+      { href: "/testing#run", label: "Run it" }, { href: "/testing#spend-policy", label: "Spend policy" }, { href: "/testing#env", label: "Environment variables" }, { href: "/testing#clean", label: "make e2e-clean" },
     ]},
     { href: "/human-in-the-loop", label: "Human-in-the-loop", icon: Shield, subs: [
       { href: "/human-in-the-loop#approval", label: "Approval workflow" }, { href: "/human-in-the-loop#confidence-gate", label: "Confidence gate" },
@@ -263,6 +276,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
             {/* Footer */}
             <div className="px-5 py-3 border-t border-line space-y-2">
+              <a href={process.env.NEXT_PUBLIC_HOME_URL} className="flex items-center gap-2 text-xs text-ink-2 hover:text-ink">
+                <Home className="h-3 w-3" /> Lantern home
+              </a>
               <a href="https://github.com/dshakes/lantern" target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 text-xs text-ink-2 hover:text-ink">
                 <ExternalLink className="h-3 w-3" /> GitHub

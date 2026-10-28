@@ -258,7 +258,7 @@ export default agent<{ query: string }>({
         <code>auto</code>, <code>reasoning-large</code>,{" "}
         <code>chat-small</code>, <code>vision-large</code>. Don&apos;t hardcode
         a vendor model. The model router maps the capability to a concrete
-        model at call time. See <a href="/models">Models</a> for the full list.
+        model at call time. See <Link href="/models">Models</Link> for the full list.
       </div>
 
       <h3>Parallel fan-out</h3>

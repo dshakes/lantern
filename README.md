@@ -9,7 +9,7 @@ The agent loop stays on your control plane. Code the agent writes runs in a Fire
 [![Go](https://img.shields.io/badge/Go-1.26+-17785f?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![Rust](https://img.shields.io/badge/Rust-2024-a85e06?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-44546a?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Docs](https://img.shields.io/badge/docs-dshakes.github.io%2Flantern-0f1b2d?style=flat-square)](https://dshakes.github.io/lantern/)
+[![Docs](https://img.shields.io/badge/docs-dshakes.github.io%2Flantern%2Fdocs-0f1b2d?style=flat-square)](https://dshakes.github.io/lantern/docs/)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/media/hero-flow-dark.gif">
@@ -111,25 +111,28 @@ Each hop is authenticated: JWT or scoped API key at the edge; a shared service t
 - Firecracker and Kata microVMs, gVisor and runc tiers chosen per workload by isolation class; fail-closed, never downgraded to a bare pod ([ADR 0002](docs/adr/0002-runtime-class-per-workload.md), [0009](docs/adr/0009-kubernetes-default-runtime-substrate.md))
 - Two tiers, one journal: trusted runs inline, untrusted runs in the microVM tier ([ADR 0022](docs/adr/0022-two-tier-agent-runtime.md))
 - Streaming exec (`text/event-stream`), sandbox file API under `/workspace` (list, read, write), session-scoped VMs
-- Pause, resume and fork; idle auto-suspend (`idleTimeoutSecs`) with transparent resume; operator-paused VMs are never auto-resumed
+- Pause, resume and fork; idle auto-suspend (`idleTimeoutSecs`) with transparent resume; operator-paused VMs are never auto-resumed. Snapshots capture the VM's disk with its memory, so files survive restore and fork ([docs](https://dshakes.github.io/lantern/runtime/sandbox-lifecycle/#snapshots))
+- Real Firecracker on an Apple Silicon Mac through a Lima guest with nested KVM: `make lima-up`, then `make lima-e2e` ([`infra/lima/`](infra/lima/README.md), [docs](https://dshakes.github.io/lantern/runtime/local-microvms/))
 - Host egress broker over vsock (opt-in, `LANTERN_EGRESS_MODE=broker`, Firecracker only); default mode routes egress through an in-guest proxy (enforced when the image installs the iptables REDIRECT rule)
 
 **Agent platform**
-- Workflow graphs from the visual editor execute: `trigger`, `ai-step`, `connector`, `condition`, `loop`, `approval`, `subagent`, `end` (`tool` nodes are accepted but return `skipped` until the tool runtime is wired into the control plane)
+- Workflow graphs from the visual editor execute: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `loop`, `approval`, `subagent`, `end`. `tool` nodes run `web_search` in the control plane and everything else in the run's microVM, and fail loudly when no runtime is wired
+- Webhook triggers: a signed public URL per agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run, duplicates deduplicated ([ADR 0028](docs/adr/0028-inbound-webhook-triggers.md), [docs](https://dshakes.github.io/lantern/triggers/))
 - Sessions with SSE streaming, cron schedules with time zones, human takeover on approval nodes
-- 17 connectors that call the real APIs (OAuth or API key), MCP server registry, A2A agent cards, a forkable agent marketplace
+- 18 connectors that call the real APIs (OAuth or API key), MCP server registry, A2A agent cards, a forkable agent marketplace
 - SDKs: TypeScript (primary), Python, Go; the `lantern` CLI; an embeddable webchat (`/widget.js`)
 
 **Reliability and cost**
 - Durable steps with crash-resume from the journal; idempotency keys from `(run_id, step_id, attempt)` on LLM calls and external deliveries, so a replay does not double-send
-- Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching
-- Per-agent caps on cost/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. The per-run cap is checked by the pre-run forecast (`/v1/runs/forecast`); tokens/day and per-tool limits are stored, not enforced yet
+- Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching; an unknown name falls back to the balanced default, never a hardcoded model ([docs](https://dshakes.github.io/lantern/models/#capabilities))
+- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. On single-call runs the per-run cap is checked only by the opt-in pre-run forecast (`/v1/runs/forecast`), and failed runs do not count toward runs/day ([what is enforced where](https://dshakes.github.io/lantern/budgets/#matrix))
 - Eval suites with per-branch baselines that fail CI with HTTP 422; rehearsals replay past failures; A/B experiments with auto-promotion
 
 **Security and governance**
 - Multi-tenant by default: `tenant_id` on every row and gRPC call, RLS on every tenant table, staged enforcement via `LANTERN_RLS_ENFORCE`
 - Signed run receipts over the journal hash: Ed25519 when `LANTERN_RECEIPT_ED25519_SEED` is set (verifiable offline against the key at `/.well-known/lantern-receipts`), HMAC-SHA256 dev fallback otherwise
 - Per-instance Ed25519 agent identity, per-VM certificates, scoped API keys, AES-256-GCM credentials at rest
+- Account lifecycle: sign-up closed by default in production (or invite-only), email verification, password reset, captcha, rate-limited auth routes, data export and workspace deletion ([ADR 0027](docs/adr/0027-public-signup-verification-abuse.md), [docs](https://dshakes.github.io/lantern/accounts/))
 - OpenTelemetry: control-plane and step spans carry `tenant_id`, `run_id`, `step_id`; trace context propagates through scheduler and manager into the harness
 - Confidential compute v1: launch measurement recorded, not yet verified ([ADR 0023](docs/adr/0023-confidential-compute.md))
 
@@ -170,7 +173,7 @@ them; on Google Cloud they come from other products.
 | The platform | **Lantern** | Google ACE | E2B | Modal |
 |---|---|---|---|---|
 | Durable agent runs with crash-resume | ✅ | out of scope | ❌ | ❌ |
-| Budgets that return HTTP 402 before the model call | partial (cost/day, runs/day, tenant daily cost; tokens and per-tool limits stored, not enforced) | out of scope | ❌ | partial |
+| Budgets that return HTTP 402 before the model call | partial (cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced) | out of scope | ❌ | partial |
 | Multi-provider model routing with failover | ✅ | out of scope | ❌ | ❌ |
 | Signed, offline-verifiable run receipts | partial (Ed25519 with a configured seed) | out of scope | ❌ | ❌ |
 | Self-host in your VPC or on-prem | ✅ Apache-2.0 | ❌ Google Cloud only | partial | ❌ |
@@ -208,13 +211,14 @@ Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,writ
 
 | Start here | |
 |---|---|
-| Docs site | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/) (`make docs-dev` serves it on `:3002`) |
+| Website and docs | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/), docs at [/lantern/docs](https://dshakes.github.io/lantern/docs/) (`make docs-dev` serves the docs on `:3002`) |
 | Agent runtime: tiers, durability, observability | [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md) |
 | Headless quickstart and demo agents | [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md), [`examples/headless-agents/`](examples/headless-agents/) |
 | Isolation classes, identity and secrets | [`docs/guides/isolation-classes.md`](docs/guides/isolation-classes.md), [`docs/guides/identity-and-secrets.md`](docs/guides/identity-and-secrets.md) |
 | Develop locally, ship to your cloud | [`docs/guides/local-to-prod.md`](docs/guides/local-to-prod.md), [`docs/guides/self-service-e2e.md`](docs/guides/self-service-e2e.md) |
 | Architecture and decisions | [`docs/architecture/`](docs/architecture/), [`docs/adr/`](docs/adr/) |
 | Operating it: runbooks, alerts, dashboards | [`docs/runbooks/`](docs/runbooks/), [`infra/monitoring/`](infra/monitoring/) |
+| End-to-end tests against a live stack | [`e2e/README.md`](e2e/README.md) (`make test-e2e`, `make e2e-clean`) |
 | Brand, tokens and diagram system | [`docs/brand/`](docs/brand/) |
 | Conventions and invariants | [`CLAUDE.md`](CLAUDE.md) |
 
@@ -256,7 +260,7 @@ Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,writ
 ```bash
 make test       # Go (-race), Rust, TypeScript, Python
 make test-db    # Go tests that need Postgres
-make test-e2e   # live-stack suites against :8080, skip when the stack is down
+make test-e2e   # live-stack suites against :8080; fails when the stack is down (E2E_ALLOW_SKIP=1 to skip)
 make lint       # golangci-lint, clippy, tsc/eslint
 make ci-local   # lint + test + audit, the CI gate
 ```

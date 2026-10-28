@@ -1775,6 +1775,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// get the same check inside CheckBudget below.)
 	if req.AgentName == "" {
 		if tc := CheckTenantBudget(ctx, h.srv.Pool, tenantID, 0); !tc.Allowed && tc.HardFail {
+			middleware.RecordBudgetBlock(ctx, "*")
 			h.logger().Warn("completions: agentless call blocked by tenant budget",
 				zap.String("tenant_id", tenantID), zap.String("reason", tc.Reason))
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{
@@ -1842,6 +1843,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	if req.AgentName != "" {
 		budgetResult := CheckBudget(ctx, h.srv.Pool, tenantID, req.AgentName, 0)
 		if !budgetResult.Allowed && budgetResult.HardFail {
+			middleware.RecordBudgetBlock(ctx, req.AgentName)
 			h.logger().Warn("completions: agent-scoped call blocked by budget",
 				zap.String("tenant_id", tenantID),
 				zap.String("agent", req.AgentName),
