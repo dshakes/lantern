@@ -546,13 +546,15 @@ with prompt caching (`anthropicSystemWithCache`).
 
 **Enforced limits.** `maxCostUsdPerDay`, `maxTokensPerDay`, `maxRunsPerDay` and the
 tenant cap block (402) at run create, session message and agent-scoped
-`/v1/completions`. Workflow runs re-check before every `ai-step`/vote, including
+`/v1/completions`. Workflow runs re-check before every `ai-step`/vote/`web_search` node, including
 `maxCostUsdPerRun` against the run's accrued spend (runs/day skipped mid-run).
 `toolLimits` gate workflow `tool`/`connector` nodes only. A budget lookup error
 fails CLOSED for hard-fail budgets (and when the budget row itself can't be read):
 503 `budget check unavailable; retry shortly` at run create, 402 elsewhere.
 Not enforced: the per-run cap on single-call paths (only a post-run
-`anomaly_detected` event), projected cost at run create (forecast is opt-in),
+`anomaly_detected` event), projected cost at run create (forecast is opt-in, and its
+history query filters `status='completed'` so it never estimates cost — fix in
+progress), runs/day for workflow runs (they never `RecordUsage`; fix in progress),
 `toolLimits` outside workflows, `notifyAtPct` alerts. Matrix:
 `apps/docs/app/budgets/page.tsx`.
 

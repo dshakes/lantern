@@ -138,7 +138,9 @@ curl -s -X POST http://localhost:8080/auth/verify \\
         <strong>No account-existence leak.</strong> <code>/auth/forgot</code> and{" "}
         <code>/auth/verify/resend</code> return the same{" "}
         <code>202</code> body whether or not the address has an account, and the
-        mail is sent in the background so response time does not differ. In prod,
+        mail itself is sent in the background, so relay latency does not show in
+        response time (an existing account still costs one extra database write
+        before the reply). In prod,
         signing up with an already-registered email returns the same{" "}
         <code>202 verificationRequired</code> as a new one. (In dev it returns{" "}
         <code>409 email already registered</code>.)
@@ -263,7 +265,11 @@ echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTE
         new tables are included automatically), plus the tenant row. Credential
         material is left out: <code>password_hash</code>, <code>key_hash</code>,{" "}
         <code>token_hash</code>, <code>provider_config</code>, any column ending{" "}
-        <code>_encrypted</code>, and <code>connector_installs.config</code>. The
+        <code>_encrypted</code>, and <code>connector_installs.config</code>.
+        Webhook-trigger secrets (<code>agent_triggers.secret_enc</code>) are
+        currently <strong>included</strong>, in plaintext when{" "}
+        <code>LANTERN_CREDENTIAL_KEY</code> is unset; a fix is in progress, so
+        treat an export as secret material until it lands. The
         document is built in memory, so very large workspaces produce a large
         response.
       </p>

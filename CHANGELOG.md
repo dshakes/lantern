@@ -41,6 +41,13 @@ This project is pre-1.0; there are no stable release branches yet.
   budgets (503 `budget check unavailable; retry shortly` at run create, 402
   elsewhere) instead of allowing the call. Still not enforced: the per-run cap on
   single-call paths and projected cost at run creation.
+- **`web_search` tool nodes honour the per-run cap** (#324) — they check
+  `maxCostUsdPerRun` against the run's accrued spend and add their LLM cost to
+  the run, like ai-steps.
+- **Fast restore** (#325) — after resume or fork the runtime-manager holds the
+  first exec until the restored harness has re-identified and heartbeated
+  (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s) instead of the caller
+  retrying; first exec after restore p50 2.9 s on nested-virt Lima (was 4.2 s).
 - **Workflow tool nodes execute** (#319) — `tool` nodes dispatch to the sandbox
   runtime or the built-in `web_search` and fail loudly when the runtime is not
   wired, instead of returning a placeholder; side effects carry an idempotency

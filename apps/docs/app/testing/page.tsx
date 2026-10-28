@@ -73,7 +73,7 @@ make test-e2e    # terminal 2`}</code></pre>
           <tr><td><code>E2E_ALLOW_SKIP</code></td><td>unset</td><td><code>1</code> turns a down stack into a skip</td></tr>
         </tbody>
       </table>
-      <p>Each suite prints the resolved target URL at the start of a run.</p>
+      <p>The runtime suite prints the resolved target URL at the start of a run.</p>
 
       <h3 id="allow-skip">E2E_ALLOW_SKIP</h3>
       <p>

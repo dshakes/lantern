@@ -8,7 +8,7 @@ export default function ConnectorsPage() {
       <h1>Connectors</h1>
       <p>
         A connector gives an agent hands: search a Gmail inbox, open a GitHub
-        issue, post to Slack. Lantern ships 17, each with a fixed set of
+        issue, post to Slack. Lantern ships 18, each with a fixed set of
         actions. Connect once; credentials are stored per tenant.
       </p>
 
@@ -146,7 +146,7 @@ export default function ConnectorsPage() {
 
       <h2 id="new-actions">Newer actions</h2>
       <p>
-        Five actions and one connector were added after the original set.
+        Four actions and one connector (PagerDuty, four actions) were added after the original set.
         All run through{" "}
         <code>POST /v1/connectors/&#123;id&#125;/execute?action=&lt;action&gt;</code>{" "}
         with a JSON body of params (the connector must be installed and

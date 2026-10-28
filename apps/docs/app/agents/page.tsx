@@ -210,20 +210,23 @@ say so rather than making things up.`}</code>
       </table>
       <p>
         The step output is <code>{"{ \"tool_name\": ..., \"result\": ... }"}</code>{" "}
-        for sandbox tools. Failures are explicit, and the step fails with one
-        of:
+        for sandbox tools. Failures are explicit; the step fails with an
+        error such as:
       </p>
       <pre>
         <code>{`tool runtime unavailable: "shell_exec" needs the microVM runtime and none is wired
 tool "shell_exec": tool runtime unavailable
 tool runtime unavailable: "shell_exec": <detail from the manager>
 tool failed: "shell_exec": <detail from the tool>
-tool failed: web_search: <error>`}</code>
+tool failed: web_search: <error>
+tool "shell_exec": ExecTool: <transport error>   # manager unreachable`}</code>
       </pre>
       <p>
         The first two mean no runtime-manager is reachable from the
         control-plane (for example the stub scheduler in dev). The third is
-        the manager reporting the tool unavailable for that VM. Only{" "}
+        the manager reporting the tool unavailable for that VM; an{" "}
+        <code>ExecTool:</code> error means the manager was configured but could
+        not be reached. Only{" "}
         <code>web_search</code> works without a runtime.
       </p>
       <p>

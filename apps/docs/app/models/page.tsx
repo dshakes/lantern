@@ -112,9 +112,11 @@ export default function ModelsPage() {
         </li>
         <li>
           <strong>Which callers</strong>: workflow <code>ai-step</code> nodes
-          resolve a capability string with this table. Session turns pick a
-          model with <code>auto</code> scoring (or complexity routing when{" "}
-          <code>LANTERN_COMPLEXITY_ROUTING=1</code>), not from this table.
+          resolve a capability string with this table. Session turns use
+          complexity routing by default (each turn classified trivial,
+          balanced or hard); set <code>LANTERN_COMPLEXITY_ROUTING=0</code> (or{" "}
+          <code>off</code>/<code>false</code>) for plain <code>auto</code>{" "}
+          scoring. Neither uses this table.
         </li>
       </ul>
 
@@ -154,13 +156,15 @@ LANTERN_ROUTE_STRATEGY=fast`}</code>
 
       <h2 id="failover">Failover</h2>
       <p>
-        The control plane fails over across providers (not across models of
-        one provider):
+        The control plane fails over through a ranked chain: each keyed
+        provider&apos;s top model, then that provider&apos;s cheaper tier
+        (Haiku / <code>gpt-4o-mini</code>, a separate quota tier), then the
+        next provider:
       </p>
       <ul>
         <li>
           <strong>429, 402 and 5xx</strong> — move to the next candidate
-          provider; a rate limit adds a backoff first
+          in the chain; a rate limit adds a backoff first
         </li>
         <li>
           <strong>No mid-sentence swap</strong> — in streaming, failover only happens

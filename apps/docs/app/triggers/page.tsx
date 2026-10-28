@@ -21,10 +21,10 @@ export default function TriggersPage() {
       <h2 id="how-it-works">How it works</h2>
       <Flow
         steps={[
-          { name: "Look up the trigger", sub: "By id. Unknown, disabled, or its agent is gone: 404. Nothing else runs yet." },
+          { name: "Look up the trigger", sub: "By id. Unknown, disabled or not a UUID: 404. Nothing else runs yet." },
           { name: "Verify the signature", sub: "HMAC-SHA256 over the raw body in the provider's format, constant-time. Bad or missing: 401." },
           { name: "Rate limit", sub: "Per trigger, spent only by senders that passed the signature check. Over: 429." },
-          { name: "Deduplicate", sub: "On the provider delivery id and a hash of the signed bytes. Seen before: 200 duplicate, no run." },
+          { name: "Deduplicate", sub: "Agent deleted: 404. Then on the provider delivery id and a hash of the signed bytes. Seen before: 200 duplicate, no run." },
           { name: "Create the run", sub: "Same code path as POST /v1/runs: spawn limit, budget check, routing. Success: 202." },
         ]}
       />
@@ -134,7 +134,7 @@ printf '%s' "$SECRET" | lantern hooks create my-agent --provider generic --secre
       <ul>
         <li>
           If you omit <code>secret</code>, Lantern generates one (<code>whsec_</code> plus 64 hex characters) and returns
-          it in the create response only. List and get never return it, and there is no way to read it back.
+          it in the create response only. List and get never return it. The one other place it appears is the owner data export, which currently includes it (see <Link href="/accounts#export">Accounts</Link>; fix in progress).
         </li>
         <li>
           If you supply one, it must be at least 16 characters and is not echoed back.
@@ -272,7 +272,7 @@ curl -i -X POST "$HOOK" \\
           <tr>
             <td><code>404</code></td>
             <td><code>{`{"error":"hook not found"}`}</code></td>
-            <td>Id is not a UUID, no such trigger, trigger disabled, or its agent no longer exists. Identical for all four.</td>
+            <td>Id is not a UUID, no such trigger, or trigger disabled: identical body, before any signature check. A trigger whose agent was deleted returns 404 only after a valid signature (an unsigned request gets 401).</td>
           </tr>
           <tr>
             <td><code>413</code></td>
@@ -392,13 +392,15 @@ curl -i -X POST "$HOOK" \\
           checked with no early exit.
         </li>
         <li>
-          <strong>404 vs 401.</strong> Unknown, disabled, bad-UUID and orphaned-agent triggers all return the same 404 body,
-          so an outsider cannot tell which ids exist. 401 appears only for an existing, enabled trigger. The rate limit is
+          <strong>404 vs 401.</strong> Unknown, disabled and bad-UUID ids all return the same 404 body before any
+          signature check, so an outsider cannot tell which of those ids exist. 401 appears only for an existing,
+          enabled trigger, including one whose agent was deleted: that trigger returns 404 only after a valid
+          signature. The rate limit is
           spent only after the signature passes, so an unsigned flood cannot use up a real sender&apos;s allowance.
         </li>
         <li>
           <strong>Secret storage.</strong> Stored encrypted with AES-256-GCM when <code>LANTERN_CREDENTIAL_KEY</code> is
-          set (plaintext pass-through when unset, as for other credentials). Never returned after create, never logged.
+          set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged. The owner data export currently includes it (see <Link href="/accounts#export">Accounts</Link>; fix in progress).
         </li>
         <li>
           <strong>Tenant scoping.</strong> Trigger CRUD runs under row-level security by tenant; get, update and delete of

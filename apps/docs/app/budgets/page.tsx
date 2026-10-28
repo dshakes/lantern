@@ -33,7 +33,7 @@ Content-Type: application/json
   "maxRunsPerDay": 100,
   "toolLimits": {
     "web_search": 50,
-    "slack.post": 100
+    "slack.post_message": 100
   },
   "hardFail": true,
   "notifyAtPct": 80
@@ -61,7 +61,7 @@ Response: 200 OK
           <tr>
             <td><code>maxCostUsdPerRun</code></td>
             <td>number</td>
-            <td>Max USD for one run. Enforced <strong>mid-run for workflow runs only</strong> (see <a href="#matrix">the matrix</a>). Elsewhere it is checked by <code>POST /v1/runs/forecast</code> and reported after the fact as an <code>anomaly_detected</code> event</td>
+            <td>Max USD for one run. Enforced <strong>mid-run for workflow runs only</strong> (see <a href="#matrix">the matrix</a>). Elsewhere it is only reported after the fact as an <code>anomaly_detected</code> event (the forecast is meant to check it but <a href="#forecast">currently cannot</a>)</td>
           </tr>
           <tr>
             <td><code>maxTokensPerDay</code></td>
@@ -71,7 +71,7 @@ Response: 200 OK
           <tr>
             <td><code>maxRunsPerDay</code></td>
             <td>integer</td>
-            <td>Max runs per day. Blocks once the day&apos;s run count reaches it. Spend inside a run (workflow ai-steps, votes, tools) does not add to the count</td>
+            <td>Max runs per day. Blocks once the day&apos;s run count reaches it. Spend inside a run (workflow ai-steps, votes, tools) does not add to the count. <strong>Workflow runs (agents with a saved graph) are not counted today</strong>, so they never trip this cap; plain runs, session messages, completions and voice calls are. Fix in progress</td>
           </tr>
           <tr>
             <td><code>toolLimits</code></td>
@@ -170,9 +170,9 @@ Response: 200 OK
             <td>Workflow <code>tool</code> node: <code>web_search</code></td>
             <td>Yes</td>
             <td>Yes</td>
+            <td>No (run already admitted)</td>
             <td>Yes</td>
-            <td>Yes</td>
-            <td>No</td>
+            <td>Yes, against spend accrued so far</td>
             <td>Yes</td>
           </tr>
           <tr>
@@ -271,8 +271,11 @@ Response: 200 OK
       <ul>
         <li>
           <strong>503 is returned by run create only.</strong>{" "}
-          <code>/v1/completions</code> and voice answer 402 with reason{" "}
-          <code>budget check unavailable</code>; sessions reply{" "}
+          <code>/v1/completions</code> answers 402 with reason{" "}
+          <code>budget check unavailable</code>; voice declines as for a budget
+          block (Twilio <code>{"<Reject>"}</code>, other providers a plain-text
+          402, the LiveKit token route 402{" "}
+          <code>agent voice budget exhausted: budget check unavailable</code>); sessions reply{" "}
           <code>sorry — I can&apos;t check this agent&apos;s usage limit right now, try again shortly</code>;
           workflow steps fail with <code>budget limit exceeded: budget check unavailable</code>.
         </li>
@@ -292,8 +295,9 @@ Response: 200 OK
       <h2 id="mid-run">Per-run cap inside a workflow</h2>
       <p>
         Workflow runs record each model call&apos;s tokens and cost onto the
-        run as they happen. Before every <code>ai-step</code> (and every
-        self-consistency confidence vote) the interpreter re-checks: tenant
+        run as they happen. Before every <code>ai-step</code>, every
+        self-consistency confidence vote and every <code>web_search</code>{" "}
+        tool node, the interpreter re-checks: tenant
         cap, the agent&apos;s daily cost and token caps, and{" "}
         <code>maxCostUsdPerRun</code> against what this run has spent so far.
         Hard-fail stops the run at that step with no further provider spend;{" "}
@@ -363,40 +367,48 @@ curl -s -i -X POST localhost:8080/v1/runs \\
 
       <h2 id="forecast">Pre-run cost forecast</h2>
       <p>
-        The forecast estimates tokens and cost from the agent&apos;s run
-        history and checks the result against its budget. It returns{" "}
-        <code>402</code> instead of <code>200</code> when it would breach a
-        hard-fail budget. Cost checks only apply once the agent has history
-        (the response carries a <code>calibrated</code> flag); the
-        runs-per-day check always applies. Forecasting is opt-in: run creation
+        <code>POST /v1/runs/forecast</code> is meant to estimate tokens and cost
+        from the agent&apos;s run history and check the estimate against its
+        budget, answering <code>402</code> instead of <code>200</code> when a
+        hard-fail budget would be breached. Forecasting is opt-in: run creation
         does not call it.
       </p>
+      <div className="callout callout-warning">
+        <strong>Today the forecast never estimates cost.</strong> Its history
+        query filters <code>status = &apos;completed&apos;</code>, but runs
+        finish as <code>succeeded</code>, <code>failed</code> or{" "}
+        <code>cancelled</code>, so it finds no history. Every response is
+        uncalibrated, the per-run and daily-cost checks are skipped, and the
+        forecast can only block on <code>maxRunsPerDay</code>. A fix is in
+        progress.
+      </div>
       <pre>
         <code>{`POST /v1/runs/forecast
 Content-Type: application/json
 
+{ "agentName": "research-agent", "input": "quantum computing" }
+
+Response today: 200 OK
 {
   "agentName": "research-agent",
-  "input": "quantum computing"
+  "model": "...",
+  "provider": "...",
+  "confidence": 0,
+  "calibrated": false,
+  "noHistoricalData": true,
+  "reasoning": { "historical_runs": 0, "no_historical_data": true, ... },
+  "budget": { "runsToday": 4, "maxRunsPerDay": 100, "hardFail": true, ... },
+  "wouldExceedBudget": false
 }
 
-Response: 200 OK
-{
-  "estimatedTokensIn": 800,
-  "estimatedTokensOut": 2000,
-  "estimatedCostUsd": 0.004,
-  "confidence": 0.82,
-  "wouldExceedBudget": false,
-  "blockReason": ""
-}
-
-// If over budget:
-{
-  "estimatedCostUsd": 1.20,
-  "wouldExceedBudget": true,
-  "blockReason": "per-run cost $1.2000 exceeds limit $1.0000"
-}  // HTTP 402 when hardFail is true`}</code>
+// Runs-per-day reached (HTTP 402 when hardFail is true):
+{ ..., "wouldExceedBudget": true, "blockReason": "daily run limit reached (100/100)" }`}</code>
       </pre>
+      <p>
+        <code>estimatedTokensIn</code>, <code>estimatedTokensOut</code> and{" "}
+        <code>estimatedCostUsd</code> are omitted when there is no history, and{" "}
+        <code>blockReason</code> is omitted when nothing would block.
+      </p>
 
       <h2 id="voice">Voice calls</h2>
       <p>
@@ -422,8 +434,14 @@ Response: 200 OK
         <li>
           <strong>Pre-run cost estimates at run creation.</strong> Run create
           checks recorded spend, not projected spend, so the run that crosses a
-          daily cap is allowed; the next one is blocked. Use{" "}
-          <code>POST /v1/runs/forecast</code> to estimate ahead of time.
+          daily cap is allowed; the next one is blocked. The forecast that
+          should estimate ahead of time currently returns no cost estimate; see{" "}
+          <a href="#forecast">the forecast</a>.
+        </li>
+        <li>
+          <strong>Runs/day for workflow runs.</strong> Workflow runs are not
+          counted toward <code>maxRunsPerDay</code>, so a workflow agent&apos;s
+          runs/day cap never trips. Fix in progress.
         </li>
         <li>
           <strong>Per-tool limits outside workflows.</strong> Session tool

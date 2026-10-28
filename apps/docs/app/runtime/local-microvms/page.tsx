@@ -34,11 +34,11 @@ export default function RuntimeLocalMicrovmsPage() {
       <h2 id="what-you-get">What you get</h2>
       <table>
         <thead>
-          <tr><th></th><th>Real Firecracker (this page)</th><th>Stub dialer (default)</th></tr>
+          <tr><th></th><th>Real Firecracker (this page)</th><th>Stub scheduler (default)</th></tr>
         </thead>
         <tbody>
           <tr><td>Isolation</td><td>Firecracker microVM on KVM</td><td>none: nothing is spawned</td></tr>
-          <tr><td>VM ids</td><td>real VMs you can exec into, pause, resume and fork</td><td>synthesized (<code>node-stub</code>/<code>az-stub</code>)</td></tr>
+          <tr><td>Placement</td><td>real VMs you can exec into, pause, resume and fork</td><td>faked: a generated vm id placed on node <code>node-stub</code> / zone <code>az-stub</code></td></tr>
           <tr><td>Setup</td><td>Lima guest, runtime-manager built inside it</td><td>none</td></tr>
         </tbody>
       </table>
@@ -48,13 +48,41 @@ export default function RuntimeLocalMicrovmsPage() {
         work and are rejected in production.
       </p>
 
-      <h2 id="setup">Manual setup</h2>
-      {/* LIMA-MAKE: swap this section for the make lima-* targets when ga/lima-make merges */}
-      <p><em>A one-command setup is coming; until then these are the manual steps.</em></p>
+      <h2 id="setup">Setup</h2>
+      <p>
+        From the repo on the Mac (it must live under your home directory, which the VM mounts read-only at the same
+        path):
+      </p>
+      <pre><code>{`brew install lima
+make lima-up           # create/start "firecracker-dev"; verify /dev/kvm, firecracker, jailer; install guest build deps
+make lima-e2e          # build harness + manager + image in the VM, run the jailed lifecycle e2e, print the timing table
+make lima-broker-e2e   # broker egress mode (ADR 0026): no NIC, vsock-only, credential injection`}</code></pre>
+      <table>
+        <thead>
+          <tr><th>Target</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>make lima-up</code></td><td>Creates the VM from <code>firecracker-dev.yaml</code> if absent, starts it if stopped, does nothing if running. Fails fast on M1/M2 or macOS older than 15.</td></tr>
+          <tr><td><code>make lima-image</code></td><td>Builds <code>vmlinux</code> + <code>rootfs.ext4</code> with the current harness as PID 1. Cached at <code>~/.cache/lantern-lima/image</code> in the VM; rebuilt only when the harness binary or <code>build-image.sh</code> changes.</td></tr>
+          <tr><td><code>make lima-e2e</code></td><td><code>lima-image</code>, then builds the runtime-manager and runs <code>infra/firecracker/integration-test.sh</code> jailed with <code>EXPECT_VENDSECRET=1</code>: boot, snapshot, stop, restore, fork ×3. Timing table saved to <code>~/.cache/lantern-lima/timing/lifecycle-timing.md</code> in the VM.</td></tr>
+          <tr><td><code>make lima-broker-e2e</code></td><td>Same build, then <code>infra/firecracker/broker-e2e.sh</code>. Needs outbound HTTPS to httpbin.org.</td></tr>
+          <tr><td><code>make lima-down</code></td><td>Stops the VM.</td></tr>
+          <tr><td><code>make lima-clean</code></td><td>Drops the VM&apos;s cached cargo target and microVM image.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Both e2e targets fail if a run leaves a firecracker process, snapshot directory or jail behind. If another run
+        already holds the manager port (<code>:50054</code>, broker <code>:51054</code>) they wait for it, up to{" "}
+        <code>LIMA_PORT_WAIT_SECS</code> (default 1800), instead of killing it. Builds refuse to start when the VM disk
+        is over <code>LIMA_DISK_MAX_PCT</code> (default 85%); <code>make lima-clean</code> frees the caches. All build
+        output goes to <code>~/.cache/lantern-lima</code> in the VM, never into the repo.
+      </p>
+
+      <h2 id="manual">Manual steps</h2>
+      <p>What the targets automate, for debugging. Run them yourself only when a target fails and you need to see why.</p>
 
       <h3 id="start-guest">Start the Lima guest</h3>
-      <pre><code>{`brew install lima
-limactl start infra/lima/firecracker-dev.yaml   # creates "firecracker-dev"
+      <pre><code>{`limactl start infra/lima/firecracker-dev.yaml   # creates "firecracker-dev"
 limactl shell firecracker-dev                   # /dev/kvm exists in here`}</code></pre>
 
       <h3 id="smoke-boot">Smoke-boot a microVM</h3>
@@ -83,18 +111,24 @@ firecracker --no-api --config-file vm.json   # boots to a root login on ttyS0`}<
 sudo apt-get install -y musl-tools e2fsprogs jq curl protobuf-compiler
 rustup target add aarch64-unknown-linux-musl
 
+# The repo is read-only in the guest: build into a cache under ~
+TARGET=~/.cache/lantern-lima/target
+
 # Harness (musl, static)
-cargo build --release --target aarch64-unknown-linux-musl \\
-  --manifest-path services/harness/Cargo.toml
-HARNESS_BIN="$PWD/services/harness/target/aarch64-unknown-linux-musl/release/lantern-harness"
+cargo build --release --bin lantern-harness --target aarch64-unknown-linux-musl \\
+  --manifest-path services/harness/Cargo.toml --target-dir "$TARGET"
+HARNESS_BIN="$TARGET/aarch64-unknown-linux-musl/release/lantern-harness"
 
 # Kernel + rootfs (sudo for loop-mount; harness passed via env)
 sudo FC_HARNESS_BIN="$HARNESS_BIN" \\
   bash infra/firecracker/build-image.sh /tmp/fc-image
 
+# Jail root for the fork step
+sudo mkdir -p /srv/jailer
+
 # Runtime-manager
-cargo build --release --manifest-path services/runtime-manager/Cargo.toml
-MANAGER_BIN="$PWD/services/runtime-manager/target/release/lantern-runtime-manager"
+cargo build --release --manifest-path services/runtime-manager/Cargo.toml --target-dir "$TARGET"
+MANAGER_BIN="$TARGET/release/lantern-runtime-manager"
 
 # The test (root: TAP + firecracker + loop devices)
 sudo \\
@@ -104,13 +138,19 @@ sudo \\
   LANTERN_RUNTIME_BACKEND=firecracker \\
   MANAGER_BIN="$MANAGER_BIN" \\
   EXPECT_VENDSECRET=1 \\
+  FIRECRACKER_JAILER_PATH=/usr/local/bin/jailer \\
+  FIRECRACKER_JAILER_UID=123 \\
+  FIRECRACKER_JAILER_GID=100 \\
+  FIRECRACKER_CHROOT_BASE=/srv/jailer \\
   LIFECYCLE_TIMING_DIR=/tmp/fc-timing \\
   bash infra/firecracker/integration-test.sh
 
 cat /tmp/fc-timing/lifecycle-timing.md`}</code></pre>
       <p>
-        The fork step needs the jailer, which the Lima provision script installs next to <code>firecracker</code>. If
-        it is missing the test prints <code>[SKIP]</code>; set <code>FIRECRACKER_JAILER_PATH</code> to override.
+        The fork step runs only when <code>FIRECRACKER_JAILER_PATH</code> points at the jailer (the Lima provision
+        script installs it at <code>/usr/local/bin/jailer</code>; being on <code>PATH</code> is not enough, because the
+        manager must be started with it). Without it the test prints{" "}
+        <code>[integration] SKIP: fork test SKIPPED</code> and still passes.
       </p>
 
       <h3 id="cleanup">Clean up</h3>
@@ -149,8 +189,8 @@ cat /tmp/fc-timing/lifecycle-timing.md`}</code></pre>
       <ul>
         <li>In the guest, <code>/dev/kvm</code> exists and <code>firecracker --version</code> prints v1.15.1.</li>
         <li>The smoke-boot reaches a root login on <code>ttyS0</code>.</li>
-        <li>The lifecycle test ends with PASS lines and a timing table in <code>/tmp/fc-timing/lifecycle-timing.md</code>.</li>
-        <li>With the stack pointed at the guest, a scheduled VM returns a <code>vm_id</code> that is not a stub (<code>node-stub</code>) and <code>GET /v1/runtime/vms/&#123;id&#125;</code> shows it running.</li>
+        <li><code>make lima-e2e</code> ends with <code>ALL ASSERTIONS PASSED</code>, including the fork step, and prints the timing table.</li>
+        <li>With the stack pointed at the guest, a scheduled VM&apos;s node is not <code>node-stub</code> and <code>GET /v1/runtime/vms/&#123;id&#125;</code> shows it running.</li>
       </ul>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
@@ -160,9 +200,11 @@ cat /tmp/fc-timing/lifecycle-timing.md`}</code></pre>
         </thead>
         <tbody>
           <tr><td><code>FATAL: /dev/kvm missing</code> during provisioning</td><td>Mac is M1/M2 or older than macOS 15. Use CI, a remote Linux host, or <code>RUNTIME_BACKEND=docker</code>.</td></tr>
-          <tr><td>Fork step prints <code>[SKIP]</code></td><td>Jailer not found. Set <code>FIRECRACKER_JAILER_PATH</code>.</td></tr>
-          <tr><td>First exec after a restore is slow (about 4 s)</td><td>The in-guest exec channel re-establishes after resume; see <Link href="/runtime/sandbox-lifecycle">Sandbox lifecycle</Link>.</td></tr>
-          <tr><td>Stubbed VM ids (<code>node-stub</code>)</td><td>The scheduler env vars above are unset, so the stub dialer is active.</td></tr>
+          <tr><td>Fork step prints <code>SKIP: fork test SKIPPED</code> (manual run)</td><td><code>FIRECRACKER_JAILER_PATH</code> unset. Set it to <code>/usr/local/bin/jailer</code> (<code>make lima-e2e</code> sets it for you).</td></tr>
+          <tr><td>Build refuses to start: VM disk over the limit</td><td><code>make lima-clean</code>, or raise <code>LIMA_DISK_MAX_PCT</code>.</td></tr>
+          <tr><td>An e2e target sits waiting on <code>:50054</code></td><td>Another manager run is using the port in the VM. It waits up to <code>LIMA_PORT_WAIT_SECS</code>; check <code>ss -ltnp | grep 50054</code> in the guest.</td></tr>
+          <tr><td>First exec after a restore takes about 3 s</td><td>The manager holds it until the restored harness re-identifies and heartbeats; the guest work is slow under nested virtualization. See <Link href="/runtime/sandbox-lifecycle#snapshot-cost">Sandbox lifecycle</Link>.</td></tr>
+          <tr><td>Node shows <code>node-stub</code></td><td><code>LANTERN_SCHEDULER_GRPC_ADDR</code> is unset on the control-plane, so its stub scheduler client fakes placement.</td></tr>
         </tbody>
       </table>
 

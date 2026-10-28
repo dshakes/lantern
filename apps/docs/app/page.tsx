@@ -50,7 +50,7 @@ const recent = [
   { icon: Brain, title: "Capability names", href: "/models#capabilities", desc: "Every capability and optimize target, and the model it resolves to per provider." },
   { icon: Plug, title: "Connector actions", href: "/connectors#new-actions", desc: "Slack thread replies, GitHub PR comments, Sentry issues, Calendar events, PagerDuty, and a recorded test mode." },
   { icon: Camera, title: "Disk snapshots", href: "/runtime/sandbox-lifecycle#snapshots", desc: "Snapshots capture the VM disk; restore and fork stage from it." },
-  { icon: Laptop, title: "Real microVMs on a Mac", href: "/runtime/local-microvms", desc: "Firecracker on KVM inside a Lima guest, on Apple Silicon." },
+  { icon: Laptop, title: "Real microVMs on a Mac", href: "/runtime/local-microvms", desc: "make lima-up, then make lima-e2e: Firecracker on KVM inside a Lima guest, on Apple Silicon M3+." },
   { icon: FlaskConical, title: "End-to-end tests", href: "/testing", desc: "make test-e2e against a live stack, with a spend policy and make e2e-clean." },
 ];
 

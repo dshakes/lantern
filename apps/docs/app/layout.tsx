@@ -119,7 +119,7 @@ const sections: NavSection[] = [
       { href: "/runtime/sandbox-lifecycle#states", label: "States" }, { href: "/runtime/sandbox-lifecycle#idle", label: "Idle suspend" }, { href: "/runtime/sandbox-lifecycle#snapshots", label: "Snapshots" }, { href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
     ]},
     { href: "/runtime/local-microvms", label: "Real microVMs on a Mac", icon: Laptop, subs: [
-      { href: "/runtime/local-microvms#requirements", label: "Requirements" }, { href: "/runtime/local-microvms#setup", label: "Setup" }, { href: "/runtime/local-microvms#connect", label: "Point Lantern at it" }, { href: "/runtime/local-microvms#troubleshooting", label: "Troubleshooting" },
+      { href: "/runtime/local-microvms#requirements", label: "Requirements" }, { href: "/runtime/local-microvms#setup", label: "make lima-*" }, { href: "/runtime/local-microvms#manual", label: "Manual steps" }, { href: "/runtime/local-microvms#connect", label: "Point Lantern at it" }, { href: "/runtime/local-microvms#troubleshooting", label: "Troubleshooting" },
     ]},
     { href: "/runtime/egress", label: "Egress & Credentials", icon: Network, subs: [
       { href: "/runtime/egress#flow", label: "The path out" }, { href: "/runtime/egress#allowlist", label: "Allowlist" }, { href: "/runtime/egress#credentials", label: "Credential injection" },

@@ -107,14 +107,19 @@ export default function RuntimeSandboxLifecyclePage() {
           <tr><th>Step</th><th>Indicative</th></tr>
         </thead>
         <tbody>
-          <tr><td>Snapshot (128 MiB memory, 134 MB written)</td><td>634 ms</td></tr>
+          <tr><td>Memory snapshot (128 MiB, 134 MB written; measured before disk capture)</td><td>634 ms</td></tr>
           <tr><td>Restore (Spawn RPC)</td><td>138 ms</td></tr>
           <tr><td>Fork spawn (hard-linked memory + per-VM rootfs copy)</td><td>131–160 ms</td></tr>
+          <tr><td>First exec after restore (p50 of 5 runs)</td><td>2,857 ms</td></tr>
         </tbody>
       </table>
       <p>
-        The benchmark does not break out disk-capture time, so expect snapshot time to grow with rootfs size. The doc estimates the per-VM rootfs copy at ~5–50 ms for a 20–100 MiB image. The
-        in-guest exec channel then needs ~2–5 s to re-establish after a restore.
+        The snapshot row predates disk capture, so add the rootfs copy (reflinked on XFS/btrfs, a full copy
+        elsewhere) to snapshot time. The doc estimates the per-VM rootfs copy at ~5–50 ms for a 20–100 MiB image.
+        After a restore the runtime-manager holds the first exec until the restored harness has re-identified and
+        sent its first heartbeat (<code>LANTERN_HARNESS_READY_TIMEOUT_MS</code>, default 5 s), so a caller makes one
+        call instead of retrying. On Lima that first exec lands in 2.6–3.1 s, almost all of it slow CPU-bound guest
+        work under nested virtualization; bare-metal KVM has not been measured.
       </p>
 
       <Recording
