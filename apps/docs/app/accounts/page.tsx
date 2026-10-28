@@ -431,6 +431,34 @@ echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTE
         owners, so they get <code>403</code>.
       </p>
 
+      <h2 id="free-tier">Free-tier caps</h2>
+      <p>
+        Every new workspace, whether created by password sign-up or the first Google login, starts with a
+        hard-fail daily spend cap and a sandbox quota so a new account cannot run up cost. The cap is the
+        tenant-wide budget (the same row <code>PUT /v1/budgets/tenant</code> edits) and the quota is the same
+        one <code>PUT /v1/runtime/quota</code> edits, so an owner can raise or remove either. Existing
+        workspaces and the seeded dev workspace are never touched. Set a variable to <code>off</code> to
+        skip that cap.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>LANTERN_FREE_TIER_COST_USD_PER_DAY</code></td><td><code>2.00</code></td><td>Tenant-wide LLM spend per day (hard fail, HTTP 402).</td></tr>
+          <tr><td><code>LANTERN_FREE_TIER_MAX_VMS</code></td><td><code>2</code></td><td>Concurrent sandbox VMs. Compute hours (4/day) and egress (1 GB/day) are fixed.</td></tr>
+          <tr><td><code>LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY</code></td><td><code>1.00</code></td><td>Sandbox spend per day.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="run-gate">Running agents before you verify</h2>
+      <p>
+        Where verification is required (production), <code>POST /v1/runs</code> from an unverified user returns{" "}
+        <code>403 {"{"}&quot;code&quot;:&quot;email_unverified&quot;{"}"}</code>. Login and sign-up already withhold
+        tokens from unverified users, so this is a second check. Google sign-in counts as verified, and API keys
+        are not affected. In dev the gate is off.
+      </p>
+
       <h2 id="env-vars">Environment variables</h2>
       <table>
         <thead>

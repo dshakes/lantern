@@ -87,6 +87,44 @@ func signupMode() string {
 // Prod only: dev keeps the one-step sign-up so `make dev` works unchanged.
 func requireEmailVerification() bool { return isProd() }
 
+// requireVerifiedEmail is the run-creation gate (defense in depth: login and
+// sign-up already withhold tokens from unverified local users). When the
+// account mode requires verification and the caller's user has not verified,
+// it answers 403 {code:"email_unverified"} and returns false. API-key (service)
+// callers pass: keys are minted by a session that was already verified.
+func (h *AuthHandler) requireVerifiedEmail(w http.ResponseWriter, r *http.Request) bool {
+	if !requireEmailVerification() {
+		return true
+	}
+	claims := claimsFromCtx(r.Context())
+	if claims == nil {
+		var err error
+		if claims, err = h.validateRequest(r); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return false
+		}
+	}
+	if claims.Role == "service" {
+		return true
+	}
+	var verified bool
+	// rls-exempt: users is resolved by the JWT subject + tenant, same as login.
+	err := h.srv.Pool.QueryRow(r.Context(), `
+		SELECT email_verified_at IS NOT NULL OR auth_provider <> 'local'
+		FROM users WHERE id = $1 AND tenant_id = $2`, claims.Subject, claims.TenantID).Scan(&verified)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		h.logger().Error("verify gate: user lookup failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return false
+	}
+	if !verified { // also covers an unknown user: fail closed
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "verify your email to run agents", "code": "email_unverified"})
+		return false
+	}
+	return true
+}
+
 // captchaConfig reports whether sign-up needs a captcha and the secret to
 // check it with. Prod open sign-up always needs one, configured or not.
 func captchaConfig() (required bool, secret string) {

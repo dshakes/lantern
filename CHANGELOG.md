@@ -10,6 +10,11 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+
+- Self-service onboarding polish (W2-S): a six-template starter gallery in dashboard onboarding
+  (served by `GET /v1/agents/templates`), a verify-email fix path for `403 email_unverified` on run
+  creation, free-tier caps (`LANTERN_FREE_TIER_*`) applied to every new tenant on password and Google
+  sign-up, and the `lantern.onboarding.step.total` counter.
 - **Webhook triggers** (ADR 0028, #323) — a public `POST /v1/hooks/{id}` URL per
   agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run. The
   signature is the only credential; duplicate deliveries return
