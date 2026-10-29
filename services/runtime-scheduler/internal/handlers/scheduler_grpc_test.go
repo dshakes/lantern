@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -300,4 +301,46 @@ func TestSchedule_IdempotencyKey_ConcurrentCreatesOneVM(t *testing.T) {
 	if got := store.TenantLiveVMs("t1"); got != 1 {
 		t.Errorf("quota = %d, want 1", got)
 	}
+}
+
+// measuredDialer answers Spawn like a real manager: a FRESH handle carrying
+// the host-asserted measurement (ADR 0031), never the request's pointer.
+type measuredDialer struct {
+	okDialer
+	m string
+}
+
+func (d measuredDialer) Spawn(_ context.Context, _ string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error) {
+	return &lanternv1.SpawnResponse{Handle: &lanternv1.VmHandle{
+		VmId: req.GetHandle().GetVmId(), Node: req.GetHandle().GetNode(), SoftwareMeasurement: d.m,
+	}}, nil
+}
+
+func (measuredDialer) Snapshot(_ context.Context, _ string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+	return &lanternv1.SnapshotResponse{SnapshotId: "snap-" + req.VmId}, nil
+}
+
+// TestSchedule_SpawnResponseStampsMeasurement: the async dispatch records the
+// manager-reported measurement on the stored VM so ListStates reports it.
+func TestSchedule_SpawnResponseStampsMeasurement(t *testing.T) {
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	m := strings.Repeat("ab", 32)
+	svc := newService(store, measuredDialer{m: m})
+
+	h, err := svc.Schedule(ctxWithTenant("t1"), scheduleReq("sha256:abc", ""))
+	if err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+	if h.SoftwareMeasurement != "" {
+		t.Error("Schedule returns before spawn; its handle cannot carry the measurement yet")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if vm, ok := store.GetVM(h.VmId); ok && vm.Handle.GetSoftwareMeasurement() == m {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("spawn response measurement was never stamped onto the stored VM")
 }

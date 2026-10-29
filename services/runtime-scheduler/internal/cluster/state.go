@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
@@ -136,6 +137,9 @@ type ClusterStore interface {
 
 	// SetVMSnapshot records the snapshot a VM was paused into.
 	SetVMSnapshot(vmID, snapshotID string) bool
+	// SetVMMeasurement records the host-asserted software measurement
+	// (ADR 0031). WriteThroughStore persists it to sched_vms.
+	SetVMMeasurement(vmID, measurement string) bool
 
 	// UpdateVMActivity records the latest idle-suspend activity signal from a
 	// heartbeat. hasActiveExec true = at least one child is running (VM is NOT
@@ -412,6 +416,22 @@ func (s *InMemoryStore) SetVMSnapshot(vmID, snapshotID string) bool {
 		return false
 	}
 	v.SnapshotID = snapshotID
+	return true
+}
+
+// SetVMMeasurement records the host-asserted software measurement (ADR 0031).
+// Copy-on-write: readers (GetVM/ListVMs) shallow-copy VM and keep using the
+// old *VmHandle outside the lock, so mutating it in place would race.
+func (s *InMemoryStore) SetVMMeasurement(vmID, measurement string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.vms[vmID]
+	if !ok || v.Handle == nil {
+		return false
+	}
+	h := proto.Clone(v.Handle).(*lanternv1.VmHandle)
+	h.SoftwareMeasurement = measurement
+	v.Handle = h
 	return true
 }
 

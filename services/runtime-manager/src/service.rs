@@ -704,6 +704,7 @@ impl RuntimeManagerGrpc {
         let tenant_id = req.tenant_id.clone();
         let cert_sha256 = backend.identity_pin(&handle.id);
         let exec_token = backend.exec_token(&handle.id);
+        let software_measurement = backend.software_measurement(&handle.id);
 
         // Register the handle. `declared_secret_uris` is sourced from the
         // manager's own spawn record (via `req.secrets`) — never from
@@ -726,6 +727,7 @@ impl RuntimeManagerGrpc {
             // the snapshot a restore came from) cannot act as the VM.
             cert_sha256,
             exec_token,
+            software_measurement,
         });
 
         tracing::info!(
@@ -737,9 +739,10 @@ impl RuntimeManagerGrpc {
         );
 
         Ok(Response::new(proto::ScheduleResponse {
-            handle_id: handle.id,
+            handle_id: handle.id.clone(),
             node_name: handle.node_name,
             cold_start_ms: handle.cold_start_ms,
+            software_measurement: backend.software_measurement(&handle.id),
         }))
     }
 
@@ -872,7 +875,13 @@ impl RuntimeManagerGrpc {
 
         let persisted = self
             .snapshot_store
-            .put_files(agent_version_id, &owner.tenant_id, vm_id, &files)
+            .put_files(
+                agent_version_id,
+                &owner.tenant_id,
+                vm_id,
+                owner.software_measurement.as_deref(),
+                &files,
+            )
             .await;
         // The store now owns its own copy; the transient one (rootfs-sized, on
         // tmpfs for bare VMs) is dropped either way.
@@ -994,6 +1003,10 @@ impl RuntimeManagerGrpc {
             // restoring request's DLP policy (pause/resume, idle auto-resume
             // and fork all come through here with the full spec).
             dlp_policy: req.dlp_policy.clone(),
+            // ADR 0031: the restored VM inherits the source's spawn
+            // measurement, recorded with the snapshot by THIS manager.
+            inherited_measurement: Some(meta.software_measurement.clone())
+                .filter(|m| !m.is_empty()),
         };
         backend
             .restore(&restore.snapshot_uri, &restore)
@@ -1032,6 +1045,26 @@ impl RuntimeManagerGrpc {
         }
         dlp_gate(req.dlp_policy.as_ref(), self.backend.as_ref(), &req.run_id)?;
 
+        // ADR 0031: the inherited measurement comes only from this manager's
+        // snapshot store, never from the caller. Non-store URIs inherit none
+        // (refused under an enforcing gate with references). A store READ
+        // error fails the restore with that error — never silently "no
+        // measurement", which would misreport the cause (and under warn boot
+        // a VM whose snapshot metadata could not be read).
+        req.inherited_measurement = match req.snapshot_uri.strip_prefix("store://") {
+            Some(id) => self
+                .snapshot_store
+                .find(id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(snapshot_id = %id, error = format!("{e:#}"), "restore: snapshot metadata lookup failed");
+                    Status::internal("snapshot store lookup failed; cannot read the snapshot's measurement")
+                })?
+                .map(|m| m.software_measurement)
+                .filter(|m| !m.is_empty()),
+            None => None,
+        };
+
         let handle = self
             .backend
             .restore(&req.snapshot_uri, &req)
@@ -1059,6 +1092,7 @@ impl RuntimeManagerGrpc {
             agent_version_id: String::new(),
             cert_sha256: self.backend.identity_pin(&handle.id),
             exec_token: self.backend.exec_token(&handle.id),
+            software_measurement: self.backend.software_measurement(&handle.id),
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -1661,8 +1695,12 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 vm_id = %h.vm_id,
                 "spawn: idempotent return — vm_id already registered"
             );
+            let mut idempotent_handle = h.clone();
+            if let Some(m) = existing.software_measurement.clone() {
+                idempotent_handle.software_measurement = m;
+            }
             return Ok(Response::new(pb::SpawnResponse {
-                handle: Some(h.clone()),
+                handle: Some(idempotent_handle),
                 boot_duration: Some(prost_types::Duration {
                     seconds: 0,
                     nanos: 0,
@@ -1706,9 +1744,11 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // handle. Without this, the registry only knows the docker
         // container id and Stop(vm-uuid) silently no-ops.
         let backend_handle_id = resp.handle_id.clone();
+        let measurement = resp.software_measurement.clone().unwrap_or_default();
         let vm_handle = match pre_handle {
-            Some(h) if !h.vm_id.is_empty() => {
+            Some(mut h) if !h.vm_id.is_empty() => {
                 self.registry.rekey(&backend_handle_id, &h.vm_id);
+                h.software_measurement = measurement;
                 h
             }
             _ => pb::VmHandle {
@@ -1716,6 +1756,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 node: resp.node_name,
                 availability_zone: String::new(),
                 created_at: None,
+                software_measurement: measurement,
             },
         };
 
@@ -3377,6 +3418,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3559,6 +3601,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
@@ -3623,6 +3666,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         // Rekey so the wire vm_id resolves to the backend handle_id.
         svc.registry.rekey(handle_id, vm_id);
@@ -3824,6 +3868,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: None,
+            software_measurement: None,
         });
         svc.registry.rekey(handle_id, vm_id);
         svc
@@ -4159,6 +4204,7 @@ mod tests {
                 node: "node-1".to_string(),
                 availability_zone: String::new(),
                 created_at: None,
+                software_measurement: String::new(),
             }),
             spec: Some(pb::AgentSpec {
                 image_digest: "sha256:idem".to_string(),
@@ -4666,7 +4712,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -4721,6 +4768,7 @@ mod tests {
             "vm-rep",
             &ca.cert.pem(),
             &ca.key_pair.serialize_pem(),
+            None,
         )
         .unwrap();
         let der = rustls_pemfile::certs(&mut std::io::BufReader::new(std::io::Cursor::new(
@@ -4771,7 +4819,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -4808,7 +4857,8 @@ mod tests {
         let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
         let ca_cert_pem = ca.cert.pem();
         let ca_key_pem = ca.key_pair.serialize_pem();
-        let issued = crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem, None).unwrap();
         let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
             .next()
             .unwrap()
@@ -5061,7 +5111,7 @@ mod tests {
                 .unwrap()
         } else {
             store
-                .put_files("av-1", tenant, "vm-src", &[("mem", art.as_path())])
+                .put_files("av-1", tenant, "vm-src", None, &[("mem", art.as_path())])
                 .await
                 .unwrap()
         };
@@ -5270,6 +5320,162 @@ mod tests {
         assert!(
             !fc_dir.join("rootfs").exists(),
             "transient disk capture must be removed once the store has it"
+        );
+    }
+
+    /// A Firecracker-shaped stub that reports a spawn measurement and records
+    /// the measurement a restore was asked to inherit (ADR 0031).
+    struct MeasuredStub {
+        dir: std::path::PathBuf,
+        inherited: std::sync::Mutex<Option<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for MeasuredStub {
+        async fn schedule(
+            &self,
+            _req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            Ok(crate::backend::Handle {
+                id: "h-src".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            for (name, body) in [("snapshot", "vmstate"), ("mem", "mem")] {
+                tokio::fs::write(self.dir.join(name), body).await?;
+            }
+            Ok(crate::backend::SnapshotInfo {
+                snapshot_uri: format!("fc://{}", self.dir.join("snapshot").display()),
+                size_bytes: 0,
+            })
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            *self.inherited.lock().unwrap() = Some(req.inherited_measurement.clone());
+            Ok(crate::backend::Handle {
+                id: "h-fork".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        fn name(&self) -> &'static str {
+            "firecracker"
+        }
+        fn satisfies_isolation(&self, _class: proto::IsolationClass) -> bool {
+            true
+        }
+        fn software_measurement(&self, handle_id: &str) -> Option<String> {
+            match handle_id {
+                "h-src" => Some("a".repeat(64)),
+                // The restored incarnation reports what it inherited.
+                _ => self.inherited.lock().unwrap().clone().flatten(),
+            }
+        }
+    }
+
+    /// B2/S4 (ADR 0031): a snapshot records its source's spawn measurement,
+    /// and a restore/fork of it is handed that value to inherit — so the
+    /// forked VM reports the spawn-derived measurement (and an enforce gate
+    /// with spawn-derived references admits it) instead of re-measuring.
+    #[tokio::test]
+    async fn snapshot_records_measurement_and_restore_inherits_it() {
+        use pb::runtime_manager_server::RuntimeManager;
+        let tmp = tempfile::tempdir().unwrap();
+        let fc_dir = tmp.path().join("fc");
+        tokio::fs::create_dir_all(&fc_dir).await.unwrap();
+        let store = crate::snapshot_store::SnapshotStore::new(tmp.path().join("store"));
+        let backend = Arc::new(MeasuredStub {
+            dir: fc_dir,
+            inherited: std::sync::Mutex::new(None),
+        });
+        let svc = RuntimeManagerGrpc::new(
+            Arc::clone(&backend) as Arc<dyn RuntimeBackend>,
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store.clone());
+
+        let src = svc
+            .spawn(Request::new(make_spawn_request("t-m", HashMap::new())))
+            .await
+            .unwrap()
+            .into_inner()
+            .handle
+            .unwrap();
+        assert_eq!(src.software_measurement, "a".repeat(64));
+
+        let snap = RuntimeManager::snapshot(
+            &svc,
+            Request::new(pb::SnapshotRequest {
+                vm_id: src.vm_id,
+                id_hint: String::new(),
+                keep_running: true,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let meta = store.find(&snap.snapshot_id).await.unwrap().unwrap();
+        assert_eq!(meta.software_measurement, "a".repeat(64));
+
+        let fork = svc
+            .spawn(Request::new(restore_spawn("t-m", &snap.snapshot_id)))
+            .await
+            .expect("restore of own snapshot")
+            .into_inner();
+        assert_eq!(
+            *backend.inherited.lock().unwrap(),
+            Some(Some("a".repeat(64))),
+            "restore must be handed the source's measurement"
+        );
+        assert_eq!(fork.handle.unwrap().software_measurement, "a".repeat(64));
+    }
+
+    /// ADR 0031: a snapshot-store READ error on restore fails the restore with
+    /// that cause — it is never swallowed into "no measurement to inherit".
+    #[tokio::test]
+    async fn restore_store_lookup_error_fails_with_accurate_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_dir = tmp.path().join("store-file");
+        tokio::fs::write(&not_a_dir, b"x").await.unwrap();
+        let svc = fc_manager(crate::snapshot_store::SnapshotStore::new(&not_a_dir));
+        let err = svc
+            .restore(Request::new(proto::RestoreRequest {
+                snapshot_uri: "store://00000000-0000-4000-8000-000000000000".into(),
+                run_id: "r".into(),
+                tenant_id: "t".into(),
+                input: serde_json::Value::Null,
+                env: HashMap::new(),
+                secrets: vec![],
+                vm_id: String::new(),
+                egress_rules: vec![],
+                dlp_policy: None,
+                inherited_measurement: Some("forged-by-caller".into()),
+            }))
+            .await
+            .expect_err("unreadable store must fail the restore");
+        assert_eq!(err.code(), tonic::Code::Internal, "{err:?}");
+        assert!(
+            err.message().contains("snapshot store lookup failed"),
+            "{}",
+            err.message()
         );
     }
 
@@ -5521,6 +5727,7 @@ mod tests {
             agent_version_id: String::new(),
             cert_sha256: None,
             exec_token: Some("tok-b".to_string()),
+            software_measurement: None,
         });
         // No heartbeat address needed: a broker VM has no NIC to dial.
         svc.harness_ready.mark_ready("vm-b");

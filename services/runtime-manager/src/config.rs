@@ -73,6 +73,16 @@ pub struct Config {
     /// gVisor, emitting a `tracing::warn!`.  Only enable this flag for local
     /// development or staging clusters without gVisor installed.
     pub allow_runc_standard: bool,
+    /// Host-asserted software measurement gate (`LANTERN_MEASUREMENT_GATE`).
+    /// `off` | `warn` | `enforce`; default `warn`.
+    pub measurement_gate: crate::measurement::MeasurementGate,
+    /// Known-good measurement hex strings (`LANTERN_REFERENCE_MEASUREMENTS`,
+    /// comma-separated). Empty = no reference set configured.
+    pub reference_measurements: Vec<String>,
+    /// Optional path to a separately-installed harness binary
+    /// (`FC_HARNESS_PATH`). When unset the harness is assumed baked into the
+    /// rootfs and its component hash is 32 zero bytes.
+    pub harness_path: Option<String>,
 }
 
 impl Config {
@@ -143,6 +153,22 @@ impl Config {
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
 
+        // ADR 0031: refuse to start on an unknown gate value, a malformed
+        // reference, or (prod) `enforce` with no references.
+        let measurement_gate =
+            crate::measurement::MeasurementGate::from_env().map_err(ConfigError::Measurement)?;
+        let reference_measurements = crate::measurement::reference_measurements_from_env()
+            .map_err(ConfigError::Measurement)?;
+        crate::measurement::check_startup(
+            measurement_gate,
+            &reference_measurements,
+            crate::tls::is_prod_env(),
+        )
+        .map_err(ConfigError::Measurement)?;
+        let harness_path = std::env::var("FC_HARNESS_PATH")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
         Ok(Config {
             listen_addr,
             runtime_backend,
@@ -162,6 +188,9 @@ impl Config {
             runtimeclass_wasm,
             runtimeclass_kata_cc,
             allow_runc_standard,
+            measurement_gate,
+            reference_measurements,
+            harness_path,
         })
     }
 }
@@ -172,6 +201,8 @@ pub enum ConfigError {
     InvalidAddr(String),
     #[error("invalid RUNTIME_BACKEND: {0} (expected docker, k8s, firecracker, kata, or wasm)")]
     InvalidBackend(String),
+    #[error("software measurement config (ADR 0031): {0}")]
+    Measurement(String),
 }
 
 #[cfg(test)]

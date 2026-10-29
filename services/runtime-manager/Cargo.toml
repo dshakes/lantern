@@ -60,6 +60,7 @@ hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"
 wasmtime = { version = "36.0.19", default-features = false, features = ["wat", "async", "cranelift", "runtime", "std", "parallel-compilation", "pooling-allocator", "component-model", "gc", "gc-drc", "threads"] }
 wasmtime-wasi = "36.0.19"
 sha2 = "0.10"
+hex = "0.4"
 bytes = "1"
 base64 = "0.22"
 regex = "1"

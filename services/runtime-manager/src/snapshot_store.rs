@@ -100,6 +100,12 @@ pub struct SnapshotMeta {
     /// field existed; no `rootfs` entry = a legacy snapshot without its disk.
     #[serde(default)]
     pub artifacts: Vec<String>,
+    /// ADR 0031: the source VM's host-asserted spawn measurement. A restore /
+    /// resume / fork of this snapshot inherits it. Empty = unmeasured source
+    /// (or a snapshot written before this field) — refused under an enforcing
+    /// gate with references.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub software_measurement: String,
 }
 
 /// Bytes to store. The caller supplies a map of `filename → bytes`; the store
@@ -316,7 +322,8 @@ impl SnapshotStore {
             .into_iter()
             .map(|(name, bytes)| (name, Source::Bytes(bytes)))
             .collect();
-        self.persist(agent_version_id, "", vm_id, sources).await
+        self.persist(agent_version_id, "", vm_id, None, sources)
+            .await
     }
 
     /// Persist on-disk artifacts `(filename, source path)` for
@@ -330,14 +337,21 @@ impl SnapshotStore {
         agent_version_id: &str,
         tenant_id: &str,
         vm_id: &str,
+        software_measurement: Option<&str>,
         files: &[(&str, &std::path::Path)],
     ) -> Result<SnapshotMeta> {
         let sources = files
             .iter()
             .map(|(name, path)| (name.to_string(), Source::File(path.to_path_buf())))
             .collect();
-        self.persist(agent_version_id, tenant_id, vm_id, sources)
-            .await
+        self.persist(
+            agent_version_id,
+            tenant_id,
+            vm_id,
+            software_measurement,
+            sources,
+        )
+        .await
     }
 
     /// Shared write path. The sha256 is over all artifact bytes, sorted by
@@ -349,6 +363,7 @@ impl SnapshotStore {
         agent_version_id: &str,
         tenant_id: &str,
         vm_id: &str,
+        software_measurement: Option<&str>,
         mut sources: Vec<(String, Source)>,
     ) -> Result<SnapshotMeta> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -462,6 +477,7 @@ impl SnapshotStore {
                 .contract_value()
                 .to_string(),
             artifacts: sources.iter().map(|(name, _)| name.clone()).collect(),
+            software_measurement: software_measurement.unwrap_or_default().to_string(),
         };
 
         // Write the meta sidecar locally.
@@ -1235,6 +1251,7 @@ mod tests {
                 "av-1",
                 "t-1",
                 "vm-1",
+                None,
                 &[("snapshot", &snap_path), ("mem", &mem_path)],
             )
             .await
@@ -1265,7 +1282,7 @@ mod tests {
         let store = SnapshotStore::new(root.path());
         let missing = root.path().join("nope");
         let err = store
-            .put_files("av", "t", "vm", &[("mem", &missing)])
+            .put_files("av", "t", "vm", None, &[("mem", &missing)])
             .await
             .unwrap_err();
         assert!(format!("{err:#}").contains("not readable"), "{err:#}");
@@ -1278,7 +1295,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = SnapshotStore::new(root.path());
         let meta = store
-            .put_files("av-9", "t-9", "vm-9", &[("mem", &mem)])
+            .put_files("av-9", "t-9", "vm-9", None, &[("mem", &mem)])
             .await
             .unwrap();
 
@@ -1311,7 +1328,7 @@ mod tests {
         let store = SnapshotStore::with_s3(root.path(), std::sync::Arc::clone(&s3), "bucket");
 
         let meta = store
-            .put_files("av-s3", "t-s3", "vm-s3", &[("mem", &mem_path)])
+            .put_files("av-s3", "t-s3", "vm-s3", None, &[("mem", &mem_path)])
             .await
             .unwrap();
         let key = StorePath::from(format!("{S3_PREFIX}/av-s3/vm-s3/{}/mem", meta.id).as_str());
@@ -1355,6 +1372,7 @@ mod tests {
                 "av",
                 "t",
                 "vm",
+                None,
                 &[
                     ("snapshot", &snap_path),
                     ("mem", &mem_path),
@@ -1382,7 +1400,7 @@ mod tests {
             let mut later = SnapshotStore::new(root.path());
             later.clock = Some(Utc::now() + chrono::Duration::seconds(60));
             later
-                .put_files("av", "t", "vm", &[("mem", &mem_path)])
+                .put_files("av", "t", "vm", None, &[("mem", &mem_path)])
                 .await
                 .unwrap();
         }

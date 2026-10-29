@@ -11,6 +11,7 @@ mod config;
 mod dlp;
 mod egress_broker;
 mod handle_registry;
+mod measurement;
 mod otel;
 mod pool;
 mod proto;
@@ -119,7 +120,11 @@ async fn main() -> anyhow::Result<()> {
             // duplicate host routes. Safe to do here: this runs before any VM
             // is scheduled, and only DOWN devices (no live VMM) are removed.
             crate::backends::firecracker::reconcile_orphaned_taps().await;
-            let fc = FirecrackerBackend::new();
+            let fc = FirecrackerBackend::new().with_measurement(
+                config.measurement_gate,
+                config.reference_measurements.clone(),
+                config.harness_path.clone(),
+            );
             // L3: production broker mode must use the tenant-bound relay.
             egress_broker::check_broker_resolver(
                 fc.egress_mode(),

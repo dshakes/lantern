@@ -586,6 +586,19 @@ func (s *SchedulerService) emit(tenantID string, ev *lanternv1.StatusEvent) {
 	s.Store.Publish(ev, tenantID)
 }
 
+// recordMeasurement stamps the manager-reported host-asserted measurement
+// (ADR 0031) onto the stored VM — for a cold spawn its own, for a resume/fork
+// the inherited spawn measurement. Through the store (copy-on-write under its
+// lock), never by mutating the shared *VmHandle: list/heartbeat readers hold it
+// outside the lock. The value is not logged; it reaches relying parties via the
+// receipt and the VM cert.
+func (s *SchedulerService) recordMeasurement(vmID string, resp *lanternv1.SpawnResponse) {
+	if m := resp.GetHandle().GetSoftwareMeasurement(); m != "" {
+		s.Store.SetVMMeasurement(vmID, m)
+		s.Logger.Info("software measurement recorded", zap.String("vm_id", vmID))
+	}
+}
+
 func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentSpec, handle *lanternv1.VmHandle, tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -598,10 +611,13 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 		Reason: "spawn dispatched to " + handle.Node,
 	})
 
-	_, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{
+	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{
 		Spec:   spec,
 		Handle: handle,
 	})
+	if err == nil {
+		s.recordMeasurement(handle.VmId, resp)
+	}
 	if err != nil {
 		s.Logger.Error("spawn dispatch failed",
 			zap.String("vm_id", handle.VmId),

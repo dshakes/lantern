@@ -81,6 +81,7 @@ MANAGER_BIN="${MANAGER_BIN:-${REPO_ROOT}/services/runtime-manager/target/release
 SECRET_ENV_KEY="LANTERN_SECRET_$(printf '%s' "${SECRET_URI}" | tr -c 'A-Za-z0-9' '_')"
 
 log "starting manager (broker mode) on ${MANAGER_ADDR}"
+# shellcheck disable=SC2016  # $$ expands in the child bash
 setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${WORK}/pgid" env \
   RUNTIME_BACKEND=firecracker LISTEN_ADDR="0.0.0.0:${LISTEN_PORT}" LOG_LEVEL=info \
   LANTERN_EGRESS_MODE=broker \
@@ -145,7 +146,7 @@ done
 printf '%s\n' "${STATS}" | head -5 >&2
 printf '%s' "${STATS}" | grep -q '{' || fail "no heartbeat-backed Stats — harness control channel over vsock is not up:\n${STATS}"
 pass "harness heartbeat reached the manager over guest-initiated vsock (Stats served from it)"
-log "host-side vsock sockets for the VM:"; ls -la /run/lantern/vsock/ | grep "${VM_ID}" >&2
+log "host-side vsock sockets for the VM:"; find /run/lantern/vsock/ -maxdepth 1 -name "*${VM_ID}*" -exec ls -la {} + >&2
 
 # (4) injected host via the guest's http_fetch (harness reqwest -> 127.0.0.1:3128 -> vsock -> broker).
 FETCH="$(jq -n --arg u "https://${INJECT_HOST}/hidden-basic-auth/user/passwd" '{url:$u, headers:{Authorization:"Basic placeholder"}}')"

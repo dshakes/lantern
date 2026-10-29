@@ -595,6 +595,7 @@ func migrateRuntimeTables(t *testing.T, pool *pgxpool.Pool) {
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS snapshot_id TEXT`,
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS parent_vm_id TEXT`,
 		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS idle_timeout_secs INT NOT NULL DEFAULT 0`,
+		`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS software_measurement TEXT`,
 	)
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {

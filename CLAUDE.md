@@ -1272,6 +1272,16 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 `LANTERN_EGRESS_MODE=broker`, `LANTERN_EGRESS_CA_PEM`,
 `LANTERN_EGRESS_VSOCK_PORT`, `LANTERN_MANAGER_VSOCK_PORT`.
 
+**Host-asserted software measurement env vars (runtime-manager; ADR 0031):**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` = record only; `warn` = log mismatch, proceed; `enforce` = refuse VM on mismatch. Unknown value → manager refuses to start. |
+| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected SHA-256 hex measurements (each must be 64 hex or startup fails). Empty = no comparison; `enforce` + empty in prod → refuses to start. |
+| `FC_HARNESS_PATH` | _(unset)_ | Path to a separately-installed harness binary for measurement. 32 zero bytes when unset (harness baked into rootfs). |
+
+The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads (by path; Firecracker opens them later — a documented TOCTOU). It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). Embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER; a registered IANA PEN is required before production), `sched_vms`/`runtime_vms.software_measurement` (write-once via the reconciler), and signed run receipts (`softwareMeasurement`). **Reproducible:** per-VM identity (vm/run id, IPs, per-VM cert paths/CA, `LANTERN_AGENT_INSTANCE_ID`/`_TOKEN`, trace parent, the whole `lantern.env.*` cmdline copy) and secrets (declared-secret refs, exec token, injection specs, values of env keys with a whole `_`-segment TOKEN/SECRET/PASSWORD/PASSWD/KEY/APIKEY/CREDENTIAL(S)/AUTH/PAT/DSN — so `MAX_TOKENS` stays measured — and URL userinfo scrubbed from every env value) are excluded; a blanked value is UNMEASURED input, so never approve a reference for a spec whose workload executes a secret-named value — put credentials in `declared_secrets`, so VMs from the same images+spec measure identically. **Restore/resume/fork INHERIT** the source's spawn measurement from `SnapshotMeta.software_measurement` (set by the manager, never by a caller) and re-check it against the current references; a snapshot without one is refused under `enforce` with references. The snapshot store (incl. S3) is inside the trust boundary — `SnapshotMeta` is unsigned (signing is a follow-up). **Firecracker cmdline carries no caller env** (the guest echoes it to the console the manager logs): only `LANTERN_ENV`/`LANTERN_MANAGER_ADDR`/`LANTERN_WORKLOAD_UID`, whitespace-sanitized; `spawn.json` is the env channel. The value is never logged. `enforce` with references is fail-closed when the measurement cannot be computed.
+
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets, `idleTimeoutSecs`). Returns `vm_id`. 402 if quota exceeded |
