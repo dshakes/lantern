@@ -45,6 +45,7 @@ This project is pre-1.0; there are no stable release branches yet.
 - PagerDuty `add_note` connector action; `POST /v1/runs/{id}/takeover/{id}/deny` (approval node fails the step).
 
 ### Fixed
+- **Fork/restore no longer byte-copies the VM disk on reflink filesystems.** Since disk-consistent snapshots, every fork and restore staged the disk with a full copy (O(n) in disk size). The manager now clones it copy-on-write (`FICLONE`) on XFS/btrfs, falls back to a full copy with a `disk_staging="full_copy"` warning on ext4/tmpfs, and can be made strict with `LANTERN_REQUIRE_REFLINK=1`.
 - **Receipt verification now detects an edited payload.** With a stored receipt, `POST /v1/runs/receipts/verify` compared only the signature string, so a receipt whose `costUsd`/`status` had been changed but that carried the original signature verified as `valid: true`. It now also requires the payload to match the issued one (canonical compare), which keeps receipts valid across key rotation.
 - Workflow `connector` nodes could not call Sentry or PagerDuty ("dispatch not yet wired").
 - A workflow whose JSON held a backslash (e.g. an escaped quote in a prompt) failed to load and the agent silently ran as a plain LLM call (`::text::bytea`).

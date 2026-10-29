@@ -209,11 +209,30 @@ owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
    agent identity, with `parentVmId` pointing at the source.  Fork spawns fan out
    with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16) so N=100
    forks saturate the node's restore pipeline without unbounded goroutine
-   explosion.  The memory snapshot file is hard-linked (not byte-copied) into
-   every fork's jail: Firecracker maps it `MAP_PRIVATE`, so all forks share the
-   same inode's pages via the host page cache until a guest write triggers
-   copy-on-write — O(1) disk I/O per fork instead of O(mem_size × N).  Falls back
-   silently to a full byte-copy on EXDEV (cross-device) or if `chmod 0444` fails.
+   explosion.  Two CoW mechanisms keep fork disk I/O O(1):
+
+   - **Memory** — the snapshot `.mem` file is hard-linked into every fork's jail.
+     Firecracker maps it `MAP_PRIVATE`, so all forks share pages via the host page
+     cache until a guest write triggers copy-on-write.  Falls back to a full byte
+     copy only on `EXDEV` (cross-device) or if `chmod 0444` fails.
+
+   - **Disk (rootfs)** — the snapshot `.rootfs` disk image is staged into each
+     fork jail via the `FICLONE` ioctl (Linux copy-on-write reflink, O(1)).
+     Physical disk extents are shared between the source snapshot and every fork
+     until a guest write triggers block-level CoW.  For best results, the
+     snapshot directory and the jail chroot (`FIRECRACKER_CHROOT_BASE`) should
+     be on the same XFS filesystem with `reflink=1` mount option, or btrfs.
+     **Default behaviour on non-reflink FS** (`EOPNOTSUPP`/`EXDEV`): the manager
+     falls back to a full byte copy, emits a once-per-process `WARN` and a
+     per-staging structured record (`disk_staging="full_copy"`, `bytes`,
+     `elapsed_ms`) so operators can see the cost in dashboards.  This keeps
+     pause/resume/fork working on ext4 hosts (Lima, GitHub KVM runners, many
+     customer nodes) without availability impact.  **Set
+     `LANTERN_REQUIRE_REFLINK=1`** on nodes whose snapshot directory is on
+     XFS/btrfs to enforce FICLONE and fail with a typed error rather than
+     silently falling back — this is the recommended production setting for
+     high-fan-out fork workloads.
+
    Forking a running VM requires Firecracker ≥ 1.12 + jailer.  Per-fork failures
    come back in `forks[].error`; they do not fail the whole call.
 
@@ -285,6 +304,48 @@ Lifecycle and identity semantics: [ADR 0025](../adr/0025-sandbox-spawn-contract-
 ### Snapshot corruption
 - SHA-256 mismatch on restore → manager logs and falls back to cold boot.
 - Snapshot is quarantined (moved to `s3://…/corrupt/`) and the scheduler invalidates the cache key.
+
+---
+
+## Node filesystem requirements for fork scale
+
+Fork staging uses two kernel CoW mechanisms to keep per-fork disk I/O O(1):
+
+| Artifact | Mechanism | FS requirement |
+|---|---|---|
+| Memory snapshot (`.mem`) | Hard-link + `MAP_PRIVATE` | Any local filesystem (hard-links never cross device) |
+| Disk snapshot (`.rootfs`) | `FICLONE` ioctl (reflink) | **XFS with `reflink=1`**, or **btrfs** — see below |
+
+**Why `FICLONE` instead of hard-links for disk?**  Firecracker opens the rootfs image with write permissions; a hard-linked disk would let two simultaneously-running fork VMs mutate the same inode, corrupting each other.  `FICLONE` creates a new inode whose extents are shared via CoW — a write to fork A's extents does not affect fork B or the source snapshot.
+
+**Production setup.**  Mount the snapshot store and the jail chroot base
+(`FIRECRACKER_CHROOT_BASE`, default `/srv/jailer`) on the same XFS partition
+formatted with `mkfs.xfs -m reflink=1`.  Both paths must be on the SAME
+filesystem (same mount point) — the kernel does not allow cross-device reflinks
+(`EXDEV`).
+
+```bash
+# Example: XFS with reflinks on a dedicated data volume
+mkfs.xfs -m reflink=1 -m crc=1 /dev/nvme0n1p2
+mount -o noatime /dev/nvme0n1p2 /data
+mkdir -p /data/snapshots /data/jailer
+# Then set env on the manager:
+export LANTERN_SNAPSHOT_DIR=/data/snapshots
+export FIRECRACKER_CHROOT_BASE=/data/jailer
+```
+
+**Verification.**  The manager logs `"disk staged via FICLONE (CoW reflink, O(1) disk I/O)"` with `src`, `dest`, `bytes`, and `disk_staging="ficlone"` fields for each fork disk.  Confirm shared extents with:
+
+```bash
+sudo filefrag -v /data/jailer/firecracker/<vm_id>/root/snapshot/rootfs | head -10
+# Physical start should match the source snapshot's extents until first guest write.
+```
+
+On non-reflink filesystems (ext4, tmpfs), the manager logs `disk_staging="full_copy"` with `bytes` and `elapsed_ms` per staging event plus a once-per-process WARN.  Alert on `disk_staging="full_copy"` in production to catch filesystem misconfiguration.
+
+**Enforcing FICLONE in production.**  Set `LANTERN_REQUIRE_REFLINK=1` on the manager to fail with a typed error instead of falling back.  Recommended for high-fan-out fork workloads on XFS/btrfs nodes.  Default is off — the fallback keeps pause/resume/fork working on any filesystem.
+
+**Dev / CI.**  No configuration needed.  The manager automatically falls back to a full byte copy on ext4/tmpfs with a WARN.  `LANTERN_REQUIRE_REFLINK` should NOT be set in dev/CI unless you have intentionally configured XFS with reflinks.
 
 ---
 
