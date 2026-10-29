@@ -273,13 +273,16 @@ impl Head {
 
     /// Every `Host:` header value (trimmed).
     fn host_headers(&self) -> Vec<&str> {
+        self.header_values("host")
+    }
+
+    /// Every value of header `want` (case-insensitive name, trimmed value).
+    fn header_values(&self, want: &str) -> Vec<&str> {
         self.headers
             .iter()
             .filter_map(|h| {
                 let (name, value) = h.split_once(':')?;
-                name.trim()
-                    .eq_ignore_ascii_case("host")
-                    .then(|| value.trim())
+                name.trim().eq_ignore_ascii_case(want).then(|| value.trim())
             })
             .collect()
     }
@@ -1190,12 +1193,7 @@ impl Broker {
         let Some(dlp) = self.dlp.as_ref() else {
             return Ok(Some(Vec::new()));
         };
-        let mut body_buf = Vec::new();
-        // ponytail: Take<&mut W> — I/O error propagates via `?` (fail-closed).
-        stream
-            .take(dlp.max_inspect_bytes as u64)
-            .read_to_end(&mut body_buf)
-            .await?;
+        let body_buf = read_body_prefix(stream, head, dlp.max_inspect_bytes).await?;
         let mut inspect = head_bytes(head);
         inspect.extend_from_slice(&body_buf);
         match dlp.scan(&inspect) {
@@ -1211,6 +1209,49 @@ impl Broker {
             crate::dlp::DlpVerdict::Clean => Ok(Some(body_buf)),
         }
     }
+}
+
+/// Read the start of the request body for DLP, following the request's own
+/// framing. Never read to EOF: the client keeps the connection open waiting
+/// for our response, so an EOF read stalls every request until the idle timeout.
+/// Content-Length → exactly min(len, cap) bytes. No length and not chunked → no
+/// body (RFC 7230 §3.3.3). Chunked → bytes as they arrive, up to `cap`, stopping
+/// at the terminal chunk or when the client goes quiet.
+async fn read_body_prefix<R: AsyncRead + Unpin>(
+    r: &mut R,
+    head: &Head,
+    cap: usize,
+) -> Result<Vec<u8>> {
+    let lens = head.header_values("content-length");
+    if let Some(v) = lens.first() {
+        let n: usize = v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad Content-Length"))?;
+        let mut buf = vec![0; n.min(cap)];
+        r.read_exact(&mut buf).await?;
+        return Ok(buf);
+    }
+    let chunked = head
+        .header_values("transfer-encoding")
+        .iter()
+        .any(|v| v.to_ascii_lowercase().contains("chunked"));
+    if !chunked {
+        return Ok(Vec::new());
+    }
+    // ponytail: chunked framing is not parsed; we scan raw chunk bytes (sizes are
+    // hex noise to the detectors) and stop on the terminal chunk or 1s of quiet.
+    // Parse chunk framing if a detector ever needs exact body bytes.
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    while buf.len() < cap && !buf.ends_with(b"0\r\n\r\n") {
+        let want = tmp.len().min(cap - buf.len());
+        match tokio::time::timeout(Duration::from_secs(1), r.read(&mut tmp[..want])).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(k)) => buf.extend_from_slice(&tmp[..k]),
+            Ok(Err(e)) => return Err(e.into()),
+        }
+    }
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -1658,6 +1699,46 @@ mod e2e {
 pub(crate) mod tests {
     use super::*;
     use crate::secret_resolver::HashMapSecretResolver;
+
+    fn head(headers: &[&str]) -> Head {
+        Head {
+            line: "POST /post HTTP/1.1\r\n".into(),
+            headers: headers.iter().map(|h| format!("{h}\r\n")).collect(),
+        }
+    }
+
+    // Regression: the client keeps the connection open awaiting our response,
+    // so the DLP body read must stop at the declared length, never wait for EOF.
+    #[tokio::test]
+    async fn dlp_body_read_does_not_wait_for_eof() {
+        let (mut client, mut server) = tokio::io::duplex(1 << 16);
+        client
+            .write_all(b"card 4532015112830366 tail")
+            .await
+            .unwrap(); // stays open
+        let got = tokio::time::timeout(
+            Duration::from_millis(500),
+            read_body_prefix(&mut server, &head(&["Content-Length: 21"]), 65536),
+        )
+        .await
+        .expect("stalled waiting for EOF")
+        .unwrap();
+        assert_eq!(got, b"card 4532015112830366");
+        // No length, not chunked (a GET): no body, no read.
+        let got = tokio::time::timeout(
+            Duration::from_millis(500),
+            read_body_prefix(&mut server, &head(&["Host: x"]), 65536),
+        )
+        .await
+        .expect("GET stalled")
+        .unwrap();
+        assert!(got.is_empty());
+        // Cap respected.
+        let got = read_body_prefix(&mut server, &head(&["Content-Length: 100"]), 3)
+            .await
+            .unwrap();
+        assert_eq!(got, b" ta");
+    }
 
     pub(crate) const SECRET: &str = "sk-live-TOPSECRET-0123456789";
     pub(crate) const SECRET_URI: &str = "lantern.secret://tenant/t1/key/OPENAI";
@@ -2394,7 +2475,7 @@ pub(crate) mod tests {
         let out = roundtrip(
             &b,
             "POST http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\
-             Content-Length: 19\r\n\r\n4111111111111111\r\n",
+             Content-Length: 18\r\n\r\n4111111111111111\r\n",
         )
         .await;
         assert!(out.starts_with("HTTP/1.1 403"), "expected 403, got: {out}");
@@ -2441,7 +2522,7 @@ pub(crate) mod tests {
         let out = roundtrip(
             &b,
             "POST http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\
-             Content-Length: 19\r\n\r\n4111111111111111\r\n",
+             Content-Length: 18\r\n\r\n4111111111111111\r\n",
         )
         .await;
         // Not blocked — connection went through (upstream read and closed).

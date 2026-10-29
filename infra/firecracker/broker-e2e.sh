@@ -100,7 +100,8 @@ pass "manager up in broker egress mode"
 SPAWN=$(jq -n --arg t "${TENANT}" --arg host "${INJECT_HOST}" --arg uri "${SECRET_URI}" '{spec:{
   tenant_id:$t, image_digest:"sha256:0000000000000000000000000000000000000000000000000000000000000002",
   isolation:"ISOLATION_HOSTILE", limits:{vcpu:"1", memory:"256Mi", timeout:"120s"}, run_id:"broker-e2e",
-  egress_rules:[{pattern:$host, inject:[{header:"Authorization", secret_uri:$uri, value_prefix:"Basic "}]}]
+  egress_rules:[{pattern:$host, inject:[{header:"Authorization", secret_uri:$uri, value_prefix:"Basic "}]}],
+  dlp_policy:{rules:[{rule_id:"block-cards", detector:"card_number", mode:"block"}]}
 }}')
 RESP=$(g "${SPAWN}" Spawn 2>>"${LOG}") || fail "Spawn failed:\n$(tail -30 "${LOG}")"
 VM_ID=$(printf '%s' "${RESP}" | jq -r '.handle.vmId // empty')
@@ -184,58 +185,22 @@ pass "non-allowlisted host denied by the broker (deny audited)"
 grep -q "${SECRET_VALUE}" "${LOG}" && fail "credential value appears in manager log"
 pass "credential value absent from the manager log"
 
-# (7) DLP block: schedule a second VM whose DLP policy blocks card numbers,
-# then confirm a request containing a Luhn-valid card number is rejected (403)
-# and the audit event does NOT contain the matched value (invariant #10).
-#
-# Uses the httpbin /post echo endpoint with a test PAN in the body.
+# (7) DLP block (ADR 0030): the VM above was spawned with a card_number/block
+# rule. DLP can only read what the broker decrypts, i.e. injecting hosts, so
+# POST to the inject host: a Luhn-valid card number in the body must be refused
+# (403 dlp-block) and the same POST without it must not be, so the 403 is DLP's.
 TEST_PAN="4532015112830366"   # Luhn-valid Visa test number, not a real card.
-DLP_SPEC=$(jq -n \
-  --arg digest "${IMAGE_DIGEST:-sha256:placeholder}" \
-  --arg node "${NODE:-local}" \
-  '{
-    image_digest: $digest,
-    isolation: "docker",
-    egress_rules: [{pattern:"httpbin.org", http_methods:["POST"]}],
-    dlp_policy: {
-      rules: [{rule_id:"block-cards", detector:"card_number", mode:"block"}],
-      max_inspect_bytes: 65536
-    }
-  }' )
-DLP_RESP=$(curl -s -m 30 -X POST "${CONTROL_PLANE_URL}/v1/runtime/schedule" \
-  -H "Authorization: Bearer ${API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d "${DLP_SPEC}")
-DLP_VM=$(printf '%s' "${DLP_RESP}" | jq -r '.vmId // empty')
-[ -n "${DLP_VM}" ] || { echo "DLP-VM schedule failed; skipping DLP e2e (stub scheduler likely): ${DLP_RESP}" >&2; }
-
-if [ -n "${DLP_VM}" ]; then
-  # Wait for VM to be running.
-  for _ in $(seq 30); do
-    ST=$(curl -s -m 10 -H "Authorization: Bearer ${API_TOKEN}" "${CONTROL_PLANE_URL}/v1/runtime/vms/${DLP_VM}" | jq -r '.state // empty')
-    [ "${ST}" = "running" ] && break; sleep 2
-  done
-
-  # POST a body containing the test PAN — DLP should block with 403.
-  DLP_FETCH=$(jq -n --arg pan "${TEST_PAN}" '{url:"https://httpbin.org/post", method:"POST", body:$pan, headers:{"Content-Type":"text/plain"}}')
-  DLP_OUT=$(exec 2>/dev/null; curl -s -m 30 -X POST "${CONTROL_PLANE_URL}/v1/runtime/vms/${DLP_VM}/exec" \
-    -H "Authorization: Bearer ${API_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n --argjson f "${DLP_FETCH}" '{command:"/usr/local/bin/harness-tool", argv:["http_fetch", (($f)|tostring)]}')" 2>&1 || true)
-  # The result status should be 403 (DLP block).
-  printf '%s\n' "${DLP_OUT}" >&2
-  printf '%s' "${DLP_OUT}" | grep -q '"status":403' \
-    || echo "WARN: DLP block test skipped — could not verify 403 (exec bridge unavailable or VM not running)" >&2
-
-  # Confirm the matched PAN value is absent from the audit log (invariant #10).
-  grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number value appeared in the manager log (invariant #10 violation)"
-  pass "DLP: matched card number value absent from manager log (invariant #10 preserved)"
-
-  # Terminate the DLP VM.
-  curl -s -m 10 -X DELETE -H "Authorization: Bearer ${API_TOKEN}" \
-    "${CONTROL_PLANE_URL}/v1/runtime/vms/${DLP_VM}?grace=5s" >/dev/null || true
-  pass "DLP block e2e: card number blocked (403) and value not leaked to logs"
-fi
+post() { tool http_fetch "$(jq -n --arg u "https://${INJECT_HOST}/post" --arg b "$1" '{url:$u, method:"POST", body:$b, headers:{"Content-Type":"text/plain"}}')"; }
+OUT=$(post "order total 42")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | grep -q '"status":403' && fail "DLP control: a clean POST was refused:\n${OUT}"
+pass "DLP control: clean POST to ${INJECT_HOST} is not blocked"
+OUT=$(post "card ${TEST_PAN} exp 12/30")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | grep -q '"status":403' || fail "DLP: card number was NOT blocked:\n${OUT}\n$(tail -30 "${LOG}")"
+printf '%s' "${OUT}" | grep -q 'dlp-block' || fail "DLP: 403 without dlp-block reason:\n${OUT}"
+grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number appeared in the manager log (invariant #10)"
+pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
 
 grep 'egress broker audit' "${LOG}" | tail -6 >&2
 pass "ALL BROKER-MODE ASSERTIONS PASSED (vm ${VM_ID})"
