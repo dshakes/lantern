@@ -245,7 +245,7 @@ describe("MediaHandler.annotate — voice (transcription path)", () => {
   afterEach(() => {
     vi.resetAllMocks();
     delete process.env.OPENAI_API_KEY;
-    delete process.env.LANTERN_OPENAI_API_KEY;
+    delete process.env.PAL_OPENAI_API_KEY;
   });
 
   it("returns ok:true with [voice note transcribed] prefix on success", async () => {

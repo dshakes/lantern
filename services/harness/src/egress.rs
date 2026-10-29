@@ -116,7 +116,7 @@ impl TokenBucket {
 /// Parse the allowed-ports configuration from the environment.
 /// Returns a `Vec` of allowed ports; default is `[443]`.
 fn allowed_ports_from_env() -> Vec<u16> {
-    match std::env::var("LANTERN_EGRESS_ALLOWED_PORTS") {
+    match pal_env::var("PAL_EGRESS_ALLOWED_PORTS") {
         Ok(raw) if !raw.trim().is_empty() => raw
             .split(',')
             .filter_map(|s| s.trim().parse::<u16>().ok())
@@ -465,8 +465,8 @@ pub fn resolve_fail_closed(lantern_env: Option<&str>, fail_closed_var: Option<&s
 /// Calls [`resolve_fail_closed`]. Emits a warning when prod ignores an
 /// explicit `LANTERN_EGRESS_FAIL_CLOSED=0`.
 fn egress_fail_closed_from_env() -> bool {
-    let env = std::env::var("LANTERN_ENV").ok();
-    let var = std::env::var("LANTERN_EGRESS_FAIL_CLOSED").ok();
+    let env = pal_env::var("PAL_ENV").ok();
+    let var = pal_env::var("PAL_EGRESS_FAIL_CLOSED").ok();
     let fail_closed = resolve_fail_closed(env.as_deref(), var.as_deref());
     // Warn when prod overrides an operator's explicit-false attempt.
     let explicit_false = var
@@ -527,7 +527,7 @@ pub async fn enforcement_preflight(
     manager: &ManagerClient,
     egress_configured: bool,
 ) -> anyhow::Result<()> {
-    let proxy_port = std::env::var("LANTERN_EGRESS_BIND")
+    let proxy_port = pal_env::var("PAL_EGRESS_BIND")
         .ok()
         .and_then(|b| b.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()))
         .unwrap_or(3128);
@@ -589,7 +589,7 @@ async fn audit_preflight(manager: &ManagerClient, proxy_port: u16, decision: &st
 
 /// Run the HTTP CONNECT proxy. Binds to 127.0.0.1:3128.
 pub async fn run_proxy(policy: Arc<EgressPolicy>) -> anyhow::Result<()> {
-    let bind = std::env::var("LANTERN_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
+    let bind = pal_env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
     let listener = TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "egress: HTTP CONNECT proxy listening");
 
@@ -957,8 +957,8 @@ const DEFAULT_EGRESS_VSOCK_PORT: u32 = 3128;
 /// Run the broker-mode forwarder on `LANTERN_EGRESS_BIND` (default
 /// 127.0.0.1:3128), dialling the host broker over vsock per connection.
 pub async fn run_broker_forwarder() -> anyhow::Result<()> {
-    let bind = std::env::var("LANTERN_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
-    let port = std::env::var("LANTERN_EGRESS_VSOCK_PORT")
+    let bind = pal_env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".into());
+    let port = pal_env::var("PAL_EGRESS_VSOCK_PORT")
         .ok()
         .and_then(|p| p.trim().parse().ok())
         .unwrap_or(DEFAULT_EGRESS_VSOCK_PORT);

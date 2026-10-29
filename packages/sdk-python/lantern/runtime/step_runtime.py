@@ -8,11 +8,11 @@ returned without re-executing the step function.
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from lantern import _env
 from lantern.errors import LanternStepError
 from lantern.types import StepOptions
 
@@ -141,4 +141,4 @@ def create_journal_step_runner(journal: StepJournal) -> Callable[
 
 def get_journal_path() -> str:
     """Get the journal file path from the runtime environment."""
-    return os.environ.get("LANTERN_JOURNAL_PATH", "/tmp/lantern-journal.jsonl")
+    return _env.get("JOURNAL_PATH", "/tmp/lantern-journal.jsonl")

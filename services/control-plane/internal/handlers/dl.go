@@ -38,8 +38,8 @@ func dlObjectKey(id string) string { return "dl/" + id }
 // a flaky MMS binary. The token is unguessable + self-verifying (no DB); bytes
 // live in a temp dir and are GC'd at expiry.
 const (
-	dlServiceTokenEnv = "LANTERN_GRPC_SERVICE_TOKEN"
-	dlSecretEnv       = "LANTERN_DL_SIGNING_SECRET"
+	dlServiceTokenEnv = "PAL_GRPC_SERVICE_TOKEN"
+	dlSecretEnv       = "PAL_DL_SIGNING_SECRET"
 	dlMaxBytes        = 16 << 20 // 16 MiB — plenty for a doc/photo
 	dlMaxTTLSeconds   = 3600     // hard cap: 1 hour
 )

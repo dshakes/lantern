@@ -199,8 +199,8 @@ func TestSpawnRateLimiter_RefillRateIsExact(t *testing.T) {
 // TestSpawnRateLimiter_EnvDefaults exercises NewSpawnRateLimiter to confirm
 // it constructs without panicking and defaults apply.
 func TestSpawnRateLimiter_EnvDefaults(t *testing.T) {
-	t.Setenv("LANTERN_SPAWN_RATE_PER_MIN", "")
-	t.Setenv("LANTERN_SPAWN_BURST", "")
+	t.Setenv("PAL_SPAWN_RATE_PER_MIN", "")
+	t.Setenv("PAL_SPAWN_BURST", "")
 
 	l := NewSpawnRateLimiter()
 	defer l.Stop()

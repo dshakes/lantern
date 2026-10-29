@@ -69,7 +69,7 @@ func NewLlmProxyHandler(srv *server.Server, auth *AuthHandler) *LlmProxyHandler 
 // turn). Override via LANTERN_LLM_MAX_TURNS for deployments that need
 // more headroom (multi-step research) or less (cost-bounded).
 func maxToolTurnsEnv() int {
-	v := os.Getenv("LANTERN_LLM_MAX_TURNS")
+	v := os.Getenv("PAL_LLM_MAX_TURNS")
 	if v == "" {
 		return 12
 	}
@@ -365,10 +365,10 @@ func (h *LlmProxyHandler) resolveModelForTenantAuto(
 //
 // LANTERN_CLAUDE_BINARY=/path → override binary location
 func claudeCodeBinary() string {
-	if os.Getenv("LANTERN_USE_CLAUDE_CODE") != "1" {
+	if os.Getenv("PAL_USE_CLAUDE_CODE") != "1" {
 		return ""
 	}
-	if explicit := os.Getenv("LANTERN_CLAUDE_BINARY"); explicit != "" {
+	if explicit := os.Getenv("PAL_CLAUDE_BINARY"); explicit != "" {
 		return explicit
 	}
 	if path, err := exec.LookPath("claude"); err == nil {
@@ -662,9 +662,9 @@ func envModel(envKey, fallback string) string {
 // Default to the latest opus (4.8); env override flips to 4-7 / 4-6 /
 // older as needed. Failover wrapper catches 4xx if the model isn't
 // available on this tenant's API key.
-func opusModel() string   { return envModel("LANTERN_OPUS_MODEL", "claude-opus-4-8") }
-func sonnetModel() string { return envModel("LANTERN_SONNET_MODEL", "claude-sonnet-4-6") }
-func haikuModel() string  { return envModel("LANTERN_HAIKU_MODEL", "claude-haiku-4-5-20251001") }
+func opusModel() string   { return envModel("PAL_OPUS_MODEL", "claude-opus-4-8") }
+func sonnetModel() string { return envModel("PAL_SONNET_MODEL", "claude-sonnet-4-6") }
+func haikuModel() string  { return envModel("PAL_HAIKU_MODEL", "claude-haiku-4-5-20251001") }
 
 // All available models with their characteristics. modelCatalog is now
 // derived dynamically so envModel overrides are honored at every
@@ -805,7 +805,7 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 	// OpenAI GPT-4o is close (quality 8, speed 8, $2.5/$10).
 	// For cost-sensitive: Haiku or GPT-4o-mini.
 
-	routeStrategy := os.Getenv("LANTERN_ROUTE_STRATEGY") // "balanced" | "cheap" | "quality" | "fast"
+	routeStrategy := os.Getenv("PAL_ROUTE_STRATEGY") // "balanced" | "cheap" | "quality" | "fast"
 	if routeStrategy == "" {
 		routeStrategy = "balanced"
 	}

@@ -69,8 +69,8 @@ type TriggerHandler struct {
 func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler) *TriggerHandler {
 	// ponytail: per-replica in-memory buckets; SetRedis on this limiter if one
 	// replica's allowance ever proves too loose.
-	rate := envIntOrDefault("LANTERN_HOOK_RATE_PER_MIN", 60)
-	burst := envIntOrDefault("LANTERN_HOOK_BURST", 10)
+	rate := envIntOrDefault("PAL_HOOK_RATE_PER_MIN", 60)
+	burst := envIntOrDefault("PAL_HOOK_BURST", 10)
 	return &TriggerHandler{
 		srv:     srv,
 		auth:    auth,

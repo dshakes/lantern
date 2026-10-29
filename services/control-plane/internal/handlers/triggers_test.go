@@ -642,7 +642,7 @@ func TestTriggers_MissingScope403(t *testing.T) {
 		t.Fatalf("insert api key: %v", err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE tenant_id = $1`, tenant) })
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 
 	tr := env.createTrigger(t, tenant, "trg-scope", map[string]any{"provider": "github"})
 	for _, c := range []struct{ method, path string }{

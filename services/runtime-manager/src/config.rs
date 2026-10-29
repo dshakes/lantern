@@ -136,22 +136,22 @@ impl Config {
         // Filter empty/whitespace values: `LANTERN_RUNTIMECLASS_GVISOR=""` must
         // not produce `Some("")` — an empty runtimeClassName in K8s silently
         // falls back to the cluster's default (runc), bypassing the isolation gate.
-        let runtimeclass_gvisor = std::env::var("LANTERN_RUNTIMECLASS_GVISOR")
+        let runtimeclass_gvisor = pal_env::var("PAL_RUNTIMECLASS_GVISOR")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata = std::env::var("LANTERN_RUNTIMECLASS_KATA")
+        let runtimeclass_kata = pal_env::var("PAL_RUNTIMECLASS_KATA")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_wasm = std::env::var("LANTERN_RUNTIMECLASS_WASM")
+        let runtimeclass_wasm = pal_env::var("PAL_RUNTIMECLASS_WASM")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata_cc = std::env::var("LANTERN_RUNTIMECLASS_KATA_CC")
+        let runtimeclass_kata_cc = pal_env::var("PAL_RUNTIMECLASS_KATA_CC")
             .ok()
             .filter(|s| !s.trim().is_empty());
 
         // Explicit developer opt-in: set to "1" or "true" to allow bare runc
         // for STANDARD/UNSPECIFIED/DEVCONTAINER without gVisor.  Default false.
-        let allow_runc_standard = std::env::var("LANTERN_ALLOW_RUNC_STANDARD")
+        let allow_runc_standard = pal_env::var("PAL_ALLOW_RUNC_STANDARD")
             .ok()
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);

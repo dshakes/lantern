@@ -91,7 +91,7 @@ spec:
             # across replicas so a link staged on one pod verifies on another.
             # Reuses the existing high-entropy jwt-secret (server-side HMAC only,
             # never exposed) to avoid provisioning a separate secret.
-            - name: LANTERN_DL_SIGNING_SECRET
+            - name: PAL_DL_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern-cp.fullname" . }}-secrets

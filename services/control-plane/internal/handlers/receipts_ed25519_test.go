@@ -46,7 +46,7 @@ func generateTestSeed(t *testing.T) string {
 func setEd25519Seed(t *testing.T, seedB64 string) {
 	t.Helper()
 	resetEd25519OnceForTest()
-	t.Setenv("LANTERN_RECEIPT_ED25519_SEED", seedB64)
+	t.Setenv("PAL_RECEIPT_ED25519_SEED", seedB64)
 	t.Cleanup(resetEd25519OnceForTest)
 }
 
@@ -55,7 +55,7 @@ func setEd25519Seed(t *testing.T, seedB64 string) {
 func clearEd25519Seed(t *testing.T) {
 	t.Helper()
 	resetEd25519OnceForTest()
-	t.Setenv("LANTERN_RECEIPT_ED25519_SEED", "")
+	t.Setenv("PAL_RECEIPT_ED25519_SEED", "")
 	t.Cleanup(resetEd25519OnceForTest)
 }
 
@@ -262,7 +262,7 @@ func TestReceipt_Ed25519_TamperDetection(t *testing.T) {
 // verifies HMAC-SHA256 receipts exactly as before the Ed25519 migration.
 func TestReceipt_HMAC_RegressionWhenNoEd25519Seed(t *testing.T) {
 	clearEd25519Seed(t)
-	t.Setenv("LANTERN_RECEIPT_SECRET", "regression-hmac-secret-42")
+	t.Setenv("PAL_RECEIPT_SECRET", "regression-hmac-secret-42")
 
 	p := receiptPayload{
 		RunID:    "run-hmac-regression",
@@ -307,7 +307,7 @@ func TestReceipt_HMAC_RegressionWhenNoEd25519Seed(t *testing.T) {
 // Ed25519 seed is configured.
 func TestReceipt_HMAC_WellKnownWhenNoEd25519(t *testing.T) {
 	clearEd25519Seed(t)
-	t.Setenv("LANTERN_RECEIPT_SECRET", "wk-hmac-secret")
+	t.Setenv("PAL_RECEIPT_SECRET", "wk-hmac-secret")
 
 	h := &ReceiptHandler{srv: nil}
 	r := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
@@ -433,7 +433,7 @@ func TestReceipt_Ed25519_HexSeedAccepted(t *testing.T) {
 	hexSeed := hex.EncodeToString(seed)
 
 	resetEd25519OnceForTest()
-	t.Setenv("LANTERN_RECEIPT_ED25519_SEED", hexSeed)
+	t.Setenv("PAL_RECEIPT_ED25519_SEED", hexSeed)
 	t.Cleanup(resetEd25519OnceForTest)
 
 	k := loadEd25519Key(nil)

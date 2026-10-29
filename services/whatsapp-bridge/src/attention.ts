@@ -51,10 +51,10 @@ export class AttentionClassifier {
   private dedupMs: number;
 
   constructor(logger: Logger) {
-    this.ownerName = process.env.LANTERN_OWNER_NAME || "the owner";
+    this.ownerName = process.env.PAL_OWNER_NAME || "the owner";
     this.logger = logger.child({ component: "attention" });
     this.dedupMs =
-      Math.max(1, Number(process.env.LANTERN_ATTENTION_DEDUP_MIN) || DEFAULT_DEDUP_MIN) * 60_000;
+      Math.max(1, Number(process.env.PAL_ATTENTION_DEDUP_MIN) || DEFAULT_DEDUP_MIN) * 60_000;
   }
 
   /** True when bridge auth is set up and classification can run. */

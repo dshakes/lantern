@@ -52,7 +52,7 @@ func envOn(key string) bool {
 }
 
 // KioskEnabled reports whether LANTERN_KIOSK is on.
-func KioskEnabled() bool { return envOn("LANTERN_KIOSK") }
+func KioskEnabled() bool { return envOn("PAL_KIOSK") }
 
 // CheckKioskConfig is the startup guard. Fatal when kiosk mode is on and: it is a
 // production-like env without LANTERN_KIOSK_ALLOW_PROD=1; RLS or authz enforcement
@@ -65,13 +65,13 @@ func CheckKioskConfig(isProdEnv bool, getenv func(string) string) (fatal bool, m
 		}
 		return false
 	}
-	if !on("LANTERN_KIOSK") {
+	if !on("PAL_KIOSK") {
 		return false, ""
 	}
-	if isProdEnv && !on("LANTERN_KIOSK_ALLOW_PROD") {
+	if isProdEnv && !on("PAL_KIOSK_ALLOW_PROD") {
 		return true, "LANTERN_KIOSK=1 in a production-like environment — kiosk mints anonymous tenants; set LANTERN_KIOSK_ALLOW_PROD=1 only for a dedicated public demo deployment"
 	}
-	if !on("LANTERN_RLS_ENFORCE") || !on("LANTERN_AUTHZ_ENFORCE") {
+	if !on("PAL_RLS_ENFORCE") || !on("PAL_AUTHZ_ENFORCE") {
 		return true, "LANTERN_KIOSK=1 requires LANTERN_RLS_ENFORCE=1 and LANTERN_AUTHZ_ENFORCE=1 — anonymous tenants must be isolated by the database, not by handler discipline"
 	}
 	// A missing or dev-default JWT secret is public, so anyone could mint an
@@ -79,7 +79,7 @@ func CheckKioskConfig(isProdEnv bool, getenv func(string) string) (fatal bool, m
 	if secret := strings.TrimSpace(getenv("JWT_SECRET")); secret == "" || secret == devJWTSecret {
 		return true, "LANTERN_KIOSK=1 requires an explicit, non-default JWT_SECRET — the dev default is public and would let anyone forge owner tokens"
 	}
-	for key, override := range map[string]string{"OPENAI_API_KEY": "LANTERN_LLM_BASEURL_OPENAI", "ANTHROPIC_API_KEY": "LANTERN_LLM_BASEURL_ANTHROPIC"} {
+	for key, override := range map[string]string{"OPENAI_API_KEY": "PAL_LLM_BASEURL_OPENAI", "ANTHROPIC_API_KEY": "PAL_LLM_BASEURL_ANTHROPIC"} {
 		if getenv(key) != "" && getenv(override) == "" {
 			return true, key + " is set in kiosk mode without " + override + " — kiosk must never hold a provider key that can reach a real provider"
 		}
@@ -111,10 +111,10 @@ func NewKioskHandler(srv *server.Server, auth *AuthHandler) *KioskHandler {
 	}
 	return &KioskHandler{
 		srv: srv, auth: auth, now: time.Now,
-		ttl:           time.Duration(atoi("LANTERN_KIOSK_TTL_MIN", 30)) * time.Minute,
-		maxSessions:   atoi("LANTERN_KIOSK_MAX_SESSIONS", 20),
-		perIPPerHour:  atoi("LANTERN_KIOSK_IP_PER_HOUR", 3),
-		sweepInterval: time.Duration(atoi("LANTERN_KIOSK_SWEEP_SEC", 60)) * time.Second,
+		ttl:           time.Duration(atoi("PAL_KIOSK_TTL_MIN", 30)) * time.Minute,
+		maxSessions:   atoi("PAL_KIOSK_MAX_SESSIONS", 20),
+		perIPPerHour:  atoi("PAL_KIOSK_IP_PER_HOUR", 3),
+		sweepInterval: time.Duration(atoi("PAL_KIOSK_SWEEP_SEC", 60)) * time.Second,
 		hitsByIP:      map[string][]time.Time{},
 	}
 }
