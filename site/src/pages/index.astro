@@ -1,131 +1,169 @@
 ---
 import Page from '../layouts/Page.astro';
-import Phone from '../components/Phone.astro';
-import Glyph from '../components/Glyph.astro';
-import Copy from '../components/Copy.astro';
 import Logo from '../components/Logo.astro';
-import { PROMISE } from '../data/promise';
-import { u, DEMO, GH } from '../data/site';
+import Copy from '../components/Copy.astro';
+import ChatDemo from '../components/landing/ChatDemo.astro';
+import Lifecycle from '../components/landing/Lifecycle.astro';
+import Media from '../components/landing/Media.astro';
+import { u, GH, DEMO } from '../data/site';
+
+const PAL_CAPS = [
+  { m: 'pal-brief', t: 'Brief', h: 'What needs you, ranked.', b: 'Type ? and pal ranks every thread, draft and promise waiting on you, with a reason. React to act: 👍 do it, 👎 skip, ⏰ snooze.' },
+  { m: 'pal-holds', t: 'Holds', h: 'Never says yes for you.', b: 'Money, commitments and claims it can’t check wait for you. A backstop runs even when the model is down.' },
+  { m: 'pal-voice', t: 'Voice', h: 'Sounds like you.', b: 'Each draft is scored against messages you really sent. One that drifts is rewritten before it goes out.' },
+  { m: 'pal-memory', t: 'Memory', h: 'One memory per person.', b: 'Across iMessage and WhatsApp, so a plan made on one is known on the other.' },
+  { m: 'pal-world', t: 'Now', h: 'Knows what’s true today.', b: 'A dated picture of your life from mail, calendar and your own notes, with a source on every line.' },
+] as const;
+const RT_CAPS = [
+  { m: 'runtime-durable', t: 'Durable', h: 'Runs that finish.', b: 'Every step is journaled. After a crash the run resumes where it stopped; finished steps never run again.', href: 'docs/runtime/durable-execution/' },
+  { m: 'runtime-egress', t: 'Contained', h: 'Nothing leaks.', b: 'Code runs in a Firecracker or Kata microVM. In broker mode it has no network device; the host adds credentials the guest never sees.', href: 'docs/runtime/egress/' },
+  { m: 'runtime-guardrails', t: 'Guardrails', h: 'Spend you set.', b: 'Over budget, a run gets HTTP 402 before any model call. Ask for a capability, not a vendor. A regressed eval returns 422.', href: 'docs/build/budgets/' },
+  { m: 'runtime-architecture', t: 'Yours', h: 'In your cloud.', b: 'The data plane runs in your VPC and dials out. No inbound ports. Apache-2.0.', href: 'docs/runtime/architecture/' },
+] as const;
+const TRUST = [
+  { h: 'Asks before it acts', b: 'pal holds money, promises and unverifiable claims at the send boundary. A rule in a prompt is advice; this is a gate in code.' },
+  { h: 'Your Mac, your folders', b: 'pal’s bridges run on a Mac you own and read only the folders you allow. Its most personal memory is encrypted at rest.' },
+  { h: 'MicroVM isolation', b: 'Untrusted agent code never runs in a bare container: Firecracker or Kata, an egress allowlist, secrets by reference.' },
+  { h: 'Tenant walls', b: 'Every row and every internal call carries a tenant. Row-level security policies cover every tenant table.' },
+  { h: 'Signed receipts', b: 'A run can carry an Ed25519 receipt over the hash of its journal. Change one row and it stops verifying.' },
+  { h: 'Read every line', b: 'Apache-2.0. Go, Rust and TypeScript, with tests and linters gating every change.' },
+];
 ---
-<Page title="pal — your pal for every moment" description="pal is a personal agent that replies in your voice, remembers your people and asks before it promises anything. PAL Runtime is the open-source layer it runs on, for the agents you build.">
-  <section class="hero" aria-labelledby="hero-h">
-    <div class="wrap hero-grid">
-      <div>
-        <p class="eyebrow">pal · the <b>Personal Agentic Layer</b></p>
-        <h1 id="hero-h" class="display">Your pal for every moment.</h1>
-        <p class="lede">A friend that gets things done, and asks first. pal answers your messages in your voice, keeps track of your people and plans, and holds anything that matters until you say yes.</p>
-        <p class="lede" style="margin-top:12px">Building agents of your own? PAL Runtime is the open-source layer pal runs on.</p>
-        <div class="actions">
-          <a class="btn btn-primary" href={u('pal/')}>Meet pal</a>
-          <a class="btn btn-ghost" href={u('runtime/')}>PAL Runtime for builders</a>
-        </div>
+<Page title="PAL — a pal for you, a runtime for your agents" description="PAL is two products on one layer: pal, a personal agent in your iMessage and WhatsApp that asks before it promises anything, and PAL Runtime, the open-source runtime for the agents you build.">
+  <section class="hero hero-choose" aria-labelledby="hero-h">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="wrap">
+      <p class="eyebrow center" data-reveal>PAL · the <b>Personal Agentic Layer</b></p>
+      <h1 id="hero-h" class="display center hero-title" data-reveal>An agent for your life.<br /><span class="grad">A runtime for yours.</span></h1>
+      <p class="lede center hero-lede" data-reveal>One layer, two ways in. pal looks after your messages and asks before it promises anything. PAL Runtime is the open-source layer it runs on, for the agents you build.</p>
+      <div class="choose" data-reveal>
+        <a class="choice choice-pal" href={u('pal/')}>
+          <span class="choice-k">For you</span>
+          <Logo size={26} />
+          <span class="choice-h">A pal in your iMessage and WhatsApp.</span>
+          <span class="choice-b">Replies in your voice, remembers your people, and holds anything risky for your yes.</span>
+          <span class="choice-go">Meet pal</span>
+        </a>
+        <a class="choice choice-rt" href={u('runtime/')}>
+          <span class="choice-k">For builders</span>
+          <Logo variant="runtime" size={26} />
+          <span class="choice-h">Agents that finish, stay contained, stay yours.</span>
+          <span class="choice-b">Durable runs, microVM sandboxes, hard budgets and signed receipts, in your own cloud.</span>
+          <span class="choice-go">Explore PAL Runtime</span>
+        </a>
       </div>
-      <Phone who="Maya" label="A chat where pal holds a reply that would promise money" caption="Invented example. pal held it for you.">
-        <span class="stamp">Today 6:42 PM</span>
-        <p class="bubble them">hey! did you see the cabin is booked for the 14th 🎉</p>
-        <p class="bubble me">yes!! can't wait</p>
-        <p class="bubble them">could you send your share today? $300, I fronted it</p>
-        <div class="held" role="note">
-          <p class="tag">pal held this for you</p>
-          <p class="draft">“sending it tonight 👍”</p>
-          <p class="why">It promises money, so it waits for your yes.</p>
-          <p class="btns" aria-hidden="true"><span>Send</span><span>Edit</span></p>
-        </div>
-      </Phone>
     </div>
   </section>
 
-  <section class="section band" aria-labelledby="promise-h">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">The PAL Promise</p>
-        <h2 id="promise-h" class="h2" style="margin-top:12px">Four things pal will always do.</h2>
+  <section class="section band" aria-labelledby="moment-h">
+    <div class="wrap split">
+      <div data-reveal>
+        <p class="eyebrow"><b class="pal-k">pal</b> · one moment</p>
+        <h2 id="moment-h" class="h2" style="margin-top:12px">It brings you what matters. It waits on what’s risky.</h2>
+        <p class="lede" style="margin-top:18px">Ask pal what’s up and you get a short, ranked list. When a reply would spend your money or your word, pal stops and asks you first, in the same chat.</p>
+        <ul class="checklist">
+          <li><span><b>Brief.</b> Threads waiting on you, drafts, things you said you’d do.</span></li>
+          <li><span><b>Hold.</b> Money, promises, dates it can’t check, hard news.</span></li>
+          <li><span><b>Your call.</b> Send it, or say it your way.</span></li>
+        </ul>
       </div>
-      <ul class="grid-4">
-        {PROMISE.map((p) => (
-          <li class="card">
-            <Glyph kind={p.kind} />
-            <h3 class="h3">{p.title}</h3>
-            <p>{p.body}</p>
-            <a class="arrow-link more" href={u(p.href)}>How it works</a>
+      <div data-reveal><ChatDemo /></div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="palcaps-h">
+    <div class="wrap">
+      <div class="section-head" data-reveal>
+        <p class="eyebrow"><b class="pal-k">pal</b> · for you</p>
+        <h2 id="palcaps-h" class="h2" style="margin-top:12px">A personal agent on your own Mac.</h2>
+        <p class="lede">In the chats you already use. It knows your people, your calendar and your mail, and it never says yes on your behalf.</p>
+      </div>
+      <ul class="bento bento-pal">
+        {PAL_CAPS.map((c, i) => (
+          <li class:list={['tile', i < 2 && 'tile-big']} data-reveal>
+            <Media name={c.m} />
+            <div class="tile-txt"><p class="tile-k">{c.t}</p><h3 class="h3">{c.h}</h3><p>{c.b}</p></div>
           </li>
         ))}
       </ul>
+      <a class="arrow-link" style="margin-top:24px" href={u('pal/')}>Everything pal does</a>
     </div>
   </section>
 
-  <section class="section" aria-labelledby="doors-h">
+  <section class="section band" aria-labelledby="life-h">
     <div class="wrap">
-      <div class="section-head center">
-        <h2 id="doors-h" class="h2">One layer. Two ways in.</h2>
-        <p class="lede">The same layer that looks after your messages runs agents for teams. Pick the door that fits.</p>
+      <div class="section-head" data-reveal>
+        <p class="eyebrow"><b class="rt-k">PAL Runtime</b> · try it</p>
+        <h2 id="life-h" class="h2" style="margin-top:12px">Pause an idle agent. Fork a busy one.</h2>
+        <p class="lede">An idle sandbox is snapshotted and stopped, giving its compute back. Resume brings back the same VM. Forks start from one snapshot and share its memory.</p>
       </div>
-      <div class="grid-2">
-        <a class="card door" href={u('pal/')}>
-          <span class="pill">For you</span>
-          <h3 class="h2">pal, your personal agent</h3>
-          <p class="body2" style="margin-top:12px">Lives in iMessage and WhatsApp, on your own Mac.</p>
-          <ul>
-            <li>Replies to people the way you would</li>
-            <li>Remembers who is who, across both apps</li>
-            <li>A daily Brief of the moments that need you</li>
-            <li>Holds money and promises for your yes</li>
-          </ul>
-          <span class="arrow-link go">Meet pal</span>
-        </a>
-        <a class="card door" href={u('runtime/')}>
-          <Logo variant="runtime" size={20} />
-          <h3 class="h2">PAL Runtime, for builders</h3>
-          <p class="body2" style="margin-top:12px">Run your own agents in your own cloud. Apache-2.0.</p>
-          <ul>
-            <li>It finishes: runs resume after a crash</li>
-            <li>It’s contained: code runs in a microVM, keys stay out</li>
-            <li>It’s yours: deploy in your VPC, budgets enforced up front</li>
-            <li>Every run can carry a signed receipt</li>
-          </ul>
-          <span class="arrow-link go">Explore PAL Runtime</span>
-        </a>
-      </div>
+      <div data-reveal><Lifecycle /></div>
     </div>
   </section>
 
-  <section class="section rule" aria-labelledby="moments-h">
-    <div class="wrap split">
-      <div>
-        <p class="eyebrow">Brief</p>
-        <h2 id="moments-h" class="h2" style="margin-top:12px">Only the moments that need you.</h2>
-        <p class="lede" style="margin-top:16px">Ask pal what’s up and it ranks what is waiting on you: people you haven’t answered, replies it held, things you said you would do. Answer with a number and it drafts the reply.</p>
-        <a class="arrow-link" style="margin-top:16px" href={u('pal/')}>See everything pal does</a>
-      </div>
-      <Phone who="pal" initial="p" label="A daily Brief from pal listing three moments that need you">
-        <p class="bubble me">what’s up?</p>
-        <div class="pal-msg">
-          <p class="from">pal</p>
-          <p>3 moments need you</p>
-          <ol>
-            <li><span>1</span><span><b>Jordan</b> has waited 2 days for an answer about Saturday</span></li>
-            <li><span>2</span><span><b>Held</b>: your reply to Maya promises $300</span></li>
-            <li><span>3</span><span>You said you’d send Alex the slides</span></li>
-          </ol>
-        </div>
-        <p class="bubble me">1</p>
-        <div class="pal-msg"><p class="from">pal</p><p>Draft for Jordan: “so sorry, Saturday works! 11 at the park?” Reply send or edit.</p></div>
-      </Phone>
-    </div>
-  </section>
-
-  <section class="section band closer" aria-labelledby="close-h">
+  <section class="section" aria-labelledby="rtcaps-h">
     <div class="wrap">
-      <p class="eyebrow">Proof, not promises</p>
-      <h2 id="close-h" class="h2">pal runs on PAL Runtime.</h2>
-      <p class="lede" style="margin:20px auto 0">The layer that runs your life can run your agents. Everything here is open source; try the whole stack on your laptop with Docker, no API key needed.</p>
-      <ul class="strip" style="margin-top:28px" aria-label="Facts about the project">
-        <li>Apache-2.0</li><li>Firecracker / Kata microVMs</li><li>Go + Rust</li><li>Tests in CI</li>
+      <div class="section-head" data-reveal>
+        <p class="eyebrow"><b class="rt-k">PAL Runtime</b> · for builders</p>
+        <h2 id="rtcaps-h" class="h2" style="margin-top:12px">The parts every production agent needs.</h2>
+        <p class="lede">The layer pal runs on, open source, for your own agents. Write it on your laptop, run the same thing in your cloud.</p>
+      </div>
+      <ul class="bento bento-rt">
+        {RT_CAPS.map((c) => (
+          <li class="tile" data-reveal>
+            <Media name={c.m} />
+            <div class="tile-txt"><p class="tile-k">{c.t}</p><h3 class="h3">{c.h}</h3><p>{c.b}</p><a class="arrow-link" href={u(c.href)}>Read how</a></div>
+          </li>
+        ))}
       </ul>
-      <Copy cmd={DEMO} label="Clone and start the demo" />
+      <a class="arrow-link" style="margin-top:24px" href={u('runtime/')}>Everything in PAL Runtime</a>
+    </div>
+  </section>
+
+  <section class="section band" aria-labelledby="trust-h">
+    <div class="wrap">
+      <div class="section-head" data-reveal>
+        <p class="eyebrow">Trust</p>
+        <h2 id="trust-h" class="h2" style="margin-top:12px">Safe by construction, not by promise.</h2>
+      </div>
+      <ul class="grid-3 trust">
+        {TRUST.map((t) => <li class="card" data-reveal><h3 class="h3">{t.h}</h3><p>{t.b}</p></li>)}
+      </ul>
+      <a class="arrow-link" style="margin-top:24px" href={u('docs/runtime/security/')}>Security model</a>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="qs-h">
+    <div class="wrap split qs">
+      <div data-reveal>
+        <p class="eyebrow">60 seconds</p>
+        <h2 id="qs-h" class="h2" style="margin-top:12px">Run the whole stack on your laptop.</h2>
+        <p class="lede" style="margin-top:18px">Docker only, no API key. The demo starts the control plane, the console and a model server that replays recorded answers. Each visitor gets a private workspace, deleted after 30 minutes.</p>
+        <div class="actions" style="margin-top:28px">
+          <a class="btn btn-primary" href={u('docs/start/quickstart/')}>Read the quickstart</a>
+          <a class="btn btn-ghost" href={GH}>View on GitHub</a>
+        </div>
+      </div>
+      <div class="term" data-reveal>
+        <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>terminal</span></div>
+        <pre tabindex="0" aria-label="Demo commands"><code><span class="c"># needs Docker and openssl</span>
+{DEMO}
+<span class="o">demo: http://localhost:3001/kiosk</span>
+
+<span class="c"># stop and delete all demo data</span>
+make demo-down</code></pre>
+        <Copy cmd={DEMO} label="Clone and start the demo" />
+      </div>
+    </div>
+  </section>
+
+  <section class="section closer closer-grad" aria-labelledby="close-h">
+    <div class="wrap" data-reveal>
+      <h2 id="close-h" class="h2">pal runs on PAL Runtime.</h2>
+      <p class="lede" style="margin:20px auto 0">The agent that answers for us every day runs on the same open layer you can run your agents on.</p>
       <div class="actions">
-        <a class="btn btn-primary" href={u('docs/start/quickstart/')}>Read the quickstart</a>
-        <a class="btn btn-ghost" href={GH}>View on GitHub</a>
+        <a class="btn btn-pal" href={u('pal/')}>Meet pal</a>
+        <a class="btn btn-rt" href={u('runtime/')}>Explore PAL Runtime</a>
       </div>
     </div>
   </section>
