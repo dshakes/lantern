@@ -1,67 +1,117 @@
-/* PAL design tokens, shared by the landing page and the Starlight docs theme.
-   Dark is the reference (ink); light sits on paper. ONE warm accent ramp
-   (amber -> ember). Cool / ok / bad are diagram signals only:
-   cool = host / outside, ok = allowed, bad = denied / crash.
-   --p-accent-text and --p-grad-text stay >= 4.5:1 on their background;
-   --p-amber / --p-ember are for fills and marks only. */
+/* PAL design tokens, shared by the marketing pages, the docs theme and the islands.
+   Two products, two colour families, used the same way everywhere:
+     pal (the personal agent)  = sunset: orange -> coral -> magenta
+     PAL Runtime (for builders) = electric: indigo -> blue -> cyan
+   plus shared neutrals and a lime "ok". Dark (ink) is the reference; light sits on white.
+   Contrast (WCAG 2.x, checked numerically; table in CONTENT-MAP.md):
+     *-text tokens >= 4.5:1 on --p-bg, --p-bg-2, --p-surface and --p-surface-2 in their theme.
+     --p-pal-btn / --p-rt-btn carry white text at >= 4.6:1.
+     Raw hues (--p-pal-1..3, --p-rt-1..3, --p-ok) are for fills, glows and marks only. */
 :root {
   --p-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --p-display: 'Inter Tight Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --p-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  --p-amber: #f5a524;
-  --p-ember: #ff5b2e;
-  --p-grad: linear-gradient(100deg, var(--p-amber), var(--p-ember));
-  --p-accent-text: #ffb547;
-  --p-accent-strong: #ffd08a;
-  --p-accent-bg: rgba(245, 165, 36, 0.1);
-  --p-cool: #7c8cff;
-  --p-ok: #3fb68b;
-  --p-bad: #ef4444;
-  --p-ok-text: #5fd3a6;
+  /* pal: sunset */
+  --p-pal-1: #ff8a3d;
+  --p-pal-2: #ff4d6d;
+  --p-pal-3: #e0379b;
+  --p-pal-grad: linear-gradient(120deg, var(--p-pal-1) 0%, var(--p-pal-2) 48%, var(--p-pal-3) 100%);
+  --p-pal-btn: linear-gradient(120deg, #e11d48, #c026d3);
+  --p-pal-text: #ff7a93;
+  --p-pal-bg: rgba(255, 77, 109, 0.12);
+  --p-pal-line: rgba(255, 77, 109, 0.45);
+
+  /* PAL Runtime: electric */
+  --p-rt-1: #6d5cff;
+  --p-rt-2: #3b82f6;
+  --p-rt-3: #22d3ee;
+  --p-rt-grad: linear-gradient(120deg, var(--p-rt-1) 0%, var(--p-rt-2) 50%, var(--p-rt-3) 100%);
+  --p-rt-btn: linear-gradient(120deg, #4f46e5, #2563eb);
+  --p-rt-text: #7ab8ff;
+  --p-rt-bg: rgba(91, 108, 255, 0.13);
+  --p-rt-line: rgba(109, 92, 255, 0.5);
+
+  /* both: the brand gradient runs sunset into electric */
+  --p-brand-grad: linear-gradient(110deg, var(--p-pal-1), var(--p-pal-2) 30%, var(--p-pal-3) 50%, var(--p-rt-1) 72%, var(--p-rt-3));
+
+  --p-ok: #a3e635;
+  --p-ok-text: #b4f05a;
+  --p-bad: #ff4d4f;
   --p-bad-text: #ff8a8a;
 
-  --p-bg: #0b0c0f;
-  --p-bg-2: #0f1014;
-  --p-surface: #131419;
-  --p-surface-2: #1a1c22;
-  --p-border: rgba(250, 250, 248, 0.08);
-  --p-border-strong: rgba(250, 250, 248, 0.16);
-  --p-text: #fafaf8;
-  --p-text-2: #b9bac0;
-  --p-text-3: #8c8e96;
-  --p-shadow: 0 1px 0 rgba(250, 250, 248, 0.04) inset, 0 24px 48px -28px rgba(0, 0, 0, 0.8);
-  --p-radius: 16px;
-  --p-radius-s: 10px;
-  --p-max: 1120px;
+  --p-bg: #07070d;
+  --p-bg-2: #0c0c16;
+  --p-surface: #11111d;
+  --p-surface-2: #181827;
+  --p-border: rgba(246, 246, 251, 0.08);
+  --p-border-strong: rgba(246, 246, 251, 0.16);
+  --p-text: #f6f6fb;
+  --p-text-2: #b8b9cc;
+  --p-text-3: #8d8fa6;
+  --p-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 30px 60px -30px rgba(0, 0, 0, 0.85);
+  --p-glow-pal: 0 0 0 1px rgba(255, 77, 109, 0.25), 0 30px 80px -30px rgba(224, 55, 155, 0.55);
+  --p-glow-rt: 0 0 0 1px rgba(109, 92, 255, 0.3), 0 30px 80px -30px rgba(59, 130, 246, 0.55);
+
+  --p-radius: 20px;
+  --p-radius-s: 12px;
+  --p-max: 1160px;
   --p-gutter: 24px;
-  --p-section: 96px;
+  --p-section: 112px;
   color-scheme: dark;
 }
-
 :root[data-theme='light'] {
-  --p-accent-text: #a8460a;
-  --p-accent-strong: #7a3005;
-  --p-accent-bg: rgba(245, 165, 36, 0.14);
-  --p-cool: #4f5fd6;
-  --p-ok: #1f8a63;
-  --p-bad: #d03030;
-  --p-ok-text: #146b4b;
-  --p-bad-text: #b42323;
-
-  --p-bg: #fafaf8;
-  --p-bg-2: #f3f2ee;
+  --p-pal-text: #c8175d;
+  --p-pal-bg: rgba(255, 77, 109, 0.1);
+  --p-pal-line: rgba(224, 55, 155, 0.4);
+  --p-rt-text: #4338ca;
+  --p-rt-bg: rgba(91, 108, 255, 0.09);
+  --p-rt-line: rgba(79, 70, 229, 0.38);
+  --p-ok: #65a30d;
+  --p-ok-text: #3a7d0a;
+  --p-bad: #e53935;
+  --p-bad-text: #c62828;
+  --p-bg: #ffffff;
+  --p-bg-2: #f6f6fb;
   --p-surface: #ffffff;
-  --p-surface-2: #f1f0ec;
-  --p-border: rgba(11, 12, 15, 0.09);
-  --p-border-strong: rgba(11, 12, 15, 0.17);
-  --p-text: #0b0c0f;
-  --p-text-2: #45474e;
-  --p-text-3: #62656d;
-  --p-shadow: 0 1px 2px rgba(11, 12, 15, 0.05), 0 20px 40px -26px rgba(11, 12, 15, 0.22);
+  --p-surface-2: #eeeef6;
+  --p-border: rgba(11, 11, 20, 0.09);
+  --p-border-strong: rgba(11, 11, 20, 0.17);
+  --p-text: #0b0b14;
+  --p-text-2: #45465a;
+  --p-text-3: #5f6178;
+  --p-shadow: 0 1px 2px rgba(11, 11, 20, 0.05), 0 24px 48px -28px rgba(11, 11, 20, 0.25);
+  --p-glow-pal: 0 0 0 1px rgba(224, 55, 155, 0.18), 0 30px 70px -34px rgba(224, 55, 155, 0.45);
+  --p-glow-rt: 0 0 0 1px rgba(79, 70, 229, 0.18), 0 30px 70px -34px rgba(59, 130, 246, 0.45);
   color-scheme: light;
 }
-
 @media (max-width: 720px) {
-  :root { --p-gutter: 16px; --p-section: 64px; }
+  :root { --p-gutter: 16px; --p-section: 72px; }
+}
+
+/* Diagram semantics, shared by the interactive diagrams (islands) and the
+   inlined architecture SVGs. guest = untrusted code (hot orange), wall = the
+   microVM boundary (cyan), host = trusted host code (lime), signal = denied (red).
+   Strokes and fills use the raw hue; the light theme darkens each to a text-safe tone. */
+:root {
+  --lx-ink: var(--p-text); --lx-ink-2: var(--p-text-2); --lx-ink-3: var(--p-text-3);
+  --lx-bg: var(--p-bg-2); --lx-surface: var(--p-surface); --lx-surface-2: var(--p-surface-2);
+  --lx-line: var(--p-border-strong);
+  --lx-flame: #ff9a3d; --lx-flame-soft: rgba(255, 154, 61, 0.14);
+  --lx-glass: #3ddcf5; --lx-glass-soft: rgba(34, 211, 238, 0.13);
+  --lx-patina: #a3e635; --lx-patina-soft: rgba(163, 230, 53, 0.13);
+  --lx-signal: #ff6b6b; --lx-signal-soft: rgba(255, 77, 79, 0.14);
+  --lx-violet: #9d8cff; --lx-violet-soft: rgba(109, 92, 255, 0.16);
+  --lx-pink: #ff6fa5; --lx-pink-soft: rgba(255, 77, 109, 0.14);
+  --lx-font-text: var(--p-font); --lx-font-display: var(--p-display); --lx-font-mono: var(--p-mono);
+  --lx-radius-s: 10px; --lx-radius-m: 16px; --lx-radius-l: 22px;
+  --lx-dur-ui: 180ms; --lx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+:root[data-theme='light'] {
+  --lx-flame: #c2410c; --lx-flame-soft: rgba(255, 138, 61, 0.14);
+  --lx-glass: #0e7490; --lx-glass-soft: rgba(34, 211, 238, 0.14);
+  --lx-patina: #3a7d0a; --lx-patina-soft: rgba(163, 230, 53, 0.2);
+  --lx-signal: #c62828; --lx-signal-soft: rgba(255, 77, 79, 0.12);
+  --lx-violet: #4f46e5; --lx-violet-soft: rgba(109, 92, 255, 0.12);
+  --lx-pink: #be185d; --lx-pink-soft: rgba(255, 77, 109, 0.12);
 }

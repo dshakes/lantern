@@ -1,6 +1,10 @@
 ---
 title: Egress and credentials
 description: How sandboxes reach the network. Default in-guest proxy mode, opt-in broker mode, allowlists and host-side credential injection.
+glance:
+  what: "Sandboxes reach the network through one of two modes: an in-guest allowlist proxy by default, or opt-in broker mode with PAL_EGRESS_MODE=broker."
+  why: "In broker mode the host enforces the allowlist and injects credentials, so the real secret never enters the VM."
+  how: "Read The path out, then set the Allowlist and Credential injection rules for your sandbox."
 sidebar:
   order: 6
 ---

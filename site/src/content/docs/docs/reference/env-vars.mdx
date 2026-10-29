@@ -1,6 +1,10 @@
 ---
 title: Environment variables
 description: Every environment variable read by the PAL control plane, schedulers, runtime manager, harness and dashboard, with defaults.
+glance:
+  what: "Every environment variable read by the control plane, schedulers, runtime manager, harness and dashboard, grouped by service with defaults."
+  why: "It tells you what each variable does and which ones make a process refuse to start in production when unset."
+  how: "Check the Production checklist first, then look up a variable in its service group."
 sidebar:
   order: 4
 ---
@@ -88,7 +92,7 @@ Behaviour and rationale are on [Accounts & sign-up](/docs/build/accounts/).
 | `PAL_SIGNUP_INVITE_SECRET` | unset | HMAC key for invite codes. Required for `invite` mode. |
 | `PAL_TURNSTILE_SECRET` | unset | Cloudflare Turnstile secret. Setting it requires a captcha on every sign-up. |
 | `PAL_MAILER` | `log` | `log`, `smtp` or `http`. |
-| `PAL_MAIL_FROM` | `Lantern ` | From address for `smtp` and `http`. |
+| `PAL_MAIL_FROM` | `Lantern <no-reply@localhost>` | From address for `smtp` and `http`. |
 | `PAL_SMTP_ADDR` | unset | `host:port`; required for `smtp`. |
 | `PAL_SMTP_USER` | unset | SMTP user (PLAIN auth). |
 | `PAL_SMTP_PASSWORD` | unset | SMTP password. |

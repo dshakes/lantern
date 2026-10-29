@@ -1,6 +1,10 @@
 ---
 title: Agent runtime
 description: How PAL Runtime executes agents. Two isolation tiers, one journal, crash recovery, streaming and signed receipts.
+glance:
+  what: "Every run executes in one of two tiers, shared (the inline executor) or microVM, declared in the agent version's manifest.isolation."
+  why: "Choosing the tier is the main trust decision: code you wrote goes shared, untrusted code goes in a microVM."
+  how: "Read Two tiers, one journal, then set manifest.isolation as shown under How routing works."
 sidebar:
   order: 1
 ---

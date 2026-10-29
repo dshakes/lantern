@@ -1,6 +1,10 @@
 ---
 title: Token streaming
 description: The message_delta, message_completed and message_error SSE contract for session replies, and the SDK async iterator.
+glance:
+  what: "Session replies stream token by token over three named SSE events on GET /v1/sessions/{id}/events: message_delta, message_completed and message_error."
+  why: "Words appear as the model writes them instead of after a finished answer, with no buffering along the path."
+  how: "Subscribe to the events endpoint or use the SDK's sessions.streamMessage() iterator."
 sidebar:
   order: 10
 ---

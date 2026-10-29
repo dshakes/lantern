@@ -1,6 +1,10 @@
 ---
 title: Human-in-the-loop
 description: Approval nodes and the confidence gate put a person in a workflow before a side effect runs.
+glance:
+  what: "Approval nodes you place yourself and the off-by-default confidence gate both pause a workflow for a person, via the takeover API."
+  why: "Some actions, such as mailing customers or issuing refunds, should not run unattended; a parked run holds no worker."
+  how: "Add an approval node as described in Approval workflow nodes, then use the Takeover API to grant or deny."
 sidebar:
   order: 4
 ---

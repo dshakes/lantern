@@ -1,6 +1,10 @@
 ---
 title: Evaluations
 description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
+glance:
+  what: "Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals, all on the same REST API as the dashboard."
+  why: "Changing a prompt can make an agent worse; a pinned baseline makes the API answer 422 so CI fails first."
+  how: "Create a suite under Eval suites, record a run, then pin it as the baseline."
 sidebar:
   order: 7
 ---

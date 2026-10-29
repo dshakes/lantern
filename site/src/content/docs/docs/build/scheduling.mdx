@@ -1,6 +1,10 @@
 ---
 title: Scheduling
 description: Run an agent on a cron expression, with per-schedule input and timezone.
+glance:
+  what: "Run an agent on a five-field cron expression; schedules are their own resource with per-schedule input and timezone, managed at /v1/schedules."
+  why: "One agent can have many schedules, and scheduled runs show up in the dashboard like any other run."
+  how: "Write a cron expression, then call Create a schedule in the Schedule API section."
 sidebar:
   order: 5
 ---

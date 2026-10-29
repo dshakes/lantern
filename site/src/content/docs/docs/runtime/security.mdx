@@ -1,6 +1,10 @@
 ---
 title: Security
 description: Trust boundaries, what is shipped versus planned, encryption, isolation and secret handling in PAL Runtime.
+glance:
+  what: "The trust boundaries between caller, control plane, data-plane host and microVM, with what is shipped versus planned."
+  why: "It tells you which protections you can rely on today and which are still planned."
+  how: "Read What is shipped today first, then Isolation and Secret management."
 sidebar:
   order: 14
 ---
@@ -36,7 +40,7 @@ The controls described below reflect what is shipped and what is planned. Items 
 - **gRPC service-token auth on every internal gRPC port:** control plane `:50051`, workflow engine `:50052`, model router `:50053`, runtime manager `:50054` and runtime scheduler `:50055`. Constant-time check, runs before tenant extraction, fail-closed in production.
 - **Runtime report binding.** Step events and exit reports from a microVM are bound to that VM's own run: a report carrying another run's `run_id` is rejected with 403, so a compromised harness cannot spoof another tenant's audit or log stream.
 - **Signed run receipts.** Issued on request for a completed run (`POST /v1/runs/{id}/receipt`). A SHA-256 of the run's full `journal_events` stream is signed with Ed25519 when `PAL_RECEIPT_ED25519_SEED` is set (verifiable with no PAL account at `/proof` against the key at `/.well-known/lantern-receipts`), with an HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).
-- **Fail-closed token gate.** The gateway's API-key introspection endpoint refuses (403) in production when `PAL_GRPC_SERVICE_TOKEN` is unset (dev allows it with a warning). Token comparisons are constant-time when set.
+- **Fail-closed token gates.** The gateway's API-key introspection endpoint refuses (403) in production when `PAL_GRPC_SERVICE_TOKEN` is unset (dev allows it with a warning). The personal `/v1/signals` endpoint refuses (401) whenever `PAL_SIGNAL_TOKEN` is unset. Both gates use constant-time token comparisons when a token is set.
 - **A2A tenant isolation.** `GetAgentCard` / `InvokeAgent` gate on `is_public` OR caller tenant; private agents return 404 to cross-tenant callers.
 - **Bridge retry and surface-gateway tenant resolution.** The surface gateway resolves a real `PAL_TENANT_ID` instead of using platform IDs; unknown installs are rejected.
 - **LLM idempotency keys on all provider calls**, derived from `(run_id, step_id, attempt)` and reused across same-provider retries.

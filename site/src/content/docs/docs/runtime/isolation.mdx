@@ -1,6 +1,10 @@
 ---
 title: Isolation classes
 description: The decision tree from trusted to hostile workloads, and the fail-closed gate.
+glance:
+  what: "Every headless agent declares an isolation class in agent.yaml, which is the security boundary the workload runs behind."
+  why: "It sets how strong the walls around an agent are, from your own code to hostile workloads, and fails closed."
+  how: "Follow The decision tree, then set the class in your spec as shown under In a spec."
 sidebar:
   order: 4
 ---

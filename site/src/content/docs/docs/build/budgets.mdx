@@ -1,6 +1,10 @@
 ---
 title: Budgets
 description: Per-agent spend and rate limits set as policy, enforced before the model is called.
+glance:
+  what: "Per-agent spend and rate limits set as policy, with an optional hard-fail that refuses calls before the model is reached."
+  why: "A buggy loop can burn a month of model spend in an afternoon; a cap refuses the next call instead."
+  how: "Follow Setting a budget, or run the Try it example that caps an agent at one run per day."
 sidebar:
   order: 6
 ---

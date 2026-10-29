@@ -97,9 +97,10 @@ export default defineConfig({
         '@fontsource-variable/inter-tight/wght.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
         './src/styles/tokens.css',
+        './src/styles/diagrams.css',
         './src/styles/starlight.css',
       ],
-      components: { SiteTitle: './src/components/SiteTitle.astro' },
+      components: { SiteTitle: './src/components/SiteTitle.astro', MarkdownContent: './src/components/MarkdownContent.astro' },
       // Groups follow the directories under src/content/docs/docs/, in this order.
       sidebar: [
         { label: 'Start', items: [{ autogenerate: { directory: 'docs/start' } }] },

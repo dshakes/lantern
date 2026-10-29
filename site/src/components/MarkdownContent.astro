@@ -1,0 +1,14 @@
+---
+// Starlight's MarkdownContent, plus the page's three-line "at a glance" lead
+// (frontmatter `glance: { what, why, how }`) above the body.
+import Default from '@astrojs/starlight/components/MarkdownContent.astro';
+const glance = Astro.locals.starlightRoute.entry.data.glance;
+---
+{glance && (
+  <dl class="glance not-content" aria-label="At a glance">
+    <div><dt>What</dt><dd>{glance.what}</dd></div>
+    <div><dt>Why</dt><dd>{glance.why}</dd></div>
+    <div><dt>How</dt><dd>{glance.how}</dd></div>
+  </dl>
+)}
+<Default><slot /></Default>

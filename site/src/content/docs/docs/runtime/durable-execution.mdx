@@ -1,6 +1,10 @@
 ---
 title: Durable execution
 description: Crash-resume with an event-sourced journal, CompletedStep replay, idempotency keys and per-step retry.
+glance:
+  what: "An event-sourced journal_events table and a CompletedStep replay gate let a crashed run resume without losing work or repeating side effects."
+  why: "A restart mid-run would otherwise lose the run or send the same email twice and re-spend model tokens."
+  how: "Read Event-sourced journal and CompletedStep replay, then Per-step retry policy to tune retries."
 sidebar:
   order: 3
 ---

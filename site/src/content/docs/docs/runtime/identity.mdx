@@ -1,6 +1,10 @@
 ---
 title: Identity and secrets
 description: Per-instance Ed25519 identity and short-TTL secret vending for microVM workloads, plus broker mode where credentials never enter the VM.
+glance:
+  what: "Every spawn gets its own Ed25519 identity, and secrets are vended to it at execution time over a mutually authenticated channel."
+  why: "Real API keys never sit where agent code can casually find them: the config holds only a reference, not a value."
+  how: "Reference secrets with the lantern.secret/... form described in that section, and read Broker mode for the strongest isolation."
 sidebar:
   order: 7
 ---

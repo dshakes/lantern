@@ -1,6 +1,10 @@
 ---
 title: Deployment
 description: Control plane and data plane topologies, the Helm chart, Terraform, namespace isolation and database migrations.
+glance:
+  what: "PAL splits into a control plane (scheduling, routing, dashboard) and a data plane (microVMs, execution, secrets) that runs in your cloud."
+  why: "Keeping the data plane in your VPC means agent data never leaves your cloud account."
+  how: "Choose a topology under Deployment options, then install with the Helm section."
 sidebar:
   order: 1
 ---

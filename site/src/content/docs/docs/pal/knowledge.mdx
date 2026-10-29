@@ -1,6 +1,10 @@
 ---
 title: Knowledge base and human handoff
 description: Upload documents for cited answers, and hand a conversation to a person.
+glance:
+  what: "Upload documents to an agent: they are chunked, embedded in Postgres with pgvector, and the best chunks join context on each message."
+  why: "Replies carry the documents they were drawn from, and a conversation can be handed to a person when the agent cannot answer."
+  how: "Use the Documents endpoints to upload a file, then see Human handoff."
 sidebar:
   order: 3
 ---

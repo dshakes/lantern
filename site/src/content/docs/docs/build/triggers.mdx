@@ -1,6 +1,10 @@
 ---
 title: Webhook triggers
 description: Bind a signed public URL to an agent so GitHub, Sentry, PagerDuty or any HMAC sender can start runs.
+glance:
+  what: "A trigger binds the public URL POST /v1/hooks/{id} to an agent so signed webhooks from GitHub, Sentry or any HMAC sender start runs."
+  why: "The signature is the only credential, so senders never hold a PAL token, and a delivery sent twice starts one run."
+  how: "Follow Create a trigger and copy the secret, which is shown only once."
 sidebar:
   order: 4
 ---
