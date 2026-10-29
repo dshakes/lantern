@@ -6,7 +6,7 @@
 //!   the guest asked for something the allowlist refuses) or `error` (platform:
 //!   DNS/upstream/credential-resolution failure). Only `error` burns the SLO.
 //!
-//! The listener is opt-in (`PAL_METRICS_ADDR`, legacy `LANTERN_METRICS_ADDR`).
+//! The listener is opt-in (`PAL_METRICS_ADDR`).
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -70,11 +70,10 @@ fn render() -> Vec<u8> {
     buf
 }
 
-/// Serve `GET /metrics` on `PAL_METRICS_ADDR` (fallback `LANTERN_METRICS_ADDR`).
+/// Serve `GET /metrics` on `PAL_METRICS_ADDR`.
 /// No-op when unset. Hand-rolled HTTP/1.0: one scrape = one short connection.
 pub async fn serve_from_env() {
     let Some(addr) = std::env::var("PAL_METRICS_ADDR")
-        .or_else(|_| std::env::var("LANTERN_METRICS_ADDR"))
         .ok()
         .filter(|a| !a.trim().is_empty())
     else {

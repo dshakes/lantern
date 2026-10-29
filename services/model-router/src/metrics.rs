@@ -3,8 +3,8 @@
 //! `lantern_model_router_requests_total{method,outcome}` is the error-rate SLI:
 //! outcome `ok`, `error` (server-side: the router could not serve it), or
 //! `client` (caller's fault; excluded from the SLO). The duration histogram
-//! feeds the latency SLI. The listener is opt-in (`PAL_METRICS_ADDR`, legacy
-//! `LANTERN_METRICS_ADDR`) and unset means no port is opened.
+//! feeds the latency SLI. The listener is opt-in (`PAL_METRICS_ADDR`)
+//! and unset means no port is opened.
 
 use std::future::Future;
 use std::sync::LazyLock;
@@ -72,11 +72,10 @@ fn render() -> Vec<u8> {
     buf
 }
 
-/// Serve `GET /metrics` on `PAL_METRICS_ADDR` (fallback `LANTERN_METRICS_ADDR`).
+/// Serve `GET /metrics` on `PAL_METRICS_ADDR`.
 /// No-op when unset. Hand-rolled HTTP/1.0: one scrape = one short connection.
 pub async fn serve_from_env() {
     let Some(addr) = std::env::var("PAL_METRICS_ADDR")
-        .or_else(|_| std::env::var("LANTERN_METRICS_ADDR"))
         .ok()
         .filter(|a| !a.trim().is_empty())
     else {

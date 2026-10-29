@@ -47,7 +47,7 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
      health probes and SSE/log streams (whose duration is the connection lifetime) do not pollute the API SLIs.
    - model-router and runtime-manager (Rust, previously no metrics): `prometheus` 0.14 with
      `default-features = false` (no protobuf dependency), a small `metrics.rs` per service, and an opt-in
-     scrape listener on `PAL_METRICS_ADDR` (legacy `LANTERN_METRICS_ADDR`). Unset = no port opened. The two
+     scrape listener on `PAL_METRICS_ADDR`. Unset = no port opened. The two
      `metrics.rs` files are duplicated on purpose: service Docker build contexts are the service directory,
      so a shared path crate would break the image builds.
      Ports: model-router 9465, runtime-manager 9466. The listener serves only `GET /metrics`.
