@@ -123,7 +123,7 @@ export function Sparkline({
 export function UtilBar({ value, tone = "accent" }: { value: number; tone?: "accent" | "warn" | "danger" | "ok" }) {
   const pct = Math.min(100, Math.max(0, value * 100));
   const fill =
-    tone === "danger" ? "bg-red-500/70" : tone === "warn" ? "bg-zinc-400" : tone === "ok" ? "bg-zinc-500" : "bg-lantern-400/80";
+    tone === "danger" ? "bg-red-500/70" : tone === "warn" ? "bg-zinc-400" : tone === "ok" ? "bg-zinc-500" : "bg-pal-400/80";
   return (
     <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
       <div className={clsx("h-full rounded-full transition-all duration-500", fill)} style={{ width: `${pct}%` }} />

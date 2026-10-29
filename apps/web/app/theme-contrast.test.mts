@@ -33,7 +33,7 @@ function ratio(a: string, b: string): number {
 
 const dark = tokens("@theme {");
 const light = { ...dark, ...tokens(':root[data-theme="light"] {') };
-const text = ["zinc-50", "zinc-100", "zinc-200", "zinc-300", "zinc-400", "zinc-500", "lantern-300", "lantern-400", "lantern-500"];
+const text = ["zinc-50", "zinc-100", "zinc-200", "zinc-300", "zinc-400", "zinc-500", "pal-300", "pal-400", "pal-500"];
 const surfaces = ["surface-0", "surface-1", "surface-2", "surface-3"];
 // zinc-600 is the faint tier (timestamps, counts): AA on page, card and inset surfaces.
 const faint = ["zinc-600"];
@@ -57,7 +57,7 @@ for (const [name, t] of [["dark", dark], ["light", light]] as const) {
     }
   });
   test(`${name}: on-flame ink clears AA on solid flame fills`, () => {
-    for (const bg of ["lantern-300", "lantern-400", "lantern-500"]) {
+    for (const bg of ["pal-300", "pal-400", "pal-500"]) {
       const r = ratio(t["on-flame"], t[bg]);
       assert.ok(r >= 4.5, `on-flame on ${bg} = ${r.toFixed(2)}`);
     }
@@ -74,7 +74,7 @@ function hue(hex: string): number {
 
 for (const [name, t] of [["dark", dark], ["light", light]] as const) {
   test(`${name}: warning hue reads apart from the flame accent`, () => {
-    const d = Math.abs(hue(t["amber-400"]) - hue(t["lantern-400"]));
-    assert.ok(d >= 15, `warn ${t["amber-400"]} vs flame ${t["lantern-400"]}: ${d.toFixed(1)}deg apart`);
+    const d = Math.abs(hue(t["amber-400"]) - hue(t["pal-400"]));
+    assert.ok(d >= 15, `warn ${t["amber-400"]} vs flame ${t["pal-400"]}: ${d.toFixed(1)}deg apart`);
   });
 }

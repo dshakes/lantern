@@ -44,7 +44,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { AskLanternContext } from "@/lib/api";
+import type { AskPalContext } from "@/lib/api";
 import type { Run } from "@/lib/mock-data";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ const SECTION_ORDER: Section[] = [
   "Workloads",
 ];
 
-const RECENT_KEY = "lantern_palette_recent";
+const RECENT_KEY = "pal_palette_recent";
 const PER_SECTION_LIMIT = 6;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ export function CommandPalette() {
   // ── Compact, REAL fleet summary handed to the LLM (a few hundred tokens,
   //    not the full DB): agent names + run counts by status from the data
   //    already loaded into the palette. ──
-  const fleetContext = useMemo<AskLanternContext>(() => {
+  const fleetContext = useMemo<AskPalContext>(() => {
     const runCountsByStatus: Record<string, number> = {};
     for (const run of recentRuns) {
       const s = run.status || "unknown";
@@ -309,12 +309,12 @@ export function CommandPalette() {
   // ── Agentic Ask: hand the free-form query to the LLM, act on the
   //    structured action, and fall back to the instant pattern-matcher on
   //    ANY failure (no key / network / timeout / bad JSON) so it never dead-
-  //    ends. The ~6s timeout lives inside api.askLantern. ──
+  //    ends. The ~6s timeout lives inside api.askPal. ──
   const runAsk = useCallback(
     async (rawQuery: string) => {
       const q = rawQuery.trim();
       if (q.length < 2) return;
-      pushRecent("ask-lantern");
+      pushRecent("ask-pal");
 
       const fallback = () => {
         const intent = interpretIntent(q, router, agentNames);
@@ -326,7 +326,7 @@ export function CommandPalette() {
       setAnswer(null);
       setThinking(true);
       try {
-        const action = await api.askLantern(q, fleetContext, { timeoutMs: 6000 });
+        const action = await api.askPal(q, fleetContext, { timeoutMs: 6000 });
         // A newer query (or a close) superseded this request — drop it.
         if (seq !== askSeqRef.current) return;
         if (!action) {
@@ -353,7 +353,7 @@ export function CommandPalette() {
     (item: CommandItem) => {
       // The Ask PAL row is agentic + async; route it through runAsk
       // (it manages its own thinking state + palette lifecycle).
-      if (item.id === "ask-lantern") {
+      if (item.id === "ask-pal") {
         void runAsk(query);
         return;
       }
@@ -373,7 +373,7 @@ export function CommandPalette() {
     if (q.length < 2) return null;
     const intent = interpretIntent(q, router, agentNames);
     return {
-      id: "ask-lantern",
+      id: "ask-pal",
       label: `Ask PAL: “${q}”`,
       meta: thinking ? "thinking…" : intent.summary,
       section: "Ask PAL",
@@ -644,10 +644,10 @@ export function CommandPalette() {
           {/* Inline Ask PAL answer (kind=answer) — grounded in the real
               fleet context we passed; palette stays open so it can be read. */}
           {answer && (
-            <div className="mx-2 mb-2 rounded-xl border border-lantern-500/25 bg-lantern-500/[0.07] px-3.5 py-3">
+            <div className="mx-2 mb-2 rounded-xl border border-pal-500/25 bg-pal-500/[0.07] px-3.5 py-3">
               <div className="flex items-center gap-1.5 pb-1">
-                <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
-                <span className="text-[12px] font-semibold uppercase tracking-wider text-lantern-300/90">
+                <Sparkles className="h-3 w-3 text-pal-400" aria-hidden />
+                <span className="text-[12px] font-semibold uppercase tracking-wider text-pal-300/90">
                   Ask PAL
                 </span>
               </div>
@@ -671,12 +671,12 @@ export function CommandPalette() {
               <div key={group.section} className="mb-1 last:mb-0">
                 <div className="flex items-center gap-1.5 px-4 pb-1 pt-2">
                   {group.section === "Ask PAL" && (
-                    <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
+                    <Sparkles className="h-3 w-3 text-pal-400" aria-hidden />
                   )}
                   <span
                     className={
                       group.section === "Ask PAL"
-                        ? "mc-micro-label !text-lantern-300/90"
+                        ? "mc-micro-label !text-pal-300/90"
                         : "mc-micro-label"
                     }
                   >
@@ -700,7 +700,7 @@ export function CommandPalette() {
                         "mx-1 rounded-lg focus-visible:outline-none",
                         selected
                           ? item.agentic
-                            ? "bg-lantern-500/10 text-zinc-100 ring-1 ring-inset ring-lantern-500/30"
+                            ? "bg-pal-500/10 text-zinc-100 ring-1 ring-inset ring-pal-500/30"
                             : "bg-teal-500/10 text-zinc-100 ring-1 ring-inset ring-teal-500/20"
                           : "text-zinc-400 hover:bg-teal-500/[0.06] hover:text-zinc-200",
                       ].join(" ")}
@@ -709,7 +709,7 @@ export function CommandPalette() {
                         className={[
                           "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
                           item.agentic
-                            ? "bg-lantern-500/15 text-lantern-300"
+                            ? "bg-pal-500/15 text-pal-300"
                             : "bg-surface-2 text-zinc-400 group-hover/item:text-zinc-300",
                         ].join(" ")}
                       >
@@ -730,7 +730,7 @@ export function CommandPalette() {
                         </span>
                       )}
                       {item.agentic ? (
-                        <span className="flex shrink-0 items-center gap-1 rounded-md border border-lantern-500/30 bg-lantern-500/10 px-1.5 py-0.5 text-[11px] font-medium text-lantern-300">
+                        <span className="flex shrink-0 items-center gap-1 rounded-md border border-pal-500/30 bg-pal-500/10 px-1.5 py-0.5 text-[11px] font-medium text-pal-300">
                           {thinking ? (
                             <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
                           ) : (
@@ -778,7 +778,7 @@ export function CommandPalette() {
             </kbd>
             to close
           </span>
-          <span className="ml-auto flex items-center gap-1.5 text-[12px] text-lantern-400/80">
+          <span className="ml-auto flex items-center gap-1.5 text-[12px] text-pal-400/80">
             <CircleDot className="h-2.5 w-2.5" aria-hidden />
             Ask PAL ✨
           </span>

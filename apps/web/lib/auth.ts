@@ -133,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Hard-gated: without NEXT_PUBLIC_DEMO_MODE=1 this cannot mint a token,
     // so the client-side auth bypass is off in any normal/production build.
     if (!DEMO_MODE_ENABLED) {
-      console.warn("[lantern] Demo mode is disabled (set NEXT_PUBLIC_DEMO_MODE=1 to enable).");
+      console.warn("[pal] Demo mode is disabled (set NEXT_PUBLIC_DEMO_MODE=1 to enable).");
       return;
     }
     const demoToken = "demo_token_" + Date.now();

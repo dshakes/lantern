@@ -84,7 +84,7 @@ export default function RunDetailPage() {
         </p>
         <button
           onClick={() => router.push("/runs")}
-          className="mt-2 text-sm text-lantern-400 transition-colors hover:text-lantern-300"
+          className="mt-2 text-sm text-pal-400 transition-colors hover:text-pal-300"
         >
           Back to Runs
         </button>
@@ -143,11 +143,11 @@ export default function RunDetailPage() {
                   value={compareInput}
                   onChange={(e) => setCompareInput(e.target.value)}
                   placeholder="run id to compare…"
-                  className="w-48 rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lantern-500/40"
+                  className="w-48 rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-pal-500/40"
                 />
                 <button
                   type="submit"
-                  className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-500"
+                  className="rounded-lg bg-pal-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-500"
                 >
                   Load
                 </button>
@@ -215,7 +215,7 @@ export default function RunDetailPage() {
                   className={clsx(
                     "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
                     recorderMode
-                      ? "bg-lantern-600/20 text-lantern-300 ring-1 ring-lantern-500/30"
+                      ? "bg-pal-600/20 text-pal-300 ring-1 ring-pal-500/30"
                       : "bg-surface-2 text-zinc-400 hover:bg-surface-3 hover:text-zinc-200",
                   )}
                   title={recorderMode ? "Exit flight recorder" : "Enter flight recorder"}
@@ -280,7 +280,7 @@ export default function RunDetailPage() {
             ) : isRunning ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-lantern-500" />
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-pal-500" />
                   <p className="mt-3 text-sm text-zinc-600">Processing...</p>
                 </div>
               </div>
@@ -342,7 +342,7 @@ export default function RunDetailPage() {
                 <InfoRow label="Tokens in"><span className="font-mono text-xs text-zinc-400">{formatTokens(run.tokensIn)}</span></InfoRow>
                 <InfoRow label="Tokens out"><span className="font-mono text-xs text-zinc-400">{formatTokens(run.tokensOut)}</span></InfoRow>
                 <InfoRow label="Total tokens"><span className="font-mono text-xs text-zinc-300">{formatTokens(run.tokensIn + run.tokensOut)}</span></InfoRow>
-                <InfoRow label="Cost"><span className="font-mono text-sm font-medium text-lantern-500">{formatCost(run.costUsd)}</span></InfoRow>
+                <InfoRow label="Cost"><span className="font-mono text-sm font-medium text-pal-500">{formatCost(run.costUsd)}</span></InfoRow>
               </dl>
             </section>
 

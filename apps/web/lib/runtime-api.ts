@@ -1,6 +1,6 @@
 // Minimal typed fetch wrapper for /v1/runtime/* endpoints.
 //
-// The main LanternAPI class is method-per-endpoint; the runtime surface is
+// The main PalAPI class is method-per-endpoint; the runtime surface is
 // small + new + likely to evolve, so we keep it isolated here behind generic
 // get/post/del helpers that read auth from the same localStorage slot.
 
@@ -24,7 +24,7 @@ function baseUrl(): string {
 
 function token(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("lantern_token");
+  return localStorage.getItem("pal_token");
 }
 
 /** Thrown when the API rejects the bearer token (401). Callers can detect
@@ -51,7 +51,8 @@ export class HttpError extends Error {
 function purgeTokenAndRedirect() {
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem("lantern_token");
+    localStorage.removeItem("pal_token");
+    localStorage.removeItem("lantern_token"); // legacy name; else the boot-time migration would resurrect the session
     // Clear the HttpOnly cookie via the server-side Route Handler.
     fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
   } catch {

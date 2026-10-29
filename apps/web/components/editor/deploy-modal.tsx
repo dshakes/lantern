@@ -42,7 +42,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-700 px-5 py-4">
           <div className="flex items-center gap-2">
-            <Rocket className="h-4 w-4 text-lantern-400" />
+            <Rocket className="h-4 w-4 text-pal-400" />
             <h2 className="text-sm font-semibold text-zinc-200">
               Deploy {agentName}
             </h2>
@@ -93,7 +93,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
                         env === e
                           ? e === "production"
                             ? "border-red-500/50 bg-red-500/10 text-red-400"
-                            : "border-lantern-500/50 bg-lantern-500/10 text-lantern-400"
+                            : "border-pal-500/50 bg-pal-500/10 text-pal-400"
                           : "border-zinc-700 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
                       }`}
                     >
@@ -113,7 +113,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder="What changed?"
-                  className="w-full rounded-md border border-zinc-700 bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-lantern-500 focus:outline-none focus:ring-1 focus:ring-lantern-500/30"
+                  className="w-full rounded-md border border-zinc-700 bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-pal-500 focus:outline-none focus:ring-1 focus:ring-pal-500/30"
                 />
               </div>
 
@@ -147,7 +147,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
                   deployState === "deploying" ||
                   (env === "production" && !confirmed)
                 }
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {deployState === "deploying" ? (
                   <>

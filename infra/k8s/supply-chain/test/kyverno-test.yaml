@@ -1,0 +1,25 @@
+# kyverno test infra/k8s/supply-chain/test
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: pal-verify-workload-images
+policies:
+  - ../verify-workload-images.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: pal-verify-workload-images
+    rule: require-image-digest
+    resources: [pinned]
+    kind: Pod
+    result: pass
+  - policy: pal-verify-workload-images
+    rule: require-image-digest
+    resources: [tagged, tagged-init]
+    kind: Pod
+    result: fail
+  - policy: pal-verify-workload-images
+    rule: require-image-digest
+    resources: [outside-tenant]
+    kind: Pod
+    result: skip
