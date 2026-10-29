@@ -95,12 +95,12 @@ The assertions. It:
    absent, so it is safe to invoke anywhere.
 2. Mints a manager **mTLS CA + server cert** and points the manager at them via
    the env contract in `services/runtime-manager/src/tls.rs`
-   (`LANTERN_MANAGER_TLS_CA/CERT/KEY` for the server; `LANTERN_VM_SIGNING_CA_CERT/KEY`
+   (`PAL_MANAGER_TLS_CA/CERT/KEY` for the server; `PAL_VM_SIGNING_CA_CERT/KEY`
    for the CA that signs per-VM client certs). With the signing CA configured,
    `boot_vm` issues a leaf cert with CN == `vm_id` for the harness to present.
 3. Boots `runtime-manager` with `RUNTIME_BACKEND=firecracker` + the `FC_*` paths
    + an env-resolvable test secret (`EnvSecretResolver` reads
-   `LANTERN_SECRET_<encoded-uri>`).
+   `PAL_SECRET_<encoded-uri>`).
 4. **Spawns** a hello microVM whose `AgentSpec` declares the test secret (so the
    VendSecret allowlist passes inside the guest).
 5. Polls the manager's structured JSON log for the success signals above.
@@ -116,7 +116,7 @@ proving the live behavior.
 A GitHub Actions job that probes for KVM, and only when present: installs the
 toolchain (musl Rust target, the Firecracker release binary, `grpcurl`), builds
 the image, and runs the integration test under `sudo` with
-`LANTERN_RUNTIME_BACKEND=firecracker` + the `FC_*` paths. Triggered on PRs that
+`PAL_RUNTIME_BACKEND=firecracker` + the `FC_*` paths. Triggered on PRs that
 touch the runtime backend / harness / this infra, on `workflow_dispatch`, and on
 a weekly cron.
 

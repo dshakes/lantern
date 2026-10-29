@@ -1,6 +1,6 @@
 # @lantern/sdk
 
-The official TypeScript SDK for [Lantern](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
+The official TypeScript SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
 Registry packages are not published yet: `npm install @lantern/sdk` fails. Install from a checkout of the repo:
 
@@ -15,8 +15,8 @@ npm install /path/to/lantern/packages/sdk-ts      # in your project
 import { LanternClient } from "@lantern/sdk";
 
 const lantern = new LanternClient({
-  apiKey: process.env.LANTERN_API_KEY,
-  baseURL: process.env.LANTERN_API_URL, // defaults to https://api.lantern.run
+  apiKey: process.env.PAL_API_KEY,
+  baseURL: process.env.PAL_API_URL, // defaults to https://api.lantern.run
 });
 
 // 1. Create an agent
@@ -95,9 +95,9 @@ export default agent({
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LANTERN_API_URL` | `https://api.lantern.run` | Control-plane base URL |
-| `LANTERN_API_KEY` | — | API key (required) |
-| `LANTERN_TENANT_ID` | — | Optional tenant override (enterprise multi-tenant) |
+| `PAL_API_URL` | `https://api.lantern.run` | Control-plane base URL |
+| `PAL_API_KEY` | — | API key (required) |
+| `PAL_TENANT_ID` | — | Optional tenant override (enterprise multi-tenant) |
 
 ## License
 
