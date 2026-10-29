@@ -624,6 +624,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
 	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
+	handlers.NewBatchHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))

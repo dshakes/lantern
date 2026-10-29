@@ -659,10 +659,21 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		Input     map[string]any `json:"input"`
 		// SessionId is optional; when provided the run is grouped under that session.
 		SessionId string `json:"sessionId,omitempty"`
+		// CallbackUrl is optional; when set, a signed POST is delivered to this URL
+		// when the run reaches a terminal status (ADR 0033).
+		CallbackUrl string `json:"callbackUrl,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+
+	// Validate callbackUrl early: reject SSRF-risky URLs before creating the run.
+	if body.CallbackUrl != "" {
+		if err := checkSSRF(body.CallbackUrl); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	// Budget pre-check: enforce hard-fail limits before dispatching the run
@@ -732,6 +743,17 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 			h.logger().Error("CreateRun failed", zap.Error(err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+	}
+
+	// Persist callback_url on the run row when supplied (ADR 0033).
+	// rls-exempt: inline executor — runs write keyed by the just-created authorized run id.
+	if body.CallbackUrl != "" {
+		if _, cbErr := h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET callback_url = $2 WHERE id = $1`, run.GetId(), body.CallbackUrl,
+		); cbErr != nil {
+			h.logger().Warn("CreateRun: failed to persist callback_url",
+				zap.String("run_id", run.GetId()), zap.Error(cbErr))
 		}
 	}
 
@@ -1156,6 +1178,8 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	result, resolvedTemplateID, err := h.executeRunInlineSync(ctx, runID, tenantID, agentName, input)
 	if err != nil {
 		// Error already written to runs.error by executeRunInlineSync.
+		// Fire the completion callback (if any) for the failure case.
+		h.fireCallbackForRun(ctx, h.srv.Pool, runID, h.logger())
 		return
 	}
 
@@ -1231,6 +1255,10 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 			)
 		}()
 	}
+
+	// Async completion callback (ADR 0033): fire after all other side-effects
+	// so the callback sees the final run state.
+	h.fireCallbackForRun(ctx, h.srv.Pool, runID, h.logger())
 }
 
 // executeRunInlineSync is the synchronous core of run execution. It updates the

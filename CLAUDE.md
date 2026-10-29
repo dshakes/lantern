@@ -333,12 +333,23 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 
 ### Runs
 
-| Method | Path                   | Description              |
-| ------ | ---------------------- | ------------------------ |
-| `POST` | `/v1/runs`             | Create and execute a run |
-| `GET`  | `/v1/runs`             | List runs                |
-| `GET`  | `/v1/runs/{id}`        | Get run details          |
-| `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)  |
+| Method | Path                   | Description                                                                              |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `POST` | `/v1/runs`             | Create and execute a run. Optional `callbackUrl` (HTTPS in prod) fires a signed POST on terminal status (`X-Lantern-Signature: v1=<hmac-sha256-hex>`, per-tenant key). See ADR 0033. |
+| `GET`  | `/v1/runs`             | List runs                                                                                |
+| `GET`  | `/v1/runs/{id}`        | Get run details                                                                          |
+| `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)                                                                  |
+
+### Batches
+
+Bulk invocation: one request fans out N child runs with optional concurrency cap. Callback fires when all children are terminal. Idempotent via `Idempotency-Key` header. Items capped at `PAL_BATCH_MAX_ITEMS` (default 1000). See ADR 0033. SDK surfaces are a follow-up.
+
+| Method   | Path                        | Description                                                         |
+| -------- | --------------------------- | ------------------------------------------------------------------- |
+| `POST`   | `/v1/batches`               | Create a batch + dispatch N child runs (`runs:execute`)             |
+| `GET`    | `/v1/batches/{id}`          | Status summary: counts by status, total cost (`runs:read`)          |
+| `GET`    | `/v1/batches/{id}/results`  | Paginated per-run outputs; `?after=<ISO>` cursor (`runs:read`)      |
+| `POST`   | `/v1/batches/{id}/cancel`   | Cancel all pending/running children + mark batch cancelled (`runs:execute`) |
 
 ### Sessions (interactive)
 
