@@ -1861,6 +1861,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "futures",
+ "hex",
  "http",
  "http-body-util",
  "hyper",

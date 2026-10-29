@@ -10,6 +10,7 @@ mod backends;
 mod config;
 mod egress_broker;
 mod handle_registry;
+mod measurement;
 mod otel;
 mod pool;
 mod proto;
