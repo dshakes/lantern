@@ -1876,6 +1876,7 @@ dependencies = [
  "prost",
  "prost-types",
  "rcgen",
+ "regex",
  "reqwest",
  "rustls",
  "rustls-native-certs 0.8.3",
