@@ -2,11 +2,11 @@
 //!
 //! Mirrors services/gateway/src/grpc.rs in structure:
 //!   - hand-rolled prost message stubs (no build.rs / protoc)
-//!   - `x-lantern-service-token` metadata on every call (invariant #7)
+//!   - `x-pal-service-token` metadata on every call (invariant #7)
 //!   - `tenant_id` metadata so the interceptor chain can enforce RLS
 //!
 //! CONTROL_PLANE_ADDR must point to the gRPC port (:50051), not the REST
-//! port (:8080).  LANTERN_GRPC_SERVICE_TOKEN must match the control-plane's
+//! port (:8080).  PAL_GRPC_SERVICE_TOKEN must match the control-plane's
 //! configured value in production (fail-closed on the server side).
 
 use prost::Message;
@@ -32,7 +32,7 @@ struct CreateRunRequest {
     input: Vec<u8>,
     #[prost(int32, tag = "3")]
     trigger_kind: i32,
-    /// Lantern session UUID (groups run under the surface conversation).
+    /// PAL session UUID (groups run under the surface conversation).
     #[prost(string, tag = "8")]
     session_id: String,
 }
@@ -140,7 +140,7 @@ impl ControlPlaneClient {
         })
     }
 
-    /// Stamp `tenant_id` and `x-lantern-service-token` onto a request's metadata.
+    /// Stamp `tenant_id` and `x-pal-service-token` onto a request's metadata.
     fn inject_metadata<T>(&self, req: &mut Request<T>, tenant_id: &str) {
         let md = req.metadata_mut();
         if let Ok(val) = tenant_id.parse() {
@@ -149,7 +149,9 @@ impl ControlPlaneClient {
         // Sent under the PAL name and the pre-PAL name, so a control plane
         // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
-            && let Ok(val) = self.service_token.parse::<tonic::metadata::MetadataValue<_>>()
+            && let Ok(val) = self
+                .service_token
+                .parse::<tonic::metadata::MetadataValue<_>>()
         {
             md.insert("x-pal-service-token", val.clone());
             md.insert("x-lantern-service-token", val);

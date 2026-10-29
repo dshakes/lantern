@@ -245,7 +245,7 @@ func TestDispatchRun_TenantIDInMetadata(t *testing.T) {
 	}
 }
 
-// TestDispatchRun_ServiceTokenInMetadata verifies that x-lantern-service-token
+// TestDispatchRun_ServiceTokenInMetadata verifies that x-pal-service-token
 // is injected when a non-empty service token is configured.
 func TestDispatchRun_ServiceTokenInMetadata(t *testing.T) {
 	fake := &fakeEngine{

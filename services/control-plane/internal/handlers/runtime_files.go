@@ -151,7 +151,7 @@ func fileWriteIdemKey(vmID, path string, body []byte) string {
 // fileTarget authenticates, enforces scope, requires a path, and confirms the
 // VM belongs to the caller's tenant, returning its node placement. Writes the
 // error response and returns ok=false on any failure.
-func (h *RuntimeHandler) fileTarget(w http.ResponseWriter, r *http.Request, scope, path string) (ctx context.Context, claims *LanternClaims, node, vmID string, ok bool) {
+func (h *RuntimeHandler) fileTarget(w http.ResponseWriter, r *http.Request, scope, path string) (ctx context.Context, claims *PalClaims, node, vmID string, ok bool) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})

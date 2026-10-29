@@ -1,6 +1,6 @@
 // Package agentidentity mints and verifies short-lived, signed identities
 // for headless agent instances. Tokens are EdDSA (Ed25519) when
-// LANTERN_AGENT_IDENTITY_ED25519_SEED is set, otherwise HS256 as a fallback.
+// PAL_AGENT_IDENTITY_ED25519_SEED is set, otherwise HS256 as a fallback.
 // The token is injected into the VM's environment at schedule time so the
 // workload can authenticate itself to the secret relay.
 //
@@ -20,20 +20,20 @@
 //
 // # Signing key selection (in priority order)
 //
-//  1. LANTERN_AGENT_IDENTITY_ED25519_SEED — base64-std or hex-encoded 32-byte
+//  1. PAL_AGENT_IDENTITY_ED25519_SEED — base64-std or hex-encoded 32-byte
 //     seed. When set, Issue() signs with EdDSA and the public key is published
 //     at /.well-known/lantern-agent-identity for external verifiers.
-//  2. LANTERN_AGENT_IDENTITY_SECRET — HMAC-SHA256 key bytes.
+//  2. PAL_AGENT_IDENTITY_SECRET — HMAC-SHA256 key bytes.
 //  3. Caller-supplied fallback (the existing JWT secret) — used when neither
 //     env var above is set so a bare dev setup works without extra config.
 //
 // # Backward compatibility
 //
-// When LANTERN_AGENT_IDENTITY_ED25519_SEED is unset, Issue() and Verify()
+// When PAL_AGENT_IDENTITY_ED25519_SEED is unset, Issue() and Verify()
 // behave identically to today (HS256 only). No behaviour change on any code
 // path unless the new env var is explicitly set.
 //
-// TTL: LANTERN_AGENT_IDENTITY_TTL, parsed as a Go duration string (e.g. "2h").
+// TTL: PAL_AGENT_IDENTITY_TTL, parsed as a Go duration string (e.g. "2h").
 // Default: 1h.
 package agentidentity
 
@@ -74,7 +74,7 @@ const (
 	// When set, Issue() uses EdDSA instead of HS256.
 	envIdentityEd25519Seed = "PAL_AGENT_IDENTITY_ED25519_SEED"
 
-	// defaultTTL is used when LANTERN_AGENT_IDENTITY_TTL is unset.
+	// defaultTTL is used when PAL_AGENT_IDENTITY_TTL is unset.
 	defaultTTL = time.Hour
 )
 
@@ -93,7 +93,7 @@ var (
 )
 
 // loadAgentEd25519Key initialises the Ed25519 key pair from
-// LANTERN_AGENT_IDENTITY_ED25519_SEED on first call (sync.Once).
+// PAL_AGENT_IDENTITY_ED25519_SEED on first call (sync.Once).
 // Returns a zero agentEd25519State when the env var is unset (HS256 fallback).
 // Never logs the seed material itself.
 func loadAgentEd25519Key() agentEd25519State {
@@ -145,7 +145,7 @@ func StartupInfo() (alg, fingerprint string) {
 }
 
 // AgentIdentityPublicKey returns the Ed25519 public key when
-// LANTERN_AGENT_IDENTITY_ED25519_SEED is configured, and nil otherwise.
+// PAL_AGENT_IDENTITY_ED25519_SEED is configured, and nil otherwise.
 // Used by the /.well-known/lantern-agent-identity handler.
 func AgentIdentityPublicKey() ed25519.PublicKey {
 	return loadAgentEd25519Key().pub
@@ -195,11 +195,11 @@ type Issuer struct {
 
 // New builds an Issuer.
 //
-// fallbackSecret is used when LANTERN_AGENT_IDENTITY_SECRET is unset. Pass
+// fallbackSecret is used when PAL_AGENT_IDENTITY_SECRET is unset. Pass
 // the caller's JWT secret so a bare dev setup works without extra config.
 // The caller owns that value; New copies the bytes.
 //
-// Ed25519 signing is enabled by setting LANTERN_AGENT_IDENTITY_ED25519_SEED;
+// Ed25519 signing is enabled by setting PAL_AGENT_IDENTITY_ED25519_SEED;
 // the key is loaded lazily on first Issue/Verify call via the package-level
 // once. When unset, HS256 behaviour is identical to the previous release.
 func New(fallbackSecret []byte) *Issuer {
@@ -240,7 +240,7 @@ func (iss *Issuer) withTTL(ttl time.Duration) *Issuer {
 // instance and returns it together with the signed JWT string.
 //
 // Signing algorithm:
-//   - Ed25519 (EdDSA) when LANTERN_AGENT_IDENTITY_ED25519_SEED is set.
+//   - Ed25519 (EdDSA) when PAL_AGENT_IDENTITY_ED25519_SEED is set.
 //   - HS256 otherwise (backward-compatible default).
 //
 // On error the caller should fail the schedule request (fail-closed): an
@@ -300,7 +300,7 @@ func (iss *Issuer) IssueForID(_ context.Context, instanceID, tenantID, runID, ag
 }
 
 // Verify parses and validates an agent-instance token. It checks:
-//   - Signature: Ed25519 (when LANTERN_AGENT_IDENTITY_ED25519_SEED is set) OR
+//   - Signature: Ed25519 (when PAL_AGENT_IDENTITY_ED25519_SEED is set) OR
 //     HS256 (when only the HMAC secret is configured). No other algorithm is
 //     accepted — any other alg header is rejected immediately to prevent
 //     algorithm-substitution attacks.

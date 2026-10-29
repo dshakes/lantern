@@ -33,7 +33,7 @@ func TestResolveLocation(t *testing.T) {
 		}
 	})
 
-	t.Run("empty tz uses LANTERN_DEFAULT_TIMEZONE", func(t *testing.T) {
+	t.Run("empty tz uses PAL_DEFAULT_TIMEZONE", func(t *testing.T) {
 		t.Setenv("PAL_DEFAULT_TIMEZONE", "America/Chicago")
 		loc := ResolveLocation("")
 		if loc.String() != "America/Chicago" {
@@ -49,7 +49,7 @@ func TestResolveLocation(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid LANTERN_DEFAULT_TIMEZONE falls back to UTC", func(t *testing.T) {
+	t.Run("invalid PAL_DEFAULT_TIMEZONE falls back to UTC", func(t *testing.T) {
 		t.Setenv("PAL_DEFAULT_TIMEZONE", "Bad/Zone")
 		loc := ResolveLocation("")
 		if loc != time.UTC {

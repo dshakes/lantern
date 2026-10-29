@@ -2,7 +2,7 @@ package handlers
 
 // W11d — Voice channel.
 //
-// Lantern agents can now also answer phone calls. The control-plane owns
+// PAL agents can now also answer phone calls. The control-plane owns
 // the channel config (phone number → agent mapping, provider credentials,
 // greeting) and per-call state; the heavy lifting (audio in/out, ASR,
 // TTS) is delegated to a pluggable VoiceProvider. Today we ship the
@@ -318,7 +318,7 @@ func (h *VoiceHandler) DeleteNumber(w http.ResponseWriter, r *http.Request) {
 //
 // Auth: per-provider signature verification (X-Twilio-Signature etc.),
 // using the credentials from the looked-up number's provider_config.
-// Fails closed unless LANTERN_TWILIO_WEBHOOK_AUTH=off (dev only).
+// Fails closed unless PAL_TWILIO_WEBHOOK_AUTH=off (dev only).
 func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 	provider, ok := h.providers[providerName]

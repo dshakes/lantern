@@ -55,7 +55,7 @@ import (
 )
 
 // maxRunStreamsPerTenant is the maximum number of concurrent RunStream
-// connections allowed per tenant. Configurable via LANTERN_DP_MAX_STREAMS_PER_TENANT.
+// connections allowed per tenant. Configurable via PAL_DP_MAX_STREAMS_PER_TENANT.
 // Default is 10.
 const defaultMaxRunStreamsPerTenant = 10
 

@@ -138,7 +138,7 @@ type config struct {
 	AgentToken              string
 	WorkflowEngineAddr      string
 	RuntimeManagerAddr      string
-	GRPCServiceToken        string // LANTERN_GRPC_SERVICE_TOKEN; empty = no token (dev)
+	GRPCServiceToken        string // PAL_GRPC_SERVICE_TOKEN; empty = no token (dev)
 	LogLevel                string
 	HeartbeatIntervalSec    int
 	ReconnectInitialDelayMs int

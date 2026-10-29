@@ -189,7 +189,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// TurnHint is an optional complexity hint that overrides the server-side
 		// classifier (G1). Valid values: "trivial", "hard". Passed as the
 		// X-Pal-Turn-Hint (or legacy X-Lantern-Turn-Hint) header or inline in the JSON body. Ignored when
-		// LANTERN_COMPLEXITY_ROUTING is off.
+		// PAL_COMPLEXITY_ROUTING is off.
 		TurnHint string `json:"turnHint,omitempty"`
 		// NoTools, when true, disables tool-catalog attachment for this
 		// turn. The personal-assistant bridges (WhatsApp + iMessage) set
@@ -317,7 +317,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 // "natural texting" persona per inbound — see whatsapp-bridge/src/natural.ts.
 //
 // turnHint is the optional G1 complexity hint ("trivial"|"hard"|""). When
-// LANTERN_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
+// PAL_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
 func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools, readOnlyTools, webSearch bool) {
 	// P0: a panic in the tool-call loop (arbitrary user/LLM/tool input) must
 	// not crash the whole process and kill all tenants. Recover, log, and
@@ -458,7 +458,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// (dashboard Settings) so auto-routing reflects what the user actually
 	// set up. Fall back to the alternate provider if the first key is missing.
 	//
-	// G1: when LANTERN_COMPLEXITY_ROUTING=1, complexity-tier routing picks
+	// G1: when PAL_COMPLEXITY_ROUTING=1, complexity-tier routing picks
 	// the cheapest model that can handle this turn rather than always using
 	// the balanced default. noTools is forwarded so the classifier knows
 	// whether tool-use is in play (multi-step signal).

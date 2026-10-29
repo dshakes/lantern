@@ -194,15 +194,24 @@ mod tests {
             }
             r
         };
-        assert!(auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "tok")])).is_ok());
         assert!(
-            auth.call(req(&[(SERVICE_TOKEN_HEADER, "tok"), (LEGACY_SERVICE_TOKEN_HEADER, "tok")]))
+            auth.call(req(&[(LEGACY_SERVICE_TOKEN_HEADER, "tok")]))
                 .is_ok()
         );
+        assert!(
+            auth.call(req(&[
+                (SERVICE_TOKEN_HEADER, "tok"),
+                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
+            ]))
+            .is_ok()
+        );
         assert_eq!(
-            auth.call(req(&[(SERVICE_TOKEN_HEADER, "bad"), (LEGACY_SERVICE_TOKEN_HEADER, "tok")]))
-                .unwrap_err()
-                .code(),
+            auth.call(req(&[
+                (SERVICE_TOKEN_HEADER, "bad"),
+                (LEGACY_SERVICE_TOKEN_HEADER, "tok")
+            ]))
+            .unwrap_err()
+            .code(),
             Code::Unauthenticated
         );
         assert_eq!(

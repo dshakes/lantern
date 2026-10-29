@@ -9,19 +9,19 @@ package handlers
 //
 // Configured services (only probed when the address env var is set):
 //
-//   - model-router:       LANTERN_MODEL_ROUTER_ADDR (default model-router:50053)
-//     Probed only when LANTERN_USE_MODEL_ROUTER=1/true/on OR the addr env
+//   - model-router:       PAL_MODEL_ROUTER_ADDR (default model-router:50053)
+//     Probed only when PAL_USE_MODEL_ROUTER=1/true/on OR the addr env
 //     is explicitly set to a non-default value.
-//   - runtime-scheduler:  LANTERN_SCHEDULER_GRPC_ADDR
-//   - runtime-manager:    LANTERN_DEFAULT_MANAGER_ADDR
-//   - workflow-engine:    LANTERN_WORKFLOW_ENGINE_ADDR (optional)
+//   - runtime-scheduler:  PAL_SCHEDULER_GRPC_ADDR
+//   - runtime-manager:    PAL_DEFAULT_MANAGER_ADDR
+//   - workflow-engine:    PAL_WORKFLOW_ENGINE_ADDR (optional)
 //
-// LANTERN_WORKFLOW_ENGINE_ADDR: gRPC address of the workflow-engine service
+// PAL_WORKFLOW_ENGINE_ADDR: gRPC address of the workflow-engine service
 // (default: workflow-engine:50052). The control-plane does not dial the
 // engine yet (grpc client not wired); set this env var to opt into TCP
 // reachability monitoring before that cutover.
 //
-// Interval: LANTERN_HEALTH_SWEEP_INTERVAL (Go duration string, e.g. "90s").
+// Interval: PAL_HEALTH_SWEEP_INTERVAL (Go duration string, e.g. "90s").
 // Default 60s. Set to "0" or "off" to disable entirely.
 //
 // GET /v1/system/health (JWT-authed): read-only snapshot for the dashboard.
@@ -269,7 +269,7 @@ func RunHealthSweepLoop(ctx context.Context, hs *HealthSweeper, interval time.Du
 		interval = healthSweepInterval()
 	}
 	if interval <= 0 {
-		hs.logger.Info("health sweep: disabled (LANTERN_HEALTH_SWEEP_INTERVAL=0/off)")
+		hs.logger.Info("health sweep: disabled (PAL_HEALTH_SWEEP_INTERVAL=0/off)")
 		return
 	}
 
@@ -290,7 +290,7 @@ func RunHealthSweepLoop(ctx context.Context, hs *HealthSweeper, interval time.Du
 	}()
 }
 
-// healthSweepInterval reads LANTERN_HEALTH_SWEEP_INTERVAL.
+// healthSweepInterval reads PAL_HEALTH_SWEEP_INTERVAL.
 // Returns 60s when unset.
 // Returns 0 when "0" or "off" (caller should disable the loop).
 func healthSweepInterval() time.Duration {

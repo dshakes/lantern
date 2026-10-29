@@ -12,7 +12,7 @@ pub struct Config {
     /// Defaults to "http://localhost:3001" when unset.
     pub allowed_origins: Vec<String>,
     /// Optional path to a PEM CA bundle used to verify the control-plane's
-    /// gRPC server cert (`LANTERN_CONTROL_PLANE_TLS_CA`).  When set the
+    /// gRPC server cert (`PAL_CONTROL_PLANE_TLS_CA`).  When set the
     /// gateway→control-plane channel upgrades to TLS.  When absent (the
     /// default) the channel stays plaintext so the existing Go↔Rust link is
     /// not broken.  This is opt-in and NOT fail-closed — the control-plane

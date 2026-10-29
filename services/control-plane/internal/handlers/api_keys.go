@@ -53,7 +53,7 @@ var knownScopes = map[Scope]bool{
 // could not itself exercise (privilege escalation). JWT owner/admin sessions
 // count as admin; other JWT roles may not mint keys. An empty request means an
 // unrestricted legacy key, so it is only grantable by an unrestricted caller.
-func validateGrantableScopes(c *LanternClaims, requested []string) error {
+func validateGrantableScopes(c *PalClaims, requested []string) error {
 	for _, s := range requested {
 		if !knownScopes[Scope(s)] {
 			return fmt.Errorf("unknown scope: %q", s)

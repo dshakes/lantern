@@ -26,7 +26,7 @@ import (
 // handler exists so the write path is reachable over the tunnel.
 //
 // This is a single-owner PERSONAL endpoint: it is NOT JWT/tenant-scoped. It is
-// gated by a shared secret (LANTERN_SIGNAL_TOKEN), exactly like the bridge
+// gated by a shared secret (PAL_SIGNAL_TOKEN), exactly like the bridge
 // heartbeat shared-token pattern in surfaces.go, and fails closed when the env
 // var is unset.
 //

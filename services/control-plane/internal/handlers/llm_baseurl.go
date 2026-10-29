@@ -2,7 +2,7 @@ package handlers
 
 // Test-mode base-URL override for LLM provider calls (the "fixture LLM tier").
 //
-// LANTERN_LLM_BASEURL_OPENAI / LANTERN_LLM_BASEURL_ANTHROPIC re-point every
+// PAL_LLM_BASEURL_OPENAI / PAL_LLM_BASEURL_ANTHROPIC re-point every
 // outbound request to api.openai.com / api.anthropic.com (completions, streaming,
 // tool loop, web_search, embeddings, ...) at a fixture server such as
 // cmd/llm-replay, so CI and kiosk mode get deterministic replies with no real

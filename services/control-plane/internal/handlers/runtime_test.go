@@ -50,7 +50,7 @@ const testJWTSecret = "test-jwt-secret-do-not-use-in-production"
 func mintTestToken(t *testing.T, tenantID, userID, role string) string {
 	t.Helper()
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),

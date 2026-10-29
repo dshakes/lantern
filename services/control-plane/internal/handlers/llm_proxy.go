@@ -66,7 +66,7 @@ func NewLlmProxyHandler(srv *server.Server, auth *AuthHandler) *LlmProxyHandler 
 // maxToolTurnsEnv returns the tool-call budget per LLM turn. Defaults
 // to 12 (covers realistic cross-source synthesis: docs + Gmail +
 // Calendar + iMessage + WhatsApp + 2-3 follow-up reads + 1 synthesis
-// turn). Override via LANTERN_LLM_MAX_TURNS for deployments that need
+// turn). Override via PAL_LLM_MAX_TURNS for deployments that need
 // more headroom (multi-step research) or less (cost-bounded).
 func maxToolTurnsEnv() int {
 	v := os.Getenv("PAL_LLM_MAX_TURNS")
@@ -335,7 +335,7 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 }
 
 // resolveModelForTenantAuto is the complexity-aware variant used by the tool
-// loop. When LANTERN_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
+// loop. When PAL_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
 // the cheapest model that can handle it; otherwise it falls back to the normal
 // balanced scorer. The hint string is the value of X-Pal-Turn-Hint (empty
 // when not provided).
@@ -359,11 +359,11 @@ func (h *LlmProxyHandler) resolveModelForTenantAuto(
 // Claude Code routing is enabled, otherwise empty. Gated by an explicit
 // env var so prod can't accidentally route through a dev tool.
 //
-// LANTERN_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
+// PAL_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
 //
 //	subscription (no API credits burned)
 //
-// LANTERN_CLAUDE_BINARY=/path → override binary location
+// PAL_CLAUDE_BINARY=/path → override binary location
 func claudeCodeBinary() string {
 	if os.Getenv("PAL_USE_CLAUDE_CODE") != "1" {
 		return ""
@@ -642,11 +642,11 @@ type modelOption struct {
 }
 
 // Live model IDs — kept here so a single env override (e.g.
-// LANTERN_OPUS_MODEL=claude-opus-4-8) flips every consumer at once
+// PAL_OPUS_MODEL=claude-opus-4-8) flips every consumer at once
 // without grep-and-replace through the codebase. Defaults track the
 // latest Claude 4.X family at time of writing (4.7 for opus / 4.6 for
 // sonnet / 4.5 for haiku). If Anthropic releases a newer ID (4.8+),
-// set LANTERN_OPUS_MODEL=claude-opus-4-8 and restart — no rebuild.
+// set PAL_OPUS_MODEL=claude-opus-4-8 and restart — no rebuild.
 //
 // The multi-provider failover wrapper (newFailoverProvider) catches
 // 4xx from an invalid/unauthorised model ID and tries the next
@@ -868,9 +868,9 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 //
 // Used by callLLMWithFailover so that if Claude returns 429 / 402 / 5xx,
 // the next request hits GPT-4o automatically. Without this, a single
-// provider outage stops every Lantern agent on the tenant.
+// provider outage stops every PAL agent on the tenant.
 //
-// Local Claude Code: when LANTERN_USE_CLAUDE_CODE=1 and the `claude`
+// Local Claude Code: when PAL_USE_CLAUDE_CODE=1 and the `claude`
 // binary is on PATH, claude-code is PREPENDED as the top candidate ONLY
 // when userFacing=false. For any user-facing path (bridge contact replies,
 // SMS, voice, escalation) claude-code is NEVER in the chain — this
@@ -1654,7 +1654,7 @@ func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.
 // HandleTTS — POST /v1/voice/tts. Body: {text, voice?, format?}.
 // Returns audio bytes (mp3 by default) via OpenAI's TTS API using the
 // tenant's configured OpenAI key. Used by the bridges' outbound voice
-// path when LANTERN_VOICE_OUT=on.
+// path when PAL_VOICE_OUT=on.
 //
 // Voices: alloy, echo, fable, onyx, nova, shimmer. Defaults to "nova"
 // (warm + clear; pleasant for self-chat consumption).
@@ -1790,7 +1790,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	// For NON-streaming, NON-agent-scoped completions ('Generate with AI'
 	// buttons etc.) route through the failover chain so claude-code is
-	// reachable when LANTERN_USE_CLAUDE_CODE=1 is the only thing
+	// reachable when PAL_USE_CLAUDE_CODE=1 is the only thing
 	// configured. Without this, users with no API keys + claude-code
 	// enabled hit 'No LLM provider API key configured' for any plain
 	// completion call — including the agent-detail Generate buttons,
@@ -1875,7 +1875,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
 		if altErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers, or set LANTERN_USE_CLAUDE_CODE=1 for free local routing.",
+				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers, or set PAL_USE_CLAUDE_CODE=1 for free local routing.",
 			})
 			return
 		}
@@ -3854,7 +3854,7 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
 
-	// Model-router cutover (P2-B5/6). Behind LANTERN_USE_MODEL_ROUTER
+	// Model-router cutover (P2-B5/6). Behind PAL_USE_MODEL_ROUTER
 	// (default OFF). When ON, offload PLAIN provider completions (no tools,
 	// real hosted provider at the head of the chain) to the model-router
 	// service. claude-code and the tool loop stay on the direct path for

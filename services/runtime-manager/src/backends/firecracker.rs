@@ -519,7 +519,7 @@ impl VmConfig {
             &hex[8..10],
         );
 
-        // Build kernel boot_args; inject the Lantern env contract:
+        // Build kernel boot_args; inject the PAL env contract:
         //   LANTERN_VM_ID, LANTERN_VM_TLS_CERT/KEY, LANTERN_MANAGER_TLS_CA.
         // Note: per-VM cert generation is a paired follow-up.  We thread
         // the paths here so the boot-args contract is stable.
@@ -708,7 +708,7 @@ pub fn parse_mem_limit(mem: &str) -> Option<u32> {
 }
 
 /// Build the kernel `console=ttyS0 …` boot_args string, injecting the
-/// Lantern env contract as kernel parameters the init process picks up.
+/// PAL env contract as kernel parameters the init process picks up.
 ///
 /// Pure function — unit-testable.
 /// Number of /30 blocks carved out of 172.16.0.0/16 (4 addresses each).
@@ -5315,7 +5315,7 @@ mod tests {
         assert_eq!(orphaned_tap_names(out), vec!["fc-bbbbbbbb".to_string()]);
     }
 
-    /// Only Lantern's own devices are eligible — never the host's networking.
+    /// Only PAL's own devices are eligible — never the host's networking.
     #[test]
     fn reconcile_ignores_non_lantern_devices() {
         let out = concat!(

@@ -8,9 +8,9 @@ package handlers
 //
 // Opt-in — it needs real services, so it is skipped unless you set:
 //
-//	LANTERN_RUNTIME_E2E=1
-//	LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055   (runtime-scheduler)
-//	LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054  (runtime-manager)
+//	PAL_RUNTIME_E2E=1
+//	PAL_SCHEDULER_GRPC_ADDR=localhost:50055   (runtime-scheduler)
+//	PAL_DEFAULT_MANAGER_ADDR=localhost:50054  (runtime-manager)
 //
 // Locally that means a runtime-manager on RUNTIME_BACKEND=docker plus a
 // runtime-scheduler; see docs/architecture/04b-microvm-productionization.md.
@@ -34,14 +34,14 @@ const e2eImage = "python:3.11-slim"
 func runtimeE2EOrSkip(t *testing.T) (schedAddr string) {
 	t.Helper()
 	if os.Getenv("PAL_RUNTIME_E2E") != "1" {
-		t.Skip("LANTERN_RUNTIME_E2E != 1 — skipping live runtime exec e2e")
+		t.Skip("PAL_RUNTIME_E2E != 1 — skipping live runtime exec e2e")
 	}
 	schedAddr = os.Getenv("PAL_SCHEDULER_GRPC_ADDR")
 	if schedAddr == "" {
-		t.Skip("LANTERN_SCHEDULER_GRPC_ADDR unset — skipping live runtime exec e2e")
+		t.Skip("PAL_SCHEDULER_GRPC_ADDR unset — skipping live runtime exec e2e")
 	}
 	if os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
-		t.Skip("LANTERN_DEFAULT_MANAGER_ADDR unset — Exec dials the manager directly")
+		t.Skip("PAL_DEFAULT_MANAGER_ADDR unset — Exec dials the manager directly")
 	}
 	return schedAddr
 }

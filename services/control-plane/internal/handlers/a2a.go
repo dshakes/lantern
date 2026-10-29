@@ -169,7 +169,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
 		Auth: AgentCardAuth{
 			Type:        "bearer",
-			Description: "Lantern API key",
+			Description: "PAL API key",
 		},
 		InputSchema:  defaultInput,
 		OutputSchema: defaultOutput,
@@ -247,7 +247,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
 			Auth: AgentCardAuth{
 				Type:        "bearer",
-				Description: "Lantern API key",
+				Description: "PAL API key",
 			},
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}}}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"result":{"type":"string"}}}`),

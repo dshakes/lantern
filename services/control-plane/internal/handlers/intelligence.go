@@ -4,16 +4,16 @@ package handlers
 //
 // G1: Complexity-aware model routing. "auto" turns are classified into
 //     trivial/balanced/hard tiers and routed to a cheaper or frontier model
-//     accordingly. Gate: LANTERN_COMPLEXITY_ROUTING=1.
+//     accordingly. Gate: PAL_COMPLEXITY_ROUTING=1.
 //
 // G3: Claim verifier. After the tool loop, any "I sent/emailed/booked/…"
 //     assertion not backed by an actual tool invocation is softened to honest
-//     intent. Gate: LANTERN_CLAIM_VERIFY=1.
+//     intent. Gate: PAL_CLAIM_VERIFY=1.
 //
 // G4: Lightweight multi-step planner. When a turn looks multi-step, a short
 //     planning instruction is prepended to the system context so the model
 //     outlines steps before gambling through tool calls. Gate:
-//     LANTERN_MULTI_STEP_PLANNER=1.
+//     PAL_MULTI_STEP_PLANNER=1.
 //
 // Every gate defaults OFF so existing behaviour is the safe fallback. Flags
 // are read on each call (no startup cache) so ops can toggle without a restart.

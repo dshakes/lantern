@@ -12,7 +12,7 @@ import (
 // IsProd reports whether the server is running in a production-like environment.
 // Dev is the default (unset) so the out-of-box `make dev` / `lantern dev`
 // experience works without any configuration; operators opt into prod behaviour
-// by setting LANTERN_ENV to "prod", "production", or "staging".
+// by setting PAL_ENV to "prod", "production", or "staging".
 //
 // Exported so cmd/server/main.go can use it for startup guards without
 // creating a circular dependency.
@@ -25,11 +25,11 @@ func IsProd() bool {
 // package (receipts, auth, cors, etc.) — keeps call sites concise.
 func isProd() bool { return IsProd() }
 
-// authzEnforce reports whether LANTERN_AUTHZ_ENFORCE is active.
+// authzEnforce reports whether PAL_AUTHZ_ENFORCE is active.
 //
 // When off (default): WithScope logs a debug message but always allows the
 // request — zero behavior change so the flag can be merged safely. When on:
-// missing scope returns HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE.
+// missing scope returns HTTP 403. This staged pattern mirrors PAL_RLS_ENFORCE.
 func authzEnforce() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_AUTHZ_ENFORCE")))
 	return v == "1" || v == "true" || v == "on"
@@ -39,7 +39,7 @@ func authzEnforce() bool {
 func AuthzEnforcing() bool { return authzEnforce() }
 
 // devReceiptSecret is the single shared default used by both receipts.go and
-// marketplace_invoke.go when LANTERN_RECEIPT_SECRET is unset in dev. A single
+// marketplace_invoke.go when PAL_RECEIPT_SECRET is unset in dev. A single
 // constant prevents the two callers from drifting to different fallback strings
 // (which would cause signature mismatches between issue and verify).
 const devReceiptSecret = "lantern-dev-receipt-secret-do-not-use-in-production"
@@ -49,7 +49,7 @@ const devReceiptSecret = "lantern-dev-receipt-secret-do-not-use-in-production"
 const devJWTSecret = "lantern-dev-jwt-secret-do-not-use-in-production"
 
 // GRPCServerTLS resolves the server-side TLS credentials for the gRPC server
-// from LANTERN_CONTROL_PLANE_TLS_CERT / LANTERN_CONTROL_PLANE_TLS_KEY (PEM file
+// from PAL_CONTROL_PLANE_TLS_CERT / PAL_CONTROL_PLANE_TLS_KEY (PEM file
 // paths). The audit-H2 boundary is the gateway→control-plane channel: in
 // production we require TLS so that hop is encrypted + authenticated.
 //
@@ -71,7 +71,7 @@ func GRPCServerTLS() (credentials.TransportCredentials, error) {
 		return nil, nil
 	}
 	if certPath == "" || keyPath == "" {
-		return nil, fmt.Errorf("control-plane TLS is half-configured: set BOTH LANTERN_CONTROL_PLANE_TLS_CERT and LANTERN_CONTROL_PLANE_TLS_KEY (or neither)")
+		return nil, fmt.Errorf("control-plane TLS is half-configured: set BOTH PAL_CONTROL_PLANE_TLS_CERT and PAL_CONTROL_PLANE_TLS_KEY (or neither)")
 	}
 
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
@@ -85,7 +85,7 @@ func GRPCServerTLS() (credentials.TransportCredentials, error) {
 	}), nil
 }
 
-// CheckSchedulerAddr evaluates whether LANTERN_SCHEDULER_GRPC_ADDR is
+// CheckSchedulerAddr evaluates whether PAL_SCHEDULER_GRPC_ADDR is
 // correctly configured for the current environment.
 //
 // It returns (fatal bool, message string). When fatal is true, the caller
@@ -93,14 +93,14 @@ func GRPCServerTLS() (credentials.TransportCredentials, error) {
 // keeps the function pure and testable without triggering os.Exit in tests.
 //
 // Rules:
-//   - prod (LANTERN_ENV=prod/production/staging): FATAL when addr is empty.
+//   - prod (PAL_ENV=prod/production/staging): FATAL when addr is empty.
 //     A prod control-plane that silently falls back to the stub scheduler
 //     fabricates fake VM IDs and never actually spawns workloads — that is a
 //     silent data-corruption class bug, not a graceful degradation.
-//   - dev (LANTERN_ENV unset): stub is fine; returns fatal=false.
+//   - dev (PAL_ENV unset): stub is fine; returns fatal=false.
 func CheckSchedulerAddr(isProdEnv bool, addr string) (fatal bool, message string) {
 	if isProdEnv && addr == "" {
-		return true, "LANTERN_SCHEDULER_GRPC_ADDR is unset — production refuses to start with the stub scheduler (it fabricates VM IDs and spawns nothing); set LANTERN_SCHEDULER_GRPC_ADDR to the runtime-scheduler gRPC address"
+		return true, "PAL_SCHEDULER_GRPC_ADDR is unset — production refuses to start with the stub scheduler (it fabricates VM IDs and spawns nothing); set PAL_SCHEDULER_GRPC_ADDR to the runtime-scheduler gRPC address"
 	}
 	return false, ""
 }
@@ -113,7 +113,7 @@ func CheckSchedulerAddr(isProdEnv bool, addr string) (fatal bool, message string
 // and are NOT filtered through this function.
 //
 // Default dev value: http://localhost:3001 (Next.js dashboard dev server).
-// Override in any environment via LANTERN_CORS_ORIGINS (comma-separated list).
+// Override in any environment via PAL_CORS_ORIGINS (comma-separated list).
 func corsAllowedOrigins() map[string]struct{} {
 	raw := strings.TrimSpace(os.Getenv("PAL_CORS_ORIGINS"))
 	if raw == "" {

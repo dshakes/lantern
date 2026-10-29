@@ -173,7 +173,7 @@ func TestResolveSecrets_BearerToken_GarbageJWT(t *testing.T) {
 
 // TestResolveSecrets_BearerToken_ExpiredToken verifies that an already-expired
 // agent-instance JWT is rejected even when the shared token is valid.
-// Uses LANTERN_AGENT_IDENTITY_TTL=1ms so the token expires before verification.
+// Uses PAL_AGENT_IDENTITY_TTL=1ms so the token expires before verification.
 func TestResolveSecrets_BearerToken_ExpiredToken(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
 	t.Setenv("PAL_AGENT_IDENTITY_TTL", "1ms")

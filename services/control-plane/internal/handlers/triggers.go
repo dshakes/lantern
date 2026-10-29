@@ -65,7 +65,7 @@ type TriggerHandler struct {
 }
 
 // NewTriggerHandler creates a TriggerHandler. Per-trigger delivery rate is
-// LANTERN_HOOK_RATE_PER_MIN (default 60) with burst LANTERN_HOOK_BURST (default 10).
+// PAL_HOOK_RATE_PER_MIN (default 60) with burst PAL_HOOK_BURST (default 10).
 func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler) *TriggerHandler {
 	// ponytail: per-replica in-memory buckets; SetRedis on this limiter if one
 	// replica's allowance ever proves too loose.
@@ -117,7 +117,7 @@ type triggerJSON struct {
 	HookPath       string          `json:"hookPath"`
 	LastDeliveryAt string          `json:"lastDeliveryAt,omitempty"`
 	CreatedAt      string          `json:"createdAt"`
-	// Secret is returned only by create, and only when Lantern generated it
+	// Secret is returned only by create, and only when PAL generated it
 	// or the caller rotated it. Never by list/get.
 	Secret string `json:"secret,omitempty"`
 }
@@ -789,7 +789,7 @@ func (h *TriggerHandler) startRun(ctx context.Context, tenantID, agentName strin
 	if err != nil {
 		return http.StatusInternalServerError, map[string]any{"error": "internal error"}
 	}
-	ctx = storeClaimsInCtx(ctx, &LanternClaims{TenantID: tenantID, Role: "service"})
+	ctx = storeClaimsInCtx(ctx, &PalClaims{TenantID: tenantID, Role: "service"})
 	ctx = context.WithValue(ctx, runTriggerKindKey{}, lanternv1.TriggerKind_TRIGGER_KIND_WEBHOOK)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs", bytes.NewReader(b))
 	if err != nil {

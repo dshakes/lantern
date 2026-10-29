@@ -589,7 +589,7 @@ func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant
 // GetAgent / ListAgents / DeleteAgent and handlers/runs.go CreateRun /
 // CancelRun / GetRun / ListRuns after the TenantPool() cutover, because those
 // handlers call setRLSTenantID (set_config) inside a transaction on TenantPool
-// (which becomes lantern_app when LANTERN_RLS_ENFORCE=1).
+// (which becomes lantern_app when PAL_RLS_ENFORCE=1).
 // ---------------------------------------------------------------------------
 
 // TestRLSEnforcement_CutoverPaths_Agents is the same-tenant-still-works proof
@@ -794,7 +794,7 @@ func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
 //	    pattern) returns ZERO ROWS even for the same tenant — proving the GUC
 //	    is required and was the root cause.
 //
-// The test uses SET LOCAL ROLE lantern_app to simulate LANTERN_RLS_ENFORCE=1
+// The test uses SET LOCAL ROLE lantern_app to simulate PAL_RLS_ENFORCE=1
 // (the TenantPool connecting as the non-superuser role) without needing a
 // separate DSN.
 // ---------------------------------------------------------------------------
@@ -827,7 +827,7 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 			"DELETE FROM agents WHERE name = $1 AND tenant_id = $2::uuid", agentName, tenantA)
 	})
 
-	// appRolePool simulates TenantPool() under LANTERN_RLS_ENFORCE=1 by using
+	// appRolePool simulates TenantPool() under PAL_RLS_ENFORCE=1 by using
 	// SET LOCAL ROLE inside each WithTenantConn transaction. In production the
 	// pool itself connects as lantern_app; here we use superPool + SET LOCAL ROLE
 	// to achieve the same effect without needing a separate DSN in CI.

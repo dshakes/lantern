@@ -30,9 +30,9 @@ import (
 // environment. It mirrors the control-plane's IsProd() logic so the guard
 // rules are consistent across services.
 //
-// Dev (LANTERN_ENV unset) is the default so `make dev` / local runs work
+// Dev (PAL_ENV unset) is the default so `make dev` / local runs work
 // without any configuration. Operators opt into prod behaviour by setting
-// LANTERN_ENV to "prod", "production", or "staging".
+// PAL_ENV to "prod", "production", or "staging".
 func IsProd() bool {
 	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
@@ -46,19 +46,19 @@ func IsProd() bool {
 // the function pure and testable without triggering os.Exit in tests.
 //
 // Rules:
-//   - prod (LANTERN_ENV=prod/production/staging): FATAL when defaultAddr is
+//   - prod (PAL_ENV=prod/production/staging): FATAL when defaultAddr is
 //     empty OR dialerOverride is "stub". The LogOnlyDialer spawns nothing and
 //     returns synthetic OK responses — in prod that is silent data loss.
-//   - dev (LANTERN_ENV unset): stub is intentional; returns fatal=false.
+//   - dev (PAL_ENV unset): stub is intentional; returns fatal=false.
 func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal bool, message string) {
 	if !isProd {
 		return false, ""
 	}
 	if dialerOverride == "stub" {
-		return true, "LANTERN_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset LANTERN_DIALER to use the real gRPC dialer"
+		return true, "PAL_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset PAL_DIALER to use the real gRPC dialer"
 	}
 	if defaultAddr == "" {
-		return true, "LANTERN_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set LANTERN_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
+		return true, "PAL_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set PAL_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
 	}
 	return false, ""
 }
@@ -67,8 +67,8 @@ func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal 
 // runtime-manager. The manager forces mTLS in prod (it verifies client certs
 // against its CA), so:
 //
-//   - LANTERN_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
-//     that CA; LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
+//   - PAL_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
+//     that CA; PAL_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
 //     client certificate.
 //   - unset in dev → insecure (plaintext), so `make dev` works.
 //   - unset in prod, client cert missing in prod, half-set cert/key, or an
@@ -78,24 +78,24 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
 	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
-		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
+		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH PAL_RUNTIME_MANAGER_TLS_CERT and PAL_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}
 	if caPath == "" {
 		if isProd {
-			return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set LANTERN_RUNTIME_MANAGER_TLS_CA plus LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
+			return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set PAL_RUNTIME_MANAGER_TLS_CA plus PAL_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
 		}
 		return insecure.NewCredentials(), nil
 	}
 	if isProd && certPath == "" {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
 	}
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
-		return nil, fmt.Errorf("read LANTERN_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
+		return nil, fmt.Errorf("read PAL_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
 	}
 	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	if certPath != "" {
@@ -109,8 +109,8 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 }
 
 // serviceTokenCreds attaches the shared service token as
-// x-lantern-service-token on every RPC (the manager requires it when
-// LANTERN_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
+// x-pal-service-token on every RPC (the manager requires it when
+// PAL_GRPC_SERVICE_TOKEN is set). Empty token → nothing attached.
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
@@ -212,11 +212,11 @@ func (d *LogOnlyDialer) Close() {}
 // Per-node address resolution rules, in order:
 //  1. If env LANTERN_NODE_ADDR_<NODE-UPPERCASED> is set, use that.
 //  2. If nodeAddr is "node-local", "node-stub", or empty, fall back to
-//     env LANTERN_DEFAULT_MANAGER_ADDR.
+//     env PAL_DEFAULT_MANAGER_ADDR.
 //  3. If nodeAddr already contains a ':' (has a port), use as-is.
 //  4. Otherwise append the default runtime-manager port (:50054).
 //
-// Transport is TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set (see
+// Transport is TLS when PAL_RUNTIME_MANAGER_TLS_CA is set (see
 // ManagerTransportCreds), cleartext otherwise (dev only). Every RPC carries
 // the shared service token.
 type GRPCDialer struct {
@@ -230,7 +230,7 @@ type GRPCDialer struct {
 
 // NewGRPCDialer returns a dialer with no eager connections; conns are
 // established on the first Spawn/Stop call per node. creds nil means insecure
-// (tests); serviceToken is attached as x-lantern-service-token on every RPC.
+// (tests); serviceToken is attached as x-pal-service-token on every RPC.
 func NewGRPCDialer(logger *zap.Logger, creds credentials.TransportCredentials, serviceToken string) *GRPCDialer {
 	if creds == nil {
 		creds = insecure.NewCredentials()

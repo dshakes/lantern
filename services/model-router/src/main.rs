@@ -98,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     }
     if token.as_deref().is_none_or(str::is_empty) {
         tracing::warn!(
-            "LANTERN_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
+            "PAL_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
         );
     }
 

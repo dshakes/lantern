@@ -289,7 +289,7 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 }
 
 // recoveryInterval returns the configured sweep interval from the
-// LANTERN_RECOVERY_INTERVAL env var (default 30s).
+// PAL_RECOVERY_INTERVAL env var (default 30s).
 func recoveryInterval() time.Duration {
 	if v := os.Getenv("PAL_RECOVERY_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

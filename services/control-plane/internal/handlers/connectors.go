@@ -535,7 +535,7 @@ func (h *ConnectorHandler) OAuthCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Encrypt and store the token via AES-256-GCM envelope encryption
-	// (internal/secrets). When LANTERN_CREDENTIAL_KEY is unset the value is
+	// (internal/secrets). When PAL_CREDENTIAL_KEY is unset the value is
 	// stored as plaintext JSON (pass-through) so local dev needs no key.
 	tokenJSON, _ := json.Marshal(tokenResp)
 	encToken, err := secrets.EncryptString(string(tokenJSON))

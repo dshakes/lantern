@@ -1,6 +1,6 @@
 // Package telemetry initialises the OpenTelemetry TracerProvider for the
 // control-plane. It is env-gated: when neither OTEL_EXPORTER_OTLP_ENDPOINT
-// nor LANTERN_OTEL_ENABLED=1 is set, a no-op provider is installed and the
+// nor PAL_OTEL_ENABLED=1 is set, a no-op provider is installed and the
 // returned shutdown function is safe to call but does nothing. This means the
 // default behaviour (no collector configured) is completely unchanged.
 package telemetry
@@ -23,7 +23,7 @@ func noopShutdown(_ context.Context) error { return nil }
 
 // otelEnabled reports whether a real TracerProvider should be configured.
 // True when OTEL_EXPORTER_OTLP_ENDPOINT is set (standard OTel env) or
-// LANTERN_OTEL_ENABLED=1 (Lantern-specific override).
+// PAL_OTEL_ENABLED=1 (PAL-specific override).
 func otelEnabled() bool {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
 		return true
@@ -39,7 +39,7 @@ func otelEnabled() bool {
 //
 // When tracing is enabled, an OTLP/HTTP exporter is created pointing at
 // OTEL_EXPORTER_OTLP_ENDPOINT (or localhost:4318 if that var is absent but
-// LANTERN_OTEL_ENABLED=1). The resource carries service.name=serviceName plus
+// PAL_OTEL_ENABLED=1). The resource carries service.name=serviceName plus
 // the standard OTel SDK resource attributes. W3C TraceContext+Baggage
 // propagation is set globally.
 //

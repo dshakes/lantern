@@ -120,8 +120,20 @@ mod tests {
             r
         };
         assert!(i(with(&[(LEGACY_TOKEN_HEADER, "s3cret")])).is_ok());
-        assert!(i(with(&[(TOKEN_HEADER, "s3cret"), (LEGACY_TOKEN_HEADER, "s3cret")])).is_ok());
-        assert!(i(with(&[(TOKEN_HEADER, "nope"), (LEGACY_TOKEN_HEADER, "s3cret")])).is_err());
+        assert!(
+            i(with(&[
+                (TOKEN_HEADER, "s3cret"),
+                (LEGACY_TOKEN_HEADER, "s3cret")
+            ]))
+            .is_ok()
+        );
+        assert!(
+            i(with(&[
+                (TOKEN_HEADER, "nope"),
+                (LEGACY_TOKEN_HEADER, "s3cret")
+            ]))
+            .is_err()
+        );
         assert!(i(with(&[(LEGACY_TOKEN_HEADER, "nope")])).is_err());
     }
 }

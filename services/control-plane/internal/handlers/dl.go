@@ -319,12 +319,12 @@ func (h *DLHandler) authService(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv(dlServiceTokenEnv)
 	if expected == "" {
 		if IsProd() {
-			h.logger().Warn("dl stage: LANTERN_GRPC_SERVICE_TOKEN unset — refusing (fail-closed in prod)")
+			h.logger().Warn("dl stage: PAL_GRPC_SERVICE_TOKEN unset — refusing (fail-closed in prod)")
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "dl staging disabled"})
 			return false
 		}
 		dlDevWarnOnce.Do(func() {
-			h.logger().Warn("dl stage: LANTERN_GRPC_SERVICE_TOKEN unset — allowing unauthenticated calls (dev only)")
+			h.logger().Warn("dl stage: PAL_GRPC_SERVICE_TOKEN unset — allowing unauthenticated calls (dev only)")
 		})
 		return true
 	}

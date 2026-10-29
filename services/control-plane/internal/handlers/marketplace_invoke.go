@@ -19,7 +19,7 @@ package handlers
 //
 // This is the wedge: nobody else combines A2A + signed receipts + budget
 // enforcement into a single settlement primitive. Two tenants seeded on
-// the same Lantern can demo end-to-end agent commerce.
+// the same PAL can demo end-to-end agent commerce.
 
 import (
 	"context"
@@ -157,7 +157,7 @@ type marketplaceInvokeResponse struct {
 // ---------- Settlement helper ----------
 
 // signInvocation produces an HMAC-SHA256 signature over the invocation
-// fields a verifier needs to reproduce. Uses the same LANTERN_RECEIPT_SECRET
+// fields a verifier needs to reproduce. Uses the same PAL_RECEIPT_SECRET
 // as run receipts so a single key fingerprint covers both surfaces.
 func signInvocation(
 	invocationID, buyerTenant, sellerTenant, agentName, runID string,

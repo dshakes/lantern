@@ -22,7 +22,7 @@ import (
 func TestIsProd_UnsetIsNotProd(t *testing.T) {
 	t.Setenv("PAL_ENV", "")
 	if IsProd() {
-		t.Error("expected IsProd()=false when LANTERN_ENV is unset")
+		t.Error("expected IsProd()=false when PAL_ENV is unset")
 	}
 }
 
@@ -32,7 +32,7 @@ func TestIsProd_ProdValues(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("PAL_ENV", v)
 			if !IsProd() {
-				t.Errorf("expected IsProd()=true for LANTERN_ENV=%q", v)
+				t.Errorf("expected IsProd()=true for PAL_ENV=%q", v)
 			}
 		})
 	}
@@ -44,7 +44,7 @@ func TestIsProd_DevValues(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("PAL_ENV", v)
 			if IsProd() {
-				t.Errorf("expected IsProd()=false for LANTERN_ENV=%q", v)
+				t.Errorf("expected IsProd()=false for PAL_ENV=%q", v)
 			}
 		})
 	}
@@ -313,7 +313,7 @@ func newXFFRequest(remoteAddr, xff string) *http.Request {
 }
 
 // TestRemoteIP_NoTrustedProxies_XFFIgnored verifies that when
-// LANTERN_TRUSTED_PROXIES is empty (the default), X-Forwarded-For is
+// PAL_TRUSTED_PROXIES is empty (the default), X-Forwarded-For is
 // completely ignored and RemoteAddr (host portion) is always used as the key.
 // This is the critical invariant that prevents an attacker from rotating their
 // "IP" on every request by changing the XFF header.
@@ -423,7 +423,7 @@ func TestRemoteIP_TrustedProxyCIDR_UntrustedPeerXFFIgnored(t *testing.T) {
 }
 
 // TestRemoteIP_MalformedCIDR_FallsBackToRemoteAddr verifies that a malformed
-// CIDR in LANTERN_TRUSTED_PROXIES doesn't crash and safely falls back.
+// CIDR in PAL_TRUSTED_PROXIES doesn't crash and safely falls back.
 func TestRemoteIP_MalformedCIDR_FallsBackToRemoteAddr(t *testing.T) {
 	t.Setenv(envTrustedProxies, "not-a-cidr,10.0.0.0/8")
 

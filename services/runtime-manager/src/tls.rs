@@ -255,9 +255,10 @@ pub fn is_vm_client_cert(cert_der: &[u8]) -> bool {
     let Ok((_, cert)) = x509_parser::parse_x509_certificate(cert_der) else {
         return true;
     };
-    cert.subject()
-        .iter_organizational_unit()
-        .any(|ou| ou.as_str().is_ok_and(|v| v == VM_CERT_OU || v == LEGACY_VM_CERT_OU))
+    cert.subject().iter_organizational_unit().any(|ou| {
+        ou.as_str()
+            .is_ok_and(|v| v == VM_CERT_OU || v == LEGACY_VM_CERT_OU)
+    })
 }
 
 /// Extract the vm_id embedded as the CN or first DNS SAN from a DER-encoded
@@ -808,7 +809,11 @@ mod tests {
             .iter_organizational_unit()
             .filter_map(|ou| ou.as_str().ok().map(str::to_owned))
             .collect();
-        assert_eq!(ous, vec![VM_CERT_OU.to_string()], "new certs carry pal-vm only");
+        assert_eq!(
+            ous,
+            vec![VM_CERT_OU.to_string()],
+            "new certs carry pal-vm only"
+        );
 
         for ou in [VM_CERT_OU, LEGACY_VM_CERT_OU] {
             let mut params = rcgen::CertificateParams::new(vec!["vm-old".to_string()]).unwrap();

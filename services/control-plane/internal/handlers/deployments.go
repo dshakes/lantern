@@ -456,7 +456,7 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 	// Create a deployment record with status "live" for the cloud deploy.
 	initialLogs, _ := json.Marshal([]string{
-		"Deploying " + name + " to Lantern Cloud...",
+		"Deploying " + name + " to PAL Cloud...",
 		"Ensuring agent version exists...",
 		"Agent marked as deployed",
 		"A2A invoke endpoint active",

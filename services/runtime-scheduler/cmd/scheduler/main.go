@@ -150,7 +150,7 @@ func main() {
 	var managerDialer dialer.ManagerDialer
 	if os.Getenv("PAL_DIALER") == "stub" || os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
 		managerDialer = dialer.NewLogOnlyDialer(logger)
-		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
+		logger.Info("using stub manager dialer (no PAL_DEFAULT_MANAGER_ADDR set)")
 	} else {
 		// The manager requires the service token and, in prod, mTLS.
 		mgrCreds, err := dialer.ManagerTransportCreds(dialer.IsProd())
@@ -200,16 +200,16 @@ func main() {
 
 	// --- Service-token auth startup guard ---
 	// In prod, the gRPC server must refuse calls without the shared token
-	// (LANTERN_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
+	// (PAL_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
 	// reachable by any in-cluster caller who can supply an arbitrary tenant_id,
-	// enabling cross-tenant microVM compute takeover. In dev (LANTERN_ENV unset)
+	// enabling cross-tenant microVM compute takeover. In dev (PAL_ENV unset)
 	// we warn and allow unauthenticated calls so `make dev` keeps working.
 	if cfg.ServiceToken == "" {
 		if dialer.IsProd() {
-			logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is required in production — " +
+			logger.Fatal("PAL_GRPC_SERVICE_TOKEN is required in production — " +
 				"without it any in-cluster caller can spoof tenant_id on the gRPC port")
 		}
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
 	}
 
 	// --- Node-heartbeat token startup guard ---
@@ -340,7 +340,7 @@ type config struct {
 	JWTSecret string
 	NodeToken string
 	// ServiceToken is the shared secret that callers must present as
-	// x-lantern-service-token in gRPC metadata. When empty the check is
+	// x-pal-service-token in gRPC metadata. When empty the check is
 	// disabled (dev mode); the startup guard aborts in prod.
 	ServiceToken    string
 	LogLevel        string

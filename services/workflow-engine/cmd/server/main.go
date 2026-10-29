@@ -40,15 +40,15 @@ func main() {
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
 
-	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Fail closed in production; warn and continue in dev (PAL_ENV unset).
 	// Without a service token any caller reachable to :50052 can forge any
 	// tenant_id because the token check is what guards the tenant interceptor.
 	prod := isProdEnv()
 	if prod && cfg.GRPCServiceToken == "" {
-		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
+		logger.Fatal("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
 	}
 	if !prod && cfg.GRPCServiceToken == "" {
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -94,7 +94,7 @@ func main() {
 	if cfg.ModelRouterAddr != "" {
 		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 		if cfg.GRPCServiceToken != "" {
-			// The router rejects calls without x-lantern-service-token.
+			// The router rejects calls without x-pal-service-token.
 			mrOpts = append(mrOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
 		}
 		conn, err := grpc.NewClient(cfg.ModelRouterAddr, mrOpts...)
@@ -105,7 +105,7 @@ func main() {
 		modelClient = lanternv1.NewModelServiceClient(conn)
 		logger.Info("model router client configured", zap.String("addr", cfg.ModelRouterAddr))
 	} else {
-		logger.Warn("LANTERN_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
+		logger.Warn("PAL_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
 	}
 
 	// --- Runtime manager client ---
@@ -132,7 +132,7 @@ func main() {
 		runtimeClient = lanternv1.NewRuntimeManagerClient(conn)
 		logger.Info("runtime manager client configured", zap.String("addr", cfg.RuntimeManagerAddr))
 	} else {
-		logger.Warn("LANTERN_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
+		logger.Warn("PAL_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
 	}
 
 	// --- Engine ---
@@ -150,7 +150,7 @@ func main() {
 	//
 	// Operator cutover: CREATE ROLE lantern_app (done by the control-plane's
 	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
-	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
+	// PAL_APP_DB_PASSWORD + PAL_RLS_ENFORCE=1 on this service too.
 	//
 	// GRANTS MATTER HERE, and this is the step that will bite. A tenant-scoped
 	// transaction in this service touches more than runs/agents: journal_events,
@@ -166,12 +166,12 @@ func main() {
 	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
 		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd == "" {
-			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
+			// FAIL CLOSED. An operator who sets PAL_RLS_ENFORCE=1 believes
 			// isolation is on; continuing on the privileged pool would leave it
 			// off while looking enabled, which is the worst of both. Matches
 			// the repo's precedent for security controls (the gRPC service
 			// token refuses to start rather than run unauthenticated).
-			logger.Fatal("LANTERN_RLS_ENFORCE=1 requires LANTERN_APP_DB_PASSWORD — " +
+			logger.Fatal("PAL_RLS_ENFORCE=1 requires PAL_APP_DB_PASSWORD — " +
 				"refusing to start rather than run with RLS silently bypassed")
 		} else {
 			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
@@ -343,7 +343,7 @@ func loadConfig() config {
 }
 
 // isProdEnv reports whether the server is running in a production-like
-// environment (LANTERN_ENV=prod|production|staging).
+// environment (PAL_ENV=prod|production|staging).
 func isProdEnv() bool {
 	e := os.Getenv("PAL_ENV")
 	return e == "prod" || e == "production" || e == "staging"

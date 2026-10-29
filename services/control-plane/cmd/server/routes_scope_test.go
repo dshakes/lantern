@@ -8,7 +8,7 @@ import (
 )
 
 // scopeExempt lists the mutating routes that legitimately carry no WithScope,
-// each with the reason. WithScope authenticates a Lantern JWT/API key, so a
+// each with the reason. WithScope authenticates a PAL JWT/API key, so a
 // route authenticated some other way cannot use it. Adding a route here is
 // fine — writing down why is the point (ADR 0027 §8).
 var scopeExempt = map[string]string{
@@ -42,7 +42,7 @@ var scopeExempt = map[string]string{
 
 	// Public by design.
 	"POST /v1/runs/receipts/verify": "public receipt verification",
-	"POST /v1/kiosk/session":        "anonymous by design; registered only when LANTERN_KIOSK=1 (ADR 0029)",
+	"POST /v1/kiosk/session":        "anonymous by design; registered only when PAL_KIOSK=1 (ADR 0029)",
 
 	// Runtime routes check runtime:* scopes inside the handler (requireRuntimeScope).
 	"POST /v1/runtime/schedule":              "in-handler runtime:write",
@@ -59,7 +59,7 @@ var routeRE = regexp.MustCompile(`HandleFunc\("((?:POST|PUT|PATCH|DELETE) [^"]+)
 
 // TestEveryMutatingRouteHasScope fails when a POST/PUT/PATCH/DELETE route is
 // registered without WithScope and isn't on the exemption list — so flipping
-// LANTERN_AUTHZ_ENFORCE=1 can never leave a mutator unguarded.
+// PAL_AUTHZ_ENFORCE=1 can never leave a mutator unguarded.
 func TestEveryMutatingRouteHasScope(t *testing.T) {
 	files := []string{"main.go"}
 	more, err := filepath.Glob("../../internal/handlers/*.go")

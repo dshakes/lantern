@@ -2,7 +2,7 @@ package handlers
 
 // kiosk.go — ephemeral anonymous demo tenants (ADR 0029).
 //
-//	POST /v1/kiosk/session   (only when LANTERN_KIOSK=1; 404 otherwise)
+//	POST /v1/kiosk/session   (only when PAL_KIOSK=1; 404 otherwise)
 //
 // Each call creates a fresh `kiosk-<rand>` tenant seeded with demo agents and
 // runs, and returns a short-lived, scope-limited JWT (role "kiosk"). A sweep
@@ -51,11 +51,11 @@ func envOn(key string) bool {
 	return false
 }
 
-// KioskEnabled reports whether LANTERN_KIOSK is on.
+// KioskEnabled reports whether PAL_KIOSK is on.
 func KioskEnabled() bool { return envOn("PAL_KIOSK") }
 
 // CheckKioskConfig is the startup guard. Fatal when kiosk mode is on and: it is a
-// production-like env without LANTERN_KIOSK_ALLOW_PROD=1; RLS or authz enforcement
+// production-like env without PAL_KIOSK_ALLOW_PROD=1; RLS or authz enforcement
 // is off; or a provider key is set that is not pinned to a fixture base URL.
 func CheckKioskConfig(isProdEnv bool, getenv func(string) string) (fatal bool, message string) {
 	on := func(k string) bool {
@@ -69,15 +69,15 @@ func CheckKioskConfig(isProdEnv bool, getenv func(string) string) (fatal bool, m
 		return false, ""
 	}
 	if isProdEnv && !on("PAL_KIOSK_ALLOW_PROD") {
-		return true, "LANTERN_KIOSK=1 in a production-like environment — kiosk mints anonymous tenants; set LANTERN_KIOSK_ALLOW_PROD=1 only for a dedicated public demo deployment"
+		return true, "PAL_KIOSK=1 in a production-like environment — kiosk mints anonymous tenants; set PAL_KIOSK_ALLOW_PROD=1 only for a dedicated public demo deployment"
 	}
 	if !on("PAL_RLS_ENFORCE") || !on("PAL_AUTHZ_ENFORCE") {
-		return true, "LANTERN_KIOSK=1 requires LANTERN_RLS_ENFORCE=1 and LANTERN_AUTHZ_ENFORCE=1 — anonymous tenants must be isolated by the database, not by handler discipline"
+		return true, "PAL_KIOSK=1 requires PAL_RLS_ENFORCE=1 and PAL_AUTHZ_ENFORCE=1 — anonymous tenants must be isolated by the database, not by handler discipline"
 	}
 	// A missing or dev-default JWT secret is public, so anyone could mint an
 	// owner token for any tenant and step around RLS entirely.
 	if secret := strings.TrimSpace(getenv("JWT_SECRET")); secret == "" || secret == devJWTSecret {
-		return true, "LANTERN_KIOSK=1 requires an explicit, non-default JWT_SECRET — the dev default is public and would let anyone forge owner tokens"
+		return true, "PAL_KIOSK=1 requires an explicit, non-default JWT_SECRET — the dev default is public and would let anyone forge owner tokens"
 	}
 	for key, override := range map[string]string{"OPENAI_API_KEY": "PAL_LLM_BASEURL_OPENAI", "ANTHROPIC_API_KEY": "PAL_LLM_BASEURL_ANTHROPIC"} {
 		if getenv(key) != "" && getenv(override) == "" {
@@ -235,7 +235,7 @@ func (h *KioskHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KioskHandler) mintToken(userID, tenantID, slug string, expires time.Time) (string, error) {
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject: userID, IssuedAt: jwt.NewNumericDate(h.now()),
 			ExpiresAt: jwt.NewNumericDate(expires), Issuer: "pal",

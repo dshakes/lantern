@@ -21,7 +21,7 @@ type Server struct {
 	Pool *pgxpool.Pool
 
 	// AppPool is the application Postgres pool for tenant-scoped reads/writes.
-	// When LANTERN_RLS_ENFORCE=1 and LANTERN_APP_DB_PASSWORD are set, AppPool
+	// When PAL_RLS_ENFORCE=1 and PAL_APP_DB_PASSWORD are set, AppPool
 	// connects as 'lantern_app' (non-superuser, subject to RLS policies on
 	// 'agents' and 'runs'). Otherwise AppPool == Pool (alias; zero behaviour
 	// change). Handlers that carry a tenant context should prefer AppPool;
@@ -59,7 +59,7 @@ func (s *Server) TenantPool() *pgxpool.Pool {
 // Returns codes.Unauthenticated when the context carries no tenant_id — a
 // missing tenant must never silently fall through to an unscoped query.
 //
-// When LANTERN_RLS_ENFORCE=1 (TenantPool() == lantern_app, non-superuser),
+// When PAL_RLS_ENFORCE=1 (TenantPool() == lantern_app, non-superuser),
 // Postgres enforces the tenant_isolation policies automatically; otherwise the
 // GUC still scopes application reads consistently. Callers must NOT commit or
 // roll back the transaction themselves — WithTenant owns the tx lifecycle.

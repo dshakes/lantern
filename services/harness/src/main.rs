@@ -1,4 +1,4 @@
-// lantern-harness — PID 1 init process running inside every Lantern microVM.
+// lantern-harness — PID 1 init process running inside every PAL microVM.
 //
 // Responsibilities (see README.md for the full boot contract):
 //   1. Init: prep /run/lantern, mount tmpfs, set rlimits.

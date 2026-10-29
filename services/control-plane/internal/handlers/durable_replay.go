@@ -310,7 +310,7 @@ func sweepOldSideEffectReceipts(ctx context.Context, pool *pgxpool.Pool) (int64,
 }
 
 // RunSideEffectReceiptsJanitor runs a periodic sweep that deletes
-// side_effect_receipts rows older than LANTERN_SIDE_EFFECT_RETENTION_DAYS
+// side_effect_receipts rows older than PAL_SIDE_EFFECT_RETENTION_DAYS
 // (default 30). Blocks until ctx is cancelled.
 //
 // Call pattern (from main.go):

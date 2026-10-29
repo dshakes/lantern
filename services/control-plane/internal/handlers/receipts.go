@@ -6,7 +6,7 @@ package handlers
 // proves what was executed. Signing algorithm depends on which key is
 // configured at startup:
 //
-//   - Ed25519 (preferred, production): set LANTERN_RECEIPT_ED25519_SEED to a
+//   - Ed25519 (preferred, production): set PAL_RECEIPT_ED25519_SEED to a
 //     base64-std or hex-encoded 32-byte seed. The public key is published at
 //     /.well-known/lantern-receipts so external auditors can verify receipts
 //     completely offline — no shared secret required.
@@ -121,7 +121,7 @@ var (
 )
 
 // loadEd25519Key returns the Ed25519 key pair derived from
-// LANTERN_RECEIPT_ED25519_SEED. Returns an zero ed25519State when the env
+// PAL_RECEIPT_ED25519_SEED. Returns an zero ed25519State when the env
 // var is unset (HMAC fallback). Logs mode once to the provided logger (or a
 // nop if nil); never logs the seed material itself.
 func loadEd25519Key(log *zap.Logger) ed25519State {
@@ -145,12 +145,12 @@ func loadEd25519Key(log *zap.Logger) ed25519State {
 			seed, err = hex.DecodeString(raw)
 		}
 		if err != nil {
-			log.Error("receipts: failed to decode LANTERN_RECEIPT_ED25519_SEED (want 32-byte base64 or hex) — falling back to HMAC",
+			log.Error("receipts: failed to decode PAL_RECEIPT_ED25519_SEED (want 32-byte base64 or hex) — falling back to HMAC",
 				zap.Error(err))
 			return
 		}
 		if len(seed) != ed25519.SeedSize {
-			log.Error("receipts: LANTERN_RECEIPT_ED25519_SEED decoded to wrong length — falling back to HMAC",
+			log.Error("receipts: PAL_RECEIPT_ED25519_SEED decoded to wrong length — falling back to HMAC",
 				zap.Int("got", len(seed)), zap.Int("want", ed25519.SeedSize))
 			return
 		}
@@ -602,7 +602,7 @@ func canonicalJSONKeys(data []byte) ([]string, error) {
 }
 
 // hmacSign computes the HMAC-SHA256 over the provided canonical bytes using
-// the configured LANTERN_RECEIPT_SECRET (or the dev fallback). The result is
+// the configured PAL_RECEIPT_SECRET (or the dev fallback). The result is
 // hex-encoded.
 func hmacSign(canonical []byte) string {
 	mac := hmac.New(sha256.New, []byte(getReceiptSecret()))
@@ -624,7 +624,7 @@ func signPayload(p receiptPayload) string {
 
 // getReceiptSecret returns the HMAC signing secret for run receipts.
 //
-// In dev (LANTERN_ENV unset) it falls back to devReceiptSecret so local
+// In dev (PAL_ENV unset) it falls back to devReceiptSecret so local
 // verification works without configuration. In prod the secret must be set
 // explicitly; main.go enforces this at startup before any traffic is served.
 func getReceiptSecret() string {

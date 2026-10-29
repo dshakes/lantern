@@ -159,7 +159,7 @@ func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[strin
 // ---------- Real gRPC scheduler client ----------
 
 // grpcSchedulerClient dials the RuntimeScheduler service at the address
-// supplied via LANTERN_SCHEDULER_GRPC_ADDR (typically scheduler:50055).
+// supplied via PAL_SCHEDULER_GRPC_ADDR (typically scheduler:50055).
 // It also lazily dials per-node runtime-manager connections for the
 // Logs / Exec stream proxy paths.
 //
@@ -168,18 +168,18 @@ func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[strin
 // existing gateway TLS at the edge.
 type grpcSchedulerClient struct {
 	logger       *zap.Logger
-	serviceToken string                           // sent to managers as x-lantern-service-token
-	mgrCreds     credentials.TransportCredentials // TLS when LANTERN_RUNTIME_MANAGER_TLS_CA is set
+	serviceToken string                           // sent to managers as x-pal-service-token
+	mgrCreds     credentials.TransportCredentials // TLS when PAL_RUNTIME_MANAGER_TLS_CA is set
 	conn         *grpc.ClientConn
 	client       lanternv1.RuntimeSchedulerClient
-	defaultMgr   string                      // LANTERN_DEFAULT_MANAGER_ADDR
+	defaultMgr   string                      // PAL_DEFAULT_MANAGER_ADDR
 	mgrMu        sync.Mutex                  // guards mgrConns
 	mgrConns     map[string]*grpc.ClientConn // nodeName -> conn
 	mgrClients   map[string]lanternv1.RuntimeManagerClient
 }
 
 // schedulerTokenCreds attaches the shared service token to every outbound gRPC
-// call as x-lantern-service-token metadata, matching the runtime-scheduler's
+// call as x-pal-service-token metadata, matching the runtime-scheduler's
 // UnaryServiceAuthInterceptor expectation. When the token is empty nothing is
 // attached (dev pass-through — the startup guard on the scheduler side aborts
 // in prod when the token is unset).
@@ -197,9 +197,9 @@ func (c schedulerTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) 
 func (c schedulerTokenCreds) RequireTransportSecurity() bool { return false }
 
 // NewGRPCSchedulerClient dials the scheduler service. serviceToken, when
-// non-empty, is attached as x-lantern-service-token on every RPC so the
+// non-empty, is attached as x-pal-service-token on every RPC so the
 // scheduler's service-auth interceptor accepts the call. Read it from
-// LANTERN_GRPC_SERVICE_TOKEN at the call site.
+// PAL_GRPC_SERVICE_TOKEN at the call site.
 func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grpcSchedulerClient, error) {
 	mgrCreds, err := ManagerTransportCreds(IsProd())
 	if err != nil {
@@ -232,8 +232,8 @@ func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grp
 // runtime-manager. The manager forces mTLS in prod (it verifies client certs
 // against its CA), so:
 //
-//   - LANTERN_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
-//     that CA; LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
+//   - PAL_RUNTIME_MANAGER_TLS_CA set → TLS, verifying the manager against
+//     that CA; PAL_RUNTIME_MANAGER_TLS_CERT/KEY (both or neither) add the
 //     client certificate.
 //   - unset in dev → insecure (plaintext), so `make dev` works.
 //   - unset in prod, client cert missing in prod, half-set cert/key, or an
@@ -243,24 +243,24 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
 	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
-		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
+		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH PAL_RUNTIME_MANAGER_TLS_CERT and PAL_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}
 	if caPath == "" {
 		if isProd {
-			return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set LANTERN_RUNTIME_MANAGER_TLS_CA plus LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
+			return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA is unset — the runtime-manager requires mTLS in production; set PAL_RUNTIME_MANAGER_TLS_CA plus PAL_RUNTIME_MANAGER_TLS_CERT/KEY (client cert signed by the manager CA)")
 		}
 		return insecure.NewCredentials(), nil
 	}
 	if isProd && certPath == "" {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CERT/KEY are unset — the runtime-manager verifies client certificates in production; set both")
 	}
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
-		return nil, fmt.Errorf("read LANTERN_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
+		return nil, fmt.Errorf("read PAL_RUNTIME_MANAGER_TLS_CA %s: %w", caPath, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("LANTERN_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
+		return nil, fmt.Errorf("PAL_RUNTIME_MANAGER_TLS_CA %s contains no PEM certificates", caPath)
 	}
 	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	if certPath != "" {
@@ -275,7 +275,7 @@ func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error
 
 // ManagerDialOptions returns the dial options every runtime-manager client in
 // the control-plane must use: ManagerTransportCreds + the shared service token
-// (LANTERN_GRPC_SERVICE_TOKEN), which the manager requires when it is set.
+// (PAL_GRPC_SERVICE_TOKEN), which the manager requires when it is set.
 func ManagerDialOptions(serviceToken string) ([]grpc.DialOption, error) {
 	creds, err := ManagerTransportCreds(IsProd())
 	if err != nil {
@@ -302,7 +302,7 @@ func withTenant(ctx context.Context, tenantID string) context.Context {
 // resolveManagerAddr maps a node name to a runtime-manager gRPC address.
 // Resolution order:
 //  1. LANTERN_NODE_ADDR_<node> (with dots/dashes replaced by underscores)
-//  2. LANTERN_DEFAULT_MANAGER_ADDR
+//  2. PAL_DEFAULT_MANAGER_ADDR
 //  3. node + ":50054" (the runtime-manager default port)
 func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
 	if node == "" {
@@ -416,7 +416,7 @@ func (c *grpcSchedulerClient) ExecStream(ctx context.Context, node, vmID, comman
 	// Dial the manager on the VM's OWN node — a workload placed on node-B is
 	// unreachable from node-A's manager, so a hardcoded default would misroute
 	// every exec in a multi-node deployment. resolveManagerAddr falls back to
-	// LANTERN_DEFAULT_MANAGER_ADDR when node is "" or has no explicit override,
+	// PAL_DEFAULT_MANAGER_ADDR when node is "" or has no explicit override,
 	// which keeps single-node dev working.
 	mgr, err := c.managerClient(node)
 	if err != nil {
@@ -1272,7 +1272,7 @@ func (h *RuntimeHandler) TerminateSessionVM(ctx context.Context, tenantID, sessi
 }
 
 // RunSessionVMIdleSweep terminates session VMs whose last_used_at is older
-// than LANTERN_SESSION_VM_IDLE_TTL (default 30m). Runs until ctx is cancelled.
+// than PAL_SESSION_VM_IDLE_TTL (default 30m). Runs until ctx is cancelled.
 // Start it as a goroutine alongside the other background loops in main.go.
 func RunSessionVMIdleSweep(ctx context.Context, h *RuntimeHandler, logger *zap.Logger) {
 	ttl := 30 * time.Minute
@@ -1385,7 +1385,7 @@ func (h *RuntimeHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter =
 // RuntimeReportHandler so LiveMetrics can surface per-VM counters. nil-safe.
 func (h *RuntimeHandler) SetMetricsStore(s vmMetricsStore) { h.metricsStore = s }
 
-// NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
+// NewRuntimeHandler constructs a RuntimeHandler. If PAL_SCHEDULER_GRPC_ADDR
 // is set the real gRPC client is dialed; otherwise the stub is used so a
 // solo control-plane stays exercisable.
 func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
@@ -1407,7 +1407,7 @@ func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
 			h.scheduler = c
 		}
 	} else {
-		logger.Info("runtime scheduler: stub client (set LANTERN_SCHEDULER_GRPC_ADDR to wire real gRPC)")
+		logger.Info("runtime scheduler: stub client (set PAL_SCHEDULER_GRPC_ADDR to wire real gRPC)")
 		h.scheduler = &stubSchedulerClient{logger: logger.Named("scheduler_stub")}
 	}
 	// State reconciler: the scheduler is authoritative for live VM state
@@ -1625,7 +1625,7 @@ type scheduleResponse struct {
 	Az        string    `json:"az"`
 	CreatedAt time.Time `json:"createdAt"`
 	// Stub is true when no real scheduler is wired
-	// (LANTERN_SCHEDULER_GRPC_ADDR unset) and this vmId was SYNTHESIZED —
+	// (PAL_SCHEDULER_GRPC_ADDR unset) and this vmId was SYNTHESIZED —
 	// nothing was spawned and no scheduler ever saw it. Without this flag a
 	// stubbed schedule is indistinguishable from a real one at the API and
 	// CLI, which turns a misconfiguration into silent data loss. The prod
@@ -2025,7 +2025,7 @@ func redactSpecJSON(raw []byte) []byte {
 
 // stubScheduleWarning is returned verbatim to API clients so the CLI and
 // dashboard can surface it without duplicating the wording.
-const stubScheduleWarning = "no scheduler wired (LANTERN_SCHEDULER_GRPC_ADDR unset): " +
+const stubScheduleWarning = "no scheduler wired (PAL_SCHEDULER_GRPC_ADDR unset): " +
 	"this vmId was synthesized and NO workload was spawned"
 
 // schedulerIsStub reports whether the handler is running against the
@@ -2840,7 +2840,7 @@ const (
 //     unscoped keys — they must not gain write or admin just by omission).
 //   - Role "member" → allowed for runtime:read only; denied for write/admin.
 //   - Any other unrecognised role → denied (fail-closed; not even read).
-func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
+func authorizeRuntimeScope(claims *PalClaims, required string) bool {
 	switch claims.Role {
 	case "owner", "admin":
 		return true
@@ -2882,7 +2882,7 @@ func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
 //
 // On denial for write/admin scopes, an audit event is also written so that
 // access-denial patterns are visible in the audit log.
-func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *LanternClaims, required string) bool {
+func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *PalClaims, required string) bool {
 	if authorizeRuntimeScope(claims, required) {
 		return true
 	}

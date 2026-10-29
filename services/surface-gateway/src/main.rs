@@ -259,7 +259,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
     }
 }
 
-/// Returns true when `LANTERN_ENV` indicates a production-like environment.
+/// Returns true when `PAL_ENV` indicates a production-like environment.
 /// Mirrors the same helper in services/harness/src/tls.rs and
 /// services/gateway/src/tls.rs — one function per binary so crates stay
 /// self-contained.

@@ -298,7 +298,7 @@ func TestAuth_GetMe_InvalidToken(t *testing.T) {
 func mintExpiredToken(t *testing.T, tenantID, userID, role string) string {
 	t.Helper()
 	past := time.Now().Add(-2 * time.Hour)
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(past.Add(-time.Hour)),
@@ -320,7 +320,7 @@ func mintExpiredToken(t *testing.T, tenantID, userID, role string) string {
 // signature is actually verified (a forged token under a different key fails).
 func mintTokenWithSecret(t *testing.T, tenantID, userID, role, secret string) string {
 	t.Helper()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

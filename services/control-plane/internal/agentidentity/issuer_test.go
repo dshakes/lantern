@@ -190,7 +190,7 @@ func TestVerify_WrongTyp(t *testing.T) {
 	}
 }
 
-// TestVerify_FallbackSecret verifies that when LANTERN_AGENT_IDENTITY_SECRET
+// TestVerify_FallbackSecret verifies that when PAL_AGENT_IDENTITY_SECRET
 // is unset, the issuer falls back to the provided secret and tokens verify
 // correctly against it.
 func TestVerify_FallbackSecret(t *testing.T) {

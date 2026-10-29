@@ -29,7 +29,7 @@ import (
 func mintTestJWT(tenantID, role string) (string, error) {
 	secret := []byte(GetJWTSecret())
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "test-user-id",
 			IssuedAt:  jwt.NewNumericDate(now),

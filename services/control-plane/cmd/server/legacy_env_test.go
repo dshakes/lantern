@@ -21,9 +21,9 @@ func TestLegacyEnvOnly_BridgeServesPALReads(t *testing.T) {
 	palenv.Bridge()
 
 	if !handlers.IsProd() {
-		t.Error("LANTERN_ENV=production alone: IsProd() = false, want true")
+		t.Error("PAL_ENV=production alone: IsProd() = false, want true")
 	}
 	if got := envDurationMain("PAL_PG_MAX_CONN_LIFETIME", time.Hour); got != 7*time.Minute {
-		t.Errorf("LANTERN_PG_MAX_CONN_LIFETIME=7m alone: got %v, want 7m", got)
+		t.Errorf("PAL_PG_MAX_CONN_LIFETIME=7m alone: got %v, want 7m", got)
 	}
 }

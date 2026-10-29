@@ -35,7 +35,7 @@ import (
 func mintSvcToken(t *testing.T, tenantID string, scopes []string) string {
 	t.Helper()
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "svc-key-id",
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -117,7 +117,7 @@ func TestAuthorizeRuntimeScope(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &LanternClaims{Role: tc.role, Scopes: tc.scopes}
+			c := &PalClaims{Role: tc.role, Scopes: tc.scopes}
 			got := authorizeRuntimeScope(c, tc.required)
 			if got != tc.want {
 				t.Errorf("authorizeRuntimeScope(role=%q scopes=%v required=%q) = %v, want %v",
@@ -471,7 +471,7 @@ func TestListVMsRBAC_UnknownRoleDenied(t *testing.T) {
 	// Mint a token with an unknown role directly (not via mintTestToken which
 	// accepts any string but let's use mintSvcToken-style to keep the JWT valid).
 	now := time.Now()
-	claims := LanternClaims{
+	claims := PalClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "analyst-key",
 			IssuedAt:  jwt.NewNumericDate(now),

@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! POST {LANTERN_CONTROL_PLANE_URL}/v1/runtime/report
-//! X-Lantern-Runtime-Token: {LANTERN_RUNTIME_SECRET_TOKEN}
+//! X-Pal-Runtime-Token: {PAL_RUNTIME_SECRET_TOKEN}   (also sent as X-Lantern-Runtime-Token)
 //! Content-Type: application/json
 //! ```
 //!
