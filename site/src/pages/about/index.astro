@@ -1,0 +1,61 @@
+---
+import Page from '../../layouts/Page.astro';
+import Glyph from '../../components/Glyph.astro';
+import Logo from '../../components/Logo.astro';
+import { PROMISE } from '../../data/promise';
+import { u, GH } from '../../data/site';
+---
+<Page path="about/" title="About pal — a friend, a moment, a layer" description="Why pal is called pal: a friend who acts for you, पल (a moment), and the Personal Agentic Layer. The story from Lantern to pal, and the promise we hold ourselves to.">
+  <section class="hero" aria-labelledby="hero-h">
+    <div class="wrap">
+      <Logo size={40} />
+      <p class="eyebrow" style="margin-top:40px">About</p>
+      <h1 id="hero-h" class="display" style="max-width:14ch">A friend. A moment. A layer.</h1>
+    </div>
+  </section>
+  <section class="section rule" aria-labelledby="story-h">
+    <div class="wrap split" style="align-items:start">
+      <h2 id="story-h" class="h2">From lantern to pal.</h2>
+      <div class="prose">
+        <p>We started as Lantern: a flame you could carry because glass kept it contained.</p>
+        <p>As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention.</p>
+        <p>पल means “a moment.” A pal is someone who shows up in it.</p>
+      </div>
+    </div>
+  </section>
+  <section class="section band" aria-labelledby="mean-h">
+    <div class="wrap">
+      <div class="section-head"><h2 id="mean-h" class="h2">Three meanings, one name.</h2></div>
+      <div class="meaning">
+        <div class="card"><p class="word">pal<small>a friend</small></p><p style="margin-top:16px">Someone who acts for you, and checks with you before anything that matters.</p></div>
+        <div class="card"><p class="word" lang="hi">पल<small>a moment (Hindi)</small></p><p style="margin-top:16px">Your day is made of moments. pal brings you the few that need you and handles the rest.</p></div>
+        <div class="card"><p class="word">P·A·L<small>Personal Agentic Layer</small></p><p style="margin-top:16px">The layer underneath: the runtime that keeps agents durable, contained and yours.</p></div>
+      </div>
+    </div>
+  </section>
+  <section class="section" aria-labelledby="promise-h">
+    <div class="wrap">
+      <div class="section-head"><p class="eyebrow">The PAL Promise</p><h2 id="promise-h" class="h2" style="margin-top:12px">What we hold ourselves to.</h2></div>
+      <ul class="grid-4">
+        {PROMISE.map((p) => (<li class="card"><Glyph kind={p.kind} /><h3 class="h3">{p.title}</h3><p>{p.body}</p><a class="arrow-link more" href={u(p.href)}>How it works</a></li>))}
+      </ul>
+    </div>
+  </section>
+  <section class="section rule" aria-labelledby="how-h">
+    <div class="wrap split" style="align-items:start">
+      <h2 id="how-h" class="h2">How we build it.</h2>
+      <ul class="checklist" style="margin-top:0">
+        <li><span><b>Calm over clever.</b> pal should feel like the most reliable friend you have, not the funniest.</span></li>
+        <li><span><b>A prompt is advice; a gate is a guarantee.</b> Anything that protects you is enforced in code, before the send.</span></li>
+        <li><span><b>Honest by default.</b> No invented customers, logos or numbers. Every claim on this site maps to code you can read.</span></li>
+        <li><span><b>Yours to run.</b> Apache-2.0, on your Mac or in your cloud.</span></li>
+      </ul>
+    </div>
+  </section>
+  <section class="section band closer" aria-labelledby="close-h">
+    <div class="wrap">
+      <h2 id="close-h" class="h2">Say hello to pal.</h2>
+      <div class="actions"><a class="btn btn-primary" href={u('pal/')}>Meet pal</a><a class="btn btn-ghost" href={u('runtime/')}>PAL Runtime</a><a class="btn btn-ghost" href={GH}>GitHub</a></div>
+    </div>
+  </section>
+</Page>

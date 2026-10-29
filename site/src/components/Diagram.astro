@@ -1,0 +1,22 @@
+---
+// One diagram, four files: landscape + portrait, dark + light (public/diagrams/).
+// Theme follows data-theme (CSS hides the other pair); <source media> swaps in
+// the portrait drawing on narrow screens. Hidden lazy images never download.
+import { u } from '../data/site';
+interface Props { name: string; alt: string; caption?: string; eager?: boolean }
+const { name, alt, caption, eager = false } = Astro.props;
+const src = (t: string, p = '') => u(`diagrams/${name}${p}-${t}.svg`);
+const loading = eager ? 'eager' : 'lazy';
+---
+<figure class="diagram">
+  {['dark', 'light'].map((t) => (
+    <picture class={`d-${t}`}>
+      <source media="(max-width: 640px)" srcset={src(t, '-portrait')} />
+      <img src={src(t)} alt={alt} width="960" loading={loading} decoding="async" />
+    </picture>
+  ))}
+  {caption && <figcaption set:html={caption} />}
+</figure>
+<style>
+  @media (max-width: 640px) { img { max-width: 420px; margin: 0 auto; } }
+</style>
