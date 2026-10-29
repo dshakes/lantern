@@ -52,13 +52,13 @@ jobs:
             context: .
             file: services/runtime-scheduler/Dockerfile
           - image: gateway
-            context: services/gateway
+            context: .
             file: services/gateway/Dockerfile
           - image: surface-gateway
-            context: services/surface-gateway
+            context: .
             file: services/surface-gateway/Dockerfile
           - image: model-router
-            context: services/model-router
+            context: .
             file: services/model-router/Dockerfile
           - image: runtime-manager
             context: .

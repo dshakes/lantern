@@ -28,7 +28,7 @@ func otelEnabled() bool {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
 		return true
 	}
-	return os.Getenv("LANTERN_OTEL_ENABLED") == "1"
+	return os.Getenv("PAL_OTEL_ENABLED") == "1"
 }
 
 // InitTracer configures the global OTel TracerProvider and TextMapPropagator.

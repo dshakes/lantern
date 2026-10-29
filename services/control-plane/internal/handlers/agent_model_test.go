@@ -46,7 +46,7 @@ func anthropicStatusResponse(code int) func(*http.Request) (*http.Response, erro
 }
 
 func TestPreferModel(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	type cand = struct{ Provider, Model string }
 	var (
 		sonnet = cand{"anthropic", sonnetModel()}
@@ -104,7 +104,7 @@ func TestPreferModel(t *testing.T) {
 }
 
 func TestCallLLMWithFailover_PreferredModel(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	msgs := []map[string]any{{"role": "user", "content": "hi"}}
 	const tenant = "00000000-0000-0000-0000-000000000001"
 
@@ -242,7 +242,7 @@ func TestStreamWithFailover_PreferredModel(t *testing.T) {
 // agents.model is a cheap capability runs on that model, and the model that
 // answered is recorded on the run's step_completed journal row.
 func TestInlineRun_HonoursAgentModel(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
 	cheap := "reasoning-small"
 	tests := []struct {
@@ -356,7 +356,7 @@ func TestAgentModel_PatchAndGet(t *testing.T) {
 // TestWorkflowAIStep_AgentModel: an ai-step with no capability ("auto") runs on
 // the agent's model; a node's explicit capability still wins.
 func TestWorkflowAIStep_AgentModel(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
 	tests := []struct {
 		name, nodeCapability, want string
@@ -486,7 +486,7 @@ func TestTemplateApply_PersistsPromptLabelsModel(t *testing.T) {
 // TestInlineRun_BackfillPersistsPromptLabelsModel is the regression test for
 // the executor's lazy back-fill UPDATE, which failed the same way.
 func TestInlineRun_BackfillPersistsPromptLabelsModel(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
 	h, srv := newChaosHandler(t)
 	tpl := templates["lantern-guide"]

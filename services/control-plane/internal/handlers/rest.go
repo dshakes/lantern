@@ -1874,12 +1874,12 @@ func deliverViaBridge(channel, tenantID, jid, message string) error {
 	var base string
 	switch channel {
 	case "imessage":
-		base = os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+		base = os.Getenv("PAL_IMESSAGE_BRIDGE_URL")
 		if base == "" {
 			base = "http://localhost:3200"
 		}
 	default:
-		base = os.Getenv("LANTERN_BRIDGE_URL")
+		base = os.Getenv("PAL_BRIDGE_URL")
 		if base == "" {
 			base = "http://localhost:3100"
 		}
@@ -1896,9 +1896,9 @@ func deliverViaBridge(channel, tenantID, jid, message string) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	tokenEnv := "LANTERN_BRIDGE_TOKEN"
+	tokenEnv := "PAL_BRIDGE_TOKEN"
 	if channel == "imessage" {
-		tokenEnv = "LANTERN_IMESSAGE_BRIDGE_TOKEN"
+		tokenEnv = "PAL_IMESSAGE_BRIDGE_TOKEN"
 	}
 	if tok := os.Getenv(tokenEnv); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -1919,7 +1919,7 @@ func deliverViaBridge(channel, tenantID, jid, message string) error {
 // deliverWhatsAppViaBridge — back-compat wrapper. Existing call sites
 // (if any remain) hit this; new code uses deliverViaBridge(channel, ...).
 func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
-	base := os.Getenv("LANTERN_BRIDGE_URL")
+	base := os.Getenv("PAL_BRIDGE_URL")
 	if base == "" {
 		base = "http://localhost:3100"
 	}
@@ -1934,7 +1934,7 @@ func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if tok := os.Getenv("LANTERN_BRIDGE_TOKEN"); tok != "" {
+	if tok := os.Getenv("PAL_BRIDGE_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -1966,16 +1966,16 @@ func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
 // dispatcher (no RESTHandler in scope) can call it. Name kept for the
 // existing call sites; behavior is now both-bridges.
 func deliverWhatsAppSelfNote(tenantID, message string) error {
-	waBase := os.Getenv("LANTERN_BRIDGE_URL")
+	waBase := os.Getenv("PAL_BRIDGE_URL")
 	if waBase == "" {
 		waBase = "http://localhost:3100"
 	}
-	imBase := os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+	imBase := os.Getenv("PAL_IMESSAGE_BRIDGE_URL")
 	if imBase == "" {
 		imBase = "http://localhost:3200"
 	}
-	waErr := postBridgeSendSelf(waBase, os.Getenv("LANTERN_BRIDGE_TOKEN"), tenantID, message)
-	imErr := postBridgeSendSelf(imBase, os.Getenv("LANTERN_IMESSAGE_BRIDGE_TOKEN"), tenantID, message)
+	waErr := postBridgeSendSelf(waBase, os.Getenv("PAL_BRIDGE_TOKEN"), tenantID, message)
+	imErr := postBridgeSendSelf(imBase, os.Getenv("PAL_IMESSAGE_BRIDGE_TOKEN"), tenantID, message)
 	if waErr != nil && imErr != nil {
 		return fmt.Errorf("both bridges failed — whatsapp: %v; imessage: %v", waErr, imErr)
 	}
@@ -2978,14 +2978,14 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 // A method (not a free function) because calibration needs the tenant pool +
 // agent name to build the per-step regret lookup closure.
 func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.ConfidenceGate {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_GATE"))) {
 	case "1", "true", "on", "yes":
 		// enabled — fall through
 	default:
 		return nil
 	}
 	threshold := 0.75
-	if s := strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE_THRESHOLD")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_GATE_THRESHOLD")); s != "" {
 		if f, err := strconv.ParseFloat(s, 64); err == nil && f > 0 && f <= 1 {
 			threshold = f
 		}
@@ -2996,9 +2996,9 @@ func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.
 	// scraping its self-reported number; it falls back to the heuristic when no
 	// LLM sampler is available, so it is always safe to enable.
 	var est workflow.ConfidenceEstimator = workflow.VerbalizationHeuristic{DefaultConfidence: 0.9}
-	if e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_ESTIMATOR"))); e == "self-consistency" || e == "self_consistency" || e == "sampling" {
+	if e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_ESTIMATOR"))); e == "self-consistency" || e == "self_consistency" || e == "sampling" {
 		samples := 5
-		if s := strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_SAMPLES")); s != "" {
+		if s := strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_SAMPLES")); s != "" {
 			if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 9 {
 				samples = n
 			}

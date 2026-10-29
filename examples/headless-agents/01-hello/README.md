@@ -1,6 +1,6 @@
 # Demo 01 — hello
 
-Smallest possible Lantern headless agent. **One Python script** that echoes
+Smallest possible PAL Runtime headless agent. **One Python script** that echoes
 its input + emits a structured log line. Exits 0.
 
 **Isolation class:** `trusted` — Lantern-authored code, no untrusted package

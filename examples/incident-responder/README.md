@@ -14,7 +14,7 @@ Files: `agent.yaml`, `workflow.json`, `trigger-sentry.json`, `trigger-pagerduty.
 make test-e2e-examples        # covers approve, deny, replay, bad signature
 ```
 
-(Manual setup is the same as in `../pr-triage-webhook/README.md`, with `LANTERN_CONNECTOR_BASEURL_{SENTRY,PAGERDUTY,SLACK}`.)
+(Manual setup is the same as in `../pr-triage-webhook/README.md`, with `PAL_CONNECTOR_BASEURL_{SENTRY,PAGERDUTY,SLACK}`.)
 
 ## Try it for real
 

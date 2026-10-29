@@ -35,7 +35,7 @@ import (
 // browserSkillEnabled reports whether the browser-as-skill feature is enabled.
 // Default OFF — set LANTERN_BROWSER_SKILL=on/1/true to enable.
 func browserSkillEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_BROWSER_SKILL")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_BROWSER_SKILL")))
 	return v == "on" || v == "1" || v == "true"
 }
 

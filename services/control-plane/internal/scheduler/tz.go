@@ -20,7 +20,7 @@ func ResolveLocation(tz string) *time.Location {
 		zap.L().Warn("scheduler.ResolveLocation: invalid timezone, falling back",
 			zap.String("tz", tz), zap.Error(err))
 	}
-	if env := os.Getenv("LANTERN_DEFAULT_TIMEZONE"); env != "" {
+	if env := os.Getenv("PAL_DEFAULT_TIMEZONE"); env != "" {
 		loc, err := time.LoadLocation(env)
 		if err == nil {
 			return loc

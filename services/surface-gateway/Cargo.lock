@@ -986,6 +986,7 @@ dependencies = [
  "hex",
  "hmac",
  "http",
+ "pal_env",
  "prost",
  "prost-types",
  "rand",
@@ -1200,6 +1201,10 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "pal_env"
+version = "0.1.0"
 
 [[package]]
 name = "parking_lot"

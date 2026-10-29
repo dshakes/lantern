@@ -72,7 +72,7 @@ const DENY_AUDIT_BURST: f64 = 20.0;
 const DENY_AUDIT_PER_SEC: f64 = 5.0;
 /// Opt-in for injecting credentials into plain-HTTP requests (cleartext on
 /// the wire). Even then only to port 80.
-pub const ENV_PLAIN_INJECT: &str = "LANTERN_EGRESS_PLAIN_INJECT";
+pub const ENV_PLAIN_INJECT: &str = "PAL_EGRESS_PLAIN_INJECT";
 
 // ---------------------------------------------------------------------------
 // Mode
@@ -89,7 +89,7 @@ pub enum EgressMode {
 }
 
 impl EgressMode {
-    pub const ENV: &'static str = "LANTERN_EGRESS_MODE";
+    pub const ENV: &'static str = "PAL_EGRESS_MODE";
 
     /// `broker` (case-insensitive) → Broker; anything else → Guest.
     pub fn parse(v: Option<&str>) -> Self {
@@ -100,7 +100,7 @@ impl EgressMode {
     }
 
     pub fn from_env() -> Self {
-        let raw = std::env::var(Self::ENV).ok();
+        let raw = pal_env::var(Self::ENV).ok();
         let mode = Self::parse(raw.as_deref());
         if mode == EgressMode::Guest
             && raw
@@ -203,7 +203,7 @@ impl Policy {
     /// Ports from `LANTERN_EGRESS_ALLOWED_PORTS` (comma list), default `[443]`
     /// — same knob and default as the in-guest proxy.
     pub fn from_env(rules: Vec<EgressRule>) -> Self {
-        let ports = match std::env::var("LANTERN_EGRESS_ALLOWED_PORTS") {
+        let ports = match pal_env::var("PAL_EGRESS_ALLOWED_PORTS") {
             Ok(raw) if !raw.trim().is_empty() => raw
                 .split(',')
                 .filter_map(|s| s.trim().parse().ok())
@@ -679,7 +679,7 @@ impl Broker {
             conns: Arc::new(tokio::sync::Semaphore::new(MAX_CONNS_PER_VM)),
             handshake_timeout: HANDSHAKE_TIMEOUT,
             idle_timeout: IDLE_TIMEOUT,
-            plain_inject: std::env::var(ENV_PLAIN_INJECT).is_ok_and(|v| v.trim() == "1"),
+            plain_inject: pal_env::var(ENV_PLAIN_INJECT).is_ok_and(|v| v.trim() == "1"),
             deny_bucket: Mutex::new((DENY_AUDIT_BURST, Instant::now())),
             dlp: None,
             #[cfg(test)]

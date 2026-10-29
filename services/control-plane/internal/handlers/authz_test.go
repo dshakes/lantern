@@ -122,7 +122,7 @@ func TestWithScope_JWT_AlwaysPasses(t *testing.T) {
 
 	for _, enforce := range []string{"", "0", "1"} {
 		t.Run("enforce="+enforce, func(t *testing.T) {
-			t.Setenv("LANTERN_AUTHZ_ENFORCE", enforce)
+			t.Setenv("PAL_AUTHZ_ENFORCE", enforce)
 
 			reached := false
 			handler := auth.WithScope(ScopeAgentsWrite, func(w http.ResponseWriter, _ *http.Request) {
@@ -200,7 +200,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement OFF (default): missing scope is logged and request is allowed.
 	t.Run("enforce=off/missing-scope-allowed", func(t *testing.T) {
 		key := insertKey([]string{ScopeRunsRead}) // lacks agents:write
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "0")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "0")
 		reached, code := makeRequest(key)
 		if code != http.StatusOK || !reached {
 			t.Errorf("enforce=off missing scope: want 200+reached; got %d reached=%v", code, reached)
@@ -210,7 +210,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement ON: missing scope → 403.
 	t.Run("enforce=on/missing-scope-forbidden", func(t *testing.T) {
 		key := insertKey([]string{ScopeRunsRead}) // lacks agents:write
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 		reached, code := makeRequest(key)
 		if code != http.StatusForbidden {
 			t.Errorf("enforce=on missing scope: want 403; got %d", code)
@@ -223,7 +223,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement ON: correct scope → 200.
 	t.Run("enforce=on/correct-scope-allowed", func(t *testing.T) {
 		key := insertKey([]string{ScopeAgentsWrite})
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 		reached, code := makeRequest(key)
 		if code != http.StatusOK || !reached {
 			t.Errorf("enforce=on correct scope: want 200+reached; got %d reached=%v", code, reached)
@@ -233,7 +233,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement ON: admin scope implies everything → 200.
 	t.Run("enforce=on/admin-scope-allowed", func(t *testing.T) {
 		key := insertKey([]string{ScopeAdmin})
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 		reached, code := makeRequest(key)
 		if code != http.StatusOK || !reached {
 			t.Errorf("enforce=on admin scope: want 200+reached; got %d reached=%v", code, reached)
@@ -243,7 +243,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement ON: coarse "write" scope implies agents:write → 200 (backward-compat).
 	t.Run("enforce=on/coarse-write-allowed", func(t *testing.T) {
 		key := insertKey([]string{ScopeWrite})
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 		reached, code := makeRequest(key)
 		if code != http.StatusOK || !reached {
 			t.Errorf("enforce=on coarse write: want 200+reached; got %d reached=%v", code, reached)
@@ -253,7 +253,7 @@ func TestWithScope_APIKey_Enforcement(t *testing.T) {
 	// enforcement ON: empty scopes list = unrestricted legacy key → always 200.
 	t.Run("enforce=on/empty-scopes-unrestricted", func(t *testing.T) {
 		key := insertKey([]string{}) // empty → unrestricted
-		t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+		t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 		reached, code := makeRequest(key)
 		if code != http.StatusOK || !reached {
 			t.Errorf("enforce=on empty scopes: want 200+reached; got %d reached=%v", code, reached)

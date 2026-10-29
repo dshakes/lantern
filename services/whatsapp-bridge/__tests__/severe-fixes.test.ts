@@ -29,7 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   process.chdir(prevCwd);
   rmSync(tmpRoot, { recursive: true, force: true });
-  delete process.env.LANTERN_WA_OWNER_JID;
+  delete process.env.PAL_WA_OWNER_JID;
 });
 
 function makeSession() {
@@ -165,7 +165,7 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
   // Group replies are OFF by default (owner, 2026-08-24); the monitoring and
   // wish rules below only apply once LANTERN_GROUP_REPLIES=1 re-enables them.
   it("group replies are off by default, even for a monitored, targeted group", () => {
-    delete process.env.LANTERN_GROUP_REPLIES;
+    delete process.env.PAL_GROUP_REPLIES;
     const sess = makeSession();
     sess.monitorGroup(group);
     const s = sess as unknown as Gate;
@@ -173,18 +173,18 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
   });
 
   it("monitored group requires owner-targeting", () => {
-    process.env.LANTERN_GROUP_REPLIES = "1";
+    process.env.PAL_GROUP_REPLIES = "1";
     const sess = makeSession();
     sess.monitorGroup(group);
     const s = sess as unknown as Gate;
     expect(s.shouldAutoReplyToInbound({ jid: group, text: "random chatter", isGroup: true, targetsOwner: false })).toBe(false);
     expect(s.shouldAutoReplyToInbound({ jid: group, text: "yo @you", isGroup: true, targetsOwner: true })).toBe(true);
-    delete process.env.LANTERN_GROUP_REPLIES;
+    delete process.env.PAL_GROUP_REPLIES;
   });
 
   it("a celebratory wish naming the owner bypasses monitoring + targeting", () => {
-    process.env.LANTERN_OWNER_NAME = "Ada";
-    process.env.LANTERN_GROUP_REPLIES = "1";
+    process.env.PAL_OWNER_NAME = "Ada";
+    process.env.PAL_GROUP_REPLIES = "1";
     const s = makeSession() as unknown as Gate;
     // unmonitored group, not @mention-targeted, but it's a wish naming the owner
     expect(
@@ -195,12 +195,12 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
         targetsOwner: false,
       }),
     ).toBe(true);
-    delete process.env.LANTERN_OWNER_NAME;
-    delete process.env.LANTERN_GROUP_REPLIES;
+    delete process.env.PAL_OWNER_NAME;
+    delete process.env.PAL_GROUP_REPLIES;
   });
 
   it("owner channel is excluded (handled elsewhere)", () => {
-    process.env.LANTERN_WA_OWNER_JID = "15551234567";
+    process.env.PAL_WA_OWNER_JID = "15551234567";
     const s = makeSession() as unknown as Gate;
     expect(s.shouldAutoReplyToInbound({ jid: dm, text: "hi", isGroup: false, targetsOwner: false })).toBe(false);
   });
@@ -245,7 +245,7 @@ describe("notifyOwnerOfDrop — deduped operational heads-up", () => {
   });
 
   it("never pages about the owner's own channel", () => {
-    process.env.LANTERN_WA_OWNER_JID = "15551234567";
+    process.env.PAL_WA_OWNER_JID = "15551234567";
     const s = makeSession();
     const spy = vi.fn().mockResolvedValue(undefined);
     (s as unknown as { confirmToSelf: unknown }).confirmToSelf = spy;

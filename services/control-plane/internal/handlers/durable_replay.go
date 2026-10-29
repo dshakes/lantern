@@ -48,7 +48,7 @@ import (
 // runLeaseTTL is the duration of a run lease.  A renewal goroutine bumps
 // expires_at every leaseTTL/3 while execution is in flight.
 func runLeaseTTL() time.Duration {
-	if v := os.Getenv("LANTERN_RUN_LEASE_TTL"); v != "" {
+	if v := os.Getenv("PAL_RUN_LEASE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
@@ -276,7 +276,7 @@ const (
 	// are kept. Default: 30 days. Receipts older than this cannot prevent
 	// re-delivery, but runs older than the LLM step cache TTL won't be
 	// re-driven anyway.
-	envSideEffectRetentionDays     = "LANTERN_SIDE_EFFECT_RETENTION_DAYS"
+	envSideEffectRetentionDays     = "PAL_SIDE_EFFECT_RETENTION_DAYS"
 	defaultSideEffectRetentionDays = 30
 
 	// sideEffectRetentionSweepInterval is how often the janitor runs.

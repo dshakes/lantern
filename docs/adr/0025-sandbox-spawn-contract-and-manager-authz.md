@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-23
-- **Deciders:** Lantern runtime, security
+- **Deciders:** PAL Runtime runtime, security
 - **Tags:** runtime, security, trust-boundary, multi-tenant, snapshots
 
 ## Context
@@ -12,7 +12,7 @@ and manager ↔ caller boundaries (invariants #5, #7, #8):
 
 1. **The guest never learns what to run.** `build_boot_args` passes only the
    VM id, TLS paths and caller env on the kernel cmdline. The workload command,
-   the egress rules and `LANTERN_WORKLOAD_UID` are never sent, so the harness's
+   the egress rules and `PAL_WORKLOAD_UID` are never sent, so the harness's
    secrets-socket peer auth and egress enforcement (P2-B7) have no inputs. Env values
    are also mangled: spaces and quotes are replaced with `_` because the
    cmdline is whitespace-split.
@@ -45,16 +45,16 @@ already attaches to every Firecracker VM (`certs.img`, mode 0600 inside):
 
 - `workload_cmd` = `AgentSpec.command ++ AgentSpec.args`; `env` = the spawn env
   after the manager's own injections; `egress_rules` = `AgentSpec.egress_rules`.
-- `workload_uid` comes from `LANTERN_WORKLOAD_UID_DEFAULT` on the manager (default
-  1000), and `workload_gid` from `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid).
-  The manager sets these values. A caller-supplied `LANTERN_WORKLOAD_UID` in the
+- `workload_uid` comes from `PAL_WORKLOAD_UID_DEFAULT` on the manager (default
+  1000), and `workload_gid` from `PAL_WORKLOAD_GID_DEFAULT` (default = uid).
+  The manager sets these values. A caller-supplied `PAL_WORKLOAD_UID` in the
   spec env is dropped, because a caller who could choose the uid that peer auth
   trusts would defeat the check.
 - JSON is the transport, so values arrive byte-exact. `version` lets the
   schema evolve: the harness rejects versions it does not know.
 - The kernel cmdline (`lantern.env.*`, `lantern.secret.*`) is **kept** for
   backward compatibility with harness builds that predate the file, and the
-  manager now also emits `lantern.env.LANTERN_WORKLOAD_UID`. When the harness
+  manager now also emits `lantern.env.PAL_WORKLOAD_UID`. When the harness
   finds `spawn.json`, it uses the file and ignores the cmdline env.
 
 ### 2. Manager per-call authz
@@ -67,10 +67,10 @@ A tonic interceptor on the `RuntimeManager` service:
   `RuntimeHarness`. Those methods keep their existing per-message binding (cert
   CN/SAN must equal the request's `vm_id`; Heartbeat/VendSecret/Report).
 - **A service token is required.** Callers must send `x-lantern-service-token`
-  equal to `LANTERN_GRPC_SERVICE_TOKEN`, compared in constant time. This is the
+  equal to `PAL_GRPC_SERVICE_TOKEN`, compared in constant time. This is the
   same token and header the control-plane, workflow-engine and scheduler use
   (invariant #7).
-- **Prod fails closed.** With `LANTERN_ENV` = prod/production/staging and the
+- **Prod fails closed.** With `PAL_ENV` = prod/production/staging and the
   token unset, the manager refuses to start. In dev an unset token logs a warning
   and calls are allowed, which matches the Go services.
 
@@ -185,9 +185,9 @@ and the cert drive. Resuming it as-is would run N forks as one VM.
    - adopts the new incarnation's tokens, held in the same shared state as
      `vm_id`, so every reader sees the live value:
      - `exec_token`: a typed `spawn.json` field that becomes
-       `LANTERN_HARNESS_EXEC_TOKEN`. The exec server's interceptor reads it per
+       `PAL_HARNESS_EXEC_TOKEN`. The exec server's interceptor reads it per
        call, so the previous token is rejected as soon as the swap lands.
-     - `LANTERN_AGENT_INSTANCE_TOKEN` from the new contract's `env`. The
+     - `PAL_AGENT_INSTANCE_TOKEN` from the new contract's `env`. The
        control plane mints this per fork child.
 
      If exec was authenticated and the new drive carries no exec token, the
@@ -216,32 +216,32 @@ could never authenticate.
 
 Caller env reaches the harness's own process environment (spawn.json `env`,
 `lantern.env.*` boot-args, container env). Before this change a caller could
-therefore set harness config, for example `LANTERN_ENV=dev` to turn off every
-prod fail-closed guard, or `LANTERN_EGRESS_FAIL_CLOSED` / `LANTERN_NO_PROXY`.
+therefore set harness config, for example `PAL_ENV=dev` to turn off every
+prod fail-closed guard, or `PAL_EGRESS_FAIL_CLOSED` / `PAL_NO_PROXY`.
 
 - **Manager** (`schedule` and `restore`, the single choke point for every
   backend): drops each caller `LANTERN_*` key except `CALLER_LANTERN_KEYS`
-  (`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN`,
-  `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`). It logs the dropped names, never
-  values, then stamps its own `LANTERN_ENV`, which it also writes as the typed
+  (`PAL_AGENT_INSTANCE_ID`, `PAL_AGENT_INSTANCE_TOKEN`,
+  `PAL_TRACE_PARENT`, `PAL_RESUME`). It logs the dropped names, never
+  values, then stamps its own `PAL_ENV`, which it also writes as the typed
   `spawn.json` field `lantern_env`. The order is sanitize first, then inject.
   After sanitizing, the manager also stamps the workload identity from the
-  request's authenticated typed fields: `LANTERN_TENANT_ID` from `tenant_id`,
-  and `LANTERN_AGENT_VERSION_ID` from `agent_version_id` (schedule only;
+  request's authenticated typed fields: `PAL_TENANT_ID` from `tenant_id`,
+  and `PAL_AGENT_VERSION_ID` from `agent_version_id` (schedule only;
   `RestoreRequest` has no such field). A forged caller value is replaced, and
   the real one is never stripped. Anything the manager adds after the choke
   point (trace parent, typed spawn.json fields) is likewise added after the
   sanitizer runs.
 - **Harness**: ignores `LANTERN_*` keys in the `spawn.json` `env` map unless
   they are allowlisted (`CALLER_LANTERN_KEYS` plus the manager-stamped identity
-  keys `LANTERN_TENANT_ID` / `LANTERN_AGENT_VERSION_ID`). `LANTERN_ENV` comes
+  keys `PAL_TENANT_ID` / `PAL_AGENT_VERSION_ID`). `PAL_ENV` comes
   from the typed field. From `lantern.env.*` boot-args it accepts only the
-  manager's own keys (`LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`,
-  `LANTERN_ENV`) plus that same allowlist. The two identity keys are also on
+  manager's own keys (`PAL_MANAGER_ADDR`, `PAL_WORKLOAD_UID`,
+  `PAL_ENV`) plus that same allowlist. The two identity keys are also on
   the supervisor's workload-visible list, because the workload SDK reads
-  `LANTERN_TENANT_ID`.
+  `PAL_TENANT_ID`.
 - Residual risk: an older manager that does not filter can still pass a caller
-  `lantern.env.LANTERN_ENV` through boot-args. Upgrade the manager.
+  `lantern.env.PAL_ENV` through boot-args. Upgrade the manager.
 
 ### Bare-mode fork of a running source fails closed
 
@@ -304,7 +304,7 @@ failed.
 ### Problem
 
 Prior to this addendum, `fork N` performed `N` full byte-copies of the guest
-memory file (`LANTERN_VM_MEM_GiB` × N GiB of I/O per fork call), because
+memory file (`PAL_VM_MEM_GiB` × N GiB of I/O per fork call), because
 `restore_after_tap` ran `plan_jailed_snapshot_staging` which puts both the
 vmstate and the mem artifact in the `copies` list. For N=100 forks on a 1 GiB
 VM this is 100 GiB of sequential writes before any guest boots.
@@ -380,9 +380,9 @@ the jail directories (the store directory was already cleaned up by
 - **Fallback is invisible to callers.** EXDEV, chmod failure, or an `fc://`
   URI silently reverts to the copy path. Per-fork error fields in
   `ForkResponse.Forks` report spawn failures, not staging path choice.
-- **`LANTERN_MAX_FORK_COUNT`** (default 100, ceiling 1000) controls the maximum
+- **`PAL_MAX_FORK_COUNT`** (default 100, ceiling 1000) controls the maximum
   forks per call. Quota is reserved all-or-nothing up front.
-- **`LANTERN_FORK_CONCURRENCY`** (default 16) bounds goroutine fan-out in the
+- **`PAL_FORK_CONCURRENCY`** (default 16) bounds goroutine fan-out in the
   scheduler so N=100 does not spawn 100 simultaneous restore goroutines.
 
 

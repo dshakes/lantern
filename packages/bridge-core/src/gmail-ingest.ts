@@ -58,7 +58,7 @@ export interface GmailPollState {
 const SEEN_CAP = 1000;
 
 export function gmailPollStatePath(): string {
-  return process.env.LANTERN_GMAIL_POLL_STATE || join(homedir(), ".lantern", "gmail-poll-state.json");
+  return process.env.PAL_GMAIL_POLL_STATE || join(homedir(), ".lantern", "gmail-poll-state.json");
 }
 
 export function loadPollState(path = gmailPollStatePath()): GmailPollState {

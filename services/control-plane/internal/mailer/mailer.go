@@ -48,14 +48,14 @@ const (
 
 // Driver returns the configured driver name (default "log").
 func Driver() string {
-	if d := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_MAILER"))); d != "" {
+	if d := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_MAILER"))); d != "" {
 		return d
 	}
 	return DriverLog
 }
 
 func from() string {
-	if f := os.Getenv("LANTERN_MAIL_FROM"); f != "" {
+	if f := os.Getenv("PAL_MAIL_FROM"); f != "" {
 		return f
 	}
 	return "Lantern <no-reply@localhost>"
@@ -68,17 +68,17 @@ func FromEnv(logger *zap.Logger, prod bool) (Mailer, error) {
 	case DriverLog:
 		return &LogMailer{Logger: logger, Redact: prod}, nil
 	case DriverSMTP:
-		addr := os.Getenv("LANTERN_SMTP_ADDR")
+		addr := os.Getenv("PAL_SMTP_ADDR")
 		if addr == "" {
 			return nil, fmt.Errorf("mailer: LANTERN_MAILER=smtp needs LANTERN_SMTP_ADDR (host:port)")
 		}
-		return &SMTPMailer{Addr: addr, User: os.Getenv("LANTERN_SMTP_USER"), Password: os.Getenv("LANTERN_SMTP_PASSWORD"), From: from()}, nil
+		return &SMTPMailer{Addr: addr, User: os.Getenv("PAL_SMTP_USER"), Password: os.Getenv("PAL_SMTP_PASSWORD"), From: from()}, nil
 	case DriverHTTP:
-		url := os.Getenv("LANTERN_MAIL_HTTP_URL")
+		url := os.Getenv("PAL_MAIL_HTTP_URL")
 		if url == "" {
 			return nil, fmt.Errorf("mailer: LANTERN_MAILER=http needs LANTERN_MAIL_HTTP_URL")
 		}
-		return &HTTPMailer{URL: url, Token: os.Getenv("LANTERN_MAIL_HTTP_TOKEN"), From: from(), Client: &http.Client{Timeout: 15 * time.Second}}, nil
+		return &HTTPMailer{URL: url, Token: os.Getenv("PAL_MAIL_HTTP_TOKEN"), From: from(), Client: &http.Client{Timeout: 15 * time.Second}}, nil
 	default:
 		return nil, fmt.Errorf("mailer: unknown LANTERN_MAILER %q (want log, smtp or http)", d)
 	}

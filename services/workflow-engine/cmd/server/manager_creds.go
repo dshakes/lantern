@@ -25,9 +25,9 @@ import (
 // ponytail: same logic lives in runtime-scheduler/internal/dialer and the
 // control-plane handlers — three Go modules, no shared package to host it.
 func managerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
-	caPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CA"))
-	certPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CERT"))
-	keyPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_KEY"))
+	caPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CA"))
+	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
 		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}

@@ -399,7 +399,7 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	// Verify provider webhook authenticity before acting on it, using the
 	// number's provider_config credentials. Twilio honors a dev-only bypass.
-	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off"
 	if !skipVerify {
 		fullURL := derivePublicURL(r) + r.URL.Path
 		if verr := provider.VerifyWebhook(cfg, fullURL, headers, bodyBytes); verr != nil {
@@ -643,7 +643,7 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 	// bypass). LiveKit: the Authorization JWT over the API secret + body hash,
 	// same scheme as inbound LiveKit webhooks — these callbacks adjust budget,
 	// so they must be authenticated too.
-	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off"
 	if !skipVerify {
 		if dec, decErr := secrets.Decrypt(cfgRaw); decErr == nil {
 			cfgRaw = dec

@@ -274,7 +274,7 @@ This is unique to durable execution and critical to get right.
 
 - **No real customer data in test fixtures.** Synthetic only.
 - **Connector tests** use vendor sandboxes where available (Stripe test mode, Slack workspace, etc.) and fixture servers otherwise.
-- **LLM tests** use a deterministic mock model router by default; real provider calls only in nightly e2e under `LANTERN_E2E_REAL_LLM=1`.
+- **LLM tests** use a deterministic mock model router by default; real provider calls only in nightly e2e under `PAL_E2E_REAL_LLM=1`.
 
 ---
 

@@ -154,7 +154,7 @@ func loadConfig() config {
 		AgentToken:              envOrDefault("AGENT_TOKEN", ""),
 		WorkflowEngineAddr:      envOrDefault("WORKFLOW_ENGINE_ADDR", "localhost:50052"),
 		RuntimeManagerAddr:      envOrDefault("RUNTIME_MANAGER_ADDR", "localhost:50054"),
-		GRPCServiceToken:        envOrDefault("LANTERN_GRPC_SERVICE_TOKEN", ""),
+		GRPCServiceToken:        envOrDefault("PAL_GRPC_SERVICE_TOKEN", ""),
 		LogLevel:                envOrDefault("LOG_LEVEL", "info"),
 		HeartbeatIntervalSec:    envOrDefaultInt("HEARTBEAT_INTERVAL_SECONDS", 30),
 		ReconnectInitialDelayMs: envOrDefaultInt("RECONNECT_INITIAL_DELAY_MS", 1000),

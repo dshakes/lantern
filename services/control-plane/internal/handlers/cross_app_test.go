@@ -185,7 +185,7 @@ func TestCrossApp_SideEffecting_ReadStep(t *testing.T) {
 	h := newTestCrossAppHandler(t, pool)
 	// LLM and connector stubs not needed — should reject before reaching them.
 
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	body, _ := json.Marshal(map[string]any{
 		"goal":          "reply to the email",
@@ -225,7 +225,7 @@ func TestCrossApp_Propose(t *testing.T) {
 		return `{"summary":"Create a calendar event for the meeting","action":{"connector":"google-calendar","action":"create_event","params":{"title":"Meeting","start":"2026-07-01T10:00:00Z"}}}`, nil
 	}
 
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	body, _ := json.Marshal(map[string]any{
 		"goal":          "schedule the meeting from this email",
@@ -328,7 +328,7 @@ func TestCrossApp_ExecuteAction_Executes(t *testing.T) {
 		executedAction = action
 		return map[string]any{"event_id": "evt-123"}, nil
 	}
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -391,7 +391,7 @@ func TestCrossApp_ExecuteAction_NonOwnerForbidden(t *testing.T) {
 		connectorCalled = true
 		return nil, nil
 	}
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -426,7 +426,7 @@ func TestCrossApp_ExecuteAction_RejectsNonCrossApp(t *testing.T) {
 	}
 
 	h := newTestCrossAppHandler(t, pool)
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -466,7 +466,7 @@ func TestCrossApp_ExecuteAction_RejectsAlreadyDone(t *testing.T) {
 		called = true
 		return nil, nil
 	}
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -504,7 +504,7 @@ func TestCrossApp_ExecuteAction_CrossTenant(t *testing.T) {
 	}
 
 	h := newTestCrossAppHandler(t, pool)
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	// Authenticate as tenant B — should not see tenant A's commitment.
 	tokB := mintTestToken(t, tenantB, uuid.NewString(), "owner")
@@ -558,7 +558,7 @@ func TestCrossApp_ExecuteAction_ConcurrentExactlyOnce(t *testing.T) {
 		atomic.AddInt64(&connectorCalls, 1)
 		return map[string]any{"ok": true}, nil
 	}
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	// Launch N goroutines all hitting ExecuteAction on the same commitment.
 	const N = 10
@@ -612,7 +612,7 @@ func TestCrossApp_DisabledByDefault(t *testing.T) {
 	tok := mintTestToken(t, tenantID, uuid.NewString(), "owner")
 	h := newTestCrossAppHandler(t, pool)
 
-	t.Setenv("LANTERN_CROSS_APP", "") // explicitly unset
+	t.Setenv("PAL_CROSS_APP", "") // explicitly unset
 
 	body, _ := json.Marshal(map[string]any{
 		"goal":          "test",
@@ -651,7 +651,7 @@ func TestCrossApp_NoAutonomousSideEffect(t *testing.T) {
 		return fmt.Sprintf(`{"summary":"Send reply","action":{"connector":"gmail","action":"send_message","params":{"to":"x@y.com","subject":"Re: Meeting","body":"Sure!"}}}`), nil
 	}
 
-	t.Setenv("LANTERN_CROSS_APP", "on")
+	t.Setenv("PAL_CROSS_APP", "on")
 
 	body, _ := json.Marshal(map[string]any{
 		"goal":          "reply to the meeting request",

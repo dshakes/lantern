@@ -187,7 +187,7 @@ func computeRegretRate(total, regrets int64, minSamples int) float64 {
 // confidenceCalibrateEnabled reports whether LANTERN_CONFIDENCE_CALIBRATE
 // is set to a truthy value. Default OFF.
 func confidenceCalibrateEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_CALIBRATE")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_CALIBRATE")))
 	return v == "1" || v == "true" || v == "on"
 }
 

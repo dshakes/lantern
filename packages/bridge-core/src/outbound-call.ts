@@ -311,7 +311,7 @@ export function planCall(
 
   // Owner identity is config, never a literal in this shared library:
   // explicit opt → LANTERN_OWNER_NAME → neutral fallback.
-  const ownerName = opts.ownerName || process.env.LANTERN_OWNER_NAME || "the owner";
+  const ownerName = opts.ownerName || process.env.PAL_OWNER_NAME || "the owner";
   // Always surface the resolved NUMBER alongside the name so the owner can
   // catch a wrong-contact resolution (e.g. multiple "Sam" entries) before
   // confirming. Never dial a name without showing what it resolved to.
@@ -480,12 +480,12 @@ export function resolveVoiceCloneConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): VoiceCloneConfig | null {
   // Master opt-in. Off by default; only "1"/"true"/"on" enable.
-  const flag = (env.LANTERN_VOICE_CLONE || "").trim().toLowerCase();
+  const flag = (env.PAL_VOICE_CLONE || "").trim().toLowerCase();
   const enabled = flag === "1" || flag === "true" || flag === "on";
   if (!enabled) return null;
 
-  const apiKey = (env.LANTERN_ELEVENLABS_API_KEY || env.LANTERN_ELEVENLABS_KEY || "").trim();
-  const voiceId = (env.LANTERN_ELEVENLABS_VOICE_ID || "").trim();
+  const apiKey = (env.PAL_ELEVENLABS_API_KEY || env.PAL_ELEVENLABS_KEY || "").trim();
+  const voiceId = (env.PAL_ELEVENLABS_VOICE_ID || "").trim();
   if (!apiKey || !voiceId) return null;
 
   return { apiKey, voiceId };

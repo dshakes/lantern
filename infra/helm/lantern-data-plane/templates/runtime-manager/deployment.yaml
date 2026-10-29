@@ -81,26 +81,26 @@ spec:
             # FAIL CLOSED (refuse to schedule) rather than downgrade to runc.
             {{- with .Values.runtimeManager.runtimeClasses }}
             {{- if .gvisor }}
-            - name: LANTERN_RUNTIMECLASS_GVISOR
+            - name: PAL_RUNTIMECLASS_GVISOR
               value: {{ .gvisor | quote }}
             {{- end }}
             {{- if .kata }}
-            - name: LANTERN_RUNTIMECLASS_KATA
+            - name: PAL_RUNTIMECLASS_KATA
               value: {{ .kata | quote }}
             {{- end }}
             {{- if .wasm }}
-            - name: LANTERN_RUNTIMECLASS_WASM
+            - name: PAL_RUNTIMECLASS_WASM
               value: {{ .wasm | quote }}
             {{- end }}
             {{- if .kataCc }}
             # Confidential compute (SEV-SNP/TDX). Confidential agents FAIL CLOSED
             # (refused) when this is unset — never downgraded. See ADR 0023.
-            - name: LANTERN_RUNTIMECLASS_KATA_CC
+            - name: PAL_RUNTIMECLASS_KATA_CC
               value: {{ .kataCc | quote }}
             {{- end }}
             {{- end }}
             {{- if .Values.runtimeManager.ccTech }}
-            - name: LANTERN_CC_TECH
+            - name: PAL_CC_TECH
               value: {{ .Values.runtimeManager.ccTech | quote }}
             {{- end }}
           {{- if .Values.runtimeManager.firecrackerEnabled }}
