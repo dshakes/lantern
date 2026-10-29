@@ -89,7 +89,7 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
   if (steps.length === 0 && isRunning) {
     return (
       <div className="flex items-center gap-2 py-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-lantern-400" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-pal-400" />
         <span className="text-xs text-zinc-400">Running...</span>
       </div>
     );
@@ -117,7 +117,7 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
                 className={clsx(
                   "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-all",
                   done ? "border-zinc-800 bg-surface-0 text-zinc-300" :
-                  running ? "border-lantern-500/30 bg-lantern-500/5 text-lantern-300" :
+                  running ? "border-pal-500/30 bg-pal-500/5 text-pal-300" :
                   failed ? "border-red-500/30 bg-red-500/5 text-red-300" :
                   "border-zinc-800 bg-surface-0 text-zinc-500",
                   hasToolData ? "cursor-pointer hover:border-zinc-600" : "cursor-default"
@@ -125,7 +125,7 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
                 title={s.detail}
               >
                 {running ? (
-                  <Loader2 className="h-3 w-3 animate-spin text-lantern-400" />
+                  <Loader2 className="h-3 w-3 animate-spin text-pal-400" />
                 ) : failed ? (
                   <XCircle className="h-3 w-3 text-red-400" />
                 ) : (

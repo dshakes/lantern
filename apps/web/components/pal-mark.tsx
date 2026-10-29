@@ -1,6 +1,6 @@
 // The PAL "Held" mark (same geometry as site/public/brand/mark.svg): a ring
 // holding an ember beside a stem. The ring follows the theme via currentColor.
-// `LanternMark` is kept as an alias so existing imports keep working (ADR 0032).
+// Renamed from LanternMark (ADR 0032); all importers updated.
 export function PalMark({ className = "h-6 w-6 text-zinc-50" }: { className?: string }) {
   return (
     <svg viewBox="0 0 64 64" className={className} role="img" aria-label="PAL">
@@ -11,4 +11,3 @@ export function PalMark({ className = "h-6 w-6 text-zinc-50" }: { className?: st
   );
 }
 
-export const LanternMark = PalMark;
