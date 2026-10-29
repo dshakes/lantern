@@ -666,6 +666,8 @@ impl RuntimeManagerGrpc {
             }
         };
 
+        dlp_gate(req.dlp_policy.as_ref(), backend.as_ref(), &req.run_id)?;
+
         tracing::info!(
             run_id = %req.run_id,
             isolation_class = ?req.isolation_class,
@@ -977,9 +979,10 @@ impl RuntimeManagerGrpc {
             // and contract, never left running as the snapshot's source VM.
             vm_id: req.vm_id.clone(),
             egress_rules: req.egress_rules.clone(),
-            // DLP policy comes from the spawn spec; restore proto has no DLP
-            // field yet — `None` means no inspection on restored VMs for now.
-            dlp_policy: None,
+            // ADR 0030: the restored incarnation's broker enforces the
+            // restoring request's DLP policy (pause/resume, idle auto-resume
+            // and fork all come through here with the full spec).
+            dlp_policy: req.dlp_policy.clone(),
         };
         backend
             .restore(&restore.snapshot_uri, &restore)
@@ -1016,6 +1019,7 @@ impl RuntimeManagerGrpc {
                 "RestoreRequest.tenant_id is required; refusing to restore an untenanted workload",
             ));
         }
+        dlp_gate(req.dlp_policy.as_ref(), self.backend.as_ref(), &req.run_id)?;
 
         let handle = self
             .backend
@@ -1489,23 +1493,74 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         restore_snapshot_id: spec.restore_snapshot_id.clone(),
         // ADR 0030: per-tenant DLP policy shipped from the control-plane via
         // AgentSpec.dlp_policy (proto field 19).
-        dlp_policy: spec.dlp_policy.as_ref().map(|p| crate::dlp::DlpPolicy {
-            rules: p
-                .rules
-                .iter()
-                .map(|r| crate::dlp::DlpRule {
-                    rule_id: r.rule_id.clone(),
-                    detector: r.detector.clone(),
-                    pattern: r.pattern.clone(),
-                    mode: crate::dlp::DlpMode::from_str(&r.mode),
-                    threshold: r.threshold as u32,
-                })
-                .collect(),
-            max_inspect_bytes: p.max_inspect_bytes as usize,
-        }),
+        dlp_policy: spec.dlp_policy.as_ref().map(dlp_from_pb).transpose()?,
         // Set by `spawn` from the scheduler-issued handle.
         vm_id: String::new(),
     })
+}
+
+/// Wire DLP policy → engine policy. Fails closed: an unknown mode is
+/// `INVALID_ARGUMENT`, never a silent `audit`. A non-positive threshold
+/// becomes 1 and a negative cap becomes 0 (= default; the engine clamps).
+#[allow(clippy::result_large_err)]
+fn dlp_from_pb(p: &pb::DlpPolicy) -> Result<crate::dlp::DlpPolicy, Status> {
+    let rules = p
+        .rules
+        .iter()
+        .map(|r| {
+            Ok(crate::dlp::DlpRule {
+                rule_id: r.rule_id.clone(),
+                detector: r.detector.clone(),
+                pattern: r.pattern.clone(),
+                mode: r.mode.parse().map_err(|e| {
+                    Status::invalid_argument(format!("dlp rule '{}': {e}", r.rule_id))
+                })?,
+                threshold: u32::try_from(r.threshold.max(1)).unwrap_or(1),
+            })
+        })
+        .collect::<Result<_, Status>>()?;
+    Ok(crate::dlp::DlpPolicy {
+        rules,
+        max_inspect_bytes: usize::try_from(p.max_inspect_bytes).unwrap_or(0),
+    })
+}
+
+/// ADR 0030 gate, before anything boots: the policy must compile (unknown
+/// detector, bad pattern → `INVALID_ARGUMENT`), and a `block` rule needs an
+/// enforcing egress broker. A backend/egress mode without one cannot honour
+/// it, so the spawn is refused (`FAILED_PRECONDITION`) rather than run with
+/// the block silently ignored. Audit-only rules on such a node are allowed
+/// but leave an audit record that they are not being inspected.
+#[allow(clippy::result_large_err)]
+fn dlp_gate(
+    policy: Option<&crate::dlp::DlpPolicy>,
+    backend: &dyn RuntimeBackend,
+    run_id: &str,
+) -> Result<(), Status> {
+    let Some(p) = policy else {
+        return Ok(());
+    };
+    crate::dlp::DlpEngine::compile(p.clone())
+        .map_err(|e| Status::invalid_argument(format!("DLP policy: {e}")))?;
+    if !p.has_active_rules() || backend.egress_mode() == "broker" {
+        return Ok(());
+    }
+    if p.has_block_rules() {
+        return Err(Status::failed_precondition(format!(
+            "DLP block rules need broker egress mode (ADR 0026); backend '{}' on this node has \
+             no egress broker, so the block would be silently ignored — refusing to spawn",
+            backend.name()
+        )));
+    }
+    tracing::warn!(
+        target: "lantern_audit",
+        run_id,
+        backend = backend.name(),
+        action = "dlp",
+        decision = "not_enforced",
+        "DLP audit rules NOT inspected: no egress broker on this node"
+    );
+    Ok(())
 }
 
 #[tonic::async_trait]
@@ -5517,6 +5572,8 @@ mod tests {
         restored: std::sync::Mutex<Vec<proto::RestoreRequest>>,
         /// Bare (non-jailed) Firecracker semantics.
         bare: bool,
+        /// `"broker"` = the node runs an egress broker (ADR 0026).
+        egress: &'static str,
     }
 
     #[async_trait::async_trait]
@@ -5574,6 +5631,9 @@ mod tests {
         fn restore_needs_stopped_source(&self) -> bool {
             self.bare
         }
+        fn egress_mode(&self) -> &'static str {
+            self.egress
+        }
     }
 
     async fn identity_manager(
@@ -5604,6 +5664,149 @@ mod tests {
         let mut req = restore_spawn("t-owner", snap);
         req.handle = make_spawn_request_with_handle("t-owner", "r", wire).handle;
         req
+    }
+
+    // ---- ADR 0030 DLP gate ------------------------------------------------
+
+    fn with_dlp(mut req: pb::SpawnRequest, rules: &[(&str, &str, &str)]) -> pb::SpawnRequest {
+        req.spec.as_mut().unwrap().dlp_policy = Some(pb::DlpPolicy {
+            rules: rules
+                .iter()
+                .map(|(detector, pattern, mode)| pb::DlpRule {
+                    rule_id: format!("r-{detector}"),
+                    detector: detector.to_string(),
+                    pattern: pattern.to_string(),
+                    mode: mode.to_string(),
+                    threshold: 0,
+                })
+                .collect(),
+            max_inspect_bytes: -1,
+        });
+        req
+    }
+
+    fn dlp_manager(egress: &'static str) -> (RuntimeManagerGrpc, Arc<IdentityStub>) {
+        let stub = Arc::new(IdentityStub {
+            egress,
+            ..Default::default()
+        });
+        let svc = RuntimeManagerGrpc::new(
+            stub.clone(),
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        );
+        (svc, stub)
+    }
+
+    const WIRE_DLP: &str = "vm-eeeeeeee-0000-4000-8000-000000000005";
+
+    /// #7: a block rule on a node with no egress broker is refused before
+    /// anything boots — never a VM whose block is silently ignored.
+    #[tokio::test]
+    async fn dlp_block_rule_without_broker_is_refused() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, stub) = dlp_manager("");
+        let req = with_dlp(
+            make_spawn_request_with_handle("t", "r", WIRE_DLP),
+            &[("card_number", "", "block")],
+        );
+        let err = svc.spawn(Request::new(req)).await.expect_err("must refuse");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert!(stub.scheduled.lock().unwrap().is_empty(), "nothing booted");
+
+        // Audit-only rules are allowed (recorded as not enforced).
+        let req = with_dlp(
+            make_spawn_request_with_handle("t", "r", WIRE_DLP),
+            &[("email", "", "audit")],
+        );
+        svc.spawn(Request::new(req))
+            .await
+            .expect("audit-only spawns");
+    }
+
+    /// #1 + #6 + #16, end to end on the manager side: the control-plane's
+    /// `custom_regex` reaches the backend and compiles; a negative cap and a
+    /// zero threshold are normalised; an unknown mode or detector is refused.
+    #[tokio::test]
+    async fn dlp_policy_reaches_broker_backend_and_bad_rules_are_refused() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, stub) = dlp_manager("broker");
+        let req = with_dlp(
+            make_spawn_request_with_handle("t", "r", WIRE_DLP),
+            &[
+                ("custom_regex", r"SSN-\d{3}", "block"),
+                ("card_number", "", "audit"),
+            ],
+        );
+        svc.spawn(Request::new(req))
+            .await
+            .expect("broker node spawns");
+        let p = stub.scheduled.lock().unwrap()[0]
+            .dlp_policy
+            .clone()
+            .unwrap();
+        assert_eq!(p.rules[0].detector, "custom_regex");
+        assert_eq!(p.rules[0].mode, crate::dlp::DlpMode::Block);
+        assert_eq!(p.rules[0].threshold, 1);
+        assert_eq!(p.effective_max(), crate::dlp::DEFAULT_MAX_INSPECT_BYTES);
+        let engine = crate::dlp::DlpEngine::compile(p).unwrap();
+        assert!(matches!(
+            engine.scan(b"id SSN-123"),
+            crate::dlp::DlpVerdict::Block(_)
+        ));
+
+        for (detector, pattern, mode) in [
+            ("card_number", "", "enforce"),
+            ("card_number", "", ""),
+            ("regex", "x", "block"),
+            ("custom_regex", "[", "block"),
+            ("custom_regex", "", "audit"),
+        ] {
+            let req = with_dlp(
+                make_spawn_request_with_handle(
+                    "t",
+                    "r2",
+                    "vm-eeeeeeee-0000-4000-8000-000000000006",
+                ),
+                &[(detector, pattern, mode)],
+            );
+            let err = svc
+                .spawn(Request::new(req))
+                .await
+                .expect_err("bad rule must be refused");
+            assert_eq!(
+                err.code(),
+                tonic::Code::InvalidArgument,
+                "{detector}/{pattern}/{mode}: {err:?}"
+            );
+        }
+        assert_eq!(
+            stub.scheduled.lock().unwrap().len(),
+            1,
+            "no bad spawn booted"
+        );
+    }
+
+    /// #2: pause/resume, idle auto-resume and fork restore through
+    /// `restore_owned_snapshot`; the restored broker must get the policy.
+    #[tokio::test]
+    async fn restore_carries_the_dlp_policy() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let (svc, stub, snap, _tmp) = identity_manager(false).await;
+        let fork = "vm-ffffffff-0000-4000-8000-000000000007";
+        svc.spawn(Request::new(with_dlp(
+            fork_spawn(&snap, fork),
+            &[("secret_key", "", "audit")],
+        )))
+        .await
+        .expect("restore");
+        let restored = stub.restored.lock().unwrap();
+        let p = restored[0]
+            .dlp_policy
+            .as_ref()
+            .expect("DLP dropped on restore");
+        assert_eq!(p.rules[0].detector, "secret_key");
+        assert_eq!(p.rules[0].mode, crate::dlp::DlpMode::Audit);
     }
 
     #[tokio::test]

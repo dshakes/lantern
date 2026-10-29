@@ -227,7 +227,13 @@ impl WarmPool {
         backend: &dyn RuntimeBackend,
         req: &ScheduleRequest,
     ) -> Result<Handle> {
-        if let Some(handle) = self.acquire(req) {
+        // ADR 0030: a warm VM's broker was built for the prewarm request, not
+        // this one; a DLP policy is only enforced by a broker built from it.
+        let dlp = req
+            .dlp_policy
+            .as_ref()
+            .is_some_and(|p| p.has_active_rules());
+        if !dlp && let Some(handle) = self.acquire(req) {
             return Ok(handle);
         }
 
