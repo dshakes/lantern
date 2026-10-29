@@ -11,23 +11,32 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ### Added
 - **Host-asserted software measurement (ADR 0031, ACE A5)** — at every Firecracker
-  spawn and restore the runtime-manager computes a SHA-256 over the five canonical
-  inputs it directly controls: kernel image, rootfs image, harness binary (32 zero
-  bytes when baked into rootfs), kernel boot arguments, and the spawn contract with
-  secret and per-VM identity fields excluded (reproducible across VMs from the
-  same images + spec). The 64-character hex measurement is:
+  cold spawn the runtime-manager computes a SHA-256 over the five canonical inputs
+  it directly controls: kernel image, rootfs image, harness binary (32 zero bytes
+  when baked into rootfs), the kernel cmdline, and the spawn contract — minus
+  secrets (declared-secret refs, exec token, injection specs, values of
+  credential-named env keys) and minus per-VM identity (vm/run id, IPs, per-VM cert
+  paths/CA, agent instance id + token, trace parent, the HashMap-ordered
+  `lantern.env.*` cmdline copy). Two VMs from the same images + spec measure
+  identically. A **restore / resume / fork inherits** its source's spawn
+  measurement (recorded in the snapshot metadata) instead of re-measuring, and
+  re-checks it against the current references; an unmeasured (legacy) snapshot is
+  refused under an enforcing gate. The 64-character hex measurement is:
   - Embedded in the per-VM X.509 cert as a custom extension (OID `1.3.6.1.4.1.99999.3`,
     a placeholder — a registered IANA PEN is needed).
-  - Stored in `runtime_vms.software_measurement` (migration `0029_software_measurement`)
-    via the reconciler after spawn completes.
+  - Recorded by the scheduler (persisted in `sched_vms.software_measurement`) and
+    written once to `runtime_vms.software_measurement` (migration
+    `0029_software_measurement`) by the reconciler — for forked/resumed VMs too.
   - Included in signed run receipts as `softwareMeasurement` (additive; omitempty
     keeps existing receipts byte-identical and their signatures valid).
-  - Returned in `VmHandle.software_measurement` (proto field 5) so orchestrators
-    can consume it without a DB query.
-  Gate control: `LANTERN_MEASUREMENT_GATE` (`off` | `warn` [default] | `enforce`).
-  Reference values: `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated hex).
-  **HOST-ASSERTED only** — proves what the host recorded it launched, NOT
-  what ran inside the VM; hardware attestation (ADR 0023) remains UNVERIFIED.
+  - Returned in `VmHandle.software_measurement` (proto field 5).
+  Gate control: `LANTERN_MEASUREMENT_GATE` (`off` | `warn` [default] | `enforce`);
+  references: `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). An unknown
+  gate value or malformed reference refuses startup, as does `enforce` with no
+  references in prod. Image hashes are streamed and cached per file identity.
+  **HOST-ASSERTED only** — proves what the host recorded it launched, NOT what ran
+  inside the VM; images are hashed by path and opened later by Firecracker (TOCTOU,
+  documented). Hardware attestation (ADR 0023) remains UNVERIFIED.
 - **Egress DLP (ADR 0030)** — per-tenant data-loss-prevention policy applied by the egress broker to TLS-terminated and plain-HTTP egress. Detectors: Luhn-validated card numbers, secret-key prefixes (AWS/GitHub/Slack/PEM), email (threshold-based), phone (threshold-based), custom regex. Modes: `off | audit | block`. Fails closed: unknown detector/mode or bad regex fails the spawn (regex also 400 at write), a block rule on a node without a broker refuses the spawn, ambiguous body framing (CL+TE, conflicting CL, bad chunks) is a 400, and in block mode a body that cannot be fully inspected up to the cap is a 403. Chunked bodies are de-chunked before scanning; `Expect: 100-continue` is answered by the broker. The policy survives pause/resume/fork; DLP VMs skip the warm pool. Not inspected (documented): opaque CONNECT tunnels, bytes past `max_inspect_bytes` (64 KiB, ≤1 MiB), keep-alive follow-on requests. Audit action `dlp` carries rule id, detector, host, byte offset/count, decision — never the matched value (invariant #10). Policy stored in `dlp_policies` (RLS-enforced, migration 0028). REST CRUD at `GET/PUT /v1/egress/dlp-policy` + `POST/DELETE /v1/egress/dlp-policy/rules`. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy` (proto field 19). e2e: `broker-e2e.sh` DLP block cases (card number, custom_regex).
 - **Prod enforces API-key scopes** — `values-prod.yaml` (and staging) set `LANTERN_AUTHZ_ENFORCE=1`; a first-class `controlPlane.env.LANTERN_AUTHZ_ENFORCE` chart value, a boot log line stating the mode, a `ControlPlane403RateElevated` alert, a chart render test (`infra/helm/lantern/tests/authz-enforce.sh`, run in CI), and the soak/rollback/re-scoping steps in `docs/runbooks/ga-staged-rollout.md`. JWT sessions and unscoped legacy keys are unaffected.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,

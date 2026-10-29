@@ -36,6 +36,15 @@ what actually executed inside the VM. A compromised host could forge it.
 Hardware attestation (ADR 0023) is the stronger guarantee; this is the pragmatic
 step available today on commodity Firecracker nodes. Both mechanisms can coexist.
 
+**TOCTOU limitation.** The manager hashes the kernel/rootfs/harness *by path*
+before boot; Firecracker opens them afterwards (and the jailer stages copies).
+A process able to rewrite those files between the hash and the open can boot
+something other than what was measured. That attacker already controls the host
+the measurement trusts, so this is consistent with "host-asserted", but it is a
+real gap: a stricter variant would hash the staged per-VM copy Firecracker
+actually opens. Image hashes are cached per `(dev, inode, size, mtime, ctime)`,
+which shares the same trust assumption.
+
 ### Canonical input order
 
 The measurement is SHA-256 over five 32-byte component hashes concatenated in this
@@ -46,8 +55,8 @@ fixed order:
 | 1 | **kernel image** | SHA-256 of file bytes at `FC_KERNEL_PATH` |
 | 2 | **rootfs image** | SHA-256 of file bytes at `FC_ROOTFS_PATH` |
 | 3 | **harness binary** | SHA-256 of file bytes at `FC_HARNESS_PATH` (32 zero bytes when unset — harness baked into rootfs) |
-| 4 | **boot arguments** | SHA-256 of the kernel cmdline with per-VM tokens removed (see below) |
-| 5 | **spawn contract** | SHA-256 of `spawn.json` canonical JSON with secret-bearing fields zeroed (see below) |
+| 4 | **boot arguments** | SHA-256 of the kernel cmdline with per-VM tokens, secret refs and the `lantern.env.*` copy removed (see below) |
+| 5 | **spawn contract** | SHA-256 of `spawn.json` canonical JSON (env is a `BTreeMap`, so key-ordered) minus secrets and per-VM identity (see below) |
 
 **Final value:** SHA-256 of the 160-byte concatenation of the five 32-byte
 hashes (in the order above). Output: 64-character lowercase hex string.
@@ -61,20 +70,33 @@ before the spawn-contract hash is computed:
 - `declared_secrets` — vault references (URIs only, but URIs reveal vault topology)
 - `exec_token` — bearer credential used by the harness for `VendSecret` calls
 - `egress_rules[*].inject` — per-rule credential injection specifications
+- the **values** of env keys whose name looks credential-bearing (contains
+  `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
+  `CREDENTIAL`) — the key is still measured, the value is blanked. A published
+  measurement must never be a hash over a live secret. This is a name
+  heuristic: a credential under an innocuous name is measured; declare
+  credentials as secrets (`lantern.secret/…`) rather than plain env.
 
 ### "Minus identity" rule
 
 The measurement must be reproducible across VMs launched from the same images
 and spec, or no reference set could ever match it. So per-incarnation values are
-excluded too: the contract's `vm_id`, `network` and per-VM `egress_ca_pem`; and
-from the cmdline the `ip=`, `lantern.vm_id=`, `lantern.run_id=`,
-`lantern.tls_cert=`/`lantern.tls_key=` (per-VM paths),
-`lantern.env.LANTERN_MANAGER_ADDR=` (per-VM host IP) and `lantern.secret.*`
-tokens (minus-secrets).
+excluded too: the contract's `vm_id`, `network` and per-VM `egress_ca_pem`, and
+the caller-set per-incarnation env keys (`CALLER_LANTERN_KEYS`:
+`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN` — a live bearer
+credential — `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`); and from the cmdline the
+`ip=`, `lantern.vm_id=`, `lantern.run_id=`, `lantern.tls_cert=`/`lantern.tls_key=`
+(per-VM paths), `lantern.secret.*` tokens, and **every** `lantern.env.*` token.
+The `lantern.env.*` tokens are a lossy legacy copy of the contract env, emitted
+in `HashMap` iteration order (so identical specs produced different cmdlines)
+and carrying the instance id/token; the harness ignores them when `spawn.json`
+is present, and the authoritative env is measured in the contract.
 
 All other spawn-contract fields (workload command, env, egress rules *sans inject*,
-uid/gid, egress mode) and the remaining cmdline are included. A changed workload
-command, changed uid, or changed egress policy changes the measurement.
+uid/gid, egress mode, `LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`) and the
+remaining cmdline are included. A changed workload command, env value, uid, or
+egress policy changes the measurement. Reference values are therefore per
+(images, spec, tenant, agent version).
 
 The value is never written to logs (gate warnings carry only `vm_id`); it reaches
 relying parties through the signed receipt, the VM cert extension and
@@ -95,14 +117,45 @@ Reference values are configured via `LANTERN_REFERENCE_MEASUREMENTS`
 (comma-separated lowercase hex strings). An empty list means no reference set is
 configured; `warn` mode produces no warning (no comparison possible), and
 `enforce` also passes (you cannot fail-closed against an unspecified allowed set
-without first providing one).
+without first providing one) — except in production (`LANTERN_ENV`
+prod/production/staging), where `enforce` with no references **refuses to
+start** the manager. The gate value is trimmed and case-insensitive; an
+unrecognised value (e.g. `enforced`) refuses startup rather than silently
+degrading to `warn`, and so does a reference that is not 64 hex characters.
+
+### Restore, resume and fork: inherited measurement
+
+A restored guest does not boot from the spawn inputs: it resumes from the
+snapshot's vmstate + memory + captured disk. Re-measuring the base images under
+the restore-shaped contract (which has, e.g., an empty workload command) would
+yield a value no reference matches, so every resume / idle auto-resume / fork
+would fail closed under `enforce`. Instead:
+
+1. At snapshot time the manager records the source VM's spawn measurement in
+   `SnapshotMeta.software_measurement` (the store's `meta.json`, alongside the
+   existing `sha256` digest over all snapshot artifacts).
+2. On restore the manager reads it from its own store — never from the caller —
+   and the restored VM **inherits** it: same value in its cert extension,
+   `ScheduleResponse`, scheduler store and `runtime_vms`, labelled in the audit
+   log as `inherited from snapshot source`.
+3. The inherited value is re-checked against the **current** reference set, so
+   retiring an image's reference also refuses restores of its snapshots.
+4. A snapshot with no recorded measurement (taken before this field, or from an
+   unmeasured source) is refused under `enforce` with references, and restores
+   unmeasured under `warn`/`off`.
+
+The inherited value attests the lineage's *original boot*, not the snapshot's
+memory/disk state (which the workload has mutated since); relying parties
+needing the latter must use the snapshot `sha256` from the store metadata.
 
 ### Binding points
 
 The measurement flows through the system as follows:
 
-1. **Computation**: `services/runtime-manager/src/measurement.rs` — pure, no I/O
-   side effects; called from `tokio::task::spawn_blocking` at spawn/restore time.
+1. **Computation**: `services/runtime-manager/src/measurement.rs` — reads the
+   image files (streamed, cached) but has no other side effects; called from
+   `tokio::task::spawn_blocking` at spawn time. Restores call
+   `measurement::check_inherited` instead.
 2. **Per-VM cert (X.509 extension)**: embedded by
    `tls::generate_vm_client_cert(vm_id, ca_cert, ca_key, Some(measurement))` as a
    custom extension with OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER: a
@@ -112,7 +165,10 @@ The measurement flows through the system as follows:
 3. **Handle registry**: stored in `HandleInfo.software_measurement` so the
    manager can return it in `ScheduleResponse` and `List` responses.
 4. **Proto propagation**: `VmHandle.software_measurement` (field 5) carries it
-   from the manager through the scheduler to the control-plane.
+   from the manager through the scheduler to the control-plane. The scheduler
+   records it from the manager's `Spawn` response for cold spawns
+   (`dispatchSpawn`) and restores (`spawnFromSnapshot`: resume + fork) and
+   persists it in `sched_vms.software_measurement` so a scheduler restart keeps it.
 5. **Database**: `runtime_vms.software_measurement TEXT` (migration
    `0029_software_measurement`). Written by the reconciler the first time
    `ListStates` returns a non-empty value (i.e., after spawn completes).
@@ -134,9 +190,9 @@ lock) in `dispatchSpawn` after the manager's Spawn response arrives, and the con
 
 ## Consequences
 
-- Every Firecracker spawn and restore now runs a SHA-256 over three files and two
-  small byte strings in a blocking task. The cost is proportional to image size
-  (~100 ms per GiB on a typical SSD); it is measured once, not at runtime.
+- The first Firecracker spawn per image version streams a SHA-256 over the
+  kernel/rootfs/harness (~100 ms per GiB on a typical SSD, constant memory);
+  later spawns hit the per-file-identity cache. Restores do not hash images.
 - A missing image file makes the computation fail-open (measurement is `None`,
   warn-logged, VM starts normally) under `off`/`warn`: a measurement gap is
   better than an unbootable cluster because the harness binary moved. Under
@@ -160,8 +216,8 @@ lock) in `dispatchSpawn` after the manager's Spawn response arrives, and the con
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` / `warn` / `enforce` |
-| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected hex measurements |
+| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` / `warn` / `enforce`; unknown → refuse to start |
+| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected 64-hex measurements; malformed → refuse to start; empty + `enforce` in prod → refuse to start |
 | `FC_HARNESS_PATH` | _(unset)_ | Path to separately-installed harness binary; 32 zero bytes when unset |
 
 ---
