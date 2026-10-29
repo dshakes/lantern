@@ -2,6 +2,9 @@
 // One diagram, four files: landscape + portrait, dark + light (public/diagrams/).
 // Theme follows data-theme (CSS hides the other pair); <source media> swaps in
 // the portrait drawing on narrow screens. Hidden lazy images never download.
+// Labels are 16px in a 960/420-wide viewBox. Landscape is used only when it renders
+// at >= 768px (>= 12px labels): viewports over 800px on marketing pages. The docs
+// column is ~45rem wide at most, so docs pages always use the portrait drawing.
 import { u } from '../data/site';
 const ALT: Record<string, string> = {
   'crash-resume': 'Steps 1 and 2 are journaled, the process crashes in step 3, the recovery sweep re-acquires the lock, steps 1 and 2 are replayed from the journal and step 3 runs again with the same idempotency key, so it is billed once.',
@@ -14,11 +17,14 @@ const { name, caption, eager = false } = Astro.props;
 const alt = Astro.props.alt ?? ALT[name];
 const src = (t: string, p = '') => u(`diagrams/${name}${p}-${t}.svg`);
 const loading = eager ? 'eager' : 'lazy';
+const portraitOnly = Astro.url.pathname.includes('/docs/');
 ---
-<figure class="diagram">
-  {['dark', 'light'].map((t) => (
+<figure class:list={['diagram', { portrait: portraitOnly }]}>
+  {['dark', 'light'].map((t) => portraitOnly ? (
+    <img class={`d-${t}`} src={src(t, '-portrait')} alt={alt} width="420" loading={loading} decoding="async" />
+  ) : (
     <picture class={`d-${t}`}>
-      <source media="(max-width: 640px)" srcset={src(t, '-portrait')} />
+      <source media="(max-width: 800px)" srcset={src(t, '-portrait')} />
       <img src={src(t)} alt={alt} width="960" loading={loading} decoding="async" />
     </picture>
   ))}
@@ -30,5 +36,6 @@ const loading = eager ? 'eager' : 'lazy';
   .diagram img { display: block; width: 100%; height: auto; margin: 0; border-radius: 18px; border: 1px solid var(--p-border); }
   .diagram figcaption { margin-top: 14px; font-size: 14px; line-height: 22px; color: var(--p-text-3); max-width: 72ch; }
   :root[data-theme='light'] .diagram .d-dark, :root:not([data-theme='light']) .diagram .d-light { display: none; }
-  @media (max-width: 640px) { .diagram img { max-width: 420px; margin: 0 auto; } }
+  @media (max-width: 800px) { .diagram img { max-width: 420px; margin: 0 auto; } }
+  .diagram.portrait img { max-width: 420px; margin: 0 auto; }
 </style>

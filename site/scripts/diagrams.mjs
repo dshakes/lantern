@@ -29,6 +29,9 @@ const CH = 9.7; // approx advance of a 16px mono glyph
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 function make(t, w, h, title, desc) {
+  // Smallest render: portrait at 328px wide (0.78x), landscape at 768px (0.8x).
+  // A 16px floor keeps every label >= 12px rendered.
+  const MIN = 16;
   const parts = [];
   let labels = 0;
   const tone = (k) => t[k] ?? k;
@@ -38,7 +41,7 @@ function make(t, w, h, title, desc) {
       const c = tone(k);
       const f = fill && k !== 'line' ? `fill="${c}" fill-opacity="${t.tint}"` : `fill="${t.bg}"`;
       parts.push(`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" rx="${r}" ${f} stroke="${c}" stroke-width="${strong ? 2 : 1.5}"${dashed ? ' stroke-dasharray="6 5"' : ''}/>`);
-      const lines = [tt && [tt, 16, t.text, 600], sub && [sub, 14, t.text2, 400], sub2 && [sub2, 14, t.text2, 400]].filter(Boolean);
+      const lines = [tt && [tt, 17, t.text, 600], sub && [sub, 16, t.text2, 400], sub2 && [sub2, 16, t.text2, 400]].filter(Boolean);
       const total = lines.reduce((a, l) => a + l[1] + 6, -6);
       let cy = y + bh / 2 - total / 2;
       if (lines.length) labels++; // a box's title + subtitle are one label
@@ -50,6 +53,7 @@ function make(t, w, h, title, desc) {
     },
     text(x, y, s, { size = 16, color = t.text, weight = 400, anchor = 'start', mono = true, maxW, count = true } = {}) {
       if (count) labels++;
+      size = Math.max(size, MIN);
       const est = s.length * CH * (size / 16) * (mono ? 1 : 0.88);
       if (maxW && est > maxW + 2) console.warn(`  ! "${s}" ~${Math.round(est)}px > ${maxW}px in ${title}`);
       parts.push(`<text x="${x}" y="${y}" font-family="${mono ? MONO : SANS}" font-size="${size}" font-weight="${weight}" fill="${color}" text-anchor="${anchor}">${esc(s)}</text>`);
@@ -115,12 +119,12 @@ const A = {
     const y2 = 286;
     d.box(xs[0], y2, bw, bh, { tone: 'ok', dashed: true, fill: false, title: 'step 1', sub: 'from journal' });
     d.box(xs[1], y2, bw, bh, { tone: 'ok', dashed: true, fill: false, title: 'step 2', sub: 'from journal' });
-    d.box(xs[2], y2, bw, bh, { tone: 'accent', strong: true, title: 'step 3 again', sub: 'same idempotency key' });
+    d.box(xs[2], y2, bw, bh, { tone: 'accent', strong: true, title: 'step 3 again', sub: 'same key' });
     d.box(xs[3], y2, bw, bh, { tone: 'ok', title: 'step 4', sub: 'continues' });
     d.arrow([[xs[0] + bw, y2 + 32], [xs[1], y2 + 32]]);
     d.arrow([[xs[1] + bw, y2 + 32], [xs[2], y2 + 32]]);
     d.arrow([[xs[2] + bw, y2 + 32], [xs[3], y2 + 32]]);
-    d.box(712, 148, 216, 80, { tone: 'line', fill: false, title: 'billed once', sub: 'provider dedups', sub2: 'the key' });
+    d.box(712, 148, 216, 80, { tone: 'line', fill: false, title: 'billed once', sub: 'provider dedups', sub2: 'the idempotency key' });
     d.arrow([[mid(2) + 40, y2], [mid(2) + 40, 252], [820, 252], [820, 228]], { tone: 'accent', dashed: true });
   },
   landH: 384,

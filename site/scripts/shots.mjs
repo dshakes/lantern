@@ -1,5 +1,6 @@
 // Mobile gate: screenshots every page at 360/390/768/1280 in dark + light and
-// fails loudly if any page scrolls horizontally (scrollWidth !== clientWidth).
+// fails loudly if any page scrolls horizontally (scrollWidth !== clientWidth)
+// or any diagram's labels render below 12px.
 // Needs a running server: `npm run build && npx astro preview --port 4329`
 // Usage: node scripts/shots.mjs <outdir> [base=http://localhost:4329/lantern/] [--only=name,name]
 import { chromium } from 'playwright';
@@ -37,18 +38,32 @@ for (const theme of THEMES) {
       await page.setViewportSize({ width: w, height: 900 });
       const res = await page.goto(base + path, { waitUntil: 'networkidle' });
       if (!res || res.status() >= 400) { failures.push(`${name} ${w} ${theme}: HTTP ${res?.status()}`); continue; }
+      // load lazy diagrams so the label-size check sees every one
+      await page.evaluate(async () => {
+        const imgs = [...document.querySelectorAll('.diagram img')].filter((i) => i.offsetWidth > 0);
+        for (const i of imgs) i.loading = 'eager';
+        await Promise.all(imgs.map((i) => i.decode().catch(() => {})));
+      });
       const m = await page.evaluate(() => {
         const s = document.scrollingElement;
         const wide = [...document.querySelectorAll('body *')]
           .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.right > s.clientWidth + 1; })
           .slice(0, 3).map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}`);
-        return { sw: s.scrollWidth, cw: s.clientWidth, wide, theme: document.documentElement.dataset.theme };
+        // diagram labels are >= 16px in the SVG; rendered size = 16 * shown/natural width
+        const small = [...document.querySelectorAll('.diagram img')]
+          .filter((i) => i.offsetWidth > 0 && i.naturalWidth > 0)
+          .map((i) => ({ src: i.currentSrc.split('/').pop(), px: (16 * i.getBoundingClientRect().width) / i.naturalWidth }))
+          .filter((d) => d.px < 12);
+        const all = [...document.querySelectorAll('.diagram img')].filter((i) => i.offsetWidth > 0 && i.naturalWidth > 0).map((i) => (16 * i.getBoundingClientRect().width) / i.naturalWidth);
+        const diag = all.length ? Math.min(...all).toFixed(1) : '';
+        return { sw: s.scrollWidth, cw: s.clientWidth, wide, small, diag, theme: document.documentElement.dataset.theme };
       });
       const ok = m.sw === m.cw;
       if (!ok) failures.push(`${name} ${w} ${theme}: scrollWidth ${m.sw} != clientWidth ${m.cw} (${m.wide.join(', ')})`);
+      for (const d of m.small) failures.push(`${name} ${w} ${theme}: diagram ${d.src} labels render at ${d.px.toFixed(1)}px (< 12)`);
       if (m.theme !== theme) failures.push(`${name} ${w} ${theme}: page rendered theme ${m.theme}`);
       await page.screenshot({ path: `${out}/${name}-${w}-${theme}.png`, fullPage: fullPageMax });
-      console.log(`${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(16)} ${String(w).padStart(4)} ${theme.padEnd(5)} sw=${m.sw} cw=${m.cw}`);
+      console.log(`${ok && !m.small.length ? 'ok  ' : 'FAIL'} ${name.padEnd(16)} ${String(w).padStart(4)} ${theme.padEnd(5)} sw=${m.sw} cw=${m.cw}${m.diag ? ` minLabel=${m.diag}px` : ''}`);
     }
   }
   await ctx.close();
