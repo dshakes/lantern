@@ -1,6 +1,6 @@
 /**
  * Production memory client that routes memory operations through the
- * runtime sidecar to the Lantern memory service.
+ * runtime sidecar to the PAL memory service.
  *
  * Memory tiers:
  * - **core**: Key-value store for structured agent state (fast, small).
@@ -13,7 +13,7 @@
 import type { MemoryClient, MemoryEntry } from "../types.js";
 import type { Runtime } from "./runtime.js";
 import type { RequestMeta } from "./grpc-client.js";
-import { LanternMemoryError } from "./errors.js";
+import { PalMemoryError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 /**
@@ -73,13 +73,13 @@ export class RuntimeMemoryClient implements MemoryClient {
    *
    * @param key - The key to look up.
    * @returns The value string, or null if the key does not exist.
-   * @throws {LanternMemoryError} If the operation fails.
+   * @throws {PalMemoryError} If the operation fails.
    */
   private async coreGet(key: string): Promise<string | null> {
     return traced("memory.core.get", { key }, async () => {
       const sidecar = this.runtime.sidecar;
       if (!sidecar) {
-        throw new LanternMemoryError("core", "Memory client requires a production runtime with sidecar");
+        throw new PalMemoryError("core", "Memory client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...this.runtime.meta };
@@ -91,8 +91,8 @@ export class RuntimeMemoryClient implements MemoryClient {
         }
         return response.value ?? null;
       } catch (err) {
-        if (err instanceof LanternMemoryError) throw err;
-        throw new LanternMemoryError("core", err instanceof Error ? err.message : String(err));
+        if (err instanceof PalMemoryError) throw err;
+        throw new PalMemoryError("core", err instanceof Error ? err.message : String(err));
       }
     });
   }
@@ -102,13 +102,13 @@ export class RuntimeMemoryClient implements MemoryClient {
    *
    * @param key - The key to set.
    * @param value - The value to store.
-   * @throws {LanternMemoryError} If the operation fails.
+   * @throws {PalMemoryError} If the operation fails.
    */
   private async coreSet(key: string, value: string): Promise<void> {
     return traced("memory.core.set", { key }, async () => {
       const sidecar = this.runtime.sidecar;
       if (!sidecar) {
-        throw new LanternMemoryError("core", "Memory client requires a production runtime with sidecar");
+        throw new PalMemoryError("core", "Memory client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...this.runtime.meta };
@@ -116,8 +116,8 @@ export class RuntimeMemoryClient implements MemoryClient {
       try {
         await sidecar.memorySet({ meta, tier: "core", key, value });
       } catch (err) {
-        if (err instanceof LanternMemoryError) throw err;
-        throw new LanternMemoryError("core", err instanceof Error ? err.message : String(err));
+        if (err instanceof PalMemoryError) throw err;
+        throw new PalMemoryError("core", err instanceof Error ? err.message : String(err));
       }
     });
   }
@@ -131,7 +131,7 @@ export class RuntimeMemoryClient implements MemoryClient {
    * @param query - Natural-language search query.
    * @param topK - Maximum number of results to return.
    * @returns An array of memory entries sorted by relevance.
-   * @throws {LanternMemoryError} If the search fails.
+   * @throws {PalMemoryError} If the search fails.
    */
   private async vectorSearch(
     tier: "recall" | "archival",
@@ -141,7 +141,7 @@ export class RuntimeMemoryClient implements MemoryClient {
     return traced(`memory.${tier}.search`, { topK }, async () => {
       const sidecar = this.runtime.sidecar;
       if (!sidecar) {
-        throw new LanternMemoryError(tier, "Memory client requires a production runtime with sidecar");
+        throw new PalMemoryError(tier, "Memory client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...this.runtime.meta };
@@ -156,8 +156,8 @@ export class RuntimeMemoryClient implements MemoryClient {
           createdAt: new Date(entry.createdAt),
         }));
       } catch (err) {
-        if (err instanceof LanternMemoryError) throw err;
-        throw new LanternMemoryError(tier, err instanceof Error ? err.message : String(err));
+        if (err instanceof PalMemoryError) throw err;
+        throw new PalMemoryError(tier, err instanceof Error ? err.message : String(err));
       }
     });
   }
@@ -172,7 +172,7 @@ export class RuntimeMemoryClient implements MemoryClient {
    *
    * @param text - The text content to store.
    * @param metadata - Optional metadata to attach to the entry.
-   * @throws {LanternMemoryError} If the operation fails.
+   * @throws {PalMemoryError} If the operation fails.
    */
   private async archivalAdd(
     text: string,
@@ -181,7 +181,7 @@ export class RuntimeMemoryClient implements MemoryClient {
     return traced("memory.archival.add", {}, async () => {
       const sidecar = this.runtime.sidecar;
       if (!sidecar) {
-        throw new LanternMemoryError("archival", "Memory client requires a production runtime with sidecar");
+        throw new PalMemoryError("archival", "Memory client requires a production runtime with sidecar");
       }
 
       const meta: RequestMeta = { ...this.runtime.meta };
@@ -189,8 +189,8 @@ export class RuntimeMemoryClient implements MemoryClient {
       try {
         await sidecar.memoryAdd({ meta, tier: "archival", text, metadata });
       } catch (err) {
-        if (err instanceof LanternMemoryError) throw err;
-        throw new LanternMemoryError("archival", err instanceof Error ? err.message : String(err));
+        if (err instanceof PalMemoryError) throw err;
+        throw new PalMemoryError("archival", err instanceof Error ? err.message : String(err));
       }
     });
   }
