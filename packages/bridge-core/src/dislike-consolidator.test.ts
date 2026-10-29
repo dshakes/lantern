@@ -68,19 +68,19 @@ test("LLM novel-preference pass: runs by default, skipped only when disabled", a
     calls++;
     return "[]";
   };
-  const saved = process.env.LANTERN_DISLIKE_LLM_CLUSTER;
+  const saved = process.env.PAL_DISLIKE_LLM_CLUSTER;
   try {
-    delete process.env.LANTERN_DISLIKE_LLM_CLUSTER; // default → on
+    delete process.env.PAL_DISLIKE_LLM_CLUSTER; // default → on
     await consolidateDislikes(mem, { minSupport: 3, minFraction: 0.3, llmCall });
     assert.ok(calls >= 1, "LLM cluster should run by default (flag unset)");
 
     calls = 0;
-    process.env.LANTERN_DISLIKE_LLM_CLUSTER = "0"; // explicit opt-out
+    process.env.PAL_DISLIKE_LLM_CLUSTER = "0"; // explicit opt-out
     await consolidateDislikes(mem, { minSupport: 3, minFraction: 0.3, llmCall });
     assert.equal(calls, 0, "LLM cluster must NOT run when explicitly disabled");
   } finally {
-    if (saved === undefined) delete process.env.LANTERN_DISLIKE_LLM_CLUSTER;
-    else process.env.LANTERN_DISLIKE_LLM_CLUSTER = saved;
+    if (saved === undefined) delete process.env.PAL_DISLIKE_LLM_CLUSTER;
+    else process.env.PAL_DISLIKE_LLM_CLUSTER = saved;
   }
 });
 

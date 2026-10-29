@@ -4,7 +4,7 @@
   implemented and unit-tested; attestation UNVERIFIED — not validated on SEV-SNP/TDX
   hardware; not a confidentiality guarantee.
 - **Date:** 2026-07-24
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, security, confidential-compute, attestation, regulated-verticals
 - **Related:** [ADR 0009 — Kubernetes as default runtime substrate](0009-kubernetes-default-runtime-substrate.md),
   [ADR 0022 — Two-tier agent runtime](0022-two-tier-agent-runtime.md),
@@ -20,7 +20,7 @@ Paging) and **Intel TDX** (Trust Domain Extensions). Both are surfaced in
 Kubernetes as **Kata Confidential Containers** (`kata-qemu-snp`, `kata-qemu-tdx`,
 or a cluster-operator-named RuntimeClass).
 
-Before this ADR, Lantern had no mechanism for an agent author to request
+Before this ADR, PAL Runtime had no mechanism for an agent author to request
 memory-encrypted execution, and the runtime had no way to refuse a confidential
 workload from landing on a non-CC node.
 
@@ -59,7 +59,7 @@ The flag threads through the entire runtime stack:
 3. **Runtime-manager** — two fail-closed gates, both unit-tested:
    - **`choose_backend`** (gate 1): `confidential` requires
      `backend.satisfies_confidential()`. For the K8s backend this returns `true`
-     ONLY when `LANTERN_RUNTIMECLASS_KATA_CC` is configured AND the RuntimeClass
+     ONLY when `PAL_RUNTIMECLASS_KATA_CC` is configured AND the RuntimeClass
      was confirmed present by the startup preflight. Refusal emits `gRPC
      failed_precondition` + a `"SECURITY: refusing to schedule"` log line.
      Never downgraded.
@@ -67,11 +67,11 @@ The flag threads through the entire runtime stack:
      Defense-in-depth for any future caller that bypasses gate 1.
 
    When `confidential` passes both gates: the Kata-CC RuntimeClass overrides the
-   isolation-class → RuntimeClass mapping, `LANTERN_CONFIDENTIAL=1` is injected
+   isolation-class → RuntimeClass mapping, `PAL_CONFIDENTIAL=1` is injected
    into the pod env, and node affinity + toleration on the operator-set label
    `lantern.dev/confidential-compute` ensures the pod lands only on CC hardware.
 
-4. **Harness** — on boot, when `LANTERN_CONFIDENTIAL=1`, the in-VM harness
+4. **Harness** — on boot, when `PAL_CONFIDENTIAL=1`, the in-VM harness
    (`services/harness/src/cc_attest.rs`) makes a **best-effort** read of the
    CC launch measurement (SEV-SNP `/dev/sev` report / TDX `configfs-tsm` or
    `/dev/tdx_guest` quote paths). The raw bytes are sha256'd; the hash (never
@@ -118,7 +118,7 @@ Two new `runtimeManager` Helm values in `infra/helm/lantern-data-plane/values.ya
 | Value | Purpose |
 |-------|---------|
 | `runtimeManager.runtimeClasses.kataCc` | `runtimeClassName` for CC pods (e.g. `"kata-qemu-snp"`). Empty → confidential workloads refused. |
-| `runtimeManager.ccTech` | Hint to the harness (`LANTERN_CC_TECH`) for tech detection. |
+| `runtimeManager.ccTech` | Hint to the harness (`PAL_CC_TECH`) for tech detection. |
 
 Operators must also label and taint CC-capable nodes:
 
@@ -194,7 +194,7 @@ given the hardware is not yet validated.
   `/dev/tdx_guest`, `configfs-tsm`) have been tested against the code but not
   validated on real SEV-SNP or TDX hardware.
 - **Kata-CC must be installed and labelled by the operator.** If
-  `LANTERN_RUNTIMECLASS_KATA_CC` is unset, confidential workloads fail closed;
+  `PAL_RUNTIMECLASS_KATA_CC` is unset, confidential workloads fail closed;
   no automatic provisioning.
 - **Only the K8s backend supports confidential compute.** Firecracker and Wasm
   backends return `satisfies_confidential() = false`; confidential requests routed

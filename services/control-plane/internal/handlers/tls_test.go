@@ -64,8 +64,8 @@ func writeTestCert(t *testing.T, dir string) (certPath, keyPath string) {
 }
 
 func TestGRPCServerTLS_UnsetReturnsNilNoError(t *testing.T) {
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_CERT", "")
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_KEY", "")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", "")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", "")
 
 	creds, err := GRPCServerTLS()
 	if err != nil {
@@ -80,8 +80,8 @@ func TestGRPCServerTLS_BuildsFromGeneratedCert(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath := writeTestCert(t, dir)
 
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_CERT", certPath)
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_KEY", keyPath)
+	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", certPath)
+	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", keyPath)
 
 	creds, err := GRPCServerTLS()
 	if err != nil {
@@ -109,8 +109,8 @@ func TestGRPCServerTLS_HalfConfiguredErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LANTERN_CONTROL_PLANE_TLS_CERT", tc.cert)
-			t.Setenv("LANTERN_CONTROL_PLANE_TLS_KEY", tc.key)
+			t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", tc.cert)
+			t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", tc.key)
 
 			creds, err := GRPCServerTLS()
 			if err == nil {
@@ -124,8 +124,8 @@ func TestGRPCServerTLS_HalfConfiguredErrors(t *testing.T) {
 }
 
 func TestGRPCServerTLS_UnloadablePathErrors(t *testing.T) {
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_CERT", "/nonexistent/tls.crt")
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_KEY", "/nonexistent/tls.key")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", "/nonexistent/tls.crt")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", "/nonexistent/tls.key")
 
 	creds, err := GRPCServerTLS()
 	if err == nil {
@@ -142,11 +142,11 @@ func TestGRPCServerTLS_UnloadablePathErrors(t *testing.T) {
 // plaintext fallback. The loader itself is environment-agnostic — the gating is
 // the IsProd() branch this asserts.
 func TestGRPCServerTLS_ProdGating(t *testing.T) {
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_CERT", "")
-	t.Setenv("LANTERN_CONTROL_PLANE_TLS_KEY", "")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_CERT", "")
+	t.Setenv("PAL_CONTROL_PLANE_TLS_KEY", "")
 
 	t.Run("prod unset is fatal-worthy (creds nil)", func(t *testing.T) {
-		t.Setenv("LANTERN_ENV", "prod")
+		t.Setenv("PAL_ENV", "prod")
 		creds, err := GRPCServerTLS()
 		if err != nil || creds != nil {
 			t.Fatalf("unset returns nil,nil regardless of env; got creds=%v err=%v", creds, err)
@@ -158,7 +158,7 @@ func TestGRPCServerTLS_ProdGating(t *testing.T) {
 	})
 
 	t.Run("dev unset is plaintext fallback", func(t *testing.T) {
-		t.Setenv("LANTERN_ENV", "")
+		t.Setenv("PAL_ENV", "")
 		creds, err := GRPCServerTLS()
 		if err != nil || creds != nil {
 			t.Fatalf("unset returns nil,nil; got creds=%v err=%v", creds, err)

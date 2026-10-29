@@ -15,7 +15,7 @@ type Size = "sm" | "md" | "lg";
 // without touching this file.
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-lantern-400 text-on-flame hover:bg-lantern-300 active:scale-[0.98] shadow-sm hover:shadow-md",
+    "bg-pal-400 text-on-flame hover:bg-pal-300 active:scale-[0.98] shadow-sm hover:shadow-md",
   secondary:
     "border border-zinc-700 bg-surface-1 text-zinc-200 hover:bg-surface-3 hover:border-zinc-600",
   ghost:
@@ -43,7 +43,7 @@ interface CommonProps {
 type ButtonProps = CommonProps & ButtonHTMLAttributes<HTMLButtonElement>;
 
 const BASE =
-  "inline-flex items-center justify-center font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/30 focus-visible:ring-offset-0";
+  "inline-flex items-center justify-center font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-pal-500/30 focus-visible:ring-offset-0";
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   function Button(

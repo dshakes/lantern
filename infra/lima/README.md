@@ -105,7 +105,7 @@ sudo FC_HARNESS_BIN="$T/$MUSL/release/lantern-harness" ARCH="$(uname -m)" \
 # cannot fork a VM), so set all four jailer vars.
 sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
 sudo FC_KERNEL_PATH="$IMG/vmlinux" FC_ROOTFS_PATH="$IMG/rootfs.ext4" \
-  RUNTIME_BACKEND=firecracker LANTERN_RUNTIME_BACKEND=firecracker \
+  RUNTIME_BACKEND=firecracker PAL_RUNTIME_BACKEND=firecracker \
   MANAGER_BIN="$T/release/lantern-runtime-manager" EXPECT_VENDSECRET=1 \
   FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
   FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
@@ -119,12 +119,12 @@ cat "$HOME"/.cache/lantern-lima/timing/lifecycle-timing.md
 The provision script installs `jailer` from the v1.15.1 tarball alongside
 `firecracker`.
 
-## Running the Lantern runtime stack against it
+## Running the PAL Runtime runtime stack against it
 
 The repo is mounted read-only at the same path inside the guest. To exercise
 `RUNTIME_BACKEND=firecracker` end-to-end, build and run runtime-manager
 *inside* the guest (it needs `/dev/kvm`), and point the scheduler on the host
-at it via `LANTERN_NODE_ADDR_<NODE>` / `LANTERN_DEFAULT_MANAGER_ADDR` and the
+at it via `PAL_NODE_ADDR_<NODE>` / `PAL_DEFAULT_MANAGER_ADDR` and the
 Lima port forward. The `cargo test` suites for runtime-manager and harness
 also run on the KVM CI runner on every push (`microvm-integration.yml`).
 

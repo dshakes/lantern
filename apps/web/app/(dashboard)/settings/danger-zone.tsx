@@ -31,7 +31,7 @@ export function DangerZone() {
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `lantern-export-${user.tenantId}.json`;
+      a.download = `pal-export-${user.tenantId}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {

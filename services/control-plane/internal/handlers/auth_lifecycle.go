@@ -74,7 +74,7 @@ var errInvalidToken = errors.New("invalid or expired token")
 // in dev. An unrecognised value is returned as-is; the handler treats anything
 // but open/invite as closed and the startup guard refuses it.
 func signupMode() string {
-	if m := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_SIGNUP_MODE"))); m != "" {
+	if m := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_SIGNUP_MODE"))); m != "" {
 		return m
 	}
 	if isProd() {
@@ -128,7 +128,7 @@ func (h *AuthHandler) requireVerifiedEmail(w http.ResponseWriter, r *http.Reques
 // captchaConfig reports whether sign-up needs a captcha and the secret to
 // check it with. Prod open sign-up always needs one, configured or not.
 func captchaConfig() (required bool, secret string) {
-	secret = os.Getenv("LANTERN_TURNSTILE_SECRET")
+	secret = os.Getenv("PAL_TURNSTILE_SECRET")
 	return secret != "" || (isProd() && signupMode() == signupOpen), secret
 }
 
@@ -144,13 +144,13 @@ func CheckSignupConfig(prod bool) (fatal bool, message string) {
 	default:
 		return true, fmt.Sprintf("LANTERN_SIGNUP_MODE=%q is not one of open, invite, closed", mode)
 	}
-	if mode == signupInvite && os.Getenv("LANTERN_SIGNUP_INVITE_SECRET") == "" {
+	if mode == signupInvite && os.Getenv("PAL_SIGNUP_INVITE_SECRET") == "" {
 		return true, "LANTERN_SIGNUP_MODE=invite needs LANTERN_SIGNUP_INVITE_SECRET to verify invite codes"
 	}
 	if !prod || mode == signupClosed {
 		return false, ""
 	}
-	if mode == signupOpen && os.Getenv("LANTERN_TURNSTILE_SECRET") == "" {
+	if mode == signupOpen && os.Getenv("PAL_TURNSTILE_SECRET") == "" {
 		return true, "LANTERN_SIGNUP_MODE=open in production needs LANTERN_TURNSTILE_SECRET (captcha is required for open sign-up)"
 	}
 	if mailer.Driver() == mailer.DriverLog {

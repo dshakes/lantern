@@ -2298,9 +2298,9 @@ export interface QuietHoursConfig {
 }
 
 export function defaultQuietHours(): QuietHoursConfig {
-  const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
-  const startHour = parseIntSafe(process.env.LANTERN_QUIET_START, 1);
-  const endHour = parseIntSafe(process.env.LANTERN_QUIET_END, 6);
+  const tz = process.env.PAL_OWNER_TIMEZONE || undefined;
+  const startHour = parseIntSafe(process.env.PAL_QUIET_START, 1);
+  const endHour = parseIntSafe(process.env.PAL_QUIET_END, 6);
   return { tz, startHour, endHour };
 }
 
@@ -2598,7 +2598,7 @@ export function naturalize(
  * lists are left intact so turning it back on restores the previous behaviour.
  */
 export function groupRepliesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env.LANTERN_GROUP_REPLIES ?? "").trim().toLowerCase();
+  const v = (env.PAL_GROUP_REPLIES ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "on";
 }
 

@@ -838,6 +838,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "pal_env",
  "pin-project-lite",
  "prometheus",
  "prost",
@@ -1109,6 +1110,10 @@ dependencies = [
  "tokio-stream",
  "tracing",
 ]
+
+[[package]]
+name = "pal_env"
+version = "0.1.0"
 
 [[package]]
 name = "parking_lot"

@@ -10,7 +10,7 @@ export interface SubAgentLink {
   addedAt: string;
 }
 
-const SUBAGENT_KEY_PREFIX = "lantern_sub_agents_";
+const SUBAGENT_KEY_PREFIX = "pal_sub_agents_";
 
 export function getSubAgents(agentName: string): SubAgentLink[] {
   if (typeof window === "undefined") return [];

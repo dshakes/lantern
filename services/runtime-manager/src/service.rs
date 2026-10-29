@@ -108,7 +108,7 @@ impl HarnessReady {
 const DEFAULT_HARNESS_READY_TIMEOUT: Duration = Duration::from_millis(5000);
 
 fn harness_ready_timeout() -> Duration {
-    std::env::var("LANTERN_HARNESS_READY_TIMEOUT_MS")
+    pal_env::var("PAL_HARNESS_READY_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map(Duration::from_millis)
@@ -120,7 +120,7 @@ fn harness_ready_timeout() -> Duration {
 const DEFAULT_HARNESS_EXEC_PORT: u16 = 50056;
 
 fn harness_exec_port() -> u16 {
-    std::env::var("LANTERN_HARNESS_EXEC_PORT")
+    pal_env::var("PAL_HARNESS_EXEC_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_HARNESS_EXEC_PORT)
@@ -648,7 +648,7 @@ impl RuntimeManagerGrpc {
         let mut req = request.into_inner();
         own_workload_env(
             &mut req.env,
-            std::env::var("LANTERN_ENV").ok().as_deref(),
+            pal_env::var("PAL_ENV").ok().as_deref(),
             &req.tenant_id,
             &req.agent_version_id,
         );
@@ -678,6 +678,18 @@ impl RuntimeManagerGrpc {
         };
 
         dlp_gate(req.dlp_policy.as_ref(), backend.as_ref(), &req.run_id)?;
+
+        // ADR 0044: only digest-pinned (and, if configured, allowlisted) images
+        // reach a registry pull; cosign identity is verified at admission.
+        if let Err(reason) = crate::image_policy::admit(backend.name(), &req.image) {
+            tracing::error!(
+                run_id = %req.run_id,
+                backend = backend.name(),
+                reason = %reason,
+                "SECURITY: refusing to schedule — image policy"
+            );
+            return Err(Status::failed_precondition(reason));
+        }
 
         tracing::info!(
             run_id = %req.run_id,
@@ -1024,7 +1036,7 @@ impl RuntimeManagerGrpc {
         // dropped, never trusted.
         own_workload_env(
             &mut req.env,
-            std::env::var("LANTERN_ENV").ok().as_deref(),
+            pal_env::var("PAL_ENV").ok().as_deref(),
             &req.tenant_id,
             "",
         );

@@ -2,17 +2,17 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-20
-- **Deciders:** Lantern runtime, security
+- **Deciders:** PAL Runtime runtime, security
 - **Tags:** runtime, secrets, security
 
 > **Status note (2026-07):** the decision holds — short-TTL, harness-vended, never
 > persisted. The **as-implemented delivery** (`services/harness/src/secrets.rs`,
 > P2-B7) is a **unix-socket vend** at `/run/lantern/secrets.sock` (override
-> `LANTERN_SECRETS_SOCKET`) rather than the tmpfs-file-plus-env-var injection
+> `PAL_SECRETS_SOCKET`) rather than the tmpfs-file-plus-env-var injection
 > sketched in steps 5–6. The worker/SDK connects and requests a value by
 > `env_name`; the harness vends from its `VendSecret` cache and re-vends before
 > expiry. The socket authenticates every peer via **`SO_PEERCRED`** and only vends
-> to the workload uid the manager injects as `LANTERN_WORKLOAD_UID` (fail-closed in
+> to the workload uid the manager injects as `PAL_WORKLOAD_UID` (fail-closed in
 > prod; unauthorized attempts emit a `secret_access_denied` audit).
 
 ## Context
@@ -56,7 +56,7 @@ The signing key for short-TTL tokens is rotated daily; old tokens fail closed at
 
 1. **The harness must be online to refresh tokens.** A harness↔manager partition expires secrets and the worker fails next call. Mitigation: vsock is a host-local channel; partition is effectively impossible without the manager being dead, in which case the VM is going down anyway.
 2. **Cold start adds N round trips for N secrets.** Mitigation: vsock RTT is ~100µs; even 10 secrets is ~1ms. Vended in parallel by the harness.
-3. **Some legacy vendor SDKs cache the API key at process start and never re-read.** Mitigation: the Lantern SDK provides a `getSecret(name)` helper that always re-reads tmpfs; docs flag this for vendor SDKs that don't behave.
+3. **Some legacy vendor SDKs cache the API key at process start and never re-read.** Mitigation: the PAL Runtime SDK provides a `getSecret(name)` helper that always re-reads tmpfs; docs flag this for vendor SDKs that don't behave.
 4. **Token rotation requires harness participation.** A misbehaving harness fails closed. Acceptable.
 
 ## Alternatives considered

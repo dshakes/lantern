@@ -61,12 +61,12 @@ const SERVICE_STARTED_AT = Date.now();
 // ---------------------------------------------------------------------------
 
 const PORT = parseInt(process.env.PORT || "3100", 10);
-const BIND = process.env.LANTERN_BRIDGE_BIND || "127.0.0.1";
-const BRIDGE_TOKEN = process.env.LANTERN_BRIDGE_TOKEN || "";
+const BIND = process.env.PAL_BRIDGE_BIND || "127.0.0.1";
+const BRIDGE_TOKEN = process.env.PAL_BRIDGE_TOKEN || "";
 // Default to the local dashboard origin rather than "*" so a malicious web
 // page can't drive the loopback bridge API via the browser (DNS-rebinding /
 // CSRF). Override with LANTERN_BRIDGE_ORIGIN (comma-separated) or "*" to widen.
-const CORS_ORIGIN = process.env.LANTERN_BRIDGE_ORIGIN || "http://localhost:3001";
+const CORS_ORIGIN = process.env.PAL_BRIDGE_ORIGIN || "http://localhost:3001";
 
 // Optional control-plane heartbeat. When both LANTERN_CONTROL_PLANE_URL
 // and LANTERN_BRIDGE_HEARTBEAT_TOKEN are set, the bridge POSTs the current
@@ -74,11 +74,11 @@ const CORS_ORIGIN = process.env.LANTERN_BRIDGE_ORIGIN || "http://localhost:3001"
 // This is what flips pairing-state from "lives only on the bridge box" to
 // "queryable from anywhere" — important for prod where the dashboard is
 // not on the same host as the bridge. In dev (no env vars) it is a no-op.
-const CONTROL_PLANE_URL = (process.env.LANTERN_CONTROL_PLANE_URL || "").replace(
+const CONTROL_PLANE_URL = (process.env.PAL_CONTROL_PLANE_URL || "").replace(
   /\/$/,
   ""
 );
-const HEARTBEAT_TOKEN = process.env.LANTERN_BRIDGE_HEARTBEAT_TOKEN || "";
+const HEARTBEAT_TOKEN = process.env.PAL_BRIDGE_HEARTBEAT_TOKEN || "";
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const isLoopback = BIND === "127.0.0.1" || BIND === "::1" || BIND === "localhost";
@@ -620,7 +620,7 @@ app.post("/session/:tenantId/jarvis/ask", async (req, res) => {
   }
   try {
     const reply = await session.askJarvis(text.trim());
-    res.json({ reply, model: process.env.LANTERN_OPUS_MODEL || "claude-opus-4-8" });
+    res.json({ reply, model: process.env.PAL_OPUS_MODEL || "claude-opus-4-8" });
   } catch (err) {
     logger.warn({ err, tenantId: req.params.tenantId }, "jarvis/ask failed");
     res.status(500).json({ error: (err as Error).message });
@@ -990,20 +990,20 @@ function logConfigCapabilities(): void {
   // into bridge-core even when no explicit env is set, so replies are NOT off
   // by default — only flag it when those defaults are the active path.
   const explicitAuth =
-    has(process.env.LANTERN_BRIDGE_EMAIL) ||
-    has(process.env.LANTERN_API_TOKEN) ||
-    has(process.env.LANTERN_BRIDGE_PASSWORD);
+    has(process.env.PAL_BRIDGE_EMAIL) ||
+    has(process.env.PAL_API_TOKEN) ||
+    has(process.env.PAL_BRIDGE_PASSWORD);
   const caps = {
     // Self-chat detection is a valid owner topology (owner messages
     // themselves), not a misconfig — only the dedicated-bot mode needs a JID.
     ownerChannel:
-      has(process.env.LANTERN_WA_OWNER_JID)
+      has(process.env.PAL_WA_OWNER_JID)
         ? "on (dedicated-bot mode)"
         : "on (self-chat mode — set LANTERN_WA_OWNER_JID for dedicated-bot mode)",
-    personalDocs: has(process.env.LANTERN_PERSONAL_DOCS_ROOTS)
+    personalDocs: has(process.env.PAL_PERSONAL_DOCS_ROOTS)
       ? "on"
       : "default-roots (~/Documents:~/Desktop:iCloud — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
-    ownerEmailMirror: has(process.env.LANTERN_OWNER_EMAIL) ? "on" : "off (optional)",
+    ownerEmailMirror: has(process.env.PAL_OWNER_EMAIL) ? "on" : "off (optional)",
     controlPlaneAuth: explicitAuth
       ? "on"
       : "on (dev default creds — set LANTERN_BRIDGE_EMAIL+PASSWORD or LANTERN_API_TOKEN for prod)",
@@ -1011,10 +1011,10 @@ function logConfigCapabilities(): void {
       has(CONTROL_PLANE_URL) && has(HEARTBEAT_TOKEN)
         ? "on"
         : "off (optional — dashboard falls back to direct probe)",
-    timezone: has(process.env.LANTERN_OWNER_TIMEZONE) ? "set" : "process-default",
+    timezone: has(process.env.PAL_OWNER_TIMEZONE) ? "set" : "process-default",
     proactiveNudges:
-      (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() === "0" ||
-      (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() === "off"
+      (process.env.PAL_PROACTIVE_NUDGES ?? "on").toLowerCase() === "0" ||
+      (process.env.PAL_PROACTIVE_NUDGES ?? "on").toLowerCase() === "off"
         ? "off"
         : "on",
   };

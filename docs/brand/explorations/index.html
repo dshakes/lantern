@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PAL mark explorations</title>
+<style>
+  :root { --ink:#0b0c0f; --paper:#fafaf8; --line:rgba(11,12,15,.1); --muted:#5b5e66; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 Inter, -apple-system, system-ui, sans-serif; padding:48px 32px 80px; }
+  h1 { font-size:32px; letter-spacing:-.03em; margin:0 0 6px; }
+  p.lede { color:var(--muted); max-width:720px; margin:0 0 32px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
+  .card { border:1px solid var(--line); border-radius:18px; background:#fff; overflow:hidden; }
+  .card.pick { outline:2px solid #ff4f5e; outline-offset:2px; }
+  .stage { display:grid; grid-template-columns:1fr 1fr; }
+  .stage > div { display:flex; align-items:center; justify-content:center; gap:14px; padding:22px 8px; }
+  .light { color:var(--ink); background:#fff; }
+  .dark { color:var(--paper); background:var(--ink); }
+  .meta { padding:14px 18px 18px; border-top:1px solid var(--line); }
+  .meta h2 { font-size:16px; margin:0 0 2px; letter-spacing:-.01em; }
+  .meta p { margin:0 0 10px; color:var(--muted); font-size:13.5px; }
+  .score { display:grid; grid-template-columns:repeat(5,1fr) auto; gap:4px; font-size:11.5px; color:var(--muted); }
+  .score b { display:block; color:var(--ink); font-size:15px; }
+  .total b { color:#d9264f; }
+  svg.m { width:96px; height:96px; }
+  svg.s32 { width:32px; height:32px; }
+  svg.s16 { width:16px; height:16px; }
+  .verdict { margin-top:40px; max-width:780px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff7a3d"/><stop offset="1" stop-color="#e5207f"/></linearGradient>
+    <linearGradient id="gr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6c5cff"/><stop offset="1" stop-color="#14c8f0"/></linearGradient>
+    <symbol id="c1" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round"><path d="M17.5 15 V56"/><circle cx="32.5" cy="30" r="15"/></g><circle cx="32.5" cy="30" r="6.5" fill="url(#g)"/></symbol>
+    <symbol id="c2" viewBox="0 0 64 64"><path d="M12 30 a20 20 0 0 0 40 0" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round"/><circle cx="32" cy="27" r="9" fill="url(#g)"/></symbol>
+    <symbol id="c3" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 47 A20 19 0 1 1 30 50 L14 55 Z"/></g><circle cx="33" cy="31" r="6" fill="url(#g)"/></symbol>
+    <symbol id="c4" viewBox="0 0 64 64"><g fill="currentColor"><rect x="8" y="44" width="44" height="10" rx="5"/><rect x="14" y="29" width="40" height="10" rx="5"/><rect x="20" y="14" width="22" height="10" rx="5"/></g><circle cx="52" cy="19" r="5.5" fill="url(#g)"/></symbol>
+    <symbol id="c5" viewBox="0 0 64 64"><path d="M50 32 A18 18 0 1 1 39 15.4" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/><circle cx="48" cy="18" r="6.5" fill="url(#g)"/></symbol>
+    <symbol id="c6" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 13 H55"/><path d="M45 13 V57"/><path d="M19 13 V27 Q19 40 32 40 H45"/></g><circle cx="32" cy="26" r="6" fill="url(#g)"/></symbol>
+    <symbol id="c7" viewBox="0 0 64 64"><circle cx="26" cy="36" r="15" fill="none" stroke="currentColor" stroke-width="9"/><circle cx="47" cy="18" r="8" fill="url(#g)"/></symbol>
+    <symbol id="c8" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"><path d="M20 12 Q8 32 20 52"/><path d="M44 12 Q56 32 44 52"/></g><circle cx="32" cy="32" r="8" fill="url(#g)"/></symbol>
+    <symbol id="c9" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 15 V56"/><rect x="17.5" y="15" width="30" height="30" rx="9"/></g><circle cx="32.5" cy="30" r="6.5" fill="url(#gr)"/></symbol>
+  </defs>
+</svg>
+
+<h1>PAL mark explorations</h1>
+<p class="lede">Eight directions for the pal mark, each shown at 96, 32 and 16px on paper and ink, plus the Runtime variant of the winner. Scored 1–5 on: <b>16px</b> (survives as a favicon), <b>mono</b> (works in one color), <b>ownable</b> (not a stock glyph), <b>story</b> (a layer that holds a moment for you) and <b>motion</b> (has a natural animation).</p>
+
+<div class="grid" id="grid"></div>
+
+<div class="verdict">
+  <h2>Verdict: 1, Held</h2>
+  <p>The p is the first letter of the name, so the mark and the wordmark are the same drawing: no separate symbol to learn. Its bowl holds a dot, which is the product in one shape (a layer that keeps a moment for you and asks before letting it go) and a nod to पल, "a moment". It stays a p at 16px, works in one ink, and animates without inventing anything: the bowl draws, the dot drops in and settles. 6 (प) has the best story but loses non-Hindi readers at small sizes; it lives on as the origin line in the guide. The Runtime sub-mark (9) keeps the same p and squares the bowl into a container: same family, machine register.</p>
+</div>
+
+<script>
+const C = [
+  ['c1','Held','A p whose bowl holds a dot: the moment pal keeps for you.',[5,5,4,5,5]],
+  ['c2','Cradle','An open arc holding a dot. Reads as a hand, or a sunrise.',[5,5,2,4,4]],
+  ['c3','Bubble','A chat bubble around the dot. Every messaging app owns this.',[4,5,1,3,4]],
+  ['c4','Strata','Stacked layers with a dot (the previous Runtime mark). Bars blur at 16px.',[3,5,3,3,4]],
+  ['c5','Orbit','A companion dot orbiting an open ring.',[4,5,2,3,5]],
+  ['c6','प (pal)','Devanagari pa with the dot in its bowl: पल, a moment.',[3,5,5,4,3]],
+  ['c7','Two pals','A ring and a dot side by side: you and your pal.',[5,5,2,3,4]],
+  ['c8','Held in brackets','A dot cupped by two curves.',[4,5,2,4,4]],
+  ['c9','Runtime (from 1)','Same p, bowl squared into a container, electric dot.',[5,5,4,5,4]],
+];
+const grid = document.getElementById('grid');
+for (const [id,name,desc,s] of C) {
+  const tot = s.reduce((a,b)=>a+b,0);
+  const icons = `<svg class="m"><use href="#${id}"/></svg><svg class="s32"><use href="#${id}"/></svg><svg class="s16"><use href="#${id}"/></svg>`;
+  grid.insertAdjacentHTML('beforeend', `<div class="card${id==='c1'?' pick':''}"><div class="stage"><div class="light">${icons}</div><div class="dark">${icons}</div></div>
+  <div class="meta"><h2>${C.findIndex(c=>c[0]===id)+1}. ${name}</h2><p>${desc}</p>
+  <div class="score">${['16px','mono','ownable','story','motion'].map((k,i)=>`<span>${k}<b>${s[i]}</b></span>`).join('')}<span class="total">total<b>${tot}/25</b></span></div></div></div>`);
+}
+</script>
+</body>
+</html>

@@ -222,7 +222,7 @@ func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grp
 		mgrCreds:     mgrCreds,
 		conn:         conn,
 		client:       lanternv1.NewRuntimeSchedulerClient(conn),
-		defaultMgr:   os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
+		defaultMgr:   os.Getenv("PAL_DEFAULT_MANAGER_ADDR"),
 		mgrConns:     make(map[string]*grpc.ClientConn),
 		mgrClients:   make(map[string]lanternv1.RuntimeManagerClient),
 	}, nil
@@ -239,9 +239,9 @@ func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grp
 //   - unset in prod, client cert missing in prod, half-set cert/key, or an
 //     unreadable file → error; runStartupGuards treats it as fatal.
 func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
-	caPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CA"))
-	certPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CERT"))
-	keyPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_KEY"))
+	caPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CA"))
+	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
 		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}
@@ -308,7 +308,7 @@ func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
 	if node == "" {
 		return c.defaultMgr
 	}
-	key := "LANTERN_NODE_ADDR_" + strings.NewReplacer(".", "_", "-", "_").Replace(node)
+	key := "PAL_NODE_ADDR_" + strings.NewReplacer(".", "_", "-", "_").Replace(node)
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
@@ -1276,7 +1276,7 @@ func (h *RuntimeHandler) TerminateSessionVM(ctx context.Context, tenantID, sessi
 // Start it as a goroutine alongside the other background loops in main.go.
 func RunSessionVMIdleSweep(ctx context.Context, h *RuntimeHandler, logger *zap.Logger) {
 	ttl := 30 * time.Minute
-	if v := os.Getenv("LANTERN_SESSION_VM_IDLE_TTL"); v != "" {
+	if v := os.Getenv("PAL_SESSION_VM_IDLE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			ttl = d
 		}
@@ -1395,8 +1395,8 @@ func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
 		identity: agentidentity.New(auth.JWTSecret()),
 	}
 	logger := srv.Logger.Named("runtime")
-	if addr := os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"); addr != "" {
-		c, err := NewGRPCSchedulerClient(addr, os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"), logger.Named("scheduler_grpc"))
+	if addr := os.Getenv("PAL_SCHEDULER_GRPC_ADDR"); addr != "" {
+		c, err := NewGRPCSchedulerClient(addr, os.Getenv("PAL_GRPC_SERVICE_TOKEN"), logger.Named("scheduler_grpc"))
 		if err != nil {
 			logger.Warn("falling back to stub scheduler client",
 				zap.String("addr", addr), zap.Error(err))

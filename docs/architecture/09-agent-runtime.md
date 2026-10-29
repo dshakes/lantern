@@ -16,7 +16,7 @@ Every agent run executes in one of two tiers. The tier is a property of the **ag
 | Executor | Goroutine inside the control-plane (`executeRunInlineSync`) | W12 stack: scheduler → manager → VM harness |
 | Typical latency | ~50–200ms to first token | ~150ms (warm pool) to ~1.5s (cold boot) |
 | Checkpointing | `journal_events` per step; crash-replay via recovery sweep | `journal_events` via harness→manager report path |
-| Crash resume | Recovery sweep re-drives within 30s | Recovery sweep re-schedules (same `run_id`, `LANTERN_RESUME=1`, ≤3 attempts); exhausted → `microvm_resume_exhausted` |
+| Crash resume | Recovery sweep re-drives within 30s | Recovery sweep re-schedules (same `run_id`, `PAL_RESUME=1`, ≤3 attempts); exhausted → `microvm_resume_exhausted` |
 | Isolation | Trust boundary: same OS process as control-plane | Separate kernel (gVisor) or separate hypervisor (Kata microVM) |
 | Egress control | Outbound allowed (trust-first-party code) | Harness enforces allowlist + iptables REDIRECT; deny-default |
 | Secret vending | Resolved inline via `lantern.secret/…` refs | Short-TTL JWT over vsock; harness caches with declared TTL |
@@ -106,7 +106,7 @@ The run waterfall in the dashboard (`apps/web/app/(dashboard)/runs/[id]`) reads 
 
 ### Recovery sweep {#recovery-sweep}
 
-`RunRecoveryLoop` runs every 30 seconds (configurable via `LANTERN_RECOVERY_INTERVAL`, a Go duration string; set `"0"` or `"off"` to disable). Each pass:
+`RunRecoveryLoop` runs every 30 seconds (configurable via `PAL_RECOVERY_INTERVAL`, a Go duration string; set `"0"` or `"off"` to disable). Each pass:
 
 1. Queries `runs` for rows where `status IN ('running','queued')` and the matching `run_locks` row is absent or expired.
 2. Caps at `recoverySweepLimit = 20` rows per pass to bound startup latency.
@@ -118,7 +118,7 @@ The run waterfall in the dashboard (`apps/web/app/(dashboard)/runs/[id]`) reads 
 1. Checks for a live (non-terminal) VM for the run — if one exists, the VM is self-managing and the sweep returns immediately.
 2. Counts all `runtime_vms` rows for the run (resume attempts so far).
 3. If the count equals or exceeds `maxMicroVMResumeAttempts` (3), marks the run `failed` with error code `microvm_resume_exhausted`.
-4. Otherwise re-schedules a new VM via `scheduleAgentSpec`, injecting `LANTERN_RESUME=1` into the manifest env so the in-VM agent reads `journal_events` `CompletedStep` rows and skips nodes it already finished.
+4. Otherwise re-schedules a new VM via `scheduleAgentSpec`, injecting `PAL_RESUME=1` into the manifest env so the in-VM agent reads `journal_events` `CompletedStep` rows and skips nodes it already finished.
 
 This means a crashed microVM run gets up to three recovery attempts before being abandoned. The OTel span is `runtime.recovery.microvm_resume`.
 
@@ -191,7 +191,7 @@ The MicroVM tier reuses the W12 stack described in detail in [04b — MicroVM pr
 When `manifest.isolation == "microvm"`, the run executor calls `scheduleAgentSpec`, which:
 
 1. Journals a `microvm:schedule` `step_started` event.
-2. Dials the runtime-scheduler (`LANTERN_SCHEDULER_GRPC_ADDR`) and calls `RuntimeScheduler.Schedule(spec)`.
+2. Dials the runtime-scheduler (`PAL_SCHEDULER_GRPC_ADDR`) and calls `RuntimeScheduler.Schedule(spec)`.
 3. On success: inserts a `vms` row, journals `step_completed` with the `vm_id`, and returns.
 4. On any error (scheduler unreachable, quota exceeded, stub): marks the run `failed` with code `microvm_unavailable` and journals `step_failed`. **No fallback to the shared tier.**
 
@@ -240,7 +240,7 @@ Sessions are not workflow-graph runs — they use the plain-LLM tool-use loop. T
 
 ### Cron schedules
 
-The `schedules` table (`cron_expr`, `next_fire_at`, `timezone`) drives periodic runs. The scheduler (`internal/scheduler/`) queries `next_fire_at <= now()` on a tick, creates a run via `POST /v1/runs`, and advances `next_fire_at` to the next cron-computed fire time. Timezone is per-schedule (`LANTERN_DEFAULT_TIMEZONE` env as deployment-wide default; UTC when unset).
+The `schedules` table (`cron_expr`, `next_fire_at`, `timezone`) drives periodic runs. The scheduler (`internal/scheduler/`) queries `next_fire_at <= now()` on a tick, creates a run via `POST /v1/runs`, and advances `next_fire_at` to the next cron-computed fire time. Timezone is per-schedule (`PAL_DEFAULT_TIMEZONE` env as deployment-wide default; UTC when unset).
 
 ### Loop agents and tiers
 
@@ -260,14 +260,14 @@ All loop agents run on the shared tier by default (they are trusted first-party 
 
 ## Service-health sweep {#health-sweep}
 
-`RunHealthSweep` (launched from `main.go`) probes configured peer services via TCP every 60 seconds (`LANTERN_HEALTH_SWEEP_INTERVAL`, Go duration string; `"0"` or `"off"` disables). Probed when the corresponding address env var is set:
+`RunHealthSweep` (launched from `main.go`) probes configured peer services via TCP every 60 seconds (`PAL_HEALTH_SWEEP_INTERVAL`, Go duration string; `"0"` or `"off"` disables). Probed when the corresponding address env var is set:
 
 | Service | Env var | Notes |
 |---|---|---|
-| model-router | `LANTERN_MODEL_ROUTER_ADDR` (default `model-router:50053`) | Only probed when `LANTERN_USE_MODEL_ROUTER=1` or addr is non-default |
-| runtime-scheduler | `LANTERN_SCHEDULER_GRPC_ADDR` | |
-| runtime-manager | `LANTERN_DEFAULT_MANAGER_ADDR` | |
-| workflow-engine | `LANTERN_WORKFLOW_ENGINE_ADDR` (default `workflow-engine:50052`) | Optional; no gRPC dial, TCP probe only |
+| model-router | `PAL_MODEL_ROUTER_ADDR` (default `model-router:50053`) | Only probed when `PAL_USE_MODEL_ROUTER=1` or addr is non-default |
+| runtime-scheduler | `PAL_SCHEDULER_GRPC_ADDR` | |
+| runtime-manager | `PAL_DEFAULT_MANAGER_ADDR` | |
+| workflow-engine | `PAL_WORKFLOW_ENGINE_ADDR` (default `workflow-engine:50052`) | Optional; no gRPC dial, TCP probe only |
 
 A service is declared **DOWN** after `downThreshold = 3` consecutive failures. Alerts fire only on state transitions (UP→DOWN, DOWN→UP) via `sendSelfNote` to the owner's self-chat. No alert storms.
 

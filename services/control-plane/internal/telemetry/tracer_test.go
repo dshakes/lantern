@@ -17,7 +17,7 @@ import (
 // returns a working no-op shutdown and doesn't panic.
 func TestInitTracer_NoOp(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	t.Setenv("LANTERN_OTEL_ENABLED", "")
+	t.Setenv("PAL_OTEL_ENABLED", "")
 
 	ctx := context.Background()
 	shutdown, err := InitTracer(ctx, "test-service")
@@ -46,7 +46,7 @@ func TestInitTracer_EnabledDummyEndpoint(t *testing.T) {
 	// Use a localhost port that is almost certainly closed so we never
 	// make a real network call, while still exercising the init code path.
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:19999")
-	t.Setenv("LANTERN_OTEL_ENABLED", "1")
+	t.Setenv("PAL_OTEL_ENABLED", "1")
 
 	ctx := context.Background()
 	shutdown, err := InitTracer(ctx, "test-service")

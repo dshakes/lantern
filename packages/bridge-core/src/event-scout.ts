@@ -75,10 +75,10 @@ export function defaultScoutState(): EventScoutState {
   return {
     categories: [...DEFAULT_SCOUT_CATEGORIES],
     location:
-      process.env.LANTERN_EVENT_SCOUT_LOCATION ||
+      process.env.PAL_EVENT_SCOUT_LOCATION ||
       "Chantilly, VA 20152 (Loudoun County — Northern Virginia / DC metro)",
     audience:
-      process.env.LANTERN_EVENT_SCOUT_AUDIENCE ||
+      process.env.PAL_EVENT_SCOUT_AUDIENCE ||
       "family with a young kid (~4-5 years old); Indian (Telugu) family — Indian community events matter as much as county/state ones",
     windowDays: 60,
     seen: {},

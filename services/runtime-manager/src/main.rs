@@ -11,6 +11,7 @@ mod config;
 mod dlp;
 mod egress_broker;
 mod handle_registry;
+mod image_policy;
 mod measurement;
 mod metrics;
 mod otel;
@@ -66,6 +67,21 @@ async fn main() -> anyhow::Result<()> {
         "starting lantern-runtime-manager"
     );
 
+    // ADR 0044: workload image admission (digest pinning + repo allowlist).
+    if config.image_policy.enforce {
+        tracing::info!(
+            allowed_repos = ?config.image_policy.allowed_repos,
+            "image policy: PAL_VERIFY_SIGNATURES on — workload images must be digest-pinned; \
+             signatures are verified by the cluster admission policy (infra/k8s/supply-chain)"
+        );
+    } else if crate::tls::is_prod_env() {
+        tracing::error!(
+            "SECURITY: PAL_VERIFY_SIGNATURES=off in a prod environment — workload images \
+             are NOT required to be digest-pinned (ADR 0044)"
+        );
+    }
+    image_policy::install(config.image_policy.clone(), config.agent_image.clone());
+
     // Secret resolver — build() selects the relay (ADR 0008) when both
     // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
     // otherwise falls back to EnvSecretResolver (dev/CI default). Built before
@@ -91,10 +107,10 @@ async fn main() -> anyhow::Result<()> {
                 wasm: config.runtimeclass_wasm.clone(),
                 kata_cc: config.runtimeclass_kata_cc.clone(),
                 allow_runc_standard: config.allow_runc_standard,
-                node_label_gvisor: std::env::var("LANTERN_NODE_LABEL_GVISOR")
+                node_label_gvisor: pal_env::var("PAL_NODE_LABEL_GVISOR")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
-                node_label_kata: std::env::var("LANTERN_NODE_LABEL_KATA")
+                node_label_kata: pal_env::var("PAL_NODE_LABEL_KATA")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
             };
@@ -129,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
             // L3: production broker mode must use the tenant-bound relay.
             egress_broker::check_broker_resolver(
                 fc.egress_mode(),
-                std::env::var("LANTERN_ENV").ok().as_deref(),
+                pal_env::var("PAL_ENV").ok().as_deref(),
                 matches!(
                     crate::secret_resolver::RelaySecretResolver::from_env_or_err(),
                     Ok(Some(_))
@@ -164,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
     // RuntimeClass is configured + cluster-present after preflight); `cc_tech` is
     // the operator-declared hardware technology (SEV-SNP/TDX), empty when unset.
     let cc_capable = backend.satisfies_confidential();
-    let cc_tech = std::env::var("LANTERN_CC_TECH")
+    let cc_tech = pal_env::var("PAL_CC_TECH")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_default();

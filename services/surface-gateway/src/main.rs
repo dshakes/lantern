@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 "WHATSAPP_APP_SECRET must be set in production (LANTERN_ENV={:?}) — \
                  WhatsApp POST webhooks would be accepted without X-Hub-Signature-256 \
                  verification, allowing forged inbound messages",
-                std::env::var("LANTERN_ENV").unwrap_or_default()
+                pal_env::var("PAL_ENV").unwrap_or_default()
             );
         }
         // M1: pass app_secret (distinct from verify_token) for POST signature verification.
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                 "TELEGRAM_SECRET_TOKEN must be set in production (LANTERN_ENV={:?}) — \
                  Telegram webhooks would be accepted without X-Telegram-Bot-Api-Secret-Token \
                  verification, allowing forged inbound messages",
-                std::env::var("LANTERN_ENV").unwrap_or_default()
+                pal_env::var("PAL_ENV").unwrap_or_default()
             );
         }
         // C3: pass secret_token for X-Telegram-Bot-Api-Secret-Token verification.
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!(
                     "TELEGRAM_API_BASE_URL is a test-only fixture override and is refused in \
                      production (LANTERN_ENV={:?}) — it would send bot replies to an arbitrary host",
-                    std::env::var("LANTERN_ENV").unwrap_or_default()
+                    pal_env::var("PAL_ENV").unwrap_or_default()
                 );
             }
             tracing::warn!(base = %base, "TELEGRAM_API_BASE_URL set — Telegram calls go to a fixture, not api.telegram.org");
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
                 "SURFACE_GATEWAY_BASE_URL must be set in production (LANTERN_ENV={:?}) — \
                  Twilio webhooks fall back to header-presence-only verification without it, \
                  allowing forged signatures from any sender that includes an x-twilio-signature header",
-                std::env::var("LANTERN_ENV").unwrap_or_default()
+                pal_env::var("PAL_ENV").unwrap_or_default()
             );
         }
         // H5: pass webhook_base_url so routes can do URL-aware HMAC-SHA1 verification.
@@ -265,7 +265,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
 /// self-contained.
 fn is_prod_env() -> bool {
     matches!(
-        std::env::var("LANTERN_ENV")
+        pal_env::var("PAL_ENV")
             .unwrap_or_default()
             .to_lowercase()
             .as_str(),

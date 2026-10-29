@@ -86,17 +86,17 @@ func (h *ShortcutsHandler) callBridge(channel, tenantID, path string, body any) 
 		var tokenEnv string
 		switch ch {
 		case "imessage":
-			base = os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+			base = os.Getenv("PAL_IMESSAGE_BRIDGE_URL")
 			if base == "" {
 				base = "http://localhost:3200"
 			}
-			tokenEnv = "LANTERN_IMESSAGE_BRIDGE_TOKEN"
+			tokenEnv = "PAL_IMESSAGE_BRIDGE_TOKEN"
 		default:
-			base = os.Getenv("LANTERN_BRIDGE_URL")
+			base = os.Getenv("PAL_BRIDGE_URL")
 			if base == "" {
 				base = "http://localhost:3100"
 			}
-			tokenEnv = "LANTERN_BRIDGE_TOKEN"
+			tokenEnv = "PAL_BRIDGE_TOKEN"
 		}
 		base = strings.TrimRight(base, "/")
 
@@ -277,17 +277,17 @@ func bridgeBaseURL(channel string) (string, string) {
 	var tokenEnv string
 	switch channel {
 	case "imessage":
-		base = os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+		base = os.Getenv("PAL_IMESSAGE_BRIDGE_URL")
 		if base == "" {
 			base = "http://localhost:3200"
 		}
-		tokenEnv = "LANTERN_IMESSAGE_BRIDGE_TOKEN"
+		tokenEnv = "PAL_IMESSAGE_BRIDGE_TOKEN"
 	default:
-		base = os.Getenv("LANTERN_BRIDGE_URL")
+		base = os.Getenv("PAL_BRIDGE_URL")
 		if base == "" {
 			base = "http://localhost:3100"
 		}
-		tokenEnv = "LANTERN_BRIDGE_TOKEN"
+		tokenEnv = "PAL_BRIDGE_TOKEN"
 	}
 	return strings.TrimRight(base, "/"), tokenEnv
 }

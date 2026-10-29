@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { LanternMark } from "@/components/lantern-mark";
+import { PalMark } from "@/components/pal-mark";
 import {
   Shield,
   CheckCircle2,
@@ -91,7 +91,7 @@ export default function ProofPage() {
     <div className="min-h-screen bg-black text-zinc-100">
       <header className="border-b border-zinc-800">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-6 py-4">
-          <LanternMark className="h-8 w-8" />
+          <PalMark className="h-8 w-8" />
           <div className="flex-1">
             <h1 className="text-sm font-semibold text-zinc-100">PAL · Proof</h1>
             <p className="text-[11px] text-zinc-500">Verify a signed agent receipt</p>
@@ -139,7 +139,7 @@ export default function ProofPage() {
     "journalHash": "..."
   }
 }`}
-            className="block w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-[12px] text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-lantern-500/40"
+            className="block w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-[12px] text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-pal-500/40"
           />
 
           {parseError && (
@@ -153,7 +153,7 @@ export default function ProofPage() {
             <button
               onClick={verify}
               disabled={!json.trim() || verifying}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2 text-[12px] font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-4 py-2 text-[12px] font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50"
             >
               {verifying ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

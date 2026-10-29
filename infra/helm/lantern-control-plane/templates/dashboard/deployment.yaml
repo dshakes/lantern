@@ -24,7 +24,7 @@ spec:
               containerPort: 3000
               protocol: TCP
           env:
-            - name: LANTERN_API_URL
+            - name: PAL_API_URL
               value: "http://{{ include "lantern-cp.fullname" . }}-gateway:{{ .Values.gateway.service.port }}"
           livenessProbe:
             httpGet:

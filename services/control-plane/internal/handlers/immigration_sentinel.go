@@ -47,7 +47,7 @@ import (
 // immigrationSentinelEnabled reports whether the sentinel is active.
 // Default OFF: unset env means zero behavior change for all callers.
 func immigrationSentinelEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_IMMIGRATION_SENTINEL")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_IMMIGRATION_SENTINEL")))
 	return v == "1" || v == "true" || v == "on"
 }
 

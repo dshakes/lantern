@@ -32,8 +32,8 @@ fi
 # short timeout. It must hit the LOCAL API (localhost:8080), NOT the public
 # NEXT_PUBLIC_API_URL (Tailscale) — a slow/unreachable remote validation "fails
 # closed" and bounces /agents → /login forever (blank screen redirect loop).
-# LANTERN_API_URL wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
-export LANTERN_API_URL="${LANTERN_API_URL:-http://localhost:8080}"
+# PAL_API_URL (LANTERN_API_URL still accepted) wins over NEXT_PUBLIC_API_URL in controlPlaneBaseUrl().
+export PAL_API_URL="${PAL_API_URL:-${LANTERN_API_URL:-http://localhost:8080}}"
 
 # Wait up to 60s for the API so we don't flash "API offline" during boot.
 for i in {1..30}; do

@@ -139,7 +139,7 @@ func TestCallLLMSync_GenAISpan_UnsupportedProvider(t *testing.T) {
 // branch. With LANTERN_USE_CLAUDE_CODE=0 the binary look-up is skipped and the
 // function returns an error immediately, confirming the span is still recorded.
 func TestCallLLMSync_GenAISpan_ClaudeCode(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "0")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "0")
 
 	exp, cleanup := installTestRecorder(t)
 	defer cleanup()

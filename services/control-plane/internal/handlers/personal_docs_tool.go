@@ -381,7 +381,7 @@ func isPersonalDocsTool(name string) bool {
 // (default http://127.0.0.1:3200, the iMessage bridge port). Auth via
 // LANTERN_IMESSAGE_BRIDGE_TOKEN / LANTERN_BRIDGE_TOKEN.
 func executePersonalDocsTool(ctx context.Context, tenantID, name string, params map[string]any) (any, error) {
-	base := strings.TrimRight(os.Getenv("LANTERN_PERSONAL_DOCS_BRIDGE_URL"), "/")
+	base := strings.TrimRight(os.Getenv("PAL_PERSONAL_DOCS_BRIDGE_URL"), "/")
 	if base == "" {
 		base = personalDocsBridgeDefaultURL
 	}
@@ -389,9 +389,9 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 	// same Mac under the same trust boundary. Prefer the iMessage token
 	// (default bridge for personal-docs) and fall back to the WhatsApp
 	// bridge token.
-	token := os.Getenv("LANTERN_IMESSAGE_BRIDGE_TOKEN")
+	token := os.Getenv("PAL_IMESSAGE_BRIDGE_TOKEN")
 	if token == "" {
-		token = os.Getenv("LANTERN_BRIDGE_TOKEN")
+		token = os.Getenv("PAL_BRIDGE_TOKEN")
 	}
 
 	if tenantID == "" {
@@ -400,7 +400,7 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 
 	// WhatsApp history searches go to the WhatsApp bridge (default
 	// :3100), everything else to the iMessage bridge (default :3200).
-	waBase := strings.TrimRight(os.Getenv("LANTERN_WHATSAPP_BRIDGE_URL"), "/")
+	waBase := strings.TrimRight(os.Getenv("PAL_WHATSAPP_BRIDGE_URL"), "/")
 	if waBase == "" {
 		waBase = whatsappBridgeDefaultURL
 	}

@@ -441,7 +441,7 @@ export default function OnboardingPage() {
   const finish = async () => {
     await persist({ ...doc, step: "done", completedAt: new Date().toISOString() });
     try {
-      localStorage.setItem("lantern_onboarding_complete", "true");
+      localStorage.setItem("pal_onboarding_complete", "true");
     } catch {
       /* cosmetic flag only */
     }
@@ -823,7 +823,7 @@ function GoalCard({
               key={g}
               type="button"
               onClick={() => setGoal(g)}
-              className="rounded-full border border-zinc-700 px-2.5 py-1 text-left text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+              className="rounded-full border border-zinc-700 px-2.5 py-1 text-left text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-500/40"
             >
               {g}
             </button>
@@ -848,7 +848,7 @@ function GoalCard({
                   type="button"
                   disabled={busy}
                   onClick={() => onPick(t)}
-                  className="h-full w-full rounded-lg border border-zinc-800 bg-surface-1 p-3 text-left transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40 disabled:opacity-50"
+                  className="h-full w-full rounded-lg border border-zinc-800 bg-surface-1 p-3 text-left transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-500/40 disabled:opacity-50"
                 >
                   <span className="block text-sm font-medium text-zinc-50">{t.name}</span>
                   <span className="mt-1 block text-xs text-zinc-400">{t.pitch}</span>
@@ -982,7 +982,7 @@ function KeyForm({ busy, onSubmit }: { busy: boolean; onSubmit: (p: Provider, ke
             <label
               key={p}
               className={clsx(
-                "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium focus-within:ring-2 focus-within:ring-lantern-500/40",
+                "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium focus-within:ring-2 focus-within:ring-pal-500/40",
                 provider === p ? "bg-surface-3 text-zinc-50" : "text-zinc-400 hover:text-zinc-50",
               )}
             >
@@ -1011,7 +1011,7 @@ function KeyForm({ busy, onSubmit }: { busy: boolean; onSubmit: (p: Provider, ke
             type="button"
             onClick={() => setShow(!show)}
             aria-label={show ? "Hide key" : "Show key"}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-500/40"
           >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
@@ -1194,9 +1194,9 @@ function NextSteps({ ref, agentName, onFinish }: { ref?: Ref<HTMLHeadingElement>
             <li key={it.title}>
               <Link
                 href={it.href}
-                className="flex h-full flex-col gap-1 rounded-lg border border-zinc-800 bg-surface-2 p-3 transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40"
+                className="flex h-full flex-col gap-1 rounded-lg border border-zinc-800 bg-surface-2 p-3 transition-colors hover:border-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-500/40"
               >
-                <it.icon className="h-4 w-4 text-lantern-300" aria-hidden />
+                <it.icon className="h-4 w-4 text-pal-300" aria-hidden />
                 <span className="text-sm font-medium text-zinc-50">{it.title}</span>
                 <span className="text-xs text-zinc-400">{it.text}</span>
               </Link>

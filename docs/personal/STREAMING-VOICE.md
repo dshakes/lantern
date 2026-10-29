@@ -34,12 +34,12 @@ control, much more work. Prefer ConversationRelay unless you need it.)
 ### 1. TwiML (already a small, gated branch to add)
 
 In `VoiceWebhook` (after owner + PIN verification), when
-`LANTERN_VOICE_STREAMING=on`, return this instead of the `<Gather>` flow:
+`PAL_VOICE_STREAMING=on`, return this instead of the `<Gather>` flow:
 
 ```xml
 <Response>
   <Connect>
-    <ConversationRelay url="wss://<LANTERN_PUBLIC_BASE_URL host>/v1/voice/relay"
+    <ConversationRelay url="wss://<PAL_PUBLIC_BASE_URL host>/v1/voice/relay"
                        welcomeGreeting="Hey, what's up?"
                        voice="<elevenlabs-or-polly-voice-id>" />
   </Connect>
@@ -67,21 +67,21 @@ a spoken passphrase check on the first `prompt`.
   `github.com/coder/websocket` (or `gorilla/websocket`) and run
   `govulncheck` before committing (per repo policy).
 - **Public `wss://`** — ConversationRelay dials your tunnel; reuse
-  `LANTERN_PUBLIC_BASE_URL` (the Cloudflare tunnel) with the `wss` scheme.
+  `PAL_PUBLIC_BASE_URL` (the Cloudflare tunnel) with the `wss` scheme.
 - **Twilio ConversationRelay** must be enabled on the account (beta).
 - **ElevenLabs voice** (optional) — set the `voice` attribute; you already
-  have `LANTERN_ELEVENLABS_KEY` / `LANTERN_ELEVENLABS_VOICE_ID`.
+  have `PAL_ELEVENLABS_KEY` / `PAL_ELEVENLABS_VOICE_ID`.
 
 ### 4. Env
 
 | Var | Purpose |
 |---|---|
-| `LANTERN_VOICE_STREAMING` | `on` → emit ConversationRelay TwiML instead of the `<Gather>` loop |
-| `LANTERN_VOICE_RELAY_URL` | Optional explicit `wss://…/v1/voice/relay` (else derived from `LANTERN_PUBLIC_BASE_URL`) |
+| `PAL_VOICE_STREAMING` | `on` → emit ConversationRelay TwiML instead of the `<Gather>` loop |
+| `PAL_VOICE_RELAY_URL` | Optional explicit `wss://…/v1/voice/relay` (else derived from `PAL_PUBLIC_BASE_URL`) |
 
 ### 5. Testing
 
-1. `LANTERN_VOICE_STREAMING=on`, restart control-plane.
+1. `PAL_VOICE_STREAMING=on`, restart control-plane.
 2. Call your Twilio number; confirm the WS `setup` then `prompt` frames
    arrive in the logs.
 3. Confirm the spoken reply reflects your memory (ask "what's on my
@@ -90,6 +90,6 @@ a spoken passphrase check on the first `prompt`.
 
 ## Fallback
 
-When `LANTERN_VOICE_STREAMING` is unset/`off`, the existing turn-based
+When `PAL_VOICE_STREAMING` is unset/`off`, the existing turn-based
 `<Gather>` voice loop is used unchanged — so this is purely additive and
 safe to ship dark.

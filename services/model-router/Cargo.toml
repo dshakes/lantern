@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+pal_env = { path = "../../packages/pal-env-rs" }
 tokio = { version = "1", features = ["full"] }
 tonic = "0.12"
 prost = "0.13"

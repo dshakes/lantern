@@ -83,6 +83,9 @@ pub struct Config {
     /// (`FC_HARNESS_PATH`). When unset the harness is assumed baked into the
     /// rootfs and its component hash is 32 zero bytes.
     pub harness_path: Option<String>,
+    /// Workload image admission (`PAL_VERIFY_SIGNATURES`,
+    /// `PAL_IMAGE_ALLOWED_REPOS`; ADR 0044).
+    pub image_policy: crate::image_policy::ImagePolicy,
 }
 
 impl Config {
@@ -133,22 +136,22 @@ impl Config {
         // Filter empty/whitespace values: `LANTERN_RUNTIMECLASS_GVISOR=""` must
         // not produce `Some("")` — an empty runtimeClassName in K8s silently
         // falls back to the cluster's default (runc), bypassing the isolation gate.
-        let runtimeclass_gvisor = std::env::var("LANTERN_RUNTIMECLASS_GVISOR")
+        let runtimeclass_gvisor = pal_env::var("PAL_RUNTIMECLASS_GVISOR")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata = std::env::var("LANTERN_RUNTIMECLASS_KATA")
+        let runtimeclass_kata = pal_env::var("PAL_RUNTIMECLASS_KATA")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_wasm = std::env::var("LANTERN_RUNTIMECLASS_WASM")
+        let runtimeclass_wasm = pal_env::var("PAL_RUNTIMECLASS_WASM")
             .ok()
             .filter(|s| !s.trim().is_empty());
-        let runtimeclass_kata_cc = std::env::var("LANTERN_RUNTIMECLASS_KATA_CC")
+        let runtimeclass_kata_cc = pal_env::var("PAL_RUNTIMECLASS_KATA_CC")
             .ok()
             .filter(|s| !s.trim().is_empty());
 
         // Explicit developer opt-in: set to "1" or "true" to allow bare runc
         // for STANDARD/UNSPECIFIED/DEVCONTAINER without gVisor.  Default false.
-        let allow_runc_standard = std::env::var("LANTERN_ALLOW_RUNC_STANDARD")
+        let allow_runc_standard = pal_env::var("PAL_ALLOW_RUNC_STANDARD")
             .ok()
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
@@ -168,6 +171,10 @@ impl Config {
         let harness_path = std::env::var("FC_HARNESS_PATH")
             .ok()
             .filter(|s| !s.trim().is_empty());
+
+        // ADR 0044: refuse to start on an unparseable value.
+        let image_policy =
+            crate::image_policy::ImagePolicy::from_env().map_err(ConfigError::ImagePolicy)?;
 
         Ok(Config {
             listen_addr,
@@ -191,6 +198,7 @@ impl Config {
             measurement_gate,
             reference_measurements,
             harness_path,
+            image_policy,
         })
     }
 }
@@ -203,6 +211,8 @@ pub enum ConfigError {
     InvalidBackend(String),
     #[error("software measurement config (ADR 0031): {0}")]
     Measurement(String),
+    #[error("image policy (ADR 0044): {0}")]
+    ImagePolicy(String),
 }
 
 #[cfg(test)]

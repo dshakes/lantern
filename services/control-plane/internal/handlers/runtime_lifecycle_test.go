@@ -268,16 +268,16 @@ func TestLifecycle_DB(t *testing.T) {
 }
 
 func TestManagerTransportCreds_ProdVsDev(t *testing.T) {
-	t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_CA", "")
-	t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_CERT", "")
-	t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_KEY", "")
+	t.Setenv("PAL_RUNTIME_MANAGER_TLS_CA", "")
+	t.Setenv("PAL_RUNTIME_MANAGER_TLS_CERT", "")
+	t.Setenv("PAL_RUNTIME_MANAGER_TLS_KEY", "")
 	if c, err := ManagerTransportCreds(false); err != nil || c.Info().SecurityProtocol != "insecure" {
 		t.Errorf("dev unset = %v, %v; want insecure", c, err)
 	}
 	if _, err := ManagerTransportCreds(true); err == nil {
 		t.Error("prod unset must fail loudly")
 	}
-	t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_CERT", "/x.pem")
+	t.Setenv("PAL_RUNTIME_MANAGER_TLS_CERT", "/x.pem")
 	if _, err := ManagerTransportCreds(false); err == nil {
 		t.Error("half-configured cert/key must fail")
 	}
@@ -304,7 +304,7 @@ func TestManagerClient_SendsServiceToken(t *testing.T) {
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 
-	t.Setenv("LANTERN_DEFAULT_MANAGER_ADDR", lis.Addr().String())
+	t.Setenv("PAL_DEFAULT_MANAGER_ADDR", lis.Addr().String())
 	c, err := NewGRPCSchedulerClient("127.0.0.1:1", "s3cret", zap.NewNop())
 	if err != nil {
 		t.Fatal(err)
@@ -408,25 +408,25 @@ func TestFork_InsertFailureTerminatesChildren(t *testing.T) {
 // TestMaxForkCount_env tests the env-configurable fork cap (no pool needed).
 func TestMaxForkCount_env(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		t.Setenv("LANTERN_MAX_FORK_COUNT", "")
+		t.Setenv("PAL_MAX_FORK_COUNT", "")
 		if got := maxForkCount(); got != maxForkCountDefault {
 			t.Errorf("unset: got %d, want default %d", got, maxForkCountDefault)
 		}
 	})
 	t.Run("custom value", func(t *testing.T) {
-		t.Setenv("LANTERN_MAX_FORK_COUNT", "42")
+		t.Setenv("PAL_MAX_FORK_COUNT", "42")
 		if got := maxForkCount(); got != 42 {
 			t.Errorf("custom 42: got %d", got)
 		}
 	})
 	t.Run("ceiling", func(t *testing.T) {
-		t.Setenv("LANTERN_MAX_FORK_COUNT", "99999")
+		t.Setenv("PAL_MAX_FORK_COUNT", "99999")
 		if got := maxForkCount(); got != maxForkCountCeiling {
 			t.Errorf("over ceiling: got %d, want %d", got, maxForkCountCeiling)
 		}
 	})
 	t.Run("invalid defaults", func(t *testing.T) {
-		t.Setenv("LANTERN_MAX_FORK_COUNT", "banana")
+		t.Setenv("PAL_MAX_FORK_COUNT", "banana")
 		if got := maxForkCount(); got != maxForkCountDefault {
 			t.Errorf("invalid: got %d, want default %d", got, maxForkCountDefault)
 		}

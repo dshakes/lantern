@@ -24,7 +24,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 )
 
-const introspectServiceTokenEnv = "LANTERN_GRPC_SERVICE_TOKEN"
+const introspectServiceTokenEnv = "PAL_GRPC_SERVICE_TOKEN"
 
 var introspectDevWarnOnce sync.Once
 

@@ -1,6 +1,6 @@
-# AGENT.md — The Lantern Agent Bundle Specification
+# AGENT.md — The PAL Runtime Agent Bundle Specification
 
-> **What this document is:** the file-format spec for a Lantern agent bundle. Read this if you are writing an agent, building an SDK, or implementing the agent loader.
+> **What this document is:** the file-format spec for a PAL Runtime agent bundle. Read this if you are writing an agent, building an SDK, or implementing the agent loader.
 >
 > **What this document is not:** a tutorial. For that, see `docs/user-guides/quickstart.md`.
 
@@ -10,7 +10,7 @@
 
 1. **Declarative first, code second.** A user can describe an agent in YAML and never write a line of code. They can also write the whole thing in TypeScript or Python and skip YAML entirely. Both compile to the same bundle.
 2. **Portable.** A bundle is a self-contained, content-addressed tarball. Same bundle runs locally (`lantern dev`), on K8s Jobs, in a Firecracker microVM, or in a Wasmtime sandbox.
-3. **Versioned and signed.** Every bundle has a semver, an immutable digest, and an optional cosign signature.
+3. **Versioned and signed.** Every bundle has a semver, an immutable digest, and an optional cosign signature (verified at image admission, not by the control plane — see *Bundle digest and signing*).
 4. **Composable.** Agents can call other agents (sub-agents) through a typed RPC, and the runtime treats this as a step in the parent's workflow.
 
 ---
@@ -261,7 +261,13 @@ $ lantern push
 ✓ pushed to lantern.dev/acme/research-agent@sha256:1f2e...
 ```
 
-The control plane verifies the cosign signature against tenant-trusted keys before scheduling.
+What is enforced today (ADR 0044): the control plane does **not** verify bundle
+signatures. Workloads run from OCI images addressed by digest — with
+`PAL_VERIFY_SIGNATURES` on (the default in prod) the runtime-manager refuses any
+image that is not `repo@sha256:...` (and, if `PAL_IMAGE_ALLOWED_REPOS` is set,
+outside those repos), and the cosign signature + signer identity is checked at
+cluster admission by the Kyverno policy in `infra/k8s/supply-chain/`. Sign agent
+images (`cosign sign <image>@sha256:...`) under an identity listed there.
 
 ---
 

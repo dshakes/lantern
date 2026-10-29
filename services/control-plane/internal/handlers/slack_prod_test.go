@@ -21,7 +21,7 @@ func TestSlackCommand_ProdWithoutSigningSecretIs401(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run("env="+tc.env, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", tc.env)
+			t.Setenv("PAL_ENV", tc.env)
 			t.Setenv("SLACK_SIGNING_SECRET", "")
 			h := NewSlackCommandHandler(&server.Server{Logger: zap.NewNop()})
 			req := httptest.NewRequest(http.MethodPost, "/v1/surfaces/slack/command", strings.NewReader("text=ping"))
@@ -36,7 +36,7 @@ func TestSlackCommand_ProdWithoutSigningSecretIs401(t *testing.T) {
 
 func TestSlackFallbackTenant(t *testing.T) {
 	for env, want := range map[string]string{"": devTenantID, "dev": devTenantID, "production": ""} {
-		t.Setenv("LANTERN_ENV", env)
+		t.Setenv("PAL_ENV", env)
 		if got := slackFallbackTenant(); got != want {
 			t.Errorf("env=%q got %q want %q", env, got, want)
 		}

@@ -37,11 +37,11 @@ if [[ ! -r /dev/kvm ]]; then
 fi
 
 # ── defaults ────────────────────────────────────────────────────────────────────
-API_URL="${LANTERN_API_URL:-http://localhost:8080}"
-TOKEN="${LANTERN_API_TOKEN:-}"
+API_URL="${PAL_API_URL:-${LANTERN_API_URL:-http://localhost:8080}}"
+TOKEN="${PAL_API_TOKEN:-${LANTERN_API_TOKEN:-}}"
 ITERATIONS=5          # per-operation sample count (override with --iterations N)
-IMAGE_DIGEST="${LANTERN_BENCH_IMAGE:-sha256:placeholder}"   # must be a real digest in prod
-TENANT_ID="${LANTERN_BENCH_TENANT:-}"
+IMAGE_DIGEST="${PAL_BENCH_IMAGE:-${LANTERN_BENCH_IMAGE:-sha256:placeholder}}"   # must be a real digest in prod
+TENANT_ID="${PAL_BENCH_TENANT:-${LANTERN_BENCH_TENANT:-}}"
 OUT_MD="docs/benchmarks/runtime-latency.md"
 
 usage() {
