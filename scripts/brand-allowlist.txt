@@ -1,6 +1,6 @@
 # Permanent `lantern` allowlist (ADR 0032). One entry per line: `<perl regex> # <reason>`.
-# Plain entries are stripped from content lines and file paths; `path:<regex>` excludes a
-# whole file. Case-sensitive; prefix (?i) to relax. Only WIRE/DATA names belong here —
+# Plain entries are stripped from content lines and file paths; `scope:<path-regex> <regex>`
+# does the same only in matching files; `path:<regex>` excludes a whole file. Case-sensitive; prefix (?i) to relax. Only WIRE/DATA names belong here —
 # never prose, UI copy or identifiers we control.
 
 # --- the rename machinery itself
@@ -20,7 +20,7 @@ packages/proto/lantern/v1 # proto dir must match the package (buf PACKAGE_DIRECT
 \blantern\.secret: ?// # secret refs are user data at rest; both forms accepted forever
 \blantern\.secret/ # secret refs are user data at rest; both forms accepted forever
 \blantern\.env\. # kernel cmdline env channel read by old harness images
-\bLANTERN_(RESUME|VM_ID|RUN_ID|TENANT_ID|AGENT_VERSION_ID|ENV|SECRETS_SOCKET|OTLP_SOCKET|WORKSPACE|TRACE_PARENT|WORKLOAD_UID|WORKLOAD_GID|WORKLOAD_CMD|WORKLOAD_ARGV)\b # guest-visible keys, dual-emitted for old workload SDKs in baked images
+scope:^(services/(harness|runtime-manager)|packages/sdk-(ts|python|go))/ \bLANTERN_(RESUME|VM_ID|RUN_ID|TENANT_ID|AGENT_VERSION_ID|ENV|SECRETS_SOCKET|OTLP_SOCKET|WORKSPACE|TRACE_PARENT|WORKLOAD_UID|WORKLOAD_GID|WORKLOAD_CMD|WORKLOAD_ARGV)\b # guest-visible keys, dual-emitted for old workload SDKs in baked images (guest-side code only; host-side reads still count)
 (?i)\bx-lantern-signal-token\b # owner's iPhone Shortcuts send this header; accepted forever
 "(🟢|🔴|📊) \*?lantern[^"]*" # bot-self legacy echo prefixes: late iCloud echoes of old status lines
 

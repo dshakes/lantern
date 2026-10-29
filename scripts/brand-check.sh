@@ -7,8 +7,9 @@
 # Scans git-tracked text files (case-insensitive), skipping lockfiles. Hits
 # matched by scripts/brand-allowlist.txt are not counted. Allowlist format, one
 # entry per line, `<perl regex> # <reason>` (reason required):
-#   <regex>        stripped from every content line AND every file path before counting
-#   path:<regex>   whole file excluded (content and path)
+#   <regex>                     stripped from every content line AND file path before counting
+#   scope:<path-regex> <regex>  same, but only in files whose path matches <path-regex>
+#   path:<regex>                whole file excluded (content and path)
 # Patterns are case-sensitive; prefix (?i) to relax one. Path hits (a tracked
 # file whose path still contains `lantern`) are counted separately.
 set -euo pipefail
@@ -28,20 +29,36 @@ allow="scripts/brand-allowlist.txt"
 lockfiles=(':!:*.lock' ':!:**/package-lock.json' ':!:package-lock.json' ':!:**/go.sum'
   ':!:go.sum' ':!:**/pnpm-lock.yaml' ':!:pnpm-lock.yaml')
 
+# grep-family exit 1 means "no match"; anything above it is a real failure
+# (not a repo, bad pathspec, I/O) and must fail the check, not read as clean.
+content_hits() {
+  local rc=0
+  git grep -I -i --null -e lantern -- . "${lockfiles[@]}" || rc=$?
+  [[ $rc -le 1 ]] || { echo "brand-check: git grep failed (exit $rc)" >&2; return "$rc"; }
+}
+path_hits() {
+  local files rc=0
+  files="$(git ls-files -- . "${lockfiles[@]}")" || { echo "brand-check: git ls-files failed" >&2; return 2; }
+  grep -i lantern <<<"$files" || rc=$?
+  [[ $rc -le 1 ]] || { echo "brand-check: grep failed (exit $rc)" >&2; return "$rc"; }
+}
+
 # Two streams into one perl pass: "C\t<path>\t<line>" content hits, "P\t<path>" paths.
 {
-  git grep -I -i --null -e lantern -- . "${lockfiles[@]}" | perl -ne '
-    chomp; my ($p, $l) = split /\0/, $_, 2; print "C\t$p\t$l\n" if defined $l' || true
-  git ls-files -- . "${lockfiles[@]}" | grep -i lantern | sed 's/^/P\t/' || true
+  content_hits | perl -ne '
+    chomp; my ($p, $l) = split /\0/, $_, 2; print "C\t$p\t$l\n" if defined $l'
+  path_hits | sed 's/^/P\t/'
 } | ALLOW="$allow" MODE="$mode" perl -e '
-  my (@content, @path);
+  my (@content, @path, @scoped);
   open my $fh, "<", $ENV{ALLOW} or die "brand-check: $ENV{ALLOW}: $!\n";
   while (my $line = <$fh>) {
     chomp $line;
     next if $line =~ /^\s*(#|$)/;
     my ($re, $reason) = $line =~ /^(.*?)\s+#\s+(\S.*)$/
       or die "brand-check: $ENV{ALLOW}:$.: need \"<regex> # <reason>\"\n";
-    if ($re =~ s/^path://) { push @path, qr/$re/ } else { push @content, qr/$re/ }
+    if ($re =~ s/^path://) { push @path, qr/$re/ }
+    elsif ($re =~ /^scope:(\S+)\s+(.+)$/) { push @scoped, [qr/$1/, qr/$2/] }
+    else { push @content, qr/$re/ }
   }
   my (%hits, %files, %paths, $total, $ptotal);
   LINE: while (<STDIN>) {
@@ -50,6 +67,7 @@ lockfiles=(':!:*.lock' ':!:**/package-lock.json' ':!:package-lock.json' ':!:**/g
     for my $re (@path) { next LINE if $p =~ $re }
     my $s = $kind eq "C" ? $text : $p;
     $s =~ s/$_//g for @content;
+    for (@scoped) { my ($in, $re) = @$_; $s =~ s/$re//g if $p =~ $in }
     my $n = () = $s =~ /lantern/gi;
     next unless $n;
     my ($top) = $p =~ m{^([^/]+/?)};
