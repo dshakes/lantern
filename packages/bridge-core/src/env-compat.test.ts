@@ -3,6 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { bridgeEnv } from "./env-compat.ts";
+import { execFileSync } from "node:child_process";
 
 type Env = Record<string, string | undefined>;
 
@@ -92,5 +93,49 @@ describe("bridgeEnv", () => {
         assert.equal(process.env["PAL_" + k.slice(8)], process.env[k], k);
       }
     }
+  });
+});
+
+// Regression (PR #365 review): a consumer that imports auth.ts/agent.ts
+// WITHOUT importing env-compat first must still see legacy LANTERN_* values,
+// because those modules read PAL_* in top-level consts.
+describe("modules with top-level env reads self-bridge", () => {
+  for (const mod of ["./auth.ts", "./agent.ts", "./owner-profile.ts"]) {
+    it(`${mod} mirrors LANTERN_API_TOKEN before it evaluates`, () => {
+      const env: Env = { ...process.env, LANTERN_API_TOKEN: "legacy-tok" };
+      for (const k of Object.keys(env)) if (k.startsWith("PAL_")) delete env[k];
+      const out = execFileSync(
+        process.execPath,
+        ["--import=tsx/esm", "--input-type=module", "-e",
+          `await import(${JSON.stringify(new URL(mod, import.meta.url).href)}); process.stdout.write(process.env.PAL_API_TOKEN ?? "")`],
+        { env: env as NodeJS.ProcessEnv, encoding: "utf8" },
+      );
+      assert.equal(out, "legacy-tok");
+    });
+  }
+});
+
+describe("auth.ts resolves legacy-only config", () => {
+  it("uses LANTERN_API_URL + LANTERN_API_TOKEN when no PAL_* is set", () => {
+    const env: Env = {
+      ...process.env,
+      LANTERN_API_URL: "http://legacy.invalid",
+      LANTERN_API_TOKEN: "legacy-tok",
+    };
+    for (const k of Object.keys(env)) if (k.startsWith("PAL_")) delete env[k];
+    const auth = JSON.stringify(new URL("./auth.ts", import.meta.url).href);
+    const script = `
+      globalThis.fetch = async (u, init) => {
+        process.stdout.write(JSON.stringify({ url: String(u), auth: new Headers(init?.headers).get("authorization") }));
+        return new Response("{}");
+      };
+      const { authedFetch } = await import(${auth});
+      await authedFetch("/v1/ping");`;
+    const out = execFileSync(
+      process.execPath,
+      ["--import=tsx/esm", "--input-type=module", "-e", script],
+      { env: env as NodeJS.ProcessEnv, encoding: "utf8" },
+    );
+    assert.deepEqual(JSON.parse(out), { url: "http://legacy.invalid/v1/ping", auth: "Bearer legacy-tok" });
   });
 });
