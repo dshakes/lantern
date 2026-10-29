@@ -43,7 +43,7 @@ Without this, the assistant has no brain. Both providers also work if
 you want failover.
 
 If you have a Claude Max subscription and want $0 LLM cost in dev,
-add `LANTERN_USE_CLAUDE_CODE=1` to `.env.local` — the bridge will
+add `PAL_USE_CLAUDE_CODE=1` to `.env.local` — the bridge will
 route through your local `claude` CLI.
 
 ## Step 3 — Set up email mirror (recommended)
@@ -63,9 +63,9 @@ This lets the bridges email you when:
 Add this line to `.env.local`:
 
 ```bash
-LANTERN_OWNER_EMAIL=you@example.com
-LANTERN_OWNER_NAME=YourFirstName   # used for group @mention detection
-LANTERN_OWNER_TIMEZONE=America/Los_Angeles   # for quiet hours + digest
+PAL_OWNER_EMAIL=you@example.com
+PAL_OWNER_NAME=YourFirstName   # used for group @mention detection
+PAL_OWNER_TIMEZONE=America/Los_Angeles   # for quiet hours + digest
 ```
 
 ## Step 4 — Pair WhatsApp
@@ -131,7 +131,7 @@ permission — click Allow. If you missed it, walk through the above.
 ### 5c. Verify
 
 ```bash
-curl -s http://localhost:3200/session/$(printenv LANTERN_DEFAULT_TENANT_ID || echo 00000000-0000-0000-0000-000000000001)/diagnostics | python3 -m json.tool
+curl -s http://localhost:3200/session/$(printenv PAL_DEFAULT_TENANT_ID || echo 00000000-0000-0000-0000-000000000001)/diagnostics | python3 -m json.tool
 ```
 
 Should show `"state": "ready"`. If you see `"permission_required"`,
@@ -200,12 +200,12 @@ For RCS delivery, inbound branded lane setup, and the Twilio SMS fallback from t
 
 ## Permanent shell env (one-time)
 
-If you ever exported a `LANTERN_API_TOKEN` in your shell that's now
+If you ever exported a `PAL_API_TOKEN` in your shell that's now
 expired, the bridge will warn you and fall back to credential login.
 To silence the warning permanently:
 
 ```bash
-unset LANTERN_API_TOKEN
+unset PAL_API_TOKEN
 # also remove the export line from ~/.zshrc / ~/.bashrc if present
 ```
 
@@ -219,7 +219,7 @@ tail -f ~/Library/Logs/Lantern/*.err.log
 
 Dashboard banner: when any service goes `logged_out` / `conflict` /
 `error` / `bridge_offline` for more than 5 minutes, you get an
-**email alert** (if `LANTERN_OWNER_EMAIL` is configured) with the
+**email alert** (if `PAL_OWNER_EMAIL` is configured) with the
 reason + a deep-link to the dashboard pair page.
 
 ## Production-ish vs personal

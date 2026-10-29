@@ -13,7 +13,7 @@ PAL deploys as two logically and physically separable planes:
 
 A lightweight **data plane agent** maintains an outbound gRPC tunnel from the data plane to the control plane. The customer never opens inbound firewall rules.
 
-This split is the primary deployment model for Team and Enterprise tiers and is the foundation of Lantern's data sovereignty, compliance, and low-latency execution story.
+This split is the primary deployment model for Team and Enterprise tiers and is the foundation of PAL Runtime's data sovereignty, compliance, and low-latency execution story.
 
 ---
 
@@ -96,7 +96,7 @@ Customers choose their own instance types, reserved instances, savings plans, an
 
 ### Mode 1: Fully managed
 
-Both control plane and data plane are hosted by PAL. The customer does not manage any infrastructure. Agent code runs on Lantern's multi-tenant Kubernetes clusters with Firecracker isolation between tenants.
+Both control plane and data plane are hosted by PAL. The customer does not manage any infrastructure. Agent code runs on PAL Runtime's multi-tenant Kubernetes clusters with Firecracker isolation between tenants.
 
 **Best for:** Startups, personal projects, teams that want zero ops burden and do not have data residency requirements.
 
@@ -105,7 +105,7 @@ Both control plane and data plane are hosted by PAL. The customer does not manag
 - Multi-tenant: all tenants share the same control plane and data plane infrastructure
 - Isolation is per-run via Firecracker microVMs (tenant A's code cannot observe tenant B)
 - PAL manages upgrades, scaling, backups, and incident response
-- Data resides in Lantern's AWS accounts in the customer's chosen region
+- Data resides in PAL Runtime's AWS accounts in the customer's chosen region
 
 ### Mode 2: Hybrid (the main product)
 
@@ -114,12 +114,12 @@ Control plane is hosted by PAL SaaS. Data plane is deployed into the customer's 
 **Best for:** Teams and enterprises that need data sovereignty, compliance, or low-latency access to internal services.
 
 **Characteristics:**
-- Control plane: `lantern-control-plane` Helm chart on Lantern's infrastructure
+- Control plane: `lantern-control-plane` Helm chart on PAL Runtime's infrastructure
 - Data plane: `lantern-data-plane` Helm chart on the customer's EKS / GKE / AKS cluster
 - The data plane agent initiates an outbound gRPC connection to the control plane — no inbound firewall rules required on the customer's VPC
 - Customer data (agent code, run inputs/outputs, secrets, tool results) never leaves the customer's VPC
 - Control plane receives only metadata (run IDs, status, timing, metering)
-- Customer provisions their own Postgres and Redis (or Lantern's Terraform modules provision them)
+- Customer provisions their own Postgres and Redis (or PAL Runtime's Terraform modules provision them)
 - Upgrades: PAL upgrades the control plane transparently; the customer upgrades the data plane via `lantern infra upgrade` or Helm
 
 **Installation flow:**
@@ -132,7 +132,7 @@ Control plane is hosted by PAL SaaS. Data plane is deployed into the customer's 
 
 ### Mode 3: Self-hosted
 
-Both control plane and data plane are deployed into the customer's own infrastructure. Nothing touches Lantern's servers.
+Both control plane and data plane are deployed into the customer's own infrastructure. Nothing touches PAL Runtime's servers.
 
 **Best for:** Enterprises with strict compliance requirements (FedRAMP, air-gapped environments, government), or organizations that want full control.
 

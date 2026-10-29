@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-23
-- **Deciders:** Lantern runtime, workflow-engine
+- **Deciders:** PAL Runtime runtime, workflow-engine
 - **Tags:** runtime, workflow-engine, proto, tool-execution
 
 > **Status note (2026-07):** the in-guest tool runner named below as the follow-up

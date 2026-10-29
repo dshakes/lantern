@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tonic::{Request, Status};
 
 pub const SERVICE_TOKEN_HEADER: &str = "x-lantern-service-token";
-pub const ENV_SERVICE_TOKEN: &str = "LANTERN_GRPC_SERVICE_TOKEN";
+pub const ENV_SERVICE_TOKEN: &str = "PAL_GRPC_SERVICE_TOKEN";
 
 /// Interceptor state. Cheap to clone (tonic clones it per connection).
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl ManagerAuth {
     /// Build from env. Errors (refuse to start) in prod when the token is unset.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::from_parts(
-            std::env::var(ENV_SERVICE_TOKEN).ok(),
+            pal_env::var(ENV_SERVICE_TOKEN).ok(),
             crate::tls::is_prod_env(),
         )
     }

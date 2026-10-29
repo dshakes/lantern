@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-06-23
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, isolation, scheduling, kubernetes, snapshots, warm-pool
 - **Builds on:** [ADR 0009](0009-kubernetes-default-runtime-substrate.md) (K8s is the substrate; isolation is a RuntimeClass tier)
 - **Related:** [04b-microvm-productionization](../architecture/04b-microvm-productionization.md), [19-agent-sandbox-backend-spike](../architecture/19-agent-sandbox-backend-spike.md), [18-agent-runtime-nextgen](../architecture/18-agent-runtime-nextgen.md)
@@ -30,7 +30,7 @@ Two things have happened since ADR 0009:
    runtime-agnostic — isolation is whatever `runtimeClassName` the
    `podTemplate` carries (gVisor or Kata), exactly the ADR 0009 model.
 
-2. **The capabilities agent-sandbox ships are the ones Lantern's runtime has
+2. **The capabilities agent-sandbox ships are the ones PAL Runtime's runtime has
    stubbed or designed-but-not-wired.** Concretely:
    - `K8sBackend::snapshot` and `::restore` **return errors today**
      (`k8s.rs:793–801`). agent-sandbox provides **gVisor checkpoint
@@ -40,11 +40,11 @@ Two things have happened since ADR 0009:
      (idle agents cost \$0, resume in <1s with full state) and we do not have
      it.
    - Warm pools: agent-sandbox's `SandboxWarmPool` is declarative
-     (`spec.replicas`, auto-replenish, sub-second adopt). Lantern reimplements
+     (`spec.replicas`, auto-replenish, sub-second adopt). PAL Runtime reimplements
      this as a per-`(class,digest)` LIFO pool plus a custom PID controller and
      scheduler scoring term.
    - Stable per-sandbox network identity + the **Sandbox Router** (proxy keyed
-     on `X-Sandbox-ID`) — Lantern has no equivalent external addressing
+     on `X-Sandbox-ID`) — PAL Runtime has no equivalent external addressing
      primitive.
 
 The question this ADR settles: **for the K8s substrate, do we keep hand-rolling
@@ -52,7 +52,7 @@ pod/Job orchestration + a bespoke scheduler, or do we reconcile the
 agent-sandbox CRDs and inherit suspend/resume, warm pools, snapshots, and stable
 DNS from the standard?**
 
-This is *not* a question about the layers Lantern is uniquely good at — the
+This is *not* a question about the layers PAL Runtime is uniquely good at — the
 short-TTL secret relay (ADRs 0005/0008), the in-guest egress proxy (ADR 0006),
 per-tenant namespaces + RLS + budgets, and the harness contract. Those stay and
 become the value-add *on top of* the substrate. This ADR is only about the
@@ -82,7 +82,7 @@ implementation are in
 - Warm pool: a `SandboxWarmPool` per `(template, class)` replaces
   `pool.rs` for the K8s substrate.
 
-Lantern's scheduler is **retained as an admission + scoring layer**, not
+PAL Runtime's scheduler is **retained as an admission + scoring layer**, not
 deleted: it still stamps `tenant_id`, enforces quota/budget (HTTP 402), and may
 compute placement *hints* (region, fair-share), but it emits a `SandboxClaim`
 and lets the controller place, rather than dialing a per-node manager.
@@ -90,7 +90,7 @@ and lets the controller place, rather than dialing a per-node manager.
 **Net effect:** deletes the most-stubbed, hardest-to-finish code (custom
 snapshot store wiring on K8s, per-node warm-pool PID controller, bespoke
 cluster store / leader election for the K8s path) and replaces it with a
-maintained, standardizing controller — while keeping every Lantern
+maintained, standardizing controller — while keeping every PAL Runtime
 differentiator as the wrapper.
 
 ### Option B — Map the CRD onto the existing proto, keep both backends
@@ -123,8 +123,8 @@ the Sandbox backend passes the same integration matrix). Concretely:
 1. Add `SandboxBackend` (`backends/sandbox.rs`) implementing `RuntimeBackend`,
    reconciling the agent-sandbox CRDs. Default backend stays `k8s` (Job) until
    parity is proven; opt in per data-plane via
-   `LANTERN_RUNTIME_BACKEND=sandbox`.
-2. Keep the Lantern scheduler as the admission/quota/scoring layer; have it emit
+   `PAL_RUNTIME_BACKEND=sandbox`.
+2. Keep the PAL Runtime scheduler as the admission/quota/scoring layer; have it emit
    `SandboxClaim`s (with placement expressed as template selection +
    `additionalPodMetadata` affinity) rather than dialing per-node managers for
    the Sandbox path.
@@ -155,13 +155,13 @@ unchanged. Same guarantee, expressed in CRD terms.
    scale-to-zero with PVC preservation and wake-on-traffic.
 2. **Less bespoke code to own.** Declarative `SandboxWarmPool` replaces the
    per-node PID controller; the controller owns pod/PVC/Service/owner-ref
-   cascades. The Lantern scheduler shrinks to admission + scoring.
+   cascades. The PAL Runtime scheduler shrinks to admission + scoring.
 3. **GitOps + `kubectl` story.** Sandboxes become inspectable CRs with printer
    columns and owner refs — operationally legible in the customer's own
    cluster, matching the ADR 0009 deployment model.
 4. **Standard gravity.** We ride GKE Pod-snapshot density work, Helm packaging,
    and SIG tooling instead of reimplementing them; the runtime story becomes
-   "Lantern adds tenancy, secrets, egress, and cost governance on top of the
+   "PAL Runtime adds tenancy, secrets, egress, and cost governance on top of the
    K8s-standard sandbox primitive."
 
 ### Negative

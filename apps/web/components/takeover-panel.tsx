@@ -151,7 +151,7 @@ export function TakeoverPanel({ runId }: { runId: string }) {
               if (e.key === "Enter") confirmGrant();
             }}
             placeholder="e.g. approved, proceed with the refund"
-            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
           />
         </ModalField>
       </Modal>
@@ -176,7 +176,7 @@ function TakeoverRow({
       <div className="flex items-start gap-2">
         <span className="mt-0.5 shrink-0">
           {t.status === "pending" && <Clock className="h-3.5 w-3.5 text-amber-300" />}
-          {t.status === "granted" && <Loader2 className="h-3.5 w-3.5 animate-spin text-lantern-400" />}
+          {t.status === "granted" && <Loader2 className="h-3.5 w-3.5 animate-spin text-pal-400" />}
           {t.status === "released" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
           {(t.status === "expired" || t.status === "denied") && <XCircle className="h-3.5 w-3.5 text-red-400" />}
         </span>
@@ -187,7 +187,7 @@ function TakeoverRow({
               className={clsx(
                 "ml-2 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
                 t.status === "pending" && "bg-amber-500/10 text-amber-300",
-                t.status === "granted" && "bg-lantern-500/10 text-lantern-300",
+                t.status === "granted" && "bg-pal-500/10 text-pal-300",
                 t.status === "released" && "bg-emerald-500/10 text-emerald-300",
                 (t.status === "expired" || t.status === "denied") && "bg-red-500/10 text-red-300"
               )}

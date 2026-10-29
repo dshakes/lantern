@@ -151,7 +151,7 @@ const surfaces: SurfaceDefinition[] = [
   {
     id: "webchat", name: "Web Chat",
     description: "Embeddable chat widget for your website",
-    icon: Globe, iconColor: "text-lantern-400", iconBg: "bg-lantern-500/10",
+    icon: Globe, iconColor: "text-pal-400", iconBg: "bg-pal-500/10",
     configFields: [
       { key: "allowedOrigins", label: "Allowed Origins", type: "textarea", placeholder: "https://example.com\nhttps://app.example.com", helpText: "One origin per line. Leave empty to allow all." },
     ],
@@ -168,7 +168,7 @@ const surfaces: SurfaceDefinition[] = [
     // configured" status driven by surface_configs. iMessage doesn't
     // need a config row — the bridge running on this Mac IS the
     // configuration.
-    livenessProbeUrl: process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200",
+    livenessProbeUrl: (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
     primaryActionHref: "/personal/setup",
     primaryActionLabel: "Manage on /personal",
   },
@@ -185,7 +185,7 @@ const surfaces: SurfaceDefinition[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "lantern_surfaces";
+const STORAGE_KEY = "pal_surfaces";
 
 function loadSurfaceConfigs(): Record<string, SurfaceConfig> {
   if (typeof window === "undefined") return {};
@@ -209,7 +209,7 @@ function PasswordInput({ value, onChange, placeholder }: { value: string; onChan
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+        className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
       />
       <button type="button" onClick={() => setVisible(!visible)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300">
         {visible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
@@ -431,8 +431,8 @@ export default function SurfacesPage() {
       }
     }
     async function checkBoth() {
-      const waUrl = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL || "http://localhost:3100";
-      const imUrl = process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200";
+      const waUrl = (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) || "http://localhost:3100";
+      const imUrl = (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200";
       await Promise.all([
         probe(`${waUrl}/health`, setWhatsappBridgeRunning),
         probe(`${imUrl}/health`, setImessageBridgeRunning),
@@ -565,7 +565,7 @@ export default function SurfacesPage() {
                       href={surface.primaryActionHref}
                       className={clsx(
                         "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-on-flame hover:bg-lantern-400",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-pal-500 text-on-flame hover:bg-pal-400",
                       )}
                     >
                       {surface.primaryActionLabel || (connected ? "Manage" : "Set up")}
@@ -575,7 +575,7 @@ export default function SurfacesPage() {
                       onClick={() => openConfig(surface)}
                       className={clsx(
                         "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-on-flame hover:bg-lantern-400",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-pal-500 text-on-flame hover:bg-pal-400",
                       )}
                     >
                       {connected ? "Configure" : "Set up"}
@@ -668,7 +668,7 @@ export default function SurfacesPage() {
                       onChange={(e) => { setFormFields({ ...formFields, [field.key]: e.target.value }); setFieldErrors((p) => { const n = { ...p }; delete n[field.key]; return n; }); }}
                       placeholder={field.placeholder}
                       rows={3}
-                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 resize-none"
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30 resize-none"
                     />
                   ) : field.type === "password" ? (
                     <PasswordInput
@@ -682,7 +682,7 @@ export default function SurfacesPage() {
                       value={formFields[field.key] ?? ""}
                       onChange={(e) => { setFormFields({ ...formFields, [field.key]: e.target.value }); setFieldErrors((p) => { const n = { ...p }; delete n[field.key]; return n; }); }}
                       placeholder={field.placeholder}
-                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
                     />
                   )}
                   {fieldErrors[field.key] && (
@@ -690,7 +690,7 @@ export default function SurfacesPage() {
                   )}
                   {field.helpText && !fieldErrors[field.key] && (
                     <p className="mt-1 text-[12px] text-zinc-600">
-                      {field.helpUrl ? <a href={field.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{field.helpText}</a> : field.helpText}
+                      {field.helpUrl ? <a href={field.helpUrl} target="_blank" rel="noopener noreferrer" className="text-pal-400/70 hover:text-pal-400 underline underline-offset-2">{field.helpText}</a> : field.helpText}
                     </p>
                   )}
                 </div>
@@ -755,7 +755,7 @@ export default function SurfacesPage() {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Check className="h-3.5 w-3.5" />Save</>}
                 </button>

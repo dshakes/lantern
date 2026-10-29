@@ -176,7 +176,7 @@ func TestResolveSecrets_BearerToken_GarbageJWT(t *testing.T) {
 // Uses LANTERN_AGENT_IDENTITY_TTL=1ms so the token expires before verification.
 func TestResolveSecrets_BearerToken_ExpiredToken(t *testing.T) {
 	t.Setenv(envRuntimeSecretToken, testRuntimeSecretToken)
-	t.Setenv("LANTERN_AGENT_IDENTITY_TTL", "1ms")
+	t.Setenv("PAL_AGENT_IDENTITY_TTL", "1ms")
 
 	// Re-build the handler so its issuer picks up the tiny TTL.
 	h := newTestSecretsHandlerForIdentity(t)

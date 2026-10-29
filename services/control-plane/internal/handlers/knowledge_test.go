@@ -83,7 +83,7 @@ func newDeskEnv(t *testing.T, rules []llmreplay.Rule) *deskEnv {
 
 	llm := httptest.NewServer(llmreplay.New(rules))
 	t.Cleanup(llm.Close)
-	t.Setenv("LANTERN_LLM_BASEURL_OPENAI", llm.URL)
+	t.Setenv("PAL_LLM_BASEURL_OPENAI", llm.URL)
 	t.Setenv("OPENAI_API_KEY", "sk-fixture")
 
 	sl := &slackFixture{}
@@ -97,7 +97,7 @@ func newDeskEnv(t *testing.T, rules []llmreplay.Rule) *deskEnv {
 		_, _ = io.WriteString(w, `{"ok":true,"ts":"1.0"}`)
 	}))
 	t.Cleanup(sl.ts.Close)
-	t.Setenv("LANTERN_CONNECTOR_BASEURL_SLACK", sl.ts.URL)
+	t.Setenv("PAL_CONNECTOR_BASEURL_SLACK", sl.ts.URL)
 
 	auth := NewAuthHandler(e.srv, testJWTSecret)
 	llmH := NewLlmProxyHandler(e.srv, auth)
@@ -289,7 +289,7 @@ func TestKnowledge_CrossTenantIsolation(t *testing.T) {
 }
 
 func TestKnowledge_ScopeEnforced(t *testing.T) {
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	d := newDeskEnv(t, nil)
 	tenant := seedEnforcedTenant(t, d.e, "kbs-"+uuid.NewString()[:8])
 	d.seedAgent(t, tenant, "desk", nil)
@@ -486,7 +486,7 @@ func TestHandoff_CrossTenantAndScope(t *testing.T) {
 		t.Errorf("cross-tenant calls changed the session: %q", st)
 	}
 
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	ro := d.apiKey(t, a, "runs:read")
 	for _, p := range []string{"handoff", "operator-messages", "resolve"} {
 		if code, _ := d.do(t, ro, http.MethodPost, "/v1/sessions/"+id+"/"+p, map[string]string{"content": "hi"}); code != http.StatusForbidden {

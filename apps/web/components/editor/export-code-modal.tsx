@@ -183,7 +183,7 @@ export function ExportCodeModal({
             onClick={() => setFormat("typescript")}
             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               format === "typescript"
-                ? "bg-lantern-500/20 text-lantern-400"
+                ? "bg-pal-500/20 text-pal-400"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
@@ -193,7 +193,7 @@ export function ExportCodeModal({
             onClick={() => setFormat("yaml")}
             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               format === "yaml"
-                ? "bg-lantern-500/20 text-lantern-400"
+                ? "bg-pal-500/20 text-pal-400"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
@@ -212,7 +212,7 @@ export function ExportCodeModal({
         <div className="flex justify-end border-t border-zinc-700 px-5 py-3">
           <button
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-lantern-400"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-pal-400"
           >
             {copied ? (
               <>

@@ -13,6 +13,7 @@ import {
   type RunInfoResponse,
 } from "./grpc-client.js";
 import { LanternError } from "./errors.js";
+import { palEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -107,12 +108,12 @@ function createDevRuntime(overrides?: Partial<RunInfo>): Runtime {
 // ---------------------------------------------------------------------------
 
 async function createProductionRuntime(): Promise<Runtime> {
-  const sidecarAddr = process.env.LANTERN_SIDECAR_ADDR ?? "localhost:50055";
+  const sidecarAddr = palEnv("SIDECAR_ADDR") ?? "localhost:50055";
   const transport = new Http2GrpcTransport(sidecarAddr);
   const sidecar = new RuntimeSidecarClient(transport);
 
   // The run ID is injected by the runtime manager as an env var.
-  const runId = process.env.LANTERN_RUN_ID;
+  const runId = palEnv("RUN_ID");
   if (!runId) {
     throw new LanternError(
       "RUNTIME_INIT",
@@ -120,7 +121,7 @@ async function createProductionRuntime(): Promise<Runtime> {
     );
   }
 
-  const tenantId = process.env.LANTERN_TENANT_ID ?? "";
+  const tenantId = palEnv("TENANT_ID") ?? "";
   const meta: RequestMeta = { runId, tenantId };
 
   // Fetch full run info from the sidecar.
@@ -209,7 +210,7 @@ export class LanternRuntime {
    * Checks the `LANTERN_RUNTIME` environment variable.
    */
   static isProduction(): boolean {
-    return process.env.LANTERN_RUNTIME === "true";
+    return palEnv("RUNTIME") === "true";
   }
 
   /**

@@ -414,7 +414,7 @@ export function voiceTranscriptionLangHint(opts: { nativity?: string } = {}): Vo
   // 1. Explicit env override. "auto" disables biasing; a known language
   //    wins (and ONLY here do we force an explicit `iso`); unset/empty/
   //    unrecognized falls through to nativity/default.
-  const envRaw = (typeof process !== "undefined" && process.env?.LANTERN_VOICE_LANG) || "";
+  const envRaw = (typeof process !== "undefined" && process.env?.PAL_VOICE_LANG) || "";
   const envTok = normalizeLangToken(envRaw);
   if (envTok === "auto") return none;
   if (envTok && envTok !== "unset" && envTok !== "english") {

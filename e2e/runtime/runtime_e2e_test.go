@@ -31,6 +31,7 @@ package runtime_e2e
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -660,7 +661,7 @@ func TestRuntime_QuotaHardFail402(t *testing.T) {
 // lantern.dev/confidential-compute. Attestation remains UNVERIFIED — this leg
 // proves placement + fail-closed refusal, not hardware attestation.
 func TestRuntime_ConfidentialCompute(t *testing.T) {
-	if os.Getenv("LANTERN_CC_E2E") != "1" {
+	if cmp.Or(os.Getenv("PAL_CC_E2E"), os.Getenv("LANTERN_CC_E2E")) != "1" {
 		t.Skip("SKIP: confidential-compute e2e requires a real SEV-SNP/TDX cluster — a " +
 			"confidential schedule against the dev stub scheduler would fake a green placement, " +
 			"which the fail-closed CC contract forbids. Set LANTERN_CC_E2E=1 with the " +

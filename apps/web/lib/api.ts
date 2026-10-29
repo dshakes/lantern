@@ -265,11 +265,11 @@ export interface SettingsInput {
 // ---------------------------------------------------------------------------
 
 /**
- * Compact, real summary of fleet state passed into `askLantern`. Kept small
+ * Compact, real summary of fleet state passed into `askPal`. Kept small
  * (a short list of names + a few counts) so the prompt stays a few hundred
  * tokens — this is the ONLY ground truth the model gets, never the full DB.
  */
-export interface AskLanternContext {
+export interface AskPalContext {
   agentNames: string[];
   /** Run counts keyed by status, e.g. { running: 2, failed: 1, completed: 40 }. */
   runCountsByStatus: Record<string, number>;
@@ -278,11 +278,11 @@ export interface AskLanternContext {
 }
 
 /** Structured action returned by the LLM and consumed by the palette. */
-export type AskLanternAction =
+export type AskPalAction =
   | { kind: "navigate"; path: string; summary: string }
   | { kind: "answer"; answer: string; summary: string };
 
-const ASK_LANTERN_SYSTEM_PROMPT = `You are the PAL runtime command interpreter inside a dashboard command palette. The operator types a free-form natural-language command; you reason over the provided compact fleet context and return ONE structured action.
+const ASK_PAL_SYSTEM_PROMPT = `You are the PAL runtime command interpreter inside a dashboard command palette. The operator types a free-form natural-language command; you reason over the provided compact fleet context and return ONE structured action.
 
 Output STRICT JSON ONLY — no markdown, no backticks, no prose around it — matching exactly one of:
 {"kind":"navigate","path":"/runs?status=failed","summary":"one short line describing the action"}
@@ -305,7 +305,7 @@ Real dashboard routes you may use for "path":
 - /evaluations  (analytics)`;
 
 /** Render the compact context as a few short lines for the prompt. */
-function formatFleetContext(ctx: AskLanternContext): string {
+function formatFleetContext(ctx: AskPalContext): string {
   const lines: string[] = [];
   const names = ctx.agentNames.slice(0, 30);
   lines.push(
@@ -336,7 +336,7 @@ function formatFleetContext(ctx: AskLanternContext): string {
  * grab the first JSON object, validate the discriminated shape. Returns null
  * on anything malformed so the caller falls back.
  */
-function parseAskLanternAction(raw: string): AskLanternAction | null {
+function parseAskPalAction(raw: string): AskPalAction | null {
   if (!raw) return null;
   // Strip ```json … ``` fences if the model added them anyway.
   const fenced = raw.replace(/```(?:json)?/gi, "").trim();
@@ -411,7 +411,7 @@ const SIMULATED_HISTORY_MAX = 25;
 export function notifySimulated(operation: string, cause?: unknown): void {
   // Keep the warning in the console for devs, but make it scannable.
   if (typeof console !== "undefined") {
-    console.warn(`[lantern] Simulated: ${operation}`, cause);
+    console.warn(`[pal] Simulated: ${operation}`, cause);
   }
   simulatedHistory.unshift({ operation, at: Date.now() });
   if (simulatedHistory.length > SIMULATED_HISTORY_MAX) {
@@ -434,10 +434,10 @@ export function getSimulatedHistory(): SimulatedEvent[] {
 }
 
 // ---------------------------------------------------------------------------
-// LanternAPI
+// PalAPI
 // ---------------------------------------------------------------------------
 
-class LanternAPI {
+class PalAPI {
   private baseUrl: string;
   private _token: string | null = null;
   // Resolves when the most recent HttpOnly session-cookie write has completed.
@@ -476,7 +476,7 @@ class LanternAPI {
         "http://localhost:8080";
     } else {
       this.baseUrl =
-        process.env.LANTERN_API_URL ??
+        (process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ??
         process.env.NEXT_PUBLIC_API_URL ??
         "http://localhost:8080";
     }
@@ -494,9 +494,10 @@ class LanternAPI {
       // Persist token in localStorage for in-memory restoreToken() on page
       // load (before the HttpOnly cookie is read server-side).
       if (token) {
-        localStorage.setItem("lantern_token", token);
+        localStorage.setItem("pal_token", token);
       } else {
-        localStorage.removeItem("lantern_token");
+        localStorage.removeItem("pal_token");
+        localStorage.removeItem("lantern_token"); // legacy name; else the boot-time migration would resurrect the session
       }
       // Set / clear the auth cookie as HttpOnly via the server-side Route
       // Handler so XSS cannot read it.  Fire-and-forget: the cookie is only
@@ -520,7 +521,7 @@ class LanternAPI {
 
   restoreToken(): string | null {
     if (typeof window === "undefined") return null;
-    const stored = localStorage.getItem("lantern_token");
+    const stored = localStorage.getItem("pal_token");
     if (stored) {
       this._token = stored;
     }
@@ -602,7 +603,7 @@ class LanternAPI {
       return data;
     } catch (err) {
       console.warn(
-        "[lantern] Signup failed",
+        "[pal] Signup failed",
         err,
       );
       throw err;
@@ -997,7 +998,7 @@ class LanternAPI {
       );
     } catch (err) {
       console.warn(
-        "[lantern] Gateway unavailable for startOAuth, simulating locally",
+        "[pal] Gateway unavailable for startOAuth, simulating locally",
         err,
       );
       throw err;
@@ -1325,11 +1326,11 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
    * non-JSON output) so the caller can fall back to the client-side
    * pattern-matcher and never hit a dead end.
    */
-  async askLantern(
+  async askPal(
     query: string,
-    context: AskLanternContext,
+    context: AskPalContext,
     opts?: { timeoutMs?: number },
-  ): Promise<AskLanternAction | null> {
+  ): Promise<AskPalAction | null> {
     const timeoutMs = opts?.timeoutMs ?? 6000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1350,7 +1351,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
           temperature: 0,
           maxTokens: 320,
           messages: [
-            { role: "system", content: ASK_LANTERN_SYSTEM_PROMPT },
+            { role: "system", content: ASK_PAL_SYSTEM_PROMPT },
             {
               role: "user",
               content: `Fleet context (compact, real):\n${formatFleetContext(
@@ -1364,7 +1365,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       if (!res.ok) return null;
       const data = await res.json();
       const content: string = typeof data?.content === "string" ? data.content : "";
-      return parseAskLanternAction(content);
+      return parseAskPalAction(content);
     } catch {
       // Aborted (timeout), network failure, or bad JSON — degrade gracefully.
       return null;
@@ -2624,7 +2625,7 @@ export interface RehearseResponse {
   reason?: string;
 }
 
-export const api = new LanternAPI();
+export const api = new PalAPI();
 
 // ---------------------------------------------------------------------------
 // Life-event types (Automations feed)

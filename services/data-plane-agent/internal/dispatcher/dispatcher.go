@@ -67,7 +67,7 @@ func New(workflowEngineAddr, runtimeManagerAddr, serviceToken string, logger *za
 // NewFromEnv is a convenience constructor that reads LANTERN_GRPC_SERVICE_TOKEN
 // from the environment. Callers that read the token themselves should use New directly.
 func NewFromEnv(workflowEngineAddr, runtimeManagerAddr string, logger *zap.Logger) *Dispatcher {
-	return New(workflowEngineAddr, runtimeManagerAddr, os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"), logger)
+	return New(workflowEngineAddr, runtimeManagerAddr, os.Getenv("PAL_GRPC_SERVICE_TOKEN"), logger)
 }
 
 // NewWithConn creates a Dispatcher using a pre-established gRPC connection to

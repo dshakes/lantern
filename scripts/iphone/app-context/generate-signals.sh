@@ -22,11 +22,11 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$HERE/_signal-template.shortcut"
-OUT_DIR="${LANTERN_SHORTCUT_OUT:-$HOME/Desktop}"
+OUT_DIR="${PAL_SHORTCUT_OUT:-${LANTERN_SHORTCUT_OUT:-$HOME/Desktop}}"
 PLIST="$HOME/Library/LaunchAgents/dev.lantern.api.plist"
 
 # --- resolve token ---------------------------------------------------------
-TOKEN="${LANTERN_SIGNAL_TOKEN:-}"
+TOKEN="${PAL_SIGNAL_TOKEN:-${LANTERN_SIGNAL_TOKEN:-}}"
 if [ -z "$TOKEN" ] && [ -f "$PLIST" ]; then
   TOKEN="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:LANTERN_SIGNAL_TOKEN' "$PLIST" 2>/dev/null || true)"
 fi

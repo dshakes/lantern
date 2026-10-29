@@ -2,12 +2,12 @@
 
 - **Status:** Accepted
 - **Date:** 2026-04-11
-- **Deciders:** Lantern architecture team
+- **Deciders:** PAL Runtime architecture team
 - **Tags:** stack, polyglot
 
 ## Context
 
-Lantern is a multi-layer system with very different demands per layer:
+PAL Runtime is a multi-layer system with very different demands per layer:
 
 | Layer | Demands |
 |---|---|

@@ -16,7 +16,7 @@ import type { LifeEventKind, LifeEventPrefs } from "./life-events.js";
 import { recordAccept, recordIgnore, recordAutoAccept, recordAutoUndo } from "./life-events.js";
 
 export function lifeEventsPrefsPath(): string {
-  return process.env.LANTERN_LIFE_EVENTS_PREFS || join(homedir(), ".lantern", "life-events-prefs.json");
+  return process.env.PAL_LIFE_EVENTS_PREFS || join(homedir(), ".lantern", "life-events-prefs.json");
 }
 
 export function loadLifeEventPrefs(path = lifeEventsPrefsPath()): LifeEventPrefs {
@@ -86,7 +86,7 @@ export function persistAutoUndo(kind: LifeEventKind, path = lifeEventsPrefsPath(
 const ACTED_CAP = 500;
 
 export function lifeEventsActedPath(): string {
-  return process.env.LANTERN_LIFE_EVENTS_ACTED || join(homedir(), ".lantern", "life-events-acted.json");
+  return process.env.PAL_LIFE_EVENTS_ACTED || join(homedir(), ".lantern", "life-events-acted.json");
 }
 
 function loadActed(path: string): string[] {
@@ -145,7 +145,7 @@ export function unmarkActed(key: string, path = lifeEventsActedPath()): void {
 // life-events-autoact.json (mode 0600). { paused: boolean }.
 
 export function lifeEventsAutoActPath(): string {
-  return process.env.LANTERN_LIFE_EVENTS_AUTOACT_STATE || join(homedir(), ".lantern", "life-events-autoact.json");
+  return process.env.PAL_LIFE_EVENTS_AUTOACT_STATE || join(homedir(), ".lantern", "life-events-autoact.json");
 }
 
 // True when the owner has explicitly PAUSED automation. Default false

@@ -29,8 +29,8 @@ type kioskEnv struct {
 
 func newKioskEnv(t *testing.T) *kioskEnv {
 	t.Helper()
-	t.Setenv("LANTERN_KIOSK", "1")
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_KIOSK", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	es := newEnforcedServer(t)
 	auth := NewAuthHandler(es.srv, testJWTSecret)
 	rest := NewRESTHandler(es.srv, auth, NewAgentService(es.srv), NewRunService(es.srv))
@@ -80,7 +80,7 @@ func (e *kioskEnv) session(t *testing.T) kioskSession {
 }
 
 func TestKiosk_DisabledIs404(t *testing.T) {
-	t.Setenv("LANTERN_KIOSK", "")
+	t.Setenv("PAL_KIOSK", "")
 	k := &KioskHandler{}
 	w := httptest.NewRecorder()
 	k.CreateSession(w, httptest.NewRequest("POST", "/v1/kiosk/session", nil))
@@ -234,7 +234,7 @@ func TestCheckKioskConfig(t *testing.T) {
 		}
 		return func(k string) string { return m[k] }
 	}
-	good := []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1", "JWT_SECRET", "a-real-random-secret"}
+	good := []string{"PAL_KIOSK", "1", "PAL_RLS_ENFORCE", "1", "PAL_AUTHZ_ENFORCE", "1", "JWT_SECRET", "a-real-random-secret"}
 	cases := []struct {
 		name  string
 		prod  bool
@@ -244,13 +244,13 @@ func TestCheckKioskConfig(t *testing.T) {
 		{"off is a no-op", true, nil, false},
 		{"dev with enforcement ok", false, good, false},
 		{"prod refused", true, good, true},
-		{"prod explicitly allowed", true, append(append([]string{}, good...), "LANTERN_KIOSK_ALLOW_PROD", "1"), false},
-		{"RLS off refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_AUTHZ_ENFORCE", "1"}, true},
-		{"authz off refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1"}, true},
+		{"prod explicitly allowed", true, append(append([]string{}, good...), "PAL_KIOSK_ALLOW_PROD", "1"), false},
+		{"RLS off refused", false, []string{"PAL_KIOSK", "1", "PAL_AUTHZ_ENFORCE", "1"}, true},
+		{"authz off refused", false, []string{"PAL_KIOSK", "1", "PAL_RLS_ENFORCE", "1"}, true},
 		{"provider key without fixture URL refused", false, append(append([]string{}, good...), "OPENAI_API_KEY", "x"), true},
-		{"missing JWT secret refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1"}, true},
-		{"dev-default JWT secret refused", false, []string{"LANTERN_KIOSK", "1", "LANTERN_RLS_ENFORCE", "1", "LANTERN_AUTHZ_ENFORCE", "1", "JWT_SECRET", devJWTSecret}, true},
-		{"provider key pinned to fixture ok", false, append(append([]string{}, good...), "OPENAI_API_KEY", "x", "LANTERN_LLM_BASEURL_OPENAI", "http://llm-replay:9090"), false},
+		{"missing JWT secret refused", false, []string{"PAL_KIOSK", "1", "PAL_RLS_ENFORCE", "1", "PAL_AUTHZ_ENFORCE", "1"}, true},
+		{"dev-default JWT secret refused", false, []string{"PAL_KIOSK", "1", "PAL_RLS_ENFORCE", "1", "PAL_AUTHZ_ENFORCE", "1", "JWT_SECRET", devJWTSecret}, true},
+		{"provider key pinned to fixture ok", false, append(append([]string{}, good...), "OPENAI_API_KEY", "x", "PAL_LLM_BASEURL_OPENAI", "http://llm-replay:9090"), false},
 	}
 	for _, c := range cases {
 		if fatal, msg := CheckKioskConfig(c.prod, env(c.env...)); fatal != c.fatal {

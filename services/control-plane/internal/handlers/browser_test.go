@@ -77,7 +77,7 @@ func TestBrowser_FeatureGateOff(t *testing.T) {
 	tok := mintTestToken(t, tenantID, uuid.NewString(), "owner")
 	h := newTestBrowserHandler(t, pool)
 
-	t.Setenv("LANTERN_BROWSER_SKILL", "") // explicitly off
+	t.Setenv("PAL_BROWSER_SKILL", "") // explicitly off
 
 	cases := []struct {
 		name    string
@@ -138,7 +138,7 @@ func TestBrowser_Propose(t *testing.T) {
 	tok := mintTestToken(t, tenantID, uuid.NewString(), "owner")
 	h := newTestBrowserHandler(t, pool)
 
-	t.Setenv("LANTERN_BROWSER_SKILL", "on")
+	t.Setenv("PAL_BROWSER_SKILL", "on")
 
 	body, _ := json.Marshal(map[string]string{
 		"url":      "https://example.com/form",
@@ -232,7 +232,7 @@ func TestBrowser_Execute_NonOwnerForbidden(t *testing.T) {
 		execCalled = true
 		return stubUnavailable(nil, "", nil)
 	}
-	t.Setenv("LANTERN_BROWSER_SKILL", "on")
+	t.Setenv("PAL_BROWSER_SKILL", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/browser/commitments/"+commitmentID+"/execute", nil)
 	req.SetPathValue("id", commitmentID)
@@ -271,7 +271,7 @@ func TestBrowser_Execute_RuntimeUnavailable(t *testing.T) {
 
 	h := newTestBrowserHandler(t, pool)
 	// execFn is nil — no runtime manager configured.
-	t.Setenv("LANTERN_BROWSER_SKILL", "on")
+	t.Setenv("PAL_BROWSER_SKILL", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/browser/commitments/"+commitmentID+"/execute", nil)
 	req.SetPathValue("id", commitmentID)
@@ -327,7 +327,7 @@ func TestBrowser_Execute_ConcurrentExactlyOnce(t *testing.T) {
 			Error:  "increment 2 not yet shipped",
 		}, nil
 	}
-	t.Setenv("LANTERN_BROWSER_SKILL", "on")
+	t.Setenv("PAL_BROWSER_SKILL", "on")
 
 	const N = 10
 	codes := make([]int, N)
@@ -390,7 +390,7 @@ func TestBrowser_Read_RuntimeUnavailable(t *testing.T) {
 	tenantID := seedBrowserTenant(t, pool)
 	tok := mintTestToken(t, tenantID, uuid.NewString(), "owner")
 
-	t.Setenv("LANTERN_BROWSER_SKILL", "on")
+	t.Setenv("PAL_BROWSER_SKILL", "on")
 
 	t.Run("no manager configured", func(t *testing.T) {
 		h := newTestBrowserHandler(t, pool)

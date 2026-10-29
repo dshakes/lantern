@@ -166,7 +166,7 @@ export class MediaHandler {
     filename: string,
     langHint: ReturnType<typeof voiceTranscriptionLangHint>,
   ): Promise<MediaAnnotation | null> {
-    const apiKey = process.env.OPENAI_API_KEY || process.env.LANTERN_OPENAI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY || process.env.PAL_OPENAI_API_KEY;
     if (!apiKey) return null;
     try {
       const form = new FormData();

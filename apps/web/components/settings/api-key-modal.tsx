@@ -176,7 +176,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
             <div className="mt-6 flex justify-end">
               <button
                 onClick={handleClose}
-                className="rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400"
+                className="rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400"
               >
                 Done
               </button>
@@ -196,7 +196,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Production API, CI/CD Pipeline"
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
                 />
               </div>
 
@@ -215,7 +215,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
                         type="checkbox"
                         checked={scopes.includes(scope.id)}
                         onChange={() => toggleScope(scope.id)}
-                        className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-lantern-500 accent-lantern-500 focus:ring-lantern-500/30"
+                        className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-pal-500 accent-pal-500 focus:ring-pal-500/30"
                       />
                       <div>
                         <span className="text-sm text-zinc-200">{scope.label}</span>
@@ -236,7 +236,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
                 <select
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
                 >
                   {EXPIRY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -258,7 +258,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
               <button
                 onClick={handleCreate}
                 disabled={!name.trim() || scopes.length === 0 || creating}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {creating ? (
                   <>

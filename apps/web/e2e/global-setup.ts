@@ -47,7 +47,7 @@ async function warmRoutes() {
     body: JSON.stringify({ email: "warmup@e2e.lantern.test", password: "e2e-warmup-password", name: "Warmup" }),
   });
   const { token } = (await r.json()) as { token?: string };
-  const headers = { cookie: `lantern_token=${token ?? ""}` };
+  const headers = { cookie: `pal_token=${token ?? ""}` };
   for (const p of ["/login", "/auth/forgot", "/auth/reset?token=x", "/onboarding", "/agents", "/settings"]) {
     await fetch(WEB_URL + p, { headers }).catch(() => {});
   }

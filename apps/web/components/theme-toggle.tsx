@@ -16,7 +16,7 @@ export function ThemeToggle() {
   const toggle = () => {
     const next = dark ? "light" : "dark";
     document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("lantern-theme", next); } catch {}
+    try { localStorage.setItem("pal-theme", next); } catch {}
     setDark(!dark);
   };
 
@@ -25,7 +25,7 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
       title={dark ? "Light theme" : "Dark theme"}
-      className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-800 bg-surface-2 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50"
+      className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-800 bg-surface-2 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50"
     >
       {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </button>

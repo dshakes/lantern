@@ -13,7 +13,7 @@ export interface McpServer {
   addedAt: string;
 }
 
-const MCP_KEY_PREFIX = "lantern_mcp_servers_";
+const MCP_KEY_PREFIX = "pal_mcp_servers_";
 
 export function getMcpServers(agentName: string): McpServer[] {
   if (typeof window === "undefined") return [];

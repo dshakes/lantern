@@ -66,9 +66,9 @@ Fill in:
 Add to `~/.lantern/env` (or the LaunchAgent plist for the iMessage bridge):
 
 ```bash
-export LANTERN_TWILIO_NUMBER="+15125550100"
+export PAL_TWILIO_NUMBER="+15125550100"
 # Alias accepted too:
-# export LANTERN_TWILIO_SMS_FROM="+15125550100"
+# export PAL_TWILIO_SMS_FROM="+15125550100"
 ```
 
 Restart the iMessage bridge.
@@ -193,17 +193,17 @@ prevents a misconfigured webhook from making the agent text strangers.
 Once the RBM agent is approved and the webhook is wired, enable the gate:
 
 ```bash
-export LANTERN_RCS_INBOUND=on
+export PAL_RCS_INBOUND=on
 ```
 
 Add to `~/.lantern/env` or the control-plane LaunchAgent plist, then restart
-the control-plane. Setting `LANTERN_RCS_INBOUND` to anything other than the
+the control-plane. Setting `PAL_RCS_INBOUND` to anything other than the
 exact string `on` (case-insensitive) leaves the lane disabled.
 
 ### Step 3 — Optional: silence signature checking in local dev
 
 ```bash
-export LANTERN_TWILIO_WEBHOOK_AUTH=off
+export PAL_TWILIO_WEBHOOK_AUTH=off
 ```
 
 Do **not** set this in production. Without signature verification, any HTTP
@@ -220,7 +220,7 @@ The handler enforces multiple layers before the agent ever drafts a reply:
    matches the connector's configured `messagingServiceSid` or `phoneNumber`.
    Prevents a webhook on a different number/service in the same Twilio account
    from triggering replies.
-3. **Owner bypass** — if `LANTERN_OWNER_PHONE` is set and the inbound `From`
+3. **Owner bypass** — if `PAL_OWNER_PHONE` is set and the inbound `From`
    matches it (normalized), the message is silently dropped. The owner's private
    command channel is `sms.go`, not this handler.
 4. **Rate limiting** — 30 inbound messages per rolling minute. Excess messages
@@ -237,9 +237,9 @@ The handler enforces multiple layers before the agent ever drafts a reply:
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Contact receives SMS instead of RCS | Handset or carrier not RCS-capable, or RBM agent not yet approved | Expected — this is the automatic fallback. Check Twilio Console → Logs for message type |
-| `delivered via Twilio SMS fallback` in bridge log but contact gets nothing | `LANTERN_TWILIO_NUMBER` is set but Twilio connector config missing `phoneNumber` or `messagingServiceSid` | Set `phoneNumber` in the connector config to match `LANTERN_TWILIO_NUMBER` |
-| Inbound webhook returns 200 but no reply is sent | `LANTERN_RCS_INBOUND` is not `on` | Set `LANTERN_RCS_INBOUND=on` and restart the control-plane |
+| `delivered via Twilio SMS fallback` in bridge log but contact gets nothing | `PAL_TWILIO_NUMBER` is set but Twilio connector config missing `phoneNumber` or `messagingServiceSid` | Set `phoneNumber` in the connector config to match `PAL_TWILIO_NUMBER` |
+| Inbound webhook returns 200 but no reply is sent | `PAL_RCS_INBOUND` is not `on` | Set `PAL_RCS_INBOUND=on` and restart the control-plane |
 | Inbound webhook returns empty body with no log entry | Signature verification failed | Check that `authToken` in the Twilio connector config matches the account auth token Twilio is signing with |
-| Webhook 200 + signature ok + `LANTERN_RCS_INBOUND=on` but still no reply | Sender confirmation failed — inbound `To` does not match connector `phoneNumber` or `MessagingServiceSid` | Set `messagingServiceSid` (preferred) or `phoneNumber` in the connector config |
-| Bot replies to its own sent messages | Echo loop — `LANTERN_OWNER_PHONE` not set | Set `LANTERN_OWNER_PHONE` to the same E.164 number the RCS sender delivers from |
+| Webhook 200 + signature ok + `PAL_RCS_INBOUND=on` but still no reply | Sender confirmation failed — inbound `To` does not match connector `phoneNumber` or `MessagingServiceSid` | Set `messagingServiceSid` (preferred) or `phoneNumber` in the connector config |
+| Bot replies to its own sent messages | Echo loop — `PAL_OWNER_PHONE` not set | Set `PAL_OWNER_PHONE` to the same E.164 number the RCS sender delivers from |
 | Rate-limit drop visible in logs | >30 inbound messages/minute | Investigate flood source; limit is hardcoded at 30/min in the handler |

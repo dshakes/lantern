@@ -171,8 +171,8 @@ func main() {
 	//
 	// The privileged pool stays the connection for everything that must span
 	// tenants: the scheduler's poll, run_locks bookkeeping, and migrations.
-	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
-		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
+		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd == "" {
 			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
 			// isolation is on; continuing on the privileged pool would leave it
@@ -347,16 +347,16 @@ func loadConfig() config {
 		ListenAddr:         envOrDefault("LISTEN_ADDR", ":50052"),
 		LogLevel:           envOrDefault("LOG_LEVEL", "info"),
 		Workers:            workers,
-		ModelRouterAddr:    envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
-		RuntimeManagerAddr: envOrDefault("LANTERN_RUNTIME_MANAGER_ADDR", "runtime-manager:50054"),
-		GRPCServiceToken:   os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
+		ModelRouterAddr:    envOrDefault("PAL_MODEL_ROUTER_ADDR", "model-router:50053"),
+		RuntimeManagerAddr: envOrDefault("PAL_RUNTIME_MANAGER_ADDR", "runtime-manager:50054"),
+		GRPCServiceToken:   os.Getenv("PAL_GRPC_SERVICE_TOKEN"),
 	}
 }
 
 // isProdEnv reports whether the server is running in a production-like
 // environment (LANTERN_ENV=prod|production|staging).
 func isProdEnv() bool {
-	e := os.Getenv("LANTERN_ENV")
+	e := os.Getenv("PAL_ENV")
 	return e == "prod" || e == "production" || e == "staging"
 }
 

@@ -145,7 +145,7 @@ export async function consolidateDislikes(
   // bot's OWN rejected drafts (not attacker-controlled) and every lesson is
   // visible + deletable in owner-profile.md, so a bad lesson is low-blast and
   // easily removed.
-  if (opts.llmCall && process.env.LANTERN_DISLIKE_LLM_CLUSTER !== "0") {
+  if (opts.llmCall && process.env.PAL_DISLIKE_LLM_CLUSTER !== "0") {
     try {
       const llmLessons = await llmClusterPass(entries, opts.llmCall, minSupport);
       for (const l of llmLessons) {

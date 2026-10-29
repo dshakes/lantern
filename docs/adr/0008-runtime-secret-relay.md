@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-10
-- **Deciders:** Lantern runtime, security
+- **Deciders:** PAL Runtime runtime, security
 - **Tags:** runtime, secrets, security, trust-boundary
 
 ## Context
@@ -17,9 +17,9 @@ directly from its own process environment — a shortcut that is explicitly
 non-production. Production requires the manager to fetch the *actual* tenant
 secrets stored in the control-plane: `llm_provider_configs.api_key_encrypted`
 and `connector_installs.config` / `oauth_token_encrypted`, both AES-256-GCM
-encrypted at rest via `internal/secrets` (`LANTERN_CREDENTIAL_KEY`).
+encrypted at rest via `internal/secrets` (`PAL_CREDENTIAL_KEY`).
 
-The manager cannot hold `LANTERN_CREDENTIAL_KEY` — that would require every
+The manager cannot hold `PAL_CREDENTIAL_KEY` — that would require every
 manager node to have access to the master key, spreading the blast radius of a
 node compromise to every tenant's credentials. The control-plane is the right
 and only boundary for decrypting credential material.
@@ -30,7 +30,7 @@ resolve refs on behalf of a specific VM and its owning tenant.
 ## Decision
 
 Add `POST /v1/runtime/secrets/resolve` to the control-plane. The runtime-manager
-authenticates with a pre-shared token (`LANTERN_RUNTIME_SECRET_TOKEN`); the
+authenticates with a pre-shared token (`PAL_RUNTIME_SECRET_TOKEN`); the
 control-plane decrypts and returns plaintext values for all requested refs that
 belong to the specified tenant.
 
@@ -66,12 +66,12 @@ Unknown scope prefixes and refs that do not match these patterns return a per-re
 ### Authentication (service-to-service)
 
 The caller supplies the header `X-Lantern-Runtime-Token: <token>`. The
-control-plane reads `LANTERN_RUNTIME_SECRET_TOKEN` from its environment at
+control-plane reads `PAL_RUNTIME_SECRET_TOKEN` from its environment at
 request time. Both the expected and supplied tokens are SHA-256-hashed to
 fixed-size 32-byte arrays before `crypto/subtle.ConstantTimeCompare`, eliminating
 any length-based timing side-channel.
 
-**Fail-closed:** when `LANTERN_RUNTIME_SECRET_TOKEN` is unset the endpoint
+**Fail-closed:** when `PAL_RUNTIME_SECRET_TOKEN` is unset the endpoint
 immediately returns `403 Forbidden` with `{"error":"relay disabled"}`. Feature is
 off by default; a misconfigured production deployment with no token set cannot be
 used as a credential oracle.
@@ -91,9 +91,9 @@ values; sending these over an unencrypted connection exposes them on the wire.
   `/v1/runtime/...` routes — no new listener is needed.
 - The Rust runtime-manager client (`services/runtime-manager/src/secret_resolver.rs`)
   MUST use an `https://` URL. It will refuse to connect over `http://` unless
-  the env var `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1` is set (development only).
+  the env var `PAL_RUNTIME_RELAY_ALLOW_INSECURE=1` is set (development only).
 - In local dev (loopback) plain HTTP is acceptable if TLS is not configured. Set
-  `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE=1` in the dev `.env` to permit it.
+  `PAL_RUNTIME_RELAY_ALLOW_INSECURE=1` in the dev `.env` to permit it.
 - For multi-host production, the connection SHOULD additionally use mTLS so both
   sides authenticate each other at the transport layer (defense-in-depth alongside
   the token header).
@@ -168,8 +168,8 @@ therefore correct: the VM row exists but the harness may not yet have
 transitioned it to `running`.
 
 **Remaining compensating controls:**
-1. `LANTERN_RUNTIME_SECRET_TOKEN` must be a ≥ 256-bit random token stored in
-   the same secrets manager as `LANTERN_CREDENTIAL_KEY`; rotation requires a
+1. `PAL_RUNTIME_SECRET_TOKEN` must be a ≥ 256-bit random token stored in
+   the same secrets manager as `PAL_CREDENTIAL_KEY`; rotation requires a
    rolling restart.
 2. The endpoint should be network-policy-restricted so only runtime-manager
    pods can reach it (not arbitrary workloads or the public internet).
@@ -206,7 +206,7 @@ layer would widen the blast radius if the cache were exposed.
 ### Positive
 
 1. **The credential key stays in one process.** Only the control-plane holds
-   `LANTERN_CREDENTIAL_KEY`. Manager nodes have no access to encrypted material or
+   `PAL_CREDENTIAL_KEY`. Manager nodes have no access to encrypted material or
    the key — a node compromise does not expose other tenants' raw credentials.
 2. **VM binding closes the shared-token tenant-escalation gap.** The endpoint
    now verifies that the requested `vm_id` exists, belongs to the claimed
@@ -216,7 +216,7 @@ layer would widen the blast radius if the cache were exposed.
    This is the inherent trust ceiling; the per-VM MAC token path (see
    Alternatives Considered) remains available as optional future hardening
    with reduced urgency now that the vm-binding check is in place.
-3. **Fail-closed by default.** Unset `LANTERN_RUNTIME_SECRET_TOKEN` → 403 on every
+3. **Fail-closed by default.** Unset `PAL_RUNTIME_SECRET_TOKEN` → 403 on every
    call; no credentials are accidentally exposed on a fresh deployment.
 4. **Audit trail is complete.** Every resolution attempt is logged with the ref
    names so security reviews can trace credential access without the endpoint ever
@@ -228,8 +228,8 @@ layer would widen the blast radius if the cache were exposed.
 
 1. **New inter-service trust boundary.** The manager→control-plane token must be
    rotated on compromise; rotation requires a rolling restart of both services.
-   Mitigation: `LANTERN_RUNTIME_SECRET_TOKEN` can be set in the same secrets
-   manager that holds `LANTERN_CREDENTIAL_KEY`, so rotation is a single operation.
+   Mitigation: `PAL_RUNTIME_SECRET_TOKEN` can be set in the same secrets
+   manager that holds `PAL_CREDENTIAL_KEY`, so rotation is a single operation.
 2. **Added latency on secret vend.** Each harness boot adds one HTTP round-trip to
    the control-plane per distinct ref (or one request for all refs batched). At
    intra-cluster latency (~1ms) this is acceptable; the harness already pays N
@@ -244,7 +244,7 @@ layer would widen the blast radius if the cache were exposed.
 
 The manager could hold its own Postgres connection and read
 `llm_provider_configs` / `connector_installs` directly. Rejected: it would also
-need `LANTERN_CREDENTIAL_KEY` to decrypt rows, which spreads the key across every
+need `PAL_CREDENTIAL_KEY` to decrypt rows, which spreads the key across every
 node. Architectural invariant 1 also prohibits components outside the control-plane
 from touching the credential store directly.
 

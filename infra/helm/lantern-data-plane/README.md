@@ -1,8 +1,8 @@
 # lantern-data-plane Helm chart
 
-Deploys the Lantern **data plane** into the customer's own Kubernetes cluster
+Deploys the PAL Runtime **data plane** into the customer's own Kubernetes cluster
 (EKS / GKE / AKS / bare metal): the workflow engine, the runtime manager, and
-the data-plane agent that tunnels outbound to the Lantern control plane. Agent
+the data-plane agent that tunnels outbound to the PAL Runtime control plane. Agent
 code and data never leave the customer's VPC.
 
 ```bash
@@ -68,7 +68,7 @@ handlers are installed.
 | Toggle (values key)          | Default | Requires (cluster operator)        | What it does |
 | ---------------------------- | ------- | ---------------------------------- | ------------ |
 | `policies.enabled`           | `false` | Kyverno                            | Tenant-namespace baseline: PSA labels + default-deny NetworkPolicy + ResourceQuota + LimitRange, generated on namespace create |
-| `imageVerification.enabled`  | `false` | Kyverno (image-verification webhook) | Require a valid cosign signature on Lantern images; fail closed |
+| `imageVerification.enabled`  | `false` | Kyverno (image-verification webhook) | Require a valid cosign signature on PAL Runtime images; fail closed |
 | `egress.cilium.enabled`      | `false` | Cilium CNI                         | Host/eBPF default-deny egress for agent pods (DNS + manager + proxy only) |
 | `egress.proxy.enabled`       | `false` | —                                  | Credential-injecting forward proxy = the single controlled egress break |
 | `externalSecrets.enabled`    | `false` | External Secrets Operator          | SecretStore + example ExternalSecret for operator/platform secrets |
@@ -102,7 +102,7 @@ Tune via `policies.namespaceSelector` (glob, default `lantern-t-*`),
 ### Image verification (cosign) — `imageVerification.enabled`
 
 A Kyverno `verifyImages` `ClusterPolicy` requiring a valid cosign signature on
-Lantern images (`imageVerification.imageReferences`, default = this chart's own
+PAL Runtime images (`imageVerification.imageReferences`, default = this chart's own
 `registry/repository/*`). **Fails closed** (`failureAction: Enforce`).
 
 - **keyless** (default) — Sigstore keyless: the signature must chain to a Fulcio
@@ -154,7 +154,7 @@ Renders a `SecretStore` (or `ClusterSecretStore` when
 (`externalSecrets.provider`: `vault` default / `aws` / `gcp`) plus one example
 `ExternalSecret`.
 
-> **Scope note.** Lantern's **primary** secret path for *agent runtime* secrets
+> **Scope note.** PAL Runtime's **primary** secret path for *agent runtime* secrets
 > is the **in-VM mTLS vend** — the harness fetches short-TTL secrets at execution
 > time and `lantern.secret/...` refs **never land in pod env**. ESO is **not**
 > that path. ESO is for **operator-managed platform secrets** (postgres
@@ -164,14 +164,16 @@ Renders a `SecretStore` (or `ClusterSecretStore` when
 
 ---
 
-## CI: image signing (`.github/workflows/sign-images.yml`)
+## CI: image signing (`.github/workflows/build-images.yml`)
 
-Signs the published runtime images with cosign **keyless** signing (Fulcio +
-Rekor) using the GitHub Actions **OIDC token** (`id-token: write`) — no
-long-lived keys, no secrets. The signature's identity IS the workflow, which is
-exactly what `imageVerification.keyless.subject` trusts. Invoke it via
-`workflow_call` from your image-publish workflow (pass digest-pinned image
-refs), or `workflow_dispatch` to backfill.
+Every image `build-images.yml` pushes is signed by digest with cosign
+**keyless** signing (Fulcio + Rekor) using the GitHub Actions **OIDC token**
+(`id-token: write`) — no long-lived keys, no secrets — and carries a SLSA build
+provenance attestation and an SPDX SBOM attestation (ADR 0044). The signature's
+identity IS that workflow on `master`, which is exactly what
+`imageVerification.keyless.subject` trusts. `sign-images.yml` (manual backfill)
+signs under a DIFFERENT identity; add it as a second attestor if you rely on it.
+Tenant workload images are verified by `infra/k8s/supply-chain/`.
 
 ---
 

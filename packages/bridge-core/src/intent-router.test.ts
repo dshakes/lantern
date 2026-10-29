@@ -17,21 +17,21 @@ import {
 // ── FLAG GATE: default OFF (this is the "byte-identical when off" floor) ──
 test("intentRouterEnabled: default OFF for unset / falsey / garbage", () => {
   assert.equal(intentRouterEnabled({}), false); // unset → OFF
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "" }), false);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "0" }), false);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "off" }), false);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "false" }), false);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "no" }), false);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "maybe" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "0" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "off" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "false" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "no" }), false);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "maybe" }), false);
 });
 
 test("intentRouterEnabled: ON only for explicit truthy tokens", () => {
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "1" }), true);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "true" }), true);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "on" }), true);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "yes" }), true);
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "  TRUE  " }), true); // trim + case
-  assert.equal(intentRouterEnabled({ LANTERN_INTENT_ROUTER: "On" }), true);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "1" }), true);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "true" }), true);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "on" }), true);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "yes" }), true);
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "  TRUE  " }), true); // trim + case
+  assert.equal(intentRouterEnabled({ PAL_INTENT_ROUTER: "On" }), true);
 });
 
 // ── PROMPT BUILD (pure) ──

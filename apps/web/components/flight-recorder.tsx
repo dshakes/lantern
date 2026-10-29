@@ -138,7 +138,7 @@ const STATUS_COLORS: Record<string, string> = {
   succeeded: "bg-emerald-500/15 text-emerald-300",
   failed: "bg-red-500/15 text-red-400",
   cancelled: "bg-zinc-700/60 text-zinc-400",
-  running: "bg-lantern-500/15 text-lantern-300",
+  running: "bg-pal-500/15 text-pal-300",
   paused: "bg-amber-500/15 text-amber-300",
   queued: "bg-zinc-700/60 text-zinc-400",
   waiting: "bg-amber-500/15 text-amber-300",
@@ -389,7 +389,7 @@ export function FlightRecorder({
                 className={clsx(
                   "rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
                   speed === s
-                    ? "bg-lantern-600/70 text-lantern-100"
+                    ? "bg-pal-600/70 text-pal-100"
                     : "text-zinc-500 hover:text-zinc-300",
                 )}
                 aria-label={`${s}× speed`}
@@ -409,14 +409,14 @@ export function FlightRecorder({
               value={cursorMs ?? scaleEnd}
               onChange={(e) => engage(Number(e.target.value))}
               aria-label="Time cursor"
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-3 accent-lantern-500"
+              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-3 accent-pal-500"
             />
           </div>
 
           {/* As-of readout or idle hint */}
           {engaged && asOf ? (
             <div className="flex shrink-0 items-center gap-3 text-[12px] tabular-nums text-zinc-400">
-              <span className="font-mono text-[11px] font-medium text-lantern-300">
+              <span className="font-mono text-[11px] font-medium text-pal-300">
                 T+{fmtMs(cursorMs!)}
               </span>
               <span title="Cumulative cost as of T" className="text-zinc-300">
@@ -513,7 +513,7 @@ export function FlightRecorder({
               <Brain
                 className={clsx(
                   "h-3 w-3",
-                  replayOpen ? "text-lantern-300" : "text-zinc-500",
+                  replayOpen ? "text-pal-300" : "text-zinc-500",
                 )}
               />
               Replay reasoning
@@ -626,7 +626,7 @@ function SignalChip({
 
 // Kind → badge color
 const KIND_COLORS: Record<string, string> = {
-  step_started: "bg-lantern-500/15 text-lantern-300",
+  step_started: "bg-pal-500/15 text-pal-300",
   step_completed: "bg-emerald-500/15 text-emerald-300",
   step_failed: "bg-red-500/15 text-red-400",
   step_retrying: "bg-amber-500/15 text-amber-300",
@@ -730,7 +730,7 @@ function ReasoningReplay({
     <div className="border-t border-zinc-800/40 bg-surface-0/40 px-4 py-3.5">
       <div className="mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Brain className="h-3.5 w-3.5 text-lantern-300" />
+          <Brain className="h-3.5 w-3.5 text-pal-300" />
           <span className="text-[12px] font-medium text-zinc-200">
             Reasoning replay
           </span>

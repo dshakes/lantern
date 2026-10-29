@@ -20,7 +20,7 @@ import (
 // ---------- isProd / IsProd ----------
 
 func TestIsProd_UnsetIsNotProd(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	if IsProd() {
 		t.Error("expected IsProd()=false when LANTERN_ENV is unset")
 	}
@@ -30,7 +30,7 @@ func TestIsProd_ProdValues(t *testing.T) {
 	cases := []string{"prod", "PROD", "production", "Production", "PRODUCTION", "staging", "STAGING"}
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", v)
+			t.Setenv("PAL_ENV", v)
 			if !IsProd() {
 				t.Errorf("expected IsProd()=true for LANTERN_ENV=%q", v)
 			}
@@ -42,7 +42,7 @@ func TestIsProd_DevValues(t *testing.T) {
 	cases := []string{"dev", "development", "test", "local", ""}
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", v)
+			t.Setenv("PAL_ENV", v)
 			if IsProd() {
 				t.Errorf("expected IsProd()=false for LANTERN_ENV=%q", v)
 			}
@@ -53,7 +53,7 @@ func TestIsProd_DevValues(t *testing.T) {
 // ---------- GetJWTSecret ----------
 
 func TestGetJWTSecret_DevReturnsDefault(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	t.Setenv("JWT_SECRET", "")
 	s := GetJWTSecret()
 	if s != devJWTSecret {
@@ -62,7 +62,7 @@ func TestGetJWTSecret_DevReturnsDefault(t *testing.T) {
 }
 
 func TestGetJWTSecret_DevHonorsEnvVar(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	t.Setenv("JWT_SECRET", "my-strong-test-secret")
 	s := GetJWTSecret()
 	if s != "my-strong-test-secret" {
@@ -71,7 +71,7 @@ func TestGetJWTSecret_DevHonorsEnvVar(t *testing.T) {
 }
 
 func TestGetJWTSecret_ProdEmptyWhenUnset(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "prod")
+	t.Setenv("PAL_ENV", "prod")
 	t.Setenv("JWT_SECRET", "")
 	s := GetJWTSecret()
 	if s != "" {
@@ -80,7 +80,7 @@ func TestGetJWTSecret_ProdEmptyWhenUnset(t *testing.T) {
 }
 
 func TestGetJWTSecret_ProdEmptyWhenDevDefault(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "production")
+	t.Setenv("PAL_ENV", "production")
 	t.Setenv("JWT_SECRET", devJWTSecret)
 	s := GetJWTSecret()
 	if s != "" {
@@ -89,7 +89,7 @@ func TestGetJWTSecret_ProdEmptyWhenDevDefault(t *testing.T) {
 }
 
 func TestGetJWTSecret_ProdHonorsStrongSecret(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "prod")
+	t.Setenv("PAL_ENV", "prod")
 	t.Setenv("JWT_SECRET", "super-strong-prod-secret-xyz")
 	s := GetJWTSecret()
 	if s != "super-strong-prod-secret-xyz" {
@@ -100,7 +100,7 @@ func TestGetJWTSecret_ProdHonorsStrongSecret(t *testing.T) {
 // ---------- getReceiptSecret ----------
 
 func TestGetReceiptSecret_DevFallback(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "")
+	t.Setenv("PAL_RECEIPT_SECRET", "")
 	s := getReceiptSecret()
 	if s != devReceiptSecret {
 		t.Errorf("expected dev constant, got %q", s)
@@ -108,7 +108,7 @@ func TestGetReceiptSecret_DevFallback(t *testing.T) {
 }
 
 func TestGetReceiptSecret_HonorsEnvVar(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "my-receipt-secret")
+	t.Setenv("PAL_RECEIPT_SECRET", "my-receipt-secret")
 	s := getReceiptSecret()
 	if s != "my-receipt-secret" {
 		t.Errorf("expected env var value, got %q", s)
@@ -129,7 +129,7 @@ func TestDevReceiptSecretMatchesConstant(t *testing.T) {
 // ---------- corsAllowedOrigins ----------
 
 func TestCORSAllowedOrigins_DefaultIsLocalhost3001(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "")
+	t.Setenv("PAL_CORS_ORIGINS", "")
 	m := corsAllowedOrigins()
 	if _, ok := m["http://localhost:3001"]; !ok {
 		t.Error("expected http://localhost:3001 in default allowlist")
@@ -140,7 +140,7 @@ func TestCORSAllowedOrigins_DefaultIsLocalhost3001(t *testing.T) {
 }
 
 func TestCORSAllowedOrigins_ParsesMultiple(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "https://app.example.com, https://staging.example.com")
+	t.Setenv("PAL_CORS_ORIGINS", "https://app.example.com, https://staging.example.com")
 	m := corsAllowedOrigins()
 	if _, ok := m["https://app.example.com"]; !ok {
 		t.Error("expected https://app.example.com")
@@ -187,7 +187,7 @@ var nopHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 })
 
 func TestCORSMiddleware_PublicPathGetsWildcard(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/lantern-receipts", nil)
@@ -202,7 +202,7 @@ func TestCORSMiddleware_PublicPathGetsWildcard(t *testing.T) {
 }
 
 func TestCORSMiddleware_AllowedOriginReflected(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents", nil)
@@ -221,7 +221,7 @@ func TestCORSMiddleware_AllowedOriginReflected(t *testing.T) {
 }
 
 func TestCORSMiddleware_UnknownOriginBlocked(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents", nil)
@@ -236,7 +236,7 @@ func TestCORSMiddleware_UnknownOriginBlocked(t *testing.T) {
 }
 
 func TestCORSMiddleware_NoOriginHeaderNoACACHeader(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/agents", nil)
@@ -251,7 +251,7 @@ func TestCORSMiddleware_NoOriginHeaderNoACACHeader(t *testing.T) {
 }
 
 func TestCORSMiddleware_PreflightReturns204(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodOptions, "/v1/agents", nil)
@@ -265,7 +265,7 @@ func TestCORSMiddleware_PreflightReturns204(t *testing.T) {
 }
 
 func TestCORSMiddleware_ReceiptVerifyGetsWildcard(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "http://localhost:3001")
+	t.Setenv("PAL_CORS_ORIGINS", "http://localhost:3001")
 	h := CORSMiddleware(nopHandler)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/runs/receipts/verify", nil)
@@ -280,7 +280,7 @@ func TestCORSMiddleware_ReceiptVerifyGetsWildcard(t *testing.T) {
 }
 
 func TestCORSMiddleware_MultipleAllowedOrigins(t *testing.T) {
-	t.Setenv("LANTERN_CORS_ORIGINS", "https://app.example.com,https://staging.example.com")
+	t.Setenv("PAL_CORS_ORIGINS", "https://app.example.com,https://staging.example.com")
 	h := CORSMiddleware(nopHandler)
 
 	for _, origin := range []string{"https://app.example.com", "https://staging.example.com"} {
@@ -488,8 +488,8 @@ func TestCheckSchedulerAddr_DevSet_OK(t *testing.T) {
 // TestCheckSchedulerAddr_ViaEnv ensures the guard reads the real env var
 // when wired through IsProd() and os.Getenv, matching the main.go call site.
 func TestCheckSchedulerAddr_ViaEnv_ProdFatal(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "prod")
-	t.Setenv("LANTERN_SCHEDULER_GRPC_ADDR", "")
+	t.Setenv("PAL_ENV", "prod")
+	t.Setenv("PAL_SCHEDULER_GRPC_ADDR", "")
 
 	fatal, msg := CheckSchedulerAddr(IsProd(), "")
 	if !fatal {
@@ -498,8 +498,8 @@ func TestCheckSchedulerAddr_ViaEnv_ProdFatal(t *testing.T) {
 }
 
 func TestCheckSchedulerAddr_ViaEnv_DevSafe(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
-	t.Setenv("LANTERN_SCHEDULER_GRPC_ADDR", "")
+	t.Setenv("PAL_ENV", "")
+	t.Setenv("PAL_SCHEDULER_GRPC_ADDR", "")
 
 	fatal, _ := CheckSchedulerAddr(IsProd(), "")
 	if fatal {

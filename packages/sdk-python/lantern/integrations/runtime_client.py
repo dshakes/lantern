@@ -8,11 +8,12 @@ four runtime endpoints the sandbox integration needs.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 import httpx
+
+from lantern import _env
 
 from ..errors import LanternApiError
 
@@ -30,8 +31,8 @@ class LanternRuntimeClient:
         timeout: float = 120.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("LANTERN_API_URL") or "https://api.lantern.run").rstrip("/")
-        self._api_key = api_key or os.environ.get("LANTERN_API_KEY") or ""
+        self.base_url = (base_url or _env.get("API_URL") or "https://api.lantern.run").rstrip("/")
+        self._api_key = api_key or _env.get("API_KEY") or ""
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"

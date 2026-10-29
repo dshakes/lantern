@@ -160,8 +160,8 @@ func buildErrandTurnEndTwiML(sayLine string) string {
 // Trailing slash is removed. May return "" when none can be resolved.
 func errandPublicBaseURL(r *http.Request) string {
 	for _, v := range []string{
-		os.Getenv("LANTERN_ERRAND_PUBLIC_URL"),
-		os.Getenv("LANTERN_CONTROL_PLANE_URL"),
+		os.Getenv("PAL_ERRAND_PUBLIC_URL"),
+		os.Getenv("PAL_CONTROL_PLANE_URL"),
 	} {
 		if v = strings.TrimRight(strings.TrimSpace(v), "/"); v != "" {
 			return v
@@ -194,7 +194,7 @@ const errandMaxTurns = 6
 
 // errandEnabled reports whether the LANTERN_ERRAND feature flag is on.
 func errandEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_ERRAND")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ERRAND")))
 	return v == "1" || v == "true" || v == "on"
 }
 
@@ -280,13 +280,13 @@ func (h *ErrandHandler) logger() *zap.Logger { return h.srv.Logger.Named("errand
 // LANTERN_TWILIO_NUMBER first (same convention as voice.go / jarvis.go).
 // Returns "" when unset; the production Twilio connector will fail cleanly.
 func errandFromNumber() string {
-	return strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER"))
+	return strings.TrimSpace(os.Getenv("PAL_TWILIO_NUMBER"))
 }
 
 // ownerNameForTenant returns the owner name for compliance preambles.
 // Reads LANTERN_OWNER_NAME (same convention as the bridge layer).
 func ownerNameForTenant() string {
-	if n := strings.TrimSpace(os.Getenv("LANTERN_OWNER_NAME")); n != "" {
+	if n := strings.TrimSpace(os.Getenv("PAL_OWNER_NAME")); n != "" {
 		return n
 	}
 	return "the owner"
@@ -588,7 +588,7 @@ func (h *ErrandHandler) ErrandTurn(w http.ResponseWriter, r *http.Request) {
 
 	// Verify Twilio signature. Dev bypass: LANTERN_TWILIO_WEBHOOK_AUTH=off.
 	// Mirrors voice.go's verification pattern exactly.
-	skipVerify := strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	skipVerify := strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off"
 	if !skipVerify {
 		fullURL := derivePublicURL(r) + r.URL.Path
 		if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
