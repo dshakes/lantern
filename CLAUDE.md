@@ -1327,6 +1327,8 @@ CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork
 Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `lantern run --idle-timeout N`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
+**Local sandbox detection (ADR 0045).** `dev` prints one `sandbox:` line and `doctor` a "Sandbox mode" check from `detectSandbox` (`packages/cli/internal/cli/sandbox_mode.go`): `firecracker` (Linux+KVM, manager `:50054`), `lima` (macOS, Lima `firecracker-dev` Running + `make lima-runtime` manager forwarded on `:52054`), `docker` (manager on `:50054` without KVM) or `stub` (says the fix). A mode is chosen only when its manager answers on TCP; non-stub starts/reuses the scheduler and sets `PAL_SCHEDULER_GRPC_ADDR` on the API.
+
 **Wiring env vars (set on control-plane + scheduler):**
 
 - `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials

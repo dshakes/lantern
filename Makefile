@@ -318,6 +318,9 @@ lima-broker-e2e: ## Broker egress mode (ADR 0026) e2e inside the VM
 lima-measurement-e2e: ## Software measurement (ADR 0031) e2e inside the VM: reproducible, enforce, resume/fork
 	@bash infra/lima/lima.sh measurement-e2e
 
+lima-runtime: ## Long-running jailed Firecracker runtime-manager in the VM on :52054 for `dev` (foreground)
+	@bash infra/lima/lima.sh runtime
+
 lima-down: ## Stop the firecracker-dev VM
 	@bash infra/lima/lima.sh down
 

@@ -170,7 +170,10 @@ func runDev(opts devOpts) error {
 		return nil
 	}
 
-	// ---- 2) Control-plane (host go run).
+	// ---- 2) Sandbox: wire the API to a real runtime, or say plainly it is a stub.
+	sandboxEnv := wireSandbox(ctx, &wg, repoRoot, detectSandbox(defaultSandboxProbe()))
+
+	// ---- 2b) Control-plane (host go run).
 	apiCmd := makeProc(ctx, repoRoot, tagAPI, "go", "run", "./cmd/server")
 	apiCmd.Dir = filepath.Join(repoRoot, "services", "control-plane")
 	apiCmd.Env = append(os.Environ(),
@@ -179,6 +182,7 @@ func runDev(opts devOpts) error {
 		"S3_ENDPOINT=http://localhost:9000",
 		"LOG_LEVEL=info",
 	)
+	apiCmd.Env = append(apiCmd.Env, sandboxEnv...)
 	if err := startProc(&wg, apiCmd, tagAPI); err != nil {
 		return err
 	}

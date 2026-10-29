@@ -205,6 +205,103 @@ For more exercises (quota, audit, terminate, cluster view) see
 
 ---
 
+## B2. Local Firecracker microVMs (`dev` sandbox detection)
+
+`pal dev` (the `lantern dev` binary until the rename lands) decides which
+sandbox the control-plane gets and prints exactly one `sandbox:` line saying so
+(ADR 0045). `pal doctor` shows the same decision under **Sandbox runtime**.
+
+| You have | `sandbox:` mode | What runs |
+|---|---|---|
+| Linux, usable `/dev/kvm` + `firecracker`, manager on `:50054` | `firecracker` | real microVMs on the host |
+| macOS M3+/15+, Lima VM `firecracker-dev` Running, `make lima-runtime` on `:52054` | `lima` | real jailed Firecracker microVMs inside the Lima guest |
+| a runtime-manager on `:50054` without KVM (`make run-runtime-manager`) | `docker` | containers — no microVM isolation (section B) |
+| none of the above | `stub` | **nothing** — the API's stub scheduler fabricates vm ids |
+
+A mode is chosen only when its runtime-manager answers on TCP, so the line
+never claims a sandbox that is not there. Bare macOS prints:
+
+```
+sandbox: stub — no microVMs; run `make lima-up` for real Firecracker
+```
+
+In any non-stub mode `dev` starts a runtime-scheduler on `:50055` (or reuses
+one already listening there, e.g. a LaunchAgent) and starts the API with
+`PAL_SCHEDULER_GRPC_ADDR=localhost:50055`.
+
+### macOS: real Firecracker through Lima
+
+```bash
+brew install lima
+make lima-up        # once: create/start the VM, verify /dev/kvm + firecracker + jailer
+make lima-runtime   # terminal 1: build harness image + manager in the VM, run the
+                    # jailed Firecracker manager on :52054 (foreground; Ctrl-C stops it)
+pal dev             # terminal 2: prints "sandbox: lima — Firecracker microVMs in Lima VM firecracker-dev …"
+```
+
+How the pieces connect: the manager listens on `0.0.0.0:52054` in the guest
+and Lima's default port forwarding exposes it as `localhost:52054` on the Mac;
+the manager self-registers by heartbeating the host scheduler at
+`http://host.lima.internal:8085` and advertises `localhost:52054`, which the
+host scheduler dials. Port `52054` (not `50054`) keeps it clear of a host
+Docker-backend manager and of `make lima-e2e`, which uses `:50054` inside the VM.
+
+Dev-only posture: plaintext gRPC and no service token (the manager's dev
+defaults; `LANTERN_ENV` is never set). The mTLS VendSecret path is exercised by
+`make lima-e2e`, not by this loop.
+
+Schedule a workload into the microVM:
+
+```bash
+VM=$(curl -s -X POST http://localhost:8080/v1/runtime/schedule \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"imageDigest":"local/busybox","isolation":"standard",
+       "limits":{"vcpu":"500m","memory":"128Mi","timeout_secs":30},
+       "command":["/bin/sh","-c","echo hello from a microVM; uname -r"]}')
+VM_ID=$(echo "$VM" | jq -r .vmId)
+lantern vm logs "$VM_ID" --follow
+```
+
+Verification status: the detection and wiring are unit-tested and were checked
+against a running `firecracker-dev` VM; the jailed manager boot + spawn path is
+what `make lima-e2e` proves. This exact schedule-through-`dev` round trip has
+not been run in CI.
+
+What differs from a cluster: the Firecracker backend boots the one harness
+rootfs built by `make lima-image` (static busybox, no Python) and runs the
+spec's `command` in it — `imageDigest` is not pulled. Workloads that need their
+own image (the Python demos in `examples/headless-agents/`) run under the
+Docker tier locally and under K8s (gVisor/Kata) in the cloud.
+
+---
+
+## B3. Same agent, local → cloud
+
+The agent is `agent.yaml` (+ its workload spec) — nothing in it names the
+environment. Only the API address and credential change:
+
+```bash
+cd examples/headless-agents/01-hello
+
+# Local: the stack from `pal dev`
+LANTERN_API_URL=http://localhost:8080 LANTERN_API_KEY=$TOKEN \
+  lantern run agent.yaml --input '{"name":"Ada"}'
+
+# Cloud: the same file against your control plane
+export LANTERN_API_URL=https://api.your-pal.example.com
+export LANTERN_API_KEY=pal_...            # dashboard → Settings → API keys
+lantern deploy --dry-run                  # shows create vs update, no mutation
+lantern deploy                            # upserts the agent + POST /v1/agents/{name}/deploy
+lantern run agent.yaml --input '{"name":"Ada"}'
+```
+
+`deploy` exit codes: 3 auth, 4 quota/budget (402), 5 not found, 6 server error.
+The data plane the cloud schedules onto is provisioned from
+`infra/terraform/` (EKS/GKE/AKS) + `infra/helm/lantern`; see
+`infra/terraform/README.md` for what is validated.
+
+---
+
 ## C. Production — K8s data plane
 
 ### Architecture
@@ -325,6 +422,6 @@ lantern vm validate --kubeconfig $KUBECONFIG
 | No egress enforcement | Docker containers ignore harness egress rules | Firecracker/gVisor/Kata: egress enforced via iptables REDIRECT |
 | No secret vending | `/run/lantern/secrets/` not available without harness | Harness vends secrets from the manager over Unix socket |
 | Quota concurrent-VM cap | Fast containers exit before next request; cap looks ineffective | Cap works correctly; harness reports exit and frees slot immediately |
-| Firecracker/Kata/gVisor | Not available on macOS; need Linux + KVM | Full isolation on Linux nodes |
+| Firecracker/Kata/gVisor | Not native on macOS; Firecracker via Lima on M3+/macOS 15+ (section B2), otherwise Linux + KVM | Full isolation on Linux nodes |
 | Snapshot/restore (demo 03) | Not functional without Firecracker | Firecracker on Linux KVM nodes |
 | GPU scheduling (demo 04) | No GPU on local Docker backend | K8s GPU pool with NVIDIA device plugin |
