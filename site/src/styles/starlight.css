@@ -70,10 +70,20 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 .sl-markdown-content :is(th, td) { border: 0; border-bottom: 1px solid var(--sl-color-hairline); padding: 0.6rem 0.9rem; }
 .sl-markdown-content tr:last-child td { border-bottom: 0; }
 .sl-markdown-content th { background: var(--sl-color-gray-6); font-weight: 600; color: var(--sl-color-white); }
-/* phones: tables become stacked cards (each cell labelled by its column via
-   data-label when present; otherwise the table scrolls inside its own frame). */
+/* phones: tables with a header row become stacked cards (cells are labelled by
+   their column via data-label, added by the head script in astro.config.mjs);
+   anything else scrolls inside its own frame. */
 @media (max-width: 40rem) {
   .sl-markdown-content table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sl-markdown-content table.stack { overflow: visible; border: 0; border-radius: 0; }
+  .sl-markdown-content table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .sl-markdown-content table.stack :is(tbody, tr, td) { display: block; }
+  .sl-markdown-content table.stack tr { margin-bottom: 0.75rem; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; overflow: hidden; background: var(--sl-color-gray-7); }
+  .sl-markdown-content table.stack td { padding: 0.45rem 0.9rem; border-bottom: 1px solid var(--sl-color-hairline); overflow-wrap: anywhere; }
+  .sl-markdown-content table.stack td:first-child { background: var(--sl-color-gray-6); font-weight: 600; color: var(--sl-color-white); }
+  .sl-markdown-content table.stack td:first-child::before { display: none; }
+  .sl-markdown-content table.stack td:last-child { border-bottom: 0; }
+  .sl-markdown-content table.stack td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; font-weight: 600; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.05rem; }
 }
 .sl-markdown-content blockquote { border-inline-start: 3px solid var(--sl-color-accent); background: var(--sl-color-gray-6); border-radius: 0 10px 10px 0; padding: 0.6rem 1rem; }
 .starlight-aside { border-radius: 12px; border-inline-start-width: 3px; }

@@ -58,6 +58,14 @@ export default defineConfig({
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
         { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: og } },
+        // Label each table cell with its column header so starlight.css can stack
+        // tables into cards on phones. ponytail: runs in the browser (a first try as
+        // a markdown.rehypePlugins entry broke the build); a build-time rehype
+        // plugin is the upgrade path if no-JS rendering of the cards matters.
+        {
+          tag: 'script',
+          content: `document.addEventListener('DOMContentLoaded',()=>{for(const t of document.querySelectorAll('.sl-markdown-content table')){const h=[...t.querySelectorAll('thead th')].map(th=>th.textContent.trim());if(!h.length)continue;t.classList.add('stack');for(const tr of t.querySelectorAll('tbody tr'))[...tr.children].forEach((td,i)=>h[i]&&td.setAttribute('data-label',h[i]))}})`,
+        },
       ],
       expressiveCode: {
         themes: ['github-dark-default', 'github-light'],
