@@ -16,6 +16,7 @@ replace github.com/dshakes/lantern/gen/go => ../../gen/go
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dshakes/lantern/packages/palenv v0.0.0
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -33,3 +34,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/dshakes/lantern/packages/palenv => ../../packages/palenv

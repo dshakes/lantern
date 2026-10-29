@@ -21,6 +21,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/notifier/internal/db"
 	"github.com/dshakes/lantern/services/notifier/internal/delivery"
 	"github.com/dshakes/lantern/services/notifier/internal/handlers"
@@ -29,6 +30,7 @@ import (
 )
 
 func main() {
+	palenv.Bridge()
 	cfg := loadConfig()
 
 	logger := mustInitLogger(cfg.LogLevel)

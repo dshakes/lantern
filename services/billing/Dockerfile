@@ -1,6 +1,7 @@
 FROM golang:1.26.10-alpine AS builder
 # Build context is the repo root (replace ../../gen/go lives outside the service dir).
 COPY gen/go/ /app/gen/go/
+COPY packages/palenv/ /app/packages/palenv/
 COPY services/billing/ /app/services/billing/
 WORKDIR /app/services/billing
 RUN go mod download

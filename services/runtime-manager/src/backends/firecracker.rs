@@ -70,6 +70,8 @@ pub const SPAWN_CONTRACT_FILE: &str = "spawn.json";
 /// Harness env var for the workload uid (secrets-socket peer auth). The
 /// manager owns this value; a caller-supplied one is dropped.
 pub const ENV_WORKLOAD_UID: &str = "LANTERN_WORKLOAD_UID";
+/// The same key under the PAL name (ADR 0032). Never caller-set either.
+const ENV_WORKLOAD_UID_PAL: &str = "PAL_WORKLOAD_UID";
 /// The guest's environment class. Manager-owned: `schedule`/`restore` replace
 /// any caller value with the manager's own before a backend sees the request.
 pub const ENV_LANTERN_ENV: &str = "LANTERN_ENV";
@@ -167,7 +169,9 @@ impl SpawnContract {
             env: req
                 .env
                 .iter()
-                .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID && k.as_str() != ENV_LANTERN_ENV)
+                .filter(|(k, _)| {
+                    ![ENV_WORKLOAD_UID, ENV_WORKLOAD_UID_PAL, ENV_LANTERN_ENV].contains(&k.as_str())
+                })
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             // Injection specs never go to the guest: it has no use for them,
@@ -835,7 +839,7 @@ pub fn build_boot_args(
     let extra_env: String = req
         .env
         .iter()
-        .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID)
+        .filter(|(k, _)| ![ENV_WORKLOAD_UID, ENV_WORKLOAD_UID_PAL].contains(&k.as_str()))
         .map(|(k, v)| {
             // Sanitise: strip spaces and quotes to avoid breaking the
             // command line.  Real production would use a structured config
@@ -5200,6 +5204,7 @@ mod tests {
             r#"spaces and "quotes" 'single' {"json":[1,2]} = ok"#.into(),
         );
         req.env.insert(ENV_WORKLOAD_UID.into(), "0".into()); // caller forgery
+        req.env.insert(ENV_WORKLOAD_UID_PAL.into(), "0".into()); // same, PAL name (ADR 0032)
         req.egress_rules = vec![EgressRule {
             pattern: "*.openai.com".into(),
             http_methods: vec!["POST".into()],
@@ -5220,6 +5225,10 @@ mod tests {
         assert!(
             !c.env.contains_key(ENV_WORKLOAD_UID),
             "caller uid must be dropped"
+        );
+        assert!(
+            !c.env.contains_key(ENV_WORKLOAD_UID_PAL),
+            "caller PAL_ uid must be dropped"
         );
         assert_eq!((c.workload_uid, c.workload_gid), (1000, 1001));
 
@@ -5279,6 +5288,7 @@ mod tests {
             "{args}"
         );
         assert!(!args.contains("LANTERN_WORKLOAD_UID=0"), "{args}");
+        assert!(!args.contains("PAL_WORKLOAD_UID"), "{args}");
     }
 
     /// build_cert_image stages spawn.json at the image root, mode 0600, before

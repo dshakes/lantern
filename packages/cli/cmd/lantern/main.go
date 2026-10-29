@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/dshakes/lantern/packages/cli/internal/cli"
+	"github.com/dshakes/lantern/packages/palenv"
 )
 
 // Build-time variables set via ldflags.
@@ -16,6 +17,7 @@ var (
 )
 
 func main() {
+	palenv.Bridge()
 	root := cli.NewRootCommand(version, commit, date)
 	if err := root.Execute(); err != nil {
 		// The root command sets SilenceErrors so cobra doesn't print;

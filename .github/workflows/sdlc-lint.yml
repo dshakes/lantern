@@ -66,6 +66,12 @@ jobs:
           version: latest
           working-directory: services/scheduler
 
+      - name: golangci-lint (palenv)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: packages/palenv
+
       # ---- Rust -------------------------------------------------------------
       - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
@@ -85,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for manifest in services/*/Cargo.toml; do
+          for manifest in services/*/Cargo.toml packages/*/Cargo.toml; do
             crate="$(dirname "$manifest")"
             if ! cargo fmt --manifest-path "$manifest" --check; then
               echo "::error file=$manifest::$crate is not rustfmt-clean — run: cargo fmt --manifest-path $manifest"
@@ -113,6 +119,9 @@ jobs:
 
       - name: cargo clippy (harness)
         run: cd services/harness && cargo clippy --all-targets
+
+      - name: cargo clippy (pal-env-rs)
+        run: cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
 
       # ---- TypeScript -------------------------------------------------------
       # ESLint 9 needs a flat eslint.config.js the packages don't have yet (own

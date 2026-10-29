@@ -118,12 +118,16 @@ const MANAGER_CMDLINE_KEYS: [&str; 3] = [
 const MANAGER_IDENTITY_KEYS: [&str; 2] = ["LANTERN_TENANT_ID", "LANTERN_AGENT_VERSION_ID"];
 
 /// Whether a free-form env key may be applied: anything outside the
-/// `LANTERN_` namespace, an allowlisted caller key, or a manager-stamped
-/// identity key.
+/// `LANTERN_`/`PAL_` namespaces, an allowlisted caller key, or a
+/// manager-stamped identity key. EVERY `PAL_*` key is dropped (ADR 0032):
+/// nothing upstream stamps or replaces `PAL_` identity yet, so even the twin
+/// of a legitimate caller key (`PAL_AGENT_INSTANCE_TOKEN`) is caller-chosen.
+/// Relax only when the writers flip (rename plan step 4).
 fn caller_key_allowed(key: &str) -> bool {
-    !key.starts_with("LANTERN_")
-        || CALLER_LANTERN_KEYS.contains(&key)
-        || MANAGER_IDENTITY_KEYS.contains(&key)
+    !key.starts_with("PAL_")
+        && (!key.starts_with("LANTERN_")
+            || CALLER_LANTERN_KEYS.contains(&key)
+            || MANAGER_IDENTITY_KEYS.contains(&key))
 }
 
 /// `spawn.json` `network` — this VM's /30 (manager = `host_ip`).
@@ -197,7 +201,7 @@ pub fn contract_env_pairs(c: &SpawnContract) -> serde_json::Result<Vec<(String, 
     }
     if !dropped.is_empty() {
         // Names only — values may be sensitive.
-        tracing::warn!(keys = ?dropped, "bootenv: ignored LANTERN_* keys in spawn.json env (harness config is manager-owned)");
+        tracing::warn!(keys = ?dropped, "bootenv: ignored LANTERN_*/PAL_* keys in spawn.json env (harness config is manager-owned)");
     }
     Ok(pairs)
 }
@@ -979,6 +983,28 @@ mod tests {
             .collect();
         // One entry per key (hydration keeps the first value it sees).
         assert_eq!(uids, vec!["1000"]);
+    }
+
+    /// ADR 0032: every caller `PAL_*` key is dropped — harness config,
+    /// forged identity, and even the twin of a legitimate caller key, which
+    /// nothing upstream stamps or replaces under the `PAL_` name.
+    #[test]
+    fn caller_pal_keys_are_all_dropped() {
+        let c = parse_spawn_contract(
+            br#"{"env":{
+                "PAL_WORKLOAD_UID":"0","PAL_ENV":"dev","PAL_EGRESS_FAIL_CLOSED":"0",
+                "PAL_HARNESS_EXEC_TOKEN":"forged","PAL_TENANT_ID":"other-tenant",
+                "PAL_RESUME":"1","PAL_TRACE_PARENT":"00-abc-def-01",
+                "PAL_AGENT_INSTANCE_ID":"i","PAL_AGENT_INSTANCE_TOKEN":"caller-chosen",
+                "LANTERN_RESUME":"1",
+                "LANTERN_TENANT_ID":"t1","KEEP":"1"
+            }}"#,
+        )
+        .expect("valid");
+        let pairs = contract_env_pairs(&c).expect("encodable");
+        let mut keys: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["KEEP", "LANTERN_RESUME", "LANTERN_TENANT_ID"]);
     }
 
     #[test]
