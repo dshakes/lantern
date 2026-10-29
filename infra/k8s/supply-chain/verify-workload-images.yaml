@@ -13,7 +13,9 @@
 # images. The default trusts this repo's build-images.yml on master (keyless,
 # GitHub OIDC) — i.e. only PAL platform images. A tenant agent image signed by
 # another workflow/key is refused until its identity is added here (add more
-# entries; `count: 1` = any one listed identity suffices).
+# entries; `count: 1` = any one listed identity suffices). Injected sidecars
+# (service mesh, Vault agent, APM) are images too: sign them under a listed
+# identity or add their signer, or they will be refused.
 #
 # Tests: `kyverno test infra/k8s/supply-chain/test` (digest rule, offline). The
 # signature rule needs a registry + Rekor and is exercised end to end by

@@ -77,8 +77,8 @@ impl ImagePolicy {
 
     pub fn from_env() -> Result<Self, String> {
         Self::parse(
-            pal_env::var("VERIFY_SIGNATURES").ok().as_deref(),
-            pal_env::var("IMAGE_ALLOWED_REPOS").ok().as_deref(),
+            pal_env::var("PAL_VERIFY_SIGNATURES").ok().as_deref(),
+            pal_env::var("PAL_IMAGE_ALLOWED_REPOS").ok().as_deref(),
             crate::tls::is_prod_env(),
         )
     }
@@ -167,6 +167,30 @@ mod tests {
 
     fn on(allowed: &str) -> ImagePolicy {
         ImagePolicy::parse(Some("on"), Some(allowed), false).unwrap()
+    }
+
+    // Regression: from_env once passed the bare suffix to pal_env, so neither
+    // PAL_ nor LANTERN_ names were ever read. Only the allowlist var is set
+    // here — `enforce` is untouched, so a concurrent lazy `admit()` init in
+    // another test cannot change behaviour.
+    #[test]
+    fn from_env_reads_pal_and_lantern_names() {
+        // SAFETY: no other test reads or writes these two variables' values in a
+        // way that affects its outcome (see comment above).
+        unsafe { std::env::set_var("LANTERN_IMAGE_ALLOWED_REPOS", "ghcr.io/legacy") };
+        assert_eq!(
+            ImagePolicy::from_env().unwrap().allowed_repos,
+            ["ghcr.io/legacy"]
+        );
+        unsafe { std::env::set_var("PAL_IMAGE_ALLOWED_REPOS", "ghcr.io/pal") };
+        assert_eq!(
+            ImagePolicy::from_env().unwrap().allowed_repos,
+            ["ghcr.io/pal"]
+        );
+        unsafe {
+            std::env::remove_var("PAL_IMAGE_ALLOWED_REPOS");
+            std::env::remove_var("LANTERN_IMAGE_ALLOWED_REPOS");
+        }
     }
 
     #[test]

@@ -186,10 +186,10 @@ jobs:
       - name: Build CLI binaries + SHA256SUMS
         env:
           VERSION: ${{ needs.release.outputs.version }}
-          COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist
+          COMMIT="$(git rev-parse HEAD)"     # the tag's commit, not the dispatch branch tip
           date="$(git log -1 --format=%cI)"   # reproducible: commit time, not wall clock
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             os="${target%/*}"; arch="${target#*/}"
