@@ -81,7 +81,7 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 .pagination-links a { border-radius: 12px; border-color: var(--sl-color-hairline-light); }
 .pagination-links a:hover { border-color: var(--sl-color-accent); }
 /* diagrams: theme pairs. Unlayered, so restate Starlight's theme hiding at higher specificity. */
-.sl-markdown-content img.diagram, .sl-markdown-content picture img { display: block; max-width: 100%; height: auto; margin: 1.75rem auto; }
+.sl-markdown-content img.diagram { display: block; max-width: 100%; height: auto; margin: 1.75rem auto; }
 [data-theme='light'] .sl-markdown-content .dark-only,
 [data-theme='dark'] .sl-markdown-content .light-only,
 [data-theme='light'] img.diagram.light\:sl-hidden,

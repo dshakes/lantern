@@ -167,13 +167,6 @@ sup.fn a { font-family: var(--p-mono); font-size: 0.7em; color: var(--p-accent-t
   @keyframes settle { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 }
 
-/* ---- diagrams ---- */
-.diagram { margin: 0; max-width: 960px; }
-.diagram img { display: block; width: 100%; height: auto; border-radius: 18px; border: 1px solid var(--p-border); }
-.diagram figcaption { margin-top: 14px; font-size: 14px; line-height: 22px; color: var(--p-text-3); max-width: 72ch; }
-.diagram .portrait-img { max-width: 420px; margin: 0 auto; }
-:root[data-theme='light'] .diagram .d-dark, :root:not([data-theme='light']) .diagram .d-light { display: none; }
-
 /* ---- outcome rows (runtime) ---- */
 /* diagrams always get the full content width, so 16px labels never render below 12px */
 .outcome { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; }

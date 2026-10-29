@@ -201,11 +201,11 @@ const B = {
 // C. your-cloud (control plane / data plane)
 const C = {
   title: 'PAL Runtime in your cloud',
-  desc: 'The control plane is run by us or self-hosted by you. The data plane runs inside your VPC with the microVM sandboxes and the run data. It dials out to the control plane and holds one connection open; run assignments come back down it. There are no inbound ports.',
+  desc: 'The control plane runs wherever you deploy it. The data plane runs inside your VPC with the microVM sandboxes and the run data. It dials out to the control plane and holds one connection open; run assignments come back down it. There are no inbound ports.',
   land(d, t) {
     d.box(24, 72, 300, 232, { tone: 'line', r: 16 });
     d.text(174, 108, 'control plane', { size: 18, weight: 600, anchor: 'middle', mono: false });
-    d.text(174, 132, 'hosted by us, or by you', { size: 14, color: t.text2, anchor: 'middle' , count: false });
+    d.text(174, 132, 'run it anywhere', { size: 14, color: t.text2, anchor: 'middle' , count: false });
     d.box(48, 156, 252, 52, { tone: 'line', title: 'API · console' });
     d.box(48, 224, 252, 52, { tone: 'line', title: 'scheduling · routing' });
     d.box(504, 32, 432, 312, { tone: 'cool', r: 18, dashed: true, fill: false });
@@ -224,7 +224,7 @@ const C = {
     const x = 24, w = 372;
     d.box(x, 24, w, 200, { tone: 'line', r: 16 });
     d.text(210, 58, 'control plane', { size: 18, weight: 600, anchor: 'middle', mono: false });
-    d.text(210, 80, 'hosted by us, or by you', { size: 14, color: t.text2, anchor: 'middle' , count: false });
+    d.text(210, 80, 'run it anywhere', { size: 14, color: t.text2, anchor: 'middle' , count: false });
     d.box(x + 20, 100, w - 40, 44, { tone: 'line', title: 'API · console' });
     d.box(x + 20, 156, w - 40, 44, { tone: 'line', title: 'scheduling · routing' });
     d.arrow([[150, 304], [150, 224]], { tone: 'accent', w: 2 });
