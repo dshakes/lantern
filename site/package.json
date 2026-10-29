@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && node scripts/check-links.mjs",
+    "build": "astro check && astro build && node scripts/check-links.mjs",
     "preview": "astro preview",
     "astro": "astro",
     "og": "node scripts/og.mjs",
@@ -19,9 +19,9 @@
     "astro": "7.3.5"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.12",
+    "@astrojs/check": "0.9.4",
     "playwright": "^1.56.1",
     "starlight-links-validator": "^0.26.0",
-    "typescript": "^6.0.3"
+    "typescript": "5.9.3"
   }
 }
