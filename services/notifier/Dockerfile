@@ -1,12 +1,12 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
-# Copy dependency files first for layer caching.
-COPY go.mod go.sum ./
+# Build context is the repo root (docker build -f services/notifier/Dockerfile .):
+# the module replaces local modules under ../../ that must be in the context.
+COPY packages/palenv/ /app/packages/palenv/
+COPY services/notifier/ /app/services/notifier/
+WORKDIR /app/services/notifier
 RUN go mod download
-
-# Copy the rest of the source.
-COPY . .
 
 # Build a statically-linked binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /notifier ./cmd/server

@@ -1,12 +1,13 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
-# Copy dependency files first for layer caching.
-COPY go.mod go.sum ./
+# Build context is the repo root (docker build -f services/billing/Dockerfile .):
+# the module replaces local modules under ../../ that must be in the context.
+COPY gen/go/ /app/gen/go/
+COPY packages/palenv/ /app/packages/palenv/
+COPY services/billing/ /app/services/billing/
+WORKDIR /app/services/billing
 RUN go mod download
-
-# Copy the rest of the source.
-COPY . .
 
 # Build a statically-linked binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /billing ./cmd/server

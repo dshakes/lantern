@@ -204,6 +204,9 @@ func runDev(opts devOpts) error {
 		waCmd.Dir = waDir
 		waCmd.Env = append(os.Environ(),
 			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
+			// Both names: palenv.Bridge mirrored the parent env, and a stale PAL_API_URL
+			// would win over this override in the child (ADR 0032).
+			fmt.Sprintf("PAL_API_URL=http://localhost:%d", opts.apiPort),
 		)
 		if err := startProc(&wg, waCmd, tagWA); err != nil {
 			fmt.Fprintln(os.Stderr, tag(tagWA, fmt.Sprintf("could not start WhatsApp bridge: %v", err)))
@@ -219,6 +222,9 @@ func runDev(opts devOpts) error {
 		imCmd.Dir = imDir
 		imCmd.Env = append(os.Environ(),
 			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
+			// Both names: palenv.Bridge mirrored the parent env, and a stale PAL_API_URL
+			// would win over this override in the child (ADR 0032).
+			fmt.Sprintf("PAL_API_URL=http://localhost:%d", opts.apiPort),
 		)
 		if err := startProc(&wg, imCmd, tagIM); err != nil {
 			fmt.Fprintln(os.Stderr, tag(tagIM, fmt.Sprintf("could not start iMessage bridge: %v", err)))

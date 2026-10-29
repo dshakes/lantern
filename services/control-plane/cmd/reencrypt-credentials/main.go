@@ -35,6 +35,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 )
 
@@ -53,6 +54,7 @@ var targets = []target{
 }
 
 func main() {
+	palenv.Bridge()
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing")
 	flag.Parse()
 
