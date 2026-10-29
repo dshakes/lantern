@@ -5,7 +5,7 @@
 //
 // As the user types ("Reply to my Gmail and post to Slack…"), we
 // detect referenced connectors and show whether each is already
-// installed at the workspace level (since Lantern connectors are
+// installed at the workspace level (since PAL connectors are
 // tenant-wide — install once, every agent uses them).
 //
 // Click an uninstalled chip to jump straight to /connectors with

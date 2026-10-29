@@ -1,10 +1,10 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Lantern ⌘K Command Palette
+// PAL ⌘K Command Palette
 //
 // The global console primitive — Linear/Vercel/Raycast-grade — with an
-// agentic "Ask Lantern" row at the top. Calm Google/Anthropic aesthetic:
+// agentic "Ask PAL" row at the top. Calm Google/Anthropic aesthetic:
 // soft backdrop blur, a rounded surface-1 panel, one accent on the active
 // row, monochrome icons, generous spacing.
 //
@@ -52,7 +52,7 @@ import type { Run } from "@/lib/mock-data";
 // ─────────────────────────────────────────────────────────────────────────
 
 type Section =
-  | "Ask Lantern"
+  | "Ask PAL"
   | "Quick actions"
   | "Agents"
   | "Runs"
@@ -75,7 +75,7 @@ interface CommandItem {
 }
 
 const SECTION_ORDER: Section[] = [
-  "Ask Lantern",
+  "Ask PAL",
   "Quick actions",
   "Agents",
   "Runs",
@@ -116,9 +116,9 @@ function fuzzyScore(text: string, query: string): number | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Ask Lantern — demo-grade client-side intent layer.
+// Ask PAL — demo-grade client-side intent layer.
 //
-// In production this query would be handed to the Lantern agent/LLM
+// In production this query would be handed to the PAL agent/LLM
 // (router → a small intent model, or the control-plane's existing
 // /v1/completions) which would return a structured action. Here we
 // pattern-match a handful of common intents deterministically so the row
@@ -126,7 +126,7 @@ function fuzzyScore(text: string, query: string): number | null {
 // ─────────────────────────────────────────────────────────────────────────
 
 interface ResolvedIntent {
-  /** One-line restatement of what Lantern will do. */
+  /** One-line restatement of what PAL will do. */
   summary: string;
   run: () => void;
 }
@@ -234,7 +234,7 @@ export function CommandPalette() {
   const loadedRef = useRef(false);
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
-  // ── Ask Lantern agentic state ──
+  // ── Ask PAL agentic state ──
   // `thinking` shows the calm spinner on the Ask row while the LLM reasons.
   // `answer` holds an inline answer card (kind=answer) so the operator can
   // read it without leaving the palette. Both reset whenever the query
@@ -351,7 +351,7 @@ export function CommandPalette() {
 
   const act = useCallback(
     (item: CommandItem) => {
-      // The Ask Lantern row is agentic + async; route it through runAsk
+      // The Ask PAL row is agentic + async; route it through runAsk
       // (it manages its own thinking state + palette lifecycle).
       if (item.id === "ask-lantern") {
         void runAsk(query);
@@ -364,7 +364,7 @@ export function CommandPalette() {
     [pushRecent, runAsk, query],
   );
 
-  // ── The agentic "Ask Lantern" item (only when there's a real query) ──
+  // ── The agentic "Ask PAL" item (only when there's a real query) ──
   //    `meta` previews the INSTANT pattern-match intent so the row always
   //    reads as actionable before the LLM responds. `onSelect` is the LLM
   //    path (via act() → runAsk); the pattern-match is the fallback inside it.
@@ -374,9 +374,9 @@ export function CommandPalette() {
     const intent = interpretIntent(q, router, agentNames);
     return {
       id: "ask-lantern",
-      label: `Ask Lantern: “${q}”`,
+      label: `Ask PAL: “${q}”`,
       meta: thinking ? "thinking…" : intent.summary,
-      section: "Ask Lantern",
+      section: "Ask PAL",
       icon: thinking ? Loader2 : Sparkles,
       agentic: true,
       weight: -100, // always pinned to the very top
@@ -508,11 +508,11 @@ export function CommandPalette() {
 
     const out: { section: Section; items: CommandItem[] }[] = [];
 
-    // Ask Lantern always leads when present.
-    if (askItem) out.push({ section: "Ask Lantern", items: [askItem] });
+    // Ask PAL always leads when present.
+    if (askItem) out.push({ section: "Ask PAL", items: [askItem] });
 
     for (const section of SECTION_ORDER) {
-      if (section === "Ask Lantern") continue;
+      if (section === "Ask PAL") continue;
       const list = bySection.get(section);
       if (list && list.length > 0) out.push({ section, items: list });
     }
@@ -621,8 +621,8 @@ export function CommandPalette() {
               }
             }}
             onKeyDown={onInputKeyDown}
-            placeholder="Search or ask Lantern…"
-            aria-label="Search or ask Lantern"
+            placeholder="Search or ask PAL…"
+            aria-label="Search or ask PAL"
             aria-controls="command-palette-list"
             autoComplete="off"
             spellCheck={false}
@@ -641,14 +641,14 @@ export function CommandPalette() {
           aria-label="Commands"
           className="max-h-[min(60vh,420px)] overflow-y-auto py-2"
         >
-          {/* Inline Ask Lantern answer (kind=answer) — grounded in the real
+          {/* Inline Ask PAL answer (kind=answer) — grounded in the real
               fleet context we passed; palette stays open so it can be read. */}
           {answer && (
             <div className="mx-2 mb-2 rounded-xl border border-lantern-500/25 bg-lantern-500/[0.07] px-3.5 py-3">
               <div className="flex items-center gap-1.5 pb-1">
                 <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
                 <span className="text-[12px] font-semibold uppercase tracking-wider text-lantern-300/90">
-                  Ask Lantern
+                  Ask PAL
                 </span>
               </div>
               <p className="text-sm leading-relaxed text-zinc-100">
@@ -670,12 +670,12 @@ export function CommandPalette() {
             grouped.map((group) => (
               <div key={group.section} className="mb-1 last:mb-0">
                 <div className="flex items-center gap-1.5 px-4 pb-1 pt-2">
-                  {group.section === "Ask Lantern" && (
+                  {group.section === "Ask PAL" && (
                     <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
                   )}
                   <span
                     className={
-                      group.section === "Ask Lantern"
+                      group.section === "Ask PAL"
                         ? "mc-micro-label !text-lantern-300/90"
                         : "mc-micro-label"
                     }
@@ -780,7 +780,7 @@ export function CommandPalette() {
           </span>
           <span className="ml-auto flex items-center gap-1.5 text-[12px] text-lantern-400/80">
             <CircleDot className="h-2.5 w-2.5" aria-hidden />
-            Ask Lantern ✨
+            Ask PAL ✨
           </span>
         </div>
       </div>

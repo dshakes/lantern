@@ -6,7 +6,7 @@
 
 ## What "validated" means
 
-The Lantern runtime dispatches UNTRUSTED agent workloads to gVisor (user-space kernel sandbox) and HOSTILE workloads to Kata (hardware-isolated microVMs). The GitHub-hosted CI job (`runtime · cluster e2e`) validates the always-on isolation legs (NetworkPolicy, securityContext, PSA, fail-closed RuntimeClass refusal) but **cannot** validate actual sandbox execution — GitHub runners have no `runsc` and no nested virtualisation (`/dev/kvm`).
+The PAL runtime dispatches UNTRUSTED agent workloads to gVisor (user-space kernel sandbox) and HOSTILE workloads to Kata (hardware-isolated microVMs). The GitHub-hosted CI job (`runtime · cluster e2e`) validates the always-on isolation legs (NetworkPolicy, securityContext, PSA, fail-closed RuntimeClass refusal) but **cannot** validate actual sandbox execution — GitHub runners have no `runsc` and no nested virtualisation (`/dev/kvm`).
 
 "Validated" for the README status line means: an operator ran the harness below against a real sandbox cluster **and the per-leg report shows PASS for legs g, h, and i**.
 

@@ -3,7 +3,7 @@
 // /embed — Webchat install center.
 //
 // Generates the <script> tag a customer pastes into their site to embed
-// a Lantern agent as a chat bubble. Pre-fills with the user's API key
+// a PAL agent as a chat bubble. Pre-fills with the user's API key
 // (when they have one), agent selector, theme, and position. The widget
 // itself is served from /widget.js at the same origin.
 
@@ -26,7 +26,7 @@ export default function EmbedPage() {
   const [apiKey, setApiKey] = useState<string>("lk_replace_with_your_api_key");
   const [theme, setTheme] = useState<Theme>("dark");
   const [position, setPosition] = useState<Position>("bottom-right");
-  const [brand, setBrand] = useState<string>("Lantern");
+  const [brand, setBrand] = useState<string>("PAL");
   const [greeting, setGreeting] = useState<string>("How can I help?");
   const [copied, setCopied] = useState(false);
 
@@ -48,7 +48,7 @@ export default function EmbedPage() {
     };
   }, [agentName]);
 
-  // Derive an apiBase that works for both prod (where Lantern is hosted)
+  // Derive an apiBase that works for both prod (where PAL is hosted)
   // and dev (where the widget points back to localhost:8080). At publish
   // time the user replaces this with their public URL.
   const apiBase = useMemo(() => {
@@ -67,7 +67,7 @@ export default function EmbedPage() {
 
   const snippet = useMemo(() => {
     return [
-      `<!-- Lantern Webchat widget -->`,
+      `<!-- PAL Webchat widget -->`,
       `<script src="${widgetSrc}"`,
       `        data-api-key="${apiKey}"`,
       `        data-agent="${agentName || "your-agent"}"`,
@@ -91,7 +91,7 @@ export default function EmbedPage() {
     <div className="flex flex-1 flex-col overflow-auto">
       <PageHeader
         title="Embed Webchat"
-        description="Drop a Lantern agent into any website with one script tag. The widget renders a chat bubble in the corner and talks to the same /v1/sessions API your dashboard uses."
+        description="Drop a PAL agent into any website with one script tag. The widget renders a chat bubble in the corner and talks to the same /v1/sessions API your dashboard uses."
       />
 
       <div className="grid flex-1 grid-cols-1 gap-6 p-8 lg:grid-cols-[minmax(0,1fr)_400px]">

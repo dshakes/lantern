@@ -73,7 +73,7 @@ func newTestCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Run an agent's eval suite and compare against baseline",
-		Long: `Run an eval suite against a Lantern agent and submit the scored
+		Long: `Run an eval suite against a PAL agent and submit the scored
 results to the control plane. If --against=last-green is set and the
 current score is a regression vs. the branch baseline, the command
 exits with a non-zero status so CI can fail the build.

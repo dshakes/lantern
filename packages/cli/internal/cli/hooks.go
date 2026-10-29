@@ -69,7 +69,7 @@ func newHooksCreateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <agent>",
 		Short: "Create a webhook trigger for an agent",
-		Long: "Create a webhook trigger. Lantern generates the signing secret and prints it once,\n" +
+		Long: "Create a webhook trigger. PAL generates the signing secret and prints it once,\n" +
 			"unless --secret-stdin supplies one (Sentry and PagerDuty generate their own).\n" +
 			"--template maps the payload into run input, e.g. '{\"pr\":\"{{payload.number}}\"}'.",
 		Args: cobra.ExactArgs(1),

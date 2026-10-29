@@ -1,6 +1,6 @@
 # Runbook — Postgres backup & restore
 
-> **Audience:** operators running Lantern in production.
+> **Audience:** operators running PAL in production.
 > **Goal:** never lose tenant data, and have a *tested* restore path before you need it.
 
 Lantern's primary datastore is Postgres (`runs`, `agents`, `journal_events`, receipts,

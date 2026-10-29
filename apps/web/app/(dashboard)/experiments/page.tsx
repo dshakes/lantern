@@ -134,7 +134,7 @@ export default function ExperimentsPage() {
             title={canCreate ? "No experiments yet" : "No agents yet"}
             description={
               canCreate
-                ? "Ship a new version safely behind a traffic split. Lantern hashes run_id deterministically, so your retry logic, webhooks, and sessions stay on the same arm."
+                ? "Ship a new version safely behind a traffic split. PAL hashes run_id deterministically, so your retry logic, webhooks, and sessions stay on the same arm."
                 : "Create an agent first. Experiments compare two versions of a deployed agent."
             }
             actionLabel={canCreate ? "New experiment" : "Create agent"}

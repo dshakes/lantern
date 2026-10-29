@@ -209,7 +209,7 @@ const quickstartAgentName = "quickstart-assistant"
 
 // quickstartSystemPrompt is the system prompt for the starter agent.
 // It is intentionally useful, not a placeholder.
-const quickstartSystemPrompt = `You are a helpful general-purpose assistant powered by Lantern.
+const quickstartSystemPrompt = `You are a helpful general-purpose assistant powered by PAL.
 You can answer questions, summarize text, draft messages, explain code, and help with
 day-to-day tasks. Be concise, accurate, and honest about what you do and don't know.`
 
@@ -220,7 +220,7 @@ var quickstartRunInput = json.RawMessage(`{"prompt":"Say hi and name one thing y
 const guideAgentName = "lantern-guide"
 
 // guideSystemPrompt is the fallback prompt used when the template endpoint is unavailable.
-const guideSystemPrompt = `You are Lantern's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
+const guideSystemPrompt = `You are the PAL onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
 
 Rules:
 - Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.
@@ -239,7 +239,7 @@ func newOnboardCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "First-run wizard: health → auth → provider → agent → run",
-		Long: `Walks you through the five steps needed to go from a running Lantern
+		Long: `Walks you through the five steps needed to go from a running PAL
 stack to a working AI agent in under a minute.
 
 Each step performs a real action against the REST API on :8080 and stops
@@ -282,7 +282,7 @@ func runOnboard(cfg *onboardConfig) error {
 		restURL = deriveRESTURL(flags.apiURL)
 	}
 
-	fmt.Fprintln(os.Stderr, "Lantern onboard — let's get you set up.")
+	fmt.Fprintln(os.Stderr, "PAL onboard — let's get you set up.")
 	fmt.Fprintln(os.Stderr, strings.Repeat("─", 48))
 
 	// ── Step 1: Health ──────────────────────────────────────────────────────
@@ -851,7 +851,7 @@ func runGuideStep(client *internal.RESTClient, firstRunContext, agentName string
 			// Agent doesn't exist and template failed — try direct creation.
 			if _, createErr := client.CreateAgentWithSystemPrompt(
 				guideAgentName,
-				"Lantern's onboarding guide — explains what your first run did and suggests the next command.",
+				"The PAL onboarding guide — explains what your first run did and suggests the next command.",
 				guideSystemPrompt,
 			); createErr != nil {
 				// Cannot create the guide agent at all — skip silently.
@@ -866,7 +866,7 @@ func runGuideStep(client *internal.RESTClient, firstRunContext, agentName string
 	// guide the EXACT next command so it can't invent an agent name or flag.
 	nextCommand := fmt.Sprintf("lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'", agentName)
 	guideInput, err := json.Marshal(map[string]string{
-		"prompt": "Here is the output from the user's first Lantern agent run:\n\n" + firstRunContext +
+		"prompt": "Here is the output from the user's first PAL agent run:\n\n" + firstRunContext +
 			"\n\nExplain what happened and suggest one next command.\n\nNext command: " + nextCommand,
 	})
 	if err != nil {

@@ -3,7 +3,7 @@
 > **Audience:** on-call operators.
 > **Fires from:** `GatewayDown` (critical), `ModelRouterDown` (critical),
 > `GatewayP99LatencyHigh` / `ModelRouterP99LatencyHigh` (warning, **TODO**).
-> **Dashboards:** Lantern — Platform Overview.
+> **Dashboards:** PAL — Platform Overview.
 
 These two Rust services sit on the hot path:
 
@@ -49,9 +49,9 @@ kubectl -n <ns> exec deploy/<gateway> -- sh -c 'nc -z localhost 8443 && echo ok'
 
 **Latency (today, via traces):** open the tracing backend, filter spans by
 service `model-router` / `gateway`, sort by duration. The model-router span tree
-shows whether the time is in Lantern routing or in the **upstream vendor** call
+shows whether the time is in PAL routing or in the **upstream vendor** call
 (OpenAI/Anthropic). A vendor slowdown or rate-limit (HTTP 429 in the logs) is the
-most common "model-router is slow" cause and is not a Lantern bug.
+most common "model-router is slow" cause and is not a PAL bug.
 
 ---
 
@@ -61,7 +61,7 @@ most common "model-router is slow" cause and is not a Lantern bug.
    resources). If it began right after a deploy, roll back:
    `kubectl -n <ns> rollout undo deploy/<service>`.
 2. **model-router slow due to upstream vendor** (429s / high upstream span time)
-   → not fixable in Lantern directly. Confirm provider status, check whether a
+   → not fixable in PAL directly. Confirm provider status, check whether a
    single provider is the bottleneck, and lean on the router's failover/routing
    to shift load. Raise provider quota if it's a sustained limit.
 3. **gateway slow** → check for backpressure / a stuck stream; streaming is
@@ -78,6 +78,6 @@ streams tokens); trace p99 back to baseline.
 ## Escalate
 
 - A vendor outage/limit is the root cause → **platform on-call** to manage
-  provider routing/quota; this is upstream, not a Lantern fix.
+  provider routing/quota; this is upstream, not a PAL fix.
 - Hot-path regression after a Rust deploy that rollback doesn't fix → the owning
   team + **platform on-call**.

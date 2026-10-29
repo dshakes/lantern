@@ -224,9 +224,9 @@ Latency budget for the first token (TTFT, time-to-first-token):
 | Workflow engine annotate + forward | < 5ms |
 | Runtime manager forward | < 1ms |
 | Gateway SSE encode + send | < 5ms |
-| **Lantern overhead total** | **< 20ms** |
+| **PAL overhead total** | **< 20ms** |
 
-So if Claude Sonnet has 600ms TTFT, the user sees the first token at ~620ms. Lantern adds nothing meaningful to perceived latency.
+So if Claude Sonnet has 600ms TTFT, the user sees the first token at ~620ms. PAL adds nothing meaningful to perceived latency.
 
 ---
 

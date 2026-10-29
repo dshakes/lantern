@@ -1,6 +1,6 @@
 "use client";
 
-// Lantern dashboard sidebar — Claude-desktop minimalism.
+// PAL dashboard sidebar — Claude-desktop minimalism.
 //
 // The unit of work is the agent. So the sidebar IS the agent list,
 // the way Claude's sidebar IS the conversation list. There are no
@@ -10,7 +10,7 @@
 //
 // Layout:
 //   ┌─────────────────────┐
-//   │ Lantern        [⇇] │
+//   │ PAL        [⇇] │
 //   │                     │
 //   │ [+ New agent]       │
 //   │ [⌕ Search    /]    │
@@ -132,7 +132,7 @@ export function Sidebar() {
           </div>
           {!collapsed && (
             <div className="flex flex-col leading-tight">
-              <span className="font-[680] text-base tracking-[-0.02em] text-zinc-50">Lantern</span>
+              <span className="font-[680] text-base tracking-[-0.02em] text-zinc-50">PAL</span>
               <span className="mc-micro-label">
                 {user?.name ? `${user.name.split(" ")[0]}'s workspace` : "workspace"}
               </span>

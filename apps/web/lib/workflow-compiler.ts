@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// workflow-compiler.ts — Compile a visual workflow into a Lantern agent config
+// workflow-compiler.ts — Compile a visual workflow into a PAL agent config
 //
 // Converts the React Flow graph into an agent.yaml + step sequence that the
 // SDK understands. This is the "code = visual" bridge described in

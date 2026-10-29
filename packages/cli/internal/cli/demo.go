@@ -60,7 +60,7 @@ no provider key is read, stored, or required.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := findRepoRoot()
 			if err != nil {
-				return fmt.Errorf("run `lantern demo` from inside a Lantern checkout: %w", err)
+				return fmt.Errorf("run `lantern demo` from inside a PAL checkout: %w", err)
 			}
 			if _, err := exec.LookPath("docker"); err != nil {
 				return fmt.Errorf("docker is required: %w", err)

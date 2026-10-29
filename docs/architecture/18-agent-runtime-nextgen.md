@@ -10,7 +10,7 @@
 > This is a strategy + gap-analysis document, not a spec. It establishes **where the
 > enterprise agent-runtime market is going (2025–2028)**, **where the named
 > incumbents lead and lag**, **where Lantern's runtime genuinely stands today
-> (honest, stub-aware)**, and a **prod-grade phased roadmap** to put Lantern on par
+> (honest, stub-aware)**, and a **prod-grade phased roadmap** to put PAL on par
 > with — then ahead of — AWS Bedrock AgentCore, Google Vertex Agent Engine,
 > Anthropic (Agent SDK + Managed Agents), OpenAI's agent suite, and Temporal.
 > Every phase carries explicit **test + validation gates** — no phase is "done"
@@ -37,7 +37,7 @@ control-plane/data-plane split + `journal_events` + `run_receipts` + per-session
 microVM + cross-channel memory. **That coherence is the thing no single-layer
 vendor can ship — and it is Lantern's wedge.**
 
-**Where Lantern is today (honest, verified 2026-06-18 by reading the code, not a
+**Where PAL is today (honest, verified 2026-06-18 by reading the code, not a
 summary):** the runtime is **substantially further along than an earlier draft of
 this doc implied**. The architecture and contracts are genuinely strong and ahead of
 the field on *design* (six isolation classes, a clean scheduler/manager/harness proto
@@ -192,7 +192,7 @@ analyst material. Treat funding figures / exact version tags as directional.
 
 ### 2.1 At a glance
 
-| Capability | **AWS AgentCore** | **Google Agent Engine** | **Anthropic** | **OpenAI** | **Temporal** | **Lantern (today)** |
+| Capability | **AWS AgentCore** | **Google Agent Engine** | **Anthropic** | **OpenAI** | **Temporal** | **PAL (today)** |
 |---|---|---|---|---|---|---|
 | What it *is* | Managed agent runtime (7+ composable services) | Managed serverless agent runtime | Framework (Agent SDK) + **Managed Agents (beta)** | LLM+tools+SDK; durability lib (Apr 2026) | Durable-execution engine | **Full-stack runtime + control/data plane** |
 | Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ **RuntimeClass tiering (runc→gVisor→Kata), fail-closed gate, cluster-e2e legs (fail-closed green in CI; execution legs operator-run)** |
@@ -210,7 +210,7 @@ analyst material. Treat funding figures / exact version tags as directional.
 ### 2.2 The structural read
 - **Only Google ships a complete, GA, governed managed runtime today.** Its
   moat is governance: per-agent **SPIFFE identity + X.509-bound tokens**, VPC-SC,
-  CMEK, FedRAMP. **This is the bar Lantern must clear on governance.**
+  CMEK, FedRAMP. **This is the bar PAL must clear on governance.**
 - **AWS leads on isolation-as-a-guarantee** (per-session microVM, 8h) and breadth
   (Gateway/Identity/Memory/Browser/Code-Interpreter/Policy/Eval) — but at the cost of
   **12 independently-billable SKUs** (cost opacity) and a documented Code-Interpreter
@@ -229,7 +229,7 @@ analyst material. Treat funding figures / exact version tags as directional.
 
 ---
 
-## 3. Lantern runtime — current state (honest, stub-aware)
+## 3. PAL runtime — current state (honest, stub-aware)
 
 Grades: ✅ production-grade · ⚠️ partial · ❌ stub/mock. File refs are anchors,
 not exhaustive.
@@ -271,7 +271,7 @@ Severity: **P0** = blocks a working/credible enterprise runtime · **P1** = on-p
 vs incumbents · **P2** = "2-years-ahead" frontier.
 
 ### Governance
-- **P0** — Per-instance agent identity. Lantern stops at `tenant_id`. Google issues
+- **P0** — Per-instance agent identity. PAL stops at `tenant_id`. Google issues
   **per-agent SPIFFE + X.509-bound tokens**; AWS has workload identity. *Need:*
   per-agent-instance OIDC/SPIFFE identity minted at spawn, short-lived, the subject of
   every audit row and secret vend.

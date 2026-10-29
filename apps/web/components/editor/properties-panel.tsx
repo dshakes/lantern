@@ -609,7 +609,7 @@ const connectorActionFields: Record<
   slack: {
     post_message: [
       { label: "Channel", placeholder: "#general", type: "text" },
-      { label: "Message", placeholder: "Hello from Lantern!", type: "textarea" },
+      { label: "Message", placeholder: "Hello from PAL!", type: "textarea" },
     ],
     react: [
       { label: "Channel", placeholder: "#general", type: "text" },

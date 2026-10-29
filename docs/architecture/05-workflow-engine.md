@@ -1,6 +1,6 @@
 # Workflow Engine — Durable Execution
 
-> The heart of Lantern. Read this if you're touching `services/workflow-engine` or any code that calls `step()`.
+> The heart of PAL. Read this if you're touching `services/workflow-engine` or any code that calls `step()`.
 
 ---
 
@@ -15,7 +15,7 @@ A workflow that:
 
 This is the same model as Temporal, with two design choices that diverge:
 
-- **Steps, not workflow/activity split.** Lantern collapses Temporal's distinction. Everything inside the user's `run` function is workflow code; anything wrapped in `step(name, fn)` is a side-effect. Determinism is enforced at the boundary by throwing on non-step I/O.
+- **Steps, not workflow/activity split.** PAL collapses Temporal's distinction. Everything inside the user's `run` function is workflow code; anything wrapped in `step(name, fn)` is a side-effect. Determinism is enforced at the boundary by throwing on non-step I/O.
 - **Postgres-native journal**, not a custom store. The journal is `journal_events`, hash-partitioned by `run_id`. We chose Postgres because we already need it for everything else and because pg_partman handles the partitioning we need.
 
 ---

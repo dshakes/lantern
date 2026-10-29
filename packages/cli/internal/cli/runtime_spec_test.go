@@ -47,7 +47,7 @@ func TestValidateRuntimeSpec_DiagnosesControlPlaneManifest(t *testing.T) {
 		"version":     "0.1.0",
 		"model":       "auto",
 		"isolation":   map[string]any{"class": "trusted"},
-		"description": "A Lantern agent",
+		"description": "A PAL agent",
 	}
 
 	err := validateRuntimeSpec(raw, raw, "demo/agent.yaml")

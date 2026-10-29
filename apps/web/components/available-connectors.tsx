@@ -4,7 +4,7 @@
 // live install status. Renders on /agents/create above the templates
 // section so users can connect their tools BEFORE picking a recipe.
 //
-// "Connectors in Lantern are one-time per workspace" — this surface
+// "Connectors in PAL are one-time per workspace" — this surface
 // reinforces that model. Click an unconnected tile to jump to /connectors
 // with that connector pre-selected.
 

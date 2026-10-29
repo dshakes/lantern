@@ -433,7 +433,7 @@ export default function ConnectorsPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-zinc-100">MCP servers</p>
-                <p className="text-xs text-zinc-500">Attach a server from Lantern's curated MCP catalog to one of your agents.</p>
+                <p className="text-xs text-zinc-500">Attach a server from the curated MCP catalog to one of your agents.</p>
               </div>
             </div>
             <button
@@ -617,7 +617,7 @@ export default function ConnectorsPage() {
                   {catalog.map((s) => <option key={s.slug} value={s.slug}>{s.name} — {s.category}</option>)}
                 </select>
                 {mcpErrors.slug && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.slug}</p>}
-                <p className="mt-1 text-[12px] text-zinc-600">From Lantern's curated MCP catalog — custom/self-hosted servers aren't supported yet.</p>
+                <p className="mt-1 text-[12px] text-zinc-600">From the curated MCP catalog — custom/self-hosted servers aren't supported yet.</p>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">

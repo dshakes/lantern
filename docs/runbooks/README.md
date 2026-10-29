@@ -1,6 +1,6 @@
-# Lantern operator runbooks
+# PAL operator runbooks
 
-Operational runbooks for running Lantern in production. Each is written for an
+Operational runbooks for running PAL in production. Each is written for an
 on-call operator: **symptom → what fired it → triage → remediation → escalate**,
 grounded in this repo's real service names, ports, and tables.
 

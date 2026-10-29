@@ -3,7 +3,7 @@
 // /proof — public receipt verifier.
 //
 // Lives outside the (dashboard) route group so it's reachable without
-// auth. Paste a Lantern signed receipt JSON; the page verifies it
+// auth. Paste a PAL signed receipt JSON; the page verifies it
 // against the control-plane's public key (exposed at
 // /v1/.well-known/lantern-receipts) and shows whether the signature
 // matches. This is the consumer-visible side of verifiable receipts:
@@ -93,7 +93,7 @@ export default function ProofPage() {
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-6 py-4">
           <LanternMark className="h-8 w-8" />
           <div className="flex-1">
-            <h1 className="text-sm font-semibold text-zinc-100">Lantern · Proof</h1>
+            <h1 className="text-sm font-semibold text-zinc-100">PAL · Proof</h1>
             <p className="text-[11px] text-zinc-500">Verify a signed agent receipt</p>
           </div>
           <Link
@@ -111,10 +111,10 @@ export default function ProofPage() {
             Verifiable agent receipts
           </h2>
           <p className="mt-2 max-w-prose text-sm text-zinc-400 leading-relaxed">
-            Every run on Lantern can issue an HMAC-signed receipt containing the
+            Every run on PAL can issue an HMAC-signed receipt containing the
             agent name, timestamp, and a hash of the run&apos;s entire event journal.
             Paste a receipt here to check that it was actually signed by this
-            Lantern installation — any tampering with the events invalidates the
+            PAL installation — any tampering with the events invalidates the
             signature.
           </p>
         </section>

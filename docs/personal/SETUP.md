@@ -1,8 +1,8 @@
 > **Quick setup:** run `make bridge-setup` in the repo root — the interactive wizard handles prereq checks, creates `.env.local`, and walks you through bridge selection in ~5 minutes. Come back here for details.
 
-# Lantern Personal — Setup guide
+# PAL Personal — Setup guide
 
-End-to-end walkthrough for setting up Lantern as your personal
+End-to-end walkthrough for setting up PAL as your personal
 assistant on WhatsApp + iMessage, with auto-start at every Mac boot.
 ~15 minutes if you're starting from scratch.
 
@@ -80,7 +80,7 @@ Device).
 
 The bridge will auto-reconnect on transient disconnects. **If
 WhatsApp asks you to re-scan after a few hours/days** (Signal session
-timeout — a WhatsApp protocol issue, not a Lantern bug), just hit
+timeout — a WhatsApp protocol issue, not a PAL bug), just hit
 "Pair" again. Your monitored groups + paused contacts + VIPs are
 preserved.
 
@@ -224,7 +224,7 @@ reason + a deep-link to the dashboard pair page.
 
 ## Production-ish vs personal
 
-This repo is set up for personal-Mac usage. For shipping Lantern as
+This repo is set up for personal-Mac usage. For shipping PAL as
 a multi-tenant service, see `docs/architecture/` — control plane is
 already multi-tenant; you'd swap docker-compose for managed Postgres,
 add Cloudflare in front of the API, run bridges on dedicated hosts.

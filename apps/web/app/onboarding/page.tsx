@@ -417,7 +417,7 @@ export default function OnboardingPage() {
       if (!sched.stub) {
         exec = await runtimeApi.post(`/v1/runtime/vms/${encodeURIComponent(vmId)}/exec`, {
           command: "/bin/sh",
-          argv: ["-c", "echo 'hello from your Lantern sandbox' && uname -sr"],
+          argv: ["-c", "echo 'hello from your PAL sandbox' && uname -sr"],
         });
       }
       result = decideSandbox(sched, exec, null);
@@ -641,7 +641,7 @@ export default function OnboardingPage() {
             <StepCard ref={headingRef} title={`Create ${doc.spec.name}`}>
               <p className={ui.muted}>
                 This saves the agent to your workspace with the instructions you approved. Its model is addressed by
-                capability (<span className={ui.mono}>{doc.spec.model || "auto"}</span>), so Lantern routes it to a
+                capability (<span className={ui.mono}>{doc.spec.model || "auto"}</span>), so PAL routes it to a
                 provider you have.
               </p>
               <div className="mt-4 flex justify-end">
@@ -693,7 +693,7 @@ export default function OnboardingPage() {
           <>
             <AgentMessage>
               <p>
-                Optional: start a microVM, run one command inside it, and shut it down. This is how Lantern isolates
+                Optional: start a microVM, run one command inside it, and shut it down. This is how PAL isolates
                 agents that run code or browse.
               </p>
             </AgentMessage>
@@ -750,7 +750,7 @@ function Shell({ step, blocked, onReset, children }: { step: Step; blocked: bool
     <div className="min-h-screen bg-surface-0">
       <PageHeader
         title="Set up your first agent"
-        description="Describe what you want. Lantern designs, creates and runs it with you."
+        description="Describe what you want. PAL designs, creates and runs it with you."
         secondaryAction={
           <Button variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={onReset}>
             Start over

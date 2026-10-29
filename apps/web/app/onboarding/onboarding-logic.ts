@@ -446,7 +446,7 @@ export function suggestFix(f: ApiFailure, step: Step): FixSuggestion {
   const msg = f.message.toLowerCase();
   if (f.status === undefined && /fetch|network|econnrefused|load failed/.test(msg)) {
     return {
-      summary: "The Lantern API isn't reachable. Start it with `make run-api` (or `lantern dev`), then try again.",
+      summary: "The PAL API isn't reachable. Start it with `make run-api` (or `lantern dev`), then try again.",
       fix: { label: "Try again", action: "check_api" },
     };
   }

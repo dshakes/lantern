@@ -1,4 +1,4 @@
-# Lantern — User Guides
+# PAL — User Guides
 
 The **headless agent runtime** is the execution kernel that runs your agents inside
 your own Kubernetes cluster. You declare an `AgentSpec` (image, isolation class,

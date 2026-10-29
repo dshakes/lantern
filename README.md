@@ -92,4 +92,4 @@ How PAL Runtime compares with Google Agent Compute Engine, E2B and Modal, honest
 
 ---
 
-<sub>We started as Lantern: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>
+<sub>We started as PAL: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>

@@ -1,6 +1,6 @@
 # Component Reference
 
-> Every service in the Lantern platform, in one place. Read [`01-overview.md`](01-overview.md) first.
+> Every service in the PAL platform, in one place. Read [`01-overview.md`](01-overview.md) first.
 
 This document is the **canonical reference** for what each service does, what it owns, what it depends on, and what its API surface looks like.
 
@@ -12,7 +12,7 @@ This document is the **canonical reference** for what each service does, what it
 - **Language** — see [ADR 0001](../adr/0001-language-stack.md).
 - **State** — what persistent state the service owns. **No service may write to another service's state directly.**
 - **Public surface** — what other services or clients call.
-- **Internal surface** — what this service exposes only to other Lantern services over mTLS gRPC.
+- **Internal surface** — what this service exposes only to other PAL services over mTLS gRPC.
 - **SLO** — service-level objective for the spike phase. Production SLOs are defined per release.
 
 ---
@@ -78,7 +78,7 @@ The control-plane also hosts the inline run executor and workflow interpreter (s
 | **Internal surface** | gRPC `WorkflowEngineService`: `ExecuteRun`, `ResumeRun`, `SignalRun`, `CancelRun`, `QueryRun` (service-token gated, run RPCs tenant-scoped) |
 | **SLO** | Step recording p99 ≤ 50ms; replay correctness 100% |
 
-Heart of Lantern. Event-sourced durable execution. Every step start, step complete, step failure, signal, query, and child workflow event becomes an entry in the `journal_events` table partitioned by `run_id`. On crash or restart, the engine reads the journal, reconstructs in-memory state, and the agent code re-runs deterministically — already-journaled steps return cached results, while new steps execute for real.
+Heart of PAL. Event-sourced durable execution. Every step start, step complete, step failure, signal, query, and child workflow event becomes an entry in the `journal_events` table partitioned by `run_id`. On crash or restart, the engine reads the journal, reconstructs in-memory state, and the agent code re-runs deterministically — already-journaled steps return cached results, while new steps execute for real.
 
 Implements:
 - `step()` — durable side-effect with idempotency key derived from `(run_id, step_id, attempt)`

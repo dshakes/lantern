@@ -204,7 +204,7 @@ For surfaces and tenants that opt in:
 - Replies from the agent are encrypted to the user's pubkey before leaving the sandbox.
 - The platform sees only ciphertext for the body of every message in personal-mode E2E sessions. Metadata (timestamps, sizes, sender) is still visible.
 
-This means **even Lantern operators can't read the contents of a personal user's chats with their agent.** This is a hard requirement for the personal workspace tier.
+This means **even PAL operators can't read the contents of a personal user's chats with their agent.** This is a hard requirement for the personal workspace tier.
 
 ### Push notifications
 

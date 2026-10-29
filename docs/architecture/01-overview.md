@@ -2,11 +2,11 @@
 
 > **Read this first.** Every other architecture doc assumes you've read this one.
 >
-> **In one line:** Lantern runs production agents on a control-plane / data-plane split, with every step journaled to Postgres, every model call routed by capability, and untrusted code confined to microVMs. **Try it:** `lantern dev`, then follow [`headless-agent-quickstart`](../guides/headless-agent-quickstart.md).
+> **In one line:** PAL runs production agents on a control-plane / data-plane split, with every step journaled to Postgres, every model call routed by capability, and untrusted code confined to microVMs. **Try it:** `lantern dev`, then follow [`headless-agent-quickstart`](../guides/headless-agent-quickstart.md).
 
 ## Mission
 
-Lantern is a serverless platform for running production AI agents reliably at any scale on any model. It exists because **the hard parts of agents are not the agent loop itself** — they are durable execution, isolation of untrusted code, multi-model routing, context management, observability, and operational correctness across failure. Frameworks ignore those problems; proprietary clouds solve them by locking you in. Lantern solves them in the open.
+PAL is a serverless platform for running production AI agents reliably at any scale on any model. It exists because **the hard parts of agents are not the agent loop itself** — they are durable execution, isolation of untrusted code, multi-model routing, context management, observability, and operational correctness across failure. Frameworks ignore those problems; proprietary clouds solve them by locking you in. PAL solves them in the open.
 
 ## Design principles
 
@@ -87,7 +87,7 @@ The system of record for agents, agent versions (bundles), runs, tenants, users,
 
 ### Workflow Engine (Go)
 
-The durable execution heart of Lantern. Event-sourced: every step start, step complete, step failure, and signal becomes an event in a Postgres journal partitioned by run. On crash or restart, the engine replays the journal to reconstruct in-memory state. Implements `step()`, `step.map`, `step.race`, `step.sleep`, signals, queries, child workflows, and the abort/cancel protocol. Scales horizontally via run-id sharding.
+The durable execution heart of PAL. Event-sourced: every step start, step complete, step failure, and signal becomes an event in a Postgres journal partitioned by run. On crash or restart, the engine replays the journal to reconstruct in-memory state. Implements `step()`, `step.map`, `step.race`, `step.sleep`, signals, queries, child workflows, and the abort/cancel protocol. Scales horizontally via run-id sharding.
 
 ### Runtime Manager (Rust)
 

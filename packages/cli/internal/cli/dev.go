@@ -1,6 +1,6 @@
 package cli
 
-// `lantern dev` brings up the entire Lantern stack with a single command.
+// `lantern dev` brings up the entire PAL stack with a single command.
 //
 //   - Infra (Postgres, Redis, MinIO) runs in docker-compose so the user
 //     doesn't need a local Postgres install.
@@ -75,7 +75,7 @@ func newDevCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "dev",
-		Short: "Run the entire Lantern stack locally with hot reload",
+		Short: "Run the entire PAL stack locally with hot reload",
 		Long: `Boot Postgres+Redis+MinIO via Docker, run the control-plane API
 (host Go process), the dashboard (Next.js HMR), and the WhatsApp bridge
 (tsx hot reload). All logs interleave into this terminal with per-process
@@ -436,7 +436,7 @@ func openBrowser(url string) error {
 	return c.Start()
 }
 
-// findRepoRoot walks up from cwd until it finds the Lantern repo root
+// findRepoRoot walks up from cwd until it finds the PAL repo root
 // (identified by go.work or the docker-compose file). Returns an error
 // if neither exists within 8 parent levels.
 func findRepoRoot() (string, error) {
@@ -446,7 +446,7 @@ func findRepoRoot() (string, error) {
 		for _, marker := range []string{"go.work", "Makefile", "README.md"} {
 			p := filepath.Join(dir, marker)
 			if _, err := os.Stat(p); err == nil {
-				// Sanity check: a real Lantern repo has services/control-plane.
+				// Sanity check: a real PAL repo has services/control-plane.
 				if _, err := os.Stat(filepath.Join(dir, "services", "control-plane")); err == nil {
 					return dir, nil
 				}
@@ -458,7 +458,7 @@ func findRepoRoot() (string, error) {
 		}
 		dir = parent
 	}
-	return "", fmt.Errorf("no Lantern repo root found (searched up from %s)", cwd)
+	return "", fmt.Errorf("no PAL repo root found (searched up from %s)", cwd)
 }
 
 // ---------- dev down / logs (preserved from earlier impl) ----------

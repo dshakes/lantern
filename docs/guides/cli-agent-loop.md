@@ -157,4 +157,4 @@ Pass `--yes` to skip the confirmation prompt (useful in CI).
 | `LANTERN_API_URL` | `localhost:50051` | gRPC address (REST is derived as `:8080`) |
 | `LANTERN_API_KEY` | — | API key (falls back to `~/.lantern/credentials.json`) |
 
-`--api-url` / `--api-key` are global flags (env: `LANTERN_API_URL`, `LANTERN_API_KEY`; the `lantern run` / `lantern vm` commands also honor `LANTERN_API_TOKEN`). Exception: on `onboard`, `--api-key` is the LLM provider key, not your Lantern key.
+`--api-url` / `--api-key` are global flags (env: `LANTERN_API_URL`, `LANTERN_API_KEY`; the `lantern run` / `lantern vm` commands also honor `LANTERN_API_TOKEN`). Exception: on `onboard`, `--api-key` is the LLM provider key, not your PAL key.

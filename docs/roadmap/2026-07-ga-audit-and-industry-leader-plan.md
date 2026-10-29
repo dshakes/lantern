@@ -1,4 +1,4 @@
-# Lantern — GA audit findings & industry-leader plan (2026-07)
+# PAL — GA audit findings & industry-leader plan (2026-07)
 
 One document, three horizons: (A) what a full-repo audit found and what was fixed
 immediately, (B) the near-term hardening backlog, (C) the strategic roadmap that
