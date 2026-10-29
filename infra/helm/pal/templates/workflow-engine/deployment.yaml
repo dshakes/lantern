@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pal.fullname" . }}-workflow-engine
+  labels:
+    {{- include "pal.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 4 }}
+spec:
+  {{- if not .Values.workflowEngine.autoscaling.enabled }}
+  replicas: {{ .Values.workflowEngine.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "pal.componentSelectorLabels" (dict "root" . "component" "workflow-engine") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pal.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "pal.serviceAccountName" . }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "pal.dbHost" . }} {{ include "pal.dbPort" . }}; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+      containers:
+        - name: workflow-engine
+          image: {{ include "pal.image" (dict "root" . "component" .Values.workflowEngine) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50052
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "pal.fullname" . }}-config
+                  key: LOG_LEVEL
+            # Required in prod-like envs (PAL_ENV=prod/production/staging):
+            # the startup guards refuse to boot without these rather than run
+            # insecurely. Injected unconditionally, empty by default, so dev and
+            # kind deployments are unchanged.
+            - name: PAL_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: credential-key
+            - name: PAL_RECEIPT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: receipt-secret
+            - name: PAL_GRPC_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: grpc-service-token
+            # --- RLS enforcement (invariant #7) ---
+            # These are injected UNCONDITIONALLY and default to empty, so a
+            # values file that sets them actually takes effect. They were absent
+            # here while values-staging.yaml declared them, which meant the flag
+            # was silently dropped: the deployment came up healthy with RLS
+            # completely off — a fail-open on the tenant-isolation control.
+            - name: PAL_ENV
+              value: {{ .Values.workflowEngine.env.PAL_ENV | default .Values.workflowEngine.env.LANTERN_ENV | default "production" | quote }}
+            - name: PAL_RLS_ENFORCE
+              value: {{ .Values.workflowEngine.env.PAL_RLS_ENFORCE | default .Values.workflowEngine.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+            - name: PAL_APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: app-db-password
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: {{ include "pal.databaseURL" . | quote }}
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "pal.fullname" . }}-config
+                  key: REDIS_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "pal.fullname" . }}-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "pal.fullname" . }}-config
+                  key: S3_BUCKET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "pal.fullname" . }}-config
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pal.fullname" . }}-secrets
+                  key: minio-password
+          livenessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.workflowEngine.resources | nindent 12 }}

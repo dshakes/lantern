@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# local-dev.sh -- One-command local development setup for Lantern.
+# local-dev.sh -- One-command local development setup for PAL Runtime.
 #
 # Usage:
 #   ./scripts/local-dev.sh [docker|kind]
@@ -123,7 +123,7 @@ wait_for_healthy() {
 # Docker mode
 # =========================================================================
 mode_docker() {
-    header "Lantern Local Dev (Docker Compose)"
+    header "PAL Runtime Local Dev (Docker Compose)"
     check_docker_prereqs
 
     COMPOSE_FILE="${REPO_ROOT}/infra/docker/docker-compose.yml"
@@ -184,7 +184,7 @@ mode_docker() {
 print_docker_summary() {
     echo ""
     printf "${BOLD}${GREEN}================================================================${NC}\n"
-    printf "${BOLD}${GREEN}  Lantern local dev environment is ready!                       ${NC}\n"
+    printf "${BOLD}${GREEN}  PAL Runtime local dev environment is ready!                       ${NC}\n"
     printf "${BOLD}${GREEN}================================================================${NC}\n"
     echo ""
     printf "${BOLD}Services:${NC}\n"
@@ -225,13 +225,13 @@ wait_for_interrupt() {
 # Kind mode
 # =========================================================================
 mode_kind() {
-    header "Lantern Local Dev (Kind + Helm)"
+    header "PAL Runtime Local Dev (Kind + Helm)"
     check_kind_prereqs
 
     KIND_CONFIG="${REPO_ROOT}/infra/kind/kind-config.yaml"
-    HELM_CHART="${REPO_ROOT}/infra/helm/lantern"
+    HELM_CHART="${REPO_ROOT}/infra/helm/pal"
     VALUES_DEV="${HELM_CHART}/values-dev.yaml"
-    CLUSTER_NAME="lantern-dev"
+    CLUSTER_NAME="pal-dev"
 
     # -- Step 1: Create or reuse Kind cluster ------------------------------
     header "Kind cluster"
@@ -249,10 +249,10 @@ mode_kind() {
     # -- Step 2: Build Docker images ---------------------------------------
     header "Building Docker images"
     local images=(
-        "lantern-control-plane:${REPO_ROOT}/services/control-plane:${REPO_ROOT}"
-        "lantern-gateway:${REPO_ROOT}/services/gateway:${REPO_ROOT}"
-        "lantern-model-router:${REPO_ROOT}/services/model-router:${REPO_ROOT}"
-        "lantern-web:${REPO_ROOT}/apps/web:${REPO_ROOT}/apps/web"
+        "pal-control-plane:${REPO_ROOT}/services/control-plane:${REPO_ROOT}"
+        "pal-gateway:${REPO_ROOT}/services/gateway:${REPO_ROOT}"
+        "pal-model-router:${REPO_ROOT}/services/model-router:${REPO_ROOT}"
+        "pal-web:${REPO_ROOT}/apps/web:${REPO_ROOT}/apps/web"
     )
 
     for entry in "${images[@]}"; do
@@ -283,19 +283,19 @@ mode_kind() {
 
     # -- Step 4: Deploy via Helm -------------------------------------------
     header "Deploying with Helm"
-    kubectl create namespace lantern 2>/dev/null || true
+    kubectl create namespace pal 2>/dev/null || true
 
-    if helm status lantern -n lantern &>/dev/null; then
+    if helm status pal -n pal &>/dev/null; then
         info "Upgrading existing Helm release..."
-        helm upgrade lantern "${HELM_CHART}" \
-            -n lantern \
+        helm upgrade pal "${HELM_CHART}" \
+            -n pal \
             -f "${HELM_CHART}/values.yaml" \
             -f "${VALUES_DEV}" \
             --wait --timeout 5m
     else
         info "Installing Helm chart..."
-        helm install lantern "${HELM_CHART}" \
-            -n lantern \
+        helm install pal "${HELM_CHART}" \
+            -n pal \
             -f "${HELM_CHART}/values.yaml" \
             -f "${VALUES_DEV}" \
             --wait --timeout 5m
@@ -307,26 +307,26 @@ mode_kind() {
     info "Port-forwarding will run in the background..."
 
     # Kill any stale port-forwards from previous runs.
-    pkill -f "kubectl port-forward.*lantern" 2>/dev/null || true
+    pkill -f "kubectl port-forward.*-n pal" 2>/dev/null || true
     sleep 1
 
     # Control-plane gRPC.
-    kubectl port-forward -n lantern svc/lantern-control-plane 50051:50051 &>/dev/null &
+    kubectl port-forward -n pal svc/pal-control-plane 50051:50051 &>/dev/null &
     PIDS+=($!)
     info "Control-plane gRPC: localhost:50051"
 
     # Control-plane HTTP.
-    kubectl port-forward -n lantern svc/lantern-control-plane 8080:8080 &>/dev/null &
+    kubectl port-forward -n pal svc/pal-control-plane 8080:8080 &>/dev/null &
     PIDS+=($!)
     info "Control-plane HTTP: localhost:8080"
 
     # Gateway.
-    kubectl port-forward -n lantern svc/lantern-gateway 8443:8443 &>/dev/null &
+    kubectl port-forward -n pal svc/pal-gateway 8443:8443 &>/dev/null &
     PIDS+=($!)
     info "Gateway: localhost:8443"
 
     # Dashboard.
-    kubectl port-forward -n lantern svc/lantern-web 3001:3000 &>/dev/null &
+    kubectl port-forward -n pal svc/pal-web 3001:3000 &>/dev/null &
     PIDS+=($!)
     info "Dashboard: localhost:3001"
 
@@ -339,7 +339,7 @@ mode_kind() {
     header "Seeding sample data"
     if command -v psql &>/dev/null; then
         # Port-forward Postgres too for seeding.
-        kubectl port-forward -n lantern svc/lantern-postgresql 5432:5432 &>/dev/null &
+        kubectl port-forward -n pal svc/pal-postgresql 5432:5432 &>/dev/null &
         PIDS+=($!)
         sleep 3
         DATABASE_URL="postgres://lantern:lantern-dev@localhost:5432/lantern?sslmode=disable" \
@@ -357,10 +357,10 @@ mode_kind() {
 print_kind_summary() {
     echo ""
     printf "${BOLD}${GREEN}================================================================${NC}\n"
-    printf "${BOLD}${GREEN}  Lantern Kind cluster is ready!                                ${NC}\n"
+    printf "${BOLD}${GREEN}  PAL Runtime Kind cluster is ready!                                ${NC}\n"
     printf "${BOLD}${GREEN}================================================================${NC}\n"
     echo ""
-    printf "${BOLD}Cluster:${NC} kind-lantern-dev\n"
+    printf "${BOLD}Cluster:${NC} kind-pal-dev\n"
     echo ""
     printf "${BOLD}Port-forwards:${NC}\n"
     printf "  %-24s %s\n" "Control-plane gRPC:" "localhost:50051"
@@ -369,10 +369,10 @@ print_kind_summary() {
     printf "  %-24s %s\n" "Dashboard:" "http://localhost:3001"
     echo ""
     printf "${BOLD}Useful commands:${NC}\n"
-    printf "  %-50s %s\n" "kubectl get pods -n lantern" "List pods"
-    printf "  %-50s %s\n" "kubectl logs -n lantern -l app=control-plane -f" "Stream control-plane logs"
-    printf "  %-50s %s\n" "helm upgrade lantern infra/helm/lantern -n lantern -f infra/helm/lantern/values-dev.yaml" "Redeploy"
-    printf "  %-50s %s\n" "kind delete cluster --name lantern-dev" "Tear down cluster"
+    printf "  %-50s %s\n" "kubectl get pods -n pal" "List pods"
+    printf "  %-50s %s\n" "kubectl logs -n pal -l app=control-plane -f" "Stream control-plane logs"
+    printf "  %-50s %s\n" "helm upgrade pal infra/helm/pal -n pal -f infra/helm/pal/values-dev.yaml" "Redeploy"
+    printf "  %-50s %s\n" "kind delete cluster --name pal-dev" "Tear down cluster"
     echo ""
     printf "${YELLOW}Press Ctrl+C to stop port-forwards.${NC}\n"
     echo ""
