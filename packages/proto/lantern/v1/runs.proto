@@ -63,6 +63,9 @@ message Run {
   google.protobuf.Timestamp created_at = 16;
   string parent_run_id = 17;
   map<string, string> labels = 18;
+  // SessionId groups related runs (interactive session turns, subagent trees).
+  // Nullable: standalone runs have an empty string (NULL in DB).
+  string session_id = 19;
 }
 
 message RunError {
@@ -178,6 +181,8 @@ message CreateRunRequest {
   bool stream = 5;
   map<string, string> labels = 6;
   string idempotency_key = 7;
+  // session_id optionally links this run to an interactive session.
+  string session_id = 8;
 }
 
 message GetRunRequest {
@@ -189,6 +194,8 @@ message ListRunsRequest {
   RunStatus status_filter = 2;
   int32 page_size = 3;
   string page_token = 4;
+  // session_id filters runs to those belonging to a specific session.
+  string session_id = 5;
 }
 
 message ListRunsResponse {

@@ -8,6 +8,7 @@ mod authz;
 mod backend;
 mod backends;
 mod config;
+mod dlp;
 mod egress_broker;
 mod handle_registry;
 mod otel;
