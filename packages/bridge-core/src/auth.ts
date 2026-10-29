@@ -1,8 +1,8 @@
-// Auth helper shared by all Lantern bridges (WhatsApp + iMessage + any
+// Auth helper shared by all pal bridges (WhatsApp + iMessage + any
 // future ones). Each bridge initializes once with its own logger; the
 // auth mode (static service token vs auto-login + relogin) is read
 // from env so the same code works in dev (admin@lantern.dev fallback)
-// and prod (long-lived LANTERN_API_TOKEN).
+// and prod (long-lived PAL_API_TOKEN).
 //
 // Previously copied between bridges; now the single source of truth.
 
@@ -60,7 +60,7 @@ export function initAuth(logger: Logger) {
   );
   if (tokenWasExpired) {
     log.warn(
-      "LANTERN_API_TOKEN env var holds an EXPIRED JWT — falling back to credential login. Run `unset LANTERN_API_TOKEN` in your shell to silence this.",
+      "PAL_API_TOKEN env var holds an EXPIRED JWT — falling back to credential login. Run `unset PAL_API_TOKEN` in your shell to silence this.",
     );
   }
   // Eagerly log in at startup so the first authedFetch always has a

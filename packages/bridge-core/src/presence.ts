@@ -20,10 +20,10 @@
 // Refresh cadence: 60s. The presence string is cached so per-reply
 // rendering is O(1).
 
+import { palStateDir } from "./state-dir.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import type { SignalPresence } from "./device-signals";
@@ -34,7 +34,7 @@ const execFileP = promisify(execFile);
 // (WhatsApp self-chat) and it must apply on EVERY channel (an iMessage contact
 // should hear "he's at the pool"). Both bridges read/write this file, so the
 // manual status is shared across bridges AND survives restarts.
-const PRESENCE_FILE = join(homedir(), ".lantern", "presence.json");
+const presenceFile = (): string => join(palStateDir(), "presence.json");
 
 export interface PresenceSnapshot {
   // Human-readable one-liner suitable for the system prompt. Empty
@@ -110,11 +110,11 @@ export class PresenceTracker {
   private persist(ov: ManualOverride | null): void {
     try {
       if (!ov) {
-        try { unlinkSync(PRESENCE_FILE); } catch { /* already gone */ }
+        try { unlinkSync(presenceFile()); } catch { /* already gone */ }
         return;
       }
-      mkdirSync(join(homedir(), ".lantern"), { recursive: true });
-      writeFileSync(PRESENCE_FILE, JSON.stringify(ov), { mode: 0o600 });
+      mkdirSync(palStateDir(), { recursive: true });
+      writeFileSync(presenceFile(), JSON.stringify(ov), { mode: 0o600 });
     } catch (err) {
       this.logger?.warn({ err }, "presence persist failed");
     }
@@ -124,7 +124,7 @@ export class PresenceTracker {
   // null when absent/expired/unparseable.
   private loadFromFile(): ManualOverride | null {
     try {
-      const raw = readFileSync(PRESENCE_FILE, "utf8");
+      const raw = readFileSync(presenceFile(), "utf8");
       const ov = JSON.parse(raw) as ManualOverride;
       if (!ov || typeof ov.expiresAt !== "number" || Date.now() >= ov.expiresAt) return null;
       // ponytail: coerce old files without setAt to 0 (unknown age); place will be suppressed.

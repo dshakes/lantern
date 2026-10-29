@@ -14,13 +14,13 @@
 // reply shapes — DO NOT REPEAT THESE STYLES."
 //
 // Store choice:
-//   ~/.lantern/dislike-patterns.jsonl
+//   ~/.pal/dislike-patterns.jsonl
 // JSONL because it's append-only, survives crashes mid-write, easy to
 // inspect with `cat`, and the read path streams the tail.
 
+import { palStateDir } from "./state-dir.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
@@ -39,7 +39,7 @@ export interface DislikeEntry {
   channel: "imessage" | "whatsapp";
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "dislike-patterns.jsonl");
+const defaultPath = (): string => join(palStateDir(), "dislike-patterns.jsonl");
 const MAX_FILE_SIZE_BYTES = 1024 * 1024; // 1 MB hard cap; we never need more
 
 export class DislikeMemory {
@@ -53,7 +53,7 @@ export class DislikeMemory {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.PAL_DISLIKE_FILE || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_DISLIKE_FILE || defaultPath();
     this.logger = opts.logger?.child({ component: "dislike-memory" });
     try {
       mkdirSync(dirname(this.path), { recursive: true });

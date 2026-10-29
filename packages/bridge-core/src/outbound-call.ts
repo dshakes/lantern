@@ -11,7 +11,7 @@
 //   CONFERENCE_BRIDGE
 //     Dial party-A (recipient), have the bot ask if they're free to
 //     talk, then dial party-B (owner) and conference both. Owner can
-//     trigger this with "lantern, get me on a call with Madhu". Cost:
+//     trigger this with "pal, get me on a call with Madhu". Cost:
 //     2 legs × duration. Bot drops out once both connected.
 //
 //   AGENT_TASK (basic IVR mode)
@@ -79,10 +79,10 @@ export interface CallPlan {
   twoPartyConsent: boolean;
   // Pre-flight cost forecast (USD). Shown in the approval gate so the
   // owner sees the spend before the call is placed — the same
-  // "forecast before every run" posture Lantern applies to LLM runs.
+  // "forecast before every run" posture PAL Runtime applies to LLM runs.
   estimatedCostUsd: number;
   // Owner's name, woven into the spoken TwiML ("calling on behalf of …",
-  // recording-consent line). Sourced from LANTERN_OWNER_NAME by the caller.
+  // recording-consent line). Sourced from PAL_OWNER_NAME by the caller.
   ownerName: string;
   request: OutboundCallRequest;
 }
@@ -310,7 +310,7 @@ export function planCall(
   const twoPartyConsent = inferTwoPartyConsent(req.to);
 
   // Owner identity is config, never a literal in this shared library:
-  // explicit opt → LANTERN_OWNER_NAME → neutral fallback.
+  // explicit opt → PAL_OWNER_NAME → neutral fallback.
   const ownerName = opts.ownerName || process.env.PAL_OWNER_NAME || "the owner";
   // Always surface the resolved NUMBER alongside the name so the owner can
   // catch a wrong-contact resolution (e.g. multiple "Sam" entries) before
@@ -392,7 +392,7 @@ export function buildTwiml(plan: CallPlan): string {
       // First-leg TwiML: greet recipient, then drop them into a
       // conference. Owner gets added as the second participant via
       // Twilio's Participants API.
-      const confName = `lantern-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const confName = `pal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const intro = `Hi, this is ${plan.ownerName}'s helper. He wants to talk — bringing him on the line now.`;
       return `<Response>${consent}<Say voice="${plan.voice}">${escape(intro)}</Say><Dial><Conference startConferenceOnEnter="false" endConferenceOnExit="true" beep="false" waitUrl="">${escape(confName)}</Conference></Dial></Response>`;
     }
@@ -409,7 +409,7 @@ export function buildTwiml(plan: CallPlan): string {
  * thread it through both legs.
  */
 export function newConferenceName(): string {
-  return `lantern-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `pal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -452,10 +452,10 @@ export function buildOwnerConferenceTwiml(conferenceName: string): string {
 // Speaking to a recipient in the owner's OWN cloned voice is a
 // deepfake-class capability, so it is OFF by default and triple-gated:
 //
-//   1. LANTERN_VOICE_CLONE=1            — explicit master opt-in
-//   2. LANTERN_ELEVENLABS_API_KEY       — the synthesis credential
-//      (legacy alias LANTERN_ELEVENLABS_KEY also accepted)
-//   3. LANTERN_ELEVENLABS_VOICE_ID      — which cloned voice to speak in
+//   1. PAL_VOICE_CLONE=1            — explicit master opt-in
+//   2. PAL_ELEVENLABS_API_KEY       — the synthesis credential
+//      (legacy alias PAL_ELEVENLABS_KEY also accepted)
+//   3. PAL_ELEVENLABS_VOICE_ID      — which cloned voice to speak in
 //
 // When ANY of the three is missing, the gate is CLOSED and callers fall
 // back cleanly to the existing Polly `<Say>` path — no behavior change

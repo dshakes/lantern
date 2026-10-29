@@ -416,7 +416,7 @@ export class PersonalClient {
       // approve.
       channel?: string;
       // URL to deep-link from email/cross-channel notifications.
-      // Defaults to LANTERN_DASHBOARD_URL or http://localhost:3001
+      // Defaults to PAL_DASHBOARD_URL or http://localhost:3001
       dashboardUrl?: string;
     } = {},
   ): Promise<{ id: string } | null> {
@@ -466,11 +466,11 @@ export class PersonalClient {
       "http://localhost:3001";
     const draftsUrl = `${dashboardUrl.replace(/\/$/, "")}/personal/drafts`;
 
-    // (1) Email — only if LANTERN_OWNER_EMAIL is set. Body has the
+    // (1) Email — only if PAL_OWNER_EMAIL is set. Body has the
     // inbound + draft + a tap-target link to the dashboard.
     const ownerEmail = process.env.PAL_OWNER_EMAIL;
     if (ownerEmail) {
-      const subject = `Lantern VIP draft: ${senderLabel}`;
+      const subject = `pal VIP draft: ${senderLabel}`;
       const body = [
         `${channelLabel} VIP — draft awaits your approval`,
         "",
@@ -479,7 +479,7 @@ export class PersonalClient {
         "They wrote:",
         `> ${inboundText.replace(/\n/g, "\n> ")}`,
         "",
-        "Lantern drafted:",
+        "pal drafted:",
         `> ${draftText.replace(/\n/g, "\n> ")}`,
         "",
         `Approve / edit / discard at ${draftsUrl}`,

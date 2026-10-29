@@ -4,7 +4,7 @@
 //
 // Resolution order:
 //   1. Self-tokens ("me", "myself", "yourself", "I", "owner") →
-//      LANTERN_OWNER_PHONE.
+//      PAL_OWNER_PHONE.
 //   2. Already a phone number (any common format) → normalized E.164.
 //   3. Bridge's in-memory contact-names cache (chat.db / WhatsApp
 //      contact-discovery layer).

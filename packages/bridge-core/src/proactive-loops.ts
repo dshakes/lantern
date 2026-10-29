@@ -4,7 +4,7 @@
 //   • computeCommuteSurface — surfaces due commitments hands-free once per drive
 //   • computeEnergyNudge   — nudges on short sleep, once per calendar day
 //
-// Ships dark: LANTERN_COMMUTE=on / LANTERN_ENERGY=on gate the timers in session.ts.
+// Ships dark: PAL_COMMUTE=on / PAL_ENERGY=on gate the timers in session.ts.
 // OWNER-ONLY: callers route output to self-chat only, never to a contact.
 //
 // ─── Privacy posture ───────────────────────────────────────────────────────────
