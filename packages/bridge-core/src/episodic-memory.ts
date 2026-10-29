@@ -77,7 +77,7 @@ export class EpisodicMemory {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.LANTERN_EPISODES_FILE || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_EPISODES_FILE || DEFAULT_PATH;
     this.logger = opts.logger?.child({ component: "episodic-memory" });
     try { mkdirSync(dirname(this.path), { recursive: true }); } catch {}
   }

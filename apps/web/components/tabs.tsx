@@ -149,7 +149,7 @@ export function Tabs({
                 className={clsx(
                   "rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
                   isActive
-                    ? "bg-lantern-500/20 text-lantern-200"
+                    ? "bg-pal-500/20 text-pal-200"
                     : "bg-surface-3 text-zinc-500"
                 )}
               >
@@ -198,7 +198,7 @@ export function Tabs({
                 <span
                   className={clsx(
                     "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-150",
-                    isActive ? "bg-lantern-400 opacity-100" : "opacity-0"
+                    isActive ? "bg-pal-400 opacity-100" : "opacity-0"
                   )}
                 />
               )}
@@ -221,7 +221,7 @@ export function Tabs({
               <span
                 className={clsx(
                   "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-150",
-                  isActive ? "bg-lantern-400 opacity-100" : "opacity-0"
+                  isActive ? "bg-pal-400 opacity-100" : "opacity-0"
                 )}
               />
             )}

@@ -21,7 +21,7 @@ potentially handles PII, and can be abused if autonomy is unbounded.
 All browser execution — both reads and writes — happens inside a Firecracker
 microVM via `RuntimeManager.ExecTool`. The control-plane **never** runs a
 headless browser in-process. No new trust boundary is introduced; the existing
-`LANTERN_RUNTIME_MANAGER_ADDR` gRPC path (used by the workflow engine) is reused.
+`PAL_RUNTIME_MANAGER_ADDR` gRPC path (used by the workflow engine) is reused.
 
 ### Read vs. write trust split
 
@@ -41,7 +41,7 @@ is the sole write path and requires the owner's explicit HTTP call.
 - No CAPTCHA solving (legal / ToS boundary).
 - No access to `localhost`, `169.254.0.0/16` (SSRF prevention).
 - Egress is restricted to the URL in the `url` field; the harness enforces the
-  `LANTERN_EGRESS_RULES` allowlist at the network layer.
+  `PAL_EGRESS_RULES` allowlist at the network layer.
 
 ### Secrets
 
@@ -52,8 +52,8 @@ args never carry credentials.
 
 ### Feature gate
 
-`LANTERN_BROWSER_SKILL=on/1/true` (default **OFF**). All three endpoints return
-404 when unset. This matches the `LANTERN_CROSS_APP` pattern.
+`PAL_BROWSER_SKILL=on/1/true` (default **OFF**). All three endpoints return
+404 when unset. This matches the `PAL_CROSS_APP` pattern.
 
 ---
 
@@ -81,4 +81,4 @@ Runtime-manager `browse` branch: wires `ExecTool` with `tool_name="browse"` and
 - **+** microVM isolation ensures the browser cannot reach the host or other VMs.
 - **+** Increment 1 is fully testable and deployable without a runtime image.
 - **−** `browse` reads are 503 until increment 2 — callers must handle gracefully.
-- **−** One additional gRPC dial per control-plane process when `LANTERN_RUNTIME_MANAGER_ADDR` is set.
+- **−** One additional gRPC dial per control-plane process when `PAL_RUNTIME_MANAGER_ADDR` is set.

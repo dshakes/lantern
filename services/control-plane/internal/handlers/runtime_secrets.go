@@ -90,7 +90,7 @@ import (
 const (
 	// envRuntimeSecretToken is the environment variable that holds the
 	// pre-shared service token for the runtime-manager → control-plane relay.
-	envRuntimeSecretToken = "LANTERN_RUNTIME_SECRET_TOKEN"
+	envRuntimeSecretToken = "PAL_RUNTIME_SECRET_TOKEN"
 
 	// runtimeTokenHeader is the HTTP header name carrying the service token.
 	runtimeTokenHeader = "X-Lantern-Runtime-Token"
@@ -211,7 +211,7 @@ func (e *authError) Error() string { return e.msg }
 // empty = never trust XFF (safe default for direct-connect deployments).
 //
 // Example: LANTERN_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-const envTrustedProxies = "LANTERN_TRUSTED_PROXIES"
+const envTrustedProxies = "PAL_TRUSTED_PROXIES"
 
 // parseTrustedProxies parses a comma-separated CIDR string and returns the
 // resulting []*net.IPNet. Malformed individual entries are silently skipped

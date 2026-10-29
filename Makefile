@@ -162,8 +162,8 @@ build-ts: ## Build TypeScript packages
 
 docker-build: ## Build all Docker images
 	docker build -t lantern-control-plane -f services/control-plane/Dockerfile .
-	docker build -t lantern-gateway services/gateway
-	docker build -t lantern-model-router services/model-router
+	docker build -t lantern-gateway -f services/gateway/Dockerfile .
+	docker build -t lantern-model-router -f services/model-router/Dockerfile .
 	docker build -t lantern-workflow-engine -f services/workflow-engine/Dockerfile .
 	docker build -t lantern-web apps/web
 	
@@ -263,6 +263,7 @@ rls-validate: ## Validate RLS policies + handler cutover before flipping LANTERN
 # ---------- Lint ----------
 
 lint: lint-go lint-rust lint-ts ## Lint everything
+	bash scripts/env-read-check.sh
 
 lint-go: ## Lint Go code (same modules as CI sdlc-lint)
 	cd services/control-plane && golangci-lint run ./...

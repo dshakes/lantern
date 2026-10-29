@@ -83,7 +83,7 @@ func TestCanonicalJSON_Deterministic(t *testing.T) {
 }
 
 func TestSignPayload_DifferentPayloadsDifferentSigs(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "test-secret-h2")
+	t.Setenv("PAL_RECEIPT_SECRET", "test-secret-h2")
 
 	p1 := receiptPayload{RunID: "run-1", TenantID: "t1", Version: 1}
 	p2 := receiptPayload{RunID: "run-2", TenantID: "t1", Version: 1}
@@ -94,7 +94,7 @@ func TestSignPayload_DifferentPayloadsDifferentSigs(t *testing.T) {
 }
 
 func TestSignPayload_SamePayloadSameSig(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "test-secret-h2")
+	t.Setenv("PAL_RECEIPT_SECRET", "test-secret-h2")
 
 	p := receiptPayload{
 		RunID:    "run-99",
@@ -112,7 +112,7 @@ func TestSignPayload_SamePayloadSameSig(t *testing.T) {
 // TestVerifyReceipt_OfflineFallback exercises the offline recompute path
 // (no DB, srv.Pool is nil — falls through to HMAC recompute over canonical bytes).
 func TestVerifyReceipt_OfflineFallback(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "offline-secret")
+	t.Setenv("PAL_RECEIPT_SECRET", "offline-secret")
 
 	p := receiptPayload{
 		RunID:    "run-offline",
@@ -147,7 +147,7 @@ func TestVerifyReceipt_OfflineFallback(t *testing.T) {
 }
 
 func TestVerifyReceipt_OfflineFallback_BadSig(t *testing.T) {
-	t.Setenv("LANTERN_RECEIPT_SECRET", "offline-secret")
+	t.Setenv("PAL_RECEIPT_SECRET", "offline-secret")
 
 	p := receiptPayload{RunID: "run-bad", TenantID: "t-bad", Version: 1}
 	reqBody, _ := json.Marshal(signedReceipt{

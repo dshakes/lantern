@@ -183,9 +183,9 @@ func TestSignalIngest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			home := isolateHome(t)
 			if tt.setEnv {
-				t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+				t.Setenv("PAL_SIGNAL_TOKEN", tok)
 			} else {
-				os.Unsetenv("LANTERN_SIGNAL_TOKEN")
+				os.Unsetenv("PAL_SIGNAL_TOKEN")
 			}
 
 			h := newSignalHandlerForTest(t)
@@ -218,7 +218,7 @@ func TestSignalIngest(t *testing.T) {
 func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 	const tok = "test-signal-token"
 	home := isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 	h := newSignalHandlerForTest(t)
 
 	// kind explicit, ts omitted -> ts defaults to now; detail clamped to 500.
@@ -274,7 +274,7 @@ func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 func TestSignalHealthMetricValueJSONL(t *testing.T) {
 	const tok = "test-signal-token"
 	home := isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 	h := newSignalHandlerForTest(t)
 
 	val := 6200.0
@@ -321,7 +321,7 @@ func TestSignalHealthMetricValueJSONL(t *testing.T) {
 func TestSignalListReturnsAppended(t *testing.T) {
 	const tok = "test-signal-token"
 	isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 	h := newSignalHandlerForTest(t)
 
 	for _, app := range []string{"Calendar", "Mail", "Notes"} {
@@ -357,7 +357,7 @@ func TestSignalListReturnsAppended(t *testing.T) {
 func TestSignalListReturnsMetricValue(t *testing.T) {
 	const tok = "test-signal-token"
 	isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 	h := newSignalHandlerForTest(t)
 
 	// POST a health signal with metric+value.
@@ -400,7 +400,7 @@ func TestSignalListReturnsMetricValue(t *testing.T) {
 
 func TestSignalListTokenGate(t *testing.T) {
 	isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", "test-signal-token")
+	t.Setenv("PAL_SIGNAL_TOKEN", "test-signal-token")
 	h := newSignalHandlerForTest(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/signals", nil) // no token header
@@ -415,7 +415,7 @@ func TestSignalListTokenGate(t *testing.T) {
 func TestSignalFileBounded(t *testing.T) {
 	const tok = "test-signal-token"
 	home := isolateHome(t)
-	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	t.Setenv("PAL_SIGNAL_TOKEN", tok)
 
 	// Pre-seed the file past the cap so the next append triggers a trim.
 	dir := filepath.Join(home, ".lantern")

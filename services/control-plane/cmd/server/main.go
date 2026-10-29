@@ -122,7 +122,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to parse REDIS_URL", zap.Error(err))
 	}
-	redisOpts.PoolSize = envIntMain("LANTERN_REDIS_POOL_SIZE", 20)
+	redisOpts.PoolSize = envIntMain("PAL_REDIS_POOL_SIZE", 20)
 	rdb := redis.NewClient(redisOpts)
 	defer rdb.Close() //nolint:errcheck
 
@@ -151,8 +151,8 @@ func main() {
 	//   4. Route remaining handler paths through srv.AppPool + db.WithTenantConn.
 	//      Add // TODO(rls-cutover) comments on each site still using Pool directly.
 	appPool := pool // alias — superuser path, RLS bypassed
-	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
-		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
+		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd != "" {
 			appCfg, cfgErr := buildAppPoolConfig(cfg.DatabaseURL, appPwd)
 			if cfgErr != nil {
@@ -227,7 +227,7 @@ func main() {
 	// runStartupGuards already refused to boot with an empty token in prod.
 	// mTLS (ADR 0043) is required ON TOP OF the token: with PAL_GRPC_TLS_* set,
 	// every non-exempt call needs a CA-verified, allowlisted client cert.
-	grpcServiceToken := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN")
+	grpcServiceToken := os.Getenv("PAL_GRPC_SERVICE_TOKEN")
 	tlsCreds, mtls := grpcTLSCreds(logger)
 	var unary []grpc.UnaryServerInterceptor
 	var stream []grpc.StreamServerInterceptor
@@ -299,7 +299,7 @@ func main() {
 	// sessions) unconditionally. It can only serve the developer-dashboard
 	// "Generate spec/code" path (Complete with empty AgentName). If you see
 	// this in prod logs, remove LANTERN_USE_CLAUDE_CODE from the deployment.
-	if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+	if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
 		logger.Warn("LANTERN_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
 	}
 
@@ -332,9 +332,9 @@ func main() {
 	// is set. Without the addr the handler is 503 for dispatch endpoints — honest
 	// increment 1 behavior until the runtime image ships (increment 2).
 	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
-	if rmAddr := os.Getenv("LANTERN_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
+	if rmAddr := os.Getenv("PAL_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
 		// Same creds as every manager dial: service token + mTLS when configured.
-		rmOpts, rmErr := handlers.ManagerDialOptions(os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"))
+		rmOpts, rmErr := handlers.ManagerDialOptions(os.Getenv("PAL_GRPC_SERVICE_TOKEN"))
 		var rmConn *grpc.ClientConn
 		if rmErr == nil {
 			rmConn, rmErr = grpc.NewClient(rmAddr, rmOpts...)
@@ -395,13 +395,13 @@ func main() {
 		// Kept backward-compatible by also accepting old text 'ok' shape:
 		// callers that just check status code still work.
 		llmMode := "api"
-		if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+		if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
 			llmMode = "claude-code-local"
 		}
 
 		// RLS readiness fields — safe to expose (no secret material, only booleans).
-		rlsEnforce := os.Getenv("LANTERN_RLS_ENFORCE") == "1"
-		appPoolActive := rlsEnforce && os.Getenv("LANTERN_APP_DB_PASSWORD") != ""
+		rlsEnforce := os.Getenv("PAL_RLS_ENFORCE") == "1"
+		appPoolActive := rlsEnforce && os.Getenv("PAL_APP_DB_PASSWORD") != ""
 
 		// Check whether the lantern_app role exists. Best-effort: if the DB is
 		// unreachable the field reports false rather than erroring the health probe.
@@ -426,7 +426,7 @@ func main() {
 	// its own listener instead of riding the public :8080 API port. Expose it
 	// to Prometheus only (NetworkPolicy metricsFrom), never via ingress.
 	if metricsHandler != nil {
-		metricsAddr := os.Getenv("LANTERN_METRICS_ADDR")
+		metricsAddr := os.Getenv("PAL_METRICS_ADDR")
 		if metricsAddr == "" {
 			metricsAddr = ":9464"
 		}
@@ -997,7 +997,7 @@ func main() {
 
 	// Drain in-flight inline runs (SIGTERM graceful drain).
 	// The durable-replay recovery loop covers any runs that exceed the timeout.
-	drainTimeout := envDurationMain("LANTERN_DRAIN_TIMEOUT", 30*time.Second)
+	drainTimeout := envDurationMain("PAL_DRAIN_TIMEOUT", 30*time.Second)
 	logger.Info("draining in-flight runs", zap.Duration("timeout", drainTimeout))
 	restHandler.DrainInFlightRuns(drainTimeout)
 	logger.Info("in-flight runs drained")
@@ -1081,7 +1081,7 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 
 	// H1 — Receipt signing secret
-	receiptSecret := os.Getenv("LANTERN_RECEIPT_SECRET")
+	receiptSecret := os.Getenv("PAL_RECEIPT_SECRET")
 	if prod && receiptSecret == "" {
 		logger.Fatal("LANTERN_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
 	}
@@ -1107,7 +1107,7 @@ func runStartupGuards(logger *zap.Logger) {
 	// Postgres enforces the tenant_isolation_{agents,runs} RLS policies even if
 	// a handler forgets a WHERE clause.  Dev is advisory-only so `make dev`
 	// works without any DB role management.
-	rlsFatal, rlsMsg := rlsGuardDecision(prod, os.Getenv("LANTERN_RLS_ENFORCE"), os.Getenv("LANTERN_APP_DB_PASSWORD"))
+	rlsFatal, rlsMsg := rlsGuardDecision(prod, os.Getenv("PAL_RLS_ENFORCE"), os.Getenv("PAL_APP_DB_PASSWORD"))
 	if rlsFatal {
 		logger.Fatal(rlsMsg)
 	}
@@ -1124,14 +1124,14 @@ func runStartupGuards(logger *zap.Logger) {
 	// gRPC service-token auth (trust boundary on :50051).
 	// Without a token, any caller reachable to :50051 can set an arbitrary
 	// tenant_id and read/write that tenant's data. Production must require it.
-	if prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+	if prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
 		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
 	}
-	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+	if !prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
 		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
-	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH"), os.Getenv("LANTERN_USE_CLAUDE_CODE")); fatal {
+	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("PAL_TWILIO_WEBHOOK_AUTH"), os.Getenv("PAL_USE_CLAUDE_CODE")); fatal {
 		logger.Fatal(msg)
 	}
 
@@ -1147,11 +1147,11 @@ func runStartupGuards(logger *zap.Logger) {
 	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
 	// data corruption, not a graceful degradation. Refuse to start.
 	// In dev the stub is intentional (no real scheduler needed).
-	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"))
+	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("PAL_SCHEDULER_GRPC_ADDR"))
 	if schedulerFatal {
 		logger.Fatal(schedulerMsg)
 	}
-	if !prod && os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR") == "" {
+	if !prod && os.Getenv("PAL_SCHEDULER_GRPC_ADDR") == "" {
 		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
 	}
 
@@ -1405,9 +1405,9 @@ func parsePgxPoolConfig(databaseURL string) (*pgxpool.Config, error) {
 // *pgxpool.Config. Called for both the privileged pool and the AppPool so
 // both benefit from the same env configuration.
 func applyPgxPoolTuning(cfg *pgxpool.Config) {
-	cfg.MaxConns = int32(envIntMain("LANTERN_PG_MAX_CONNS", 20))
-	cfg.MaxConnLifetime = envDurationMain("LANTERN_PG_MAX_CONN_LIFETIME", time.Hour)
-	cfg.MaxConnIdleTime = envDurationMain("LANTERN_PG_MAX_CONN_IDLE_TIME", 30*time.Minute)
+	cfg.MaxConns = int32(envIntMain("PAL_PG_MAX_CONNS", 20))
+	cfg.MaxConnLifetime = envDurationMain("PAL_PG_MAX_CONN_LIFETIME", time.Hour)
+	cfg.MaxConnIdleTime = envDurationMain("PAL_PG_MAX_CONN_IDLE_TIME", 30*time.Minute)
 }
 
 // envIntMain reads an integer env var, falling back to fallback when absent or

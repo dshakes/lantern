@@ -1,6 +1,6 @@
 # lantern-sdk (Python)
 
-The official Python SDK for [Lantern](https://github.com/dshakes/lantern) — the
+The official Python SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the
 open-source runtime for production AI agents with VPC deployment, pre-run cost
 forecasts, policy budgets, and eval-in-CI.
 
@@ -27,7 +27,7 @@ Optional extras:
 
 | Extra        | Pulls in           | For                                                        |
 | ------------ | ------------------ | ---------------------------------------------------------- |
-| `deepagents` | `deepagents>=0.6`  | Run a LangChain deepagents agent on a Lantern microVM — see [deepagents integration](#deepagents-integration) |
+| `deepagents` | `deepagents>=0.6`  | Run a LangChain deepagents agent on a PAL Runtime microVM — see [deepagents integration](#deepagents-integration) |
 
 ---
 
@@ -40,9 +40,9 @@ from lantern import LanternClient
 
 async def main():
     async with LanternClient(
-        api_key=os.environ["LANTERN_API_KEY"],
+        api_key=os.environ["PAL_API_KEY"],
         # base_url defaults to https://api.lantern.run
-        # or set LANTERN_API_URL for a self-hosted instance
+        # or set PAL_API_URL for a self-hosted instance
     ) as client:
 
         # 1. Create an agent
@@ -65,11 +65,11 @@ asyncio.run(main())
 
 ```python
 LanternClient(
-    base_url: str | None = None,    # default: LANTERN_API_URL or https://api.lantern.run
-    api_key: str | None = None,     # default: LANTERN_API_KEY
+    base_url: str | None = None,    # default: PAL_API_URL or https://api.lantern.run
+    api_key: str | None = None,     # default: PAL_API_KEY
     *,
     timeout: float = 30.0,          # per-request timeout in seconds
-    route_strategy: str | None = None,  # default: LANTERN_ROUTE_STRATEGY or "auto"
+    route_strategy: str | None = None,  # default: PAL_ROUTE_STRATEGY or "auto"
 )
 ```
 
@@ -83,9 +83,9 @@ not using a context manager.
 
 | Var | Purpose |
 |---|---|
-| `LANTERN_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
-| `LANTERN_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
-| `LANTERN_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Lantern-Route-Strategy`. Default `auto` |
+| `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
+| `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
+| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Lantern-Route-Strategy`. Default `auto` |
 
 ---
 
@@ -207,7 +207,7 @@ async def researcher(input: dict, ctx: AgentContext) -> dict:
 | `await step_map(name, items, fn, *, concurrency, retry, timeout)` | Fan-out over a list; each item gets its own journal entry `name[i]` |
 | `await step_race(name, fns, *, retry, timeout)` | Run multiple callables concurrently; return the first result, cancel the rest |
 | `await step_sleep(name, duration)` | Durable sleep. Duration strings: `"30s"`, `"5m"`, `"2h"` |
-| `await step_signal(name, *, timeout)` | Wait for an external signal. Only functional in the Lantern production runtime |
+| `await step_signal(name, *, timeout)` | Wait for an external signal. Only functional in the PAL Runtime production runtime |
 
 In local / dev mode all step primitives execute the function directly (no
 journalling). The production runtime installs a journal-aware runner via
@@ -275,7 +275,7 @@ lantern-runner --agent hello-world --input '{"name": "World"}'
 
 `pip install "path/to/lantern/packages/sdk-python[deepagents]"` adds a
 [deepagents](https://github.com/langchain-ai/deepagents) sandbox backend that runs
-the agent's shell and filesystem inside a Lantern microVM instead of on the host.
+the agent's shell and filesystem inside a PAL Runtime microVM instead of on the host.
 Egress allowlist, secret vending, and per-tenant quota are enforced by the runtime,
 not by the prompt — untrusted agent code never touches a bare shell (invariant #5).
 
@@ -293,7 +293,7 @@ with LanternSandbox.create(image_digest="sha256:...") as sandbox:
 `glob`/`grep`) from three primitives, so the backend is just those three mapped
 onto the runtime REST surface:
 
-| Backend method                   | Lantern endpoint                          |
+| Backend method                   | PAL Runtime endpoint                          |
 | -------------------------------- | ----------------------------------------- |
 | `execute()`                      | `POST /v1/runtime/vms/{id}/exec`          |
 | `upload_files()`/`download_files()` | base64 over the same exec channel      |
@@ -312,7 +312,7 @@ mount a store at `/memories/` while everything else executes in the sandbox. See
 [`examples/deepagents_sandbox_agent.py`](examples/deepagents_sandbox_agent.py) for a
 runnable version that also wires `RubricMiddleware` for in-loop self-evaluation.
 
-Reads `LANTERN_API_URL` / `LANTERN_API_KEY` like the main client; pass `base_url` /
+Reads `PAL_API_URL` / `PAL_API_KEY` like the main client; pass `base_url` /
 `api_key` explicitly to override.
 
 `create()` defaults the entrypoint to `sleep infinity`. A sandbox is a long-lived
@@ -326,7 +326,7 @@ on the `docker` backend, covering `execute`, binary upload/download roundtrip, a
 the BaseSandbox-derived `write`/`read`/`ls`/`edit`/`grep` the agent actually calls.
 The Go-side regression test is
 `services/control-plane/internal/handlers/runtime_exec_e2e_test.go` (opt-in via
-`LANTERN_RUNTIME_E2E=1`). The **Firecracker** path specifically is not verifiable
+`PAL_RUNTIME_E2E=1`). The **Firecracker** path specifically is not verifiable
 on macOS (no `/dev/kvm`) — that is covered by the `microvm · integration` CI job on
 a KVM runner. Exec routing differs between them: the manager sends Firecracker VMs
 to the in-guest harness and everything else through the backend.

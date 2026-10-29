@@ -224,7 +224,7 @@ func loadConfig() config {
 		ControlPlaneAddr: envOrDefault("CONTROL_PLANE_ADDR", "localhost:50051"),
 		// Shared service token for the control-plane's optional service-token
 		// interceptor. When unset, nothing is attached (additive, dev pass-through).
-		ServiceToken: os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
+		ServiceToken: os.Getenv("PAL_GRPC_SERVICE_TOKEN"),
 		LogLevel:     envOrDefault("LOG_LEVEL", "info"),
 	}
 }

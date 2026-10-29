@@ -2,12 +2,12 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-23
-- **Deciders:** Lantern control-plane, runtime-scheduler, runtime-manager
+- **Deciders:** PAL Runtime control-plane, runtime-scheduler, runtime-manager
 - **Tags:** runtime, isolation, routing, durability, staged-rollout
 
 ## Context
 
-Lantern has two agent runtimes today, and only one of them carries traffic:
+PAL Runtime has two agent runtimes today, and only one of them carries traffic:
 
 1. **The inline executor** (`services/control-plane/internal/handlers/rest.go`,
    `executeRunInlineSync`) — a goroutine inside the control-plane process. It

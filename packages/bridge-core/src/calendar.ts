@@ -65,7 +65,7 @@ export class CalendarLookup {
         const summary = ev.summary || "(no title)";
         if (!start) continue;
         // Render times in the owner's timezone if configured.
-        const tz = process.env.LANTERN_OWNER_TIMEZONE;
+        const tz = process.env.PAL_OWNER_TIMEZONE;
         const when = formatWhen(start, tz);
         lines.push(`- ${when} — ${summary}`);
       }

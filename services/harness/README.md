@@ -1,7 +1,7 @@
 # lantern-harness
 
 The **RuntimeHarness** — a single static Rust binary that runs as PID 1 inside
-every Lantern microVM. It is the only thing the host's runtime-manager talks to
+every PAL Runtime microVM. It is the only thing the host's runtime-manager talks to
 once a VM is booted; everything the workload knows about the rest of the platform
 comes through this process.
 
@@ -14,7 +14,7 @@ See `packages/proto/lantern/v1/runtime.proto` for the wire contract
 
 1. **Init (PID 1)** — prep `/run/lantern`, mount `/tmp` as tmpfs, set rlimits,
    exec the workload binary as a child.
-2. **Supervisor** — restart the workload on crash up to `LANTERN_MAX_RESTARTS`
+2. **Supervisor** — restart the workload on crash up to `PAL_MAX_RESTARTS`
    times; exit cleanly when the workload exits with status 0.
 3. **Heartbeat** — bidirectional gRPC stream to runtime-manager every 5s,
    reporting `(vm_id, ResourceUsage, worker_pid, restart_count)`. Reads
@@ -32,7 +32,7 @@ See `packages/proto/lantern/v1/runtime.proto` for the wire contract
    `/run/lantern/otlp.sock` and batches them on a 2s flush.
 8. **Signal handlers**
    - `SIGTERM` → drain. Forward `SIGTERM` to the workload, wait
-     `LANTERN_DRAIN_GRACE_SECS` (default 25), then `SIGKILL`.
+     `PAL_DRAIN_GRACE_SECS` (default 25), then `SIGKILL`.
    - `SIGUSR1` → snapshot prep. Flush log buffers, signal the workload via
      `SIGUSR1` (workloads that implement checkpointing handle it).
    - `SIGCHLD` → reap zombies. As PID 1 the harness inherits orphans and
@@ -55,17 +55,17 @@ The VM image and the manager must agree on the following:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `LANTERN_VM_ID` | yes | Globally unique VM id. Tags every heartbeat / report. |
-| `LANTERN_MANAGER_ADDR` | yes | `host:port` of the on-node runtime-manager (default `127.0.0.1:50054`). |
-| `LANTERN_WORKLOAD_CMD` | yes | Space-separated argv of the workload binary. |
-| `LANTERN_DECLARED_SECRETS` | no | JSON array `[{"env_name":"OPENAI_API_KEY","secret_uri":"lantern.secret://..."}, ...]`. Anything not on this list is rejected at vend time. |
-| `LANTERN_MAX_RESTARTS` | no | Supervisor restart budget. Default `5`. |
-| `LANTERN_DRAIN_GRACE_SECS` | no | SIGTERM→SIGKILL window. Default `25`. |
-| `LANTERN_EGRESS_BIND` | no | Proxy bind addr. Default `127.0.0.1:3128`. |
-| `LANTERN_SECRETS_SOCKET` | no | Unix socket path. Default `/run/lantern/secrets.sock`. |
-| `LANTERN_OTLP_SOCKET` | no | Unix socket path. Default `/run/lantern/otlp.sock`. |
-| `LANTERN_RUN_DIR` | no | Runtime dir. Default `/run/lantern`. |
-| `LANTERN_RLIMIT_AS_BYTES` | no | Cap on virtual address space, set at boot. |
+| `PAL_VM_ID` | yes | Globally unique VM id. Tags every heartbeat / report. |
+| `PAL_MANAGER_ADDR` | yes | `host:port` of the on-node runtime-manager (default `127.0.0.1:50054`). |
+| `PAL_WORKLOAD_CMD` | yes | Space-separated argv of the workload binary. |
+| `PAL_DECLARED_SECRETS` | no | JSON array `[{"env_name":"OPENAI_API_KEY","secret_uri":"lantern.secret://..."}, ...]`. Anything not on this list is rejected at vend time. |
+| `PAL_MAX_RESTARTS` | no | Supervisor restart budget. Default `5`. |
+| `PAL_DRAIN_GRACE_SECS` | no | SIGTERM→SIGKILL window. Default `25`. |
+| `PAL_EGRESS_BIND` | no | Proxy bind addr. Default `127.0.0.1:3128`. |
+| `PAL_SECRETS_SOCKET` | no | Unix socket path. Default `/run/lantern/secrets.sock`. |
+| `PAL_OTLP_SOCKET` | no | Unix socket path. Default `/run/lantern/otlp.sock`. |
+| `PAL_RUN_DIR` | no | Runtime dir. Default `/run/lantern`. |
+| `PAL_RLIMIT_AS_BYTES` | no | Cap on virtual address space, set at boot. |
 | `RUST_LOG` | no | Tracing filter. Default `info,lantern_harness=debug`. |
 
 ### Mount points the VM image must provide
@@ -99,7 +99,7 @@ the SDK can speak the protocols directly.
 
 ## How to embed
 
-In a Lantern VM image (alpine/distroless rootfs):
+In a PAL Runtime VM image (alpine/distroless rootfs):
 
 ```dockerfile
 FROM lantern/harness:latest AS harness

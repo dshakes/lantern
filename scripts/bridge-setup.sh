@@ -441,7 +441,7 @@ main() {
   section "Repo detection"
   check_repo_root
 
-  local ENV_FILE="${LANTERN_ENV_FILE:-${REPO_ROOT}/.env.local}"
+  local ENV_FILE="${PAL_ENV_FILE:-${LANTERN_ENV_FILE:-${REPO_ROOT}/.env.local}}"
 
   section "Prereq checks"
   check_macos

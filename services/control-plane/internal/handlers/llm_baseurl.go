@@ -26,8 +26,8 @@ import (
 
 // llmHosts maps a provider API host to its override env var.
 var llmHosts = map[string]string{
-	"api.openai.com":    "LANTERN_LLM_BASEURL_OPENAI",
-	"api.anthropic.com": "LANTERN_LLM_BASEURL_ANTHROPIC",
+	"api.openai.com":    "PAL_LLM_BASEURL_OPENAI",
+	"api.anthropic.com": "PAL_LLM_BASEURL_ANTHROPIC",
 }
 
 // CheckLLMBaseURLOverrides is the startup guard: fatal in prod when any override

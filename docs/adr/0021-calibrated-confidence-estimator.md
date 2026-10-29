@@ -3,13 +3,13 @@
 - **Status:** Accepted
 - **Date:** 2026-07-09
 - **Deciders:** Shekhar Mudarapu, control-plane, agent-runtime
-- **Relates to:** Confidence-gated execution (`LANTERN_CONFIDENCE_GATE`), `docs/architecture/18-agent-runtime-nextgen.md`, invariant #10 (secrets), the Phase-1 outcome-feedback loop
+- **Relates to:** Confidence-gated execution (`PAL_CONFIDENCE_GATE`), `docs/architecture/18-agent-runtime-nextgen.md`, invariant #10 (secrets), the Phase-1 outcome-feedback loop
 
 ## Context
 
 Before a side-effecting workflow node (`tool`, `connector`, or an `ai-step`
 flagged `requiresConfidence`) auto-executes, the interpreter can score a
-confidence in `[0,1]` and divert steps below `LANTERN_CONFIDENCE_GATE_THRESHOLD`
+confidence in `[0,1]` and divert steps below `PAL_CONFIDENCE_GATE_THRESHOLD`
 (default `0.75`) to human approval (`internal/workflow/confidence.go`).
 
 The only estimator was `VerbalizationHeuristic`: it scrapes the model's own
@@ -33,12 +33,12 @@ tenant-scoped LLM caller (`Deps.CallLLM`) at the gate call site.
 ## Decision
 
 Add a second estimator, `SelfConsistencyEstimator`, selectable via
-`LANTERN_CONFIDENCE_ESTIMATOR=self-consistency`. It scores confidence from the
+`PAL_CONFIDENCE_ESTIMATOR=self-consistency`. It scores confidence from the
 model's **independent agreement** that an action is correct, not from a number
 the model volunteers about itself:
 
 - Re-pose the pending action to the model `N` times
-  (`LANTERN_CONFIDENCE_SAMPLES`, default 5, clamped `[1,9]`) as a fresh,
+  (`PAL_CONFIDENCE_SAMPLES`, default 5, clamped `[1,9]`) as a fresh,
   deliberately skeptical **YES/NO** judgment ("is this safe and correct to
   execute RIGHT NOW, no further confirmation?").
 - Confidence = fraction voting "execute". Consensus → high; a split vote → low →
@@ -57,7 +57,7 @@ step). `VerbalizationHeuristic` ignores the sampler and remains the default.
                  side-effecting node (tool / connector / ai-step*)
                                     │
                      ┌──────────────┴───────────────┐
-   LANTERN_CONFIDENCE_ESTIMATOR                       │  Deps.CallLLM (nil-safe)
+   PAL_CONFIDENCE_ESTIMATOR                       │  Deps.CallLLM (nil-safe)
                      │                                │
         ┌────────────┴─────────────┐                  │
         ▼                          ▼                  │
@@ -118,5 +118,5 @@ estimator and lowers its score by the realized **regret rate** for this
 lookup (`internal/handlers/confidence_calibration.go`) is tenant-scoped
 (`db.WithTenantConn`, RLS-safe), 5-min cached, min-3-sample guarded, and
 fail-safe (no data / any error → regret 0 → base unchanged). Opt-in via
-`LANTERN_CONFIDENCE_CALIBRATE`; default OFF. This makes the self-consistency
+`PAL_CONFIDENCE_CALIBRATE`; default OFF. This makes the self-consistency
 signal *outcome-calibrated* rather than merely grounded.

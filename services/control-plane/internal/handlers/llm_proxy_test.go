@@ -36,7 +36,7 @@ import (
 
 func TestResolveAutoModel_PrefersAvailableProvider(t *testing.T) {
 	// Use balanced (the default) so we hit the real scoring path.
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+	t.Setenv("PAL_ROUTE_STRATEGY", "balanced")
 
 	tests := []struct {
 		name              string
@@ -78,7 +78,7 @@ func TestResolveAutoModel_PrefersAvailableProvider(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestResolveAutoModel_StrategyQuality(t *testing.T) {
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "quality")
+	t.Setenv("PAL_ROUTE_STRATEGY", "quality")
 	// When quality is the axis and both providers are available, we expect
 	// Claude Opus (quality 10) to win.
 	prov, model := resolveAutoModel(true, true)
@@ -88,7 +88,7 @@ func TestResolveAutoModel_StrategyQuality(t *testing.T) {
 }
 
 func TestResolveAutoModel_StrategyCheap(t *testing.T) {
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "cheap")
+	t.Setenv("PAL_ROUTE_STRATEGY", "cheap")
 	// Cheapest option in catalog: gpt-4o-mini ($0.15/$0.60).
 	prov, model := resolveAutoModel(true, true)
 	if prov != "openai" || model != "gpt-4o-mini" {
@@ -97,7 +97,7 @@ func TestResolveAutoModel_StrategyCheap(t *testing.T) {
 }
 
 func TestResolveAutoModel_StrategyFast(t *testing.T) {
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "fast")
+	t.Setenv("PAL_ROUTE_STRATEGY", "fast")
 	// Fastest: haiku (10) and gpt-4o-mini (10) tie. Either is acceptable.
 	prov, model := resolveAutoModel(true, true)
 	if !(model == "claude-haiku-4-5-20251001" || model == "gpt-4o-mini") {
@@ -107,7 +107,7 @@ func TestResolveAutoModel_StrategyFast(t *testing.T) {
 
 func TestResolveAutoModel_StrategyBalancedDefault(t *testing.T) {
 	// Unset strategy → defaults to "balanced".
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "")
+	t.Setenv("PAL_ROUTE_STRATEGY", "")
 	prov, model := resolveAutoModel(true, true)
 	if prov == "" || model == "" {
 		t.Fatalf("balanced default must still pick a model, got %s/%s", prov, model)
@@ -120,7 +120,7 @@ func TestResolveAutoModel_NeverReturnsUnavailable(t *testing.T) {
 	// we never pick a provider the caller flagged unavailable.
 	for _, strategy := range []string{"balanced", "quality", "cheap", "fast", ""} {
 		t.Run("strategy="+strategy, func(t *testing.T) {
-			t.Setenv("LANTERN_ROUTE_STRATEGY", strategy)
+			t.Setenv("PAL_ROUTE_STRATEGY", strategy)
 
 			// Only Anthropic available.
 			if prov, _ := resolveAutoModel(true, false); prov != "anthropic" {
@@ -196,7 +196,7 @@ func TestResolveModel_UnknownRoutesToBestAvailable(t *testing.T) {
 	// With only Anthropic env → must pick Anthropic, not openai/gpt-4o.
 	t.Setenv("ANTHROPIC_API_KEY", "ant-key")
 	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+	t.Setenv("PAL_ROUTE_STRATEGY", "balanced")
 
 	p, _ := resolveModel("who-knows")
 	if p != "anthropic" {
@@ -226,7 +226,7 @@ func TestResolveModel_AutoUsesEnv(t *testing.T) {
 	// Only env-driven path for "auto" should honour env vars. Clear first.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "x")
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+	t.Setenv("PAL_ROUTE_STRATEGY", "balanced")
 
 	p, _ := resolveModel("auto")
 	if p != "openai" {
@@ -376,7 +376,7 @@ func TestResolveModel_AllSDKCapabilities(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ANTHROPIC_API_KEY", tc.anthropicEnv)
 			t.Setenv("OPENAI_API_KEY", tc.openaiEnv)
-			t.Setenv("LANTERN_ROUTE_STRATEGY", "balanced")
+			t.Setenv("PAL_ROUTE_STRATEGY", "balanced")
 
 			prov, model := resolveModel(tc.capability)
 			if prov == "" || model == "" {
@@ -674,7 +674,7 @@ func TestResolveCandidateChain_CheaperFallback_Anthropic(t *testing.T) {
 func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
 	// If gpt-4o-mini is already the top OpenAI model (cheap strategy), we
 	// should not add it a second time.
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "cheap")
+	t.Setenv("PAL_ROUTE_STRATEGY", "cheap")
 	chain := resolveCandidateChain(false, true, false)
 	miniCount := 0
 	for _, c := range chain {
@@ -698,12 +698,12 @@ func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
 // into production bridge-contact replies.
 func TestResolveCandidateChain_UserFacing_NeverClaudeCode(t *testing.T) {
 	// Enable claude-code to confirm it is forcibly excluded on user-facing paths.
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "1")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "1")
 	// Point to a non-existent binary so claudeCodeBinary() returns non-empty
 	// (it calls exec.LookPath; use the actual 'true' binary which exists on
 	// all Unix systems and is named 'claude' here only in env — instead we
 	// just verify the path via the env override).
-	t.Setenv("LANTERN_CLAUDE_BINARY", "/usr/bin/true")
+	t.Setenv("PAL_CLAUDE_BINARY", "/usr/bin/true")
 
 	cases := []struct {
 		name         string
@@ -731,8 +731,8 @@ func TestResolveCandidateChain_UserFacing_NeverClaudeCode(t *testing.T) {
 // userFacing=false and LANTERN_USE_CLAUDE_CODE=1, claude-code IS included
 // as the top candidate (dev dashboard path).
 func TestResolveCandidateChain_DevPath_ClaudeCodeAllowed(t *testing.T) {
-	t.Setenv("LANTERN_USE_CLAUDE_CODE", "1")
-	t.Setenv("LANTERN_CLAUDE_BINARY", "/usr/bin/true")
+	t.Setenv("PAL_USE_CLAUDE_CODE", "1")
+	t.Setenv("PAL_CLAUDE_BINARY", "/usr/bin/true")
 
 	chain := resolveCandidateChain(true, true, false /* not userFacing */)
 	if len(chain) == 0 {
@@ -779,7 +779,7 @@ func TestIsFlagDisabled(t *testing.T) {
 func TestComplexityRoutingEnabled_OffValues(t *testing.T) {
 	for _, v := range []string{"0", "off", "false", "OFF", "False"} {
 		t.Run("LANTERN_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
-			t.Setenv("LANTERN_COMPLEXITY_ROUTING", v)
+			t.Setenv("PAL_COMPLEXITY_ROUTING", v)
 			if complexityRoutingEnabled() {
 				t.Errorf("complexityRoutingEnabled() should be false when env=%q", v)
 			}
@@ -788,7 +788,7 @@ func TestComplexityRoutingEnabled_OffValues(t *testing.T) {
 }
 
 func TestComplexityRoutingEnabled_DefaultOn(t *testing.T) {
-	t.Setenv("LANTERN_COMPLEXITY_ROUTING", "")
+	t.Setenv("PAL_COMPLEXITY_ROUTING", "")
 	if !complexityRoutingEnabled() {
 		t.Error("complexityRoutingEnabled() should default to true when env is empty")
 	}
@@ -1426,7 +1426,7 @@ func TestWarnUnknownCapabilityOnce_Bounded(t *testing.T) {
 // — Sonnet with Anthropic, GPT-4o with OpenAI only — never the frontier model
 // on price-blind scoring, and never the tool-shy mini tier.
 func TestResolveAutoModel_BalancedDefaultIsNotFrontier(t *testing.T) {
-	t.Setenv("LANTERN_ROUTE_STRATEGY", "")
+	t.Setenv("PAL_ROUTE_STRATEGY", "")
 	cases := []struct {
 		name                string
 		anthropic, openai   bool

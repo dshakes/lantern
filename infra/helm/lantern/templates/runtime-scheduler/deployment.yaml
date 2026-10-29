@@ -58,9 +58,9 @@ spec:
                   key: LOG_LEVEL
             # Prod-like LANTERN_ENV makes the scheduler refuse to start without
             # the service token, node token and a real manager address.
-            - name: LANTERN_ENV
+            - name: PAL_ENV
               value: {{ .Values.runtimeScheduler.env.LANTERN_ENV | default "production" | quote }}
-            - name: LANTERN_GRPC_SERVICE_TOKEN
+            - name: PAL_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
@@ -75,7 +75,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: jwt-secret
-            - name: LANTERN_DEFAULT_MANAGER_ADDR
+            - name: PAL_DEFAULT_MANAGER_ADDR
               value: {{ .Values.runtimeScheduler.defaultManagerAddr | default (printf "%s-runtime-manager:%v" (include "lantern.fullname" .) .Values.runtimeManager.service.port) | quote }}
             - name: POSTGRES_PASSWORD
               valueFrom:

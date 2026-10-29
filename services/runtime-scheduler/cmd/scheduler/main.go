@@ -140,15 +140,15 @@ func main() {
 	// In dev the stub is intentional (no runtime-manager needed locally).
 	dialerFatal, dialerMsg := dialer.CheckManagerDialer(
 		dialer.IsProd(),
-		os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
-		os.Getenv("LANTERN_DIALER"),
+		os.Getenv("PAL_DEFAULT_MANAGER_ADDR"),
+		os.Getenv("PAL_DIALER"),
 	)
 	if dialerFatal {
 		logger.Fatal(dialerMsg)
 	}
 
 	var managerDialer dialer.ManagerDialer
-	if os.Getenv("LANTERN_DIALER") == "stub" || os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR") == "" {
+	if os.Getenv("PAL_DIALER") == "stub" || os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
 		managerDialer = dialer.NewLogOnlyDialer(logger)
 		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
 	} else {
@@ -374,7 +374,7 @@ func loadConfig() config {
 		HTTPAddr:        envOrDefault("HTTP_ADDR", ":8085"),
 		JWTSecret:       envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
 		NodeToken:       os.Getenv("SCHEDULER_NODE_TOKEN"),
-		ServiceToken:    os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
+		ServiceToken:    os.Getenv("PAL_GRPC_SERVICE_TOKEN"),
 		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
 		TenantMaxVMs:    envInt("SCHEDULER_TENANT_MAX_VMS", 20),
 		WeightWarmPool:  envFloat("SCHEDULER_WEIGHT_WARM_POOL", def.WarmPool),

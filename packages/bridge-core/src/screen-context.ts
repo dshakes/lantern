@@ -88,14 +88,14 @@ export function defaultScreenContextConfig(): ScreenContextConfig {
     return Number.isFinite(v) && v > 0 ? v : fallback;
   };
   return {
-    enabled: (process.env.LANTERN_SCREEN_OCR || "off").toLowerCase() === "on",
-    intervalMs: num("LANTERN_SCREEN_OCR_INTERVAL_MS", 60_000),
-    ringSize: num("LANTERN_SCREEN_OCR_RING", 8),
-    maxAgeMs: num("LANTERN_SCREEN_OCR_TTL_MS", 15 * 60_000),
-    appBlocklist: (process.env.LANTERN_SCREEN_OCR_BLOCK || "").split(",").map((s) => s.trim()).filter(Boolean).concat(DEFAULT_BLOCKLIST),
-    startHour: num("LANTERN_SCREEN_OCR_START_HOUR", 8),
-    endHour: num("LANTERN_SCREEN_OCR_END_HOUR", 22),
-    maxTextChars: num("LANTERN_SCREEN_OCR_MAX_CHARS", 2000),
+    enabled: (process.env.PAL_SCREEN_OCR || "off").toLowerCase() === "on",
+    intervalMs: num("PAL_SCREEN_OCR_INTERVAL_MS", 60_000),
+    ringSize: num("PAL_SCREEN_OCR_RING", 8),
+    maxAgeMs: num("PAL_SCREEN_OCR_TTL_MS", 15 * 60_000),
+    appBlocklist: (process.env.PAL_SCREEN_OCR_BLOCK || "").split(",").map((s) => s.trim()).filter(Boolean).concat(DEFAULT_BLOCKLIST),
+    startHour: num("PAL_SCREEN_OCR_START_HOUR", 8),
+    endHour: num("PAL_SCREEN_OCR_END_HOUR", 22),
+    maxTextChars: num("PAL_SCREEN_OCR_MAX_CHARS", 2000),
   };
 }
 

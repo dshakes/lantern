@@ -60,7 +60,7 @@ import (
 const defaultMaxRunStreamsPerTenant = 10
 
 func maxRunStreamsPerTenant() int {
-	if v := os.Getenv("LANTERN_DP_MAX_STREAMS_PER_TENANT"); v != "" {
+	if v := os.Getenv("PAL_DP_MAX_STREAMS_PER_TENANT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}

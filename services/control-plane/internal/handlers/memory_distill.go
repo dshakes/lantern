@@ -46,7 +46,7 @@ import (
 // memoryDistillEnabled reports whether distillation is active.
 // Default OFF: unset env = zero behavior change.
 func memoryDistillEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_MEMORY_DISTILL")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_MEMORY_DISTILL")))
 	return v == "1" || v == "true" || v == "on"
 }
 
@@ -104,7 +104,7 @@ type MemoryDistillHandler struct {
 // completeFn defaults to CompleteInternalWithUsage (provider-failover chain).
 func NewMemoryDistillHandler(srv *server.Server, auth *AuthHandler, llmProxy *LlmProxyHandler) *MemoryDistillHandler {
 	interval := 6 * time.Hour
-	if v := strings.TrimSpace(os.Getenv("LANTERN_MEMORY_DISTILL_INTERVAL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PAL_MEMORY_DISTILL_INTERVAL")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= time.Minute {
 			interval = d
 		}
@@ -112,7 +112,7 @@ func NewMemoryDistillHandler(srv *server.Server, auth *AuthHandler, llmProxy *Ll
 	h := &MemoryDistillHandler{
 		srv:      srv,
 		auth:     auth,
-		tenantID: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		tenantID: getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 		interval: interval,
 	}
 	h.completeFn = func(ctx context.Context, tenantID, system, user string) (string, error) {

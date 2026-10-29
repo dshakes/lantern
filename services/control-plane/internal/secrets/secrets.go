@@ -42,7 +42,7 @@ import (
 
 // EnvKey is the environment variable holding the base64/hex-encoded 32-byte
 // master key. Exported so callers and tests can reference it by name.
-const EnvKey = "LANTERN_CREDENTIAL_KEY"
+const EnvKey = "PAL_CREDENTIAL_KEY"
 
 const (
 	envelopeMarker = "__lantern_enc__"

@@ -45,7 +45,7 @@ export function ReceiptCard({ runId, disabled }: ReceiptCardProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `lantern-receipt-${receipt.payload.runId}.json`;
+    a.download = `pal-receipt-${receipt.payload.runId}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -55,7 +55,7 @@ export function ReceiptCard({ runId, disabled }: ReceiptCardProps) {
       <button
         onClick={issue}
         disabled={issuing || disabled}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-surface-2/50 px-4 py-2.5 text-xs font-medium text-zinc-300 transition-colors hover:border-lantern-500/30 hover:bg-lantern-500/5 hover:text-lantern-300 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-surface-2/50 px-4 py-2.5 text-xs font-medium text-zinc-300 transition-colors hover:border-pal-500/30 hover:bg-pal-500/5 hover:text-pal-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {issuing ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />

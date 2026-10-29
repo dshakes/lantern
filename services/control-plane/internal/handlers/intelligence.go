@@ -175,7 +175,7 @@ func isFlagDisabled(v string) bool {
 
 // complexityRoutingEnabled reports whether G1 is active.
 func complexityRoutingEnabled() bool {
-	return !isFlagDisabled(os.Getenv("LANTERN_COMPLEXITY_ROUTING"))
+	return !isFlagDisabled(os.Getenv("PAL_COMPLEXITY_ROUTING"))
 }
 
 // resolveModelForComplexity returns the (provider, model) pair appropriate
@@ -244,7 +244,7 @@ func rewriteUnbackedClaims(text string, invocations []ToolInvocation, log *zap.L
 
 // plannerEnabled reports whether G4 is active.
 func plannerEnabled() bool {
-	return !isFlagDisabled(os.Getenv("LANTERN_MULTI_STEP_PLANNER"))
+	return !isFlagDisabled(os.Getenv("PAL_MULTI_STEP_PLANNER"))
 }
 
 // plannerInstruction is the minimal system-level hint injected when a turn

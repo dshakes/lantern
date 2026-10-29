@@ -23,9 +23,9 @@ import type {
 // never reaches the browser bundle.
 const BRIDGE_WS_URLS: Record<BridgeChannel, string> = {
   whatsapp:
-    process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL || "http://localhost:3100",
+    (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) || "http://localhost:3100",
   imessage:
-    process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200",
+    (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
 };
 
 // Same-origin prefix for all REST bridge calls (proxied server-side).

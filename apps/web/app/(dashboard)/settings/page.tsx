@@ -91,7 +91,7 @@ type TabId = (typeof TABS)[number]["id"];
 // Local storage
 // ---------------------------------------------------------------------------
 
-const LS_PREFIX = "lantern_settings_";
+const LS_PREFIX = "pal_settings_";
 
 function loadLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -119,7 +119,7 @@ function defaultMembersList(): StoredMember[] {
   return [];
 }
 
-const roleBadgeColors: Record<string, string> = { owner: "bg-lantern-500/10 text-lantern-500", admin: "bg-purple-500/10 text-purple-400", member: "bg-blue-500/10 text-blue-400", viewer: "bg-zinc-500/10 text-zinc-400" };
+const roleBadgeColors: Record<string, string> = { owner: "bg-pal-500/10 text-pal-500", admin: "bg-purple-500/10 text-purple-400", member: "bg-blue-500/10 text-blue-400", viewer: "bg-zinc-500/10 text-zinc-400" };
 
 // ---------------------------------------------------------------------------
 // Page component
@@ -388,7 +388,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             type="text"
             value={general.workspaceName}
             onChange={(e) => setGeneral({ ...general, workspaceName: e.target.value })}
-            className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none transition-colors duration-150 focus:border-lantern-500/60"
+            className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none transition-colors duration-150 focus:border-pal-500/60"
           />
         </Field>
         <Field label="Workspace ID" hint="Example value, not your tenant ID.">
@@ -423,7 +423,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             <select
               value={general.defaultModel}
               onChange={(e) => setGeneral({ ...general, defaultModel: e.target.value })}
-              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-lantern-500/60"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-pal-500/60"
             >
               <option value="auto">Auto (recommended)</option>
               <option value="reasoning-large">Reasoning Large</option>
@@ -440,7 +440,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             <select
               value={general.defaultIsolation}
               onChange={(e) => setGeneral({ ...general, defaultIsolation: e.target.value })}
-              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-lantern-500/60"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-pal-500/60"
             >
               <option value="trusted">Trusted — shared namespace</option>
               <option value="standard">Standard — isolated pod</option>
@@ -542,7 +542,7 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
           <h3 className="text-sm font-semibold text-zinc-100">API Keys</h3>
           <p className="mt-0.5 text-xs text-zinc-500">Manage keys used to authenticate with the PAL API.</p>
         </div>
-        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400">Create API Key</button>
+        <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-3 py-1.5 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400">Create API Key</button>
       </div>
 
       {/* Desktop: table, unchanged */}
@@ -668,7 +668,7 @@ function ProvidersTab({ providers, saving, onKeyChange, onTest, onSave }: { prov
 
       <div className="flex justify-end">
         <button onClick={onSave} disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
+          className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Save className="h-3.5 w-3.5" />Save Changes</>}
         </button>
       </div>
@@ -711,7 +711,7 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
                     <span className={clsx("rounded-full px-2.5 py-0.5 text-xs font-medium", roleBadgeColors[member.role])}>Owner</span>
                   ) : (
                     <select value={member.role} onChange={(e) => onChangeRole(member.id, e.target.value)}
-                      className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+                      className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30">
                       <option value="admin">Admin</option><option value="member">Developer</option><option value="viewer">Viewer</option>
                     </select>
                   )}
@@ -751,7 +751,7 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
               {member.role !== "owner" && (
                 <div className="flex items-center gap-2">
                   <select value={member.role} onChange={(e) => onChangeRole(member.id, e.target.value)}
-                    className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+                    className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30">
                     <option value="admin">Admin</option><option value="member">Developer</option><option value="viewer">Viewer</option>
                   </select>
                   <button onClick={() => onRemoveClick(member)} className="inline-flex items-center gap-1 rounded px-2 py-2 text-xs text-red-400 transition-colors hover:bg-red-500/10"><Trash2 className="h-3 w-3" />Remove</button>
@@ -797,10 +797,10 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
         <h3 className="mb-4 text-sm font-semibold text-zinc-100">Current Plan</h3>
         <div className="grid grid-cols-3 gap-4">
           {plans.map((plan) => (
-            <div key={plan.name} className={clsx("rounded-xl border p-5 transition-colors", plan.current ? "border-lantern-500 bg-lantern-500/5" : "border-zinc-800 bg-surface-1")}>
+            <div key={plan.name} className={clsx("rounded-xl border p-5 transition-colors", plan.current ? "border-pal-500 bg-pal-500/5" : "border-zinc-800 bg-surface-1")}>
               <div className="flex items-start justify-between">
-                <div><p className="text-sm font-semibold text-zinc-100">{plan.name}</p><p className="mt-0.5 text-lg font-bold text-lantern-400">{plan.price}</p></div>
-                {plan.current && <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-xs font-medium text-lantern-400">Current</span>}
+                <div><p className="text-sm font-semibold text-zinc-100">{plan.name}</p><p className="mt-0.5 text-lg font-bold text-pal-400">{plan.price}</p></div>
+                {plan.current && <span className="rounded-full bg-pal-500/10 px-2 py-0.5 text-xs font-medium text-pal-400">Current</span>}
               </div>
               <ul className="mt-3 space-y-1">{plan.features.map((f) => <li key={f} className="text-xs text-zinc-500">{f}</li>)}</ul>
               {!plan.current && <button className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"><ArrowUpRight className="h-3 w-3" />{plan.name === "Enterprise" ? "Contact Sales" : "Upgrade"}</button>}
@@ -822,7 +822,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
               return (
                 <div key={item.label}>
                   <div className="flex items-baseline justify-between"><p className="text-sm font-medium text-zinc-300">{item.label}</p><p className="text-xs text-zinc-500">{item.format(item.used)} / {item.format(item.limit)}</p></div>
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface-3"><div className={clsx("h-full rounded-full transition-all", pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-lantern-500")} style={{ width: `${pct}%` }} /></div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface-3"><div className={clsx("h-full rounded-full transition-all", pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-pal-500")} style={{ width: `${pct}%` }} /></div>
                   <p className="mt-1 text-right text-[12px] text-zinc-600">{pct.toFixed(0)}% used</p>
                 </div>
               );
@@ -858,7 +858,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                     <tr className="border-t border-zinc-700">
                       <td className="font-semibold text-zinc-100">Total</td>
                       <td className="text-zinc-400">{fleetUsage.periods.total.runs}</td>
-                      <td className="font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</td>
+                      <td className="font-semibold text-pal-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</td>
                     </tr>
                   )}
                 </tbody>
@@ -884,7 +884,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                       <p className="text-sm font-semibold text-zinc-100">Total</p>
                       <p className="text-[12px] text-zinc-500">{fleetUsage.periods.total.runs} runs</p>
                     </div>
-                    <span className="text-sm font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</span>
+                    <span className="text-sm font-semibold text-pal-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -896,7 +896,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                 <thead><tr><th>Agent</th><th>Runs</th><th>Tokens</th><th>Cost</th></tr></thead>
                 <tbody>
                   {costByAgent.map((row) => <tr key={row.agent}><td className="font-medium text-zinc-300">{row.agent}</td><td className="text-zinc-400">{row.runs}</td><td className="text-zinc-400">{row.tokens}</td><td className="font-medium text-zinc-200">{row.cost}</td></tr>)}
-                  <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-lantern-400">$12.47</td></tr>
+                  <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-pal-400">$12.47</td></tr>
                 </tbody>
               </table>
 
@@ -916,7 +916,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                     <p className="text-sm font-semibold text-zinc-100">Total</p>
                     <p className="text-[12px] text-zinc-500">348 runs · 2.1M tokens</p>
                   </div>
-                  <span className="text-sm font-semibold text-lantern-400">$12.47</span>
+                  <span className="text-sm font-semibold text-pal-400">$12.47</span>
                 </div>
               </div>
             </>
@@ -934,7 +934,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
               <div className="relative flex-1">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500">$</span>
                 <input type="number" value={billing.budgetLimit} onChange={(e) => setBilling({ ...billing, budgetLimit: e.target.value })}
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 pl-7 pr-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 pl-7 pr-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30" />
               </div>
               <button onClick={onSetBudget} className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3">Set Budget</button>
             </div>
@@ -942,7 +942,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
           <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-surface-2 px-4 py-3">
             <div><p className="text-sm font-medium text-zinc-200">Hard limit</p><p className="text-xs text-zinc-500">Pause all agents when budget is exceeded.</p></div>
             <button onClick={onToggleHardLimit} className="text-zinc-400 transition-colors hover:text-zinc-200">
-              {billing.hardLimit ? <ToggleRight className="h-8 w-8 text-lantern-500" /> : <ToggleLeft className="h-8 w-8" />}
+              {billing.hardLimit ? <ToggleRight className="h-8 w-8 text-pal-500" /> : <ToggleLeft className="h-8 w-8" />}
             </button>
           </div>
         </div>

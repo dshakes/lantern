@@ -1,3 +1,5 @@
+# Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
+# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
 x-common-env: &common-env
   DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern?sslmode=disable
   REDIS_URL: redis://redis:6379
@@ -115,8 +117,8 @@ services:
 
   gateway:
     build:
-      context: ../../services/gateway
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/gateway/Dockerfile
     ports:
       - "8443:8443"
     environment:
@@ -134,8 +136,8 @@ services:
 
   model-router:
     build:
-      context: ../../services/model-router
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/model-router/Dockerfile
     ports:
       - "50053:50053"
     environment:
@@ -152,7 +154,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      LANTERN_API_URL: http://control-plane:8080
+      PAL_API_URL: http://control-plane:8080
       NEXT_PUBLIC_API_URL: http://localhost:8080
     depends_on:
       control-plane:
@@ -180,7 +182,7 @@ services:
       - "50055:50055"
       - "8085:8085"
     environment:
-      LANTERN_DEFAULT_MANAGER_ADDR: runtime-manager:50054
+      PAL_DEFAULT_MANAGER_ADDR: runtime-manager:50054
       JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
       LOG_LEVEL: debug
     depends_on:
@@ -190,8 +192,8 @@ services:
   runtime-manager:
     profiles: ["runtime"]
     build:
-      context: ../../services/runtime-manager
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/runtime-manager/Dockerfile
     ports:
       - "50054:50054"
     environment:

@@ -9,7 +9,7 @@
 
 > This is a strategy + gap-analysis document, not a spec. It establishes **where the
 > enterprise agent-runtime market is going (2025–2028)**, **where the named
-> incumbents lead and lag**, **where Lantern's runtime genuinely stands today
+> incumbents lead and lag**, **where PAL Runtime's runtime genuinely stands today
 > (honest, stub-aware)**, and a **prod-grade phased roadmap** to put PAL on par
 > with — then ahead of — AWS Bedrock AgentCore, Google Vertex Agent Engine,
 > Anthropic (Agent SDK + Managed Agents), OpenAI's agent suite, and Temporal.
@@ -32,10 +32,10 @@ defensible, futuristic position is vertical integration** — a single fabric wh
 the microVM boot, the durable journal entry, the agent's short-lived identity, the
 signed receipt, the OTel span, and the memory mutation are *the same event*,
 end-to-end traceable and externally verifiable. Golem calls this missing tier the
-**"agent execution kernel."** It maps almost exactly onto Lantern's existing
+**"agent execution kernel."** It maps almost exactly onto PAL Runtime's existing
 control-plane/data-plane split + `journal_events` + `run_receipts` + per-session
 microVM + cross-channel memory. **That coherence is the thing no single-layer
-vendor can ship — and it is Lantern's wedge.**
+vendor can ship — and it is PAL Runtime's wedge.**
 
 **Where PAL is today (honest, verified 2026-06-18 by reading the code, not a
 summary):** the runtime is **substantially further along than an earlier draft of
@@ -45,16 +45,16 @@ split, defense-in-depth egress, tenant-bound secret relay with mTLS, signed rece
 cross-channel memory), and most of the data path is real:
 
 - **Scheduler → Manager dispatch** is a real `GRPCDialer` (connection-pooled,
-  per-node), selected whenever `LANTERN_DEFAULT_MANAGER_ADDR` is set; the
+  per-node), selected whenever `PAL_DEFAULT_MANAGER_ADDR` is set; the
   `LogOnlyDialer` is only a dev fallback. *Not a blocker.*
   (`services/runtime-scheduler/internal/dialer/manager.go`,
   `cmd/scheduler/main.go:97`)
 - **Control-plane → Scheduler** is a real `grpcSchedulerClient`, selected on
-  `LANTERN_SCHEDULER_GRPC_ADDR`; `stubSchedulerClient` is the unset fallback.
+  `PAL_SCHEDULER_GRPC_ADDR`; `stubSchedulerClient` is the unset fallback.
   *Not a blocker.* (`services/control-plane/internal/handlers/runtime.go:442`)
 - **Harness `VendSecret`** calls the real `RuntimeHarness.VendSecret` RPC over an
   mTLS tonic channel (`tls.rs`); the stub is an explicit opt-in
-  (`LANTERN_ALLOW_SECRET_STUB=1`). *Done.*
+  (`PAL_ALLOW_SECRET_STUB=1`). *Done.*
 - **Harness heartbeat stream** — *was* a loopback stub (heartbeats dropped, egress
   revocations never propagated). **Closed in this branch** (commit on
   `feat/agent-runtime-nextgen`): a real bidirectional `RuntimeHarness.Heartbeat`
@@ -74,7 +74,7 @@ path the default"; it is mostly *validation + defaulting*, not greenfield.
 (ADR 0009) and express isolation as a **RuntimeClass tier on a pod**
 (runc → gVisor → Kata/Firecracker), the same architecture GKE Agent Sandbox and
 Northflank converged on in 2026. This unifies five backends into one substrate,
-matches Lantern's data-plane-on-customer-K8s deployment model, and preserves the
+matches PAL Runtime's data-plane-on-customer-K8s deployment model, and preserves the
 hard invariant that untrusted/hostile code never runs in a bare shared-kernel pod.
 
 ---
@@ -224,7 +224,7 @@ analyst material. Treat funding figures / exact version tags as directional.
   and Cloud audit logs miss data-plane events.
 - **The seam none of them own:** a **vendor-operated, multi-tenant, durable agent
   runtime that executes inside the customer's VPC with a tenant-scoped, tamper-evident,
-  data-plane audit substrate.** That seam is exactly Lantern's control-plane/data-plane
+  data-plane audit substrate.** That seam is exactly PAL Runtime's control-plane/data-plane
   + journal + receipts architecture. **Defend it.**
 
 ---
@@ -238,14 +238,14 @@ not exhaustive.
 | Component | Grade | Reality |
 |---|---|---|
 | **Scheduler placement** (`runtime-scheduler/internal/scoring`) | ✅ | 5-factor score (warm-pool/region/fair-share/cost/health), per-tenant hard cap, Postgres write-through. |
-| **Scheduler → Manager dispatch** (`internal/dialer/manager.go`) | ✅ | Real connection-pooled `GRPCDialer`, selected on `LANTERN_DEFAULT_MANAGER_ADDR`. `LogOnlyDialer` is a dev fallback only. |
+| **Scheduler → Manager dispatch** (`internal/dialer/manager.go`) | ✅ | Real connection-pooled `GRPCDialer`, selected on `PAL_DEFAULT_MANAGER_ADDR`. `LogOnlyDialer` is a dev fallback only. |
 | **Manager: Firecracker** (`backends/firecracker.rs`) | ⚠️ | Cold-boot KVM validated; warm snapshots via mmap; TAP+seccomp. Jailer snapshot-restore untested. |
 | **Manager: K8s Job** (`backends/k8s.rs`) | ✅ | Full kube client, Job+Pod, resource limits, seccomp `RuntimeDefault`, hardened `securityContext` (non-root, RO rootfs, cap-drop-ALL, no priv-esc, no SA token). **RuntimeClass tiering done** (runc/gVisor/Kata per ADR 0009) with a fail-closed second gate in `build_job`. Per-workload NetworkPolicy now **ingress+egress default-deny** with a DNS carve-out; explicit `hostNetwork/PID/IPC:false`; **node-affinity** pins untrusted→gVisor / hostile→Kata-labelled nodes; **RuntimeClass preflight** at boot disables a hardened capability (fail-closed) if its class is absent. |
 | **Manager: Kata / Wasmtime / Docker** | ⚠️ | Kata lifecycle exists, no IT; Wasmtime WASIp1 + epoch timeouts solid; Docker dev-only. |
-| **Control-plane → Scheduler** (`handlers/runtime.go`) | ✅ | Real `grpcSchedulerClient`, selected on `LANTERN_SCHEDULER_GRPC_ADDR`. `stubSchedulerClient` is the unset fallback. |
+| **Control-plane → Scheduler** (`handlers/runtime.go`) | ✅ | Real `grpcSchedulerClient`, selected on `PAL_SCHEDULER_GRPC_ADDR`. `stubSchedulerClient` is the unset fallback. |
 | **Harness: boot + egress** (`harness/src/egress.rs`) | ✅ | HTTP CONNECT proxy + nftables + token-bucket + audit-on-deny + deny private/link-local (169.254/RFC1918). |
 | **Harness ↔ Manager mTLS** (`manager_client.rs`, `tls.rs`) | ✅ | TLS channel from injected per-VM cert/key/CA; https when present, http dev fallback. |
-| **Harness `VendSecret`** (`manager_client.rs`) | ✅ | Calls the real `RuntimeHarness.VendSecret` RPC; stub is opt-in (`LANTERN_ALLOW_SECRET_STUB=1`). |
+| **Harness `VendSecret`** (`manager_client.rs`) | ✅ | Calls the real `RuntimeHarness.VendSecret` RPC; stub is opt-in (`PAL_ALLOW_SECRET_STUB=1`). |
 | **Harness heartbeat stream** (`manager_client.rs`) | ✅ | **Closed in this branch** — real bidi `Heartbeat` tonic stream over mTLS; proto round-trip + unit tests. Egress revocations on `HeartbeatAck` now propagate. |
 | **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ✅ | Manager `report` handler implemented — drains the harness stream, **cert-binds the reported `vm_id` to the mTLS peer** (no cross-tenant forgery), and forwards logs/OTLP/audit to the control-plane `POST /v1/runtime/report` (shared-token, fail-closed, VM-tenant binding). Audit lands in `runtime_audit_events`, logs in `runtime_vm_logs` (retention-swept). |
 | **Control-plane secret relay** (`handlers/runtime_secrets.go`) | ✅ | Token auth (constant-time), fail-closed, VM-binding check, rate-limited, audited. ADR 0008. |
@@ -442,7 +442,7 @@ and the **heartbeat stream** are real (the last closed in this branch). Remainin
 - Wire the manager-side **Report ingestion** handler (`service.rs`) and connect
   `harness/src/report.rs::forward_one` so OTLP/logs/audit have a sink.
 - Make the real path the **default** in the data-plane install (set
-  `LANTERN_SCHEDULER_GRPC_ADDR` / `LANTERN_DEFAULT_MANAGER_ADDR`), lands with Phase 1.
+  `PAL_SCHEDULER_GRPC_ADDR` / `PAL_DEFAULT_MANAGER_ADDR`), lands with Phase 1.
 **Gate:** end-to-end integration test — `control-plane Schedule → scheduler placement
 → manager Spawn (K8s) → harness boots, authenticates over mTLS, vends one real secret,
 egress-denies a blocked domain, streams a heartbeat the manager records → Terminate`.
@@ -496,7 +496,7 @@ legs green in CI + the execution legs runnable against a real cluster (operator 
   Postgres LISTEN/NOTIFY.
 **Remaining:**
 - ✅ *(done, this branch)* **`tenant_id` provenance (P0 security, invariant #7):** the
-  K8s backend derived the namespace from caller-supplied `env[LANTERN_TENANT_ID]` —
+  K8s backend derived the namespace from caller-supplied `env[PAL_TENANT_ID]` —
   an empty `spec.tenant_id` + caller env let a pod land in another tenant's namespace.
   Fixed: tenant is now a first-class authenticated field on the internal
   `ScheduleRequest`; `spawn_to_schedule`/`restore` fail closed on empty, strip + re-inject
@@ -505,11 +505,11 @@ legs green in CI + the execution legs runnable against a real cluster (operator 
 - ✅ *(done, this branch)* **Per-agent-instance identity:** every schedule mints a
   short-lived HS256-signed identity token (`internal/agentidentity`, `typ=agent-instance`,
   claims: instance/tenant/run/version) — injected into the spawn env
-  (`LANTERN_AGENT_INSTANCE_{ID,TOKEN}`), persisted on `runtime_vms`, stamped on
+  (`PAL_AGENT_INSTANCE_{ID,TOKEN}`), persisted on `runtime_vms`, stamped on
   `runtime_audit_events`, and verified by the secret relay when presented as a Bearer
   token (cross-checked to vm_id+tenant+non-terminal; additive/backward-compatible).
   ✅ *(done, PR #36)* manager/harness now **present the Bearer on `VendSecret`** (harness
-  reads `LANTERN_AGENT_INSTANCE_TOKEN` → `authorization` metadata → manager forwards to the
+  reads `PAL_AGENT_INSTANCE_TOKEN` → `authorization` metadata → manager forwards to the
   relay). ✅ *(done, PR #40)* the identity signature can now be **Ed25519** (externally
   verifiable, public key at `/.well-known/lantern-agent-identity`), additive over HS256 —
   the alg-confusion surface is defended (a published public key can't be used as an HMAC
@@ -517,7 +517,7 @@ legs green in CI + the execution legs runnable against a real cluster (operator 
 - ✅ *(done, PR #40)* **Non-owner Postgres role (`lantern_app`) RLS cutover machinery** —
   dual-pool (`AppPool`) + `db.WithTenantConn` (tx-local `app.tenant_id` GUC) + gRPC
   RunService cut over as the representative path; cross-tenant denial proven against real
-  Postgres. **Flag-gated OFF** (`LANTERN_RLS_ENFORCE`) so the live app is untouched. Follow-up:
+  Postgres. **Flag-gated OFF** (`PAL_RLS_ENFORCE`) so the live app is untouched. Follow-up:
   the per-handler REST cutover (mechanical, `TODO(rls-cutover)`-marked) + flip the flag after
   staging validation.
 **Gate:** security-auditor review; tests for (a) cross-tenant identity isolation;
@@ -634,14 +634,14 @@ Runtime-manager  (Rust)
   Gate 2 — build_job:
     confidential && kata_cc.is_none() → bail
     (defense-in-depth behind gate 1)
-  Selects Kata-CC RuntimeClass (LANTERN_RUNTIMECLASS_KATA_CC)
-  Injects LANTERN_CONFIDENTIAL=1 into pod env
+  Selects Kata-CC RuntimeClass (PAL_RUNTIMECLASS_KATA_CC)
+  Injects PAL_CONFIDENTIAL=1 into pod env
   Adds node affinity + toleration on lantern.dev/confidential-compute label
           │
           │ Kata-CC pod  (SEV-SNP / TDX encrypted VM)
           ▼
 In-VM harness  (Rust, PID 1)
-  Reads LANTERN_CONFIDENTIAL=1
+  Reads PAL_CONFIDENTIAL=1
   Best-effort measurement read:
     SEV-SNP: /dev/sev   TDX: configfs-tsm or /dev/tdx_guest
     Absent → measurement_present=false (frame still emits; no panic)
@@ -708,7 +708,7 @@ Do not read this block as a confidentiality guarantee.
 runtimeManager:
   runtimeClasses:
     kataCc: ""      # e.g. "kata-qemu-snp" — REQUIRED; empty → confidential refused
-  ccTech: ""        # hint injected as LANTERN_CC_TECH (e.g. "sev-snp")
+  ccTech: ""        # hint injected as PAL_CC_TECH (e.g. "sev-snp")
 ```
 
 Operators must label and taint CC nodes:

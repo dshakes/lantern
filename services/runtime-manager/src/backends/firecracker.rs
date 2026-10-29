@@ -156,9 +156,9 @@ impl SpawnContract {
     /// Build from the spawn request; uid/gid from `LANTERN_WORKLOAD_UID_DEFAULT`
     /// (default 1000) / `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid).
     pub fn from_schedule(req: &ScheduleRequest) -> Self {
-        let env_u32 = |k: &str| std::env::var(k).ok().and_then(|v| v.trim().parse().ok());
-        let uid = env_u32("LANTERN_WORKLOAD_UID_DEFAULT").unwrap_or(DEFAULT_WORKLOAD_UID);
-        let gid = env_u32("LANTERN_WORKLOAD_GID_DEFAULT").unwrap_or(uid);
+        let env_u32 = |k: &str| pal_env::var(k).ok().and_then(|v| v.trim().parse().ok());
+        let uid = env_u32("PAL_WORKLOAD_UID_DEFAULT").unwrap_or(DEFAULT_WORKLOAD_UID);
+        let gid = env_u32("PAL_WORKLOAD_GID_DEFAULT").unwrap_or(uid);
         Self::with_ids(req, uid, gid)
     }
 
@@ -526,7 +526,7 @@ impl VmConfig {
         //
         // LANTERN_VM_CERT_DIR overrides the default /run/lantern/certs so that
         // non-root dev environments (tests, CI, Lima) can write cert files.
-        let cert_root = std::env::var(crate::tls::ENV_VM_CERT_DIR)
+        let cert_root = pal_env::var(crate::tls::ENV_VM_CERT_DIR)
             .unwrap_or_else(|_| crate::tls::DEFAULT_VM_CERT_DIR.to_string());
         let tls_cert_path = format!("{cert_root}/{vm_id}/tls.crt");
         let tls_key_path = format!("{cert_root}/{vm_id}/tls.key");
@@ -2656,7 +2656,7 @@ pub fn make_mem_readonly(path: &std::path::Path) -> Result<()> {
 ///
 /// Spawns a blocking task because the ioctl is synchronous.
 pub async fn reflink_file_cow(src: &str, dest: &str) -> Result<()> {
-    let require_reflink = std::env::var("LANTERN_REQUIRE_REFLINK").as_deref() == Ok("1");
+    let require_reflink = pal_env::var("PAL_REQUIRE_REFLINK").as_deref() == Ok("1");
     let src = src.to_owned();
     let dest = dest.to_owned();
     tokio::task::spawn_blocking(move || reflink_file_cow_sync(&src, &dest, require_reflink))

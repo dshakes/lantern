@@ -60,7 +60,7 @@ export function ConfirmDialog({
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-on-flame transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               destructive
                 ? "bg-red-600 hover:bg-red-500"
-                : "bg-lantern-500 hover:bg-lantern-400"
+                : "bg-pal-500 hover:bg-pal-400"
             }`}
           >
             {loading ? (

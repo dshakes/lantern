@@ -23,15 +23,15 @@ func TestFromEnv(t *testing.T) {
 		want    string
 	}{
 		{name: "default log", want: "*mailer.LogMailer"},
-		{name: "smtp needs addr", env: map[string]string{"LANTERN_MAILER": "smtp"}, wantErr: "LANTERN_SMTP_ADDR"},
-		{name: "smtp ok", env: map[string]string{"LANTERN_MAILER": "smtp", "LANTERN_SMTP_ADDR": "mx:587"}, want: "*mailer.SMTPMailer"},
-		{name: "http needs url", env: map[string]string{"LANTERN_MAILER": "http"}, wantErr: "LANTERN_MAIL_HTTP_URL"},
-		{name: "http ok", env: map[string]string{"LANTERN_MAILER": "HTTP", "LANTERN_MAIL_HTTP_URL": "https://x"}, want: "*mailer.HTTPMailer"},
-		{name: "unknown", env: map[string]string{"LANTERN_MAILER": "carrier-pigeon"}, wantErr: "unknown LANTERN_MAILER"},
+		{name: "smtp needs addr", env: map[string]string{"PAL_MAILER": "smtp"}, wantErr: "LANTERN_SMTP_ADDR"},
+		{name: "smtp ok", env: map[string]string{"PAL_MAILER": "smtp", "PAL_SMTP_ADDR": "mx:587"}, want: "*mailer.SMTPMailer"},
+		{name: "http needs url", env: map[string]string{"PAL_MAILER": "http"}, wantErr: "LANTERN_MAIL_HTTP_URL"},
+		{name: "http ok", env: map[string]string{"PAL_MAILER": "HTTP", "PAL_MAIL_HTTP_URL": "https://x"}, want: "*mailer.HTTPMailer"},
+		{name: "unknown", env: map[string]string{"PAL_MAILER": "carrier-pigeon"}, wantErr: "unknown LANTERN_MAILER"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, k := range []string{"LANTERN_MAILER", "LANTERN_SMTP_ADDR", "LANTERN_MAIL_HTTP_URL"} {
+			for _, k := range []string{"PAL_MAILER", "PAL_SMTP_ADDR", "PAL_MAIL_HTTP_URL"} {
 				t.Setenv(k, tc.env[k])
 			}
 			m, err := FromEnv(zap.NewNop(), false)

@@ -21,7 +21,7 @@ import (
 // Exported so cmd/server/main.go can use it for startup guards without
 // creating a circular dependency.
 func IsProd() bool {
-	e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_ENV")))
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
 }
 
@@ -35,7 +35,7 @@ func isProd() bool { return IsProd() }
 // request — zero behavior change so the flag can be merged safely. When on:
 // missing scope returns HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE.
 func authzEnforce() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_AUTHZ_ENFORCE")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_AUTHZ_ENFORCE")))
 	return v == "1" || v == "true" || v == "on"
 }
 
@@ -137,7 +137,7 @@ func CheckSchedulerAddr(isProdEnv bool, addr string) (fatal bool, message string
 // Default dev value: http://localhost:3001 (Next.js dashboard dev server).
 // Override in any environment via LANTERN_CORS_ORIGINS (comma-separated list).
 func corsAllowedOrigins() map[string]struct{} {
-	raw := strings.TrimSpace(os.Getenv("LANTERN_CORS_ORIGINS"))
+	raw := strings.TrimSpace(os.Getenv("PAL_CORS_ORIGINS"))
 	if raw == "" {
 		raw = "http://localhost:3001"
 	}

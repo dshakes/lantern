@@ -29,9 +29,9 @@ cross-check the calendar items against your actual calendar. If it invents an
 event, that's a bug (the block is built deterministically, so a hallucination
 means the LLM ignored the block — tell me and I'll tighten the prompt).
 
-**Promise-keeping + closed-loop need `LANTERN_CONCIERGE=on`** (default off):
+**Promise-keeping + closed-loop need `PAL_CONCIERGE=on`** (default off):
 ```bash
-launchctl setenv LANTERN_CONCIERGE on   # then restart the bridge
+launchctl setenv PAL_CONCIERGE on   # then restart the bridge
 ```
 Then: add a calendar event via self-chat (`remind me to renew my passport`),
 approve it, and confirm `brief me` later shows it under **Handled recently**

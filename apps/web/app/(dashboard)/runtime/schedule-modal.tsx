@@ -208,7 +208,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
             value={form.image}
             onChange={(e) => setForm({ ...form, image: e.target.value })}
             placeholder="alpine:latest"
-            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-pal-500 focus:outline-none"
           />
         </ModalField>
 
@@ -221,7 +221,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
                 type="button"
                 className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
                   form.isolation === opt.value
-                    ? "border-lantern-500 bg-lantern-500/10 text-zinc-100"
+                    ? "border-pal-500 bg-pal-500/10 text-zinc-100"
                     : "border-zinc-700 bg-surface-0 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
                 }`}
               >
@@ -240,7 +240,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
             value={form.command}
             onChange={(e) => setForm({ ...form, command: e.target.value })}
             placeholder="sh,-c"
-            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-pal-500 focus:outline-none"
           />
         </ModalField>
 
@@ -253,7 +253,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
             onChange={(e) => setForm({ ...form, args: e.target.value })}
             placeholder="echo hello; sleep 60"
             rows={2}
-            className="w-full resize-y rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none"
+            className="w-full resize-y rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder-zinc-600 focus:border-pal-500 focus:outline-none"
           />
         </ModalField>
 
@@ -265,14 +265,14 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
                   value={row.key}
                   onChange={(e) => updateEnv(i, { key: e.target.value })}
                   placeholder="KEY"
-                  className="w-40 rounded-lg border border-zinc-700 bg-surface-0 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none"
+                  className="w-40 rounded-lg border border-zinc-700 bg-surface-0 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-pal-500 focus:outline-none"
                 />
                 <span className="text-zinc-600">=</span>
                 <input
                   value={row.value}
                   onChange={(e) => updateEnv(i, { value: e.target.value })}
                   placeholder="value"
-                  className="flex-1 rounded-lg border border-zinc-700 bg-surface-0 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none"
+                  className="flex-1 rounded-lg border border-zinc-700 bg-surface-0 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-pal-500 focus:outline-none"
                 />
                 <button
                   type="button"

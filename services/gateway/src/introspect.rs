@@ -112,10 +112,10 @@ impl ApiKeyIntrospector {
     /// when either `LANTERN_CONTROL_PLANE_URL` or `LANTERN_GRPC_SERVICE_TOKEN`
     /// is unset/empty.
     pub fn from_env() -> Option<Self> {
-        let base = std::env::var("LANTERN_CONTROL_PLANE_URL")
+        let base = pal_env::var("PAL_CONTROL_PLANE_URL")
             .ok()
             .filter(|v| !v.is_empty())?;
-        let service_token = std::env::var("LANTERN_GRPC_SERVICE_TOKEN")
+        let service_token = pal_env::var("PAL_GRPC_SERVICE_TOKEN")
             .ok()
             .filter(|v| !v.is_empty())?;
         let http = reqwest::Client::builder()

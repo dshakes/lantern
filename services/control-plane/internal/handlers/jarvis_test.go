@@ -13,11 +13,11 @@ func TestBriefChannel(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	h := &JarvisHandler{}
 
-	t.Setenv("LANTERN_JARVIS_BRIEF_CHANNEL", "")
+	t.Setenv("PAL_JARVIS_BRIEF_CHANNEL", "")
 	if got := h.briefChannel(); got != "" {
 		t.Errorf("no env/file → want empty, got %q", got)
 	}
-	t.Setenv("LANTERN_JARVIS_BRIEF_CHANNEL", "email")
+	t.Setenv("PAL_JARVIS_BRIEF_CHANNEL", "email")
 	if got := h.briefChannel(); got != "email" {
 		t.Errorf("env only → want email, got %q", got)
 	}
@@ -70,7 +70,7 @@ func TestEmbedConcurrency(t *testing.T) {
 		"abc": 4, // non-numeric → default
 	}
 	for env, want := range cases {
-		t.Setenv("LANTERN_EMBED_CONCURRENCY", env)
+		t.Setenv("PAL_EMBED_CONCURRENCY", env)
 		if got := embedConcurrency(); got != want {
 			t.Errorf("embedConcurrency() with env %q = %d, want %d", env, got, want)
 		}
