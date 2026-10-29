@@ -153,7 +153,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	switch signupMode() {
 	case signupOpen:
 	case signupInvite:
-		if !inviteCodeValid(os.Getenv("LANTERN_SIGNUP_INVITE_SECRET"), req.Email, req.InviteCode, time.Now()) {
+		if !inviteCodeValid(os.Getenv("PAL_SIGNUP_INVITE_SECRET"), req.Email, req.InviteCode, time.Now()) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "a valid invite code is required to sign up"})
 			return
 		}

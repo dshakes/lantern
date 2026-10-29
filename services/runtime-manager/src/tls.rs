@@ -66,7 +66,7 @@ use tonic::transport::ServerTlsConfig;
 /// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
-        std::env::var("LANTERN_ENV")
+        pal_env::var("PAL_ENV")
             .unwrap_or_default()
             .to_lowercase()
             .as_str(),
@@ -79,9 +79,9 @@ pub fn is_prod_env() -> bool {
 // ---------------------------------------------------------------------------
 
 /// mTLS env-var names injected at deploy time (manager SERVER identity).
-pub const ENV_CA: &str = "LANTERN_MANAGER_TLS_CA";
-pub const ENV_CERT: &str = "LANTERN_MANAGER_TLS_CERT";
-pub const ENV_KEY: &str = "LANTERN_MANAGER_TLS_KEY";
+pub const ENV_CA: &str = "PAL_MANAGER_TLS_CA";
+pub const ENV_CERT: &str = "PAL_MANAGER_TLS_CERT";
+pub const ENV_KEY: &str = "PAL_MANAGER_TLS_KEY";
 
 /// Env-var names injected into each VM so its harness can present a
 /// CA-signed CLIENT cert (CN=vm_id) on the harness↔manager channel.
@@ -96,12 +96,12 @@ pub const VM_ENV_CA: &str = "LANTERN_MANAGER_TLS_CA";
 /// that issues per-VM client certs).  Defaults to the server `ENV_CA`/`ENV_KEY`
 /// when unset — i.e. the manager signs VM certs with the same CA it presents,
 /// which is the common single-CA topology.
-pub const ENV_SIGNING_CA_CERT: &str = "LANTERN_VM_SIGNING_CA_CERT";
-pub const ENV_SIGNING_CA_KEY: &str = "LANTERN_VM_SIGNING_CA_KEY";
+pub const ENV_SIGNING_CA_CERT: &str = "PAL_VM_SIGNING_CA_CERT";
+pub const ENV_SIGNING_CA_KEY: &str = "PAL_VM_SIGNING_CA_KEY";
 
 /// Root directory under which per-VM cert material is written.  Overridable so
 /// tests (and the Firecracker boot-args contract) can target a known path.
-pub const ENV_VM_CERT_DIR: &str = "LANTERN_VM_CERT_DIR";
+pub const ENV_VM_CERT_DIR: &str = "PAL_VM_CERT_DIR";
 pub const DEFAULT_VM_CERT_DIR: &str = "/run/lantern/certs";
 
 /// Short TTL for issued per-VM client certs.  A VM that outlives this must
@@ -113,9 +113,9 @@ const VM_CERT_TTL_DAYS: i64 = 1;
 ///
 /// The returned config requires client certs signed by `LANTERN_MANAGER_TLS_CA`.
 pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
-    let ca_path = std::env::var(ENV_CA).ok();
-    let cert_path = std::env::var(ENV_CERT).ok();
-    let key_path = std::env::var(ENV_KEY).ok();
+    let ca_path = pal_env::var(ENV_CA).ok();
+    let cert_path = pal_env::var(ENV_CERT).ok();
+    let key_path = pal_env::var(ENV_KEY).ok();
 
     match (ca_path, cert_path, key_path) {
         (Some(ca), Some(cert), Some(key)) => {
@@ -135,7 +135,7 @@ pub fn build_server_tls_config() -> anyhow::Result<Option<ServerTlsConfig>> {
                 eprintln!(
                     "FATAL: {ENV_CA}, {ENV_CERT}, {ENV_KEY} are required in production \
                      (LANTERN_ENV={:?}). Refusing to start without mTLS.",
-                    std::env::var("LANTERN_ENV").unwrap_or_default()
+                    pal_env::var("PAL_ENV").unwrap_or_default()
                 );
                 std::process::exit(1);
             }
@@ -456,16 +456,16 @@ fn set_dir_mode_0700(dir: &Path) -> anyhow::Result<()> {
 /// available — in that case per-VM cert issuance is skipped (dev plaintext;
 /// the prod gate in [`build_server_tls_config`] already forces mTLS on).
 pub fn load_signing_ca() -> anyhow::Result<Option<(String, String)>> {
-    let cert_path = std::env::var(ENV_SIGNING_CA_CERT)
+    let cert_path = pal_env::var(ENV_SIGNING_CA_CERT)
         .ok()
-        .or_else(|| std::env::var(ENV_CA).ok());
+        .or_else(|| pal_env::var(ENV_CA).ok());
     // The server cert env var holds the SERVER leaf, not a CA key, so we only
     // fall back to ENV_KEY when it is explicitly the CA key topology. To stay
     // safe we require an explicit signing-CA key unless ENV_CA doubles as a
     // self-signed CA whose key is in ENV_KEY.
-    let key_path = std::env::var(ENV_SIGNING_CA_KEY)
+    let key_path = pal_env::var(ENV_SIGNING_CA_KEY)
         .ok()
-        .or_else(|| std::env::var(ENV_KEY).ok());
+        .or_else(|| pal_env::var(ENV_KEY).ok());
 
     match (cert_path, key_path) {
         (Some(c), Some(k)) => {

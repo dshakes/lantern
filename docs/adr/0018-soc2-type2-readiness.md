@@ -23,12 +23,12 @@ common enterprise gate.
 What already exists (grounded in the tree):
 
 - **Tenant isolation** — Postgres FORCE Row-Level Security on every
-  tenant-scoped table, gated by `LANTERN_RLS_ENFORCE=1`, with a catalog
+  tenant-scoped table, gated by `PAL_RLS_ENFORCE=1`, with a catalog
   gate-test that fails CI if a new tenant table ships without a policy
   (ADR 0011; `internal/handlers/*_rls_test.go`).
 - **gRPC trust boundary** — shared-service-token interceptor on `:50051`,
   `:50052`, `:50055`, fail-closed in prod (invariant #7,
-  `LANTERN_GRPC_SERVICE_TOKEN`).
+  `PAL_GRPC_SERVICE_TOKEN`).
 - **Encryption at rest for secrets** — AES-256-GCM via `internal/secrets` for
   `llm_provider_configs.api_key_encrypted`, `connector_installs`, voice provider
   config, and bridge PII stores (`bridge-core/src/secure-store.ts`).

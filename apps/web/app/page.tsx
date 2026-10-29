@@ -16,7 +16,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LanternMark } from "@/components/lantern-mark";
+import { PalMark } from "@/components/pal-mark";
 import { api } from "@/lib/api";
 import { getLastAgent, clearLastAgent, setLastAgent } from "@/lib/last-agent";
 
@@ -93,7 +93,7 @@ export default function HomePage() {
           aria-hidden
           className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-800 bg-surface-1"
         >
-          <LanternMark className="h-8 w-8" />
+          <PalMark className="h-8 w-8" />
         </div>
         {status === "deciding" ? (
           <p className="text-xs text-zinc-500">Loading your workspace…</p>

@@ -24,7 +24,7 @@ through `internal/runclient`:
 | Var                           | Default            | Purpose                                                                                                       |
 | ----------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- |
 | `CONTROL_PLANE_ADDR`          | `localhost:50051`  | Control-plane gRPC address the scheduler dials for `CreateRun`. In-cluster: `control-plane:50051`.            |
-| `LANTERN_GRPC_SERVICE_TOKEN`  | _(unset)_          | When set, attached as `x-lantern-service-token` metadata so the control-plane's service-token interceptor accepts the call. When unset, nothing extra is attached (additive, dev pass-through). |
+| `PAL_GRPC_SERVICE_TOKEN`  | _(unset)_          | When set, attached as `x-lantern-service-token` metadata so the control-plane's service-token interceptor accepts the call. When unset, nothing extra is attached (additive, dev pass-through). |
 
 Transport is insecure (cleartext) — the scheduler↔control-plane hop is on a
 private network / service mesh, matching how the runtime-scheduler dials the

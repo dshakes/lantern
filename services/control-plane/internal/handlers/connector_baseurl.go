@@ -30,7 +30,7 @@ var connectorHosts = map[string]string{
 	"api.pagerduty.com":  "PAGERDUTY",
 }
 
-const connectorBaseURLPrefix = "LANTERN_CONNECTOR_BASEURL_"
+const connectorBaseURLPrefix = "PAL_CONNECTOR_BASEURL_"
 
 // parseConnectorBaseURL validates an override value: absolute http(s) URL with a host.
 func parseConnectorBaseURL(raw string) (*url.URL, error) {

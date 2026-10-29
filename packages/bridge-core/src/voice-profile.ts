@@ -28,7 +28,7 @@ import { join, dirname } from "node:path";
 
 /** Returns true when LANTERN_VOICE_REASONING is "1", "true", or "on". */
 export function isVoiceReasoningEnabled(): boolean {
-  const v = (process.env["LANTERN_VOICE_REASONING"] ?? "").toLowerCase();
+  const v = (process.env["PAL_VOICE_REASONING"] ?? "").toLowerCase();
   return v === "1" || v === "true" || v === "on";
 }
 

@@ -42,9 +42,9 @@ type freeTier struct {
 // the default rather than silently removing a cap.
 func freeTierFromEnv() freeTier {
 	return freeTier{
-		CostUSDPerDay:        envFloat("LANTERN_FREE_TIER_COST_USD_PER_DAY", defaultFreeCostUSDPerDay),
-		MaxVMs:               int(envFloat("LANTERN_FREE_TIER_MAX_VMS", defaultFreeMaxVMs)),
-		RuntimeCostUSDPerDay: envFloat("LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY", defaultFreeRuntimeCostUSDPerDay),
+		CostUSDPerDay:        envFloat("PAL_FREE_TIER_COST_USD_PER_DAY", defaultFreeCostUSDPerDay),
+		MaxVMs:               int(envFloat("PAL_FREE_TIER_MAX_VMS", defaultFreeMaxVMs)),
+		RuntimeCostUSDPerDay: envFloat("PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY", defaultFreeRuntimeCostUSDPerDay),
 	}
 }
 

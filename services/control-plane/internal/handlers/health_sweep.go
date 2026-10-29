@@ -158,9 +158,9 @@ func NewHealthSweeper(logger *zap.Logger, auth *AuthHandler) *HealthSweeper {
 
 	// model-router: probe when USE_MODEL_ROUTER is on OR the addr is
 	// explicitly set (operator may want monitoring without the cutover active).
-	mrAddr := strings.TrimSpace(os.Getenv("LANTERN_MODEL_ROUTER_ADDR"))
+	mrAddr := strings.TrimSpace(os.Getenv("PAL_MODEL_ROUTER_ADDR"))
 	mrOn := func() bool {
-		v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_USE_MODEL_ROUTER")))
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_USE_MODEL_ROUTER")))
 		return v == "1" || v == "true" || v == "on"
 	}()
 	if mrOn && mrAddr == "" {
@@ -168,9 +168,9 @@ func NewHealthSweeper(logger *zap.Logger, auth *AuthHandler) *HealthSweeper {
 	}
 	add("model-router", mrAddr)
 
-	add("runtime-scheduler", strings.TrimSpace(os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR")))
-	add("runtime-manager", strings.TrimSpace(os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR")))
-	add("workflow-engine", strings.TrimSpace(os.Getenv("LANTERN_WORKFLOW_ENGINE_ADDR")))
+	add("runtime-scheduler", strings.TrimSpace(os.Getenv("PAL_SCHEDULER_GRPC_ADDR")))
+	add("runtime-manager", strings.TrimSpace(os.Getenv("PAL_DEFAULT_MANAGER_ADDR")))
+	add("workflow-engine", strings.TrimSpace(os.Getenv("PAL_WORKFLOW_ENGINE_ADDR")))
 
 	return hs
 }
@@ -294,7 +294,7 @@ func RunHealthSweepLoop(ctx context.Context, hs *HealthSweeper, interval time.Du
 // Returns 60s when unset.
 // Returns 0 when "0" or "off" (caller should disable the loop).
 func healthSweepInterval() time.Duration {
-	v := strings.TrimSpace(os.Getenv("LANTERN_HEALTH_SWEEP_INTERVAL"))
+	v := strings.TrimSpace(os.Getenv("PAL_HEALTH_SWEEP_INTERVAL"))
 	if v == "" {
 		return 60 * time.Second
 	}

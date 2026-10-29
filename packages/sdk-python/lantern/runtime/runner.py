@@ -17,11 +17,11 @@ import argparse
 import asyncio
 import importlib
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from lantern import _env
 from lantern.agent import get_agent, list_agents
 from lantern.runtime.context import build_dev_context, build_production_context
 from lantern.runtime.runtime import RuntimeMode, detect_mode
@@ -115,17 +115,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--agent",
-        default=os.environ.get("LANTERN_AGENT_NAME"),
+        default=_env.get("AGENT_NAME"),
         help="Agent name (or set LANTERN_AGENT_NAME)",
     )
     parser.add_argument(
         "--input",
-        default=os.environ.get("LANTERN_INPUT", "{}"),
+        default=_env.get("INPUT", "{}"),
         help="JSON input (or set LANTERN_INPUT)",
     )
     parser.add_argument(
         "--dir",
-        default=os.environ.get("LANTERN_AGENT_DIR"),
+        default=_env.get("AGENT_DIR"),
         help="Directory to search for agent modules",
     )
 

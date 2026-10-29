@@ -1,6 +1,6 @@
 # data-pipeline
 
-> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> **Heads up: this example targets the PAL Runtime SDK in-VM runtime, which is not
 > runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
 > `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
 > `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
@@ -101,7 +101,7 @@ lantern run data-pipeline --input '{"skipDistribution": true}'
 }
 ```
 
-## Lantern features demonstrated
+## PAL Runtime features demonstrated
 
 - **Scheduled triggers**: Runs automatically every Monday at 9am via cron — no external scheduler needed
 - **Parallel data fetching**: `step.map` fetches from HubSpot, Stripe, and Google Analytics concurrently

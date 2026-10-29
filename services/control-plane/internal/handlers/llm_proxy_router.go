@@ -70,7 +70,7 @@ func (h *LlmProxyHandler) modelRouterEnabled() bool {
 	if h.router.enabled != nil {
 		return *h.router.enabled
 	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_USE_MODEL_ROUTER"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PAL_USE_MODEL_ROUTER"))) {
 	case "1", "true", "on", "yes":
 		return true
 	default:
@@ -83,7 +83,7 @@ func (h *LlmProxyHandler) modelRouterAddr() string {
 	if h.router.addr != "" {
 		return h.router.addr
 	}
-	if v := strings.TrimSpace(os.Getenv("LANTERN_MODEL_ROUTER_ADDR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PAL_MODEL_ROUTER_ADDR")); v != "" {
 		return v
 	}
 	return modelRouterDefaultAddr
@@ -125,7 +125,7 @@ func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, e
 	}
 	// The router requires x-lantern-service-token (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
-	if tok := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"); tok != "" {
+	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))
 	}
 	conn, err := grpc.NewClient(addr, opts...)

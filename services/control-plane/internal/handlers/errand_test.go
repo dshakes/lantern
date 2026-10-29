@@ -76,7 +76,7 @@ func (d *recordingDialer) last() recordedCall {
 
 // newErrandHandlerWithDialer builds a handler backed by a real pool, with an
 // injected dialer (no LLM). The LANTERN_ERRAND env var must be set by the
-// caller via t.Setenv("LANTERN_ERRAND", "1") for endpoints to respond (not 404).
+// caller via t.Setenv("PAL_ERRAND", "1") for endpoints to respond (not 404).
 func newErrandHandlerWithDialer(t *testing.T, pool *pgxpool.Pool, dialer OutboundDialer) *ErrandHandler {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
@@ -355,7 +355,7 @@ func TestErrand_GateOff_404(t *testing.T) {
 // TestErrand_ProposeStoresProposed verifies a propose inserts a 'proposed' row
 // and returns {id, disclosurePreview} containing the compliance markers.
 func TestErrand_ProposeStoresProposed(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -408,7 +408,7 @@ func TestErrand_ProposeStoresProposed(t *testing.T) {
 // TestErrand_ProposeDNC_409 confirms that proposing a call to a DNC number
 // returns 409 and never touches the DB beyond the DNC check.
 func TestErrand_ProposeDNC_409(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -433,7 +433,7 @@ func TestErrand_ProposeDNC_409(t *testing.T) {
 //   - call's TwiML contains the AI-disclosure + recording phrases
 //   - errand moves to 'placed'
 func TestErrand_ConfirmAndCall_PlacesOneCall(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -485,7 +485,7 @@ func TestErrand_ConfirmAndCall_PlacesOneCall(t *testing.T) {
 // TestErrand_ConfirmAndCall_Idempotent confirms that a second confirm on an
 // already-placed errand returns 409 and places no additional call.
 func TestErrand_ConfirmAndCall_Idempotent(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -516,7 +516,7 @@ func TestErrand_ConfirmAndCall_Idempotent(t *testing.T) {
 // from separate goroutines (under -race). Exactly one must succeed (200), the
 // other must get 409. Exactly one call must be placed.
 func TestErrand_ConfirmAndCall_Concurrent(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -568,7 +568,7 @@ func TestErrand_ConfirmAndCall_Concurrent(t *testing.T) {
 // TestErrand_ConfirmAndCall_NonOwner_403 proves that a non-owner caller cannot
 // trigger a dial (the owner-only gate must fire before the dialer is reached).
 func TestErrand_ConfirmAndCall_NonOwner_403(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -589,7 +589,7 @@ func TestErrand_ConfirmAndCall_NonOwner_403(t *testing.T) {
 // TestErrand_ConfirmAndCall_DNCRefused proves that a number added to DNC between
 // propose-time and confirm-time is refused at confirm-time and no call is placed.
 func TestErrand_ConfirmAndCall_DNCRefused(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -624,7 +624,7 @@ func TestErrand_ConfirmAndCall_DNCRefused(t *testing.T) {
 // TestErrand_OptOut_AddsDNC proves that opt-out writes the number to dnc_numbers
 // and marks the errand 'cancelled'.
 func TestErrand_OptOut_AddsDNC(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -676,7 +676,7 @@ func newEnforcedErrandHandler(t *testing.T, e *enforcedServer) *ErrandHandler {
 // TestRLSErrands_SameTenantWorks proves propose + list work under genuine
 // RLS enforcement (AppPool as lantern_app).
 func TestRLSErrands_SameTenantWorks(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	e := newEnforcedServer(t)
 	h := newEnforcedErrandHandler(t, e)
 
@@ -710,7 +710,7 @@ func TestRLSErrands_SameTenantWorks(t *testing.T) {
 // TestRLSErrands_CrossTenantBlocked proves cross-tenant reads are blocked at
 // the Postgres layer under genuine RLS enforcement.
 func TestRLSErrands_CrossTenantBlocked(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	e := newEnforcedServer(t)
 	h := newEnforcedErrandHandler(t, e)
 
@@ -810,8 +810,8 @@ func TestContainsOptOut_Table(t *testing.T) {
 // TestErrandTurn_OptOut_DNC verifies that an opt-out phrase spoken by the
 // callee adds their number to dnc_numbers and marks the errand 'cancelled'.
 func TestErrandTurn_OptOut_DNC(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
-	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off") // bypass Twilio sig verify
+	t.Setenv("PAL_ERRAND", "1")
+	t.Setenv("PAL_TWILIO_WEBHOOK_AUTH", "off") // bypass Twilio sig verify
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -859,8 +859,8 @@ func TestErrandTurn_OptOut_DNC(t *testing.T) {
 // TestErrandTurn_MaxTurns_Completed checks that the max-turn cap marks the
 // errand completed and returns a <Hangup/>.
 func TestErrandTurn_MaxTurns_Completed(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
-	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	t.Setenv("PAL_ERRAND", "1")
+	t.Setenv("PAL_TWILIO_WEBHOOK_AUTH", "off")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -898,8 +898,8 @@ func TestErrandTurn_MaxTurns_Completed(t *testing.T) {
 // TestErrandTurn_NormalTurn_Continue checks a successful LLM turn that is not
 // done: response contains <Gather, the say text, transcript grew by 2, turns++.
 func TestErrandTurn_NormalTurn_Continue(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
-	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	t.Setenv("PAL_ERRAND", "1")
+	t.Setenv("PAL_TWILIO_WEBHOOK_AUTH", "off")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -960,8 +960,8 @@ func TestErrandTurn_NormalTurn_Continue(t *testing.T) {
 // TestErrandTurn_DoneTurn_Completed checks that done=true marks status=completed
 // and returns a <Hangup/> response containing the say text.
 func TestErrandTurn_DoneTurn_Completed(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
-	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	t.Setenv("PAL_ERRAND", "1")
+	t.Setenv("PAL_TWILIO_WEBHOOK_AUTH", "off")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -1003,8 +1003,8 @@ func TestErrandTurn_DoneTurn_Completed(t *testing.T) {
 // TestErrandTurn_LLMError_GracefulEnd checks that an LLM error causes a graceful
 // <Hangup/> response and marks the errand completed.
 func TestErrandTurn_LLMError_GracefulEnd(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
-	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	t.Setenv("PAL_ERRAND", "1")
+	t.Setenv("PAL_TWILIO_WEBHOOK_AUTH", "off")
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {
 		t.Fatalf("Migrate: %v", err)
@@ -1039,7 +1039,7 @@ func TestErrandTurn_LLMError_GracefulEnd(t *testing.T) {
 // TestErrandTurn_BadSignature_403 verifies that a request with a wrong
 // X-Twilio-Signature (when an authToken IS configured) returns 403.
 func TestErrandTurn_BadSignature_403(t *testing.T) {
-	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("PAL_ERRAND", "1")
 	// Do NOT set LANTERN_TWILIO_WEBHOOK_AUTH=off — signature verification must run.
 	pool := openTestPool(t)
 	if err := db.Migrate(context.Background(), pool, false); err != nil {

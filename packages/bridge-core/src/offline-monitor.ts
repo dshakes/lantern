@@ -30,10 +30,10 @@ export interface OfflineMonitorConfig {
 
 export function defaultOfflineMonitorConfig(channelLabel: string): OfflineMonitorConfig {
   return {
-    thresholdSec: parseInt(process.env.LANTERN_OFFLINE_ALERT_AFTER_SEC ?? "300", 10),
+    thresholdSec: parseInt(process.env.PAL_OFFLINE_ALERT_AFTER_SEC ?? "300", 10),
     checkIntervalSec: 60,
     alertCooldownSec: 4 * 3600, // 4h between repeats
-    dashboardUrl: process.env.LANTERN_DASHBOARD_URL || "http://localhost:3001",
+    dashboardUrl: process.env.PAL_DASHBOARD_URL || "http://localhost:3001",
     channelLabel,
   };
 }

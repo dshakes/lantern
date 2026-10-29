@@ -39,7 +39,7 @@ function git(args: string): string | null {
  */
 export function buildInfo(): BuildInfo {
   if (cached) return cached;
-  const envSha = (process.env.LANTERN_BUILD_SHA || "").trim();
+  const envSha = (process.env.PAL_BUILD_SHA || "").trim();
   const sha = envSha || git("rev-parse --short HEAD") || "unknown";
   // Only meaningful for a source checkout; a baked SHA is authoritative.
   const dirty = envSha ? false : (git("status --porcelain") ?? "") !== "";

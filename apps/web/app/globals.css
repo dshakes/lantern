@@ -1,96 +1,68 @@
 @import "tailwindcss";
 
-/* Brand tokens ("glass & flame") — verbatim copy of the :root blocks in
-   docs/brand/tokens.css (canonical, lantern-site). This is the ONE place the
-   brand palette lives in apps/web; everything below derives from it.
-   flame = untrusted guest code / primary accent · glass = the microVM wall ·
-   patina = trusted host · signal = denied. */
+/* PAL brand tokens: values mirror docs/brand/tokens.css (canonical). This is
+   the ONE place the palette lives in apps/web; everything below derives from it.
+   pal = coral -> magenta (gradient only for brand moments; solid for UI) ·
+   PAL Runtime = indigo -> cyan (scoped by .theme-runtime) · sig-* = semantic
+   ok / hold / bad, deliberately NOT brand hues. */
 :root {
-  /* day */
-  --lx-bg: #f2f5f8;
-  --lx-surface: #ffffff;
-  --lx-surface-2: #e7edf3;
-  --lx-ink: #0f1b2d;
-  --lx-ink-2: #44546a;
-  --lx-ink-3: #5d6d83;
-  --lx-line: #c3cedb;
+  --pal-coral: #ff7a3d;
+  --pal-magenta: #e5207f;
+  --rt-indigo: #6c5cff;
+  --rt-cyan: #14c8f0;
+  --pal-grad: linear-gradient(135deg, var(--pal-coral), var(--pal-magenta));
+  --rt-grad: linear-gradient(135deg, var(--rt-indigo), var(--rt-cyan));
+  --pal-radius-s: 10px;
+  --pal-radius: 16px;
+  --pal-radius-l: 24px;
 
-  --lx-flame: #a85e06;       /* untrusted code, the guest — the flame */
-  --lx-flame-soft: #fbebd3;
-  --lx-glass: #1c76a6;       /* the microVM wall — the glass */
-  --lx-glass-soft: #dcedf8;
-  --lx-patina: #17785f;      /* trusted host infrastructure — verdigris */
-  --lx-patina-soft: #d6efe7;
-  --lx-signal: #c23b29;      /* denied, a boundary that must not be crossed */
-  --lx-signal-soft: #f8deda;
-
-  --lx-font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --lx-font-text: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --lx-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --lx-radius-s: 6px;   /* chips, inputs */
-  --lx-radius-m: 10px;  /* nodes, code blocks */
-  --lx-radius-l: 18px;  /* groups, the VM wall */
-
-  --lx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --lx-dur-ui: 160ms;     /* responses to a person's action */
-  --lx-dur-packet: 2.8s;  /* one packet crossing a diagram, linear */
+  /* dark (default) */
+  --pal-bg: #0b0c0f;
+  --pal-surface: #131419;
+  --pal-surface-2: #1a1c22;
+  --pal-text: #fafaf8;
+  --pal-text-2: #b9bac0;
+  --pal-text-3: #8c8e96;
+  --pal-accent-text: #ff8a6b;
+  --sig-ok: #5fd3a6;
+  --sig-ok-soft: #12332a;
+  --sig-hold: #ffb547;
+  --sig-bad: #ff8a8a;
+  --sig-bad-soft: #3a1b1d;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --lx-bg: #0b1220;
-    --lx-surface: #111b2e;
-    --lx-surface-2: #17243b;
-    --lx-ink: #e8eef5;
-    --lx-ink-2: #a9b6c8;
-    --lx-ink-3: #7a8aa2;
-    --lx-line: #2b3b57;
-    --lx-flame: #ffb547;
-    --lx-flame-soft: #3a2a12;
-    --lx-glass: #7cc4e8;
-    --lx-glass-soft: #13314a;
-    --lx-patina: #4fc1a6;
-    --lx-patina-soft: #123a33;
-    --lx-signal: #ff7262;
-    --lx-signal-soft: #3e1c1a;
-  }
-}
-
-:root[data-theme="dark"] {
-  --lx-bg: #0b1220;
-  --lx-surface: #111b2e;
-  --lx-surface-2: #17243b;
-  --lx-ink: #e8eef5;
-  --lx-ink-2: #a9b6c8;
-  --lx-ink-3: #7a8aa2;
-  --lx-line: #2b3b57;
-  --lx-flame: #ffb547;
-  --lx-flame-soft: #3a2a12;
-  --lx-glass: #7cc4e8;
-  --lx-glass-soft: #13314a;
-  --lx-patina: #4fc1a6;
-  --lx-patina-soft: #123a33;
-  --lx-signal: #ff7262;
-  --lx-signal-soft: #3e1c1a;
+:root[data-theme="light"] {
+  --pal-bg: #fafaf8;
+  --pal-surface: #ffffff;
+  --pal-surface-2: #f1f0ec;
+  --pal-text: #0b0c0f;
+  --pal-text-2: #45474e;
+  --pal-text-3: #62656d;
+  --pal-accent-text: #c81e5a;
+  --sig-ok: #146b4b;
+  --sig-ok-soft: #d8f0e6;
+  --sig-hold: #a8460a;
+  --sig-bad: #b42323;
+  --sig-bad-soft: #fbe0e0;
 }
 
 /* Dashboard scales, derived from the brand. Dark values here (dark is the
    default theme); the light remap lives at the bottom of this file under
    :root[data-theme="light"]. Tailwind v4 emits each as a CSS var, so the
-   ~2,900 zinc/surface/lantern utilities re-skin from here alone.
-   `lantern-*` is the accent scale = flame. */
+   ~2,900 zinc/surface/pal utilities re-skin from here alone.
+   `pal-*` is the accent scale = flame. */
 @theme {
-  --color-lantern-50: #fff6e8;
-  --color-lantern-100: #ffe9c7;
-  --color-lantern-200: #ffd89c;
-  --color-lantern-300: #ffc670;
-  --color-lantern-400: #ffb547; /* --lx-flame (dark) */
-  --color-lantern-500: #f5a32e;
-  --color-lantern-600: #d9861a;
-  --color-lantern-700: #a85e06;
-  --color-lantern-800: #6e3d05;
-  --color-lantern-900: #3a2a12;
+  /* pal accent: coral (400, text + solid fill) -> magenta (600). */
+  --color-pal-50: #fff1ec;
+  --color-pal-100: #ffe0d6;
+  --color-pal-200: #ffc4b0;
+  --color-pal-300: #ffa88c;
+  --color-pal-400: #ff8a6b; /* --pal-accent-text (dark) */
+  --color-pal-500: #ff7a3d; /* --pal-coral */
+  --color-pal-600: #e5207f; /* --pal-magenta */
+  --color-pal-700: #b8186a;
+  --color-pal-800: #5c1038;
+  --color-pal-900: #2a0f1c;
   /* Warning = sulfur, not amber. Stock amber sits on top of the flame
      accent; flame (orange) and signal (red) already own the warm reds, so
      warnings take the one warm hue left that reads apart from both. The
@@ -107,31 +79,31 @@
   --color-amber-900: #3a3503;
   --color-amber-950: #282402;
 
-  /* Ink that sits ON a solid flame fill (primary buttons, the mark tile). */
-  --color-on-flame: #1a1004;
+  /* Ink that sits ON a solid pal fill (primary buttons, the mark tile). */
+  --color-on-flame: #1a0a06;
 
-  --color-surface-0: #0b1220; /* --lx-bg */
-  --color-surface-1: #111b2e; /* --lx-surface */
-  --color-surface-2: #17243b; /* --lx-surface-2 */
-  --color-surface-3: #1e2d47;
-  --color-surface-4: #2b3b57; /* --lx-line */
+  --color-surface-0: #0b0c0f; /* --pal-bg */
+  --color-surface-1: #131419; /* --pal-surface */
+  --color-surface-2: #1a1c22; /* --pal-surface-2 */
+  --color-surface-3: #22252c;
+  --color-surface-4: #2f323a;
 
-  /* Neutral scale — cool blue-grey ink from the brand, not stock zinc. */
-  --color-zinc-50: #f5f8fc;
-  --color-zinc-100: #e8eef5;  /* --lx-ink */
-  --color-zinc-200: #ced8e5;
-  --color-zinc-300: #a9b6c8;  /* --lx-ink-2 */
-  --color-zinc-400: #9babc0;
-  --color-zinc-500: #8e9eb4;
-  --color-zinc-600: #7f8fa7;  /* faint text (286x as text) — AA on page, card and surface-2 */
-  --color-zinc-700: #3a4b68;
-  --color-zinc-800: #2b3b57;  /* --lx-line, hairline borders */
-  --color-zinc-900: #17243b;
-  --color-zinc-950: #0b1220;
+  /* Neutral scale: brand ink/paper, not stock zinc. */
+  --color-zinc-50: #fafaf8;   /* --pal-text */
+  --color-zinc-100: #f0f0ee;
+  --color-zinc-200: #d4d5d9;
+  --color-zinc-300: #b9bac0;  /* --pal-text-2 */
+  --color-zinc-400: #a6a8af;
+  --color-zinc-500: #9a9ca4;
+  --color-zinc-600: #8c8e96;  /* --pal-text-3: faint text, AA on page, card, surface-2 */
+  --color-zinc-700: #3a3d46;
+  --color-zinc-800: #272a31;  /* hairline borders */
+  --color-zinc-900: #1a1c22;
+  --color-zinc-950: #0b0c0f;
 
-  --font-sans: var(--font-plex-sans), "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: var(--font-bricolage), "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-inter-tight), "Inter Tight", var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }
 
 /* ---------------------------------------------------------------------------
@@ -198,16 +170,16 @@
   --color-border-default: var(--color-zinc-700);
   --color-border-strong: var(--color-zinc-600);
 
-  --color-accent: var(--color-lantern-400);
-  --color-accent-hover: var(--color-lantern-300);
-  --color-accent-soft: color-mix(in srgb, var(--lx-flame) 14%, transparent);
+  --color-accent: var(--color-pal-400);
+  --color-accent-hover: var(--color-pal-300);
+  --color-accent-soft: color-mix(in srgb, var(--color-pal-400) 14%, transparent);
 
-  --color-success: var(--lx-patina);
-  --color-success-soft: var(--lx-patina-soft);
+  --color-success: var(--sig-ok);
+  --color-success-soft: var(--sig-ok-soft);
   --color-warn: var(--color-amber-400);
   --color-warn-soft: color-mix(in srgb, var(--color-amber-400) 12%, transparent);
-  --color-danger: var(--lx-signal);
-  --color-danger-soft: var(--lx-signal-soft);
+  --color-danger: var(--sig-bad);
+  --color-danger-soft: var(--sig-bad-soft);
 
   /* Per-page container chrome. */
   --page-max-w: 1400px;
@@ -254,7 +226,7 @@ h1, h2 {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--lx-flame) 35%, transparent);
+  background: color-mix(in srgb, var(--color-pal-500) 35%, transparent);
   color: var(--color-zinc-50);
 }
 
@@ -411,8 +383,8 @@ input, textarea, select {
 }
 input:focus-visible, textarea:focus-visible, select:focus-visible {
   outline: none;
-  border-color: color-mix(in srgb, var(--lx-flame) 60%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-flame) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-pal-500) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-pal-500) 22%, transparent);
 }
 
 /* Card chrome — every .surface-card across the dashboard picks up the
@@ -426,7 +398,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--lx-flame) 6%, transparent), transparent 60%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-pal-500) 6%, transparent), transparent 60%);
   opacity: 0;
   transition: opacity var(--motion-normal) var(--easing-standard);
   pointer-events: none;
@@ -515,17 +487,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 /* Focus ring */
 .focus-ring:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--color-surface-0), 0 0 0 4px color-mix(in srgb, var(--lx-flame) 60%, transparent);
+  box-shadow: 0 0 0 2px var(--color-surface-0), 0 0 0 4px color-mix(in srgb, var(--color-pal-500) 60%, transparent);
 }
 
 /* Button variants */
 .btn-primary {
-  background: var(--color-lantern-500);
+  background: var(--color-pal-500);
   color: var(--color-on-flame);
   transition: background 0.15s ease;
 }
 .btn-primary:hover {
-  background: var(--color-lantern-400);
+  background: var(--color-pal-400);
 }
 .btn-secondary {
   border: 1px solid var(--color-zinc-700);
@@ -537,12 +509,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   color: var(--color-zinc-50);
 }
 .btn-danger {
-  background: var(--lx-signal-soft);
-  color: var(--lx-signal);
+  background: var(--sig-bad-soft);
+  color: var(--sig-bad);
   transition: background 0.15s ease;
 }
 .btn-danger:hover {
-  background: color-mix(in srgb, var(--lx-signal) 22%, transparent);
+  background: color-mix(in srgb, var(--sig-bad) 22%, transparent);
 }
 .btn-ghost {
   color: var(--color-zinc-400);
@@ -576,7 +548,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 .sidebar-item.active {
   background: var(--color-surface-3);
-  color: var(--color-lantern-400);
+  color: var(--color-pal-400);
 }
 
 .sidebar-item.active::before {
@@ -588,7 +560,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   width: 3px;
   height: 60%;
   border-radius: 0 2px 2px 0;
-  background: var(--color-lantern-400);
+  background: var(--color-pal-400);
 }
 
 /* Data table styles */
@@ -733,7 +705,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .editor-canvas .react-flow__handle:hover {
   transform: scale(1.3);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lx-flame) 30%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-pal-500) 30%, transparent);
 }
 
 /* Controls styling */
@@ -780,8 +752,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Selection box */
 .editor-canvas .react-flow__selection {
-  background: color-mix(in srgb, var(--lx-flame) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--lx-flame) 30%, transparent);
+  background: color-mix(in srgb, var(--color-pal-500) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-pal-500) 30%, transparent);
 }
 
 /* Wizard step transitions */
@@ -980,41 +952,40 @@ input[type="range"]::-webkit-slider-thumb {
    Dark stays the default (no selector). The flame accent is remapped too.
    =========================================================================== */
 :root[data-theme="light"] {
-  /* Surfaces: brand day palette — cool off-white page, white cards. */
-  --color-surface-0: #f2f5f8; /* --lx-bg */
-  --color-surface-1: #ffffff; /* --lx-surface */
-  --color-surface-2: #e7edf3; /* --lx-surface-2 */
-  --color-surface-3: #dde5ee;
-  --color-surface-4: #cfd9e4;
+  /* Surfaces: PAL paper, white cards. */
+  --color-surface-0: #fafaf8; /* --pal-bg */
+  --color-surface-1: #ffffff; /* --pal-surface */
+  --color-surface-2: #f1f0ec; /* --pal-surface-2 */
+  --color-surface-3: #e8e7e2;
+  --color-surface-4: #dad9d3;
   /* Neutral scale inverted: low n = dark (text), high n = light (bg/border). */
-  --color-zinc-50:  #0f1b2d;  /* --lx-ink */
-  --color-zinc-100: #172437;
-  --color-zinc-200: #2a3a51;
-  --color-zinc-300: #44546a;  /* --lx-ink-2 */
-  --color-zinc-400: #46566b;  /* muted text — AA on every light surface */
-  --color-zinc-500: #4f5f75;  /* --lx-ink-3, deepened to clear AA on surface-3 */
-  --color-zinc-600: #586880;  /* faint text — AA on page, card and surface-2 */
-  --color-zinc-700: #c3cedb;  /* --lx-line */
-  --color-zinc-800: #d6dee8;  /* hairline borders */
-  --color-zinc-900: #e7edf3;
-  --color-zinc-950: #f2f5f8;
-  /* Accent (flame) — inverted like zinc so text-lantern-300/400 stay AA on
-     white, and solid fills (500/600) carry white ink. */
-  --color-lantern-50:  #fdf6ec;
-  --color-lantern-100: #fbebd3;  /* --lx-flame-soft */
-  --color-lantern-200: #7a4304;
-  --color-lantern-300: #824704;
-  --color-lantern-400: #8f4f05;
-  --color-lantern-500: #985405;  /* --lx-flame (day) #a85e06, deepened to clear AA as text on surface-3 */
-  --color-lantern-600: #844804;
-  --color-lantern-700: #6e3d05;
-  --color-lantern-800: #f3cf9a;
-  --color-lantern-900: #fbebd3;
+  --color-zinc-50:  #0b0c0f;  /* --pal-text */
+  --color-zinc-100: #15171c;
+  --color-zinc-200: #2a2c33;
+  --color-zinc-300: #45474e;  /* --pal-text-2 */
+  --color-zinc-400: #4c4e56;  /* muted text */
+  --color-zinc-500: #565860;
+  --color-zinc-600: #62656d;  /* --pal-text-3: faint text */
+  --color-zinc-700: #d3d2cc;
+  --color-zinc-800: #e3e2dd;  /* hairline borders */
+  --color-zinc-900: #f1f0ec;
+  --color-zinc-950: #fafaf8;
+  /* Accent inverted like zinc: text-pal-300/400/500 stay AA, solid fills carry white ink. */
+  --color-pal-50:  #fff5f8;
+  --color-pal-100: #ffe1ea;
+  --color-pal-200: #8f1241;
+  --color-pal-300: #a8174c;
+  --color-pal-400: #bf1c55;  /* --pal-accent-text (day) #c81e5a, deepened to clear AA on surface-3 */
+  --color-pal-500: #b01a4f;
+  --color-pal-600: #98153f;
+  --color-pal-700: #7e1135;
+  --color-pal-800: #ffc9d8;
+  --color-pal-900: #ffe1ea;
   --color-on-flame: #ffffff;
-  --elev-1: 0 1px 2px rgba(15, 27, 45, 0.06);
-  --elev-2: 0 2px 6px rgba(15, 27, 45, 0.08), 0 1px 2px rgba(15, 27, 45, 0.06);
-  --elev-3: 0 8px 24px rgba(15, 27, 45, 0.12), 0 2px 4px rgba(15, 27, 45, 0.06);
-  --elev-4: 0 16px 48px rgba(15, 27, 45, 0.16);
+  --elev-1: 0 1px 2px rgba(11, 12, 15, 0.06);
+  --elev-2: 0 2px 6px rgba(11, 12, 15, 0.08), 0 1px 2px rgba(11, 12, 15, 0.06);
+  --elev-3: 0 8px 24px rgba(11, 12, 15, 0.12), 0 2px 4px rgba(11, 12, 15, 0.06);
+  --elev-4: 0 16px 48px rgba(11, 12, 15, 0.16);
   color-scheme: light;
 }
 :root[data-theme="light"] body { background: var(--color-surface-0); color: var(--color-zinc-50); }
@@ -1104,3 +1075,37 @@ input[type="range"]::-webkit-slider-thumb {
 :root[data-theme="light"] .mc-glass:hover {
   box-shadow: 0 2px 4px rgba(20, 20, 40, .06), 0 18px 40px -18px rgba(20, 20, 40, .20);
 }
+
+/* PAL Runtime accent: pages under .theme-runtime re-point the pal-* scale at
+   indigo -> cyan, so every existing text-pal-* / bg-pal-* utility on /runtime
+   picks it up with no per-component edits. Semantic colours are untouched. */
+.theme-runtime {
+  --color-pal-50: #eef1ff;
+  --color-pal-100: #dde3ff;
+  --color-pal-200: #bcc6ff;
+  --color-pal-300: #8fe9ff;
+  --color-pal-400: #6fe3ff; /* --rt-accent-text (dark) */
+  --color-pal-500: #14c8f0; /* --rt-cyan */
+  --color-pal-600: #6c5cff; /* --rt-indigo */
+  --color-pal-700: #4a3ee6;
+  --color-pal-800: #1d1a5c;
+  --color-pal-900: #12113a;
+  --color-on-flame: #06121a;
+}
+:root[data-theme="light"] .theme-runtime {
+  --color-pal-50: #f1f0ff;
+  --color-pal-100: #e2e0ff;
+  --color-pal-200: #2f25b8;
+  --color-pal-300: #3b2fd0;
+  --color-pal-400: #4a3ee6; /* --rt-accent-text (day) */
+  --color-pal-500: #4538d8;
+  --color-pal-600: #3a2ec0;
+  --color-pal-700: #2f25a0;
+  --color-pal-800: #d4d0ff;
+  --color-pal-900: #e2e0ff;
+  --color-on-flame: #ffffff;
+}
+
+/* Brand moment: the one place the coral -> magenta gradient fills a surface. */
+.bg-pal-grad { background-image: var(--pal-grad); }
+.theme-runtime .bg-pal-grad { background-image: var(--rt-grad); }

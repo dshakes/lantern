@@ -80,9 +80,9 @@ func NewMessagingHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHa
 		logger:        logger.Named("messaging"),
 		pool:          pool,
 		llm:           llm,
-		defaultTenant: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
-		twilioAuthOff: strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off",
-		enabled:       strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_RCS_INBOUND"))) == "on",
+		defaultTenant: getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		twilioAuthOff: strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off",
+		enabled:       strings.ToLower(strings.TrimSpace(os.Getenv("PAL_RCS_INBOUND"))) == "on",
 	}
 	if !h.enabled {
 		h.logger.Info("contact RCS/SMS lane disabled — set LANTERN_RCS_INBOUND=on after the Twilio RBM agent is approved")
@@ -170,7 +170,7 @@ func (h *MessagingHandler) InboundWebhook(w http.ResponseWriter, r *http.Request
 
 	// The owner's own line is handled by sms.go (full-tool command channel).
 	// If the owner happens to text this branded number, don't double-handle.
-	if ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE")); ownerPhone != "" &&
+	if ownerPhone := strings.TrimSpace(os.Getenv("PAL_OWNER_PHONE")); ownerPhone != "" &&
 		normalizePhone(from) == normalizePhone(ownerPhone) {
 		writeTwiML(w, "")
 		return
@@ -241,7 +241,7 @@ func (h *MessagingHandler) askContactAgent(ctx context.Context, contactText stri
 	if h.llm == nil {
 		return "", fmt.Errorf("LLM proxy unavailable")
 	}
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
+	ownerName := getEnvOr("PAL_OWNER_NAME", "Ada")
 	system := strings.Join([]string{
 		"You are " + ownerName + "'s personal assistant, replying to one of his contacts over text (RCS/SMS).",
 		"Write the reply EXACTLY as it should be sent — no preamble, no narration, no explanation of your reasoning.",

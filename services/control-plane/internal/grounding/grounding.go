@@ -18,7 +18,7 @@ import (
 // Reads LANTERN_CLAIM_VERIFY on every call so ops can toggle without restart.
 // Default is ON (empty / absent env var → enabled).
 func Enabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CLAIM_VERIFY"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CLAIM_VERIFY"))) {
 	case "0", "off", "false":
 		return false
 	}

@@ -83,7 +83,7 @@ const (
 // must return. Fails closed: an unset env or a missing/mismatched header is a
 // 401. The token is never logged.
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
-	expected := os.Getenv("LANTERN_SIGNAL_TOKEN")
+	expected := os.Getenv("PAL_SIGNAL_TOKEN")
 	provided := r.Header.Get("x-lantern-signal-token")
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {

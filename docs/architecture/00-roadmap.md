@@ -42,7 +42,7 @@
 
 | Service | Language | Status |
 |---|---|---|
-| `control-plane` | Go | ✅ — agents/runs CRUD, auth (email+password, Google OAuth, JWT), API keys, LLM provider management, deployments, data planes, Postgres schema with RLS (policies enabled on all 34 tenant tables; enforcement staged via `LANTERN_RLS_ENFORCE`); gRPC :50051 service-token auth; OTel HTTP+gRPC spans; LLM idempotency keys; gRPC StreamRunEvents journal replay; durable crash-resume primitives |
+| `control-plane` | Go | ✅ — agents/runs CRUD, auth (email+password, Google OAuth, JWT), API keys, LLM provider management, deployments, data planes, Postgres schema with RLS (policies enabled on all 34 tenant tables; enforcement staged via `PAL_RLS_ENFORCE`); gRPC :50051 service-token auth; OTel HTTP+gRPC spans; LLM idempotency keys; gRPC StreamRunEvents journal replay; durable crash-resume primitives |
 | `workflow-engine` | Go | 🟡 spike — step journaling, replay loop, in-memory queue; LLM steps now dispatch through model-router gRPC (engine path wired but remains dormant — no live caller yet) |
 | `runtime-manager` | Rust | 🟡 spike — K8s Job runtime, Firecracker integration seam; harness SO_PEERCRED peer auth + egress proxy injection (CI-gated, UNVERIFIED locally — no macOS linker) |
 | `gateway` | Rust | 🟡 spike — Axum, JWT auth, SSE streaming proxy, rate limiting |
@@ -51,7 +51,7 @@
 | `notifier` | Go | ⬜ stub |
 | `billing` | Go | 🟡 spike — `billing.proto` + `BillingServiceServer` registered on gRPC; `EmitUsage`/`CheckBudget`/`GetUsage`/`SetBudget` wired; see ADR 0013 |
 | `scheduler` | Go | 🟡 spike — `scheduler.proto` + `SchedulerServiceServer` registered on gRPC; `RegisterSchedule`/`ListSchedules`/`DeleteSchedule`/`Trigger` wired; creates runs via control-plane RunService; see ADR 0013 |
-| `surface-gateway` | Rust | 🟡 spike — real tenant resolution (LANTERN_TENANT_ID) replacing platform IDs; rejects unknown installs |
+| `surface-gateway` | Rust | 🟡 spike — real tenant resolution (PAL_TENANT_ID) replacing platform IDs; rejects unknown installs |
 
 ## Surface gateway
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 
+from lantern import _env
+
 
 class RuntimeMode(StrEnum):
     PRODUCTION = "production"
@@ -21,7 +23,7 @@ def detect_mode() -> RuntimeMode:
     The Lantern runtime sets ``LANTERN_RUNTIME=1`` in the sandbox
     environment.  Anything else is treated as dev mode.
     """
-    if os.environ.get("LANTERN_RUNTIME") == "1":
+    if _env.get("RUNTIME") == "1":
         return RuntimeMode.PRODUCTION
     return RuntimeMode.DEV
 

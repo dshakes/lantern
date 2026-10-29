@@ -36,13 +36,13 @@ import (
 const (
 	retentionSweepInterval = time.Hour
 
-	envJournalRetentionDays     = "LANTERN_JOURNAL_RETENTION_DAYS"
+	envJournalRetentionDays     = "PAL_JOURNAL_RETENTION_DAYS"
 	defaultJournalRetentionDays = 90
 
-	envAuditRetentionDays     = "LANTERN_AUDIT_RETENTION_DAYS"
+	envAuditRetentionDays     = "PAL_AUDIT_RETENTION_DAYS"
 	defaultAuditRetentionDays = 365
 
-	envUsageDailyRetentionDays     = "LANTERN_USAGE_DAILY_RETENTION_DAYS"
+	envUsageDailyRetentionDays     = "PAL_USAGE_DAILY_RETENTION_DAYS"
 	defaultUsageDailyRetentionDays = 400
 )
 

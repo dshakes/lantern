@@ -16,7 +16,7 @@ func TestDerivePublicURL(t *testing.T) {
 	if got := derivePublicURL(r); got != "https://lantern.example.org" {
 		t.Errorf("forwarded: got %q", got)
 	}
-	t.Setenv("LANTERN_PUBLIC_BASE_URL", "https://public.example.net/")
+	t.Setenv("PAL_PUBLIC_BASE_URL", "https://public.example.net/")
 	if got := derivePublicURL(r); got != "https://public.example.net" {
 		t.Errorf("override: got %q", got)
 	}

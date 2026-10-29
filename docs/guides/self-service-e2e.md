@@ -253,7 +253,7 @@ The health sweep runs every 60s and fires a self-chat alert on the first DOWN tr
 
 All spans carry `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`. Filter by run in your trace backend (Tempo, Jaeger, etc.) using `lantern.run_id = "<run-id>"`. W3C `traceparent` propagates from the control-plane through scheduler → manager → harness, so one trace covers the full spawn chain.
 
-Set `LANTERN_OTEL_ENABLED=1` + `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` to enable OTel export (no-op when unset).
+Set `PAL_OTEL_ENABLED=1` + `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` to enable OTel export (no-op when unset).
 
 ### 13. Issue a verifiable receipt
 
@@ -293,7 +293,7 @@ curl -s -X POST "http://localhost:8080/v1/runs/$RUN_ID/feedback" \
 Feedback feeds:
 
 - **Rehearsals** — `POST /v1/runs/rehearse` pulls past failed or low-score runs (score ≤ 2) as synthetic test cases against a candidate version before traffic flips.
-- **Confidence calibration** — when `LANTERN_CONFIDENCE_CALIBRATE=1`, the `CalibratedEstimator` lowers scores for action types where the realized regret rate (feedback ≤ 2 or failed run) is high, so those nodes are routed to human approval more aggressively over time.
+- **Confidence calibration** — when `PAL_CONFIDENCE_CALIBRATE=1`, the `CalibratedEstimator` lowers scores for action types where the realized regret rate (feedback ≤ 2 or failed run) is high, so those nodes are routed to human approval more aggressively over time.
 - **The 👎 flywheel** (bridge-side) — `dislikes.jsonl` mines rejections into `## Style lessons (managed)` bullets in `owner-profile.md`, injected into every future reply prompt.
 
 ### 15. Update the eval baseline
@@ -314,7 +314,7 @@ Or via REST: run `POST /v1/eval-runs` with the new results, then `POST /v1/eval-
 |---|---|
 | Run stuck in `running` forever | Recovery sweep fires every 30s; check `GET /v1/system/health` for scheduler/manager DOWN |
 | `POST /v1/runs` returns 402 | Budget exceeded — check `GET /v1/agents/triage/budget` and today's usage |
-| microVM run fails with `microvm_unavailable` | Scheduler unreachable — `GET /v1/system/health`, then check `LANTERN_SCHEDULER_GRPC_ADDR` |
+| microVM run fails with `microvm_unavailable` | Scheduler unreachable — `GET /v1/system/health`, then check `PAL_SCHEDULER_GRPC_ADDR` |
 | Eval run returns 422 | Regression against the branch baseline — compare `score` to `GET /v1/eval-baselines?agentName=triage&branch=main` |
 | Receipt verify fails | `journal_events` were tampered or the signing key changed — check `/.well-known/lantern-receipts` |
 
@@ -326,10 +326,10 @@ These features exist in the code but are off by default:
 
 | Feature | Flag | Notes |
 |---|---|---|
-| RLS enforcement | `LANTERN_RLS_ENFORCE=1` | Requires `lantern_app` DB role; set `LANTERN_APP_DB_PASSWORD` first |
-| Model-router cutover | `LANTERN_USE_MODEL_ROUTER=1` | Enables routing completions through the model-router service |
-| Confidence gate | `LANTERN_CONFIDENCE_GATE=1` | Routes low-confidence side-effecting nodes to human approval |
-| Confidence calibration | `LANTERN_CONFIDENCE_CALIBRATE=1` | Wraps the estimator with regret-based score adjustment |
-| Document deadline sentinel | `LANTERN_IMMIGRATION_SENTINEL=1` | Derives deadlines from personal documents + email (owner-only, off by default) |
+| RLS enforcement | `PAL_RLS_ENFORCE=1` | Requires `lantern_app` DB role; set `PAL_APP_DB_PASSWORD` first |
+| Model-router cutover | `PAL_USE_MODEL_ROUTER=1` | Enables routing completions through the model-router service |
+| Confidence gate | `PAL_CONFIDENCE_GATE=1` | Routes low-confidence side-effecting nodes to human approval |
+| Confidence calibration | `PAL_CONFIDENCE_CALIBRATE=1` | Wraps the estimator with regret-based score adjustment |
+| Document deadline sentinel | `PAL_IMMIGRATION_SENTINEL=1` | Derives deadlines from personal documents + email (owner-only, off by default) |
 
 See [CLAUDE.md](../../CLAUDE.md) for the complete env-var reference.

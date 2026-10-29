@@ -156,7 +156,7 @@ func TestResolveModelForComplexity_BalancedDelegatesToScorer(t *testing.T) {
 var testLogger = zap.NewNop()
 
 func TestRewriteUnbackedClaims_Disabled(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "0")
+	t.Setenv("PAL_CLAIM_VERIFY", "0")
 	text := "I sent the email to your colleague."
 	got := rewriteUnbackedClaims(text, nil, testLogger)
 	if got != text {
@@ -165,7 +165,7 @@ func TestRewriteUnbackedClaims_Disabled(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_UnbackedEmailSoftened(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	// No tool invocations — "I emailed her" has no backing.
 	text := "I emailed her about the meeting."
 	got := rewriteUnbackedClaims(text, nil, testLogger)
@@ -178,7 +178,7 @@ func TestRewriteUnbackedClaims_UnbackedEmailSoftened(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_BackedSendKept(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	// A successful send_message tool ran — "I sent" is backed.
 	invocations := []ToolInvocation{
 		{Name: "send_message", Result: map[string]any{"ok": true}},
@@ -191,7 +191,7 @@ func TestRewriteUnbackedClaims_BackedSendKept(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_FailedToolDoesNotBack(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	// Tool ran but errored — does NOT count as backing.
 	invocations := []ToolInvocation{
 		{Name: "send_email", Error: "network timeout"},
@@ -204,7 +204,7 @@ func TestRewriteUnbackedClaims_FailedToolDoesNotBack(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_BackedBookingKept(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	invocations := []ToolInvocation{
 		{Name: "create_event", Result: map[string]any{"id": "evt_1"}},
 	}
@@ -216,7 +216,7 @@ func TestRewriteUnbackedClaims_BackedBookingKept(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_UnbackedBookingSoftened(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	text := "I booked the table for you."
 	got := rewriteUnbackedClaims(text, nil, testLogger)
 	if strings.Contains(got, "I booked") {
@@ -225,7 +225,7 @@ func TestRewriteUnbackedClaims_UnbackedBookingSoftened(t *testing.T) {
 }
 
 func TestRewriteUnbackedClaims_TextWithNoClaimsUnchanged(t *testing.T) {
-	t.Setenv("LANTERN_CLAIM_VERIFY", "1")
+	t.Setenv("PAL_CLAIM_VERIFY", "1")
 	text := "Here is a summary of your inbox: you have 3 unread emails."
 	got := rewriteUnbackedClaims(text, nil, testLogger)
 	if got != text {
@@ -273,7 +273,7 @@ func TestIsMultiStep_PleaseLongAnd(t *testing.T) {
 }
 
 func TestInjectPlannerIfNeeded_DisabledNoOp(t *testing.T) {
-	t.Setenv("LANTERN_MULTI_STEP_PLANNER", "0")
+	t.Setenv("PAL_MULTI_STEP_PLANNER", "0")
 	in := msgs("You are a helpful assistant.", "Send an email and then book a meeting.")
 	out := injectPlannerIfNeeded(in)
 	sys, _ := out[0]["content"].(string)
@@ -283,7 +283,7 @@ func TestInjectPlannerIfNeeded_DisabledNoOp(t *testing.T) {
 }
 
 func TestInjectPlannerIfNeeded_EnabledMultiStep(t *testing.T) {
-	t.Setenv("LANTERN_MULTI_STEP_PLANNER", "1")
+	t.Setenv("PAL_MULTI_STEP_PLANNER", "1")
 	in := msgs("You are a helpful assistant.", "Send an email and then book a meeting.")
 	out := injectPlannerIfNeeded(in)
 	sys, _ := out[0]["content"].(string)
@@ -293,7 +293,7 @@ func TestInjectPlannerIfNeeded_EnabledMultiStep(t *testing.T) {
 }
 
 func TestInjectPlannerIfNeeded_EnabledSingleStep_NoOp(t *testing.T) {
-	t.Setenv("LANTERN_MULTI_STEP_PLANNER", "1")
+	t.Setenv("PAL_MULTI_STEP_PLANNER", "1")
 	in := msgs("You are a helpful assistant.", "What time is it in London?")
 	out := injectPlannerIfNeeded(in)
 	sys, _ := out[0]["content"].(string)
@@ -303,7 +303,7 @@ func TestInjectPlannerIfNeeded_EnabledSingleStep_NoOp(t *testing.T) {
 }
 
 func TestInjectPlannerIfNeeded_DoesNotMutateOriginal(t *testing.T) {
-	t.Setenv("LANTERN_MULTI_STEP_PLANNER", "1")
+	t.Setenv("PAL_MULTI_STEP_PLANNER", "1")
 	in := msgs("Original system prompt.", "Send an email and then update the calendar entry.")
 	orig := in[0]["content"].(string)
 	_ = injectPlannerIfNeeded(in)
@@ -313,7 +313,7 @@ func TestInjectPlannerIfNeeded_DoesNotMutateOriginal(t *testing.T) {
 }
 
 func TestInjectPlannerIfNeeded_NoSystemMessage(t *testing.T) {
-	t.Setenv("LANTERN_MULTI_STEP_PLANNER", "1")
+	t.Setenv("PAL_MULTI_STEP_PLANNER", "1")
 	// No system message — planner should prepend one.
 	in := []map[string]any{
 		{"role": "user", "content": "Please send the report and then book a follow-up meeting."},

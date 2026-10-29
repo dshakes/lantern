@@ -69,10 +69,10 @@ the same day.
    not be errcheck-ignored, fair-share query actually round-robins tenants,
    span attributes per invariant #9 (use control-plane's `EnrichSpan`).
 3. **In-guest Exec RPC** (`0.0.0.0:50056`) needs authn (token or mTLS), fail-closed
-   in prod — same pattern as LANTERN_GRPC_SERVICE_TOKEN.
+   in prod — same pattern as PAL_GRPC_SERVICE_TOKEN.
 4. **surface-gateway webhook adapters**: degraded (no-secret) mode must refuse to
    start in prod/staging instead of warn-and-accept-forged-webhooks.
-5. **Harness prod guards**: `LANTERN_WORKLOAD_UID` unset should refuse startup in
+5. **Harness prod guards**: `PAL_WORKLOAD_UID` unset should refuse startup in
    prod (mirror the other startup guards); wire or delete the dead WarmPool.
 6. **model-router**: honor provider `Retry-After` on 429 (not hardcoded 1s); delete
    dead `BudgetExceeded`; OTel counter when rate-limit fail-open triggers; remove
@@ -99,16 +99,16 @@ the same day.
 13. **Wire `RunService.SignalRun` in the control-plane** (runs.go — currently
     `Unimplemented`): the surface-gateway dispatcher now sends correct,
     authenticated SignalRun calls for surface messages and approval responses;
-    they no-op until the server side lands. Also add `LANTERN_AGENT_NAME` (new,
+    they no-op until the server side lands. Also add `PAL_AGENT_NAME` (new,
     required) to surface-gateway's docker-compose/Helm env so dispatch knows the
     target agent.
-14. **Helm chart security-env hygiene**: the chart sets no `LANTERN_ENV` and
-    wires no `LANTERN_GRPC_SERVICE_TOKEN` (and doesn't deploy workflow-engine /
-    runtime-scheduler at all). Prod values must set `LANTERN_ENV` so the
+14. **Helm chart security-env hygiene**: the chart sets no `PAL_ENV` and
+    wires no `PAL_GRPC_SERVICE_TOKEN` (and doesn't deploy workflow-engine /
+    runtime-scheduler at all). Prod values must set `PAL_ENV` so the
     fail-closed startup guards (control-plane, workflow-engine :50052,
     runtime-scheduler :50055, node-heartbeat token) actually arm, and the
     shared service token must come from a chart secret. Same for
-    `LANTERN_RUNTIME_SECRET_TOKEN` / `LANTERN_SIGNAL_TOKEN` where applicable.
+    `PAL_RUNTIME_SECRET_TOKEN` / `PAL_SIGNAL_TOKEN` where applicable.
 
 ---
 
@@ -117,7 +117,7 @@ the same day.
 Positioning read from the landscape scan: OpenAI's platform is bifurcating
 (AgentKit deprecation), LangGraph is orchestration-only, Temporal is durability
 without AI semantics, AgentCore is AWS-locked, Composio is connectors-only,
-Braintrust/Langfuse are bolt-on evals. Nobody ships Lantern's closed loop
+Braintrust/Langfuse are bolt-on evals. Nobody ships PAL Runtime's closed loop
 (route → run → meter → eval → receipt → improve) end-to-end. The moat is making
 that loop *measurably trustworthy*. Ranked by customer value × feasibility:
 
@@ -129,7 +129,7 @@ that loop *measurably trustworthy*. Ranked by customer value × feasibility:
    steps to the existing `WaitForApproval` takeover mechanism rather than
    auto-executing. A `confidence_evaluated` journal event (score, threshold,
    decision) lands in every gated step so the run waterfall can render it.
-   Feature is behind `LANTERN_CONFIDENCE_GATE` (default OFF). One heuristic
+   Feature is behind `PAL_CONFIDENCE_GATE` (default OFF). One heuristic
    estimator ships (`VerbalizationHeuristic`). **What's deferred:**
    - **Statistical calibration** (self-consistency sampling, logit-based scoring
      per arXiv 2602.05073 / 2601.15778) — the `ConfidenceEstimator` interface is
@@ -156,7 +156,7 @@ that loop *measurably trustworthy*. Ranked by customer value × feasibility:
    standards race is happening now.
 5. **Look-ahead action simulation** (SafeMCP pattern): before granting a
    side-effecting tool call, reason over declared egress/tool scopes
-   (`LANTERN_EGRESS_RULES`, connector scopes) about blast radius; block/escalate
+   (`PAL_EGRESS_RULES`, connector scopes) about blast radius; block/escalate
    on mismatch. Extends budget hard-fail from "too expensive" to "too dangerous."
    Answers the OWASP Agentic Top 10 story enterprises now ask about.
 6. **Bandit-adaptive model routing** (RouteLLM/PILOT): the reward signal

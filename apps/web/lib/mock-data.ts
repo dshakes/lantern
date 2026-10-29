@@ -643,10 +643,10 @@ export const failedRunEvents: StreamEvent[] = [
       name: "search-web",
       error: "STEP_TIMEOUT: Step 'search-web' exceeded timeout of 30s",
       stackTrace: `Error: STEP_TIMEOUT: Step 'search-web' exceeded timeout of 30s
-    at StepRunner.execute (lantern-runtime/src/step-runner.ts:142:15)
-    at WorkflowEngine.runStep (lantern-engine/src/engine.ts:89:22)
-    at WorkflowEngine.executeGraph (lantern-engine/src/engine.ts:201:18)
-    at RunManager.start (lantern-engine/src/run-manager.ts:67:10)`,
+    at StepRunner.execute (pal-runtime/src/step-runner.ts:142:15)
+    at WorkflowEngine.runStep (pal-engine/src/engine.ts:89:22)
+    at WorkflowEngine.executeGraph (pal-engine/src/engine.ts:201:18)
+    at RunManager.start (pal-engine/src/run-manager.ts:67:10)`,
       durationMs: 28100,
     },
   },

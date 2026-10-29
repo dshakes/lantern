@@ -104,7 +104,7 @@ describe("voice floor (ADR 0024 W4) is wired on both bridges", () => {
     it(`${name}: contact drafts are scored against the owner corpus, never the owner channel or a group`, () => {
       expect(src).toMatch(/voiceModel: isOwnerChan \|\| (opts\.)?isGroup \? null : this\.getVoiceModel\(\)/);
       expect(src).toMatch(/"voice score"/);
-      expect(src).toMatch(/LANTERN_VOICE_FLOOR/);
+      expect(src).toMatch(/PAL_VOICE_FLOOR/);
     });
   }
 });
@@ -116,7 +116,7 @@ describe("critique-refine (ADR 0024 W3.4) is wired on both bridges", () => {
       expect(src).toMatch(/::refine`/);
       expect(src).toMatch(/after <= before/);
       expect(src).toMatch(/detectBotTells\(refined, inbound, botTellCtx\)\.ok/);
-      expect(src).toMatch(/LANTERN_VOICE_REFINE/);
+      expect(src).toMatch(/PAL_VOICE_REFINE/);
     });
   }
 });

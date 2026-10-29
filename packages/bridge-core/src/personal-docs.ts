@@ -75,7 +75,7 @@ export interface PersonalDocsConfig {
 
 export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig {
   const home = homedir();
-  const envRoots = (process.env.LANTERN_PERSONAL_DOCS_ROOTS || "")
+  const envRoots = (process.env.PAL_PERSONAL_DOCS_ROOTS || "")
     .split(":")
     .map((r) => r.trim().replace(/^~/, home))
     .filter(Boolean);
@@ -93,8 +93,8 @@ export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig 
   mkdirSync(stateDir, { recursive: true });
   return {
     roots,
-    maxResults: parseInt(process.env.LANTERN_PERSONAL_DOCS_MAX_RESULTS || "8", 10),
-    maxReadChars: parseInt(process.env.LANTERN_PERSONAL_DOCS_MAX_CHARS || "12000", 10),
+    maxResults: parseInt(process.env.PAL_PERSONAL_DOCS_MAX_RESULTS || "8", 10),
+    maxReadChars: parseInt(process.env.PAL_PERSONAL_DOCS_MAX_CHARS || "12000", 10),
     auditLogPath: join(stateDir, "personal-docs.log"),
   };
 }
@@ -409,7 +409,7 @@ export class PersonalDocs {
     //   - recency: ((mtime - oldest) / span) * 5  — gentle tie-break
     // Folder hits stay in the pool (they're useful as breadcrumbs)
     // but don't beat real files.
-    const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
+    const ownerFirst = (process.env.PAL_OWNER_NAME || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
     const wantsMine = /\bmy\b|\bmine\b|\bi\b/i.test(query);
     // Detect a third-party possessive ("Sam's drivers license",
     // "Arin's passport") and rank files containing that name higher
@@ -795,7 +795,7 @@ export class PersonalDocs {
     try {
       let pngs: string[] = [];
       if (ext === ".pdf") {
-        const maxPages = Number(process.env.LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES || "3");
+        const maxPages = Number(process.env.PAL_PERSONAL_DOCS_OCR_MAX_PAGES || "3");
         pngs = await this.renderPdfPages(filePath, tmpDir, Math.max(1, maxPages));
         // Even if renderPdfPages returned 0, the JXA helper may have
         // created the directory — mark for cleanup either way.

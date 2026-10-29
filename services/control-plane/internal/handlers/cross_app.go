@@ -29,7 +29,7 @@ import (
 // crossAppEnabled reports whether cross-app workflows are enabled.
 // Default OFF — set LANTERN_CROSS_APP=on to enable.
 func crossAppEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CROSS_APP")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CROSS_APP")))
 	return v == "on" || v == "1" || v == "true"
 }
 

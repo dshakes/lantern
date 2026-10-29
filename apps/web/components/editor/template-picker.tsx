@@ -92,7 +92,7 @@ function TemplateCard({
       className={clsx(
         "flex flex-col items-start rounded-xl border p-4 text-left transition-all",
         "border-zinc-700/80 bg-surface-1 hover:border-zinc-600 hover:bg-surface-2",
-        "focus:outline-none focus:ring-2 focus:ring-lantern-500/50"
+        "focus:outline-none focus:ring-2 focus:ring-pal-500/50"
       )}
     >
       <MiniDiagram nodeTypes={template.nodeTypes} />
