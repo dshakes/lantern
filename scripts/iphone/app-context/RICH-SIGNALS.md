@@ -1,6 +1,6 @@
 # Rich iPhone Signals — iOS Shortcuts Automation Recipes
 
-Go beyond app-opens. Teach your Lantern bot **where you are, what Focus you're
+Go beyond app-opens. Teach your PAL Runtime bot **where you are, what Focus you're
 in, what your phone is plugged into, your health for the day, and what you're
 listening to** — so when you ask it "where am I", "how many steps today", "am I
 still in Work focus", or "what am I listening to", it actually knows.
@@ -374,6 +374,6 @@ fails.)
   The bot never volunteers it and never reveals it to a contact.
 - The token gates the endpoint; keep it secret (server-side only, never shipped
   to a browser).
-- Turn the feature off any time: `LANTERN_IPHONE_SIGNALS=off` on the bridge, or
-  unset `LANTERN_SIGNAL_TOKEN` on the receiver (which makes it reject every
+- Turn the feature off any time: `PAL_IPHONE_SIGNALS=off` on the bridge, or
+  unset `PAL_SIGNAL_TOKEN` on the receiver (which makes it reject every
   request).

@@ -79,7 +79,7 @@ export function RehearsalsPanel({ agentName }: Props) {
           <select
             value={window}
             onChange={(e) => setWindow(e.target.value)}
-            className="mt-1 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="mt-1 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           >
             {WINDOW_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -94,13 +94,13 @@ export function RehearsalsPanel({ agentName }: Props) {
             min={1}
             max={200}
             onChange={(e) => setLimit(Math.max(1, Math.min(200, parseInt(e.target.value || "25", 10))))}
-            className="mt-1 w-20 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="mt-1 w-20 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </div>
         <button
           onClick={run}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-[12px] font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-md bg-pal-500 px-3 py-1.5 text-[12px] font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50"
         >
           {loading ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

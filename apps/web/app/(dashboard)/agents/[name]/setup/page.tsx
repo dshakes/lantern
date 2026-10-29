@@ -243,7 +243,7 @@ export default function AgentSetupPage({ params }: PageProps) {
                     </div>
                   </div>
                   {!item.done && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-lantern-400">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-pal-400">
                       Go <ChevronRight className="h-3.5 w-3.5" />
                     </span>
                   )}

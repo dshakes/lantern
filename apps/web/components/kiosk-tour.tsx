@@ -66,8 +66,8 @@ export function KioskTour() {
     <>
       {meta && !ended && (
         <>
-          <div className="flex items-center gap-3 border-b border-lantern-500/20 bg-lantern-500/5 px-6 py-2 text-sm text-zinc-300">
-            <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-[11px] text-lantern-400">demo · replay</span>
+          <div className="flex items-center gap-3 border-b border-pal-500/20 bg-pal-500/5 px-6 py-2 text-sm text-zinc-300">
+            <span className="rounded-full bg-pal-500/10 px-2 py-0.5 text-[11px] text-pal-400">demo · replay</span>
             <span>Recorded answers, no live model. Your workspace is deleted when the timer ends.</span>
             <span className="ml-auto tabular-nums text-zinc-400" aria-label="Time left in demo">
               {formatClock(msLeft(meta, now))}

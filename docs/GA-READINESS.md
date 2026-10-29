@@ -23,8 +23,8 @@ claim was actually checked.
 | Control-plane Go suite (agents, runs, sessions, budgets, RLS, crash-replay, scheduler, secrets, workflow) | ✅ | `go test ./...` green across all control-plane packages |
 | RLS policies on all 34 tenant tables (ADR 0011) | ✅ | `TestRLSEnforcement_AllTenantTables` catalog gate + `TestRLSEnforcement_Sessions` cross-tenant denial proof under `lantern_app` role |
 | RLS handler cutover (`WithTenant`/`TenantPool()`) | ✅ | 0 non-exempt tenant-scoped `srv.Pool` sites remain in `internal/handlers`; every remaining site carries an `rls-exempt:` reason. `RLS*` tests + `go test -race -run RLS` green; workflow-engine tenant work also scoped (`TestRLSCatalog_NoUnscopedTenantQueries`) |
-| RLS enforcement flip (`LANTERN_RLS_ENFORCE=1`) | 🟡 staged | Safe to flip per-env (set `LANTERN_APP_DB_PASSWORD`, `ALTER ROLE lantern_app`); not yet flipped in any environment. Check `lantern_app` GRANTs for the engine tables first. |
-| Prod guards (Helm `LANTERN_ENV=production` default, `JWT_SECRET` wired, `values-prod.yaml`; Twilio-auth-off / claude-code fatal; Slack unsigned refused; API-key scope subset) | ✅ | Go guard tests; `helm template` renders with real subcharts for values / staging / prod |
+| RLS enforcement flip (`PAL_RLS_ENFORCE=1`) | 🟡 staged | Safe to flip per-env (set `PAL_APP_DB_PASSWORD`, `ALTER ROLE lantern_app`); not yet flipped in any environment. Check `lantern_app` GRANTs for the engine tables first. |
+| Prod guards (Helm `PAL_ENV=production` default, `JWT_SECRET` wired, `values-prod.yaml`; Twilio-auth-off / claude-code fatal; Slack unsigned refused; API-key scope subset) | ✅ | Go guard tests; `helm template` renders with real subcharts for values / staging / prod |
 | Tenant-wide spend cap + workflow/`web_search` metering | ✅ | handler tests for `/v1/budgets/tenant`, `RecordUsageSpend` (no `runs_count` bump), per-request LLM idempotency keys |
 | gRPC service-token auth (control-plane `:50051`, workflow-engine `:50052`, scheduler `:50055`, model-router `:50053`, runtime-manager `:50054`) | ✅ | Go `grpcauth` tests + Rust interceptor tests; fail-closed in prod |
 | Handler tests — auth, sessions, connectors (+24 DB-backed) | ✅ | Cross-tenant isolation asserted; credential round-trip verified; load-bearing assertions confirmed to fail on broken code |
@@ -41,8 +41,8 @@ claim was actually checked.
 | Data-plane tunnel + run-routing **end-to-end** | ✅ | `TestDataPlane_RoutingLoop_E2E` — real gRPC RunStream: queued run → RouteRun pins `data_plane_id` → assignment delivered live → Accept (→running) → Complete (→completed, cost/tokens persisted) |
 | Tunnel + routing **live two-process smoke** | ✅ | `make smoke-dataplane` — boots the real control-plane + data-plane-agent **binaries**, agent dials `:50051` + registers via bootstrap token, `POST /v1/runs` routes to the plane, `DpRunAssignment` delivered over the tunnel. Passing locally. |
 | workflow-engine (journal), runtime-scheduler (scoring/store/leader), data-plane-agent (tunnel) | ✅ | `go test` green (pure-Go packages) |
-| workflow-engine LLM + tool steps | ✅ | `llm_call` via `ModelService.Complete`, `tool_call` via `RuntimeManager.ExecTool` (tenant-scoped, ADR 0025); live through the data-plane `RouteRun` path. The bridge LLM path is still direct unless `LANTERN_USE_MODEL_ROUTER` is on (default OFF, ADR 0014) |
-| Surface-gateway real tenant resolution | ✅ | Resolves `LANTERN_TENANT_ID`; rejects unknown installs instead of inventing a tenant |
+| workflow-engine LLM + tool steps | ✅ | `llm_call` via `ModelService.Complete`, `tool_call` via `RuntimeManager.ExecTool` (tenant-scoped, ADR 0025); live through the data-plane `RouteRun` path. The bridge LLM path is still direct unless `PAL_USE_MODEL_ROUTER` is on (default OFF, ADR 0014) |
+| Surface-gateway real tenant resolution | ✅ | Resolves `PAL_TENANT_ID`; rejects unknown installs instead of inventing a tenant |
 | Dashboard HttpOnly JWT cookie (server-side token) | ✅ | Bridge tokens proxied via Next.js server route; auth JWT set as HttpOnly cookie |
 | Dashboard durable run resume (crash-replay primitives) | ✅ | `durable_replay.go` — `journalCompletedStep` wired into workflow interpreter; RESUME path driven from journal on crash |
 
@@ -113,7 +113,7 @@ The three new CI jobs are 🟡 until they have been observed green on GitHub; th
 2. ~~Codex audit lane hard-fails on billing.~~ ✅ **Closed** — the lane degrades gracefully now; a quota top-up restores the actual second opinion.
 3. ~~No concurrency/load testing on the run path.~~ ✅ **Basic load closed** — `make loadtest-runs` fired 120 concurrent run-creates (≈471 req/s) with **zero 5xx/connection errors**. A multi-node *soak/chaos* run still needs a real cluster (🔴).
 4. ~~Deployed docs unverified.~~ ✅ **Content closed** — `make validate-docs-live` proves all 21 routes serve 200 + real content. Pixel-level layout still needs a browser (🔴).
-5. **RLS enforcement flip** — handler cutover is complete and `LANTERN_RLS_ENFORCE=1` is safe to flip, but it is not yet enabled in any environment. Needs a per-env rollout with the `lantern_app` role password and GRANT check.
+5. **RLS enforcement flip** — handler cutover is complete and `PAL_RLS_ENFORCE=1` is safe to flip, but it is not yet enabled in any environment. Needs a per-env rollout with the `lantern_app` role password and GRANT check.
 6. **Firecracker / KVM end-to-end** — 🔴 spawn contract, privilege drop, and pause/resume/fork are unit-tested but no microVM has been booted on a Linux/KVM host with this code, including guest network re-identify after restore.
 7. **Python SDK `AgentContext`** — management surface parity is done (97 tests); the runtime context (`step()`, `ctx.llm`) still raises `NotImplementedError`. Not on PyPI.
 8. **Real-cluster `helm install`** — 🔴 charts render for values / staging / prod, but have not been installed on a live cluster.

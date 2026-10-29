@@ -1,6 +1,6 @@
 # talent-scout
 
-> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> **Heads up: this example targets the PAL Runtime SDK in-VM runtime, which is not
 > runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
 > `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
 > `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
@@ -72,7 +72,7 @@ lantern run talent-scout --input '{"role": "Senior ML Engineer", "skills": ["PyT
 }
 ```
 
-## Lantern features demonstrated
+## PAL Runtime features demonstrated
 
 - **Multi-LLM routing**: Uses `reasoning-small` for query planning (cheap), `code-large` for analyzing GitHub repos, `reasoning-large` for holistic ranking, and `chat-small` for outreach drafting
 - **Cost-aware routing**: Each step uses the cheapest capable model -- outreach and query planning use `optimize: "cheap"`

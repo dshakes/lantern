@@ -1,25 +1,27 @@
 ---
-// The ONE place the pal mark lives in pages ("Held": the ember dot held in the
-// bowl of the a). Strokes use currentColor so the logo follows the theme.
-// Static copies for README / external use are in public/brand/.
-// variant="runtime" prefixes the PAL Runtime sub-mark (Strata: three offset
-// bars, the top one breaking into the dot) and sets "runtime" as real text.
-// ponytail: geometry mirrors public/brand/lockup.svg (a–l gap opened 3 units
-// for optical spacing); change both together.
+// The ONE place the pal logo lives in pages ("Held": a p whose bowl holds a
+// dot, the moment pal keeps for you). Strokes use currentColor so the logo
+// follows the theme; the dot carries the product ramp.
+// variant="runtime" swaps the dot to the electric ramp and sets "Runtime" as
+// real text. Static files for README / external use: public/brand/.
+// ponytail: geometry mirrors WORD in docs/brand/build/brand.mjs; change both together.
 interface Props { size?: number; variant?: 'pal' | 'runtime'; class?: string }
 const { size = 24, variant = 'pal', class: cls } = Astro.props;
-const label = variant === 'runtime' ? 'PAL Runtime' : 'pal';
+const rt = variant === 'runtime';
+const label = rt ? 'PAL Runtime' : 'pal';
+const gid = `pal-dot-${Math.random().toString(36).slice(2, 8)}`;
+const [a, b] = rt ? ['#6c5cff', '#14c8f0'] : ['#ff7a3d', '#e5207f'];
 ---
 <span class:list={['pal-logo', cls]} style={`--s:${size}px`} role="img" aria-label={label}>
-  {variant === 'runtime' && (
-    <svg class="strata" viewBox="4 10 54 46" aria-hidden="true"><g fill="currentColor"><rect x="6" y="44" width="44" height="10" rx="5"/><rect x="12" y="29" width="40" height="10" rx="5"/><rect x="18" y="14" width="22" height="10" rx="5"/></g><circle cx="51" cy="19" r="5.5" fill="#ff5b2e"/></svg>
-  )}
-  <svg class="word" viewBox="-4 -4 113 72" aria-hidden="true"><g stroke="currentColor" fill="none" stroke-width="8" stroke-linecap="round"><path d="M6 19 V62 M82 19 V49 M101 4 V49"/><circle cx="21" cy="34" r="15"/><circle cx="67" cy="34" r="15"/></g><circle cx="67" cy="34" r="6" fill="#ff5b2e"/></svg>
-  {variant === 'runtime' && <span class="rt" aria-hidden="true">runtime</span>}
+  <svg class="word" viewBox="0 -11 114 80" aria-hidden="true">
+    <defs><linearGradient id={gid} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color={a} /><stop offset="1" stop-color={b} /></linearGradient></defs>
+    <g stroke="currentColor" fill="none" stroke-width="9" stroke-linecap="round"><path d="M4.5 13 V64 M81 13 V43 M100 -6 V34 A9 9 0 0 0 109 43" /><circle cx="19.5" cy="28" r="15" /><circle cx="66" cy="28" r="15" /></g>
+    <circle cx="19.5" cy="28" r="6.5" fill={`url(#${gid})`} />
+  </svg>
+  {rt && <span class="rt" aria-hidden="true">Runtime</span>}
 </span>
 <style>
-  .pal-logo { display: inline-flex; align-items: center; gap: calc(var(--s) * 0.32); line-height: 1; color: var(--p-text, var(--sl-color-white)); }
-  .word { height: calc(var(--s) * 1.15); width: auto; aspect-ratio: 113 / 72; flex: none; overflow: visible; }
-  .strata { height: calc(var(--s) * 0.92); width: auto; aspect-ratio: 54 / 46; flex: none; }
-  .rt { font-family: var(--p-display, 'Inter Tight Variable', system-ui, sans-serif); font-weight: 600; font-size: calc(var(--s) * 0.9); letter-spacing: -0.03em; color: var(--p-text-2, var(--sl-color-gray-2)); }
+  .pal-logo { display: inline-flex; align-items: center; gap: calc(var(--s) * 0.3); line-height: 1; color: var(--p-text, var(--sl-color-white)); }
+  .word { height: calc(var(--s) * 1.2); width: auto; aspect-ratio: 114 / 80; flex: none; overflow: visible; }
+  .rt { font-family: var(--p-display, 'Inter Tight Variable', system-ui, sans-serif); font-weight: 500; font-size: calc(var(--s) * 0.95); letter-spacing: -0.025em; color: var(--p-text, var(--sl-color-white)); }
 </style>

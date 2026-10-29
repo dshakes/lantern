@@ -24,11 +24,11 @@ there are no long-term support branches yet.
   login, the `lantern-dev-jwt-secret-do-not-use-in-production` JWT secret, and
   the local Postgres/MinIO credentials in `docs`/compose are for local
   development. **Production deployments must override** `JWT_SECRET`,
-  `LANTERN_CREDENTIAL_KEY`, database/object-store credentials, and disable or
+  `PAL_CREDENTIAL_KEY`, database/object-store credentials, and disable or
   rotate the seeded admin user.
 - **Secrets at rest** (`connector_installs`, `llm_provider_configs`,
   `voice_numbers`) are AES-256-GCM encrypted via `internal/secrets` when
-  `LANTERN_CREDENTIAL_KEY` is set. If it is unset the code falls back to
+  `PAL_CREDENTIAL_KEY` is set. If it is unset the code falls back to
   plaintext pass-through for local dev — **always set it in production.**
 - **Multi-tenant isolation** is enforced by `tenant_id` on every row, gRPC
   metadata, and Postgres Row-Level Security (`FORCE ROW LEVEL SECURITY`) on
@@ -90,7 +90,7 @@ hostile agent code in production, these need real implementations:
   `EnvSecretResolver` ships today.
 - **TLS on the data path** — fail-closed in prod across the board now: gateway
   terminates rustls on :8443; harness↔manager mTLS with the CN==vm_id check; and
-  the **control-plane gRPC server now serves TLS** (`LANTERN_CONTROL_PLANE_TLS_*`,
+  the **control-plane gRPC server now serves TLS** (`PAL_CONTROL_PLANE_TLS_*`,
   required in prod) so the gateway→control-plane channel can be encrypted
   end-to-end. RESIDUAL: the live multi-process handshakes are exercised by the
   KVM/integration CI, not on a single macOS dev box.
@@ -103,6 +103,6 @@ hostile agent code in production, these need real implementations:
 - **K8s job hardening** — emit a default-deny NetworkPolicy per job and add
   `seccomp: RuntimeDefault` + `cap_drop: [ALL]` to the job SecurityContext.
 
-Set these in production regardless: `LANTERN_ENV=production`, `JWT_SECRET`,
-`LANTERN_RECEIPT_SECRET`, `LANTERN_CREDENTIAL_KEY` (the control-plane refuses
-to boot without them when `LANTERN_ENV` is prod).
+Set these in production regardless: `PAL_ENV=production`, `JWT_SECRET`,
+`PAL_RECEIPT_SECRET`, `PAL_CREDENTIAL_KEY` (the control-plane refuses
+to boot without them when `PAL_ENV` is prod).

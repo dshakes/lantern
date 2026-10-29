@@ -23,7 +23,7 @@ Items that are already done or intentionally deferred to beta/GA.
 - [x] TypeScript SDK + Python SDK + Go SDK (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`)
 - [x] `lantern` CLI (`packages/cli`)
 - [x] Dashboard, landing, docs site (`apps/web`; `site/` for landing + docs)
-- [x] Dev credentials seeded on first boot; `LANTERN_ENV=prod` hard-fails without `JWT_SECRET` / `LANTERN_CREDENTIAL_KEY`
+- [x] Dev credentials seeded on first boot; `PAL_ENV=prod` hard-fails without `JWT_SECRET` / `PAL_CREDENTIAL_KEY`
 - [x] Security audits remediated (auth, tenant isolation, webhook verification, XSS, secrets, fail-closed posture) — see `SECURITY.md`
 - [x] `~290` Rust unit tests, `~565` bridge-core tests, control-plane + SDK suites
 
@@ -32,7 +32,7 @@ Items that are already done or intentionally deferred to beta/GA.
 - SDK registry publishing (PyPI, npm) and a release/publish runbook
 - Real-account SaaS tiers: connector and provider calls against live vendor accounts (fixtures only in CI; per-example READMEs describe manual runs)
 - Full-stack KVM lane: a provisioned runner for `microvm-integration.yml`
-- Flipping `LANTERN_RLS_ENFORCE` and `LANTERN_AUTHZ_ENFORCE` per environment
+- Flipping `PAL_RLS_ENFORCE` and `PAL_AUTHZ_ENFORCE` per environment
 - Fuzzing, OpenAPI/AsyncAPI, soak/chaos on a real cluster
 
 ---
@@ -48,10 +48,10 @@ Work needed before accepting non-owner production traffic.
 - [x] **In-guest harness VendSecret agent** — implemented, no longer a stub: `services/harness/src/manager_client.rs` (mTLS client + `VendSecret`), `secrets.rs` (peer-authenticated socket), spawn contract per ADR 0025. Live proof inside a booted microVM (`EXPECT_VENDSECRET=1`) still needs the KVM lane above
 - [ ] **Secret vending mTLS two-process handshake verified** — the KVM CI pipeline validates the live harness↔manager mTLS path; see `SECURITY.md` + `services/runtime-manager/src/tls.rs`
 - [x] **Secret relay per-VM binding** — `POST /v1/runtime/secrets/resolve` now verifies `(vm_id, tenant_id)` against `runtime_vms` before returning any credential (404 on unknown/wrong-tenant/terminal VMs, rate-limited to block probing). Per-VM MAC tokens remain optional future hardening (`services/control-plane/internal/handlers/runtime_secrets.go`)
-- [ ] **Production `SecretResolver`** — `RelaySecretResolver` (ADR 0008) is now implemented and activated by `LANTERN_CONTROL_PLANE_URL` + `LANTERN_RUNTIME_SECRET_TOKEN`. Vault / AWS Secrets Manager remain a GA option; the relay endpoint is the recommended production step (`services/runtime-manager/src/secret_resolver.rs`)
-- [ ] **RBAC scope enforcement ON** — mutating routes are annotated with `AuthHandler.WithScope` in `services/control-plane/cmd/server/main.go`, but enforcement is flag-gated, default OFF (`LANTERN_AUTHZ_ENFORCE`); reads are unannotated. OPEN: annotate reads, flip the flag per environment
-- [ ] **Non-owner Postgres role in use** — handler cutover is complete (`0 non-exempt srv.Pool sites`, ADR 0011) and `infra/db/least-privilege.sql` exists, but `LANTERN_RLS_ENFORCE=1` + `LANTERN_APP_DB_PASSWORD` is not flipped in any environment (OPEN: per-env rollout)
-- [ ] **Egress host-level firewall** — ADR 0026 broker mode (`LANTERN_EGRESS_MODE=broker`, no guest NIC) closes this for Firecracker but is opt-in; guest mode still needs the node iptables REDIRECT rule (`services/harness/src/egress.rs`). OPEN: make broker the default / document node setup
+- [ ] **Production `SecretResolver`** — `RelaySecretResolver` (ADR 0008) is now implemented and activated by `PAL_CONTROL_PLANE_URL` + `PAL_RUNTIME_SECRET_TOKEN`. Vault / AWS Secrets Manager remain a GA option; the relay endpoint is the recommended production step (`services/runtime-manager/src/secret_resolver.rs`)
+- [ ] **RBAC scope enforcement ON** — mutating routes are annotated with `AuthHandler.WithScope` in `services/control-plane/cmd/server/main.go`, but enforcement is flag-gated, default OFF (`PAL_AUTHZ_ENFORCE`); reads are unannotated. OPEN: annotate reads, flip the flag per environment
+- [ ] **Non-owner Postgres role in use** — handler cutover is complete (`0 non-exempt srv.Pool sites`, ADR 0011) and `infra/db/least-privilege.sql` exists, but `PAL_RLS_ENFORCE=1` + `PAL_APP_DB_PASSWORD` is not flipped in any environment (OPEN: per-env rollout)
+- [ ] **Egress host-level firewall** — ADR 0026 broker mode (`PAL_EGRESS_MODE=broker`, no guest NIC) closes this for Firecracker but is opt-in; guest mode still needs the node iptables REDIRECT rule (`services/harness/src/egress.rs`). OPEN: make broker the default / document node setup
 
 ### Testing gaps
 
@@ -65,7 +65,7 @@ Work needed before accepting non-owner production traffic.
 
 ### Runtime / infra
 
-- [x] **Scheduler dispatches to the manager** — real gRPC dialer in `services/runtime-scheduler/internal/dialer/manager.go`, selected by `LANTERN_DEFAULT_MANAGER_ADDR`; `LogOnlyDialer` remains only as the dev stub and is fatal in prod (`dialer.CheckManagerDialer`)
+- [x] **Scheduler dispatches to the manager** — real gRPC dialer in `services/runtime-scheduler/internal/dialer/manager.go`, selected by `PAL_DEFAULT_MANAGER_ADDR`; `LogOnlyDialer` remains only as the dev stub and is fatal in prod (`dialer.CheckManagerDialer`)
 - [x] **Exec + Stats for K8s backend** — `K8sBackend::exec_command` uses the kube `ws` feature (`Api::exec` / `AttachedProcess`); `stats_sample` queries `metrics.k8s.io/v1beta1` with a clear error when metrics-server is absent (`services/runtime-manager/src/backends/k8s.rs`)
 - [x] **Firecracker stats via heartbeat cache** — the manager now consumes `RuntimeHarness::Heartbeat` streams from in-VM harnesses and serves the cached `ResourceUsage` from the stats gRPC method; staleness threshold 30 s (`service.rs`). Firecracker `exec` still returns an error naming the harness channel as the future path.
 - [x] **Snapshot persistence to S3/MinIO** — `SnapshotStore` now has a two-tier design: local filesystem primary + optional S3/MinIO upload on every `put`, S3 fallback on `get`. Activated by `S3_ENDPOINT` + `S3_BUCKET` env vars (`services/runtime-manager/src/snapshot_store.rs`). Verified live against dev MinIO.

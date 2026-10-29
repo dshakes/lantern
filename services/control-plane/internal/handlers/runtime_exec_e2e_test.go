@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dshakes/lantern/packages/palenv"
 	"go.uber.org/zap"
 )
 
@@ -33,6 +34,9 @@ const e2eImage = "python:3.11-slim"
 
 func runtimeE2EOrSkip(t *testing.T) (schedAddr string) {
 	t.Helper()
+	// The CI gate (and older docs) set LANTERN_*; a test binary has no main()
+	// to run the compat bridge, so mirror them here or the gate silently skips.
+	palenv.Bridge()
 	if os.Getenv("PAL_RUNTIME_E2E") != "1" {
 		t.Skip("PAL_RUNTIME_E2E != 1 — skipping live runtime exec e2e")
 	}

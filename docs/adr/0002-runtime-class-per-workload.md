@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (class→backend mapping superseded in part by [ADR 0009](0009-kubernetes-default-runtime-substrate.md))
 - **Date:** 2026-05-12
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, isolation, scheduling
 
 > **Note (2026-06-18):** the *principle* of this ADR — the author declares an
@@ -15,7 +15,7 @@
 
 ## Context
 
-Lantern supports several physical execution backends — K8s Job, Firecracker, Kata Containers, Wasmtime, and long-lived devcontainer pods. The six classes are catalogued in [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md). Each has very different cost, cold-start, and security characteristics:
+PAL Runtime supports several physical execution backends — K8s Job, Firecracker, Kata Containers, Wasmtime, and long-lived devcontainer pods. The six classes are catalogued in [`docs/architecture/04-runtime-isolation.md`](../architecture/04-runtime-isolation.md). Each has very different cost, cold-start, and security characteristics:
 
 - Firecracker is the right default for tenant code: ~150ms warm restore, hardware-level isolation, packs hundreds per node.
 - Kata is heavier (~300ms warm) but more compatible — needed for workloads that touch unusual kernel surfaces.
@@ -38,7 +38,7 @@ Every agent declares an isolation class in its spec. The proto field is `AgentSp
 Defaults:
 - If unset, default is `ISOLATION_STANDARD` (Firecracker). Never `TRUSTED`.
 - Marketplace-installed agents and LLM-generated code are forced to `ISOLATION_UNTRUSTED` regardless of what the author declared.
-- `ISOLATION_TRUSTED` is allowed only for first-party agents signed by Lantern's signing key.
+- `ISOLATION_TRUSTED` is allowed only for first-party agents signed by PAL Runtime's signing key.
 
 The mapping class → backend lives in the scheduler:
 
@@ -72,7 +72,7 @@ DEVCONTAINER  → long-lived K8s pod + PVC
 Tempting — it's the right default. But:
 - `HOSTILE` workloads need Kata's broader compatibility (Firecracker has a narrow device set; some malware-analysis sandboxes won't run).
 - `WASM` is dramatically cheaper for pure-function tools (microseconds vs ~150ms). Forcing them into Firecracker is leaving an order of magnitude on the table.
-- First-party Lantern steps don't need microVM isolation; K8s Job is cheaper and faster to debug.
+- First-party PAL Runtime steps don't need microVM isolation; K8s Job is cheaper and faster to debug.
 
 ### Always Kata
 Heavier than Firecracker for the same isolation. E2B and AWS Lambda both run Firecracker in production for the same reason ([E2B](https://e2b.dev/), [Firecracker boot times](https://dev.to/adwitiya/how-i-built-sandboxes-that-boot-in-28ms-using-firecracker-snapshots-i0k)). We chose Firecracker as default for cold-start; Kata is the escape hatch.

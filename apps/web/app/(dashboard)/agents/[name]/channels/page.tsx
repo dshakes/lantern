@@ -54,8 +54,8 @@ export default function AgentChannelsPage() {
       name: "Webchat widget",
       description: "Embed a one-line <script> on any website. Visitors get a chat bubble in the corner that talks to this agent.",
       icon: Code2,
-      iconColor: "text-lantern-400",
-      iconBg: "bg-lantern-500/10",
+      iconColor: "text-pal-400",
+      iconBg: "bg-pal-500/10",
       href: `/embed?agent=${encodeURIComponent(name)}`,
       status: "Available",
     },
@@ -152,7 +152,7 @@ function ChannelTile({ card }: { card: ChannelCard }) {
       <p className="flex-1 text-[12px] leading-relaxed text-zinc-500">
         {card.description}
       </p>
-      <div className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-lantern-400 transition-colors duration-150 group-hover:text-lantern-300">
+      <div className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-pal-400 transition-colors duration-150 group-hover:text-pal-300">
         Configure
         <ArrowRight className="h-3 w-3 transition-transform duration-150 group-hover:translate-x-0.5" />
       </div>

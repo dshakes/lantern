@@ -113,7 +113,7 @@ export function VmDrawer({
                 className={clsx(
                   "flex items-center gap-1.5 border-b-2 px-3 py-3 text-[12px] font-medium transition-colors",
                   tab === t.id
-                    ? "border-lantern-400 text-zinc-100"
+                    ? "border-pal-400 text-zinc-100"
                     : "border-transparent text-zinc-500 hover:text-zinc-300",
                 )}
               >
@@ -300,7 +300,7 @@ function ExecTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
         {history.length === 0 && <div className="text-zinc-600">No commands yet. Try `ls`, `ps`, `cat /etc/hostname`.</div>}
         {history.map((h, i) => (
           <div key={i}>
-            <div className="text-lantern-300">$ {h.cmd}</div>
+            <div className="text-pal-300">$ {h.cmd}</div>
             <pre className="mt-0.5 whitespace-pre-wrap break-words text-zinc-400">{h.out}</pre>
           </div>
         ))}
@@ -315,7 +315,7 @@ function ExecTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
           }}
           disabled={!active && !isDemo}
           placeholder={active || isDemo ? "command…" : "workload not running"}
-          className="flex-1 rounded-lg bg-surface-2 px-3 py-2 font-mono text-[12px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-lantern-500/40 disabled:opacity-50"
+          className="flex-1 rounded-lg bg-surface-2 px-3 py-2 font-mono text-[12px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-pal-500/40 disabled:opacity-50"
         />
         <Button variant="secondary" size="sm" loading={running} onClick={run} icon={<CornerDownLeft className="h-3.5 w-3.5" />}>
           Run

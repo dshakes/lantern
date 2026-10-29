@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-10-28  
-**Author:** Lantern runtime team
+**Author:** PAL Runtime runtime team
 
 ---
 

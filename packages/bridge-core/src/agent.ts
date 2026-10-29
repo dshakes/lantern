@@ -12,6 +12,9 @@
 //     persist its jid→sessionId map to. iMessage doesn't persist
 //     (sessions are short-lived anyway).
 
+// Mirror LANTERN_X -> PAL_X before this module's top-level env reads, for any
+// entrypoint that did not import env-compat first (ADR 0032).
+import "./env-compat.js";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "fs";
 import type { Logger } from "pino";
 

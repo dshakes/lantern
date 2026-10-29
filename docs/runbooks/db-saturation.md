@@ -74,7 +74,7 @@ kubectl -n <ns> logs deploy/<control-plane> --tail=200 | grep -i 'pool\|connecti
    ```
    Capture the offending `application_name`/`query` first — that's the bug.
 2. **Genuinely undersized for load** — scale connections deliberately:
-   - lower per-pod pool size (`LANTERN_PG_MAX_CONNS`) if you have many replicas
+   - lower per-pod pool size (`PAL_PG_MAX_CONNS`) if you have many replicas
      each holding a big pool (replicas × pool can exceed `max_connections`); OR
    - raise `max_connections` on the DB (managed Postgres: change the parameter
      group / flags); OR

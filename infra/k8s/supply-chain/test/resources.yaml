@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: pinned, namespace: lantern-t-acme}
+spec:
+  containers:
+    - {name: agent, image: "ghcr.io/acme/agent@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: tagged, namespace: pal-t-acme}
+spec:
+  containers:
+    - {name: agent, image: "ghcr.io/acme/agent:latest"}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: tagged-init, namespace: lantern-t-acme}
+spec:
+  initContainers:
+    - {name: setup, image: "busybox:1.36"}
+  containers:
+    - {name: agent, image: "ghcr.io/acme/agent@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: outside-tenant, namespace: kube-system}
+spec:
+  containers:
+    - {name: x, image: "registry.k8s.io/pause:3.9"}
