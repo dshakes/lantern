@@ -1,0 +1,37 @@
+---
+title: Knowledge base and human handoff
+description: Upload documents for cited answers, and hand a conversation to a person.
+sidebar:
+  order: 3
+---
+
+Upload documents to an agent. Each one is split into chunks, embedded and stored in Postgres with pgvector. On every session message the best chunks are added to the agent's context, and the reply carries the documents it was drawn from. An agent labelled `handoff=human` can also pass a conversation to a person.
+
+## Documents
+
+| Method | Path | Scope | Notes |
+| --- | --- | --- | --- |
+| POST | `/v1/agents/{name}/documents` | agents:write | Body `{title, content, source?, id?}`. Up to 1 MiB of text and 120 chunks. A caller-supplied `id` (UUID, unique per agent) makes the upload idempotent: the same id replaces the document. 201 with `chunkCount` and `embeddedChunks`. |
+| GET | `/v1/agents/{name}/documents` | agents:read | List. |
+| GET | `/v1/agents/{name}/documents/{id}` | agents:read | Metadata. 404 for another tenant's document. |
+| DELETE | `/v1/agents/{name}/documents/{id}` | agents:write | 204; chunks are removed with it. |
+| POST | `/v1/agents/{name}/documents/search` | agents:read | Body `{query, limit?}`; returns `results[{documentId,title,content,score}]`. |
+
+## How retrieval works
+
+Chunks are embedded with the tenant's OpenAI key (`text-embedding-3-small`, 1536 dimensions) and matched by cosine distance; hits below `LANTERN_KB_MIN_SCORE` (default 0.2) are dropped. With no OpenAI key the chunks are stored without a vector and search falls back to Postgres full-text. The excerpts are fenced in the system prompt and labelled as reference data, not instructions. Agents with no documents pay nothing: no embedding call is made.
+
+The session event `message_completed` includes `sources: [{id, title}]` for the documents used; the web widget shows them under the reply.
+
+## Human handoff
+
+Label the agent `handoff=human` (and optionally `handoff_slack_channel`). The agent then has exactly one tool, `handoff_to_human`, and no connector tools, so a public widget key cannot reach your integrations. When the model calls it the session moves to `status=handoff`, the stream emits `session.handoff`, and a message is posted to the Slack channel through your installed Slack connector (once per handoff).
+
+| Method | Path | Scope | Notes |
+| --- | --- | --- | --- |
+| POST | `/v1/sessions/{id}/handoff` | runs:execute | Force a handoff without the model. Idempotent. |
+| POST | `/v1/sessions/{id}/operator-messages` | write | Body `{content}`. Only while in handoff (409 otherwise); emits `operator.message`. |
+| POST | `/v1/sessions/{id}/resolve` | write | Hand the chat back to the agent; emits `session.resolved`. |
+| GET | `/v1/sessions?status=handoff` | read | The queue of conversations waiting for a person. |
+
+While a session is in handoff, customer messages are saved to the transcript and the model stays silent. Operator endpoints need the coarse `write` scope on purpose: a public widget key (`runs:execute`) must not be able to speak as the operator.

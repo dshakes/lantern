@@ -198,6 +198,8 @@ export class OwnerProfileStore {
       if (!OWNER_TZ_ENV_EXPLICIT && this.cache.timezone &&
           process.env.LANTERN_OWNER_TIMEZONE !== this.cache.timezone) {
         process.env.LANTERN_OWNER_TIMEZONE = this.cache.timezone;
+        // Both names (ADR 0032): env-compat mirrored PAL_OWNER_TIMEZONE at boot.
+        process.env.PAL_OWNER_TIMEZONE = this.cache.timezone;
         this.logger.info(
           { timezone: this.cache.timezone, source: "owner-profile" },
           "owner timezone set from profile",

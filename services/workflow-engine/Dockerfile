@@ -1,9 +1,10 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 WORKDIR /app
 
 # Copy the gen/go module that we depend on via the replace directive.
 # (Build context is the repo root — see infra/docker/docker-compose.yml.)
 COPY gen/go/ /app/gen/go/
+COPY packages/palenv/ /app/packages/palenv/
 
 # Copy the workflow-engine service source.
 COPY services/workflow-engine/ /app/services/workflow-engine/

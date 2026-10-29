@@ -22,7 +22,7 @@ Items that are already done or intentionally deferred to beta/GA.
 - [x] Personal agent bridges — WhatsApp + iMessage (`services/whatsapp-bridge`, `services/imessage-bridge`)
 - [x] TypeScript SDK + Python SDK + Go SDK (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`)
 - [x] `lantern` CLI (`packages/cli`)
-- [x] Dashboard, landing, docs site (`apps/web`, `apps/landing`, `apps/docs`)
+- [x] Dashboard, landing, docs site (`apps/web`; `site/` for landing + docs)
 - [x] Dev credentials seeded on first boot; `LANTERN_ENV=prod` hard-fails without `JWT_SECRET` / `LANTERN_CREDENTIAL_KEY`
 - [x] Security audits remediated (auth, tenant isolation, webhook verification, XSS, secrets, fail-closed posture) — see `SECURITY.md`
 - [x] `~290` Rust unit tests, `~565` bridge-core tests, control-plane + SDK suites

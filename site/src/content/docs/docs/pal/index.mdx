@@ -1,0 +1,117 @@
+---
+title: PAL (personal agent)
+description: A personal assistant on messaging channels, built on PAL Runtime sessions, memory and gated replies.
+sidebar:
+  order: 1
+---
+
+PAL is a personal assistant that runs on messaging channels (iMessage and WhatsApp) and is built on the platform these docs describe. It handles multilingual threads, tracks commitments across both channels, and can take actions on the owner's Mac. This page covers how it is built, which platform features it uses, the safety model around it, and the feedback loop that improves it. Claims are checked against the source; paths are listed at the end.
+
+Two small programs (the channel bridges) run on the owner's Mac and talk to a PAL control plane. Every reply a contact would receive passes through a series of checks first. Most replies pass and are sent after a short, human-paced delay. A reply that commits the owner to money or an action, or asserts something the assistant cannot verify, is held and shown to the owner instead.
+
+## Architecture
+
+```text
+iMessage (chat.db)        WhatsApp
+        |                    |
+        +---------+----------+
+                  | inbound message
+                  v
+   channel bridge (Node.js, on the Mac)
+     owner-only checks, check stack, pacing
+                  | POST /v1/sessions/{id}/messages
+                  v
+   control plane
+     sessions, web_search tool, memory API
+                  | model: "auto"
+                  v
+   model router -> concrete model
+
+On the Mac:       encrypted sent log, dislike log, episode and topic stores
+In the platform:  person graph, memory events (Postgres, RLS)
+```
+
+Each contact gets a session through the same `/v1/sessions` API the dashboard and SDKs use; there is no separate bridge protocol. Auxiliary LLM calls (gate judges, voice refinement, ranking) use a **purpose-keyed session** (`<contact>::<purpose>`) so they cannot leak into the contact's live thread.
+
+## The reply pipeline
+
+Every contact reply goes through these stages in order. The first three are soft: a failure triggers regeneration. The next two are hard: they hold the reply for the owner. The prompt rules are advice; these stages are code.
+
+```text
+1. draft            purpose-keyed session, web_search on, read-only tools
+2. bot-tell guard   stock phrases, leaked reasoning, denials of the
+                    owner's own facts            (soft: regenerate)
+3. voice floor      stylometric distance from the owner's own sent
+                    messages                     (soft: regenerate)
+4. critique-refine  MEDIUM/LOW drafts only; accepted only if closer to
+                    the owner's voice and bot-tell clean
+5. commitment gate  LLM judge + deterministic multilingual backstop
+                    holds replies that commit money or an action
+                                                 (HOLD for the owner)
+6. grounding gate   LLM judge + deterministic backstop; holds replies
+                    that state unverifiable facts about the owner's
+                    plans or answer bad news in the wrong register
+                                                 (HOLD for the owner)
+7. claim rewrite    "I sent it" becomes "I'll send it" unless the action
+                    was recorded for that contact in the last 10 minutes
+8. paced send       hold time from the owner's real reply latency,
+                    jittered, clamped to 600 ms - 25 s
+```
+
+The two checks that can hold a message (stages 5 and 6) hold any reply that commits money or asserts what it cannot verify. They are not a blanket hold: most replies pass. Each runs a deterministic backstop alongside the LLM judge, so an LLM outage cannot make them fail open. A hold forces the draft path even when draft-and-confirm is off, and the owner gets a notification with the held draft.
+
+Both gates exist because prompt-only rules failed on two classes of reply: promises of money or action written in a language the guards did not cover, and assertions of stale profile facts as current. A prompt rule is advice; these stages are enforced in code.
+
+## Platform features used
+
+| Feature | How the assistant uses it |
+| --- | --- |
+| Sessions (`/v1/sessions`) | One session per contact; purpose-keyed sessions for side calls |
+| Model router | The bridge requests `model: "auto"` by default; the router picks the concrete model |
+| Web search tool | On for every contact reply, for live facts the model should check before answering |
+| Memory API (`/v1/memory`, `/v1/people`) | One person graph and timeline shared by both channels |
+
+Actions on the Mac (Calendar, Notes, Mail) run through AppleScript in the bridge, not through the connector layer.
+
+## Safety model
+
+- **Owner-only.** Document search, Mac actions and commands run only for the owner's chat. A message from anyone else never reaches them.
+- **Path-restricted documents.** Reads stay inside `LANTERN_PERSONAL_DOCS_ROOTS` and go through `isAllowedPath`; the OCR cache is mode 0600.
+- **Mute is not the kill switch.** Mute still runs the pipeline but hands every contact reply to the owner as a draft; the block is enforced at the send boundary, so groups and fallbacks are covered too. The kill switch ignores all inbound and does nothing.
+- **No silent drops.** Every suppression logs which check fired and why.
+- **Draft-and-confirm is opt-in.** When off, a LOW-confidence reply is held briefly, then sent with a heads-up to the owner. Enable with `LANTERN_DRAFT_CONFIRM=on` (iMessage) or `LANTERN_DRAFT_HIGH_STAKES=on` (WhatsApp).
+- **Data stays on the Mac**, except the message text sent to the LLM provider you configure. The highest-sensitivity stores are AES-256-GCM encrypted at rest.
+
+## The quality loop
+
+- **Sent log.** Every sent contact reply is stored encrypted (AES-256-GCM) with its tier and voice score, so quality is measurable. Nothing on the reply path reads it back.
+- **Voice score.** A deterministic stylometric distance from the owner's own messages. The floor is the 95th percentile of the owner's own samples. It checks surface features, not meaning.
+- **Thumbs-down flywheel.** A thumbs-down logs the pair. Patterns recurring across three or more rejections graduate into style lessons that are injected into every future prompt. An LLM clustering pass is on by default and fail-safe (`LANTERN_DISLIKE_LLM_CLUSTER=0` disables it).
+- **Audits.** A script (`scripts/introspect/run.sh`) audits recent live replies four times a day and alarms if no run has succeeded in 36 hours.
+- **Parity test.** CI fails if a shared pipeline module is wired into one bridge but not the other.
+
+## Limits
+
+- The bridge runs on one Mac. If it is off, nothing is processed.
+- The grounding gate holds claims it cannot verify; it does not verify them. A separate scheduled refresh updates the owner's profile from mail and calendar, so there is a lag.
+- Voice scoring is a signal, not a judgment of tone or meaning.
+- Voice cloning (`LANTERN_VOICE_CLONE`) is off by default and treated as deepfake-class.
+
+## Configuration
+
+Key variables:
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `LANTERN_OWNER_NAME` | required | First name, used for document ranking |
+| `LANTERN_OWNER_TIMEZONE` | process timezone | Quiet hours, digests, calendar lookups |
+| `LANTERN_DRAFT_CONFIRM` / `LANTERN_DRAFT_HIGH_STAKES` | off | Hold LOW-confidence replies for approval |
+| `LANTERN_VOICE_REFINE` | on | Critique-refine for MEDIUM/LOW drafts |
+| `LANTERN_VOICE_FLOOR` | on | Stylometric floor; `0` disables |
+| `LANTERN_QUIET_START` / `LANTERN_QUIET_END` | 1 / 6 | Quiet-hours window (24h integers); messages queue |
+
+See also [Channels](/lantern/docs/pal/surfaces/) and [Security](/lantern/docs/runtime/security/).
+
+## Source paths
+
+`packages/bridge-core/src/`: `natural.ts`, `voice-score.ts`, `voice-refine.ts`, `commitment-gate.ts`, `grounding-gate.ts`, `verifiable-claims.ts`, `sent-log.ts`, `secure-store.ts`, `dislike-consolidator.ts`, `agent.ts`, `bridge-parity.test.ts`. Wiring: `services/imessage-bridge/src/session.ts`.

@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/connectorreplay"
 )
 
 func main() {
+	palenv.Bridge()
 	addr := flag.String("addr", "127.0.0.1:9191", "listen address (loopback by default)")
 	flag.Parse()
 	s, err := connectorreplay.New()

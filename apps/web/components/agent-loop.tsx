@@ -1,4 +1,4 @@
-// Cyclic SVG loop diagram for one personal-suite agent — ported from apps/docs.
+// Cyclic SVG loop diagram for one personal-suite agent — ported from the former docs app (now site/).
 // ponytail: inline SVG, no deps; CSS classes live in app/globals.css.
 
 type Tone = "sky" | "amber" | "violet" | "emerald" | "rose";

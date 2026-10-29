@@ -1,0 +1,135 @@
+---
+title: Token streaming
+description: The message_delta, message_completed and message_error SSE contract for session replies, and the SDK async iterator.
+sidebar:
+  order: 10
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Session replies are streamed token-by-token from the model provider through the control-plane to the client. The streaming contract is a sequence of three named SSE events on `GET /v1/sessions/{id}/events`.
+
+Streaming is why chat UIs feel alive: instead of waiting for a finished answer, words appear as the model writes them. PAL Runtime passes each fragment (token) to your app as it arrives; nothing along the path holds the response back to deliver it in one piece. Your app listens on a single long-lived HTTP connection (SSE, server-sent events) and receives three kinds of messages: a fragment arrived, the reply finished, or something went wrong.
+
+Provider deltas flow through the control-plane and Redis pub/sub to connected SSE clients. Tool-using turns buffer; tool-free turns stream every token.
+
+<Aside title="Sessions only">
+Session turns run in the control plane's session handler (not the run executor). The streaming contract described here covers interactive sessions. Headless microVM runs stream `step_started` / `step_completed` / `step_failed` events, not token deltas.
+</Aside>
+
+## The three events
+
+A single assistant turn produces events in this order.
+
+### `message_delta`
+
+Emitted for each token chunk during streaming. Not emitted for tool-bearing turns (see the limitation below).
+
+```json
+{
+  "sessionId": "sess_abc123",
+  "turnId":    "tur_xyz789",
+  "seq":       1,
+  "delta":     "Hello"
+}
+```
+
+`turnId` is stable across all events in the turn. `seq` is a monotone per-turn counter that starts at 1. `delta` is a text fragment of one or more tokens.
+
+### `message_completed`
+
+Emitted exactly once per turn, after all deltas (or immediately for tool-bearing turns that do not stream). Contains the full assembled text and usage metadata.
+
+```json
+{
+  "sessionId": "sess_abc123",
+  "turnId":    "tur_xyz789",
+  "text":      "Hello, how can I help you today?",
+  "usage": {
+    "tokensIn":  42,
+    "tokensOut": 12,
+    "costUsd":   0.000018
+  }
+}
+```
+
+### `message_error`
+
+Emitted when the LLM call fails mid-stream after at least one delta has been sent. Clients should discard any partial response accumulated so far for this `turnId`.
+
+```json
+{
+  "sessionId": "sess_abc123",
+  "turnId":    "tur_xyz789",
+  "error":     "provider error — partial response discarded"
+}
+```
+
+The `turnId` is stable across all three event types for the same assistant turn. Clients can use it to correlate deltas to their final `message_completed`, and to discard in-progress buffers when a `message_error` arrives.
+
+<Aside type="caution" title="Tool-bearing turns do not stream deltas">
+When the session has tools attached, the LLM call runs through a non-streaming tool-use loop (up to 5 rounds). For those turns the client receives a single `message_completed` without any preceding `message_delta` events.
+</Aside>
+
+## SDK: `sessions.streamMessage()`
+
+The TypeScript SDK exposes token streaming as an async iterator. It handles sequence reordering, unknown event filtering, and legacy server compatibility automatically.
+
+```ts
+import { LanternClient } from "@lantern/sdk";
+
+const client = new LanternClient({ apiKey: "..." });
+
+for await (const event of client.sessions.streamMessage(sessionId, {
+  content: "Summarise the last quarter in 3 bullets.",
+})) {
+  if (event.type === "delta") {
+    process.stdout.write(event.delta);        // stream tokens as they arrive
+  } else if (event.type === "completed") {
+    console.log("\nTotal cost:", event.usage.costUsd);
+  }
+}
+```
+
+The iterator yields a discriminated-union type `SessionStreamEvent`:
+
+```ts
+type SessionStreamEvent =
+  | { type: "delta";     delta: string }
+  | { type: "completed"; text: string; usage: { tokensIn: number; tokensOut: number; costUsd: number } };
+```
+
+Out-of-order `seq` values are buffered and yielded in order. A `message_error` from the server throws a typed `MessageStreamError`. Unknown event kinds are silently ignored so old and new server versions are both handled.
+
+## SSE transport
+
+Named SSE events are delivered on the existing session event stream:
+
+```
+GET /v1/sessions/{id}/events
+Authorization: Bearer <token>
+
+# Server-sent events:
+event: message_delta
+data: {"sessionId":"...","turnId":"...","seq":1,"delta":"Hello"}
+
+event: message_delta
+data: {"sessionId":"...","turnId":"...","seq":2,"delta":", world"}
+
+event: message_completed
+data: {"sessionId":"...","turnId":"...","text":"Hello, world","usage":{...}}
+```
+
+Legacy clients that subscribe to `agent.message` events continue to receive them; the new named events are additive. The `_event` key in the payload tells the session event bus which SSE event name to emit.
+
+## Provider streaming
+
+The control-plane calls the model provider in streaming mode via `streamWithFailover`. Each chunk from the provider triggers an `onDelta` callback that publishes a `message_delta` to the Redis session channel, which the SSE handler fans out to connected clients. The `Idempotency-Key` header is set on the provider request (invariant #8) so a crash-retry dedups at the provider.
+
+Provider failover: if the primary provider fails before any deltas have been sent, the failover chain retries on the next configured provider. If the primary fails after deltas have been sent, a `message_error` is emitted and the partial response is discarded.
+
+## Dashboard and webchat
+
+The dashboard session chat and the embedded webchat widget both consume these events. The webchat widget, served at `/widget.js`, renders token-by-token as deltas arrive and flips to the final text on `message_completed`.
+
+Related: [Sessions and memory](/lantern/docs/runtime/sessions-and-memory/) covers how sessions are created and managed. [Observability](/lantern/docs/runtime/observability/) covers the OTel span attributes set on LLM calls.

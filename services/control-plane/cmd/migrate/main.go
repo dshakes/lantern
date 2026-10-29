@@ -13,10 +13,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
 )
 
 func main() {
+	palenv.Bridge()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("migrate: DATABASE_URL is required")

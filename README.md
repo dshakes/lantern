@@ -1,224 +1,61 @@
 <div align="center">
 
-# Lantern
-
-**Run AI agents in your own cloud. Their code runs in a microVM. Their spend stops at a 402.**
-The agent loop stays on your control plane. Code the agent writes runs in a Firecracker or Kata microVM. Every step is journaled, so a crash resumes instead of restarting. Apache-2.0.
-
-[![License](https://img.shields.io/badge/license-Apache--2.0-1c76a6?style=flat-square)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26+-17785f?style=flat-square&logo=go&logoColor=white)](https://go.dev)
-[![Rust](https://img.shields.io/badge/Rust-2024-a85e06?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-44546a?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Docs](https://img.shields.io/badge/docs-dshakes.github.io%2Flantern%2Fdocs-0f1b2d?style=flat-square)](https://dshakes.github.io/lantern/docs/)
-
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/media/hero-flow-dark.gif">
-  <img src="docs/media/hero-flow-light.gif" alt="Animated: a tool call travels from the agent loop through the runtime-manager into a microVM; the untrusted code's network request crosses vsock to a host egress broker (opt-in, LANTERN_EGRESS_MODE=broker), which adds the credential and forwards it upstream; a request to a host off the allowlist is refused." width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="site/public/brand/lockup-on-dark.svg">
+  <img src="site/public/brand/lockup.svg" alt="pal" width="140">
 </picture>
+
+### The Personal Agentic Layer
+
+**pal** is a personal agent that replies in your voice, remembers your people and asks before it promises anything.
+**PAL Runtime** is the open-source layer it runs on, for the agents you build: durable runs, microVM sandboxes, hard budgets and signed receipts, in your own cloud.
+
+[Website](https://dshakes.github.io/lantern/) · [Docs](https://dshakes.github.io/lantern/docs/) · [Compare](https://dshakes.github.io/lantern/compare/) · [Apache-2.0](LICENSE)
 
 </div>
 
-## Why Lantern
+> The CLI and packages are still named `lantern` while the rename lands. Commands, env vars (`LANTERN_*`) and package names below are the real ones today.
 
-- **The agent is outside the sandbox. The code is inside.** Code an agent writes or downloads runs in a Firecracker or Kata microVM, never a bare pod. The loop that holds the prompt and the model keys runs on the control plane, so a compromised workload has nothing to steal and nothing to steer.
-- **Credentials stay on the host (broker mode).** Set `LANTERN_EGRESS_MODE=broker` (opt-in, Firecracker only) and the VM boots with no network device. Egress crosses vsock to a broker on the host that checks the allowlist and injects the credential from a `lantern.secret/...` ref. The default mode routes egress through an in-guest CONNECT proxy; enforcement needs the image's iptables REDIRECT rule, and production refuses to boot without it when egress is declared.
-- **Idle sandboxes give their compute back; forks share memory.** Set `idleTimeoutSecs` and an idle VM is snapshotted and stopped, then resumed on the next request. Forks hard-link one read-only memory file and copy on write: on a real KVM run, three forks shared one inode and each spawned in 131–160 ms ([Lima nested-virt, indicative](docs/benchmarks/runtime-latency.md); measured 2026-10-27 at 93cf2870, before snapshots captured the VM disk in #322, so memory-only, re-measure pending).
-- **The rest of production is already here.** Crash-resume from the step journal. Budgets that return HTTP 402 before the run, not after the bill. Models addressed by capability. Eval suites that fail CI with HTTP 422. Signed run receipts (Ed25519 when `LANTERN_RECEIPT_ED25519_SEED` is set) that anyone can verify against the published key. All of it self-hosted in your VPC.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/public/diagrams/your-cloud-dark.svg">
+  <img src="site/public/diagrams/your-cloud-light.svg" alt="The control plane holds the API, console, scheduling and routing. The data plane runs inside your VPC with the microVM sandboxes and the run data; it dials out to the control plane and runs come back over that connection, so there are no inbound ports." width="100%">
+</picture>
 
-## Quickstart
+## The PAL Promise
 
-**Try it first: no API key, Docker only.** `make demo` starts the control plane, dashboard and a recorded-answer LLM fixture server in kiosk mode (it also needs `openssl` to generate a throwaway session secret). Every visitor gets a private workspace with sample agents, deleted after 30 minutes. Nothing calls a model provider.
+- **Sounds like you.** Every reply is scored against messages you really sent; a draft that drifts from your voice is rewritten before it goes out.
+- **Remembers your people.** One memory of each person across iMessage and WhatsApp.
+- **Asks before it promises.** Money, commitments and claims it cannot verify are held for your yes, enforced at the send boundary, not in a prompt.
+- **Never stops, never leaks.** Runs resume from their journal after a crash, untrusted code runs in a Firecracker or Kata microVM, credentials can stay on the host (opt-in broker mode), budgets return HTTP 402 before the model is called, and every run can carry a signed receipt.
+
+pal runs on PAL Runtime: the layer that runs your life can run your agents.
+
+## Try it in 60 seconds
+
+Docker only, no API key. `make demo` starts the control plane, the console and a recorded-answer model server (it also needs `openssl`). Each visitor gets a private workspace, deleted after 30 minutes; nothing calls a model provider.
 
 ```bash
 git clone https://github.com/dshakes/lantern.git && cd lantern
-make demo         # first run builds images; prints "demo: http://localhost:3001/kiosk"
+make demo         # prints "demo: http://localhost:3001/kiosk"
 make demo-down    # stop and delete all demo data
 ```
 
-Open **http://localhost:3001/kiosk** and press Start demo. The demo binds `:8080` and `:3001`, the same ports as `make dev`, so stop one before starting the other (or set `KIOSK_API_PORT` / `KIOSK_WEB_PORT`). If you have built the CLI (below), `lantern demo` does the same, waits until the stack is healthy and opens the browser; `lantern demo --down` stops it. Details: [docs: demo mode](https://dshakes.github.io/lantern/docs/demo/).
+## Run your own agent
 
-**Then run your own agent.** This needs Docker, Go 1.25+ to build the CLI, and an OpenAI or Anthropic key:
+Needs Docker, Go 1.25+ for the CLI, and an OpenAI or Anthropic key.
 
 ```bash
-make dev                                         # Postgres, Redis, MinIO, control plane, dashboard, and the rest of the stack
+make dev                                         # full stack: Postgres, Redis, MinIO, control plane, console
 ( cd packages/cli && go install ./cmd/lantern )  # the `lantern` CLI
-lantern doctor                                   # health, auth, LLM provider, a live run
+lantern doctor                                   # health, auth, model provider, a live run
 lantern onboard                                  # describe an agent in one line, get a running agent
 ```
 
-Dashboard: **http://localhost:3001**, sign in as `admin@lantern.dev` / `lantern` (local dev only).
-
-Run code in a sandbox. This uses host processes instead of `make dev` (both bind `:8080`), one per terminal:
-
-```bash
-make dev-infra             # Postgres, Redis (no MinIO: use `lantern dev --infra-only` or `make dev` if you need it)
-make run-runtime-manager   # :50054, Docker backend on macOS
-make run-scheduler         # :50055
-make run-api-runtime       # control plane on :8080, wired to the scheduler
-lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"world"}'
-lantern vm exec <vm-id> -- ls /workspace
-lantern vm ls <vm-id>
-```
-
-The demo spec pins a placeholder `image_digest`: build the image from `examples/headless-agents/01-hello/` and point the spec at it first, or the VM fails on image pull. Firecracker needs Linux with `/dev/kvm`. On Apple Silicon (M3+, macOS 15+), [`infra/lima/`](infra/lima/) provisions a guest with nested KVM. `make lima-up && make lima-e2e` boots real Firecracker microVMs there in one command each. Full walkthrough: [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md).
-
-<details>
-<summary>Other ways to run the stack</summary>
-
-```bash
-lantern dev                 # hot-reload: infra in Docker, API + dashboard + bridges on the host
-lantern dev --infra-only    # just Postgres + Redis + MinIO
-make dev-infra              # Postgres + Redis only; then make run-api, make dashboard-dev
-make run-api-free           # route LLM calls through your local `claude` CLI at $0 in dev
-```
-
-Prerequisites for host processes: Go 1.26+ (the CLI alone builds with 1.25), Node 20+, Rust 1.85+, Docker with Compose v2. `make proto` additionally needs `protoc`. Dev credentials are listed in [`CLAUDE.md`](CLAUDE.md#dev-credentials).
-
-</details>
-
-## How it works
-
-<img src="docs/assets/diagrams/hero-architecture.svg" alt="The agent loop, model router and budgets run in the control plane. Tool calls cross to a runtime-manager on the data-plane host, which runs the code inside a microVM. Network requests from the VM leave only through a host broker that checks the allowlist and injects credentials." width="100%">
-
-The control plane (Go) owns the agent: the workflow interpreter, the durable journal, the model router and the budget gate. When a durable `tool_call` step needs to run code, the workflow engine calls `ExecTool` on the runtime-manager (Rust) on a data-plane host, which runs it inside a microVM whose PID 1 is the Lantern harness. The VM gets the workload and nothing else: no model keys, no service tokens. In broker mode (`LANTERN_EGRESS_MODE=broker`, opt-in, Firecracker only) the VM has no network device either — all egress crosses vsock to a broker on the host.
-
-### Egress: the VM asks, the host decides
-
-<img src="docs/assets/diagrams/egress-broker.svg" alt="Guest workload sends a request to the harness forwarder on 127.0.0.1:3128, which carries it over vsock to the host broker inside runtime-manager. The broker checks the allowlist, refuses and audits anything else, injects the credential resolved from a lantern.secret ref, and forwards upstream." width="100%">
-
-In broker mode (`LANTERN_EGRESS_MODE=broker`, opt-in, Firecracker only): a workload talks to `127.0.0.1:3128` as if it were a normal proxy. The harness forwards the request over vsock to a broker in the runtime-manager on the host. The broker checks the per-sandbox allowlist, adds the credential resolved from the `lantern.secret/...` ref, and sends it upstream. Denied requests are refused and written to the audit stream. In the default mode the allowlist is enforced in-guest; the credential injection moves to the host only when broker mode is enabled.
-
-<img src="docs/media/egress-broker-kvm.gif" alt="Terminal recording, recorded on Lima nested KVM: infra/firecracker/broker-e2e.sh passes on real Firecracker — no TAP and no eth0, exec over vsock, credential injected upstream while the guest saw only a placeholder, plain-HTTP to :443 refused, mismatched Host refused, non-allowlisted host denied, secret absent from the manager log." width="100%">
-
-### Lifecycle: idle auto-suspend
-
-<img src="docs/assets/diagrams/sandbox-lifecycle.svg" alt="Sandbox lifecycle: scheduled, running, idle-suspended after idleTimeoutSecs, auto-resumed on the next exec or file request, paused with a snapshot, resumed under the same vm id, forked into copy-on-write children, terminated." width="100%">
-
-<img src="docs/media/lifecycle-walkthrough.gif" alt="Walking the sandbox lifecycle on the landing page: schedule, idle suspend, wake on request, pause, resume, fork into copy-on-write children." width="100%">
-
-| Transition | Trigger | What happens |
-|---|---|---|
-| schedule → running | `POST /v1/runtime/schedule`, `lantern run` | Placement by warm pool, region, fair share, cost and health; per-tenant quota (402 over cap) |
-| running → suspended | no activity for `idleTimeoutSecs` seconds (0/unset = never) | Snapshot to storage, compute and quota slot released; the scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to ~40 s |
-| suspended → running | next `exec` or file request (REST, CLI or SDK) | Resumed transparently; the first exec after restore waits for the in-guest exec channel to reconnect (~4 s in the Lima benchmark) |
-| running → paused → running | `lantern vm pause` / `resume` | Snapshot frees the quota slot; resume restores the same `vm_id` |
-| running → forked | `lantern vm fork <id> --count N` | Children share the parent's memory copy-on-write, each with its own `vm_id`, cert and identity; N up to 100 by default, 1000 max (`LANTERN_MAX_FORK_COUNT`, enforced by the server) |
-
-<img src="docs/media/lifecycle-kvm.gif" alt="Terminal recording, recorded on Lima nested KVM: infra/firecracker/integration-test.sh passes on real Firecracker 1.15.1 + jailer — boot, ExecTool, snapshot, stop, restore with state intact, fork x3, copy-on-write isolation, shared snapshot-memory inode, clean teardown, and the per-step timing table." width="100%">
-
-Lifecycle latency numbers are in [`docs/benchmarks/runtime-latency.md`](docs/benchmarks/runtime-latency.md) (Lima nested-virt on Apple M4 Max, aarch64 — indicative, not bare metal).
-
-### Trust boundaries
-
-<img src="docs/assets/diagrams/trust-boundaries.svg" alt="Four trust zones: caller, control plane, data-plane host and microVM, with the credential that crosses each boundary." width="100%">
-
-Each hop is authenticated: JWT or scoped API key at the edge; a shared service token (`x-lantern-service-token`) on every internal gRPC port; per-VM certificates that the manager refuses on its own control methods ([ADR 0025](docs/adr/0025-sandbox-spawn-contract-and-manager-authz.md)); row-level security on every tenant table ([ADR 0011](docs/adr/0011-rls-all-tenant-tables.md)). Inside the VM the workload runs as an unprivileged uid with `LANTERN_*` env withheld.
-
-## Capabilities
-
-**Runtime and isolation**
-- Firecracker and Kata microVMs, gVisor and runc tiers chosen per workload by isolation class; fail-closed, never downgraded to a bare pod ([ADR 0002](docs/adr/0002-runtime-class-per-workload.md), [0009](docs/adr/0009-kubernetes-default-runtime-substrate.md))
-- Two tiers, one journal: trusted runs inline, untrusted runs in the microVM tier ([ADR 0022](docs/adr/0022-two-tier-agent-runtime.md))
-- Streaming exec (`text/event-stream`), sandbox file API under `/workspace` (list, read, write), session-scoped VMs
-- Pause, resume and fork; idle auto-suspend (`idleTimeoutSecs`) with transparent resume; operator-paused VMs are never auto-resumed. Snapshots capture the VM's disk with its memory, so files survive restore and fork ([docs](https://dshakes.github.io/lantern/docs/runtime/sandbox-lifecycle/#snapshots))
-- Real Firecracker on an Apple Silicon Mac through a Lima guest with nested KVM: `make lima-up`, then `make lima-e2e` ([`infra/lima/`](infra/lima/README.md), [docs](https://dshakes.github.io/lantern/docs/runtime/local-microvms/))
-- Host egress broker over vsock (opt-in, `LANTERN_EGRESS_MODE=broker`, Firecracker only); default mode routes egress through an in-guest proxy (enforced when the image installs the iptables REDIRECT rule)
-
-**Agent platform**
-- Workflow graphs from the visual editor execute: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `loop`, `approval`, `subagent`, `end`. `tool` nodes run `web_search` in the control plane and everything else in the run's microVM, and fail loudly when no runtime is wired
-- Webhook triggers: a signed public URL per agent; GitHub, Sentry, PagerDuty or any HMAC-SHA256 sender starts a run, duplicates deduplicated ([ADR 0028](docs/adr/0028-inbound-webhook-triggers.md), [docs](https://dshakes.github.io/lantern/docs/triggers/))
-- Sessions with SSE streaming, cron schedules with time zones, human takeover on approval nodes
-- 18 connectors that call the real APIs (OAuth or API key), MCP server registry, A2A agent cards, a forkable agent marketplace
-- SDKs: TypeScript (primary), Python, Go; the `lantern` CLI; an embeddable webchat (`/widget.js`)
-
-**Reliability and cost**
-- Durable steps with crash-resume from the journal; idempotency keys from `(run_id, step_id, attempt)` on LLM calls and external deliveries, so a replay does not double-send
-- Models addressed by capability (`auto`, `reasoning-large`), routed across providers with failover and caching; an unknown name falls back to the balanced default, never a hardcoded model ([docs](https://dshakes.github.io/lantern/docs/models/#capabilities))
-- Per-agent caps on cost/day, tokens/day and runs/day plus a tenant-wide daily cost cap: over a hard cap the call gets HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and per-tool limits gate workflow tool and connector nodes. A budget that cannot be read fails closed. On single-call runs the per-run cap is checked only by the opt-in pre-run forecast (`/v1/runs/forecast`), and failed runs do not count toward runs/day ([what is enforced where](https://dshakes.github.io/lantern/docs/budgets/#matrix))
-- Eval suites with per-branch baselines that fail CI with HTTP 422; rehearsals replay past failures; A/B experiments with auto-promotion
-
-**Security and governance**
-- Multi-tenant by default: `tenant_id` on every row and gRPC call, RLS on every tenant table, staged enforcement via `LANTERN_RLS_ENFORCE`
-- Signed run receipts over the journal hash: Ed25519 when `LANTERN_RECEIPT_ED25519_SEED` is set (verifiable offline against the key at `/.well-known/lantern-receipts`), HMAC-SHA256 dev fallback otherwise
-- Per-instance Ed25519 agent identity, per-VM certificates, scoped API keys, AES-256-GCM credentials at rest
-- Account lifecycle: sign-up closed by default in production (or invite-only), email verification, password reset, captcha, rate-limited auth routes, data export and workspace deletion ([ADR 0027](docs/adr/0027-public-signup-verification-abuse.md), [docs](https://dshakes.github.io/lantern/docs/accounts/))
-- OpenTelemetry: control-plane and step spans carry `tenant_id`, `run_id`, `step_id`; trace context propagates through scheduler and manager into the harness
-- Confidential compute v1: launch measurement recorded, not yet verified ([ADR 0023](docs/adr/0023-confidential-compute.md))
-
-**Personal surfaces**
-- WhatsApp and iMessage assistants that reply in the owner's voice, behind commitment and grounding gates that hold money promises and unverifiable claims for the owner
-- Slack, Telegram, Discord, voice (Twilio, LiveKit), email and webchat surfaces
-- **Built on Lantern:** the founder runs a personal assistant on iMessage and WhatsApp on this platform, in daily use. It exercises sessions, model routing, the memory API and the web-search tool. Replies pass a multi-stage check pipeline, and the last two stages hold any reply that commits money or asserts what it cannot verify. [Architecture and safety model](https://dshakes.github.io/lantern/docs/personal/)
-- Setup: [`docs/personal/BOT-SETUP.md`](docs/personal/BOT-SETUP.md)
-
-## How Lantern compares
-
-Google's Agent Compute Engine (announced October 22, 2026) and E2B and Modal are
-**managed sandboxes**: compute you rent to run agent code. Lantern is an
-**open-source agent runtime you host yourself**; its microVM sandbox is one part,
-next to durable runs, budgets, routing, evals and receipts. So the honest
-comparison has two halves.
-
-**The sandbox.** This is ACE's whole product, and on isolation it is ahead of
-Lantern by default: its sandbox never holds a credential and all egress leaves
-through a proxy on the host, backed by Google's hardware root of trust. Lantern
-comes closest in its opt-in broker mode on Firecracker (injected credentials stay
-on the host), but vended `spec.secrets` still enter the guest, there is no
-hardware root of trust, and it has been validated on nested KVM, not at Google's
-scale.
-
-| The sandbox | **Lantern** | Google ACE | E2B | Modal |
-|---|---|---|---|---|
-| Hardware-isolated microVM per sandbox | ✅ Firecracker / Kata (needs KVM) | ✅ | ✅ | partial (gVisor or VM runtime) |
-| Platform runs the agent loop for you | ✅ | partial (your harness: "each team writes and trusts its own harness") | ❌ (you host the loop) | ❌ (you host the loop) |
-| Credentials never enter the sandbox | partial (injected headers only; opt-in broker mode, Firecracker) | ✅ by default | partial (header injection, beta) | partial (experimental) |
-| Egress allowlist enforced outside the guest | partial (broker mode, opt-in) | ✅ by default | partial (CIDR + domain on HTTP/TLS, at E2B's firewall) | partial (CIDR; domain allowlist in beta) |
-| No network interface in the sandbox by default | partial (broker mode only; guest mode attaches a TAP NIC) | ✅ by default | not documented | not documented |
-| Data-loss-prevention policy on egress | ❌ | ✅ (per Google) | not documented | not documented |
-| Idle auto-suspend, resume on demand | ✅ (Firecracker only, opt-in per VM) | ✅ | ✅ (opt-in) | partial |
-| Snapshot and fork | ✅ (Firecracker only; shared-memory fork) | ✅ | ✅ | partial |
-| Fork fan-out per call | up to 1,000 (default 100); validated with 3 forks on Lima | thousands, memory-deduplicated (per Google) | up to 20 | no fork |
-| Hardware root of trust / attestation | partial (measurement recorded, not verified) | ✅ (Titan) | ❌ | ❌ |
-| Proven at scale | Lima nested-KVM + CI only | the infrastructure behind Gemini's agents (per Google) | production | production |
-
-**The platform around it.** These are agent-runtime features. ACE is a compute
-layer, so "out of scope" means it isn't trying to do them, not that it fails at
-them; on Google Cloud they come from other products.
-
-| The platform | **Lantern** | Google ACE | E2B | Modal |
-|---|---|---|---|---|
-| Durable agent runs with crash-resume | ✅ | out of scope | ❌ | ❌ |
-| Budgets enforced before the model call | partial (cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced; a mid-workflow breach fails the step) | out of scope | ❌ | partial |
-| Multi-provider model routing with failover | ✅ | out of scope | ❌ | ❌ |
-| Signed, offline-verifiable run receipts | partial (Ed25519 with a configured seed) | out of scope | ❌ | ❌ |
-| Self-host in your VPC or on-prem | ✅ Apache-2.0 | ❌ Google Cloud only | partial | ❌ |
-| Availability | open source today | preview "in the coming months" | GA | GA |
-
-**When to pick which.** Pick ACE if you want a managed sandbox on Google Cloud
-with the strongest isolation defaults. Pick E2B or Modal if you want hosted
-sandboxes today. Pick Lantern if you need to run agents in your own cloud or
-on-prem, with the sandbox, durable execution, spend limits and audit trail in
-one stack you control.
-
-Competitor columns reflect each vendor's public docs and announcements as of
-2026-10-28 (E2B: [egress and secrets](https://docs.e2b.dev/sandbox/internet-access),
-[auto-resume](https://docs.e2b.dev/sandbox/auto-resume),
-[fork](https://docs.e2b.dev/sandbox/fork); Modal:
-[sandbox networking](https://modal.com/docs/guide/sandbox-networking),
-[Sandbox reference](https://modal.com/docs/reference/modal.Sandbox)); the Google column follows Google's [Agent Compute Engine deep
-dive](https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive)
-(Oct 22, 2026). ❌ means not offered or not announced; "not documented" means the docs we read don't say. Open an issue if a cell is
-out of date.
+Console: http://localhost:3001, sign in as `admin@lantern.dev` / `lantern` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: see the [Runtime quickstart](https://dshakes.github.io/lantern/docs/runtime/quickstart/).
 
 ## Use it from code
 
-Registry packages are not published yet: `@lantern/sdk` is not on npm, and the `lantern-sdk` name on PyPI belongs to an unrelated project, so do not `npm install @lantern/sdk` or `pip install lantern-sdk`. Install from a checkout:
-
-```bash
-( cd packages/sdk-ts && npm install && npm run build )   # builds dist/
-npm install /path/to/lantern/packages/sdk-ts             # in your project; a file: path, not the registry
-pip install "/path/to/lantern/packages/sdk-python"       # add [deepagents] for the LangChain deepagents sandbox backend
-```
+The SDKs are not on a registry yet; install from a checkout (`npm install /path/to/lantern/packages/sdk-ts`, or `pip install /path/to/lantern/packages/sdk-python`).
 
 ```ts
 import { LanternClient } from "@lantern/sdk";
@@ -227,80 +64,32 @@ const lantern = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: pr
 
 await lantern.agents.create({ name: "triage", description: "Classifies support emails" });
 await lantern.budgets.upsert("triage", { maxCostUsdPerDay: 25, hardFail: true });
-
-const forecast = await lantern.runs.forecast({ agentName: "triage", input: "my invoice is wrong again" });
-const run = await lantern.runs.create({ agent: "triage", input: { email: "..." } });  // 402 if over the daily cap
+const run = await lantern.runs.create({ agent: "triage", input: { email: "..." } }); // 402 if over the daily cap
 ```
 
-The client defaults to `https://api.lantern.run`, which is not your self-hosted stack: pass `baseUrl` (as above) or set `LANTERN_API_URL`.
+Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
 
-Python: `client.runtime.{pause,resume,fork,exec_stream,list_files,read_file,write_file}`. Go: `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile`, `WriteFile`.
+## What is in this repo
 
-## Documentation
-
-| Start here | |
+| | |
 |---|---|
-| Website and docs | [dshakes.github.io/lantern](https://dshakes.github.io/lantern/), docs at [/lantern/docs](https://dshakes.github.io/lantern/docs/) (`make docs-dev` serves the docs on `:3002`) |
-| Agent runtime: tiers, durability, observability | [`docs/architecture/09-agent-runtime.md`](docs/architecture/09-agent-runtime.md) |
-| Headless quickstart and demo agents | [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md), [`examples/headless-agents/`](examples/headless-agents/) |
-| Data analyst in a sandbox (CSV, pandas, denied egress) | [`examples/data-analyst/`](examples/data-analyst/) |
-| Isolation classes, identity and secrets | [`docs/guides/isolation-classes.md`](docs/guides/isolation-classes.md), [`docs/guides/identity-and-secrets.md`](docs/guides/identity-and-secrets.md) |
-| Develop locally, ship to your cloud | [`docs/guides/local-to-prod.md`](docs/guides/local-to-prod.md), [`docs/guides/self-service-e2e.md`](docs/guides/self-service-e2e.md) |
-| Architecture and decisions | [`docs/architecture/`](docs/architecture/), [`docs/adr/`](docs/adr/) |
-| Operating it: runbooks, alerts, dashboards | [`docs/runbooks/`](docs/runbooks/), [`infra/monitoring/`](infra/monitoring/) |
-| End-to-end tests against a live stack | [`e2e/README.md`](e2e/README.md) (`make test-e2e`, `make e2e-clean`) |
-| Brand, tokens and diagram system | [`docs/brand/`](docs/brand/) |
-| Conventions and invariants | [`CLAUDE.md`](CLAUDE.md) |
+| Control plane, workflow engine, schedulers | Go |
+| Model router, runtime manager, in-VM harness, gateways | Rust |
+| Console, website, TypeScript SDK | TypeScript |
+| SDKs | TypeScript, Python, Go |
+| Personal agent bridges (iMessage, WhatsApp) | TypeScript, runs on your own Mac |
 
-<details>
-<summary>Architecture invariants</summary>
+How PAL Runtime compares with Google Agent Compute Engine, E2B and Modal, honestly and column by column: [/compare](https://dshakes.github.io/lantern/compare/).
 
-1. The control plane never touches user code; only the runtime-manager and harness do.
-2. The workflow engine is the only writer of run state.
-3. Anything longer than 100ms or calling an LLM is a durable, idempotent, replayable step.
-4. Token streams are end to end, with no buffering points.
-5. Untrusted code runs in a microVM, never a bare pod.
-6. Models are addressed by capability, never by vendor name.
-7. Every row and every gRPC call carries `tenant_id`; no cross-tenant joins.
-8. Every external side effect carries an idempotency key from `(run_id, step_id, attempt)`.
-9. Every service emits OpenTelemetry traces.
-10. Secrets never appear in logs, traces or run state.
+## Links
 
-</details>
+- Website: [dshakes.github.io/lantern](https://dshakes.github.io/lantern/) (source in [`site/`](site/), `cd site && npm run dev`)
+- Docs: [dshakes.github.io/lantern/docs](https://dshakes.github.io/lantern/docs/)
+- Architecture and decisions: [`docs/architecture/`](docs/architecture/), [`docs/adr/`](docs/adr/)
+- Conventions and invariants: [`CLAUDE.md`](CLAUDE.md)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md). Run `make ci-local` before pushing.
+- License: [Apache-2.0](LICENSE)
 
-<details>
-<summary>Services and ports</summary>
+---
 
-| Service | Language | Port | Role |
-|---|---|---|---|
-| control-plane | Go | `:8080` REST/SSE, `:50051` gRPC | agents, runs, sessions, budgets, evals, receipts |
-| workflow-engine | Go | `:50052` | durable step execution, the only writer of run state |
-| model-router | Rust | `:50053` | capability routing, failover, caching |
-| runtime-manager | Rust | `:50054` | Firecracker, Kata, K8s, Docker, Wasmtime backends |
-| runtime-scheduler | Go | `:50055` gRPC, `:8085` REST | placement and quota |
-| harness | Rust | in VM | PID 1: egress, identity, audit stream |
-| gateway / surface-gateway | Rust | `:8443` / `:8444` | API edge, channel webhooks |
-| dashboard / landing / docs | TypeScript | `:3001` / `:3000` / `:3002` | Next.js apps |
-
-</details>
-
-<details>
-<summary>Testing</summary>
-
-```bash
-make test       # Go (-race), Rust, TypeScript, Python
-make test-db    # Go tests that need Postgres
-make test-e2e   # live-stack suites against :8080; fails when the stack is down (E2E_ALLOW_SKIP=1 to skip)
-make lint       # golangci-lint, clippy, tsc/eslint
-make ci-local   # lint + test + audit, the CI gate
-```
-
-</details>
-
-## Contributing
-
-Read [`CLAUDE.md`](CLAUDE.md) for conventions and invariants, and the relevant [ADR](docs/adr/) before changing a load-bearing decision. Run `make proto` after editing a `.proto` and `make ci-local` before pushing.
-
-## License
-
-[Apache 2.0](LICENSE). Everything described here is in this repository.
+<sub>We started as Lantern: a flame you could carry because glass kept it contained. As the product became a companion, we kept the light and dropped the lamp. The flame became a dot, a single moment of attention. पल means "a moment." A pal is someone who shows up in it.</sub>

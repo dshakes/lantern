@@ -1020,8 +1020,7 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	for k, v := range spec.Env {
 		env[k] = v
 	}
-	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
-	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
+	stampAgentIdentity(env, instanceID, instanceToken)
 	specMap["env"] = env
 
 	// Attach DLP policy (ADR 0030), loaded above.
@@ -1943,8 +1942,24 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 const redactedValue = "[redacted]"
 
 // secretSpecEnvKeys are env keys whose values are credentials, never config.
+// Both names of the token (ADR 0032): a caller-supplied PAL_ twin is dropped
+// at the stamp site, but rows written before that, or by another writer, must
+// not serve it either.
 var secretSpecEnvKeys = []string{
 	"LANTERN_AGENT_INSTANCE_TOKEN",
+	"PAL_AGENT_INSTANCE_TOKEN",
+}
+
+// stampAgentIdentity sets the VM's agent identity in a spawn env, replacing
+// anything the caller supplied under EITHER name (ADR 0032). Only the
+// LANTERN_ names are written until the writers flip (rename plan step 4); a
+// caller-chosen PAL_ twin is deleted, never forwarded, because once the
+// harness prefers PAL_ it would authenticate VendSecret with it.
+func stampAgentIdentity(env map[string]any, instanceID, instanceToken string) {
+	delete(env, "PAL_AGENT_INSTANCE_ID")
+	delete(env, "PAL_AGENT_INSTANCE_TOKEN")
+	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
+	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
 }
 
 // redactSpecSecrets returns a copy of an AgentSpec map with credential-bearing

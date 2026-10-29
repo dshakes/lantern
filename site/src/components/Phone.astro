@@ -1,0 +1,15 @@
+---
+// A phone-sized chat thread, drawn in HTML so it scales and themes cleanly.
+// Every name and message here is invented.
+interface Props { who: string; initial?: string; label: string; caption?: string }
+const { who, initial = who[0], label, caption } = Astro.props;
+---
+<figure class="phone-fig" aria-label={label}>
+  <div class="phone">
+    <div class="phone-screen">
+      <div class="phone-top"><span class="avatar" aria-hidden="true">{initial}</span><span class="who">{who}</span></div>
+      <div class="thread"><slot /></div>
+    </div>
+  </div>
+  {caption && <figcaption class="phone-caption">{caption}</figcaption>}
+</figure>

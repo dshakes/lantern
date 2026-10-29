@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 WORKDIR /app
 
 # The scheduler module replaces ../../gen/go locally, so the build
@@ -6,6 +6,7 @@ WORKDIR /app
 # We expect the build to be run from the repo root with:
 #   docker build -f services/runtime-scheduler/Dockerfile .
 COPY gen/go /workspace/gen/go
+COPY packages/palenv /workspace/packages/palenv
 COPY services/runtime-scheduler /workspace/services/runtime-scheduler
 
 WORKDIR /workspace/services/runtime-scheduler

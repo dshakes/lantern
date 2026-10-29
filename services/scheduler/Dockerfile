@@ -1,12 +1,10 @@
-FROM golang:1.23-alpine AS builder
-WORKDIR /app
-
-# Copy dependency files first for layer caching.
-COPY go.mod go.sum ./
+FROM golang:1.26.10-alpine AS builder
+# Build context is the repo root (replace ../../gen/go lives outside the service dir).
+COPY gen/go/ /app/gen/go/
+COPY packages/palenv/ /app/packages/palenv/
+COPY services/scheduler/ /app/services/scheduler/
+WORKDIR /app/services/scheduler
 RUN go mod download
-
-# Copy the rest of the source.
-COPY . .
 
 # Build a statically-linked binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /scheduler ./cmd/server

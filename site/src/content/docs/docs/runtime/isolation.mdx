@@ -1,0 +1,94 @@
+---
+title: Isolation classes
+description: The decision tree from trusted to hostile workloads, and the fail-closed gate.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every headless agent declares an isolation class in its `agent.yaml`. The class is the security boundary the workload runs behind. On Kubernetes it maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
+
+An isolation class answers one question: how strong should the walls around this agent be? Code you wrote yourself gets normal walls. Code that pulls packages from the internet or was written by an LLM gets a sandbox that intercepts the operating system's syscalls. Hostile input gets a full virtual machine with its own kernel. You declare the level once in the agent's config. If the cluster can't provide walls that strong, PAL Runtime refuses to run the workload rather than quietly using weaker ones.
+
+## The decision tree
+
+Pick the least-privileged class the workload can tolerate. Walk it top to bottom and stop at the first match:
+
+```
+Is the code first-party and signed?  ── yes ─▶ TRUSTED   (runc)
+        │ no
+Does it load packages from the internet,
+or drive a browser, or run user/LLM-generated code?  ── yes ─▶ UNTRUSTED (gVisor + egress-deny)
+        │ no
+Is the *input* adversarial / hostile?  ── yes ─▶ HOSTILE   (Kata microVM)
+        │ no
+        ────────▶ STANDARD  (gVisor, default)
+```
+
+## The classes
+
+| Class | RuntimeClass | Use when |
+| --- | --- | --- |
+| `trusted` | `runc` | Signed first-party code only. Runs on shared nodes. No untrusted package loading, no LLM-generated code path. |
+| `standard` | `gvisor` | Default. Your own code on shared, gVisor-isolated nodes. Used when the class is left unset. |
+| `untrusted` | `gvisor` + egress-deny | Loads internet packages (PyPI/npm), drives a browser, or runs LLM-generated code. Adds an egress allowlist (a NetworkPolicy fence); pods run with the `RuntimeDefault` seccomp profile. |
+| `hostile` | `kata-qemu` (or `kata-fc`) | Adversarial workloads. Full-kernel microVM via Kubernetes on a dedicated node pool with no co-tenancy. |
+| `wasm` | `crun+wasm` | WebAssembly workloads (or in-process Wasmtime on trusted hosts). |
+| `devcontainer` | `gvisor` | Long-lived workspace: a persistent pod plus PVC that survives across calls. |
+
+## Defaults and forced classes
+
+An unset class resolves to `standard`.
+
+<Aside type="caution">
+Per ADR 0002, marketplace and LLM-generated bundles are to be forced to `untrusted`, and `trusted` is to require the signing key. This is policy, not yet enforced at schedule time: a request for `trusted` is honoured as sent.
+</Aside>
+
+## The fail-closed gate
+
+This is the load-bearing invariant: untrusted and hostile code never runs in a bare pod.
+
+- A node may satisfy `untrusted` only if it advertises the `gvisor` RuntimeClass.
+- A node may satisfy `hostile` only if it advertises `kata-qemu` / `kata-fc`.
+- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. It is never downgraded to `runc`.
+
+The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`lantern.dev/runtimeclass`) that only matches nodes labelled as having the handler.
+
+<Aside type="caution">
+If your cluster has not provisioned the `gvisor` / `kata` RuntimeClasses, `untrusted` and `hostile` workloads are refused. That is correct, but operationally visible. The data-plane installer provisions them and a preflight check surfaces the gap before traffic.
+</Aside>
+
+<Aside>
+gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those, or get a `runc`-on-trusted exception via the admin override.
+</Aside>
+
+## In a spec
+
+Demo 02 (`web-scraper`) declares `untrusted` because it pulls third-party packages, and pairs it with an egress allowlist:
+
+```yaml
+spec:
+  isolation: untrusted
+  network: allowlist_domain
+  egress_rules:
+    - pattern: "*.wikipedia.org"
+      http_methods: ["GET"]
+      rate_bps: 1048576   # 1 MiB/s
+```
+
+Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/lantern/docs/runtime/identity/).
+
+## Firecracker backend and broker mode
+
+Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `LANTERN_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/lantern/docs/runtime/egress/).
+
+## Kubernetes backend hardening
+
+On the Kubernetes backend each workload Job is created with `automountServiceAccountToken: false` and a default-deny-egress NetworkPolicy (DNS on port 53 is the only exception) that is applied before the Job starts and removed with it. The in-VM harness then enforces the declared egress allowlist on top, so the host policy and the guest allowlist are two independent fences.
+
+```bash
+make k8s-validate   # throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop
+```
+
+The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/lantern-data-plane/` and are off by default.

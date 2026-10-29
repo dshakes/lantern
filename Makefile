@@ -117,11 +117,9 @@ regression: ## Run the full alpha-readiness regression test suite
 regression-quiet: ## Same but only print failures (good for cron)
 	@bash scripts/regression.sh --quiet
 
-landing-dev: ## Start the landing page in dev mode
-	cd apps/landing && npm run dev
+site-dev: ## Start the website (Astro + Starlight) in dev mode
+	cd site && npm run dev
 
-docs-dev: ## Start the docs site in dev mode
-	cd apps/docs && npm run dev
 
 deploy-local: ## Make the running LaunchAgents match origin/master and PROVE it (FORCE=1 restarts all)
 	@bash scripts/launchd/deploy-local.sh
@@ -159,18 +157,16 @@ build-rust: ## Build Rust services
 
 build-ts: ## Build TypeScript packages
 	cd packages/sdk-ts && npm run build
-	cd apps/landing && npm run build
-	cd apps/docs && npm run build
+	cd site && npm run build
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
-	docker build -t lantern-control-plane services/control-plane
+	docker build -t lantern-control-plane -f services/control-plane/Dockerfile .
 	docker build -t lantern-gateway services/gateway
 	docker build -t lantern-model-router services/model-router
-	docker build -t lantern-workflow-engine services/workflow-engine
+	docker build -t lantern-workflow-engine -f services/workflow-engine/Dockerfile .
 	docker build -t lantern-web apps/web
-	docker build -t lantern-landing apps/landing
-
+	
 # ---------- Proto ----------
 
 proto: ## Regenerate code from proto definitions
@@ -192,11 +188,13 @@ test-go: ## Run Go tests
 	cd services/workflow-engine && go test -race -count=1 ./...
 	cd services/scheduler && go test -race -count=1 ./...
 	cd services/runtime-scheduler && CGO_ENABLED=0 go test ./...
+	cd packages/palenv && go test -race -count=1 ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
 	cd services/model-router && cargo test
 	cd services/runtime-manager && cargo test
+	cd packages/pal-env-rs && cargo test
 
 test-ts: ## Run TypeScript tests
 	cd packages/sdk-ts && npx vitest run
@@ -265,11 +263,12 @@ rls-validate: ## Validate RLS policies + handler cutover before flipping LANTERN
 
 lint: lint-go lint-rust lint-ts ## Lint everything
 
-lint-go: ## Lint Go code (same four modules as CI sdlc-lint)
+lint-go: ## Lint Go code (same modules as CI sdlc-lint)
 	cd services/control-plane && golangci-lint run ./...
 	cd services/workflow-engine && golangci-lint run ./...
 	cd services/runtime-scheduler && golangci-lint run ./...
 	cd services/scheduler && golangci-lint run ./...
+	cd packages/palenv && golangci-lint run ./...
 
 lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/gateway && cargo clippy -- -D warnings
@@ -277,19 +276,19 @@ lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/runtime-manager && cargo clippy -- -D warnings
 	cd services/surface-gateway && cargo clippy -- -D warnings
 	cd services/harness && cargo clippy -- -D warnings
+	cd packages/pal-env-rs && cargo clippy --all-targets -- -D warnings
 
 lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)
-	@fail=0; for m in services/*/Cargo.toml; do \
+	@fail=0; for m in services/*/Cargo.toml packages/*/Cargo.toml; do \
 		cargo fmt --manifest-path $$m --check || { \
 			echo "  ↳ fix with: cargo fmt --manifest-path $$m"; fail=1; }; \
 	done; exit $$fail
 
 fmt-rust: ## Format every Rust crate in place
-	@for m in services/*/Cargo.toml; do cargo fmt --manifest-path $$m; done
+	@for m in services/*/Cargo.toml packages/*/Cargo.toml; do cargo fmt --manifest-path $$m; done
 
 lint-ts: ## Lint TypeScript code
 	cd packages/sdk-ts && npm run lint
-	cd apps/landing && npm run typecheck
 	cd services/whatsapp-bridge && npm run typecheck
 	cd services/imessage-bridge && npm run typecheck
 

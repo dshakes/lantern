@@ -1,0 +1,88 @@
+---
+title: Human-in-the-loop
+description: Approval nodes and the confidence gate put a person in a workflow before a side effect runs.
+sidebar:
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two ways to put a person in a workflow: **approval nodes** you place yourself, and the **confidence gate** (off by default), which diverts low-confidence steps to a person. Both record the decision through the takeover API.
+
+Some actions should not run unattended: mailing 500 customers, issuing a refund, deleting records. The run stops there and asks a person. While it waits, the run is parked and holds no worker.
+
+## Approval workflow nodes
+
+In the visual workflow editor, an `approval` node pauses execution until a human acts. The run moves to `status: 'waiting'`, the executing goroutine exits, and a `takeover_requests` row is created. The request expires after **30 minutes** by default (pass `timeoutMinutes`, max 1440).
+
+### Takeover API
+
+```text
+# Create a pending takeover row (done by the workflow node automatically,
+# or manually by an operator)
+POST /v1/runs/{id}/takeover/request
+{ "reason": "About to send email to 500 users", "stepId": "send", "timeoutMinutes": 60 }
+-> { "id": "tk-uuid", "status": "pending", "expiresAt": "..." }
+
+# List takeover requests for a run
+GET /v1/runs/{id}/takeover
+-> [{ "id": "tk-uuid", "status": "pending", "reason": "...", "expiresAt": "..." }]
+
+# Operator approves (optional notes; optional SDP offer for WebRTC takeover)
+POST /v1/runs/{id}/takeover/{tkId}/grant
+{ "notes": "ok to send", "sdpOffer": "v=0\r\n..." }
+
+# Operator denies: the approval node fails (step_failed) and so does the run
+POST /v1/runs/{id}/takeover/{tkId}/deny
+{ "notes": "not now" }
+
+# Browser-side SDP answer (for live WebRTC session)
+POST /v1/runs/{id}/takeover/{tkId}/answer
+{ "sdpAnswer": "v=0\r\n..." }
+
+# Release: the run is re-queued and resumes from the approval node
+POST /v1/runs/{id}/takeover/{tkId}/release
+```
+
+<Aside title="Parked, not spinning">
+A run in `waiting` status holds no goroutine, so a long wait costs no compute. On release the interpreter replays the graph and skips every step already completed in the journal, resuming at the approval node. The SDP fields exist for live WebRTC takeover, but the microVM video stream is not wired yet; the grant, release and resume path is. A paused child run fails its parent step; nested approvals do not work yet.
+</Aside>
+
+## Confidence gate
+
+Off by default. Set `LANTERN_CONFIDENCE_GATE=1` to turn it on. Before a side-effecting node runs, the interpreter scores it. Below the threshold (`LANTERN_CONFIDENCE_GATE_THRESHOLD`, default 0.75) the step goes to human approval instead of executing. If no approval handler is wired, the step auto-approves so unattended workflows still finish.
+
+### Gated node types
+
+- **`tool`** and **`connector`**: always gated when the feature is on
+- **`ai-step`**: only gated when `node.Data["requiresConfidence"] = true`
+
+### Estimators
+
+Select the estimator with `LANTERN_CONFIDENCE_ESTIMATOR`.
+
+**`verbalization` (default).** Scans prior step text for self-reported confidence ("Confidence: 85%"). Falls back to 0.9 when none is found. Failure mode: silence leads to 0.9 and auto-execute; a model that hallucinates an action also writes "confidence: 95%".
+
+**`self-consistency`.** Re-poses the pending action to the model `LANTERN_CONFIDENCE_SAMPLES` times (default 5) as a fresh YES/NO judgment and returns the fraction voting "execute". Consensus gives a high score; a split vote gives a low score and diverts. Safer than verbalization because silence is actively probed. Falls back to the verbalization heuristic when no LLM sampler is wired.
+
+### Outcome calibration
+
+Off by default; `LANTERN_CONFIDENCE_CALIBRATE=1` enables it. Wraps the base estimator and lowers its score by the realized **regret rate**: the fraction of auto-executed steps of that type later thumbs-downed (feedback score of 2 or lower) or ending in a failed run: `adjusted = base × (1 − regret)`. Action types that have gone wrong get gated harder over time. Fail-safe: any error or fewer than 3 samples gives regret 0, so the base score is unchanged.
+
+### Journal events
+
+Every gated step emits a `confidence_evaluated` journal event with `{ score, threshold, decision ("execute" | "divert"), node_type, estimator }`. A diverted step emits `step_completed` once approved, or `step_failed` if denied.
+
+### Env vars
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LANTERN_CONFIDENCE_GATE` | off | `1`/`true`/`on` enables gating |
+| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution |
+| `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement |
+| `LANTERN_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]) |
+| `LANTERN_CONFIDENCE_CALIBRATE` | off | `1` wraps the estimator in outcome-regret calibration |
+
+<Aside title="Rollout order">
+Enable the gate on non-production agents first. Inspect `confidence_evaluated` events in the run waterfall. Switch to `self-consistency` and tune threshold and samples. Then production.
+</Aside>

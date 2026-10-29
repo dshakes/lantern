@@ -98,8 +98,9 @@ pub enum SecretResolverError {
 
 /// Development / CI resolver.
 ///
-/// Reads `LANTERN_SECRET_<key>` from the process environment, where `<key>`
-/// is the URI with every non-alphanumeric byte replaced by `_`.  Example:
+/// Reads `PAL_SECRET_<key>`, else `LANTERN_SECRET_<key>` (ADR 0032), from the
+/// process environment, where `<key>` is the URI with every non-alphanumeric
+/// byte replaced by `_`.  Example:
 ///
 /// ```text
 /// secret_uri = "lantern.secret://tenant/t1/key/OPENAI_API_KEY"
@@ -117,11 +118,20 @@ pub struct EnvSecretResolver;
 
 impl EnvSecretResolver {
     fn env_key(uri: &str) -> String {
-        let slug: String = uri
-            .chars()
+        format!("LANTERN_SECRET_{}", Self::slug(uri))
+    }
+
+    fn slug(uri: &str) -> String {
+        uri.chars()
             .map(|c| if c.is_alphanumeric() { c } else { '_' })
-            .collect();
-        format!("LANTERN_SECRET_{slug}")
+            .collect()
+    }
+
+    /// The secret for `uri` from `get` (an env lookup): `PAL_SECRET_<slug>`
+    /// wins over `LANTERN_SECRET_<slug>`, same as every other PAL/LANTERN pair.
+    fn lookup(uri: &str, get: impl Fn(&str) -> Option<String>) -> Option<String> {
+        let slug = Self::slug(uri);
+        get(&format!("PAL_SECRET_{slug}")).or_else(|| get(&format!("LANTERN_SECRET_{slug}")))
     }
 }
 
@@ -132,9 +142,10 @@ impl SecretResolver for EnvSecretResolver {
         secret_uri: &str,
         _agent_bearer: Option<&str>,
     ) -> Result<String, SecretResolverError> {
-        let key = Self::env_key(secret_uri);
-        std::env::var(&key).map_err(|_| SecretResolverError::NotFound {
-            uri: secret_uri.to_string(),
+        Self::lookup(secret_uri, |k| std::env::var(k).ok()).ok_or_else(|| {
+            SecretResolverError::NotFound {
+                uri: secret_uri.to_string(),
+            }
         })
     }
 }
@@ -631,6 +642,26 @@ mod tests {
         assert!(key.starts_with("LANTERN_SECRET_"));
         assert!(!key.contains("://"), "slashes must be replaced");
         assert!(!key.contains('.'), "dots must be replaced");
+    }
+
+    /// ADR 0032: the dev resolver honours `PAL_SECRET_*` like
+    /// `LANTERN_SECRET_*`, PAL first.
+    #[test]
+    fn env_lookup_reads_pal_then_lantern() {
+        let uri = "lantern.secret://tenant/t1/key/OPENAI_API_KEY";
+        let legacy = EnvSecretResolver::env_key(uri);
+        let pal = legacy.replacen("LANTERN_", "PAL_", 1);
+        let get = |pairs: &[(&str, &str)]| {
+            let env: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            EnvSecretResolver::lookup(uri, |k| env.get(k).cloned())
+        };
+        assert_eq!(get(&[(&pal, "p")]).as_deref(), Some("p"));
+        assert_eq!(get(&[(&legacy, "l")]).as_deref(), Some("l"));
+        assert_eq!(get(&[(&legacy, "l"), (&pal, "p")]).as_deref(), Some("p"));
+        assert_eq!(get(&[]), None);
     }
 
     #[tokio::test]

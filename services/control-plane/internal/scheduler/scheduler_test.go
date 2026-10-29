@@ -19,6 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/db"
 )
 
 // noopLogger returns a zap logger that discards all output.
@@ -52,41 +54,14 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// ensureSchema creates the schedules table (and its dependency) if they do not
-// exist. The gate command runs db.Migrate; these DDL statements handle running
-// the test against a DB that already has the schema.
+// ensureSchema applies the real migrations. It must never hand-write DDL: a
+// partial `CREATE TABLE IF NOT EXISTS tenants` that wins the race against the
+// migrator on a cold database is skipped by every later migration, leaving a
+// broken schema for every package that shares the database.
 func ensureSchema(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	ctx := context.Background()
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS tenants (
-			id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			slug          TEXT NOT NULL UNIQUE,
-			tier          TEXT NOT NULL DEFAULT 'free',
-			k8s_namespace TEXT NOT NULL DEFAULT '',
-			settings      JSONB DEFAULT '{}'::jsonb,
-			created_at    TIMESTAMPTZ DEFAULT now(),
-			updated_at    TIMESTAMPTZ DEFAULT now()
-		)`,
-		`CREATE TABLE IF NOT EXISTS schedules (
-			id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-			tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-			agent_name     TEXT NOT NULL,
-			cron_expr      TEXT NOT NULL,
-			input_template JSONB DEFAULT '{}'::jsonb,
-			config         JSONB DEFAULT '{}'::jsonb,
-			enabled        BOOLEAN NOT NULL DEFAULT true,
-			next_fire_at   TIMESTAMPTZ,
-			last_fired_at  TIMESTAMPTZ,
-			created_at     TIMESTAMPTZ DEFAULT now(),
-			updated_at     TIMESTAMPTZ DEFAULT now(),
-			UNIQUE(tenant_id, agent_name)
-		)`,
-	}
-	for _, s := range stmts {
-		if _, err := pool.Exec(ctx, s); err != nil {
-			t.Fatalf("ensureSchema: %v", err)
-		}
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("ensureSchema: db.Migrate: %v", err)
 	}
 }
 

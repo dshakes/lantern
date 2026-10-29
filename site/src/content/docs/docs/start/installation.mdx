@@ -1,0 +1,124 @@
+---
+title: Installation
+description: Clone the repo, start the local stack, verify it is healthy.
+sidebar:
+  order: 3
+---
+
+import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Clone, start the stack, verify it is healthy. Only want to look around? `make demo` needs Docker and no API key; see [Demo mode](/lantern/docs/start/demo/).
+
+The "stack" is everything PAL needs on your laptop: Postgres (agents and runs), Redis (live updates), MinIO (agent bundles), the API server and the dashboard. One command starts all of it.
+
+<Steps>
+
+1. **Prerequisites**
+
+   | Tool | Min version | Homebrew |
+   | --- | --- | --- |
+   | Docker Desktop | v4.x+ | `brew install --cask docker` |
+   | Node.js | v22+ | `brew install node` |
+   | Go | v1.26+ | `brew install go` |
+   | Git | any | `brew install git` |
+
+   <Aside>Docker must be running before you start. Postgres, Redis, and MinIO run in Docker containers.</Aside>
+
+2. **Clone the repo**
+
+   ```bash
+   git clone https://github.com/dshakes/lantern.git
+   cd lantern
+   ```
+
+3. **Start the stack.** One command boots everything:
+
+   ```bash
+   (cd packages/cli && go install ./cmd/lantern)   # installs the lantern CLI
+   lantern dev
+   ```
+
+   Or run services individually for faster iteration:
+
+   ```bash
+   # Terminal 1: Postgres and Redis only (no MinIO; lantern dev --infra-only adds it)
+   make dev-infra
+
+   # Terminal 2: control-plane API on :8080
+   make run-api
+
+   # Terminal 3: Next.js dashboard on :3001
+   make dashboard-dev
+   ```
+
+   <Aside type="caution">Never run `go run ./cmd/server` directly. It uses OS-user Postgres auth and will fail. Always use `make run-api`, which injects `DATABASE_URL`, `REDIS_URL`, and `S3_ENDPOINT`.</Aside>
+
+4. **Verify**
+
+   ```bash
+   curl -s http://localhost:8080/healthz
+   # -> {"status":"ok"}
+
+   make dev-doctor   # probes every service and reports status
+   ```
+
+</Steps>
+
+## Dev credentials
+
+Seeded automatically on first boot. No setup required.
+
+| Service | Value |
+| --- | --- |
+| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| Redis | `redis://localhost:6379` |
+| MinIO | `http://localhost:9000`, console `:9001`, creds `lantern / lanternsecret` |
+| Dashboard | `admin@lantern.dev` / `lantern` at [localhost:3001](http://localhost:3001) |
+| JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
+| Dev tenant ID | `00000000-0000-0000-0000-000000000001` (slug: `dev`) |
+| Dev user ID | `00000000-0000-0000-0000-000000000002` (role: `owner`) |
+
+<Aside type="caution">Never use these credentials in production. Rotate all secrets before any production deployment.</Aside>
+
+## Service ports
+
+| Service | Port | Protocol |
+| --- | --- | --- |
+| control-plane (HTTP) | `:8080` | REST + health + SSE |
+| control-plane (gRPC) | `:50051` | gRPC |
+| dashboard | `:3001` | Next.js / Turbopack |
+| workflow-engine | `:50052` | gRPC |
+| model-router | `:50053` | gRPC |
+| runtime-manager | `:50054` | gRPC |
+| runtime-scheduler | `:50055` / `:8085` | gRPC / REST |
+| gateway | `:8443` | HTTPS |
+| surface-gateway | `:8444` | HTTP webhooks |
+| PostgreSQL | `:5432` | postgres |
+| Redis | `:6379` | redis |
+| MinIO S3 | `:9000` | S3-compatible |
+| MinIO console | `:9001` | HTTP browser |
+
+## Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make dev` | Full docker-compose stack |
+| `make dev-infra` | Postgres + Redis only, no MinIO (`lantern dev --infra-only` adds it) |
+| `make dev-doctor` | Health-check every service |
+| `make run-api` | Control-plane on `:8080` |
+| `make dashboard-dev` | Next.js dashboard on `:3001` |
+| `make run-whatsapp-bridge` | WhatsApp bridge on `:3100` |
+| `make build` | Compile Go + Rust + TypeScript |
+| `make test` | All test suites |
+| `make lint` | All linters |
+| `make ci-local` | Lint + test + audit (same as CI) |
+| `make proto` | Regenerate from `.proto` definitions |
+| `make clean` | Remove artifacts + docker volumes |
+
+## Next steps
+
+<CardGrid>
+  <LinkCard title="Quickstart" description="Create your first agent and run it end-to-end." href="/lantern/docs/start/quickstart/" />
+  <LinkCard title="Agents" description="Instructions, tools, visual editor." href="/lantern/docs/build/agents/" />
+  <LinkCard title="Deployment" description="Production with Helm or Terraform." href="/lantern/docs/operate/deployment/" />
+</CardGrid>

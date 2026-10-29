@@ -1,0 +1,36 @@
+# Permanent `lantern` allowlist (ADR 0032). One entry per line: `<perl regex> # <reason>`.
+# Plain entries are stripped from content lines and file paths; `scope:<path-regex> <regex>`
+# does the same only in matching files; `path:<regex>` excludes a whole file. Case-sensitive; prefix (?i) to relax. Only WIRE/DATA names belong here —
+# never prose, UI copy or identifiers we control.
+
+# --- the rename machinery itself
+path:^docs/adr/0032-rename-lantern-to-pal\.md$ # the rename ADR has to name the old brand
+path:^scripts/brand-(check\.sh|allowlist\.txt)$ # the gate and its allowlist name what they look for
+
+# --- wire names: in every gRPC path, baked VM images and customer data planes
+\blantern\.v1\b # proto package: part of every gRPC method path (buf PACKAGE_DIRECTORY_MATCH)
+packages/proto/lantern/v1 # proto dir must match the package (buf PACKAGE_DIRECTORY_MATCH)
+\blantern/v1/ # proto import paths (`import "lantern/v1/...proto"`) follow the package dir
+
+# --- persisted / external identifiers
+\blantern-t- # K8s namespace prefix, persisted in tenants.k8s_namespace, parsed in k8s.rs
+\blantern-run- # runtime handle ids, persisted and parsed by the manager
+/\.well-known/lantern-receipts # external receipt verifiers (pal-* is served too)
+/\.well-known/lantern-agent-identity # external agent-identity verifiers (pal-* is served too)
+\blantern\.secret: ?// # secret refs are user data at rest; both forms accepted forever
+\blantern\.secret/ # secret refs are user data at rest; both forms accepted forever
+\blantern\.env\. # kernel cmdline env channel read by old harness images
+scope:^(services/(harness|runtime-manager)|packages/sdk-(ts|python|go))/ \bLANTERN_(RESUME|VM_ID|RUN_ID|TENANT_ID|AGENT_VERSION_ID|ENV|SECRETS_SOCKET|OTLP_SOCKET|WORKSPACE|TRACE_PARENT|WORKLOAD_UID|WORKLOAD_GID|WORKLOAD_CMD|WORKLOAD_ARGV)\b # guest-visible keys, dual-emitted for old workload SDKs in baked images (guest-side code only; host-side reads still count)
+(?i)\bx-lantern-signal-token\b # owner's iPhone Shortcuts send this header; accepted forever
+"(🟢|🔴|📊) \*?lantern[^"]*" # bot-self legacy echo prefixes: late iCloud echoes of old status lines
+
+# --- data-store names (init-only semantics; ALTER ROLE RENAME clears the MD5 password)
+\blantern_app\b # restricted RLS role
+postgres(ql)?://lantern:lantern@[^/\s"']*/lantern\b # dev DB user/password/name
+\bPOSTGRES_(DB|USER|PASSWORD): *lantern\b # compose DB init values
+\blanternsecret\b # dev MinIO secret
+\bminio:9000 lantern\b # dev MinIO access key in the compose init script
+\b(MINIO_ROOT_USER|AWS_ACCESS_KEY_ID): *lantern\b # dev MinIO access key
+
+# --- checkout path: compose project, plists and worktrees derive from it
+/workspace/lantern\b # owner's checkout dir

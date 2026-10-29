@@ -1,0 +1,97 @@
+---
+title: Marketplace and A2A
+description: Publish, fork and invoke agents, and expose public agents to other platforms through A2A agent cards.
+sidebar:
+  order: 8
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Publish an agent, fork someone else's into your tenant, or call a published agent without forking it. A2A agent cards make public agents discoverable by other platforms.
+
+A2A (Agent-to-Agent) is an open protocol for agents to find and call each other; an agent card is the public description an agent publishes. A fork is your private copy.
+
+## What is the Marketplace
+
+In the dashboard, **Marketplace** sits under the Workspace section. Two registries sit behind it:
+
+- **Agent Marketplace**: published agents (`/v1/marketplace`). Filter by category or search text; star, fork, or unpublish your own. Listings carry a description, tags, README, star and fork counts.
+- **MCP Marketplace**: a curated registry of Model Context Protocol servers (`/v1/mcp/servers`). Attach one to an agent with `POST /v1/agents/{name}/mcp-servers`.
+
+<Aside>
+A fork is a copy in your tenant. The original author does not see your data or runs.
+</Aside>
+
+## A2A agent cards and visibility
+
+PAL implements the **Agent-to-Agent (A2A) protocol** for cross-platform agent discovery. Agents are **private by default** (`agents.is_public = false`). The card, the well-known directory, and A2A invoke only expose an agent to a non-owner when it is marked public.
+
+<Aside type="caution">
+No REST endpoint sets the flag yet; today it is a column on `agents` that an operator flips.
+</Aside>
+
+### Visibility rules
+
+- An authenticated caller always sees and can invoke their **own** agents regardless of visibility.
+- A card or invoke for another tenant's agent returns **404** (not 403) when the agent is not public, to avoid leaking that the agent exists.
+- `GET /.well-known/agent.json` lists only `is_public = true` agents.
+
+### Agent card endpoints
+
+```http
+GET /v1/agents/{name}/card          — own agent or is_public; else 404
+GET /.well-known/agent.json          — lists only public agents
+```
+
+## Publishing your agent
+
+Publishing copies the agent's manifest into the public registry under a slug. There is no review queue and no unlisted mode; a listing is live as soon as the call returns.
+
+```http
+POST /v1/marketplace/publish
+{
+  "agentName": "research-agent",
+  "description": "Cited research reports",
+  "category": "research",
+  "tags": ["research", "web"],
+  "readme": "..."
+}
+
+DELETE /v1/marketplace/{slug}     # unpublish
+```
+
+<Aside type="caution">
+Anyone can read a published agent's manifest, including its system prompt. Do not put secrets in a manifest. Use `lantern.secret/...` refs, which each tenant resolves from its own store at run time.
+</Aside>
+
+## Discovering and forking agents
+
+```http
+GET  /v1/marketplace?category=research&q=citations
+GET  /v1/marketplace/{slug}                 # manifest, card, README
+POST /v1/marketplace/{slug}/fork            { "newName": "my-copy" }
+POST /v1/marketplace/{slug}/star
+```
+
+A fork is a normal agent in your tenant. Edit its prompt, swap models, add connectors; the original is unaffected.
+
+## Cross-tenant invocation (commerce)
+
+A buyer can invoke a published agent without forking it. The run executes in the **seller's** tenant, with their LLM keys and budgets. The seller's hard-fail budget applies (HTTP 402), and the buyer's input is validated against the manifest's `inputSchema` when one exists. The buyer gets the output and an HMAC-SHA256 signed receipt.
+
+```http
+POST /v1/marketplace/{slug}/invoke
+{ "input": { "topic": "..." } }
+
+Receipt fields: invocationId, buyerTenant, sellerTenant, marketplace,
+  agentName, runId, costUsd, issuedAt, signature, algorithm
+
+GET /v1/marketplace/invocations?role=buyer    # buyer-side history
+GET /v1/marketplace/invocations?role=seller   # seller-side history
+```
+
+## Cross-platform interop
+
+- **Discovery**: other platforms read `/.well-known/agent.json` and `/v1/agents/{name}/card`. Both are limited to public agents (plus your own, when authenticated).
+- **Inbound call**: `POST /v1/agents/{name}/a2a/invoke` requires an authenticated caller; it returns 401 without credentials.
+- **Outbound call**: inside a running agent, `ctx.a2a(agentCardUrl).submit({ input })` calls a remote A2A agent through the runtime sidecar (production runtime only). `ctx.subagent(name, input)` calls another agent by name.
