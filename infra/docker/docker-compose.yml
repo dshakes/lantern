@@ -158,12 +158,6 @@ services:
       control-plane:
         condition: service_healthy
 
-  landing:
-    build:
-      context: ../../apps/landing
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
 
   # ---------- Runtime profile --------------------------------------------------
   # These services are NOT started by plain `make dev` / `docker compose up`.
