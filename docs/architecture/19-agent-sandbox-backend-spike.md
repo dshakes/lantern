@@ -100,7 +100,7 @@ checkpoint underneath. **That is the whole point of the migration.**
 The split: **stable, security-defining fields → `SandboxTemplate` (reused across
 runs); per-run fields → `SandboxClaim`.**
 
-| Lantern (`ScheduleRequest` / `AgentSpec`) | agent-sandbox target | Notes |
+| PAL (`ScheduleRequest` / `AgentSpec`) | agent-sandbox target | Notes |
 |---|---|---|
 | `isolation_class` | `SandboxTemplate.podTemplate.spec.runtimeClassName` | via existing `isolation_to_runtime_class` (`k8s.rs:250`): STANDARD/UNTRUSTED→`gvisor`, HOSTILE→`kata`. **Fail-closed unchanged.** |
 | `image` / `bundle_uri` + `bundle_digest` | `podTemplate.spec.containers[0].image` | digest-pinned (`AgentSpec.image_digest` is REQUIRED, no tags) |
@@ -109,7 +109,7 @@ runs); per-run fields → `SandboxClaim`.**
 | `limits.scratch_size` | `volumeClaimTemplates[scratch]` or `emptyDir.sizeLimit` | tmpfs scratch → `emptyDir`; durable (DEVCONTAINER) → PVC template |
 | `limits.timeout` | `Sandbox.spec.lifecycle.shutdownTime` (now + timeout) + `shutdownPolicy: Delete` | the CRD's TTL is absolute; compute `now + timeout` at claim time |
 | `tenant_id` (authenticated) | claim **namespace** `lantern-t-<tenant_id>` + `additionalPodMetadata.labels[tenant-id]` | reuses `namespace_for` (`k8s.rs:133`); never from caller env |
-| `secrets` (`SecretRef`) | **NOT mapped to K8s Secrets** — left to the harness | secret refs stay in the pod env as Lantern URIs; the in-VM harness vends short-TTL tokens (ADR 0005/0008). Deliberately *not* `envFrom: secretRef`. |
+| `secrets` (`SecretRef`) | **NOT mapped to K8s Secrets** — left to the harness | secret refs stay in the pod env as PAL URIs; the in-VM harness vends short-TTL tokens (ADR 0005/0008). Deliberately *not* `envFrom: secretRef`. |
 | `egress_rules` / `network` | `SandboxTemplate.spec.networkPolicy` (default-deny) **+** harness egress proxy | NetworkPolicy is defense-in-depth; the allowlist proxy (ADR 0006) is the real enforcement, unchanged |
 | `env` (caller-supplied) | container `env` (+ injected `tenant_id`/`run_id`) | direct |
 | `run_id` / `agent_version_id` | `additionalPodMetadata.labels` + claim name | for dashboards/audit correlation |

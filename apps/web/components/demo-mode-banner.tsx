@@ -57,7 +57,7 @@ export function DemoModeBanner() {
           >
             {summary}
             <span className="ml-2 text-[12px] text-amber-300/70">
-              · Lantern API offline — values you see are local mocks
+              · PAL API offline — values you see are local mocks
             </span>
           </button>
           {expanded && (

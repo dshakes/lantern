@@ -106,7 +106,7 @@ export function AgentMessage({ children, busy }: { children: ReactNode; busy?: b
         L
       </span>
       <div className="min-w-0 flex-1 space-y-3 pt-1 text-sm leading-relaxed text-zinc-200">
-        <span className="sr-only">Lantern guide:</span>
+        <span className="sr-only">PAL guide:</span>
         {children}
         {busy && (
           <span className="inline-flex items-center gap-1" aria-label="Working">

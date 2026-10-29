@@ -15,7 +15,7 @@ observed.
 
 ## Supported versions
 
-Lantern is pre-1.0 and ships from `master`. Security fixes land on `master`;
+PAL is pre-1.0 and ships from `master`. Security fixes land on `master`;
 there are no long-term support branches yet.
 
 ## Scope & hardening notes

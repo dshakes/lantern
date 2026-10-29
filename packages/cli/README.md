@@ -1,6 +1,6 @@
 # lantern CLI
 
-The `lantern` command-line tool for [Lantern](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents.
+The `lantern` command-line tool for [PAL](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents.
 
 ```bash
 # macOS / Linux

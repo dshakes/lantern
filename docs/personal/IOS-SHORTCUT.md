@@ -1,12 +1,12 @@
-# iOS Shortcut → Hey Lantern (Siri-callable Jarvis)
+# iOS Shortcut → Hey PAL (Siri-callable Jarvis)
 
 Trigger your Jarvis from anywhere on your iPhone — Siri ("Hey Siri,
-Lantern"), the Action button, a Lock Screen widget, or the Shortcuts
+PAL"), the Action button, a Lock Screen widget, or the Shortcuts
 home-screen icon. Voice input → answer spoken back.
 
 ## What you get
 
-- Say "Hey Siri, Lantern" → Siri prompts "What's up?" → you speak →
+- Say "Hey Siri, PAL" → Siri prompts "What's up?" → you speak →
   the bridge runs the full Jarvis pipeline (profile + tools + all
   the language/dialect rules) → answer is spoken back via the
   iPhone's voice.
@@ -43,7 +43,7 @@ home-screen icon. Voice input → answer spoken back.
 ## Build the shortcut
 
 Open the **Shortcuts** app on your iPhone → tap **+** → name it
-`Lantern`.
+`PAL`.
 
 ### Step 1 — Dictate the question
 
@@ -81,9 +81,9 @@ Open the **Shortcuts** app on your iPhone → tap **+** → name it
 ### Step 5 (optional) — Siri trigger
 
 - Tap the shortcut's **(i)** info icon → **Add to Siri** → record
-  "Hey Lantern" or any phrase you want.
+  "Hey PAL" or any phrase you want.
 - Optionally: pin to Lock Screen, add to Action Button (Settings →
-  Action Button → Shortcut → Lantern), or add a widget.
+  Action Button → Shortcut → PAL), or add a widget.
 
 ## Test it
 

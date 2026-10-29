@@ -1,7 +1,7 @@
 # Runtime Latency Benchmarks
 
 Measured with `scripts/bench/runtime-latency.sh` on a Linux host with KVM access
-and a live Lantern stack. All times are wall-clock milliseconds; RSS delta is
+and a live PAL stack. All times are wall-clock milliseconds; RSS delta is
 host-side `/proc/meminfo` MemUsed change (an upper bound, not a per-fork
 isolated measurement).
 
@@ -49,7 +49,7 @@ Expected effect on the benchmark numbers:
 ## Running the benchmark
 
 ```bash
-# Prerequisites: Linux + KVM, running Lantern stack
+# Prerequisites: Linux + KVM, running PAL stack
 export LANTERN_API_URL=http://localhost:8080
 export LANTERN_API_TOKEN=<your-admin-token>
 bash scripts/bench/runtime-latency.sh --iterations 10

@@ -2,7 +2,7 @@
 
 > **Sources:** Live web research, April 2026 (see citations inline). Knowledge cutoff for the synthesizing model is May 2025; everything in this document was verified against current vendor docs and recent third-party reviews.
 >
-> **Audience:** Lantern architects and engineers. The point is *not* to summarize every vendor — it's to identify what they each do well, what they each get wrong, and what we should steal vs. avoid.
+> **Audience:** PAL architects and engineers. The point is *not* to summarize every vendor — it's to identify what they each do well, what they each get wrong, and what we should steal vs. avoid.
 
 ---
 
@@ -174,7 +174,7 @@ We grouped the field into four buckets and evaluated each on the same dimensions
 
 **What we steal:** Handoffs-as-tools. Input/output guardrails as a first-class concept. The Responses API surface.
 
-**What we avoid:** Living in-process only. Lantern runs the agent loop on durable infrastructure.
+**What we avoid:** Living in-process only. PAL runs the agent loop on durable infrastructure.
 
 ---
 
@@ -238,7 +238,7 @@ We grouped the field into four buckets and evaluated each on the same dimensions
 
 **Limitation:** Less powerful than Temporal — fewer primitives, no multi-region replication GA, smaller ecosystem.
 
-**What we steal:** **The `step.run` ergonomic.** This is the Lantern SDK's primary API. Easier than Temporal's workflow/activity split.
+**What we steal:** **The `step.run` ergonomic.** This is the PAL SDK's primary API. Easier than Temporal's workflow/activity split.
 
 ---
 
@@ -260,11 +260,11 @@ We grouped the field into four buckets and evaluated each on the same dimensions
 - **firecracker-containerd** (project by AWS) bridges Firecracker to containerd, enabling K8s integration via runtime classes.
 - **State of MicroVM Isolation 2026** ([emirb.github.io](https://emirb.github.io/blog/microvm-2026/)) — comprehensive review confirming Firecracker is still the best fit for ephemeral, untrusted code.
 
-**Lantern decision:** Firecracker via firecracker-containerd as the default `untrusted` runtime. Kata for `hostile`. K8s Job pods for `trusted`. WASI for `wasm`. See `docs/adr/0002-microvm-runtime.md`.
+**PAL decision:** Firecracker via firecracker-containerd as the default `untrusted` runtime. Kata for `hostile`. K8s Job pods for `trusted`. WASI for `wasm`. See `docs/adr/0002-microvm-runtime.md`.
 
 ---
 
-## What this means for Lantern
+## What this means for PAL
 
 We are not building a clone. We are picking the **best primitive from each** and unifying them into a single platform with **none of the lock-in**:
 
@@ -283,7 +283,7 @@ We are not building a clone. We are picking the **best primitive from each** and
 | **Letta** | Memory tier model: core / recall / archival |
 | **Firecracker** | 28ms snapshot-restore as the cold-start floor |
 
-What no one else has yet, and what Lantern will:
+What no one else has yet, and what PAL will:
 
 1. **All of the above in a single platform**, not bolted together by the user.
 2. **Cost-aware big/small model routing** that learns from past runs (no one is doing this well).

@@ -311,7 +311,7 @@ export default function AgentsPage() {
           <EmptyState
             illustration={<AgentsIllustration size={120} />}
             title="No agents yet"
-            description="Describe the job in a sentence. Lantern drafts the prompt and settings, and you review them before the agent is created."
+            description="Describe the job in a sentence. PAL drafts the prompt and settings, and you review them before the agent is created."
             actionLabel="Create an agent"
             onAction={() => router.push("/agents/create")}
             secondaryActionLabel="Browse templates"
@@ -373,7 +373,7 @@ export default function AgentsPage() {
             {/* Exec model legend */}
             <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[12px] text-zinc-500">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">Runs as</span>
-              <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-sky-400" />Scheduled · Lantern cron</span>
+              <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-sky-400" />Scheduled · PAL cron</span>
               <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-violet-400" />Bridge loop · on your Mac</span>
               <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Reactive · per inbound message</span>
             </div>

@@ -2,7 +2,7 @@
 
 > **Audience:** on-call operators.
 > **Fires from:** `ControlPlaneDown` (critical), `ControlPlaneNotReady` (critical).
-> **Dashboards:** Lantern — Platform Overview.
+> **Dashboards:** PAL — Platform Overview.
 
 The control-plane (`services/control-plane`, REST `:8080`, gRPC `:50051`) is the
 front door: auth, agents, runs, sessions, connectors, budgets, marketplace, and

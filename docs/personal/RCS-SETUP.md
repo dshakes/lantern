@@ -1,6 +1,6 @@
 # RCS Setup — iMessage bridge + server-side branded lane
 
-Lantern supports RCS in two independent directions, with different effort levels
+PAL supports RCS in two independent directions, with different effort levels
 to enable each. This guide walks through both, in the order you should provision
 them.
 
@@ -116,7 +116,7 @@ action covers both.
 ### Step 1 — Create a Messaging Service
 
 1. Twilio Console → Messaging → Services → **Create Messaging Service**
-2. Give it a name (e.g. "Lantern RCS")
+2. Give it a name (e.g. "PAL RCS")
 3. Add your Twilio phone number as a sender under **Sender Pool**
 
 ### Step 2 — Register an RCS sender (requires Google RBM approval)

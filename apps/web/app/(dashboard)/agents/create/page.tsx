@@ -236,7 +236,7 @@ function CreatePage() {
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-zinc-100">Describe with AI</h3>
                   <p className="mt-1 text-xs text-zinc-500">
-                    Tell Lantern what you want; it drafts the agent for you.
+                    Tell PAL what you want; it drafts the agent for you.
                   </p>
                 </div>
               </button>

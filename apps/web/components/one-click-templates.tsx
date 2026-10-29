@@ -7,7 +7,7 @@
 //
 // Each tile up-front shows which connectors the template needs AND
 // whether those are already installed at the tenant level. Connectors
-// in Lantern are workspace-wide — install once, every agent can use
+// in PAL are workspace-wide — install once, every agent can use
 // them — so the tile reflects the user's real install state.
 
 import { useEffect, useState } from "react";

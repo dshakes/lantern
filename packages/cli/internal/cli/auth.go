@@ -20,8 +20,8 @@ func newLoginCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate with the Lantern platform",
-		Long: `Log in to Lantern using your email and password.
+		Short: "Authenticate with the PAL platform",
+		Long: `Log in to PAL using your email and password.
 
 If --email and --password are provided, login is non-interactive.
 Otherwise, you will be prompted for credentials.

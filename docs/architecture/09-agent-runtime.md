@@ -1,6 +1,6 @@
 # Agent Runtime
 
-> **Definitive reference for how Lantern runs agents.** Read this before touching `services/control-plane/internal/handlers/rest.go`, the workflow interpreter, the harness, or the scheduler/manager pair.
+> **Definitive reference for how PAL runs agents.** Read this before touching `services/control-plane/internal/handlers/rest.go`, the workflow interpreter, the harness, or the scheduler/manager pair.
 
 Related: [ADR 0022 — Two-tier routing](../adr/0022-two-tier-agent-runtime.md) · [04b — MicroVM productionization](04b-microvm-productionization.md) · [01 — Overview](01-overview.md)
 
@@ -324,7 +324,7 @@ The microVM tier adds `vm_id`, `isolation_class`, and `agent_version` on schedul
 ## Diagram: end-to-end lifecycle
 
 <p align="center">
-  <img src="../assets/diagrams/e2e-journey.svg" alt="End-to-end Lantern agent lifecycle: Develop → Test → Deploy → Run → Observe → Improve, with a continuous improvement loop back to Develop. The journal_events table is the shared substrate underneath all stages." width="100%">
+  <img src="../assets/diagrams/e2e-journey.svg" alt="End-to-end PAL agent lifecycle: Develop → Test → Deploy → Run → Observe → Improve, with a continuous improvement loop back to Develop. The journal_events table is the shared substrate underneath all stages." width="100%">
 </p>
 
 The loop back from Improve to Develop closes via eval baseline updates and rehearsals. Each stage is covered in the [self-service walkthrough](../guides/self-service-e2e.md).

@@ -1,7 +1,7 @@
 # Dedicated Bot Accounts — iMessage + WhatsApp
 
-This guide gets Lantern off your **personal** self-chat and onto its own
-"Lantern" contact in both iMessage and WhatsApp. You DM the bot like a
+This guide gets PAL off your **personal** self-chat and onto its own
+"PAL" contact in both iMessage and WhatsApp. You DM the bot like a
 friend; the bot reads your Mac, runs OCR, executes calendar/note/mail
 actions, and replies — same features as self-chat mode, cleaner UX.
 
@@ -61,7 +61,7 @@ From your phone, DM the bot: **"when does my passport expire"** — you should s
    - Install WhatsApp on any phone (or eSIM-capable spare iPhone) and complete onboarding with the new number. Verify via SMS.
    - For Google Voice: WhatsApp will SMS the verification code to your GV number → forwarded to your inbox/main phone. Enter it in WhatsApp.
    - Once verified, you can uninstall WhatsApp from the spare device — the registration sticks.
-3. **From your primary WhatsApp**, save the bot number as a contact (e.g. "Lantern") and send a "hi" to initialize the chat.
+3. **From your primary WhatsApp**, save the bot number as a contact (e.g. "PAL") and send a "hi" to initialize the chat.
 
 ### Pair the bridge to the bot number
 
@@ -138,7 +138,7 @@ Create `~/.lantern/owner-profile.md` to give the bot your voice, world, and grou
 # Owner profile
 
 ## About me
-I'm Ada — founder building Lantern. Currently heads-down on launch.
+I'm Ada — founder building PAL. Currently heads-down on launch.
 
 ## How I text
 - lowercase, short, dry

@@ -207,7 +207,7 @@ See also: docs/runbooks/cluster-validation.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := findRepoRoot()
 			if err != nil {
-				return fmt.Errorf("locate repo root: %w (run from inside the Lantern repo)", err)
+				return fmt.Errorf("locate repo root: %w (run from inside the PAL repo)", err)
 			}
 
 			scriptPath := filepath.Join(repoRoot, "scripts", "validate-cluster.sh")

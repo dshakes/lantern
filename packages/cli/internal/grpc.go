@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// ClientConfig holds the connection parameters for the Lantern API.
+// ClientConfig holds the connection parameters for the PAL API.
 type ClientConfig struct {
 	APIUrl   string
 	APIKey   string
@@ -32,7 +32,7 @@ func (c *Clients) Close() error {
 	return nil
 }
 
-// Dial creates a gRPC connection to the Lantern control plane and returns
+// Dial creates a gRPC connection to the PAL control plane and returns
 // typed service clients. Every outgoing call automatically carries tenant_id
 // and api_key as gRPC metadata.
 func Dial(cfg ClientConfig) (*Clients, error) {

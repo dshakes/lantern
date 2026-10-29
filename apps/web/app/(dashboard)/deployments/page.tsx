@@ -2,7 +2,7 @@
 
 // Data Plane Command Center — "where your agents run".
 //
-// The control-plane/data-plane split is Lantern's core story: the control
+// The control-plane/data-plane split is the core PAL story: the control
 // plane orchestrates, but agent workloads execute inside the customer's own
 // Kubernetes clusters (EKS/GKE/AKS) in their VPC. This page is the fleet view
 // of those data planes — health, heartbeat freshness, the outbound mTLS
@@ -106,7 +106,7 @@ const cloudSetups: CloudSetup[] = [
     name: "AWS", cloud: "aws", icon: "AWS",
     blurb: "Amazon EKS with Firecracker support",
     steps: [
-      "# Install the Lantern data plane on AWS EKS",
+      "# Install the PAL data plane on AWS EKS",
       "terraform init",
       'terraform apply -var="cloud=aws" \\',
       '  -var="region=us-east-1" \\',
@@ -122,7 +122,7 @@ const cloudSetups: CloudSetup[] = [
     name: "GCP", cloud: "gcp", icon: "GCP",
     blurb: "Google GKE with nested virtualization",
     steps: [
-      "# Install the Lantern data plane on GKE",
+      "# Install the PAL data plane on GKE",
       "terraform init",
       'terraform apply -var="cloud=gcp" \\',
       '  -var="region=us-central1" \\',
@@ -138,7 +138,7 @@ const cloudSetups: CloudSetup[] = [
     name: "Azure", cloud: "azure", icon: "AZ",
     blurb: "Azure AKS with dedicated hosts",
     steps: [
-      "# Install the Lantern data plane on AKS",
+      "# Install the PAL data plane on AKS",
       "terraform init",
       'terraform apply -var="cloud=azure" \\',
       '  -var="region=eastus2" \\',

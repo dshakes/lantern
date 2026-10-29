@@ -2,7 +2,7 @@
 
 > **What this is:** the multi-LLM router and intelligence layer that decides — for every model call — *which model* to use based on the cost / latency / accuracy budget the agent declared. We call it **the Spectrum** because it routes across the full spectrum of models from tiny edge models to frontier closed-source giants.
 >
-> **Why it matters:** the difference between an agent that costs $0.001 per run and one that costs $1.00 per run is which model handled which step. Choosing well is the single biggest lever on production agent economics. No one is automating this well today. Lantern automates it as a first-class feature.
+> **Why it matters:** the difference between an agent that costs $0.001 per run and one that costs $1.00 per run is which model handled which step. Choosing well is the single biggest lever on production agent economics. No one is automating this well today. PAL automates it as a first-class feature.
 
 ---
 
@@ -204,7 +204,7 @@ The Spectrum talks to:
 | **Closed-source frontier APIs** | OpenAI, Anthropic, Google, xAI, Cohere — one HTTPS client each, with native streaming, prompt cache (Anthropic), reasoning effort (OpenAI/Claude) |
 | **OpenRouter** | As one upstream — gives access to hundreds of models for niches the platform doesn't host directly |
 | **Vercel AI Gateway** | As another upstream when configured by the tenant |
-| **Self-hosted on Lantern GPUs** | vLLM and Text Generation Inference servers running open-weight models (Llama, Mistral, Mixtral, Qwen, DeepSeek, Phi). Lantern operates these inside the same K8s cluster as the rest of the platform, on a dedicated GPU node pool. Cost is amortized infrastructure cost, often 5-10× cheaper than equivalent API calls. |
+| **Self-hosted on PAL GPUs** | vLLM and Text Generation Inference servers running open-weight models (Llama, Mistral, Mixtral, Qwen, DeepSeek, Phi). PAL operates these inside the same K8s cluster as the rest of the platform, on a dedicated GPU node pool. Cost is amortized infrastructure cost, often 5-10× cheaper than equivalent API calls. |
 | **Edge models** | TinyLlama, Phi-3-mini, Gemma 2B, DistilBERT, ALBERT — running directly inside the Spectrum's Rust process via `candle`, `mistral.rs`, or ONNX Runtime. Sub-50ms inference, no network hop. Used for classification, routing decisions, simple extraction. |
 | **Tenant BYO** | Tenants can register their own provider (a private vLLM endpoint, an Ollama at home, a corporate Bedrock account) and the Spectrum will route to it transparently. |
 
@@ -312,14 +312,14 @@ Budget enforcement is **synchronous and authoritative** — there's no chance of
 
 The Spectrum streams from the upstream provider to the caller in **the same wire format** the agent SDK expects, regardless of which provider was picked. We normalize:
 
-- OpenAI Chat Completions stream → Lantern stream
-- OpenAI Responses API stream → Lantern stream
-- Anthropic Messages stream → Lantern stream
-- Google Gemini stream → Lantern stream
-- vLLM SSE → Lantern stream
-- llama.cpp REST → buffered → Lantern stream
+- OpenAI Chat Completions stream → PAL stream
+- OpenAI Responses API stream → PAL stream
+- Anthropic Messages stream → PAL stream
+- Google Gemini stream → PAL stream
+- vLLM SSE → PAL stream
+- llama.cpp REST → buffered → PAL stream
 
-The wire format is the **OpenAI Chat Completions stream** (the de facto standard) extended with optional Lantern fields:
+The wire format is the **OpenAI Chat Completions stream** (the de facto standard) extended with optional PAL fields:
 - `lantern.generation_id` — set on first chunk for resumption
 - `lantern.model_used` — the actual model the Spectrum picked
 - `lantern.cost_estimate_usd` — running cost

@@ -3,7 +3,7 @@
 > **Audience:** on-call operators.
 > **Fires from:** `SchedulerDown` (critical), `SchedulerNoLeader` (critical),
 > `SchedulerScheduleErrorRateHigh` (warning), `CronScheduleOverdue` (critical).
-> **Dashboards:** Lantern — Data Plane & Runtime, Platform Overview.
+> **Dashboards:** PAL — Data Plane & Runtime, Platform Overview.
 
 Two distinct "scheduling" subsystems share this runbook because both are
 leader-elected tickers gated on a Postgres advisory lock:

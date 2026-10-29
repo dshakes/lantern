@@ -540,7 +540,7 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-zinc-100">API Keys</h3>
-          <p className="mt-0.5 text-xs text-zinc-500">Manage keys used to authenticate with the Lantern API.</p>
+          <p className="mt-0.5 text-xs text-zinc-500">Manage keys used to authenticate with the PAL API.</p>
         </div>
         <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400">Create API Key</button>
       </div>

@@ -191,7 +191,7 @@ export function buildQRLink(params: {
     case "pair":
       return `${base}/pair?token=${params.token ?? generatePairingToken()}`;
     case "whatsapp":
-      return `https://wa.me/${params.phoneNumber ?? ""}?text=${encodeURIComponent("Connect to Lantern")}`;
+      return `https://wa.me/${params.phoneNumber ?? ""}?text=${encodeURIComponent("Connect to PAL")}`;
     case "telegram":
       return `https://t.me/${params.botUsername ?? "LanternBot"}?start=connect`;
     default:

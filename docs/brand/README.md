@@ -1,4 +1,4 @@
-# Lantern brand: glass and flame
+# PAL brand: glass and flame
 
 A lantern is a flame you can carry because glass keeps it contained. That is the
 product: the agent's untrusted code is the flame, the microVM is the glass, and

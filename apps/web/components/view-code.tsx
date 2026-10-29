@@ -130,8 +130,8 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
               <span>
                 Install:&nbsp;
                 <code className="font-mono text-zinc-400">
-                  {active === "ts" && "npm install ./packages/sdk-ts  # from a Lantern checkout; not on npm yet"}
-                  {active === "python" && "pip install ./packages/sdk-python  # from a Lantern checkout; not on PyPI yet"}
+                  {active === "ts" && "npm install ./packages/sdk-ts  # from a PAL checkout; not on npm yet"}
+                  {active === "python" && "pip install ./packages/sdk-python  # from a PAL checkout; not on PyPI yet"}
                   {active === "go" && "go get github.com/dshakes/lantern/packages/sdk-go"}
                   {active === "curl" && "—"}
                 </code>
@@ -151,15 +151,15 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
 
 export function snippetsForGetRun(runId: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   return {
-    ts: `import { Lantern } from "@lantern/sdk";
+    ts: `import { PAL } from "@lantern/sdk";
 
-const lantern = new Lantern({ apiKey: process.env.LANTERN_API_KEY });
+const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
 const run = await lantern.runs.get("${runId}");
 console.log(run.status, run.output);`,
-    python: `from lantern_sdk import Lantern
+    python: `from lantern_sdk import PAL
 
-lantern = Lantern(api_key="...")  # or set LANTERN_API_KEY env var
+lantern = PAL(api_key="...")  # or set LANTERN_API_KEY env var
 
 run = lantern.runs.get("${runId}")
 print(run.status, run.output)`,
@@ -186,18 +186,18 @@ func main() {
 export function snippetsForCreateRun(agentName: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   const inputJSON = `{"message": "your input here"}`;
   return {
-    ts: `import { Lantern } from "@lantern/sdk";
+    ts: `import { PAL } from "@lantern/sdk";
 
-const lantern = new Lantern({ apiKey: process.env.LANTERN_API_KEY });
+const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
 const run = await lantern.runs.create({
   agentName: "${agentName}",
   input: ${inputJSON},
 });
 console.log("started:", run.id);`,
-    python: `from lantern_sdk import Lantern
+    python: `from lantern_sdk import PAL
 
-lantern = Lantern(api_key="...")
+lantern = PAL(api_key="...")
 
 run = lantern.runs.create(
     agent_name="${agentName}",
@@ -232,18 +232,18 @@ func main() {
 
 export function snippetsForSubmitFeedback(runId: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   return {
-    ts: `import { Lantern } from "@lantern/sdk";
+    ts: `import { PAL } from "@lantern/sdk";
 
-const lantern = new Lantern({ apiKey: process.env.LANTERN_API_KEY });
+const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
 await lantern.runs.feedback("${runId}", {
   score: 5,                 // 1-5
   comment: "nailed it",
   source: "sdk",
 });`,
-    python: `from lantern_sdk import Lantern
+    python: `from lantern_sdk import PAL
 
-lantern = Lantern(api_key="...")
+lantern = PAL(api_key="...")
 lantern.runs.feedback(
     run_id="${runId}",
     score=5,                 # 1-5

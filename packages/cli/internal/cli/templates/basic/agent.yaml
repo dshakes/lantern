@@ -1,6 +1,6 @@
 name: "{{.Name}}"
 version: "0.1.0"
-description: "A Lantern agent"
+description: "A PAL agent"
 model: auto
 isolation:
   class: trusted

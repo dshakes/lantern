@@ -1,4 +1,4 @@
-# Lantern Roadmap & Status
+# PAL Roadmap & Status
 
 > **Use this file to know what exists, what is spiked, and what is stubbed.** Updated as work proceeds.
 

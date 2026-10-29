@@ -1,6 +1,6 @@
 # Runbook: Flip LANTERN_RLS_ENFORCE=1
 
-**Audience**: operators deploying the Lantern control-plane.  
+**Audience**: operators deploying the PAL control-plane.  
 **Risk level**: medium — flipping the flag activates RLS enforcement for
 all tenant-scoped queries.  No data is deleted; the worst outcome of a
 premature flip is a running API that returns empty rows for authenticated

@@ -1,6 +1,6 @@
-# Contributing to Lantern
+# Contributing to PAL
 
-Thanks for your interest in Lantern. This guide gets you from clone to a
+Thanks for your interest in PAL. This guide gets you from clone to a
 mergeable change.
 
 ## Get it running

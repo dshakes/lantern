@@ -9,6 +9,10 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ## [Unreleased]
 
+### Changed
+
+- Product renamed from Lantern to **PAL** (the Personal Agentic Layer; ADR 0032). Docs, dashboard copy, widget and CLI help text now say PAL. Identifiers (`LANTERN_*` env vars, the `lantern` CLI, package names, `lantern.v1`, the GitHub repo URL) are unchanged; env vars also accept `PAL_*`.
+
 ### Added
 - **Host-asserted software measurement (ADR 0031, ACE A5)** — at every Firecracker
   cold spawn the runtime-manager computes a SHA-256 over the five canonical inputs

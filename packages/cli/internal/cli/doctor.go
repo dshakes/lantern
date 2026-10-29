@@ -26,7 +26,7 @@ import (
 func newDoctorCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Check that the Lantern stack is ready for use",
+		Short: "Check that the PAL stack is ready for use",
 		Long: `Runs a sequence of readiness checks against the local stack and prints
 a pass/fail line for each one. Exits non-zero if any hard check fails.
 
@@ -395,7 +395,7 @@ func checkRun(restURL, token string) checkResult {
 	if _, err := client.GetAgent(doctorAgentName); err != nil {
 		if _, cerr := client.CreateAgentWithSystemPrompt(
 			doctorAgentName,
-			"Lantern doctor probe agent — safe to delete.",
+			"PAL doctor probe agent — safe to delete.",
 			"Reply with exactly one word: ready",
 		); cerr != nil {
 			return checkResult{
@@ -464,7 +464,7 @@ func checkRun(restURL, token string) checkResult {
 	}
 }
 
-// servicePort describes a known Lantern service port.
+// servicePort describes a known PAL service port.
 type servicePort struct {
 	port string
 	name string

@@ -1,7 +1,7 @@
 # iOS Shortcuts + Siri integration
 
-Run your Lantern assistant by voice. "Hey Siri, pause Lantern" → bot
-pauses. "Hey Siri, Lantern status" → Siri reads the bot's current
+Run your PAL assistant by voice. "Hey Siri, pause PAL" → bot
+pauses. "Hey Siri, PAL status" → Siri reads the bot's current
 state aloud.
 
 The control-plane exposes a few single-purpose HTTP endpoints under
@@ -16,9 +16,9 @@ action and ties it to a Siri phrase.
 Open the dashboard → Settings → API keys → create one named "iOS
 Shortcuts". Copy the key (starts with `lnt_`).
 
-### 2. Make Lantern reachable from your phone
+### 2. Make PAL reachable from your phone
 
-If you're running Lantern on your home Mac, your iPhone needs to
+If you're running PAL on your home Mac, your iPhone needs to
 reach it. Options:
 
 - **Same Wi-Fi**: use your Mac's local IP (e.g. `http://192.168.1.42:8080`).
@@ -39,11 +39,11 @@ Open Shortcuts.app on iPhone → `+` → add these. For each:
 
 | Shortcut | URL path | Method | Suggested Siri phrase |
 |---|---|---|---|
-| Pause Lantern | `/v1/shortcuts/pause` | POST | "Hey Siri, pause Lantern" |
-| Pause for 2 hours | `/v1/shortcuts/pause?duration=2h` | POST | "Hey Siri, pause Lantern for two hours" |
-| Resume Lantern | `/v1/shortcuts/resume` | POST | "Hey Siri, resume Lantern" |
-| Lantern status | `/v1/shortcuts/status` | GET | "Hey Siri, Lantern status" |
-| Note to Lantern | `/v1/shortcuts/say` (body: `{"message": "..."}`) | POST | "Hey Siri, tell Lantern ..." |
+| Pause PAL | `/v1/shortcuts/pause` | POST | "Hey Siri, pause PAL" |
+| Pause for 2 hours | `/v1/shortcuts/pause?duration=2h` | POST | "Hey Siri, pause PAL for two hours" |
+| Resume PAL | `/v1/shortcuts/resume` | POST | "Hey Siri, resume PAL" |
+| PAL status | `/v1/shortcuts/status` | GET | "Hey Siri, PAL status" |
+| Note to PAL | `/v1/shortcuts/say` (body: `{"message": "..."}`) | POST | "Hey Siri, tell PAL ..." |
 
 Optional per-channel: append `?channel=whatsapp` or `?channel=imessage`
 if you want a Shortcut to only affect one. Default is both.
@@ -52,7 +52,7 @@ if you want a Shortcut to only affect one. Default is both.
 
 For the status Shortcut, add a "Speak Text" action after "Get
 Contents of URL" pointing to the URL response. Siri will say the
-result aloud — "Lantern: WhatsApp is connected, bot on, 0 paused;
+result aloud — "PAL: WhatsApp is connected, bot on, 0 paused;
 iMessage is ready, bot on, 1 paused."
 
 ## Programmatic test (before wiring Siri)
@@ -86,7 +86,7 @@ curl -X POST "$LANTERN_URL/v1/shortcuts/say" \
   screen widgets so one tap (no Siri) triggers them.
 - **Apple Watch**: Shortcuts surface on watchOS too — pause from your
   wrist while you're heads-down.
-- **HomePod**: Siri Shortcuts work on HomePod too — "Hey Siri, Lantern
+- **HomePod**: Siri Shortcuts work on HomePod too — "Hey Siri, PAL
   status" while you're cooking.
 - **Privacy**: API keys are revocable from the dashboard. Each Shortcut
   has its own header so you can rotate one without breaking the others.

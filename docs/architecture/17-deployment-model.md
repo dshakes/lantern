@@ -5,9 +5,9 @@
 
 ## Summary
 
-Lantern deploys as two logically and physically separable planes:
+PAL deploys as two logically and physically separable planes:
 
-1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by Lantern SaaS at `lantern.run` or self-hosted by the customer.
+1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by PAL SaaS at `lantern.run` or self-hosted by the customer.
 
 2. **Data Plane** — the "muscle." Workflow engine, runtime manager, Firecracker/Kata/Wasm sandboxes, and agent execution. All user code runs here. All user data stays here. Deployed into the customer's own cloud infrastructure (EKS, GKE, AKS, or bare metal).
 
@@ -40,7 +40,7 @@ A transient control plane outage does not halt running agents. The data plane ca
 
 ### Cost optimization
 
-Customers choose their own instance types, reserved instances, savings plans, and spot configurations. Lantern does not mark up compute. The control plane is a lean SaaS with predictable per-tenant pricing.
+Customers choose their own instance types, reserved instances, savings plans, and spot configurations. PAL does not mark up compute. The control plane is a lean SaaS with predictable per-tenant pricing.
 
 ---
 
@@ -96,7 +96,7 @@ Customers choose their own instance types, reserved instances, savings plans, an
 
 ### Mode 1: Fully managed
 
-Both control plane and data plane are hosted by Lantern. The customer does not manage any infrastructure. Agent code runs on Lantern's multi-tenant Kubernetes clusters with Firecracker isolation between tenants.
+Both control plane and data plane are hosted by PAL. The customer does not manage any infrastructure. Agent code runs on Lantern's multi-tenant Kubernetes clusters with Firecracker isolation between tenants.
 
 **Best for:** Startups, personal projects, teams that want zero ops burden and do not have data residency requirements.
 
@@ -104,12 +104,12 @@ Both control plane and data plane are hosted by Lantern. The customer does not m
 - Single Helm chart (`lantern`) deployed to Lantern-operated clusters
 - Multi-tenant: all tenants share the same control plane and data plane infrastructure
 - Isolation is per-run via Firecracker microVMs (tenant A's code cannot observe tenant B)
-- Lantern manages upgrades, scaling, backups, and incident response
+- PAL manages upgrades, scaling, backups, and incident response
 - Data resides in Lantern's AWS accounts in the customer's chosen region
 
 ### Mode 2: Hybrid (the main product)
 
-Control plane is hosted by Lantern SaaS. Data plane is deployed into the customer's own cloud infrastructure. This is the primary enterprise deployment model.
+Control plane is hosted by PAL SaaS. Data plane is deployed into the customer's own cloud infrastructure. This is the primary enterprise deployment model.
 
 **Best for:** Teams and enterprises that need data sovereignty, compliance, or low-latency access to internal services.
 
@@ -120,13 +120,13 @@ Control plane is hosted by Lantern SaaS. Data plane is deployed into the custome
 - Customer data (agent code, run inputs/outputs, secrets, tool results) never leaves the customer's VPC
 - Control plane receives only metadata (run IDs, status, timing, metering)
 - Customer provisions their own Postgres and Redis (or Lantern's Terraform modules provision them)
-- Upgrades: Lantern upgrades the control plane transparently; the customer upgrades the data plane via `lantern infra upgrade` or Helm
+- Upgrades: PAL upgrades the control plane transparently; the customer upgrades the data plane via `lantern infra upgrade` or Helm
 
 **Installation flow:**
 1. Customer signs up at `lantern.run` and creates a tenant
 2. Customer runs `lantern infra install --cloud aws --region us-east-1`
 3. CLI generates Terraform configuration for the customer's cloud
-4. Customer reviews and applies the Terraform (or Lantern applies it via a guided flow)
+4. Customer reviews and applies the Terraform (or PAL applies it via a guided flow)
 5. Terraform provisions EKS cluster (or uses existing), installs the `lantern-data-plane` Helm chart
 6. Data plane agent connects to `api.lantern.run`, registers, begins receiving run assignments
 
@@ -140,7 +140,7 @@ Both control plane and data plane are deployed into the customer's own infrastru
 - Both `lantern-control-plane` and `lantern-data-plane` Helm charts deployed to customer infrastructure
 - Customer manages all upgrades, backups, and scaling
 - License key required (validated offline via cryptographic signature, no phone-home)
-- Lantern provides support via a private channel; no telemetry leaves the customer's network unless explicitly configured
+- PAL provides support via a private channel; no telemetry leaves the customer's network unless explicitly configured
 - Can run in air-gapped environments with pre-pulled container images
 
 ---
@@ -179,7 +179,7 @@ Data Plane Agent                    Control Plane
 
 ### Authentication
 
-1. **Initial registration:** The data plane agent authenticates with a short-lived token provisioned by Lantern during `lantern infra install`. This token is a signed JWT with claims `{tenant_id, plane_id, exp}`.
+1. **Initial registration:** The data plane agent authenticates with a short-lived token provisioned by PAL during `lantern infra install`. This token is a signed JWT with claims `{tenant_id, plane_id, exp}`.
 2. **mTLS:** After registration, the control plane issues a client certificate for the data plane. Subsequent connections use mutual TLS. Certificates are rotated automatically every 24 hours.
 3. **Token refresh:** The data plane agent refreshes its token before expiry. If the token expires (e.g., due to prolonged disconnection), the agent falls back to the initial registration token stored as a Kubernetes secret.
 
@@ -337,7 +337,7 @@ The existing unified chart deploys all components into a single cluster. Used fo
 
 ### `infra/helm/lantern-control-plane/`
 
-Deploys only control plane components: gateway, control-plane service, model router, surface gateway, dashboard, billing, scheduler. Includes Postgres, Redis, and MinIO/S3 dependencies. This is what Lantern runs as SaaS.
+Deploys only control plane components: gateway, control-plane service, model router, surface gateway, dashboard, billing, scheduler. Includes Postgres, Redis, and MinIO/S3 dependencies. This is what PAL runs as SaaS.
 
 ### `infra/helm/lantern-data-plane/`
 
@@ -349,7 +349,7 @@ Deploys only data plane components: data plane agent, workflow engine, runtime m
 
 ### Control plane upgrades (Lantern-managed)
 
-Lantern performs rolling upgrades of the control plane with zero downtime. The gRPC tunnel protocol is versioned; the control plane maintains backward compatibility with data planes up to 2 minor versions behind.
+PAL performs rolling upgrades of the control plane with zero downtime. The gRPC tunnel protocol is versioned; the control plane maintains backward compatibility with data planes up to 2 minor versions behind.
 
 ### Data plane upgrades (customer-managed)
 
