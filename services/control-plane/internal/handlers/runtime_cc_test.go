@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -186,5 +188,71 @@ func TestBuildReceipt_SoftwareMeasurement(t *testing.T) {
 	}
 	if rc.Payload.ConfidentialCompute != nil {
 		t.Error("non-confidential run must NOT carry a confidentialCompute block")
+	}
+}
+
+// measurementScheduler reports one live VM for one tenant (errors for any
+// other tenant so the sweep never touches rows it does not own).
+type measurementScheduler struct {
+	recScheduler
+	tenant string
+	states map[string]VMStateInfo
+}
+
+func (m *measurementScheduler) ListStates(_ context.Context, tenantID string) (map[string]VMStateInfo, error) {
+	if tenantID != m.tenant {
+		return nil, errors.New("not this test's tenant")
+	}
+	return m.states, nil
+}
+
+// TestReconcile_SoftwareMeasurement_WriteOnce (ADR 0031, S3): the reconciler
+// records the scheduler-reported measurement even when the VM's state is
+// unchanged, and never overwrites or clears it on later sweeps.
+func TestReconcile_SoftwareMeasurement_WriteOnce(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+
+	tenantID := uniqueTenantID("tenant-rec-swm")
+	seedTestTenant(t, pool, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenantID) })
+	ctx := context.Background()
+	const vmID = "vm-rec-swm"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec)
+		VALUES ($1, $2, 'running', '{}'::jsonb)
+	`, vmID, tenantID); err != nil {
+		t.Fatalf("seed runtime_vms: %v", err)
+	}
+	read := func() string {
+		var m *string
+		if err := pool.QueryRow(ctx, `SELECT software_measurement FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&m); err != nil {
+			t.Fatalf("read measurement: %v", err)
+		}
+		if m == nil {
+			return ""
+		}
+		return *m
+	}
+
+	first := strings.Repeat("1a", 32)
+	sched := &measurementScheduler{tenant: tenantID, states: map[string]VMStateInfo{
+		vmID: {State: "running", SoftwareMeasurement: first}, // state unchanged
+	}}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+
+	h.reconcileOnce()
+	if got := read(); got != first {
+		t.Fatalf("after first sweep measurement = %q, want %q", got, first)
+	}
+	sched.states[vmID] = VMStateInfo{State: "running", SoftwareMeasurement: strings.Repeat("2b", 32)}
+	h.reconcileOnce()
+	if got := read(); got != first {
+		t.Fatalf("measurement overwritten: %q, want %q (write-once)", got, first)
+	}
+	sched.states[vmID] = VMStateInfo{State: "running"}
+	h.reconcileOnce()
+	if got := read(); got != first {
+		t.Fatalf("measurement cleared: %q, want %q", got, first)
 	}
 }
