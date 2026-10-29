@@ -72,6 +72,12 @@ jobs:
           version: latest
           working-directory: packages/palenv
 
+      - name: golangci-lint (grpctls)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: packages/grpctls
+
       # ---- Rust -------------------------------------------------------------
       - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
