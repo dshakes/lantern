@@ -152,6 +152,17 @@ lantern demo --down`}</code></pre>
         deployment that holds real tenants.
       </p>
 
+      <h2 id="node-filesystem">Node filesystem for snapshots and forks</h2>
+      <p>
+        Pause, resume and fork stage each child&apos;s disk from the snapshot. On XFS (formatted with{" "}
+        <code>reflink=1</code>) or btrfs the runtime manager clones it copy-on-write (<code>FICLONE</code>), so a fork costs metadata,
+        not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with{" "}
+        <code>disk_staging=&quot;full_copy&quot;</code>, the bytes copied and the time taken; everything still works, but fork
+        cost grows with disk size. Once your nodes&apos; snapshot directory (<code>/var/lib/lantern/snapshots</code>) and jail
+        root are on XFS or btrfs, set <code>LANTERN_REQUIRE_REFLINK=1</code> on the runtime manager to turn the fallback into an
+        error. It is off in every shipped values file.
+      </p>
+
       <h2 id="runbooks">Runbooks</h2>
       <p>
         On-call runbooks live in the repository, each as symptom, what fired it, triage, remediation, escalate:{" "}
