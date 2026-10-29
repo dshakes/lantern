@@ -1,0 +1,115 @@
+---
+title: Get started
+description: Describe an agent in plain language; the onboarding agent designs it, checks your model key, creates it and runs it.
+sidebar:
+  order: 2
+---
+
+import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Describe what you want your agent to do in plain language. PAL's onboarding agent designs it, checks your model key with a real call, creates it, and runs it so you see real output. This takes about five minutes.
+
+<Aside type="note">The CLI and packages are still named `lantern` while the rename lands.</Aside>
+
+<Aside type="tip" title="No API key yet?">
+Run `make demo` from a checkout. It needs Docker only, answers from recorded replays and opens at `http://localhost:3001/kiosk`. See [Demo mode](/lantern/docs/start/demo/). The rest of this page runs your own agent against your own key.
+</Aside>
+
+Three terms used throughout: an *agent* is an AI worker with a name and instructions. A *run* is one execution of that agent: input in, output out. The *event stream* is the live record of a run, so you can watch each step as it happens.
+
+## Before you start
+
+- A running stack: `lantern dev` (or `make dev-infra`, which starts Postgres and Redis only, + `make run-api` + `make dashboard-dev`). See [Installation](/lantern/docs/start/installation/).
+- An OpenAI or Anthropic API key. You can add it during onboarding.
+- The CLI, if you want the terminal path: `( cd packages/cli && go install ./cmd/lantern )`. Run `lantern doctor` to check the stack, including whether the sandbox runtime is wired.
+
+## In the dashboard
+
+Where email verification is required (see [Accounts](/lantern/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`; onboarding shows a **Resend verification email** button and an **I've verified, try again** button instead of failing silently.
+
+Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (dev: `admin@lantern.dev` / `lantern`). The page is a conversation on the right and a progress rail on the left. Each step moves on only after the platform confirms it actually worked.
+
+<Steps>
+
+1. **Describe the goal.** Write a sentence or two, for example *"Turn my rough meeting notes into a short summary with action items."*
+
+2. **Or start from a template.** Below the goal box is a gallery of six starters: support desk, PR triage, incident responder, daily digest, data analyst and a Telegram assistant. Each card says which connectors or channels it needs (for example Slack, or the Telegram channel) and uses a `fast` or `balanced` capability model. Picking one skips the design call and opens the same review step, so you can edit it before approving. A starter needing a connector you have not installed will tell you so in its first run rather than pretend.
+
+3. **Review the design.** The onboarding agent proposes a name, instructions, steps, a capability-addressed model (`auto`, never a vendor model name), and a first task, and explains why it chose them. Edit anything, then approve. If the design call fails, you can start from a basic one-step design instead; the page labels it as the basic design.
+
+4. **Check the model key.** PAL makes a real test call to your provider. A saved key that the provider rejects stops the flow here, showing the provider's actual error and a **Replace the key** button, instead of failing later in your first run.
+
+5. **Create and run.** The agent is created with the instructions you approved. The first run streams live: each step appears as it starts and finishes. The output is then shown, with a short explanation of what the agent did and what to try next.
+
+6. **Optional: run it in a sandbox.** Starts a microVM, runs one command inside it, and shuts it down. On a stack without a runtime scheduler this step says **Sandbox unavailable** and nothing runs. `lantern doctor` tells you which piece is missing.
+
+</Steps>
+
+Your progress is saved on the server, so a reload or another browser picks up where you left off. **Start over** clears that progress. Agents you already created stay in your workspace.
+
+When something fails, the page says what went wrong and gives the one action most likely to fix it:
+
+| What you see | One-click fix |
+| --- | --- |
+| No model key configured | Add a model key (then the design is retried) |
+| Provider rejected the key (401, revoked, no credit) | Replace the key |
+| Design came back unusable | Rephrase the goal, or use the basic design |
+| An agent with that name exists | Rename the agent |
+| Budget or quota blocked the run | Open budgets |
+
+## In the terminal
+
+```bash
+lantern onboard
+```
+
+It checks health, signs in (stored credentials or the dev seed), and test-calls your provider key, asking for one if needed. Then it asks *"What do you want your agent to do?"*, shows the proposed agent, creates it when you confirm, and streams the first run using the design's own first task.
+
+For CI, use the non-interactive mode. It never prompts and fails loudly at the first broken step:
+
+```bash
+lantern onboard --yes \
+  --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
+  --description "Summarize support tickets into one-line triage notes"
+```
+
+## Under the hood: the REST calls
+
+Both paths use the same public endpoints, so you can script them yourself:
+
+```bash
+export LANTERN_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
+H="Authorization: Bearer $LANTERN_TOKEN"
+
+# 1. Provider key + a real test call
+curl -s -X POST localhost:8080/v1/settings/llm-providers -H "$H" \
+  -d '{"provider":"anthropic","apiKey":"sk-ant-..."}'
+curl -s -X POST localhost:8080/v1/settings/llm-providers/anthropic/test -H "$H"
+
+# 2. Design an agent from a goal (returns the spec: name, systemPrompt, firstInput, rationale, steps)
+curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" \
+  -d '{"description":"Turn meeting notes into action items"}' | tee spec.json
+
+# 3. Create it (the instruction field is systemPrompt)
+jq '{name, description, systemPrompt}' spec.json | \
+  curl -s -X POST localhost:8080/v1/agents -H "$H" -d @-
+
+# 4. Run it with the suggested first task, then stream events (named SSE events)
+RUN_ID=$(jq --argjson i "$(jq .firstInput spec.json)" -n \
+  "{agentName: \"$(jq -r .name spec.json)\", input: \$i}" | \
+  curl -s -X POST localhost:8080/v1/runs -H "$H" -d @- | jq -r .id)
+curl -N localhost:8080/v1/runs/$RUN_ID/events -H "$H" -H "Accept: text/event-stream"
+```
+
+generate-spec returns `400` with `"code":"no_provider"` when no key is configured, and `502` with `bad_spec` or `llm_failed` when the model call fails. The stream closes when the run reaches `succeeded`, `failed` or `cancelled`. Read the final output from `GET /v1/runs/{id}`. Onboarding progress is stored at `GET/PUT/DELETE /v1/onboarding`.
+
+## What's next
+
+<CardGrid>
+  <LinkCard title="Connect a channel" description="Slack, WhatsApp, Telegram, web chat." href="/lantern/docs/pal/surfaces/" />
+  <LinkCard title="Set a budget" description="Per-run and per-day caps before real traffic." href="/lantern/docs/build/budgets/" />
+  <LinkCard title="Add an eval" description="Pin expected answers; CI fails on regressions." href="/lantern/docs/build/evaluations/" />
+  <LinkCard title="PAL Runtime" description="MicroVM isolation, durable execution, receipts." href="/lantern/docs/runtime/" />
+</CardGrid>

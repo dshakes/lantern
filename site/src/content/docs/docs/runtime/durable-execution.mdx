@@ -1,0 +1,146 @@
+---
+title: Durable execution
+description: Crash-resume with an event-sourced journal, CompletedStep replay, idempotency keys and per-step retry.
+sidebar:
+  order: 3
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. The shared tier (inline executor) recovers through an event-sourced `journal_events` table and a `CompletedStep` replay gate, with external deliveries de-duplicated by idempotency key. MicroVM runs are re-scheduled by the same recovery sweep (see below).
+
+Consider an agent three steps into a five-step task that has already sent an email and spent money on model calls, when the server restarts. Without durability you either lose the run or start over and send the email twice. PAL Runtime writes each step to the database as it finishes. After a crash the run reloads at the last completed step: finished steps are skipped and their saved results reused, and only the unfinished work runs again.
+
+{/* DIAGRAM: crash-resume */}
+
+## Event-sourced journal
+
+Every step transition is appended to `journal_events` before the next step begins. The journal, not in-memory state, is authoritative. On the shared tier the inline executor writes these events directly. On the microVM tier the control plane accepts `step_event` reports on `/v1/runtime/report` and writes them to the same table; the harness does not emit step events yet.
+
+```
+run     step    journal events
+────────────────────────────────────────────────
+run_1   step_a  step_started → step_completed
+run_1   step_b  step_started → step_completed
+run_1   step_c  step_started ◀── crash here
+                (no step_completed written)
+```
+
+Other event kinds you will see in the waterfall:
+
+- `step_retrying`: between retry attempts.
+- `step_waiting`: the run is parked at an approval node.
+- `anomaly_detected`: one of `runaway_loop`, `excessive_steps`, `retry_storm`, `cost_spike` or `token_spike`.
+- `confidence_evaluated`: the confidence gate decision, when enabled.
+- `confidence_gate_bypassed`: gating is on but no handler is wired, so the step auto-approves.
+
+## CompletedStep replay
+
+The workflow interpreter receives a `CompletedStep` hook wired to `journalCompletedStep`. Before invoking any side-effecting node (`ai-step`, `tool`, `connector`, `subagent`, `approval`) the interpreter queries `journal_events` for an existing `step_completed` row. If one is found, the cached output is returned and the underlying side effect is never re-invoked.
+
+The plain-LLM path has the equivalent `checkCachedLLMStep` cache: before calling the model router, the executor checks the journal for a previous successful LLM step for this run. If found, it replays the cached response and the provider is never contacted again.
+
+<Aside title="No re-spent tokens on crash-replay">
+Completed LLM steps are read back from the journal. The provider sees only the original call, not a retry.
+</Aside>
+
+## Resume from the last completed step
+
+On re-drive, the interpreter walks the graph from the trigger node again. Nodes that already have a `step_completed` row are skipped via the `CompletedStep` hook. Execution continues from the first incomplete node. This is idempotent: a re-drive that re-walks an already-finished graph is a no-op.
+
+## Side-effect dedup via idempotency keys
+
+Every external side effect carries a key derived from a one-way hash of the three identifiers, pipe-delimited:
+
+```
+idempotency_key = sha256("runID|stepID|attempt")
+```
+
+LLM provider calls receive an `Idempotency-Key` HTTP header on every request to OpenAI and Anthropic (derived in `internal/handlers/llm_idempotency.go` via a one-way hash; the key never carries secret material). A crash then replay to the same provider dedups at the provider instead of double-billing.
+
+External deliveries (email, connector auth pages, browser and cross-app actions) claim a `side_effect_receipts` row before dispatching. A re-drive that reaches the same delivery finds the receipt and short-circuits. Workflow `connector` and `tool` nodes rely on the `CompletedStep` skip instead.
+
+<Aside type="caution" title="Steps must be idempotent by authorship">
+The idempotency key protects the delivery; writing the step to tolerate re-invocation is the other half of the contract.
+</Aside>
+
+## Shared-tier recovery sweep
+
+The shared tier uses `run_locks` to detect orphaned runs. Each in-flight run holds a lock row `(run_id, worker_id, expires_at)`. A background loop, `RunRecoveryLoop`, runs every 30 s (override: `LANTERN_RECOVERY_INTERVAL`, a Go duration; invalid or 0-or-negative values fall back to 30 s, so the sweep cannot be disabled). Each pass:
+
+<Steps>
+
+1. **Find orphans.** `SELECT runs WHERE status IN ('running','queued') AND (no lock row OR lock expired)`. Capped at 20 runs per pass.
+2. **Lease steal (distributed guard).** UPSERT `run_locks` with a fresh 10-minute TTL. Only the replica that wins the UPSERT proceeds; others skip silently, so there is no thundering-herd double-execution.
+3. **Re-drive.** The winner calls `redriveRun`, which runs `runWorkflowIfPresent` (graph) or `executeRunInlineSync` (plain LLM). The `CompletedStep` hook skips already-finished nodes.
+4. **Resume.** The interpreter continues at the first node without a `step_completed` row. No node that already completed is ever re-invoked.
+
+</Steps>
+
+MicroVM runs are handled separately by the recovery sweep. When the sweep finds an orphaned microVM run it calls `resumeMicroVMRun` (see [MicroVM-tier crash-resume](#microvm-tier-crash-resume) below) rather than re-driving it through the shared-tier inline executor. The two paths are distinct to avoid racing with the scheduler's own state machine.
+
+## Scheduler HA (microVM tier)
+
+Leader election keeps one active scheduler, and placement state is durable. VMs lost with a node are reconciled to `terminated`; microVM runs are retried by the control-plane recovery sweep (`resumeMicroVMRun`, max 3 attempts).
+
+## Per-step retry policy
+
+Workflow nodes can declare a retry policy in `node.Data["retry"]`:
+
+```json
+{
+  "retry": {
+    "maxAttempts": 3,
+    "backoffMs": 500,
+    "retryableClasses": ["llm", "connector"]
+  }
+}
+```
+
+`maxAttempts` is the total number of attempts including the first (default 1 means no retry). Between attempts the interpreter journals a `step_retrying` event with `{attempt, of, error}`, visible in the run waterfall. Retryable classes: `any`, `timeout`, `llm`, `connector`, `tool`.
+
+<Aside>
+Retry wraps `executeNode` outside the `CompletedStep` check. A crash-replay skips a node only when it has a `step_completed` row. It does not re-retry a node that was mid-retry when the crash happened.
+</Aside>
+
+## MicroVM-tier crash-resume
+
+The recovery sweep handles microVM runs separately from shared-tier runs. When the sweep finds an orphaned `microvm` run (no live VM, lock expired), it calls `resumeMicroVMRun`:
+
+1. If a live (non-terminal) VM exists for this run, skip. The VM is self-managing.
+2. Count all `runtime_vms` rows for this run (total VMs ever spawned equals resume attempts).
+3. If attempts are 3 or more, mark the run `failed` with code `microvm_resume_exhausted`. No further retries.
+4. Otherwise re-schedule a new VM via the dispatcher, injecting `LANTERN_RESUME=1` in the environment.
+
+```bash
+# environment injected into the re-scheduled VM
+LANTERN_RESUME=1
+```
+
+`LANTERN_RESUME=1` signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
+
+## Inspecting and recovering a run
+
+The run waterfall at `/runs/<run_id>` in the dashboard renders the journal. The same events are available over REST and, in dev, straight from Postgres:
+
+```bash
+curl -N $API/v1/runs/<run_id>/events -H "Authorization: Bearer $TOKEN"   # SSE: journal events as they land
+psql $DATABASE_URL -c "SELECT seq, kind, step_id FROM journal_events WHERE run_id = '<run_id>' ORDER BY seq"
+```
+
+A run is stuck when it is `running` but its lease in `run_locks` has expired. There is no manual resume endpoint for crashed runs: the recovery sweep re-drives it once the lease lapses (poll interval 30 s; a lease won by an earlier recovery lasts up to 10 minutes, `recoveryLockTTL`). If a run stays stuck past that, look in the control-plane logs for a panic or a database error, since those block the sweep.
+
+## What exactly-once covers
+
+The journal gives exactly-once completion: the `run_completed` event and the move to `succeeded` happen once. External side effects are deduplicated by the idempotency key in `side_effect_receipts`, so they are at-most-once if the receiver honors the key. A third-party API that does not, hit by a crash between the call and the receipt write, can fire twice. Guard such calls with a step that checks a precondition first.
+
+`loop` and `subagent` nodes are durable too: a crash mid-loop replays from the last completed iteration, and a re-driven parent finds the child's completed step in its journal instead of spawning it again. An `approval` wait survives a restart because the interpreter re-reads the `takeover_requests` row. A child that stops on an approval fails the parent step with `ErrChildRunPaused`; nested approvals are not supported yet.
+
+## Why it matters
+
+- **No double-spend.** LLM steps are replayed from the journal, never re-billed at the provider.
+- **No double-send.** Idempotency keys and `side_effect_receipts` de-dup LLM calls and external deliveries across retries.
+- **No babysitting.** The 30 s recovery sweep re-drives crashed shared-tier runs and re-schedules microVM runs (up to 3 attempts) without intervention.
+- **Retry visibility.** `step_retrying` events appear in the waterfall so you see how many attempts a step took.
+
+Each resume is still one trace per span (see [Observability](/lantern/docs/runtime/observability/)), and the completed run's journal is what the [verifiable receipt](/lantern/docs/runtime/receipts/) is signed over.

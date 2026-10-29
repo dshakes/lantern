@@ -1,0 +1,32 @@
+---
+title: Egress and credentials
+description: How sandboxes reach the network. Default in-guest proxy mode, opt-in broker mode, allowlists and host-side credential injection.
+sidebar:
+  order: 6
+---
+
+A sandbox is only as safe as its way out. PAL Runtime ships two egress modes. The default mode enforces the allowlist inside the guest via an iptables-redirected CONNECT proxy. The optional **broker mode** (`LANTERN_EGRESS_MODE=broker`, Firecracker only) removes the network device entirely: every outbound request crosses a vsock to a broker in the runtime-manager on the host, which checks the sandbox's allowlist and adds the credential there. In broker mode the workload never holds the token it is using.
+
+{/* DIAGRAM: sandbox-egress */}
+
+## The path out
+
+1. The workload sends an ordinary HTTP(S) request through `127.0.0.1:3128`. The harness injects `HTTP_PROXY`/`HTTPS_PROXY`, so most clients need no change.
+2. The harness (PID 1) forwards it over vsock, the VM's only channel to the host.
+3. The broker in the runtime-manager matches the destination against the sandbox's allowlist.
+4. If the rule has an `inject` entry (`header` plus `secret_uri`), the broker resolves the secret on the host and sets that header, replacing any placeholder the workload sent.
+5. The request goes upstream. A denied request is refused and written to the audit stream.
+
+## Allowlist
+
+Each spawn declares its egress rules (host pattern, HTTP methods, rate). Anything not listed is denied. The broker also refuses private and metadata IP ranges and allows only port 443 unless `LANTERN_EGRESS_ALLOWED_PORTS` says otherwise.
+
+In broker mode (`LANTERN_EGRESS_MODE=broker`) the VM has no network device, so a client that ignores proxy variables simply has no route. In the default mode iptables redirects all traffic to the in-guest proxy. Denials are security-critical audit events and are never dropped, even across a brief manager outage.
+
+## Credential injection
+
+Specs reference secrets by `secret_uri`, never by value. The broker resolves the ref on the host and sets the header on the outbound request, so the secret exists only on the host side of the vsock. A compromised workload cannot exfiltrate a key it never received.
+
+For HTTPS, the broker terminates TLS only for hosts whose rule injects a credential, using a per-VM ephemeral CA that is name-constrained to those hosts. Every other host is an opaque CONNECT tunnel with end-to-end TLS.
+
+Related: [Identity and secrets](/lantern/docs/runtime/identity/), [Isolation classes](/lantern/docs/runtime/isolation/), [Security](/lantern/docs/runtime/security/).

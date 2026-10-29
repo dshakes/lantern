@@ -1,0 +1,138 @@
+---
+title: Surfaces
+description: The channels where people talk to an agent - WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A surface is a channel where people talk to an agent. Seven are wired: WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat. Replies go back on the channel the message came from. The agent and its guardrails are the same on every channel; only the entry point changes.
+
+## Available surfaces
+
+### WhatsApp
+
+Two paths:
+
+- **Personal (bridge)**: a Baileys-based bridge pairs with your own WhatsApp account by QR code. No Business account needed. Self-hosted only.
+- **Business Cloud API**: the surface gateway has a WhatsApp Cloud API adapter for a dedicated business number.
+
+To set up personal WhatsApp:
+
+1. Open **Channels** (`/surfaces`) and choose WhatsApp
+2. Select **Personal (bridge)**
+3. Scan the QR code with your WhatsApp app
+4. The bridge connects and your agent is now reachable via WhatsApp
+
+<Aside>The bridge is a separate long-running process (port 3100). Start it with `make run-whatsapp-bridge`, or `lantern dev`, which starts it by default.</Aside>
+
+#### Bridge tenant env var
+
+Set `LANTERN_TENANT_ID` to the tenant UUID the bridge runs under. `LANTERN_DEFAULT_TENANT_ID` is still read as a fallback. The iMessage bridge and `bridge-core` resolve it in that order. The macOS iMessage bridge is covered in [PAL (personal agent)](/lantern/docs/pal/).
+
+### Slack
+
+The surface gateway (`services/surface-gateway`) has a Slack adapter for events and bot messages, and the control plane serves a slash-command endpoint at `POST /v1/surfaces/slack/command`. In production, unsigned slash commands are refused unless `SLACK_SIGNING_SECRET` is set. Configure the surface under **Channels** (`POST /v1/surfaces` with a `surfaceId` and `displayName`).
+
+### Discord
+
+A Discord adapter ships in the surface gateway. Configure it under **Channels** with your bot credentials.
+
+### Telegram
+
+Connect a Telegram bot to an agent:
+
+1. Create a bot via `@BotFather` on Telegram
+2. Add the bot token under **Channels**
+3. Assign the surface to an agent
+
+**How a message becomes a reply.** Telegram POSTs the update to the surface-gateway at `/webhooks/telegram`. The gateway checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_SECRET_TOKEN` (a missing or wrong token is a 401 and nothing runs), creates a run for `LANTERN_AGENT_NAME` in `LANTERN_TENANT_ID`, waits for it to finish, and sends the run's output to the same chat with `sendMessage`. The same loop serves WhatsApp Cloud, whose POSTs are verified with `X-Hub-Signature-256` (`WHATSAPP_APP_SECRET`). Try it end to end with `examples/telegram-assistant` (calendar-aware assistant) and see [the fixture suite](/lantern/docs/build/testing/#examples).
+
+Limits:
+
+- The agent needs a promoted version before the gateway can run it: run it once from the dashboard or `POST /v1/runs` first, otherwise the gateway logs `agent has no promoted version`.
+- Replies are plain text, sent once when the run ends (no token streaming to the chat). Replies are wired for Telegram and WhatsApp only; a Slack or Discord run completes but is not posted back.
+- A run that does not finish within 3 minutes gets no reply.
+- `TELEGRAM_API_BASE_URL` re-points Bot API calls at a fixture server for tests; the gateway refuses to start with it when `LANTERN_ENV` is prod, production or staging.
+
+### Voice (Twilio and LiveKit)
+
+Phone numbers route inbound calls to an agent. Two providers are supported:
+
+- **Twilio**: TwiML webhooks for inbound PSTN calls. The control-plane verifies Twilio's webhook signature and replies with TwiML. SMS is also available on the same Twilio connector.
+- **LiveKit**: realtime audio; the control-plane mints a short-lived join token and the audio loop runs in a separately-deployed LiveKit Agents worker (media last-mile).
+
+#### Budget gating
+
+Voice spend counts against the same `agent_budgets` as runs. A Twilio inbound call over a hard-fail budget is declined with `<Reject>` (no carrier cost). A LiveKit join token is refused with HTTP 402 (no token means no media). A flat cost estimate is recorded on connect; the provider's status callback at `POST /v1/voice/calls/status/{provider}` reconciles to actual duration cost when the call ends.
+
+Both Twilio endpoints verify `X-Twilio-Signature` (HMAC-SHA1 over the public URL plus the sorted form fields, keyed with the number's auth token) and answer a bad or missing one with 403 before touching any state, so a forged status callback cannot move a budget. Billing is by started minute: a 61-second call is two minutes at $0.03, so the $0.05 connect-time reservation reconciles to $0.06; a call that never connects refunds it to zero. Try it with `examples/voice-receptionist`; the signed-webhook flow is asserted in [the fixture suite](/lantern/docs/build/testing/#examples). The inbound reply is a fixed greeting today; the realtime conversation needs the LiveKit worker (media last mile).
+
+#### Voice API
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/v1/voice/numbers` | Link a phone number to an agent (provider + config) |
+| `GET` | `/v1/voice/numbers` | List linked numbers |
+| `DELETE` | `/v1/voice/numbers/{id}` | Unlink a number |
+| `GET` | `/v1/voice/calls` | Recent calls with duration and cost |
+| `POST` | `/v1/voice/token` | Mint a short-lived LiveKit join token |
+| `POST` | `/v1/voice/webhook/{provider}` | Inbound call webhook (Twilio TwiML or LiveKit JWT) |
+| `POST` | `/v1/voice/calls/status/{provider}` | Call-end status callback; reconciles actual cost into the budget rollup. Point Twilio's "call status changes" webhook here. |
+
+#### Env vars
+
+| Variable | Purpose |
+| --- | --- |
+| `LANTERN_VOICE_CALLER_ID` | E.164 caller-ID shown on outbound calls. Must be a Twilio verified number. |
+| `LANTERN_VOICE_SMS_HEADSUP` | `on` (default): sends an SMS heads-up before the call so recipients recognize the number. |
+| `LANTERN_VOICE_CLONE` | Optional. `1` speaks outbound calls in a cloned voice via ElevenLabs. Requires `LANTERN_ELEVENLABS_API_KEY` and `LANTERN_ELEVENLABS_VOICE_ID`. |
+
+### Web Chat
+
+Embed a chat widget on any website:
+
+```html
+<!-- widget.js is served by the dashboard app; copy the exact snippet from /embed -->
+<script src="http://localhost:3001/widget.js"
+  data-api-key="YOUR_SCOPED_API_KEY"
+  data-agent="your-agent-name"
+  data-api-base="http://localhost:8080"
+  data-theme="dark"
+  data-position="bottom-right"
+  async defer></script>
+```
+
+The widget uses the same `/v1/sessions` endpoints as the dashboard and streams replies over SSE. The API key is visible in the browser, so scope it to sessions and messages. The dashboard's `/embed` page generates the snippet.
+
+### REST API
+
+Every agent is accessible via the REST API. See the [API Reference](/lantern/docs/reference/api/) for full details.
+
+```bash
+curl -X POST http://localhost:8080/v1/runs \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"agentName": "my-agent", "input": {"topic": "quantum computing"}}'
+```
+
+## Assigning surfaces to agents
+
+Configure a surface once for the tenant, then point it at an agent:
+
+1. Set up the surface under **Channels**
+2. On the agent's page, open its **Channels** tab and enable the surfaces it should answer on
+
+<Aside type="caution">An agent answers only on surfaces assigned to it. A message on a channel the agent is not enabled for gets no reply.</Aside>
+
+## Two-way communication
+
+When a user sends a message:
+
+1. The surface gateway (or a bridge) receives the message
+2. It routes to the correct agent based on the surface configuration
+3. The agent runs with the message as input
+4. The response streams back through the same surface, in the same conversation or thread
+
+<Aside type="tip">Pair a [schedule](/lantern/docs/build/scheduling/) with the Slack connector to post a daily summary.</Aside>

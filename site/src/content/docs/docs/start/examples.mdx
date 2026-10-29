@@ -1,0 +1,124 @@
+---
+title: Examples
+description: Runnable end-to-end agents that work with no SaaS account and no model key.
+sidebar:
+  order: 4
+---
+
+Runnable, end-to-end agents. Each lives under `examples/` in the repo with a README and an end-to-end test that runs it against recorded GitHub, Sentry, PagerDuty, Google Calendar and Slack servers, a fixture model, and (for chat) the real surface-gateway (`make test-e2e-examples`; the data analyst has its own target, below), so you can try it with no SaaS account and no model key.
+
+## Support desk
+
+A webchat agent that answers from your docs (with the source shown), and hands the conversation to a human when it cannot answer, pinging Slack. Path: `examples/support-desk/`. See [Knowledge base and human handoff](/lantern/docs/pal/knowledge/) for the APIs.
+
+```bash
+make dev-infra && make run-api          # terminal 1
+python3 examples/support-desk/setup.py   # creates the agent, uploads the docs
+# create an API key with scope runs:execute, then open examples/support-desk/demo.html
+```
+
+Try it: ask *How do I reset my password?* (a cited answer), then *I want a refund* (the widget shows "Connecting you to a human"). An operator replies with `POST /v1/sessions/{id}/operator-messages` and the reply appears in the widget.
+
+`setup.py` deploys over REST because it also uploads the documents and mints the widget key; `lantern deploy` from the example directory deploys the agent on its own.
+
+## PR triage to a Slack thread
+
+**What:** every opened GitHub pull request is read, triaged by a model in one line, commented on the PR, and announced in Slack with the verdict in the thread. **Why:** a reviewer sees risk before opening the diff. **Uses:** a [webhook trigger](/lantern/docs/build/triggers/), the GitHub `get_pr` and `comment_pr` actions, Slack `post_message` and `reply_thread`, in a `workflow.json` graph.
+
+```bash
+cd examples/pr-triage-webhook
+curl -X POST $API/v1/agents -H "Authorization: Bearer $TOKEN" -d '{"name":"pr-triage-webhook","description":"PR triage","systemPrompt":"Workflow agent: see workflow.json"}'
+curl -X PUT $API/v1/agents/pr-triage-webhook/workflow -H "Authorization: Bearer $TOKEN" -d @workflow.json
+curl -X POST $API/v1/agents/pr-triage-webhook/triggers -H "Authorization: Bearer $TOKEN" -d @trigger.json
+# -> {"id": "<trigger-id>", "secret": "<shown once>"}
+./send-fixture.sh $API/v1/hooks/<trigger-id> <secret>   # signed pull_request.opened
+```
+
+For real GitHub, install the `github` and `slack` connectors, then add a repository webhook with payload URL `$API/v1/hooks/<trigger-id>`, content type JSON, the trigger secret, and the Pull requests event. Re-sending the same delivery returns `200 duplicate` and starts no second run; a bad signature is `401`; an agent over its budget gets `402`.
+
+## Incident responder with an approval
+
+**What:** a Sentry alert (or PagerDuty incident) is summarized with the Sentry issue and the PagerDuty incident in hand, a runbook step is posted to Slack, and the run parks at an approval node. Approving posts a note on the PagerDuty incident; denying fails the step and posts nothing. **Uses:** two triggers (`sentry`, `pagerduty`), Sentry `get_issue`, PagerDuty `get_incident` and `add_note`, and the [approval node](/lantern/docs/pal/human-in-the-loop/).
+
+```bash
+cd examples/incident-responder
+# create the agent and PUT workflow.json as above, then create both triggers
+curl -X POST $API/v1/agents/incident-responder/triggers -d @trigger-sentry.json    # and trigger-pagerduty.json
+./send-fixture.sh sentry $API/v1/hooks/<sentry-trigger-id> <secret>
+# the run parks; approve or deny it:
+curl -X POST $API/v1/runs/<run-id>/takeover/<takeover-id>/grant -d '{"notes":"go"}'
+curl -X POST $API/v1/runs/<run-id>/takeover/<takeover-id>/deny  -d '{"notes":"not now"}'
+```
+
+## Daily digest to Slack
+
+**What:** every weekday at 09:00 New York time the agent lists open GitHub PRs, has a model write a short digest, and posts it to Slack. **Why:** the smallest unattended agent: a [schedule](/lantern/docs/build/scheduling/) with a timezone, a three-node workflow, and a hard budget cap. Path: `examples/daily-digest/`.
+
+```bash
+cd examples/daily-digest
+lantern deploy                      # agent + system prompt + workflow from agent.yaml
+# install the slack and github connectors, edit owner/repo/channel in schedule.json, then:
+curl -X POST $API/v1/schedules -H "Authorization: Bearer $TOKEN" -d @schedule.json   # nextFireAt = next weekday 09:00 NY
+```
+
+`lantern deploy` covers the agent; the schedule has no deploy field, so it is created over REST. Run it now with `POST /v1/runs`. The scheduler polls every 60 s.
+
+## Telegram assistant
+
+**What:** message a Telegram bot (or WhatsApp Cloud number) and a workflow reads your Google Calendar and answers in the same chat. **Uses:** the surface-gateway, [Telegram](/lantern/docs/pal/surfaces/#telegram) secret-token and WhatsApp `X-Hub-Signature-256` checks, the calendar `list_events` action. Path: `examples/telegram-assistant/`.
+
+```bash
+cd examples/telegram-assistant
+lantern deploy
+curl -X POST $API/v1/runs -H "Authorization: Bearer $TOKEN" -d '{"agentName":"telegram-assistant","input":{"text":"hi"}}'   # priming run
+# run the gateway (see the README), then setWebhook with secret_token, and message the bot
+```
+
+The priming run is needed because the gateway starts runs over gRPC, which refuses an agent that has never had a REST run (no promoted version). Replies are plain text, once, within 3 minutes.
+
+## Voice receptionist
+
+**What:** a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an over-budget call is declined with `<Reject/>` before it connects, and the status callback reconciles the $0.05 reservation to the real per-started-minute cost. Path: `examples/voice-receptionist/`; details in [Voice](/lantern/docs/pal/surfaces/#twilio).
+
+```bash
+cd examples/voice-receptionist
+lantern deploy
+curl -X PUT  $API/v1/agents/voice-receptionist/budget -d '{"maxCostUsdPerDay":2,"hardFail":true}'
+curl -X POST $API/v1/voice/numbers -d @number.json    # your SID, auth token, number
+```
+
+Budgets and voice numbers are not part of the deploy manifest, so those stay REST. The inbound reply is a fixed greeting; the realtime conversation needs the LiveKit media worker.
+
+## Data analyst in a sandbox
+
+**What:** upload a CSV, run pandas in an isolated microVM, and get JSON plus a chart back; an agent then explains the result. **Why:** the code that touches the data never runs in the control plane, and egress is deny-by-default. Path: `examples/data-analyst/` (`Dockerfile`, `analyze.py`, `agent.yaml`, `spec.json`, `sales.csv`, `replay-rules.json`). See [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/).
+
+```bash
+BASE=http://localhost:8080
+VM=$(curl -s -XPOST $BASE/v1/runtime/schedule -H "Authorization: Bearer $T" \
+  -d '{"imageDigest":"lantern/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
+curl -XPUT "$BASE/v1/runtime/vms/$VM/files/content?path=sales.csv" -H "Authorization: Bearer $T" --data-binary @sales.csv
+curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \
+  -d '{"command":"python","argv":["/opt/analyze.py","/workspace/sales.csv"]}'
+```
+
+Try it in CI form: `make test-e2e-analyst` runs `TestDataAnalystSandbox` against a stack that has the scheduler and runtime manager running (it is not part of `make test-e2e-examples`). The default tier uses the manager's `docker` backend with no network and a fixture model; the files API is Firecracker-only, so there the CSV goes in through exec. The Firecracker tier (needs `/dev/kvm`) adds the files-API upload and an audited egress deny.
+
+## Eval-gated deploy
+
+**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/lantern/docs/build/evaluations/#eval-runs).
+
+```bash
+cd examples/eval-gated-deploy
+EVAL_PIN=1 scripts/eval.sh .                    # baseline: 3/3 cases, pinned for branch main
+scripts/eval.sh candidates/regressed; echo $?   # 1: HTTP 422, nothing deploys
+scripts/eval.sh candidates/improved && scripts/release.sh candidates/improved
+```
+
+The server stores the per-case results you post and compares the mean score; the script scores each case (`assert.contains`) from the run output.
+
+## Limits
+
+- A model reply is dropped into JSON-free connector parameters, so the prompts ask for one plain line. Keep that if you edit them.
+- The incident trigger templates pin the Sentry organization and the PagerDuty incident or issue id to the fixture values; edit `trigger-*.json` for your account.
+- PR comments use the PR conversation (`comment_pr`); inline review comments on a diff line are not wired.

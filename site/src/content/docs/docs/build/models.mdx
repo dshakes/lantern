@@ -1,0 +1,148 @@
+---
+title: Models
+description: Capability-based model routing, providers, strategies, failover and API keys.
+sidebar:
+  order: 3
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Agents ask for a **capability** such as `reasoning-large`. PAL Runtime maps it to a concrete model from the providers you have keyed. Vendor model names stay out of agent code, so swapping a model or riding out a provider outage needs no code change.
+
+## Supported providers
+
+Two LLM providers today:
+
+- **Anthropic**: Opus, Sonnet and Haiku (defaults `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`; override with `LANTERN_OPUS_MODEL`, `LANTERN_SONNET_MODEL`, `LANTERN_HAIKU_MODEL`)
+- **OpenAI**: `gpt-4o` and `gpt-4o-mini`
+
+Add a provider key under **Settings** (LLM providers) or via the API below. Scored picks (`auto`, `cheap`, `best`) only consider providers you have keyed.
+
+## Capability names
+
+Use these strings in `model` fields or `capability` arguments. Resolution happens in the control plane (`llm_proxy.go`). Fixed names are pinned to one provider; the rest pick by which providers are keyed.
+
+| Name | Kind | Resolves to |
+| --- | --- | --- |
+| `reasoning-frontier` | capability | Opus (`LANTERN_OPUS_MODEL`), always Anthropic |
+| `reasoning-large` | capability | Sonnet, always Anthropic |
+| `reasoning-small` | capability | Haiku, always Anthropic |
+| `code-large` | capability | Sonnet, always Anthropic |
+| `chat-large` | capability | `gpt-4o`, always OpenAI |
+| `vision-large` | capability | `gpt-4o`, always OpenAI |
+| `chat-small` | capability | `gpt-4o-mini`, always OpenAI |
+| `vision-small` | capability | `gpt-4o-mini`, always OpenAI |
+| `chat-edge`, `code-small` | capability | Haiku if Anthropic is keyed, else `gpt-4o-mini` |
+| `cheap`, `fast` | optimize target | Haiku if Anthropic is keyed, else `gpt-4o-mini` |
+| `best` | optimize target | Opus if Anthropic is keyed, else `gpt-4o` |
+| `auto`, `balanced`, empty string | capability / optimize target | Scored pick among keyed providers (see [How `auto` works](#how-auto-works)) |
+| `embed-large`, `embed-small`, `rerank`, `transcribe`, `tts` | capability | Not servable by text completion; routed to the same scored pick as `auto` |
+
+"Anthropic keyed" means the tenant has an active Anthropic key (Settings) or the process has `ANTHROPIC_API_KEY`; the cheap tier prefers Anthropic whenever it is keyed. The always-pinned names do not check which providers you keyed, so a pinned name whose provider has no key is left to [failover](#failover).
+
+### Resolution rules
+
+- **Unknown names** (anything not in the table and not a vendor model name) route to the balanced default, same as `auto`. The control plane logs one WARN per distinct name (capped at 256 names) and never routes unknowns to a hardcoded model.
+- **`fast` and `cheap`** both map to the cheap tier (Haiku, else `gpt-4o-mini`). Neither optimizes for latency here; use `LANTERN_ROUTE_STRATEGY=fast` for that.
+- **Literal vendor model names** pass through unchanged: a name starting with `gpt`, `o1` or `o3` goes to OpenAI, one starting with `claude` goes to Anthropic. The match is a plain prefix and the name is not checked against any list; a wrong id fails at the provider. Prefer a capability (models are addressed by capability).
+- **Precedence**, first match wins: (1) `auto` / `balanced` / empty, (2) `fast` / `cheap` / `chat-edge` / `code-small`, (3) `best`, (4) the non-completion names, (5) the fixed-tier capabilities and vendor model names, (6) anything else is unknown.
+- **Which callers**: workflow `ai-step` nodes resolve a capability string with this table. Session turns use complexity routing by default (each turn classified trivial, balanced or hard); set `LANTERN_COMPLEXITY_ROUTING=0` (or `off`/`false`) for plain `auto` scoring. Neither uses this table.
+
+### How `auto` works
+
+`auto` scores each model in a built-in catalog (Opus, Sonnet, Haiku, `gpt-4o`, `gpt-4o-mini`) on quality, speed and cost, and picks the top scorer among providers you have keyed. With neither provider keyed it returns `gpt-4o` and the call fails with a missing-key error. `LANTERN_ROUTE_STRATEGY` changes the weighting and applies to every name that resolves to the scored pick (`auto`, `balanced`, unknown names, the non-completion names).
+
+The default `balanced` strategy scores quality first, speed second, and subtracts a real price penalty (`balancedScore` in `llm_proxy.go`). It picks Sonnet when Anthropic is keyed and `gpt-4o` when only OpenAI is; Opus scores lower because of its price, and the mini tier lower because of quality. Pin `reasoning-frontier` or `best` if you want Opus.
+
+### Routing strategies
+
+```bash
+# Default: quality first, price as a real penalty (Sonnet, else gpt-4o)
+LANTERN_ROUTE_STRATEGY=balanced
+
+# Cheapest available (Haiku or gpt-4o-mini)
+LANTERN_ROUTE_STRATEGY=cheap
+
+# Highest quality regardless of cost (Opus, else gpt-4o)
+LANTERN_ROUTE_STRATEGY=quality
+
+# Fastest response time (Haiku, else gpt-4o-mini)
+LANTERN_ROUTE_STRATEGY=fast
+```
+
+## Per-agent model
+
+Each agent can carry a `model`: a capability (`fast`, `cheap`, `reasoning-small`, `reasoning-large`, ...) or a vendor model id (`gpt-*`, `o1*`, `o3*`, `claude-*`). Runs, sessions and workflow `ai-step` nodes with no capability of their own try that model first. Use it to pin a cheap model on a high-volume agent, or a stronger one on an agent that needs it.
+
+```text
+# Set on create
+POST /v1/agents
+{ "name": "triage", "model": "fast" }
+
+# Change later ("" or "auto" goes back to the default chain)
+PATCH /v1/agents/triage
+{ "model": "reasoning-large" }
+
+# Read it back
+GET /v1/agents/triage   →  { ..., "model": "reasoning-large" }
+```
+
+- **Unset or `auto`**: exactly the [`auto`](#how-auto-works) chain, unchanged.
+- **Validation**: anything else returns 400. Embedding, rerank and speech capabilities are rejected because agents run text completions. The error never echoes the value.
+- **Provider not keyed**: if the model's provider has no key for your tenant, the agent uses the default chain.
+- **Workflow nodes**: an `ai-step` with an explicit capability keeps it; only `auto` nodes take the agent's model.
+- **Recorded**: the model that answered is on the run's `llm:main` step in the run timeline.
+
+## Failover
+
+The control plane fails over through a ranked chain: each keyed provider's top model, then that provider's cheaper tier (Haiku / `gpt-4o-mini`, a separate quota tier), then the next provider.
+
+- **429, 402 and 5xx**: move to the next candidate in the chain; a rate limit adds a backoff first.
+- **Agent models go first**: an agent's [model](#per-agent-model) heads the chain and the default chain follows it. A cheap-tier agent (Haiku / `*-mini`) fails over only to the other provider's cheap tier, never to a Sonnet, gpt-4o or Opus class model. If both cheap tiers fail, the call fails instead of escalating the bill.
+- **No mid-sentence swap**: in streaming, failover only happens while zero tokens have been emitted. After the first token an error surfaces as `message_error`, never a splice.
+
+## LLM idempotency
+
+OpenAI and Anthropic calls carry an `Idempotency-Key` header, so a backoff retry or a crash replay dedups at the provider instead of double-billing. The key is a one-way hash of the run, step and attempt, plus a hash of the request body, with a per-provider suffix on failover targets. Ad-hoc `/v1/completions` calls without a run use a hash of provider, model and messages. See `llm_idempotency.go`.
+
+## Adding API keys
+
+Add a provider key in the dashboard settings, or via the API:
+
+```text
+POST /v1/settings/llm-providers
+{ "provider": "anthropic", "apiKey": "sk-ant-..." }
+
+POST /v1/settings/llm-providers
+{ "provider": "openai", "apiKey": "sk-..." }
+```
+
+Keys are AES-256-GCM encrypted at rest when `LANTERN_CREDENTIAL_KEY` is set (plaintext otherwise, so set it outside dev). They never appear in logs, traces or run state. The control plane resolves them per tenant at call time.
+
+## Model-router service
+
+A separate Rust model-router service exists (gRPC `:50053`, Anthropic and OpenAI providers). The control plane only routes plain completions through it when `LANTERN_USE_MODEL_ROUTER=1`; it is **off by default**, and any router error falls back to the direct path.
+
+<Aside type="tip">
+Enable the router on a non-critical tenant first.
+</Aside>
+
+The router has its own, separate mapping. The control plane resolves a model first using the table above, converts it back to a router capability (Opus to `reasoning-frontier`, Sonnet to `reasoning-large`, Haiku to `reasoning-small`, `gpt-4o` to `chat-large`, `-mini` to `chat-small`, anything else to `auto`), and the router then picks the concrete model for that capability. Each provider supports a capability only if it lists it exactly:
+
+| Router capability | Anthropic | OpenAI |
+| --- | --- | --- |
+| `reasoning-frontier` | `claude-opus-4-6` | not supported |
+| `reasoning-large` | `claude-sonnet-4-6` | `o3` |
+| `reasoning-small` | `claude-haiku-4-5` | not supported |
+| `code-large` | `claude-sonnet-4-6` | `gpt-4o` |
+| `chat-large` | not supported | `gpt-4o` |
+| `chat-small` | not supported | `gpt-4o-mini` |
+| `embed-large`, `embed-small` | not supported | `text-embedding-3-large`, `text-embedding-3-small` |
+
+`auto` and unspecified become `chat-large`.
+
+<Aside type="caution">
+Router model ids are fixed in the service (not overridable by `LANTERN_OPUS_MODEL` and friends), so with the router on the Opus tier is `claude-opus-4-6`, not the control-plane default `claude-opus-4-8`.
+</Aside>
+
+Among providers that support the capability, the optimize target orders them: cheap by price, fast by p50 latency, best by quality score, balanced by a fixed provider preference.

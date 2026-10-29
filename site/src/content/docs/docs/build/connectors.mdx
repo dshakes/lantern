@@ -1,0 +1,224 @@
+---
+title: Connectors
+description: The 18 built-in connectors, their actions, credentials, recorded test mode and per-agent assignment.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/lantern/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
+
+## Available connectors (18)
+
+### Communication
+
+- **Slack** (`slack`): list channels and users, post messages, reply in threads; OAuth or bot token
+- **Discord** (`discord`): list guilds, send messages; bot token or OAuth
+- **Telegram** (`telegram`): send messages, fetch updates; bot token
+- **Twilio** (`twilio`): send SMS, list messages, place calls, add conference participants; Account SID + Auth Token + phone number (or Messaging Service SID)
+
+### Email and calendar
+
+- **Gmail** (`gmail`): list, search and send mail; Google OAuth or email + app password
+- **Google Calendar** (`google-calendar`): list and create events; Google OAuth
+
+### Docs and storage
+
+- **Google Drive** (`google-drive`): list files; Google OAuth
+- **Google Sheets** (`google-sheets`): get a spreadsheet, get cell values; Google OAuth
+- **Notion** (`notion`): search, list databases; OAuth or integration token
+
+### Dev tools
+
+- **GitHub** (`github`): list repos, list and get PRs, list and get issues, create issues, comment on PRs; OAuth or personal access token
+- **Linear** (`linear`): list and create issues; API key or OAuth
+- **Jira** (`jira`): list and create issues; email + API token + domain, or OAuth
+- **Sentry** (`sentry`): list and get issues; auth token
+- **PagerDuty** (`pagerduty`): list and get incidents, create and update incidents; REST API key. No dashboard card yet; install over the API (see [Newer actions](#newer-actions))
+- **Vercel** (`vercel`): list projects and deployments; access token
+
+### CRM and sales
+
+- **HubSpot** (`hubspot`): list contacts and deals; API key or OAuth
+- **Salesforce** (`salesforce`): run SOQL queries; access token + instance URL (OAuth supported)
+
+### Commerce
+
+- **Stripe** (`stripe`): list charges and customers; secret key or OAuth
+
+<Aside>
+**Web search** is a built-in agent tool, not a connector: nothing to install. Sessions enable it with the `webSearch` flag.
+</Aside>
+
+<Aside>
+**Adding a connector** is a code change today: a new case in `connector_executor.go` in the control plane. There is no plug-in interface yet.
+</Aside>
+
+## Newer actions
+
+Four actions and one connector (PagerDuty, four actions) were added after the original set. All run through `POST /v1/connectors/{id}/execute?action=<action>` with a JSON body of params (the connector must be installed and connected first). A successful call returns `{"connector", "action", "data"}`; a failed vendor call returns 502 with `{"error", "connector", "action"}`; an uninstalled connector returns 404.
+
+Required params are marked **(required)**.
+
+| Connector / action | Params | Credential (config field) | Class |
+| --- | --- | --- | --- |
+| `slack` / `reply_thread` | `channel` **(required)**, `text` **(required)**, `thread_ts` **(required)** | OAuth, or `botToken` | write |
+| `github` / `comment_pr` | `owner` **(required)**, `repo` **(required)**, `number` **(required)**, `body` **(required)** | OAuth, or `personalAccessToken` | write |
+| `sentry` / `get_issue` | `organization` **(required)**, `issue_id` **(required)** | `authToken` | read-only |
+| `google-calendar` / `create_event` | `summary` **(required)**, `start` **(required)**, `end` **(required)** (RFC3339); optional `calendarId` (default `primary`), `timeZone`, `description`, `location`, `attendees` (array of emails) | Google OAuth | write |
+| `pagerduty` / `list_incidents` | optional `status` (`triggered`, `acknowledged`, `resolved`), `limit` (default 25) | `apiKey` (REST API key) | read-only |
+| `pagerduty` / `get_incident` | `incident_id` **(required)** | `apiKey` | read-only |
+| `pagerduty` / `create_incident` | `title` **(required)**, `service_id` **(required)**, `from` **(required)** (acting user's email); optional `details` | `apiKey` | write |
+| `pagerduty` / `update_incident` | `incident_id` **(required)**, `from` **(required)**, `status` **(required)** (`acknowledged` or `resolved`) | `apiKey` | write |
+| `pagerduty` / `add_note` | `incident_id` **(required)**, `content` **(required)**, `from` **(required)** | `apiKey` | write |
+
+Slack `post_message` also accepts an optional `thread_ts`; `reply_thread` is the same call with `thread_ts` required. "Read-only" is the allowlist in `connector_safety.go`; anything not on it, including every action on an unknown connector, is treated as side-effecting.
+
+PagerDuty has no dashboard card yet. Install it over the API, then call it. Agents get `list_incidents` and `get_incident` as tools; `create_incident`, `update_incident` and `add_note` are REST-only (and usable from workflow connector nodes).
+
+```bash
+# install PagerDuty (config.apiKey = a REST API key)
+curl -X POST http://localhost:8080/v1/connectors/install \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connectorId": "pagerduty", "displayName": "PagerDuty", "config": {"apiKey": "..."}}'
+
+# read an incident
+curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=get_incident" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"incident_id": "PABC123"}'
+
+# acknowledge it (write; "from" is required by PagerDuty)
+curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=update_incident" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"incident_id": "PABC123", "from": "oncall@example.com", "status": "acknowledged"}'
+
+# reply in a Slack thread
+curl -X POST "http://localhost:8080/v1/connectors/slack/execute?action=reply_thread" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"channel": "C0123", "thread_ts": "1700000000.000100", "text": "On it."}'
+```
+
+## Recorded test mode
+
+Run connector actions without a real SaaS account by pointing a vendor at a local fixture server. This is dev and test only.
+
+**1. Start the fixture server** from `services/control-plane`. It listens on loopback and serves recorded responses for Slack, GitHub, Sentry, PagerDuty and Google Calendar:
+
+```bash
+go run ./cmd/connector-replay            # 127.0.0.1:9191
+go run ./cmd/connector-replay -addr 127.0.0.1:9292
+```
+
+**2. Point the control plane at it** before starting it (`LANTERN_ENV` must not be prod, production or staging):
+
+```bash
+export LANTERN_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_GITHUB=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_SENTRY=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_GOOGLE=http://127.0.0.1:9191
+export LANTERN_CONNECTOR_BASEURL_PAGERDUTY=http://127.0.0.1:9191
+make run-api
+```
+
+**3. Check it worked**: install a connector with any non-empty token, execute an action, then read what the server saw:
+
+```bash
+curl -s http://127.0.0.1:9191/__requests
+```
+
+Each recorded call has `method`, `path`, `query`, `header`, `body`, `hasAuth`, `matched` and `status`. The `Authorization` header is never stored, only whether it was set.
+
+### Override variables
+
+| Variable | Vendor host replaced | Connectors affected |
+| --- | --- | --- |
+| `LANTERN_CONNECTOR_BASEURL_SLACK` | `slack.com` | Slack |
+| `LANTERN_CONNECTOR_BASEURL_GITHUB` | `api.github.com` | GitHub |
+| `LANTERN_CONNECTOR_BASEURL_SENTRY` | `sentry.io` | Sentry |
+| `LANTERN_CONNECTOR_BASEURL_GOOGLE` | `www.googleapis.com` | Google Calendar, Google Drive |
+| `LANTERN_CONNECTOR_BASEURL_PAGERDUTY` | `api.pagerduty.com` | PagerDuty |
+
+The value must be an absolute `http` or `https` URL with a host. Only scheme and host are replaced; the vendor path is kept, so the fixture server serves real paths such as `/api/chat.postMessage`. An unmatched request gets 404:
+
+```json
+{"error": "no recorded fixture for METHOD PATH"}
+```
+
+Fixtures are exact method + path matches in `internal/connectorreplay/fixtures.json` (embedded in the binary): Slack `conversations.list` and `chat.postMessage`; GitHub `acme/api` pulls list, PR 42, and a comment on 42; Sentry org `acme` issues list and issue `1001`; PagerDuty incidents list, get `PABC123`, create, update; Google Calendar `primary` events list and insert. Use those owner, repo, org and ids in your test params.
+
+### Refused in production
+
+A bearer token must never be sent to an arbitrary host, so overrides are blocked twice:
+
+- **Startup:** with `LANTERN_ENV` set to `prod`, `production` or `staging`, the control plane exits if any override variable is set: `LANTERN_CONNECTOR_BASEURL_X set in production — connector base-URL overrides are test-only and would redirect tenant credentials to another host; unset them` (names of every variable set are listed). In any environment a malformed value is also fatal: `LANTERN_CONNECTOR_BASEURL_X is malformed: must be an absolute http(s) URL, got "..."`.
+- **Request time:** the outbound transport ignores overrides whenever the environment is prod, even if one slipped in.
+
+## Setting up a connector
+
+### OAuth-based connectors
+
+Gmail, Google Calendar, Drive, Sheets, Slack, GitHub and Notion support OAuth. The flow:
+
+1. Open **Integrations** (`/connectors`) in the dashboard.
+2. Click the connector you want to enable.
+3. Click **Connect**. You are redirected to the service's OAuth consent screen.
+4. Authorize access and you are redirected back.
+5. The connector is now available and can be attached to any agent.
+
+<Aside type="tip">
+Revoke access any time by uninstalling the connector (`DELETE /v1/connectors/{id}`).
+</Aside>
+
+### API key-based connectors
+
+Linear, Sentry, Vercel, Stripe, Twilio, Telegram and others take a key or token instead of OAuth. For these:
+
+1. Open **Integrations**.
+2. Click the connector and select **Manual credentials**.
+3. Enter your API key or credentials.
+4. Click **Save**. Credentials are encrypted at rest (AES-256-GCM) when `LANTERN_CREDENTIAL_KEY` is set; without it they are stored as plaintext, so set it outside dev.
+
+<Aside type="caution">
+Credentials never appear in logs, traces or run state. Connector actions run in the control plane, which resolves the credential at call time.
+</Aside>
+
+## Per-agent connector assignment
+
+Connect an account once, then choose which agents may use it. You connect your Gmail account once in Settings; for each agent, you choose which connectors it can access. An agent can only use connectors explicitly assigned to it.
+
+To assign connectors to an agent:
+
+1. Open the agent's detail page in the dashboard.
+2. Go to the **Configuration** tab.
+3. In the **Connectors** section, toggle the connectors this agent should have access to.
+4. Click **Save**.
+
+## How agents use connectors
+
+Assigned connectors reach the LLM as tools; it decides when to call them. You can also call an action directly over REST:
+
+```bash
+curl -X POST "http://localhost:8080/v1/connectors/gmail/execute?action=search" \
+  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "from:boss@company.com subject:urgent"}'
+```
+
+PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/lantern/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
+
+## Connector permissions
+
+OAuth scopes come from `oauth_providers.go`:
+
+- **Gmail**: `gmail.modify` (read, send, label; no permanent delete)
+- **GitHub**: `repo`, `read:user`
+- **Slack**: `channels:read`, `chat:write`, `users:read`
+
+<Aside type="tip">
+If a connector is missing or uninstalled, the action returns a missing-credentials error naming the connector.
+</Aside>
