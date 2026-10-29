@@ -1,6 +1,6 @@
 package cli
 
-// doctor.go — `lantern doctor` readiness check.
+// doctor.go — `pal doctor` readiness check.
 //
 // Runs a sequence of hard checks against the local dev stack on :8080 and
 // prints a ✓/✗ line for each one. Exits non-zero when any hard check fails.
@@ -139,15 +139,15 @@ type healthzResponse struct {
 //
 // The "lanternAppRoleExists" field reflects whether the DB role was found by
 // the running API — so it is only as fresh as the API process's last /healthz
-// call to Postgres.  "appPoolActive" is true only when LANTERN_RLS_ENFORCE=1
-// AND LANTERN_APP_DB_PASSWORD is set in the API process.
+// call to Postgres.  "appPoolActive" is true only when PAL_RLS_ENFORCE=1
+// AND PAL_APP_DB_PASSWORD is set in the API process.
 //
 // If the API is not yet running (healthCheck failed) all sub-checks are
 // skipped so the user sees exactly one actionable message.
 func checkRLS(restURL string, health checkResult) []checkResult {
 	if !health.passed {
 		return []checkResult{{
-			label:  "LANTERN_RLS_ENFORCE set on API",
+			label:  "PAL_RLS_ENFORCE set on API",
 			passed: false,
 			detail: "skipped — API not reachable (fix HTTP health check first)",
 			hard:   false,
@@ -192,30 +192,30 @@ func checkRLS(restURL string, health checkResult) []checkResult {
 			hard: false,
 		},
 		{
-			label:  "LANTERN_APP_DB_PASSWORD set on API",
+			label:  "PAL_APP_DB_PASSWORD set on API",
 			passed: h.AppPoolActive || !h.RLSEnforce,
 			detail: func() string {
 				if h.AppPoolActive {
 					return "set — AppPool connects as lantern_app"
 				}
 				if h.RLSEnforce {
-					return "LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — AppPool aliased to superuser pool; RLS not enforced at runtime"
+					return "PAL_RLS_ENFORCE=1 but PAL_APP_DB_PASSWORD is unset — AppPool aliased to superuser pool; RLS not enforced at runtime"
 				}
-				return "unset (acceptable in dev; required before flipping LANTERN_RLS_ENFORCE=1)"
+				return "unset (acceptable in dev; required before flipping PAL_RLS_ENFORCE=1)"
 			}(),
 			hard: false,
 		},
 		{
-			label:  "LANTERN_RLS_ENFORCE active on API",
+			label:  "PAL_RLS_ENFORCE active on API",
 			passed: h.RLSEnforce && h.AppPoolActive,
 			detail: func() string {
 				if h.RLSEnforce && h.AppPoolActive {
 					return "enforced — AppPool is the non-superuser lantern_app role"
 				}
 				if h.RLSEnforce {
-					return "flag set but AppPool still aliased to superuser (set LANTERN_APP_DB_PASSWORD)"
+					return "flag set but AppPool still aliased to superuser (set PAL_APP_DB_PASSWORD)"
 				}
-				return "off — run `make rls-validate` to verify readiness, then set LANTERN_RLS_ENFORCE=1"
+				return "off — run `make rls-validate` to verify readiness, then set PAL_RLS_ENFORCE=1"
 			}(),
 			hard: false,
 		},
@@ -243,7 +243,7 @@ func checkHealth(restURL string) checkResult {
 		return checkResult{
 			label:  "HTTP health (:8080/healthz)",
 			passed: false,
-			detail: fmt.Sprintf("unreachable — is `lantern dev` (or `make run-api`) running? (%v)", err),
+			detail: fmt.Sprintf("unreachable — is `pal dev` (or `make run-api`) running? (%v)", err),
 			hard:   true,
 		}
 	}
@@ -302,7 +302,7 @@ func checkAuth(restURL string) (checkResult, string) {
 		return checkResult{
 			label:  "authentication",
 			passed: false,
-			detail: fmt.Sprintf("stored credentials absent/stale and dev login failed: %v — run `lantern login`", err),
+			detail: fmt.Sprintf("stored credentials absent/stale and dev login failed: %v — run `pal login`", err),
 			hard:   true,
 		}, ""
 	}
@@ -383,7 +383,7 @@ func checkProviders(restURL, token string) checkResult {
 }
 
 // doctorAgentName is the throwaway agent created by checkRun.
-const doctorAgentName = "lantern-doctor-probe"
+const doctorAgentName = "pal-doctor-probe"
 
 // checkRun creates a throwaway agent, fires a trivial run, polls until terminal,
 // reports the result, and deletes the agent.
@@ -491,7 +491,7 @@ func checkPorts() []checkResult {
 		if err != nil {
 			remedy := ""
 			if sp.port == "8080" {
-				remedy = " — run: lantern dev (or make run-api)"
+				remedy = " — run: pal dev (or make run-api)"
 			} else if sp.port == "3001" {
 				remedy = " — run: make dashboard-dev"
 			}

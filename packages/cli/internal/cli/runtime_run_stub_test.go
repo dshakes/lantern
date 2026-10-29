@@ -2,9 +2,9 @@ package cli
 
 // runtime_run_stub_test.go — regression test for the silent-no-op bug.
 //
-// When the control-plane runs without LANTERN_SCHEDULER_GRPC_ADDR it falls
+// When the control-plane runs without PAL_SCHEDULER_GRPC_ADDR it falls
 // back to stubSchedulerClient, which SYNTHESIZES a vm_id and spawns nothing.
-// `lantern run` used to print "scheduled vm_id=..." and exit 0 in that state,
+// `pal run` used to print "scheduled vm_id=..." and exit 0 in that state,
 // so a misconfigured stack was indistinguishable from a working one. The
 // control-plane now returns {"stub":true,...}; the CLI must fail loudly.
 
@@ -30,7 +30,7 @@ func writeSpec(t *testing.T) string {
 }
 
 // runWithScheduleResponse points the CLI at a fake control-plane that returns
-// the given /v1/runtime/schedule body, then runs `lantern run <spec>`.
+// the given /v1/runtime/schedule body, then runs `pal run <spec>`.
 func runWithScheduleResponse(t *testing.T, body string) (string, string, error) {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -65,7 +65,7 @@ func TestRun_StubScheduleIsAnError(t *testing.T) {
 	if !strings.Contains(stderr, "NOT SCHEDULED") {
 		t.Fatalf("stderr must explain nothing was spawned; got:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "LANTERN_SCHEDULER_GRPC_ADDR") {
+	if !strings.Contains(stderr, "PAL_SCHEDULER_GRPC_ADDR") {
 		t.Fatalf("stderr must name the missing env var; got:\n%s", stderr)
 	}
 }

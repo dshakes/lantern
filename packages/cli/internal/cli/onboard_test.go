@@ -1,6 +1,6 @@
 package cli
 
-// onboard_test.go — unit tests for `lantern onboard`.
+// onboard_test.go — unit tests for `pal onboard`.
 //
 // All network calls use httptest.Server mocks — no live stack required.
 // The existing doctor helpers (registerHealthOK, registerLoginOK, etc.) are
@@ -383,7 +383,7 @@ func registerGuideSucceeded(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/runs/guide-run-ok", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"guide-run-ok","agentName":"` + guideAgentName + `","status":"succeeded","output":{"text":"Your first run succeeded — the quickstart agent said hello. Try: lantern runs create --agent quickstart-assistant --input '{\"prompt\":\"What can you do?\"}'."}}`))
+		_, _ = w.Write([]byte(`{"id":"guide-run-ok","agentName":"` + guideAgentName + `","status":"succeeded","output":{"text":"Your first run succeeded — the quickstart agent said hello. Try: pal runs create --agent quickstart-assistant --input '{\"prompt\":\"What can you do?\"}'."}}`))
 	})
 }
 

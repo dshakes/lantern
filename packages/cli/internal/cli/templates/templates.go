@@ -1,9 +1,9 @@
-// Package templates provides embedded template files for the `lantern init` command.
+// Package templates provides embedded template files for the `pal init` command.
 package templates
 
 import "embed"
 
-// FS embeds all template directories used by `lantern init`.
+// FS embeds all template directories used by `pal init`.
 //
 //go:embed basic research tool-use connector personal scheduled approval
 var FS embed.FS
