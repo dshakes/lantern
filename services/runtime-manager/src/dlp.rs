@@ -12,10 +12,25 @@
 //! The matched bytes are **never** included in audit events, logs, or errors.
 //! [`DlpMatch`] carries only offset/count, rule id, and detector name.
 
-use regex::Regex;
+use regex::bytes::Regex;
 
 /// Default cap on bytes inspected per request (64 KiB).
 pub const DEFAULT_MAX_INSPECT_BYTES: usize = 64 * 1024;
+/// Ceiling on a policy's `max_inspect_bytes`: the broker buffers this much of
+/// a guest-controlled body per connection, so it is never left unbounded.
+pub const MAX_INSPECT_BYTES_CEILING: usize = 1024 * 1024;
+
+/// Every detector the engine knows. The wire/API name of the caller-supplied
+/// pattern detector is `custom_regex` (the control-plane, the DB CHECK and the
+/// REST API all use it). Parity with the control-plane is pinned by
+/// `services/testdata/dlp_detectors.json`.
+pub const DETECTORS: &[&str] = &[
+    "card_number",
+    "secret_key",
+    "email",
+    "phone",
+    "custom_regex",
+];
 
 // ---------------------------------------------------------------------------
 // Policy types (serialised in the proto/ScheduleRequest path)
@@ -31,15 +46,21 @@ pub enum DlpMode {
     Block,
 }
 
-impl DlpMode {
-    pub fn from_str(s: &str) -> Self {
+/// Unknown (or empty) modes are an error, never a silent downgrade to
+/// `audit`: a tenant that wrote `block` must not get less than it asked for.
+impl std::str::FromStr for DlpMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
         match s {
-            "block" => DlpMode::Block,
-            "off" => DlpMode::Off,
-            _ => DlpMode::Audit,
+            "block" => Ok(DlpMode::Block),
+            "audit" => Ok(DlpMode::Audit),
+            "off" => Ok(DlpMode::Off),
+            other => Err(format!("unknown DLP mode {other:?} (want off|audit|block)")),
         }
     }
+}
 
+impl DlpMode {
     pub fn as_str(self) -> &'static str {
         match self {
             DlpMode::Off => "off",
@@ -54,9 +75,9 @@ impl DlpMode {
 pub struct DlpRule {
     /// Tenant-assigned stable identifier for this rule.
     pub rule_id: String,
-    /// Detector to run: `card_number` | `secret_key` | `email` | `phone` | `regex`.
+    /// Detector to run: one of [`DETECTORS`]. Unknown → compile error.
     pub detector: String,
-    /// For `regex` detector: the RE2 pattern. Ignored for built-ins.
+    /// For `custom_regex`: the pattern. Ignored for built-ins.
     #[serde(default)]
     pub pattern: String,
     /// Operating mode.
@@ -74,23 +95,28 @@ fn default_threshold() -> u32 {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct DlpPolicy {
     pub rules: Vec<DlpRule>,
-    /// Override default inspect cap. 0 → [`DEFAULT_MAX_INSPECT_BYTES`].
+    /// Override default inspect cap. 0 → [`DEFAULT_MAX_INSPECT_BYTES`];
+    /// clamped to [`MAX_INSPECT_BYTES_CEILING`].
     #[serde(default)]
     pub max_inspect_bytes: usize,
 }
 
 impl DlpPolicy {
     pub fn effective_max(&self) -> usize {
-        if self.max_inspect_bytes == 0 {
-            DEFAULT_MAX_INSPECT_BYTES
-        } else {
-            self.max_inspect_bytes
+        match self.max_inspect_bytes {
+            0 => DEFAULT_MAX_INSPECT_BYTES,
+            n => n.min(MAX_INSPECT_BYTES_CEILING),
         }
     }
 
     /// True if there is at least one non-Off rule (engine worth compiling).
     pub fn has_active_rules(&self) -> bool {
         self.rules.iter().any(|r| r.mode != DlpMode::Off)
+    }
+
+    /// True if any rule blocks (needs an enforcing broker).
+    pub fn has_block_rules(&self) -> bool {
+        self.rules.iter().any(|r| r.mode == DlpMode::Block)
     }
 }
 
@@ -126,7 +152,7 @@ pub enum DlpVerdict {
 
 struct CompiledRule {
     base: DlpRule,
-    /// Compiled for `regex` detector only.
+    /// Compiled for `custom_regex` only.
     compiled: Option<Regex>,
 }
 
@@ -137,19 +163,26 @@ pub struct DlpEngine {
 }
 
 impl DlpEngine {
-    /// Compile a policy into an engine. Returns an error if any `regex` rule
-    /// has an invalid pattern (compilation happens here, not at scan time).
+    /// Compile a policy into an engine. Fails closed: an unknown detector or
+    /// an empty/invalid `custom_regex` pattern is an error (the spawn fails),
+    /// never a rule that silently matches nothing.
     pub fn compile(policy: DlpPolicy) -> Result<Self, String> {
         let max_inspect_bytes = policy.effective_max();
         let mut rules = Vec::with_capacity(policy.rules.len());
         for r in policy.rules {
+            if !DETECTORS.contains(&r.detector.as_str()) {
+                return Err(format!(
+                    "dlp rule '{}': unknown detector {:?}",
+                    r.rule_id, r.detector
+                ));
+            }
             if r.mode == DlpMode::Off {
                 continue;
             }
-            let compiled = if r.detector == "regex" {
+            let compiled = if r.detector == "custom_regex" {
                 if r.pattern.is_empty() {
                     return Err(format!(
-                        "dlp rule '{}': regex detector requires a pattern",
+                        "dlp rule '{}': custom_regex detector requires a pattern",
                         r.rule_id
                     ));
                 }
@@ -166,6 +199,12 @@ impl DlpEngine {
             rules,
             max_inspect_bytes,
         })
+    }
+
+    /// True if any compiled rule blocks: the broker then fails closed when it
+    /// cannot inspect a body completely.
+    pub fn has_block_rules(&self) -> bool {
+        self.rules.iter().any(|r| r.base.mode == DlpMode::Block)
     }
 
     /// Scan `data` (request headers + early body bytes up to the cap).
@@ -221,7 +260,8 @@ fn run_detector(
         "secret_key" => find_secret_key(data),
         "email" => find_email(data, threshold),
         "phone" => find_phone(data, threshold),
-        "regex" => find_regex(compiled_regex?, data),
+        "custom_regex" => find_regex(compiled_regex?, data),
+        // Unreachable: `compile` rejects unknown detectors.
         _ => None,
     }
 }
@@ -251,8 +291,26 @@ fn luhn_check(digits: &[u8]) -> bool {
     sum.is_multiple_of(10)
 }
 
-/// Find the first Luhn-passing card-number sequence. Returns (offset, len)
-/// in bytes within `data` (raw text, including any separators).
+/// Issuer plausibility on top of Luhn (1 in 10 random digit strings passes
+/// Luhn alone): 13 digits = Visa (`4`), 14 = Diners (`30`/`36`/`38`), 15–19 =
+/// major-industry identifier 2–6 (Mastercard 2/5, Amex/JCB 3, Visa 4,
+/// Discover/UnionPay/Maestro 6). This drops epoch-ms / epoch-µs timestamps
+/// (leading `1`), the commonest 13–16 digit false positive in API traffic.
+fn plausible_card(d: &[u8]) -> bool {
+    let issuer = match d.len() {
+        13 => d[0] == b'4',
+        14 => d.starts_with(b"30") || d.starts_with(b"36") || d.starts_with(b"38"),
+        15..=19 => (b'2'..=b'6').contains(&d[0]),
+        _ => false,
+    };
+    issuer && luhn_check(d)
+}
+
+/// Find the first plausible card number. A digit run is a sequence of digit
+/// groups joined by a SINGLE space or dash; every window of whole groups that
+/// holds 13–19 digits is checked, so trailing data in the same run
+/// (`4532015112830366 12/30`) cannot hide the card. Returns (offset, len) in
+/// bytes within `data` (raw text, including separators).
 pub fn find_card_number(data: &[u8]) -> Option<(usize, usize)> {
     let n = data.len();
     let mut i = 0;
@@ -261,25 +319,35 @@ pub fn find_card_number(data: &[u8]) -> Option<(usize, usize)> {
             i += 1;
             continue;
         }
-        let start = i;
-        let mut digits: Vec<u8> = Vec::with_capacity(19);
+        // Byte spans (start, end) of each digit group in this run.
+        let mut groups: Vec<(usize, usize)> = Vec::new();
         let mut j = i;
-        while j < n && digits.len() <= 19 {
-            match data[j] {
-                b if b.is_ascii_digit() => {
-                    digits.push(b);
-                    j += 1;
-                }
-                b' ' | b'-' => {
-                    j += 1;
-                }
-                _ => break,
+        loop {
+            let s = j;
+            while j < n && data[j].is_ascii_digit() {
+                j += 1;
+            }
+            groups.push((s, j));
+            if j + 1 < n && matches!(data[j], b' ' | b'-') && data[j + 1].is_ascii_digit() {
+                j += 1;
+            } else {
+                break;
             }
         }
-        if (13..=19).contains(&digits.len()) && luhn_check(&digits) {
-            return Some((start, j - start));
+        let mut digits: Vec<u8> = Vec::with_capacity(19);
+        for a in 0..groups.len() {
+            digits.clear();
+            for &(s, e) in &groups[a..] {
+                if digits.len() + (e - s) > 19 {
+                    break;
+                }
+                digits.extend_from_slice(&data[s..e]);
+                if digits.len() >= 13 && plausible_card(&digits) {
+                    return Some((groups[a].0, e - groups[a].0));
+                }
+            }
         }
-        i += 1;
+        i = j;
     }
     None
 }
@@ -454,12 +522,12 @@ pub fn find_phone(data: &[u8], threshold: u32) -> Option<(usize, usize)> {
 }
 
 // ---------------------------------------------------------------------------
-// regex — caller-supplied compiled Regex
+// custom_regex — caller-supplied compiled byte Regex
 // ---------------------------------------------------------------------------
 
+/// Byte regex: a body that is not valid UTF-8 is still scanned.
 pub fn find_regex(re: &Regex, data: &[u8]) -> Option<(usize, usize)> {
-    let s = std::str::from_utf8(data).ok()?;
-    let m = re.find(s)?;
+    let m = re.find(data)?;
     Some((m.start(), m.end() - m.start()))
 }
 
@@ -733,7 +801,7 @@ mod tests {
         let res = DlpEngine::compile(DlpPolicy {
             rules: vec![DlpRule {
                 rule_id: "r1".to_string(),
-                detector: "regex".to_string(),
+                detector: "custom_regex".to_string(),
                 pattern: "[invalid".to_string(),
                 mode: DlpMode::Block,
                 threshold: 1,
@@ -743,12 +811,151 @@ mod tests {
         assert!(res.is_err());
     }
 
+    // --- review fixes (ADR 0030 hardening) ---
+
+    fn rule(id: &str, detector: &str, pattern: &str, mode: DlpMode) -> DlpRule {
+        DlpRule {
+            rule_id: id.into(),
+            detector: detector.into(),
+            pattern: pattern.into(),
+            mode,
+            threshold: 1,
+        }
+    }
+
+    fn policy(rules: Vec<DlpRule>) -> DlpPolicy {
+        DlpPolicy {
+            rules,
+            max_inspect_bytes: 0,
+        }
+    }
+
+    /// #1: the detector set is pinned against the control-plane's, and every
+    /// name the API accepts compiles here (custom_regex was inert before).
+    #[test]
+    fn detector_names_match_control_plane_fixture() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/dlp_detectors.json")).unwrap();
+        let want: Vec<&str> = v["detectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d.as_str().unwrap())
+            .collect();
+        assert_eq!(want, DETECTORS);
+        for d in want {
+            let pat = if d == "custom_regex" { "x" } else { "" };
+            DlpEngine::compile(policy(vec![rule("r", d, pat, DlpMode::Block)]))
+                .unwrap_or_else(|e| panic!("{d} must compile: {e}"));
+        }
+    }
+
+    #[test]
+    fn custom_regex_blocks() {
+        let e = DlpEngine::compile(policy(vec![rule(
+            "ssn",
+            "custom_regex",
+            r"SSN-\d{3}-\d{2}-\d{4}",
+            DlpMode::Block,
+        )]))
+        .unwrap();
+        assert!(matches!(
+            e.scan(b"x SSN-123-45-6789 y"),
+            DlpVerdict::Block(_)
+        ));
+    }
+
+    /// #1: an unknown detector fails the compile (and so the spawn) instead
+    /// of being a rule that never matches.
+    #[test]
+    fn unknown_detector_rejected_at_compile() {
+        for d in ["regex", "credit_card", ""] {
+            let res = DlpEngine::compile(policy(vec![rule("r", d, "x", DlpMode::Block)]));
+            assert!(res.is_err(), "detector {d:?} accepted");
+        }
+        // Even on an `off` rule: a typo is a typo.
+        assert!(DlpEngine::compile(policy(vec![rule("r", "nope", "", DlpMode::Off)])).is_err());
+    }
+
+    /// #6: unknown/empty modes are errors, never a silent `audit`.
+    #[test]
+    fn unknown_mode_is_an_error() {
+        assert_eq!("block".parse::<DlpMode>(), Ok(DlpMode::Block));
+        assert_eq!("audit".parse::<DlpMode>(), Ok(DlpMode::Audit));
+        assert_eq!("off".parse::<DlpMode>(), Ok(DlpMode::Off));
+        for m in ["", "Block", "enforce", "deny"] {
+            assert!(m.parse::<DlpMode>().is_err(), "mode {m:?} accepted");
+        }
+    }
+
+    /// #5: a body that is not valid UTF-8 is still scanned by custom_regex.
+    #[test]
+    fn custom_regex_scans_non_utf8() {
+        let re = Regex::new(r"SECRET-\d+").unwrap();
+        let mut data = vec![0xff, 0xfe, b' '];
+        data.extend_from_slice(b"SECRET-42");
+        assert_eq!(find_regex(&re, &data), Some((3, 9)));
+    }
+
+    /// #8: trailing data in the same digit run cannot hide a card.
+    #[test]
+    fn card_followed_by_more_digits_is_found() {
+        for data in [
+            &b"card 4532015112830366 12/30"[..],
+            b"4532015112830366 1",
+            b"4532 0151 1283 0366 7",
+            b"ref 99 4532015112830366",
+            b"4532-0151-1283-0366-12",
+        ] {
+            assert!(
+                find_card_number(data).is_some(),
+                "{}",
+                String::from_utf8_lossy(data)
+            );
+        }
+        // A double space ends the run: still found as its own run.
+        assert!(find_card_number(b"12  4532015112830366").is_some());
+    }
+
+    /// #9: epoch-ms (13 digits) and epoch-µs (16 digits) timestamps are not
+    /// cards, even when they pass Luhn.
+    #[test]
+    fn timestamps_are_not_cards() {
+        let mut luhn_passing = 0;
+        for k in 0..20_000u64 {
+            for v in [1_730_000_000_000 + k * 7, 1_730_000_000_000_000 + k * 13] {
+                let s = v.to_string();
+                luhn_passing += usize::from(luhn_check(s.as_bytes()));
+                let body = format!("{{\"ts\":{s},\"at\":\"{s}\"}}");
+                assert!(find_card_number(body.as_bytes()).is_none(), "{s}");
+            }
+        }
+        assert!(
+            luhn_passing > 1000,
+            "test must include Luhn-valid timestamps"
+        );
+        // Real issuers still match at 13/14 digits.
+        assert!(find_card_number(b"4222222222222").is_some()); // Visa-13 test number
+        assert!(find_card_number(b"30569309025904").is_some()); // Diners test number
+    }
+
+    /// #16: a huge or negative-derived cap is clamped, never trusted.
+    #[test]
+    fn max_inspect_bytes_is_clamped() {
+        let mut p = policy(vec![]);
+        assert_eq!(p.effective_max(), DEFAULT_MAX_INSPECT_BYTES);
+        p.max_inspect_bytes = usize::MAX;
+        assert_eq!(p.effective_max(), MAX_INSPECT_BYTES_CEILING);
+        p.max_inspect_bytes = 10;
+        assert_eq!(p.effective_max(), 10);
+    }
+
     #[test]
     fn engine_empty_regex_rejected_at_compile() {
         let res = DlpEngine::compile(DlpPolicy {
             rules: vec![DlpRule {
                 rule_id: "r1".to_string(),
-                detector: "regex".to_string(),
+                detector: "custom_regex".to_string(),
                 pattern: String::new(),
                 mode: DlpMode::Block,
                 threshold: 1,

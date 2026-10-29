@@ -1,0 +1,4 @@
+{
+  "_comment": "DLP detector names (ADR 0030). The control-plane (validDetectors, DB CHECK in migration 0028) and the runtime-manager (dlp::DETECTORS) must agree exactly; both test suites read this file. Change all three together.",
+  "detectors": ["card_number", "secret_key", "email", "phone", "custom_regex"]
+}
