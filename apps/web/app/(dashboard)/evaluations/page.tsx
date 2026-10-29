@@ -383,10 +383,10 @@ export default function EvaluationsPage() {
     return {
       dailyLabels: labels,
       dailySeries: [
-        { name: "Runs", values: runsByDay, color: "var(--lx-glass)" },
+        { name: "Runs", values: runsByDay, color: "var(--rt-indigo)" },
         // Scale cost x100 so $0.42 and 42 runs visually coexist; tooltip
         // formatter undoes the scale below.
-        { name: "Cost (¢)", values: costByDay.map((c) => c * 100), color: "var(--lx-flame)" },
+        { name: "Cost (¢)", values: costByDay.map((c) => c * 100), color: "var(--color-pal-500)" },
       ],
     };
   }, [filteredRuns, timeRange]);

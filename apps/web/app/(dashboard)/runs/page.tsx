@@ -110,7 +110,7 @@ export default function RunsPage() {
           <div className="relative w-full sm:w-auto">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input type="text" placeholder="Search runs…" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
-              className="h-9 w-full rounded-lg border sm:w-56 border-zinc-800 bg-surface-0 pl-9 pr-3 text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 outline-none" />
+              className="h-9 w-full rounded-lg border sm:w-56 border-zinc-800 bg-surface-0 pl-9 pr-3 text-sm text-zinc-300 placeholder:text-zinc-600 focus:border-pal-500/50 outline-none" />
           </div>
           <Filter className="hidden h-4 w-4 text-zinc-500 sm:block" />
           <select value={agentFilter} onChange={(e) => { setAgentFilter(e.target.value); setPage(0); }}
@@ -241,7 +241,7 @@ function RunGroup({
         ) : (
           <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
         )}
-        <Layers className="h-3.5 w-3.5 text-lantern-400 shrink-0" />
+        <Layers className="h-3.5 w-3.5 text-pal-400 shrink-0" />
         <span className="min-w-0 truncate text-xs font-medium text-zinc-200">{agg.agentLabel}</span>
         <StatusBadge status={agg.status} />
         <span className="shrink-0 rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
@@ -295,7 +295,7 @@ function RunRow({
           onClick={() => onToggleRun(run.id)}
           onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggleRun(run.id); } }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/40 sm:gap-3 sm:px-4"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg outline-none focus-visible:ring-2 focus-visible:ring-pal-500/40 sm:gap-3 sm:px-4"
         >
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
           <AgentAvatar name={run.agentName} status={run.status} size="sm" />
@@ -343,7 +343,7 @@ function RunRow({
               <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
             </div>
           ) : run.status === "running" ? (
-            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
+            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-pal-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
           ) : <p className="text-xs text-zinc-600">No output available.</p>}
         </div>
       )}

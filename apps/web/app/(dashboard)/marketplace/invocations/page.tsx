@@ -101,7 +101,7 @@ export default function InvocationsPage() {
         ) : invocations.length === 0 ? (
           <div className="rounded-xl border border-zinc-800 bg-surface-1 p-8 text-center text-[12px] text-zinc-500">
             No {role}-side invocations yet. {role === "buyer"
-              ? <>Discover agents in <Link href="/marketplace" className="text-lantern-400 hover:text-lantern-300">the marketplace</Link>.</>
+              ? <>Discover agents in <Link href="/marketplace" className="text-pal-400 hover:text-pal-300">the marketplace</Link>.</>
               : "Publish an agent so others can invoke it."}
           </div>
         ) : (
@@ -123,7 +123,7 @@ function RolePill({ active, onClick, label }: { active: boolean; onClick: () => 
       className={clsx(
         "rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
         active
-          ? "border-lantern-500/40 bg-lantern-500/10 text-lantern-200"
+          ? "border-pal-500/40 bg-pal-500/10 text-pal-200"
           : "border-zinc-800 bg-surface-1 text-zinc-400 hover:text-zinc-200"
       )}
     >
@@ -160,7 +160,7 @@ function InvocationRow({ inv, role }: { inv: Invocation; role: Role }) {
       )}
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 text-[14px] text-zinc-100">
-          <Link href={`/marketplace/${inv.marketplaceSlug}`} className="font-semibold hover:text-lantern-300">
+          <Link href={`/marketplace/${inv.marketplaceSlug}`} className="font-semibold hover:text-pal-300">
             {inv.marketplaceSlug}
           </Link>
           <span className="text-zinc-700">·</span>

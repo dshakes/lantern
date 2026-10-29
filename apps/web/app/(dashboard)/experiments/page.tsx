@@ -190,7 +190,7 @@ export default function ExperimentsPage() {
                 onChange={(e) =>
                   setCreating({ ...creating, agentName: e.target.value })
                 }
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
               >
                 <option value="">Select an agent...</option>
                 {agents.map((a) => (
@@ -208,7 +208,7 @@ export default function ExperimentsPage() {
                   setCreating({ ...creating, name: e.target.value })
                 }
                 placeholder="e.g. v2-prompt-tweak"
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
               />
             </ModalField>
             <div className="grid grid-cols-2 gap-3">
@@ -222,7 +222,7 @@ export default function ExperimentsPage() {
                       variantAVersion: e.target.value,
                     })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-pal-500"
                 />
               </ModalField>
               <ModalField label="Variant B (challenger)">
@@ -236,7 +236,7 @@ export default function ExperimentsPage() {
                     })
                   }
                   placeholder="v0.3.0"
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-pal-500"
                 />
               </ModalField>
             </div>
@@ -255,7 +255,7 @@ export default function ExperimentsPage() {
                     trafficSplitB: parseInt(e.target.value, 10),
                   })
                 }
-                className="w-full accent-lantern-500"
+                className="w-full accent-pal-500"
               />
               <div className="mt-1 flex justify-between font-mono text-[11px] text-zinc-600">
                 <span>1%</span>
@@ -274,7 +274,7 @@ export default function ExperimentsPage() {
                       autoPromote: e.target.checked,
                     })
                   }
-                  className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-lantern-500"
+                  className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-pal-500"
                 />
                 <span className="flex items-center gap-1.5">
                   Auto-promote
@@ -334,7 +334,7 @@ function ExperimentCard({
       case "running":
         return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
       case "promoted":
-        return "bg-lantern-500/10 text-lantern-300 border-lantern-500/20";
+        return "bg-pal-500/10 text-pal-300 border-pal-500/20";
       case "concluded":
         return "bg-zinc-800 text-zinc-400 border-zinc-700";
       default:

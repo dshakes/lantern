@@ -9,7 +9,7 @@
 // actual agent record is re-fetched from the API on hit so the cache
 // never goes stale.
 
-const KEY = "lantern_last_agent";
+const KEY = "pal_last_agent";
 
 export function getLastAgent(): string | null {
   if (typeof window === "undefined") return null;
