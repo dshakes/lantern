@@ -60,14 +60,14 @@ The SDKs are not on a registry yet; install from a checkout (`npm install /path/
 ```ts
 import { LanternClient } from "@lantern/sdk";
 
-const lantern = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.LANTERN_API_KEY });
+const lantern = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.PAL_API_KEY });
 
 await lantern.agents.create({ name: "triage", description: "Classifies support emails" });
 await lantern.budgets.upsert("triage", { maxCostUsdPerDay: 25, hardFail: true });
 const run = await lantern.runs.create({ agent: "triage", input: { email: "..." } }); // 402 if over the daily cap
 ```
 
-Pass `baseUrl` (or set `LANTERN_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
+Pass `baseUrl` (or set `PAL_API_URL`): the client's default is not your self-hosted stack. Python and Go SDKs cover the same management surface.
 
 ## What is in this repo
 

@@ -9,7 +9,7 @@
 Most "real" agent examples start from someone else's event: a GitHub PR, a Sentry
 alert, a PagerDuty incident. Today the only ways to start a run are an authenticated
 `POST /v1/runs`, a cron schedule, or a messaging surface. None of those lets GitHub
-start a run, because GitHub cannot hold a Lantern JWT or API key.
+start a run, because GitHub cannot hold a PAL Runtime JWT or API key.
 
 A webhook endpoint is a **new unauthenticated ingress** that creates runs, which spend
 the tenant's LLM budget. Whoever can make a request look valid can spend another
@@ -56,12 +56,12 @@ and inline execution all apply unchanged. The run is stamped `trigger_kind = web
 If creation fails, the delivery row is removed so the provider's own retry can succeed later.
 
 **Limits.** Body capped at 1 MiB (`413`). Each trigger is rate-limited after signature
-verification (`LANTERN_HOOK_RATE_PER_MIN`, default 60; `429`), so an unauthenticated
+verification (`PAL_HOOK_RATE_PER_MIN`, default 60; `429`), so an unauthenticated
 flood cannot exhaust a legitimate sender's allowance. The limiter is per replica; the
 per-IP edge limit is a separate concern.
 
-**Secrets.** Stored with `internal/secrets` (AES-256-GCM when `LANTERN_CREDENTIAL_KEY`
-is set). Shown once on create (when Lantern generates it), never returned by list/get,
+**Secrets.** Stored with `internal/secrets` (AES-256-GCM when `PAL_CREDENTIAL_KEY`
+is set). Shown once on create (when PAL Runtime generates it), never returned by list/get,
 never logged (invariant #10). Sentry and PagerDuty generate their own signing secrets,
 so `PATCH` accepts a replacement secret.
 

@@ -10,7 +10,7 @@
 Enterprise procurement gates on two identity requirements the current stack does
 not meet: **SAML SSO** against the customer's IdP (Okta, Azure AD/Entra,
 Ping) and **SCIM lifecycle provisioning** so that deactivating a user in the IdP
-deactivates them in Lantern. This is table stakes above a certain deal size and
+deactivates them in PAL Runtime. This is table stakes above a certain deal size and
 usually appears on the same checklist as SOC 2 (ADR 0018, CC6.2).
 
 What exists today (grounded):

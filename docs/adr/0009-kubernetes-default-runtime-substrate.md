@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-18
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, isolation, scheduling, kubernetes, security
 - **Supersedes (in part):** the class→backend mapping in [ADR 0002](0002-runtime-class-per-workload.md)
 - **Related:** [18-agent-runtime-nextgen](../architecture/18-agent-runtime-nextgen.md), [04-runtime-isolation](../architecture/04-runtime-isolation.md), [17-deployment-model](../architecture/17-deployment-model.md)
@@ -19,7 +19,7 @@ on anything that is not a microVM backend.
 
 Three things changed since ADR 0002 (2026-05-12):
 
-1. **Lantern's deployment model is Kubernetes.** The data plane runs in the
+1. **PAL Runtime's deployment model is Kubernetes.** The data plane runs in the
    customer's VPC on EKS/GKE/AKS ([17-deployment-model](../architecture/17-deployment-model.md)).
    Running Firecracker as the *primary* path requires bare-metal / nested-virt nodes
    the customer must provision and operate separately from their cluster — friction
