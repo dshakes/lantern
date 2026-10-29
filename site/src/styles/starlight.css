@@ -1,0 +1,101 @@
+/* Starlight theme mapped onto the PAL tokens (tokens.css), so docs match the landing page. */
+:root {
+  --sl-font: var(--p-font);
+  --sl-font-mono: var(--p-mono);
+  --sl-color-accent-low: #2b1d0a;
+  --sl-color-accent: #f5a524;
+  --sl-color-accent-high: #ffd08a;
+  --sl-color-white: #fafaf8;
+  --sl-color-gray-1: #e6e6e3;
+  --sl-color-gray-2: #b9bac0;
+  --sl-color-gray-3: #9496a0;
+  --sl-color-gray-4: #555761;
+  --sl-color-gray-5: #2a2c33;
+  --sl-color-gray-6: #17181d;
+  --sl-color-gray-7: #111216;
+  --sl-color-black: #0b0c0f;
+  --sl-color-bg-nav: color-mix(in srgb, #0b0c0f 84%, transparent);
+  --sl-color-bg-sidebar: #0b0c0f;
+  --sl-color-hairline: rgba(250, 250, 248, 0.07);
+  --sl-color-hairline-light: rgba(250, 250, 248, 0.11);
+  --sl-text-h1: 2.5rem;
+  --sl-text-h2: 1.7rem;
+  --sl-text-h3: 1.3rem;
+  --sl-line-height-headings: 1.15;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fbe9cf;
+  --sl-color-accent: #a8460a;
+  --sl-color-accent-high: #6e2a04;
+  --sl-color-white: #0b0c0f;
+  --sl-color-gray-1: #23252b;
+  --sl-color-gray-2: #45474e;
+  --sl-color-gray-3: #5c5f68;
+  --sl-color-gray-4: #9a9ca3;
+  --sl-color-gray-5: #e2e1dc;
+  --sl-color-gray-6: #f1f0ec;
+  --sl-color-gray-7: #f6f5f2;
+  --sl-color-black: #fafaf8;
+  --sl-color-bg-nav: color-mix(in srgb, #fafaf8 86%, transparent);
+  --sl-color-bg-sidebar: #fafaf8;
+  --sl-color-hairline: rgba(11, 12, 15, 0.08);
+  --sl-color-hairline-light: rgba(11, 12, 15, 0.12);
+}
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-feature-settings: 'cv11', 'ss01'; }
+header.header { backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); border-bottom: 1px solid var(--sl-color-hairline); }
+/* search: a command palette */
+site-search button[data-open-modal] { border-radius: 10px; border-color: var(--sl-color-hairline-light); background: var(--sl-color-gray-6); transition: border-color .15s; }
+site-search button[data-open-modal]:hover { border-color: color-mix(in srgb, var(--p-amber) 55%, transparent); }
+site-search button[data-open-modal] kbd { border-radius: 6px; border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-black); font-family: var(--p-mono); }
+site-search dialog { border-radius: 18px; border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-black); box-shadow: 0 40px 120px -30px rgba(0,0,0,.6); }
+site-search :is(#starlight__search, .pagefind-ui) {
+  --pagefind-ui-primary: var(--sl-color-accent); --pagefind-ui-text: var(--sl-color-white); --pagefind-ui-background: transparent;
+  --pagefind-ui-border: var(--sl-color-hairline-light); --pagefind-ui-border-radius: 12px; --pagefind-ui-font: var(--p-font); }
+site-search .pagefind-ui__result { border-radius: 12px; padding: 0.9rem 1rem; }
+site-search mark { background: color-mix(in srgb, var(--p-amber) 35%, transparent); color: inherit; border-radius: 3px; }
+/* sidebar: quiet group labels, a pill for the current page */
+.sidebar-pane { border-inline-end: 1px solid var(--sl-color-hairline); }
+nav.sidebar summary .large { font-size: 0.76rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+nav.sidebar a { border-radius: 8px; font-size: 0.92rem; font-weight: 500; color: var(--sl-color-gray-2); transition: background .15s, color .15s; }
+nav.sidebar a:hover { color: var(--sl-color-white); background: var(--sl-color-gray-6); }
+nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 600; }
+/* content typography */
+.sl-markdown-content { line-height: 1.72; }
+.sl-markdown-content :is(h1, h2, h3, h4), .content-panel h1#_top { font-family: var(--p-display); letter-spacing: -0.03em; font-weight: 650; }
+.content-panel h1#_top { font-size: clamp(2rem, 5vw, var(--sl-text-h1)); }
+.sl-markdown-content a { text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 45%, transparent); text-underline-offset: 3px; }
+.sl-markdown-content a:hover { text-decoration-color: var(--sl-color-accent); }
+.sl-markdown-content :not(pre) > code { padding: 0.12em 0.4em; border-radius: 6px; background: var(--sl-color-gray-6); border: 1px solid var(--sl-color-hairline-light); font-size: 0.86em; overflow-wrap: anywhere; }
+.sl-markdown-content table { display: table; width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; overflow: hidden; font-size: 0.92rem; }
+.sl-markdown-content :is(th, td) { border: 0; border-bottom: 1px solid var(--sl-color-hairline); padding: 0.6rem 0.9rem; }
+.sl-markdown-content tr:last-child td { border-bottom: 0; }
+.sl-markdown-content th { background: var(--sl-color-gray-6); font-weight: 600; color: var(--sl-color-white); }
+/* phones: tables with a header row become stacked cards (cells are labelled by
+   their column via data-label, added by the head script in astro.config.mjs);
+   anything else scrolls inside its own frame. */
+@media (max-width: 40rem) {
+  .sl-markdown-content table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sl-markdown-content table.stack { overflow: visible; border: 0; border-radius: 0; }
+  .sl-markdown-content table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .sl-markdown-content table.stack :is(tbody, tr, td) { display: block; }
+  .sl-markdown-content table.stack tr { margin-bottom: 0.75rem; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; overflow: hidden; background: var(--sl-color-gray-7); }
+  .sl-markdown-content table.stack td { padding: 0.45rem 0.9rem; border-bottom: 1px solid var(--sl-color-hairline); overflow-wrap: anywhere; }
+  .sl-markdown-content table.stack td:first-child { background: var(--sl-color-gray-6); font-weight: 600; color: var(--sl-color-white); }
+  .sl-markdown-content table.stack td:first-child::before { display: none; }
+  .sl-markdown-content table.stack td:last-child { border-bottom: 0; }
+  .sl-markdown-content table.stack td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; font-weight: 600; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.05rem; }
+}
+.sl-markdown-content blockquote { border-inline-start: 3px solid var(--sl-color-accent); background: var(--sl-color-gray-6); border-radius: 0 10px 10px 0; padding: 0.6rem 1rem; }
+.starlight-aside { border-radius: 12px; border-inline-start-width: 3px; }
+.card, .sl-link-card { border-radius: 14px; border-color: var(--sl-color-hairline-light); }
+.pagination-links a { border-radius: 12px; border-color: var(--sl-color-hairline-light); }
+.pagination-links a:hover { border-color: var(--sl-color-accent); }
+/* diagrams: theme pairs. Unlayered, so restate Starlight's theme hiding at higher specificity. */
+.sl-markdown-content img.diagram { display: block; max-width: 100%; height: auto; margin: 1.75rem auto; }
+[data-theme='light'] .sl-markdown-content .dark-only,
+[data-theme='dark'] .sl-markdown-content .light-only,
+[data-theme='light'] img.diagram.light\:sl-hidden,
+[data-theme='dark'] img.diagram.dark\:sl-hidden { display: none; }
+.sl-markdown-content pre { max-width: 100%; overflow-x: auto; }
+:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

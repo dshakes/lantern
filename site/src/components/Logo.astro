@@ -1,0 +1,25 @@
+---
+// The ONE place the pal mark lives in pages ("Held": the ember dot held in the
+// bowl of the a). Strokes use currentColor so the logo follows the theme.
+// Static copies for README / external use are in public/brand/.
+// variant="runtime" prefixes the PAL Runtime sub-mark (Strata: three offset
+// bars, the top one breaking into the dot) and sets "runtime" as real text.
+// ponytail: geometry mirrors public/brand/lockup.svg (a–l gap opened 3 units
+// for optical spacing); change both together.
+interface Props { size?: number; variant?: 'pal' | 'runtime'; class?: string }
+const { size = 24, variant = 'pal', class: cls } = Astro.props;
+const label = variant === 'runtime' ? 'PAL Runtime' : 'pal';
+---
+<span class:list={['pal-logo', cls]} style={`--s:${size}px`} role="img" aria-label={label}>
+  {variant === 'runtime' && (
+    <svg class="strata" viewBox="4 10 54 46" aria-hidden="true"><g fill="currentColor"><rect x="6" y="44" width="44" height="10" rx="5"/><rect x="12" y="29" width="40" height="10" rx="5"/><rect x="18" y="14" width="22" height="10" rx="5"/></g><circle cx="51" cy="19" r="5.5" fill="#ff5b2e"/></svg>
+  )}
+  <svg class="word" viewBox="-4 -4 113 72" aria-hidden="true"><g stroke="currentColor" fill="none" stroke-width="8" stroke-linecap="round"><path d="M6 19 V62 M82 19 V49 M101 4 V49"/><circle cx="21" cy="34" r="15"/><circle cx="67" cy="34" r="15"/></g><circle cx="67" cy="34" r="6" fill="#ff5b2e"/></svg>
+  {variant === 'runtime' && <span class="rt" aria-hidden="true">runtime</span>}
+</span>
+<style>
+  .pal-logo { display: inline-flex; align-items: center; gap: calc(var(--s) * 0.32); line-height: 1; color: var(--p-text, var(--sl-color-white)); }
+  .word { height: calc(var(--s) * 1.15); width: auto; aspect-ratio: 113 / 72; flex: none; overflow: visible; }
+  .strata { height: calc(var(--s) * 0.92); width: auto; aspect-ratio: 54 / 46; flex: none; }
+  .rt { font-family: var(--p-display, 'Inter Tight Variable', system-ui, sans-serif); font-weight: 600; font-size: calc(var(--s) * 0.9); letter-spacing: -0.03em; color: var(--p-text-2, var(--sl-color-gray-2)); }
+</style>

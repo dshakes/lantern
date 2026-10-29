@@ -249,21 +249,23 @@ mode_kind() {
     # -- Step 2: Build Docker images ---------------------------------------
     header "Building Docker images"
     local images=(
-        "lantern-control-plane:${REPO_ROOT}/services/control-plane"
-        "lantern-gateway:${REPO_ROOT}/services/gateway"
-        "lantern-model-router:${REPO_ROOT}/services/model-router"
-        "lantern-web:${REPO_ROOT}/apps/web"
+        "lantern-control-plane:${REPO_ROOT}/services/control-plane:${REPO_ROOT}"
+        "lantern-gateway:${REPO_ROOT}/services/gateway:${REPO_ROOT}/services/gateway"
+        "lantern-model-router:${REPO_ROOT}/services/model-router:${REPO_ROOT}/services/model-router"
+        "lantern-web:${REPO_ROOT}/apps/web:${REPO_ROOT}/apps/web"
     )
 
     for entry in "${images[@]}"; do
         local img="${entry%%:*}"
-        local ctx="${entry#*:}"
-        if [[ -f "${ctx}/Dockerfile" ]]; then
+        local rest="${entry#*:}"
+        local dir="${rest%%:*}"   # dir holding the Dockerfile
+        local ctx="${rest#*:}"    # build context (repo root for Go services using replace ../../gen/go)
+        if [[ -f "${dir}/Dockerfile" ]]; then
             info "Building ${img}..."
-            docker build -t "${img}:dev" "${ctx}" || { warn "Failed to build ${img}, skipping"; continue; }
+            docker build -t "${img}:dev" -f "${dir}/Dockerfile" "${ctx}" || { warn "Failed to build ${img}, skipping"; continue; }
             success "Built ${img}:dev"
         else
-            warn "No Dockerfile for ${img} at ${ctx}/Dockerfile, skipping"
+            warn "No Dockerfile for ${img} at ${dir}/Dockerfile, skipping"
         fi
     done
 

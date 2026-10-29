@@ -34,7 +34,7 @@ We use four languages, each in the layer where it is unambiguously the best choi
 
 - **Go** — `control-plane`, `workflow-engine`, `memory`, `notifier`, `billing`, `scheduler`, `cli`, `sdk-go`
 - **Rust** — `runtime-manager`, `gateway`, `model-router`, snapshotter binaries
-- **TypeScript / Next.js 15** — `apps/web`, `apps/landing`, `apps/docs`, `packages/sdk-ts`
+- **TypeScript / Next.js 15** — `apps/web`, `packages/sdk-ts` (landing/docs moved to `site/`, see note below)
 - **Python** — `packages/sdk-python`
 
 A single source of truth for cross-service types lives in `packages/proto/` (protobuf3) and codegens to all four languages.
@@ -82,3 +82,6 @@ Bun is fast but not predictable; we need 99th percentile latency guarantees on t
 - `CLAUDE.md` — repo conventions
 - Vercel AI Gateway docs (referenced design pattern)
 - Firecracker (Rust) — why the runtime manager must speak Rust natively
+
+
+> **Note (2026-10-29):** the Next.js landing and docs apps were removed; the website now lives in `site/` (Astro + Starlight). Not a language-stack change for the control plane or dashboard.

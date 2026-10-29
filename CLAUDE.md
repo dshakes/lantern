@@ -22,7 +22,8 @@ This is a **polyglot monorepo on purpose**. Pick the right tool for the layer; d
 | -------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------- |
 | Control plane, workflow engine, scheduler, memory, notifier, billing | **Go 1.23**                 | K8s-native, single binary, mature gRPC + Postgres ecosystem   |
 | Gateway, model router, runtime manager, surface gateway              | **Rust 2024**               | Hot path; Firecracker is Rust; predictable latency and memory |
-| Dashboard, landing, docs site                                        | **TypeScript / Next.js 15** | RSC + streaming, our SDK's primary language already           |
+| Dashboard (`apps/web`)                                               | **TypeScript / Next.js 15** | RSC + streaming, our SDK's primary language already           |
+| Website: landing + docs (`site/`)                                    | **Astro + Starlight**       | Static, content-first; replaced the Next.js landing/docs apps |
 | Primary SDK                                                          | **TypeScript**              | Where the agent ecosystem lives                               |
 | Secondary SDKs                                                       | **Python 3.11+**, **Go**    | Python for AI/ML users, Go for infra users                    |
 | CLI (`lantern`)                                                      | **Go / Cobra**              | Static binary, cross-compile easy, reuses our gRPC client     |
@@ -130,7 +131,7 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 
 ```bash
 make dashboard-dev    # Next.js dashboard at localhost:3001
-make landing-dev      # Landing page
+make site-dev         # Website (site/, Astro + Starlight) — landing + docs
 ```
 
 ### Dashboard sidebar (4 primary + Workspace section)
@@ -280,7 +281,7 @@ for `open` in prod). Mailer: `LANTERN_MAILER` = `log` (default) / `smtp` / `http
 sign-up and `LANTERN_MAILER=log` refuses to start (`CheckSignupConfig`). Pre-auth routes are
 Redis rate-limited per IP (+ email), fail-open on Redis errors;
 `LANTERN_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
-`apps/docs/app/accounts/page.tsx`.
+`site/src/content/docs/docs/` (accounts page).
 
 **Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `LANTERN_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `LANTERN_FREE_TIER_MAX_VMS` (2), `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
 
@@ -593,7 +594,7 @@ Not enforced: the per-run cap on single-call paths (only a post-run
 `succeeded`-run history), projected cost at run create, failed runs toward
 runs/day (only successes count; a workflow run counts once on success),
 `toolLimits` outside workflows, `notifyAtPct` alerts. Matrix:
-`apps/docs/app/budgets/page.tsx`.
+`site/src/content/docs/docs/` (budgets page).
 
 ### Eval suites + CI gating (wedge #2)
 
@@ -2136,7 +2137,7 @@ The four-Makefile-target dance below still works for power users, but
 | `make run-api`             | Control-plane with dev env vars on `:8080` (host go run)  |
 | `make dashboard-dev`       | Next.js dashboard on `:3001`                              |
 | `make run-whatsapp-bridge` | WhatsApp bridge on `:3100`                                |
-| `make landing-dev`         | Landing page dev server                                   |
+| `make site-dev`            | Website dev server (`site/`, Astro + Starlight)           |
 | `make build`               | Compile Go + Rust + TypeScript                            |
 | `make proto`               | Regenerate from proto definitions                         |
 | `make test`                | All test suites (Go × 4 services, Rust × 3, TS × 2, Python × 1) |

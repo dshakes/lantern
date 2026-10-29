@@ -1,0 +1,229 @@
+---
+title: Evaluations
+description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
+sidebar:
+  order: 7
+---
+
+Test agents against fixed cases, fail CI on regressions, split traffic between versions, and collect human feedback. All of it is on the same REST API the dashboard uses.
+
+Change a prompt and the agent may get worse. An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower, so CI fails before users see it.
+
+## Eval suites
+
+A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object (e.g. `{"contains":"1945"}`, or `{"grounded":true}` to fail outputs that claim actions nothing backed). Suites are upserted by `(tenant, agent, name)`.
+
+### Create or update a suite
+
+```http
+POST /v1/eval-suites
+{
+  "agentName": "research-agent",
+  "name": "factual-accuracy",
+  "cases": [
+    {
+      "name": "case-1",
+      "input": "What year did WWII end?",
+      "expected": "1945",
+      "assert": { "contains": "1945" }
+    }
+  ]
+}
+
+Response: 200 OK
+{ "id": "suite-uuid", "agentName": "research-agent", "name": "factual-accuracy" }
+```
+
+### Other suite endpoints
+
+```http
+GET    /v1/eval-suites              — list all suites (bare array)
+GET    /v1/eval-suites?agentName=  — filter by agent
+GET    /v1/eval-suites/{id}        — get suite
+DELETE /v1/eval-suites/{id}        — delete suite
+```
+
+## Recording a run and the CI gate
+
+Run the agent on each case yourself (or use `lantern test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the branch baseline. A regression returns **HTTP 422**, which fails a CI step.
+
+```http
+POST /v1/eval-runs
+{
+  "suiteId": "suite-uuid",
+  "agentVersion": "v2",
+  "commitSha": "abc1234",
+  "branch": "main",
+  "durationMs": 4200,
+  "totalCostUsd": 0.12,
+  "caseResults": [
+    { "name": "case-1", "passed": true, "score": 0.95, "actual": "1945" }
+  ]
+}
+
+Response: 200 OK — no regression
+{ "id": "run-uuid", "passed": true, "score": 0.95, "casesTotal": 1,
+  "casesPassed": 1, "regressed": false, "baselineScore": 0.94 }
+
+Response: 422 Unprocessable Entity — regressed vs. baseline
+{ "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94, ... }
+```
+
+A complete pipeline (run, post, stop on 422, deploy, receipt) is in the [Eval-gated deploy](/lantern/docs/start/examples/) example.
+
+```http
+GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)
+```
+
+## Baselines
+
+Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `lantern test --agent a --suite s --set-baseline`.
+
+```http
+POST /v1/eval-baselines
+{ "agentName": "research-agent", "branch": "main", "evalRunId": "run-uuid" }
+
+GET /v1/eval-baselines?agentName=research-agent&branch=main
+```
+
+## Eval observability
+
+Two read-only endpoints over existing `eval_runs` data for the dashboard quality-trend sparkline and top-failing-cases view.
+
+### Failure clusters
+
+```http
+GET /v1/eval-observability/failures?agentName=research-agent&branch=main&limit=50
+
+Response:
+{
+  "clusters": [
+    {
+      "case": "What year did WWII end?",
+      "failures": 3,
+      "seen": 5,
+      "failRate": 0.6,
+      "sampleError": "Agent said 1944 instead of 1945",
+      "firstSeen": "2026-07-01T...",
+      "lastSeen": "2026-07-20T..."
+    }
+  ],
+  "runsScanned": 50
+}
+```
+
+### Score trend
+
+```http
+GET /v1/eval-observability/trends?agentName=research-agent&branch=main
+
+Response:
+{
+  "points": [
+    {
+      "runId": "run-uuid",
+      "createdAt": "2026-07-01T...",
+      "score": 0.94,
+      "passRate": 0.9,
+      "passed": 9,
+      "costUsd": 0.12,
+      "agentVersion": "v1",
+      "commitSha": "abc1234"
+    }
+  ],
+  "latestVsMean": -0.03,
+  "regressing": true
+}
+```
+
+## A/B experiments
+
+Split traffic between two agent versions. The split is deterministic (FNV-1a hash of the run ID), so a run always lands on the same variant. Record a score per run; with `autoPromote` on, PAL promotes the winner once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
+
+### Create an experiment
+
+```http
+POST /v1/experiments
+{
+  "agentName": "research-agent",
+  "name": "prompt-v2-test",
+  "variantAVersion": "v1",
+  "variantBVersion": "v2",
+  "trafficSplitB": 20,        // percent of traffic to B (0-100)
+  "autoPromote": true,        // promote the leader at +0.02 score
+  "minRunsToPromote": 100     // per arm; default 100
+}
+
+Response: 201 Created
+{ "id": "exp-uuid", "status": "running", ... }
+```
+
+### Record an outcome
+
+```http
+POST /v1/experiments/{id}/record
+{
+  "variant": "b",   // "a" | "b"
+  "score": 0.95     // 0-1; the stored score is a running mean per variant
+}
+
+// Auto-promotion fires when:
+// - both arms have >= minRunsToPromote runs
+// - one arm's mean score beats the other by more than 0.02
+```
+
+### Conclude manually
+
+```http
+POST /v1/experiments/{id}/conclude
+{
+  "winner": "b",     // "a" | "b" | "tie"
+  "promote": true    // flip the agent's current version to the winner
+}
+```
+
+### Other experiment endpoints
+
+```http
+GET /v1/experiments         — list (bare array)
+GET /v1/experiments/{id}    — get with aScore / bScore and run counts
+```
+
+## Human feedback
+
+Collect thumbs-up / thumbs-down reactions on individual runs. Score is 1–5; 4–5 is positive, 1–2 is negative. Runs scored 2 or lower are pulled in by rehearsals.
+
+```http
+POST /v1/runs/{id}/feedback
+{
+  "score": 2,
+  "comment": "The agent missed the follow-up question",
+  "preferredOutput": "It should have asked for clarification first"
+}
+
+GET /v1/runs/{id}/feedback                   — per-run history (bare array)
+GET /v1/agents/{name}/feedback               — aggregate summary
+  → { totalFeedback, avgScore, thumbsUp, thumbsDown, last7DaysAvgScore, ... }
+```
+
+## Rehearsals
+
+Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `lantern test --rehearse` runs them.
+
+```http
+POST /v1/runs/rehearse
+{
+  "agentName": "research-agent",
+  "window": "7d",            // look-back (default 7d)
+  "limit": 20,               // default 25, max 200
+  "includeFailures": true,   // status=failed runs (default true)
+  "includeLowScore": true    // feedback score <= 2 (default true)
+}
+
+Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
+  "expectedOutput", ... }], "count", "reason"? }
+```
+
+## OTel traces
+
+Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `LANTERN_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.

@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 WORKDIR /app
 
 # Copy the gen/go module that we depend on via replace directive.

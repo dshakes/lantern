@@ -1,0 +1,71 @@
+---
+title: Verifiable receipts
+description: Signed, tamper-evident, offline-verifiable proof of what a run executed.
+sidebar:
+  order: 12
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+When a headless agent finishes, you can ask the runtime for a **signed receipt**: tamper-evident, offline-verifiable proof of what actually ran. The receipt is signed over the run's journal hash, so any post-hoc edit to the run's event log invalidates the signature.
+
+A receipt is proof, not a promise. When an agent claims it did the task, the receipt lets anyone (an auditor, a customer, a counterparty who doesn't trust you) check that claim: which agent ran, what it cost, and that nobody edited the record afterward. Verification needs no account and no running server; the signature either checks out or it doesn't.
+
+## What a receipt attests
+
+The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/lantern/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
+
+## Payload fields
+
+The signature (**Ed25519** when `LANTERN_RECEIPT_ED25519_SEED` is set) covers the canonical JSON of a `receiptPayload` struct with these fields (alphabetically sorted keys, compact JSON, no whitespace):
+
+- `agentName`: always present.
+- `agentVersion`: omitted when blank.
+- `costUsd`: accumulated cost for the run.
+- `issuedAt`: RFC3339 timestamp.
+- `journalHash`: SHA-256 of the ordered `journal_events` rows.
+- `model` / `provider`: reserved; currently always omitted.
+- `runId`: always present.
+- `status`: the run's status at issuance (for example `succeeded`, `failed`, `cancelled`; issuing on a non-terminal run is not refused).
+- `tenantId`: always present.
+- `tokensIn` / `tokensOut`: prompt and completion token counts.
+- `version`: schema version (currently `1`).
+- `confidentialCompute`: present only for confidential runs (`attested: false`: the launch measurement is recorded, not verified).
+
+The canonical JSON is produced by a three-step round-trip: marshal the struct, unmarshal into `map[string]any`, re-marshal (Go sorts map keys alphabetically on re-marshal). The result is compact JSON with keys in alphabetical order, reproducible offline with any JSON library that sorts keys.
+
+## Issuing a receipt
+
+Issue and persist a signed receipt for a completed run:
+
+```
+POST /v1/runs/{id}/receipt
+```
+
+The receipt is an **Ed25519** signature over the journal hash. It is persisted alongside the run, so it can be retrieved and re-verified later.
+
+Verify with `POST /v1/runs/receipts/verify` (no auth required). If `LANTERN_RECEIPT_ED25519_SEED` is unset, the control plane falls back to an HMAC-SHA256 signature for dev. Set the seed in any real deployment.
+
+## Verifying offline
+
+Verification needs no privileged access. The signing key's algorithm, fingerprint and (for Ed25519) public key are published at a well-known endpoint, so an external party can verify a receipt without calling back into your control plane:
+
+```
+GET /.well-known/lantern-receipts
+```
+
+Anyone holding an Ed25519 receipt and the public key published there can confirm the receipt was signed by this deployment's key. Matching the journal hash against the run's actual event log (that is, confirming nothing was altered after the fact) additionally requires the run's journal export. An HMAC-SHA256 receipt can only be checked by the deployment that holds the secret.
+
+<Aside>
+A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/lantern/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
+</Aside>
+
+You do not need a terminal to check one: the dashboard's public `/proof` page (no sign-in) accepts a receipt and calls `POST /v1/runs/receipts/verify`, which needs no auth either.
+
+## Why it matters
+
+- **Provenance.** Cryptographic proof of exactly which steps a run executed.
+- **Tamper-evidence.** Editing the journal after the fact invalidates the signature.
+- **Offline verification.** The key fingerprint at `/.well-known/lantern-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
+
+Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/lantern/docs/reference/api/) for the full request/response shape.

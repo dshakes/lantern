@@ -1,0 +1,12 @@
+---
+// Starlight's site title, rendered with the shared PAL logo. Links to the landing page.
+import Logo from './Logo.astro';
+const home = import.meta.env.BASE_URL;
+---
+<a href={home} class="site-title" aria-label="pal home"><Logo size={22} /></a>
+<a href={`${home}docs/`} class="docs-tag">docs</a>
+<style>
+  .site-title { display: inline-flex; align-items: center; text-decoration: none; min-height: 44px; }
+  .docs-tag { align-self: center; margin-inline-start: 0.6rem; padding: 0.15rem 0.5rem; border: 1px solid var(--sl-color-hairline-light); border-radius: 999px; font-family: var(--sl-font-mono); font-size: 0.72rem; color: var(--sl-color-gray-2); text-decoration: none; }
+  .docs-tag:hover { color: var(--sl-color-accent-high); border-color: var(--sl-color-accent); }
+</style>

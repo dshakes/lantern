@@ -1,8 +1,5 @@
-FROM golang:1.23-alpine AS builder
-WORKDIR /app
-
-# Build context is the repo root (docker build -f services/data-plane-agent/Dockerfile .):
-# the module replaces local modules under ../../ that must be in the context.
+FROM golang:1.26.10-alpine AS builder
+# Build context is the repo root (replace ../../gen/go lives outside the service dir).
 COPY gen/go/ /app/gen/go/
 COPY packages/palenv/ /app/packages/palenv/
 COPY services/data-plane-agent/ /app/services/data-plane-agent/

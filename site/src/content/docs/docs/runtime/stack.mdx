@@ -1,0 +1,104 @@
+---
+title: The stack
+description: The languages, data stores and rules behind PAL Runtime, and why each layer uses the tool it does.
+sidebar:
+  order: 15
+---
+
+Four languages, three data stores, one contract format. This page explains why Rust and Go are both in here: what each piece does and why it went to that tool.
+
+Running other people's agents is three jobs. **Coordinate** (who owns what, what ran, who is billed): Go, for its database and cluster libraries. **Stay fast on every request** (route tokens, hold sandboxes): Rust, with no garbage-collector pauses. **Be easy to build against**: TypeScript, where the AI ecosystem lives. One language does not win all three, so each layer gets its own.
+
+## The rule
+
+Right tool per layer. **Never unify for unification's sake.** Adding a new language requires an ADR ([ADR 0001](https://github.com/dshakes/lantern/blob/master/docs/adr/0001-language-stack.md)). The bar is high: each language adds a CI matrix, a set of security advisories and something new contributors must learn.
+
+## Languages, and the job each one holds
+
+| Layer | Language | Why this one |
+| --- | --- | --- |
+| Control plane, workflow engine, scheduler, memory, billing | **Go 1.23** | Kubernetes is written in Go, so every cluster library is first-class. Compiles to one static binary with no runtime to install. Mature gRPC and Postgres ecosystem. Its concurrency model (goroutines) suits work that is mostly waiting, on a database or on another service. |
+| Gateway, model router, runtime manager, surface gateway | **Rust 2024** | The hot path. Rust has no garbage collector, so there are no unpredictable pauses while a token stream is in flight and latency stays flat instead of spiking. It also frees memory deterministically, which matters for a process babysitting hundreds of sandboxes. Firecracker itself is Rust, so we speak its native language. |
+| Dashboard, landing page, docs site | **TypeScript / Next.js 15** | React Server Components and streaming mean the run waterfall can render tokens as they arrive rather than after. It is the same language as the primary SDK, so types flow straight through. |
+| Primary SDK | **TypeScript** | Where the agent ecosystem already lives. |
+| Secondary SDKs | **Python 3.11+**, **Go** | Python for AI/ML users, Go for infra users. |
+| CLI (`lantern`) | **Go / Cobra** | Static binary, trivial cross-compilation to every OS, and it reuses the same gRPC client the services use. |
+| API contracts | **protobuf3** | One source of truth for types that cross a service boundary. Generates Go and TypeScript, so a field rename cannot silently drift between two services. |
+
+## What these things are
+
+| Thing | In one sentence |
+| --- | --- |
+| **gRPC** | How the services call each other: like a web request, but with a schema both sides agreed on in advance, so a typo is a compile error rather than a production page. |
+| **protobuf** | The schema language for those calls. You write the message shape once; code for every language is generated from it. |
+| **Firecracker** | A very small, very fast virtual machine built by AWS to run Lambda. Firecracker's own documentation cites boot in about 125 ms. Untrusted code gets its own kernel, so escaping means breaking the hardware virtualization boundary, not just a container. |
+| **gVisor** | A sandbox that implements the operating system interface in user space. The workload thinks it is talking to Linux; it is talking to an intermediary that only forwards the safe calls. |
+| **Kata Containers** | Containers that are full virtual machines. Broader compatibility than Firecracker; one of the isolation backends the runtime manager can use for untrusted and hostile workloads. |
+| **The harness** | PAL's Rust program that boots as the very first process inside every microVM. It hands out secrets, enforces the egress allowlist, and streams logs and heartbeats home. It is the last trust boundary around the workload. |
+| **Control plane / data plane** | The split between the part that decides (tenants, runs, budgets) and the part that executes (the data plane in your cloud account, where agent code and data live). |
+| **pgvector** | A Postgres extension that stores embeddings and finds similar ones: semantic search without running a separate vector database. |
+| **OTel (OpenTelemetry)** | The vendor-neutral standard for traces and metrics. Every PAL service emits it, so one run can be followed across five services in whatever monitoring tool you already own. |
+| **RLS (Row-Level Security)** | A Postgres feature that filters rows by tenant inside the database itself. When enforcement is on (`LANTERN_RLS_ENFORCE=1`, off by default), tenant isolation survives an application bug: the database refuses to return another tenant's rows. |
+
+## Data stores
+
+Three, and adding a fourth requires an ADR. Between them they cover every current need.
+
+| Store | Holds | Why not something else |
+| --- | --- | --- |
+| **Postgres** (+ pgvector) | Everything durable: tenants, agents, runs, the event journal, budgets, receipts, embeddings. | Transactions, JSONB, and row-level security in one engine. pgvector means no separate vector database. |
+| **Redis** | Caching, rate limiting, queues, and the pub/sub that pushes live run events to the dashboard. | This data is allowed to be lost on restart. Putting it in Postgres would mean paying durability costs for something disposable. |
+| **S3 / MinIO** | Large blobs: agent bundles, microVM snapshots, attachments. | Big binary objects do not belong in a relational database. MinIO is the S3-compatible local stand-in for development. |
+
+## End to end: one sandbox run
+
+What happens between `lantern run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `LANTERN_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
+
+```text
+  you --> CLI / SDK / dashboard                          (Go, TypeScript)
+           |  REST or gRPC, bearer token
+           v
+  1  CONTROL PLANE                                      (Go, :8080 / :50051)
+           |  authenticate, resolve tenant, check budget + quota
+           v
+  2  RUNTIME SCHEDULER                                   (Go, :50055)
+           |  picks a node: warm pool, region, fair share, cost, health
+           v
+  3  RUNTIME MANAGER                                     (Rust, :50054)
+           |  spawns the workload in the isolation class the spec declared
+           |  (Firecracker, Kata, K8s Job, Wasmtime, Docker)
+           v
+  4  HARNESS - PID 1 inside the sandbox                  (Rust)
+           |  enforces the egress allowlist, vends short-lived secrets,
+           |  streams logs, heartbeats, and cost back up
+           v
+     your agent code runs
+
+  results flow back the same way, streaming:
+     harness --> manager --> control plane --> SSE --> dashboard / SDK
+                                  |
+                                  +--> journal_events (Postgres)
+                                       the durable record: replay, receipts, audit
+```
+
+**Workflow runs** add the workflow engine (Go, `:50052`), the only writer of run state, which journals each step so a crash resumes instead of restarting. The **model router** (Rust, `:50053`) maps a capability like `reasoning-large` to a vendor model, with failover and metering. The control plane's inline path calls providers directly unless the router cutover is on.
+
+## The rules that hold it together
+
+The stack choices above only pay off because a handful of boundaries are never crossed. These are load-bearing: breaking one causes an incident, not a bug.
+
+- **The control plane never touches your code.** Only the runtime manager talks to Firecracker, Kata or pods.
+- **One writer for run state.** Services emit events; the workflow engine is the only thing that writes the outcome. No service updates the `runs` table directly.
+- **Anything slow is durable.** If it can take more than 100 ms or calls a model, it becomes a journaled step, idempotent and replayable, so a restart resumes mid-run.
+- **Streaming never buffers.** No service is allowed to collect a whole response and then forward it.
+- **Untrusted code gets a microVM.** Never a bare container. If the node cannot provide isolation for an untrusted or hostile workload, the manager refuses it instead of downgrading.
+- **Models are named by capability, not vendor.** Your code says `reasoning-large`; the router resolves it to a vendor model, so a swap needs no code change.
+- **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application once `LANTERN_RLS_ENFORCE=1` is set.
+- **Secrets never appear in logs, traces, or run state.** Only a `lantern.secret/...` reference travels; it is resolved at the moment of use.
+
+## What this costs
+
+- **Four language toolchains in CI.** Every pull request runs golangci-lint, `cargo clippy -D warnings`, and eslint/tsc. Slower pipeline, more supply-chain surface to audit.
+- **Contract changes are two-step.** Touching a proto means regenerating, then fixing both the Go and the Rust side. Deliberate: the friction is what stops silent drift.
+- **A wider contributor surface.** Nobody is deep in all four. The mitigation is that the boundaries are narrow enough to work in one layer without holding the others in your head.
+- **Rust is slower to write.** It is used only where latency or memory determinism pays for it, never for CRUD.

@@ -1,8 +1,7 @@
 /*
  * Lantern brand tokens — "glass & flame".
- * Canonical source. apps/landing and apps/docs carry a verbatim copy of the
- * :root blocks below in their globals.css (each app builds in its own Docker
- * context, so a cross-app @import would break). Diagram SVGs carry the same
+ * Reference copy. Live website tokens: site/src/styles/tokens.css (the old
+ * Next.js landing/docs apps were removed). Keep the :root values in sync. Diagram SVGs carry the same
  * values inside their embedded <style class="lx-style"> block.
  *
  * Theme resolution: system preference by default; an explicit

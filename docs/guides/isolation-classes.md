@@ -1,3 +1,3 @@
 # Isolation Classes
 
-Moved: the docs site is the canonical copy. Read it at <https://dshakes.github.io/lantern/docs/runtime/isolation/> (source: `apps/docs/app/runtime/isolation/page.tsx`).
+Moved: the docs site is the canonical copy. Read it at <https://dshakes.github.io/lantern/docs/runtime/isolation/>.

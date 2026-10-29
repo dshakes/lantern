@@ -1,0 +1,206 @@
+---
+import Page from '../../layouts/Page.astro';
+import Diagram from '../../components/Diagram.astro';
+import Copy from '../../components/Copy.astro';
+import Logo from '../../components/Logo.astro';
+import { u, DEMO, BLOB, GH } from '../../data/site';
+
+// Same SDK call and 402 body as the old landing page (rest.go, CheckBudget's
+// reason string). Only the dollar amounts are an example.
+const SAMPLE = `const lantern = new LanternClient({
+  baseUrl: "http://localhost:8080",
+  apiKey: process.env.LANTERN_API_KEY,
+});
+
+await lantern.agents.create({ name: "triage" });
+await lantern.budgets.upsert("triage", {
+  maxCostUsdPerDay: 25,
+  hardFail: true,
+});
+
+await lantern.runs.create({ agent: "triage", input });`;
+const REASON = 'daily spend would reach $25.0318 exceeding limit $25.0000';
+const RESPONSE = `{
+  "error": "agent budget limit reached: ${REASON}",
+  "reason": "${REASON}"
+}`;
+const TOKEN = /(\/\/.*$)|("[^"]*")|\b(const|new|await|true)\b|\b(\d+(?:\.\d+)?)\b/gm;
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const hl = (src: string) => {
+  let out = '', last = 0;
+  for (const m of src.matchAll(TOKEN)) {
+    const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'k' : 'n';
+    out += esc(src.slice(last, m.index)) + `<span class="${cls}">${esc(m[0])}</span>`;
+    last = m.index! + m[0].length;
+  }
+  return out + esc(src.slice(last));
+};
+---
+<Page path="runtime/" title="PAL Runtime — agents that finish, stay contained, and stay yours" description="PAL Runtime, the Personal Agentic Layer for builders: durable agent runs, microVM sandboxes with egress control, budgets enforced before the model call, signed receipts, in your own cloud. Apache-2.0.">
+  <section class="hero" aria-labelledby="hero-h">
+    <div class="wrap">
+      <Logo variant="runtime" size={22} />
+      <p class="eyebrow" style="margin-top:28px">PAL Runtime · the <b>Personal Agentic Layer</b> for builders</p>
+      <h1 id="hero-h" class="display" style="max-width:16ch">Agents that finish, stay contained, and stay yours.</h1>
+      <p class="lede">An open-source runtime for the agents you build. Runs that survive a crash, code that runs in a microVM, spend that is capped before the model is called, and a receipt for every run. In your own cloud.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href={u('docs/runtime/quickstart/')}>Quickstart</a>
+        <a class="btn btn-ghost" href={u('compare/')}>How it compares</a>
+      </div>
+      <div style="margin-top:28px;max-width:720px"><Copy cmd={DEMO} label="Clone and start the demo" /></div>
+      <p class="small" style="margin-top:10px">Docker, no API key: the demo replays recorded model answers.</p>
+    </div>
+  </section>
+
+  <section class="section band" aria-labelledby="outcomes-h">
+    <div class="wrap">
+      <h2 id="outcomes-h" class="sr-only">Three outcomes</h2>
+      <article class="outcome">
+        <div>
+          <p class="num">01 · It finishes</p>
+          <h3 class="h2">A crash doesn’t start the run over.</h3>
+          <p class="body2">Every step is written to the run’s journal as it finishes. If the process dies, a recovery sweep picks the run up again: finished steps come back from the journal, and only the unfinished step runs again.</p>
+          <ul class="facts">
+            <li>Side effects carry an idempotency key from run, step and attempt, so a retried model call is billed once.</li>
+            <li>A distributed lock makes sure only one worker resumes a run.</li>
+          </ul>
+          <a class="arrow-link" style="margin-top:12px" href={u('docs/runtime/durable-execution/')}>Durable execution</a>
+        </div>
+        <Diagram name="crash-resume" alt="Steps 1 and 2 are journaled, the process crashes in step 3, the recovery sweep re-acquires the lock, steps 1 and 2 are replayed from the journal and step 3 runs again with the same idempotency key, so it is billed once." />
+      </article>
+      <article class="outcome">
+        <div>
+          <p class="num">02 · It’s contained</p>
+          <h3 class="h2">Untrusted code runs in a microVM. Keys stay outside.</h3>
+          <p class="body2">Agent code runs in a Firecracker or Kata microVM with its own kernel. In broker mode the VM has no network card at all: its only way out is a broker on the host, which checks each request against the allowlist and adds the credential there.</p>
+          <ul class="facts">
+            <li>Requests to hosts off the allowlist are refused and audited.</li>
+            <li>Injected credentials never enter the VM, its logs or its audit trail.</li>
+          </ul>
+          <p class="small" style="margin-top:12px">Broker mode is opt-in and Firecracker-only<sup class="fn"><a href="#fn-1" id="r-1">1</a></sup>.</p>
+          <a class="arrow-link" style="margin-top:4px" href={u('docs/runtime/egress/')}>Egress and secrets</a>
+        </div>
+        <Diagram name="sandbox-egress" alt="A tool call reaches code in a microVM with no network card. Over vsock it reaches the host broker, which applies the allowlist and adds the key; keys stay on the host. An allowed host goes through, any other host is refused and audited." />
+      </article>
+      <article class="outcome">
+        <div>
+          <p class="num">03 · It’s yours</p>
+          <h3 class="h2">In your cloud, next to your data.</h3>
+          <p class="body2">Run the control plane wherever suits you. The data plane runs in your VPC with the sandboxes and the run data. It dials out to the control plane and work comes back down that same connection, so you open no inbound ports.</p>
+          <ul class="facts">
+            <li>EKS, GKE, AKS or a plain host.</li>
+            <li>Apache-2.0, every line of it.</li>
+          </ul>
+          <a class="arrow-link" style="margin-top:12px" href={u('docs/runtime/architecture/')}>Architecture</a>
+        </div>
+        <Diagram name="your-cloud" alt="The control plane, run wherever you deploy it, holds the API, console, scheduling and routing. The data plane in your VPC, with microVM sandboxes and run data, dials out to it; runs come back over that connection. No inbound ports." />
+      </article>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="budget-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Budgets</p>
+        <h2 id="budget-h" class="h2" style="margin-top:12px">A budget before the first token.</h2>
+        <p class="lede">Cap what an agent may spend. Over the cap, the run is refused before the bill, and the model is never called.</p>
+      </div>
+      <Diagram name="budget-gate" alt="A run request meets the budget check (forecast and daily caps). Over the cap it is refused with 402, no model call, costing nothing. Under the cap it is routed by capability and the usage is recorded." />
+      <div class="grid-2" style="margin-top:24px;align-items:start">
+        <div>
+          <pre class="code" tabindex="0" aria-label="TypeScript SDK example"><code set:html={hl(SAMPLE)} /></pre>
+          <p class="small" style="margin-top:10px">TypeScript shown; Python and Go SDKs too. Models are named by capability (<code>auto</code>, <code>reasoning-large</code>), never by vendor.</p>
+        </div>
+        <figure class="response" aria-label="The response when the cap is reached">
+          <div class="response-bar"><span class="status-pill">402 Payment Required</span><span>POST /v1/runs</span></div>
+          <pre class="code" tabindex="0"><code>{RESPONSE}</code></pre>
+          <figcaption class="small" style="padding:0 22px 18px">No model call is made. The fields and wording are the handler’s; the dollar amounts are an example<sup class="fn"><a href="#fn-2" id="r-2">2</a></sup>.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section rule" aria-labelledby="ba-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="ba-h" class="h2">What you’d otherwise build.</h2>
+        <p class="lede">A sandbox is one part. Production agents need the rest, and most teams end up writing it themselves.</p>
+      </div>
+      <div class="ba">
+        <div class="without">
+          <h3>Without a runtime</h3>
+          <ul>
+            <li><span>A job queue, retry logic and a dedup table so a crash doesn’t double-charge</span></li>
+            <li><span>A VM fleet, an egress proxy and a secrets vault for agent code</span></li>
+            <li><span>Per-tenant spend metering and a kill switch</span></li>
+            <li><span>A model client with provider failover</span></li>
+            <li><span>An audit log you can prove nobody edited</span></li>
+          </ul>
+        </div>
+        <div class="with">
+          <h3>With PAL Runtime</h3>
+          <ul>
+            <li><span><b>Durable runs.</b> Journaled steps, crash-resume, idempotency keys.</span></li>
+            <li><span><b>Sandboxes.</b> Firecracker or Kata, egress allowlist, secrets by reference.</span></li>
+            <li><span><b>Budgets.</b> Daily and per-run caps, 402 before the call.</span></li>
+            <li><span><b>Routing.</b> Ask for a capability; failover across providers.</span></li>
+            <li><span><b>Receipts.</b> Signed, verifiable offline.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section band" aria-labelledby="trust-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Security and trust</p>
+        <h2 id="trust-h" class="h2" style="margin-top:12px">Built for more than one tenant from day one.</h2>
+      </div>
+      <div class="grid-3">
+        <div class="card"><h3 class="h3">Tenant isolation</h3><p>Every row carries a tenant, every internal call carries it too, and row-level security policies cover every tenant table<sup class="fn"><a href="#fn-3" id="r-3">3</a></sup>.</p></div>
+        <div class="card"><h3 class="h3">Trust boundaries</h3><p>Internal gRPC ports accept a tenant only from callers holding the service token, and refuse to start in production without it.</p></div>
+        <div class="card"><h3 class="h3">Secrets by reference</h3><p>Code refers to <code>lantern.secret/…</code>; the value is resolved at execution time and never lands in logs, traces or run state.</p></div>
+        <div class="card"><h3 class="h3">Signed receipts</h3><p>A finished run gets an Ed25519-signed receipt over its event journal; anyone can verify it, and any later edit breaks the signature<sup class="fn"><a href="#fn-4" id="r-4">4</a></sup>.</p></div>
+        <div class="card"><h3 class="h3">Traced end to end</h3><p>OpenTelemetry spans on every request and step, tagged with tenant, run and step.</p></div>
+        <div class="card"><h3 class="h3">Open to audit</h3><p>Apache-2.0, Go and Rust, with tests and linters gating every change in CI.</p></div>
+      </div>
+      <a class="arrow-link" style="margin-top:20px" href={u('docs/runtime/security/')}>Security model</a>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="num-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Measured</p>
+        <h2 id="num-h" class="h2" style="margin-top:12px">Pause an idle agent. Fork a busy one.</h2>
+        <p class="lede">An idle sandbox is snapshotted and stopped, giving its compute back, and wakes on the next request. Forks share one memory snapshot instead of copying it.</p>
+      </div>
+      <div class="numbers">
+        <div class="card"><p class="big">634<small>ms</small></p><p>to snapshot a 128 MiB sandbox</p></div>
+        <div class="card"><p class="big">138<small>ms</small></p><p>to restore it</p></div>
+        <div class="card"><p class="big">&lt;160<small>ms</small></p><p>per fork, three forks on one snapshot</p></div>
+      </div>
+      <ol class="footnotes">
+        <li id="fn-0"><span>Indicative: one jailed Firecracker run, 1 vCPU and 128 MiB per VM, nested KVM on an M4 Max laptop, not bare metal. <a class="link" href={`${BLOB}/docs/benchmarks/runtime-latency.md`}>Methodology →</a></span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section band closer" aria-labelledby="close-h">
+    <div class="wrap">
+      <p class="eyebrow">Proof, not promises</p>
+      <h2 id="close-h" class="h2">pal runs on PAL Runtime.</h2>
+      <p class="lede" style="margin:20px auto 0">The personal agent we use every day runs on the same layer. If it is good enough to answer for us, it is ready to run your agents.</p>
+      <ul class="strip" style="margin-top:28px" aria-label="Facts about the project"><li>Apache-2.0</li><li>Firecracker / Kata microVMs</li><li>Go + Rust</li><li>Tests in CI</li></ul>
+      <Copy cmd={DEMO} label="Clone and start the demo" />
+      <div class="actions"><a class="btn btn-primary" href={u('docs/runtime/quickstart/')}>Quickstart</a><a class="btn btn-ghost" href={GH}>View on GitHub</a></div>
+      <ol class="footnotes" style="margin:48px auto 0;text-align:left">
+        <li id="fn-1"><span>1.</span><span>Without broker mode the allowlist is enforced inside the VM by a proxy, and secrets you vend to the workload do enter the guest. <a class="link" href={u('compare/')}>Full comparison</a>.</span></li>
+        <li id="fn-2"><span>2.</span><span>Enforced today: per-agent daily cost, runs and tokens, and a tenant-wide daily cost cap. Workflow runs also stop mid-run at a per-run cap and at per-tool limits.</span></li>
+        <li id="fn-3"><span>3.</span><span>Policies are in place on every tenant table; enforcement is switched on per environment.</span></li>
+        <li id="fn-4"><span>4.</span><span>Ed25519 once a signing key is configured; development falls back to HMAC.</span></li>
+      </ol>
+    </div>
+  </section>
+</Page>

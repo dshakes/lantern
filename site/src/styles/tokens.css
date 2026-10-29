@@ -1,0 +1,67 @@
+/* PAL design tokens, shared by the landing page and the Starlight docs theme.
+   Dark is the reference (ink); light sits on paper. ONE warm accent ramp
+   (amber -> ember). Cool / ok / bad are diagram signals only:
+   cool = host / outside, ok = allowed, bad = denied / crash.
+   --p-accent-text and --p-grad-text stay >= 4.5:1 on their background;
+   --p-amber / --p-ember are for fills and marks only. */
+:root {
+  --p-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --p-display: 'Inter Tight Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --p-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --p-amber: #f5a524;
+  --p-ember: #ff5b2e;
+  --p-grad: linear-gradient(100deg, var(--p-amber), var(--p-ember));
+  --p-accent-text: #ffb547;
+  --p-accent-strong: #ffd08a;
+  --p-accent-bg: rgba(245, 165, 36, 0.1);
+  --p-cool: #7c8cff;
+  --p-ok: #3fb68b;
+  --p-bad: #ef4444;
+  --p-ok-text: #5fd3a6;
+  --p-bad-text: #ff8a8a;
+
+  --p-bg: #0b0c0f;
+  --p-bg-2: #0f1014;
+  --p-surface: #131419;
+  --p-surface-2: #1a1c22;
+  --p-border: rgba(250, 250, 248, 0.08);
+  --p-border-strong: rgba(250, 250, 248, 0.16);
+  --p-text: #fafaf8;
+  --p-text-2: #b9bac0;
+  --p-text-3: #8c8e96;
+  --p-shadow: 0 1px 0 rgba(250, 250, 248, 0.04) inset, 0 24px 48px -28px rgba(0, 0, 0, 0.8);
+  --p-radius: 16px;
+  --p-radius-s: 10px;
+  --p-max: 1120px;
+  --p-gutter: 24px;
+  --p-section: 96px;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --p-accent-text: #a8460a;
+  --p-accent-strong: #7a3005;
+  --p-accent-bg: rgba(245, 165, 36, 0.14);
+  --p-cool: #4f5fd6;
+  --p-ok: #1f8a63;
+  --p-bad: #d03030;
+  --p-ok-text: #146b4b;
+  --p-bad-text: #b42323;
+
+  --p-bg: #fafaf8;
+  --p-bg-2: #f3f2ee;
+  --p-surface: #ffffff;
+  --p-surface-2: #f1f0ec;
+  --p-border: rgba(11, 12, 15, 0.09);
+  --p-border-strong: rgba(11, 12, 15, 0.17);
+  --p-text: #0b0c0f;
+  --p-text-2: #45474e;
+  --p-text-3: #62656d;
+  --p-shadow: 0 1px 2px rgba(11, 12, 15, 0.05), 0 20px 40px -26px rgba(11, 12, 15, 0.22);
+  color-scheme: light;
+}
+
+@media (max-width: 720px) {
+  :root { --p-gutter: 16px; --p-section: 64px; }
+}
