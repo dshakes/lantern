@@ -27,16 +27,51 @@ func isProd() bool { return IsProd() }
 
 // authzEnforce reports whether LANTERN_AUTHZ_ENFORCE is active.
 //
-// When off (default): WithScope logs a debug message but always allows the
-// request — zero behavior change so the flag can be merged safely. When on:
-// missing scope returns HTTP 403. This staged pattern mirrors LANTERN_RLS_ENFORCE.
+// Secure-default rule (ADR 0042):
+//   - Production (LANTERN_ENV=prod/production/staging): ON by default.
+//     Set LANTERN_AUTHZ_ENFORCE=0 to override with a startup WARN.
+//   - Dev (LANTERN_ENV unset): OFF by default; set =1/true/on to enable.
+//
+// This means an operator who forgets to set the flag still gets enforcement
+// in prod, while dev stays friction-free.
 func authzEnforce() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_AUTHZ_ENFORCE")))
-	return v == "1" || v == "true" || v == "on"
+	// Explicit opt-out always wins.
+	if v == "0" || v == "false" || v == "off" {
+		return false
+	}
+	// Explicit opt-in.
+	if v == "1" || v == "true" || v == "on" {
+		return true
+	}
+	// Unset: secure default ON in prod, OFF in dev.
+	return IsProd()
 }
 
 // AuthzEnforcing is the exported form of authzEnforce, for the startup log.
 func AuthzEnforcing() bool { return authzEnforce() }
+
+// AuthzGuardDecision evaluates whether the authz enforcement env var is
+// safely configured for the current environment.
+//
+// Returns (warnMsg string). An empty string means no warning needed.
+// When LANTERN_AUTHZ_ENFORCE=0 in prod, returns a loud WARN message.
+// (There is no fatal case — enforcement being off is operationally bad but
+// not a crash-worthy startup condition; it is instead surfaced as a WARN so
+// an alert can key on it. contrast with LANTERN_RLS_ENFORCE which IS fatal
+// in prod when the app DB password is also missing.)
+func AuthzGuardDecision(isProdEnv bool, authzEnforceVal string) string {
+	if !isProdEnv {
+		return ""
+	}
+	v := strings.ToLower(strings.TrimSpace(authzEnforceVal))
+	if v == "0" || v == "false" || v == "off" {
+		return "LANTERN_AUTHZ_ENFORCE=0 in production — API-key scope enforcement is OFF; " +
+			"a key missing the endpoint's required scope will be allowed through; " +
+			"set LANTERN_AUTHZ_ENFORCE=1 (or remove the var) to re-enable the secure default"
+	}
+	return ""
+}
 
 // devReceiptSecret is the single shared default used by both receipts.go and
 // marketplace_invoke.go when LANTERN_RECEIPT_SECRET is unset in dev. A single
