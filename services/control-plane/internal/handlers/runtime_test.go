@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -127,8 +129,19 @@ func openTestPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("pool.Ping: %v — skipping (DB unreachable?)", err)
 	}
 	t.Cleanup(pool.Close)
+	// Migrate once per test process: a cold database otherwise fails every
+	// test that runs before one that happens to call db.Migrate itself.
+	testMigrateOnce.Do(func() { testMigrateErr = db.Migrate(ctx, pool, true) })
+	if testMigrateErr != nil {
+		t.Fatalf("db.Migrate: %v", testMigrateErr)
+	}
 	return pool
 }
+
+var (
+	testMigrateOnce sync.Once
+	testMigrateErr  error
+)
 
 // bearerHeader returns an "Authorization: Bearer <tok>" header value.
 func bearerHeader(tok string) string { return "Bearer " + tok }
