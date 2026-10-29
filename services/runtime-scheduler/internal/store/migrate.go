@@ -81,6 +81,10 @@ var migrations = []string{
 	// ------------------------------------------------------------------
 	`ALTER TABLE sched_vms ADD COLUMN IF NOT EXISTS snapshot_id  TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE sched_vms ADD COLUMN IF NOT EXISTS parent_vm_id TEXT NOT NULL DEFAULT ''`,
+
+	// Host-asserted software measurement (ADR 0031), so a scheduler restart
+	// still reports it to the control plane's reconciler.
+	`ALTER TABLE sched_vms ADD COLUMN IF NOT EXISTS software_measurement TEXT NOT NULL DEFAULT ''`,
 }
 
 // Migrate runs all CREATE TABLE IF NOT EXISTS statements for the scheduler

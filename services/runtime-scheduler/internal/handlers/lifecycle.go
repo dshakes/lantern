@@ -435,8 +435,10 @@ func (s *SchedulerService) spawnFromSnapshot(ctx context.Context, nodeAddr strin
 	}
 	spec.RestoreSnapshotId = snapID
 	spec.TenantId = vm.TenantID
-	if _, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{Spec: spec, Handle: handle}); err != nil {
+	resp, err := s.Dialer.Spawn(ctx, nodeAddr, &lanternv1.SpawnRequest{Spec: spec, Handle: handle})
+	if err != nil {
 		return fmt.Errorf("spawn %s from snapshot %s: %w", handle.GetVmId(), snapID, err)
 	}
+	s.recordMeasurement(handle.GetVmId(), resp)
 	return nil
 }

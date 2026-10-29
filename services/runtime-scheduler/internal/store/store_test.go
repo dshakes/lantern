@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -583,5 +584,38 @@ func TestWriteThroughStore_PausedForkRoundTrip(t *testing.T) {
 	}
 	if n, _ := mem2.GetNode("n1"); n.RunningVms != 1 {
 		t.Errorf("reloaded RunningVms = %d, want 1", n.RunningVms)
+	}
+}
+
+// TestWriteThroughStore_MeasurementPersists (ADR 0031, S5): the host-asserted
+// measurement survives a scheduler restart, so the control plane's reconciler
+// still receives it for VMs spawned before the restart.
+func TestWriteThroughStore_MeasurementPersists(t *testing.T) {
+	pool, dbURL := openTestPool(t)
+	defer pool.Close()
+	migrateDB(t, pool)
+	cleanupTables(t, dbURL)
+	t.Cleanup(func() { cleanupTables(t, dbURL) })
+
+	_, wt := newWriteThrough(t, pool)
+	wt.UpsertNode(cluster.Node{Name: "n1", Address: "n1:50054", LastHeartbeat: time.Now().UTC()})
+	wt.CreateVM(&cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:abc"},
+		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		TenantID: "t1", NodeName: "n1", LastEventAt: time.Now().UTC(),
+	})
+	m := strings.Repeat("ef", 32)
+	if !wt.SetVMMeasurement("vm-m", m) {
+		t.Fatal("SetVMMeasurement returned false for a known VM")
+	}
+
+	mem2, wt2 := newWriteThrough(t, pool)
+	if err := wt2.LoadFromDB(context.Background(), time.Hour); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+	vm, ok := mem2.GetVM("vm-m")
+	if !ok || vm.Handle.GetSoftwareMeasurement() != m {
+		t.Fatalf("reloaded measurement = %q (ok=%v), want %q", vm.Handle.GetSoftwareMeasurement(), ok, m)
 	}
 }

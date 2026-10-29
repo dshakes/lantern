@@ -108,7 +108,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT vm_id, tenant_id, node_name, state, reason,
 		       spec, availability_zone, created_at, last_event_at, last_heartbeat_at,
-		       snapshot_id, parent_vm_id
+		       snapshot_id, parent_vm_id, software_measurement
 		FROM sched_vms
 		WHERE state NOT IN ($1, $2)`,
 		int32(lanternv1.VmState_VM_STATE_TERMINATED),
@@ -121,7 +121,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 
 	count := 0
 	for rows.Next() {
-		var vmID, tenantID, nodeName, reason, az, snapshotID, parentVMID string
+		var vmID, tenantID, nodeName, reason, az, snapshotID, parentVMID, measurement string
 		var stateInt int32
 		var specJSON []byte
 		var createdAt, lastEventAt time.Time
@@ -130,7 +130,7 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		if err := rows.Scan(
 			&vmID, &tenantID, &nodeName, &stateInt, &reason,
 			&specJSON, &az, &createdAt, &lastEventAt, &lastHeartbeatAt,
-			&snapshotID, &parentVMID,
+			&snapshotID, &parentVMID, &measurement,
 		); err != nil {
 			return fmt.Errorf("scan sched_vms row: %w", err)
 		}
@@ -139,9 +139,10 @@ func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
 		_ = json.Unmarshal(specJSON, &spec) // best-effort; nil fields are fine
 
 		handle := &lanternv1.VmHandle{
-			VmId:             vmID,
-			Node:             nodeName,
-			AvailabilityZone: az,
+			VmId:                vmID,
+			Node:                nodeName,
+			AvailabilityZone:    az,
+			SoftwareMeasurement: measurement,
 		}
 		vm := &cluster.VM{
 			Handle:      handle,
@@ -283,9 +284,10 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 		INSERT INTO sched_vms
 			(vm_id, tenant_id, node_name, state, reason,
 			 spec, availability_zone, last_event_at, last_heartbeat_at,
-			 snapshot_id, parent_vm_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			 snapshot_id, parent_vm_id, software_measurement)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (vm_id) DO UPDATE SET
+			software_measurement = EXCLUDED.software_measurement,
 			snapshot_id       = EXCLUDED.snapshot_id,
 			parent_vm_id      = EXCLUDED.parent_vm_id,
 			state             = EXCLUDED.state,
@@ -297,7 +299,7 @@ func (s *WriteThroughStore) persistVM(ctx context.Context, v *cluster.VM) {
 			updated_at        = now()`,
 		v.Handle.VmId, v.TenantID, v.NodeName, int32(v.State), v.Reason,
 		specJSON, az, v.LastEventAt, lhAt,
-		v.SnapshotID, v.ParentVMID,
+		v.SnapshotID, v.ParentVMID, v.Handle.GetSoftwareMeasurement(),
 	)
 	if err != nil {
 		s.logger.Warn("sched_vms insert failed",
@@ -353,6 +355,26 @@ func (s *WriteThroughStore) SetVMSnapshot(vmID, snapshotID string) bool {
 		`UPDATE sched_vms SET snapshot_id=$1, updated_at=now() WHERE vm_id=$2`, snapshotID, vmID,
 	); err != nil {
 		s.logger.Warn("sched_vms snapshot update failed",
+			zap.String("vm_id", vmID), zap.Error(err))
+	}
+	return true
+}
+
+// SetVMMeasurement records the host-asserted software measurement (ADR 0031)
+// in memory then Postgres, so it survives a scheduler restart.
+func (s *WriteThroughStore) SetVMMeasurement(vmID, measurement string) bool {
+	if !s.mem.SetVMMeasurement(vmID, measurement) {
+		return false
+	}
+	if s.pool == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE sched_vms SET software_measurement=$1, updated_at=now() WHERE vm_id=$2`, measurement, vmID,
+	); err != nil {
+		s.logger.Warn("sched_vms measurement update failed",
 			zap.String("vm_id", vmID), zap.Error(err))
 	}
 	return true

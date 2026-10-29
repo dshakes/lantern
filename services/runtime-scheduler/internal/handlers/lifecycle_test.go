@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -722,5 +723,34 @@ func TestLifecycle_UnregisteredNodeNeverDialed(t *testing.T) {
 				t.Errorf("state = %v, want RUNNING", vm.State)
 			}
 		})
+	}
+}
+
+// TestResumeAndFork_StampInheritedMeasurement (ADR 0031, S4): the manager's
+// Spawn response for a restore carries the INHERITED spawn measurement; resume
+// and fork must record it on the stored VM rather than discard the response.
+func TestResumeAndFork_StampInheritedMeasurement(t *testing.T) {
+	m := strings.Repeat("cd", 32)
+	store := cluster.NewInMemoryStore()
+	addNode(store, "n1", 8000, 16<<30)
+	seedVM(store, "vm-p", "t1", lanternv1.VmState_VM_STATE_PAUSED, "snap-p")
+	seedVM(store, "vm-src", "t1", lanternv1.VmState_VM_STATE_RUNNING, "")
+	svc := newService(store, measuredDialer{m: m})
+
+	if _, err := svc.Resume(ctxWithTenant("t1"), &lanternv1.ResumeRequest{VmId: "vm-p"}); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if vm, _ := store.GetVM("vm-p"); vm.Handle.GetSoftwareMeasurement() != m {
+		t.Errorf("resumed VM measurement = %q, want inherited %q", vm.Handle.GetSoftwareMeasurement(), m)
+	}
+
+	resp, err := svc.Fork(ctxWithTenant("t1"), &lanternv1.ForkRequest{VmId: "vm-src", Count: 2, Identities: idents(2)})
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	for _, c := range resp.Forks {
+		if vm, _ := store.GetVM(c.VmId); vm.Handle.GetSoftwareMeasurement() != m {
+			t.Errorf("fork child %s measurement = %q, want inherited %q", c.VmId, vm.Handle.GetSoftwareMeasurement(), m)
+		}
 	}
 }

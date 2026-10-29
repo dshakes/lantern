@@ -138,7 +138,7 @@ type ClusterStore interface {
 	// SetVMSnapshot records the snapshot a VM was paused into.
 	SetVMSnapshot(vmID, snapshotID string) bool
 	// SetVMMeasurement records the host-asserted software measurement
-	// (ADR 0031). In-memory only; the control plane persists it.
+	// (ADR 0031). WriteThroughStore persists it to sched_vms.
 	SetVMMeasurement(vmID, measurement string) bool
 
 	// UpdateVMActivity records the latest idle-suspend activity signal from a
