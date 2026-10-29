@@ -465,6 +465,9 @@ impl SecretResolver for RelaySecretResolver {
             let mut rb = self
                 .client
                 .post(self.resolve_url())
+                // PAL name plus the pre-PAL name for a control plane that
+                // has not upgraded yet (ADR 0032).
+                .header("X-Pal-Runtime-Token", &self.token)
                 .header("X-Lantern-Runtime-Token", &self.token)
                 .header("Content-Type", "application/json");
             if let Some(tok) = agent_bearer {

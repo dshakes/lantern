@@ -396,11 +396,11 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 
 		var attrs []attribute.KeyValue
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			attrs = append(attrs, attribute.String("lantern.tenant_id", tid))
+			attrs = append(attrs, attribute.String("pal.tenant_id", tid), attribute.String("lantern.tenant_id", tid))
 		}
 		if r, ok := req.(runIDer); ok {
 			if rid := r.GetRunId(); rid != "" {
-				attrs = append(attrs, attribute.String("lantern.run_id", rid))
+				attrs = append(attrs, attribute.String("pal.run_id", rid), attribute.String("lantern.run_id", rid))
 			}
 		}
 		if len(attrs) > 0 {
@@ -427,7 +427,7 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 		defer span.End()
 
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			span.SetAttributes(attribute.String("lantern.tenant_id", tid))
+			span.SetAttributes(attribute.String("pal.tenant_id", tid), attribute.String("lantern.tenant_id", tid))
 		}
 
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
@@ -449,7 +449,7 @@ func (w *wrappedStream) Context() context.Context {
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return middleware.OutgoingServiceTokenMetadata(c.token), nil
 }
 
 // RequireTransportSecurity is false: in-cluster hop, same as the other dials.

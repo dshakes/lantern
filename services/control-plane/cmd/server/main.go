@@ -752,12 +752,14 @@ func main() {
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
 	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", authHandler.WithScope(handlers.ScopeRunsWrite, receiptHandler.IssueReceipt))
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
-	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown) // legacy path for external verifiers (ADR 0032)
 
 	// Agent-instance identity public-key discovery. No auth (public endpoint).
 	// Ed25519 mode: returns {algorithm, publicKey, keyFingerprint}.
 	// HS256 mode (default): returns {algorithm:"HS256"} only — no secret emitted.
-	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown) // legacy path (ADR 0032)
 
 	// Log the active agent-identity signing mode once at startup.
 	{

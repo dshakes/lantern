@@ -310,7 +310,7 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 		if k.pub == nil {
 			// Server not configured for Ed25519 — cannot verify offline.
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "Ed25519 key not configured on this server; obtain the public key from /.well-known/lantern-receipts and verify locally",
+				"error": "Ed25519 key not configured on this server; obtain the public key from /.well-known/pal-receipts and verify locally",
 			})
 			return
 		}
@@ -338,7 +338,7 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// WellKnown handles GET /.well-known/lantern-receipts.
+// WellKnown handles GET /.well-known/pal-receipts (and the legacy /.well-known/lantern-receipts).
 //
 // Ed25519 mode: publishes algorithm + base64-encoded public key + SHA-256
 // fingerprint of the public key. External verifiers can fetch this endpoint

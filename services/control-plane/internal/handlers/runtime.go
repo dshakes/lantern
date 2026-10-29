@@ -189,7 +189,7 @@ func (c schedulerTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) 
 	if c.token == "" {
 		return nil, nil
 	}
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return middleware.OutgoingServiceTokenMetadata(c.token), nil
 }
 
 // RequireTransportSecurity returns false: the scheduler link is an in-cluster
@@ -703,7 +703,7 @@ func egressInjectFromMap(r map[string]any) []*lanternv1.CredentialInjection {
 
 // validateEgressInject rejects malformed credential-injection specs before
 // anything is scheduled: the header must be an RFC 7230 token, the ref a
-// parseable `lantern.secret/...` ref, the prefix free of CR/LF, the rule an
+// parseable `pal.secret/...` (or legacy `lantern.secret/...`) ref, the prefix free of CR/LF, the rule an
 // EXACT hostname (no wildcard, IP or CIDR), and the ref must not also be
 // declared in `secrets` (that would hand the very value injection keeps out
 // of the VM to the workload). Errors name indexes only — never the ref.
@@ -711,7 +711,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 	declared := map[string]bool{}
 	for _, sr := range secrets {
 		if u, _ := firstOf(sr, "secret_uri", "secretUri").(string); u != "" {
-			declared[u] = true
+			declared[canonicalSecretRef(u)] = true
 		}
 	}
 	for i, r := range rules {
@@ -720,7 +720,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 				return fmt.Errorf("egress rule %d inject %d: header must be a valid HTTP header name", i, j)
 			}
 			if parseRef(ci.SecretUri).scope == "" {
-				return fmt.Errorf("egress rule %d inject %d: secretRef must be a lantern.secret/... ref", i, j)
+				return fmt.Errorf("egress rule %d inject %d: secretRef must be a pal.secret/... ref", i, j)
 			}
 			if strings.ContainsAny(ci.ValuePrefix, "\r\n") {
 				return fmt.Errorf("egress rule %d inject %d: valuePrefix must not contain CR/LF", i, j)
@@ -728,7 +728,7 @@ func validateEgressInject(rules []map[string]any, secrets []map[string]any) erro
 			if pattern, _ := r["pattern"].(string); pattern == "" || strings.Contains(pattern, "*") || net.ParseIP(pattern) != nil || strings.Contains(pattern, "/") {
 				return fmt.Errorf("egress rule %d: credential injection requires an exact hostname pattern", i)
 			}
-			if declared[ci.SecretUri] {
+			if declared[canonicalSecretRef(ci.SecretUri)] {
 				return fmt.Errorf("egress rule %d inject %d: secretRef is also listed in secrets — an injected credential must not be vended into the VM", i, j)
 			}
 		}
@@ -1838,7 +1838,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	// Start a span covering the scheduling work (after auth).
 	tracer := otel.Tracer("lantern.control-plane")
 	ctx, span := tracer.Start(ctx, "runtime.schedule")
-	span.SetAttributes(attribute.String("lantern.tenant_id", tenantID))
+	span.SetAttributes(attribute.String("pal.tenant_id", tenantID), attribute.String("lantern.tenant_id", tenantID))
 	defer span.End()
 
 	// Decode via a raw map so we accept both the camelCase REST convention
@@ -1881,9 +1881,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	// Stamp known spec attributes immediately so they appear even if we
 	// return early (quota denial, identity failure, etc.).
 	span.SetAttributes(
-		attribute.String("lantern.run_id", spec.RunID),
-		attribute.String("lantern.agent_version_id", spec.AgentVersionID),
-		attribute.String("lantern.isolation_class", spec.Isolation),
+		attribute.String("pal.run_id", spec.RunID), attribute.String("lantern.run_id", spec.RunID),
+		attribute.String("pal.agent_version_id", spec.AgentVersionID), attribute.String("lantern.agent_version_id", spec.AgentVersionID),
+		attribute.String("pal.isolation_class", spec.Isolation), attribute.String("lantern.isolation_class", spec.Isolation),
 	)
 
 	// Quota enforcement BEFORE we touch the scheduler.
@@ -1917,8 +1917,8 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.SetAttributes(
-		attribute.String("lantern.vm_id", vmID),
-		attribute.String("lantern.agent_instance_id", instanceID),
+		attribute.String("pal.vm_id", vmID), attribute.String("lantern.vm_id", vmID),
+		attribute.String("pal.agent_instance_id", instanceID), attribute.String("lantern.agent_instance_id", instanceID),
 	)
 
 	span.SetStatus(codes.Ok, "")
@@ -1931,7 +1931,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	if h.schedulerIsStub() {
 		resp.Stub = true
 		resp.Warning = stubScheduleWarning
-		span.SetAttributes(attribute.Bool("lantern.scheduler_stub", true))
+		span.SetAttributes(attribute.Bool("pal.scheduler_stub", true), attribute.Bool("lantern.scheduler_stub", true))
 		h.logger().Warn("scheduled against the STUB scheduler — no workload was spawned",
 			zap.String("vm_id", vmID), zap.String("tenant_id", tenantID))
 	}

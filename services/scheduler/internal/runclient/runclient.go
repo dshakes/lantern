@@ -31,7 +31,12 @@ const tenantMetadataKey = "tenant_id"
 // serviceTokenMetadataKey mirrors the control-plane's
 // middleware.ServiceTokenMetadataKey constant. Kept as a local const so the
 // scheduler doesn't take a build dependency on the control-plane module.
-const serviceTokenMetadataKey = "x-lantern-service-token"
+const serviceTokenMetadataKey = "x-pal-service-token"
+
+// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
+// sent under both names so a control-plane that predates the PAL name still
+// authenticates the call.
+const legacyServiceTokenMetadataKey = "x-lantern-service-token"
 
 // Client holds a long-lived gRPC connection to the control-plane and creates
 // runs on its RunService. One Client is shared by the cron ticker and the
@@ -46,7 +51,7 @@ type Client struct {
 // New dials the control-plane at addr and returns a Client. The connection is
 // established lazily by gRPC; New itself does not block on connectivity.
 //
-// serviceToken, when non-empty, is attached as x-lantern-service-token metadata
+// serviceToken, when non-empty, is attached as x-pal-service-token metadata
 // on every CreateRun so the control-plane's optional service-token interceptor
 // accepts the call. When empty, nothing extra is attached (additive).
 //
@@ -117,7 +122,7 @@ func (c *Client) CreateRun(ctx context.Context, tenantID, agentName string, inpu
 func outgoingContext(ctx context.Context, tenantID, serviceToken string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, serviceToken, legacyServiceTokenMetadataKey, serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

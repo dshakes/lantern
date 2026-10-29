@@ -328,7 +328,7 @@ func (h *DLHandler) authService(w http.ResponseWriter, r *http.Request) bool {
 		})
 		return true
 	}
-	presented := r.Header.Get(middleware.ServiceTokenMetadataKey)
+	presented := middleware.ServiceTokenFromHeader(r.Header)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) != 1 {
 		h.logger().Warn("dl stage: invalid service token")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid service token"})

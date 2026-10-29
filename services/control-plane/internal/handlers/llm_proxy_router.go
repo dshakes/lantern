@@ -123,7 +123,7 @@ func dialModelRouter(addr string) (lanternv1.ModelServiceClient, func() error, e
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}
-	// The router requires x-lantern-service-token (invariant #7); reuse the
+	// The router requires x-pal-service-token (or the legacy x-lantern-service-token) (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
 	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))

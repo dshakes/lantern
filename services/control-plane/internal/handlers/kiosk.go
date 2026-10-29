@@ -238,7 +238,7 @@ func (h *KioskHandler) mintToken(userID, tenantID, slug string, expires time.Tim
 	claims := LanternClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject: userID, IssuedAt: jwt.NewNumericDate(h.now()),
-			ExpiresAt: jwt.NewNumericDate(expires), Issuer: "lantern",
+			ExpiresAt: jwt.NewNumericDate(expires), Issuer: "pal",
 		},
 		TenantID: tenantID, Email: slug + "@demo.invalid", Name: "Demo visitor",
 		Role: kioskRole, Scopes: kioskScopes,

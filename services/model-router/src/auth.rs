@@ -1,6 +1,7 @@
 //! Service-token gate for the gRPC port (CLAUDE.md invariant #7).
 //!
-//! Callers must present `x-lantern-service-token` == `LANTERN_GRPC_SERVICE_TOKEN`.
+//! Callers must present `x-pal-service-token` (or the pre-PAL
+//! `x-lantern-service-token`) == `PAL_GRPC_SERVICE_TOKEN`.
 //! Without it any pod reaching :50053 could read tenant caches, burn the
 //! router's env provider keys, or feed it a stolen `provider_credentials` map.
 //! The token is never logged.
@@ -8,7 +9,9 @@
 use subtle::ConstantTimeEq;
 use tonic::{Request, Status};
 
-pub const TOKEN_HEADER: &str = "x-lantern-service-token";
+pub const TOKEN_HEADER: &str = "x-pal-service-token";
+/// Pre-PAL name of the same header (ADR 0032); still accepted.
+pub const LEGACY_TOKEN_HEADER: &str = "x-lantern-service-token";
 
 /// True for the env values that mean "production-like" (fail closed).
 fn is_prod(env: &str) -> bool {
@@ -41,9 +44,12 @@ pub fn interceptor(
         let Some(expected) = token.as_deref() else {
             return Ok(req);
         };
-        let ok = req
-            .metadata()
-            .get(TOKEN_HEADER)
+        // PAL name first, the pre-PAL name only when it is absent: exactly
+        // one value is compared (ADR 0032).
+        let ok = [TOKEN_HEADER, LEGACY_TOKEN_HEADER]
+            .into_iter()
+            .filter_map(|k| req.metadata().get(k))
+            .find(|v| !v.is_empty())
             .is_some_and(|got| bool::from(got.as_bytes().ct_eq(expected.as_bytes())));
         if ok {
             Ok(req)
@@ -99,5 +105,23 @@ mod tests {
         }
         assert!(check_startup("", None).is_ok());
         assert!(check_startup("dev", None).is_ok());
+    }
+
+    /// ADR 0032: the legacy header still authenticates; a wrong PAL token is
+    /// not rescued by a right legacy one.
+    #[test]
+    fn accepts_legacy_header_and_compares_one_value() {
+        let i = interceptor(Some("s3cret".into()));
+        let with = |pairs: &[(&'static str, &str)]| {
+            let mut r = Request::new(());
+            for (k, v) in pairs {
+                r.metadata_mut().insert(*k, v.parse().unwrap());
+            }
+            r
+        };
+        assert!(i(with(&[(LEGACY_TOKEN_HEADER, "s3cret")])).is_ok());
+        assert!(i(with(&[(TOKEN_HEADER, "s3cret"), (LEGACY_TOKEN_HEADER, "s3cret")])).is_ok());
+        assert!(i(with(&[(TOKEN_HEADER, "nope"), (LEGACY_TOKEN_HEADER, "s3cret")])).is_err());
+        assert!(i(with(&[(LEGACY_TOKEN_HEADER, "nope")])).is_err());
     }
 }

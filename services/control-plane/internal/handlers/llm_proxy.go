@@ -337,7 +337,7 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 // resolveModelForTenantAuto is the complexity-aware variant used by the tool
 // loop. When LANTERN_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
 // the cheapest model that can handle it; otherwise it falls back to the normal
-// balanced scorer. The hint string is the value of X-Lantern-Turn-Hint (empty
+// balanced scorer. The hint string is the value of X-Pal-Turn-Hint (empty
 // when not provided).
 func (h *LlmProxyHandler) resolveModelForTenantAuto(
 	ctx context.Context,
@@ -479,13 +479,13 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			attribute.String("gen_ai.operation.name", "chat"),
 			attribute.Int64("gen_ai.usage.input_tokens", tokensIn),
 			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
-			attribute.Float64("lantern.cost_usd", costUsd),
+			attribute.Float64("pal.cost_usd", costUsd), attribute.Float64("lantern.cost_usd", costUsd),
 		)
 		// Extended FinOps attributes (zero when not applicable).
 		span.SetAttributes(
 			attribute.Int64("gen_ai.usage.reasoning_tokens", detail.ReasoningTokens),
-			attribute.Int64("lantern.usage.cache_read_tokens", detail.CacheReadTokens),
-			attribute.Int64("lantern.usage.cache_write_tokens", detail.CacheWriteTokens),
+			attribute.Int64("pal.usage.cache_read_tokens", detail.CacheReadTokens), attribute.Int64("lantern.usage.cache_read_tokens", detail.CacheReadTokens),
+			attribute.Int64("pal.usage.cache_write_tokens", detail.CacheWriteTokens), attribute.Int64("lantern.usage.cache_write_tokens", detail.CacheWriteTokens),
 		)
 		span.End()
 		if cb != nil {

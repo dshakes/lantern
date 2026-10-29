@@ -974,7 +974,7 @@ func (h *AuthHandler) generateToken(userID, tenantID, email, name, role string) 
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(30 * 24 * time.Hour)),
-			Issuer:    "lantern",
+			Issuer:    "pal",
 		},
 		TenantID: tenantID,
 		Email:    email,

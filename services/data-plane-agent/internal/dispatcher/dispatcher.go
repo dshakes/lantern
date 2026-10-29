@@ -27,7 +27,13 @@ const tenantMetadataKey = "tenant_id"
 
 // serviceTokenMetadataKey mirrors control-plane middleware.ServiceTokenMetadataKey.
 // Kept local so the dispatcher does not take a build dep on the control-plane module.
-const serviceTokenMetadataKey = "x-lantern-service-token"
+const serviceTokenMetadataKey = "x-pal-service-token"
+
+// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
+// sent under both names so a control plane that predates the PAL name (the
+// customer data plane and the control plane upgrade independently) still
+// authenticates the call.
+const legacyServiceTokenMetadataKey = "x-lantern-service-token"
 
 var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
 
@@ -240,7 +246,7 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if d.serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken, legacyServiceTokenMetadataKey, d.serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

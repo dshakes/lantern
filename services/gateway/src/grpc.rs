@@ -488,9 +488,12 @@ impl ControlPlaneClient {
         // Authenticate to the control-plane gRPC trust boundary. Only attached
         // when configured; the control-plane fails closed in prod if it expects
         // a token and the header is missing/wrong.
+        // Sent under the PAL name and the pre-PAL name, so a control plane
+        // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
-            && let Ok(val) = self.service_token.parse()
+            && let Ok(val) = self.service_token.parse::<tonic::metadata::MetadataValue<_>>()
         {
+            metadata.insert("x-pal-service-token", val.clone());
             metadata.insert("x-lantern-service-token", val);
         }
         Ok(())
