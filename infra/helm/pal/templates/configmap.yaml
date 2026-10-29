@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pal.fullname" . }}-config
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+data:
+  DATABASE_URL: {{ include "pal.databaseURL" . | quote }}
+  REDIS_URL: "redis://{{ include "pal.fullname" . }}-redis-master:6379"
+  S3_ENDPOINT: {{ include "pal.s3Endpoint" . | quote }}
+  S3_REGION: {{ .Values.externalS3.region | default "us-east-1" | quote }}
+  S3_BUCKET: {{ .Values.externalS3.bucket | default "lantern-dev" | quote }}
+  LOG_LEVEL: {{ .Values.global.logLevel | quote }}
+  AWS_ACCESS_KEY_ID: {{ include "pal.s3AccessKey" . | quote }}

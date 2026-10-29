@@ -1,0 +1,10 @@
+PAL Runtime has been deployed!
+
+1. Gateway:    kubectl port-forward svc/{{ include "pal.fullname" . }}-gateway 8443:8443
+2. Dashboard:  kubectl port-forward svc/{{ include "pal.fullname" . }}-dashboard 3001:3000
+3. Control Plane (gRPC): kubectl port-forward svc/{{ include "pal.fullname" . }}-control-plane 50051:50051
+
+To get started:
+  pal init my-agent
+  pal deploy
+  pal run my-agent --input '{"message": "hello"}'
