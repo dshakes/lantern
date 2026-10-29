@@ -143,7 +143,10 @@ fn workload_may_see(key: &str) -> bool {
 
 /// Filter an environment down to what a workload child may inherit. Each
 /// visible harness-namespace key is emitted under BOTH names, so old and new
-/// workload SDKs read the same value; `PAL_X` wins if the two differ.
+/// workload SDKs read the same value. If the harness env has both and they
+/// differ, `PAL_X` wins whichever arrives first. Output order: pass-through
+/// keys in input order, then the harness pairs sorted by suffix, each as
+/// `LANTERN_X` then `PAL_X`.
 fn workload_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -155,8 +158,10 @@ fn workload_env_from(
             continue;
         };
         if let Some(rest) = key.strip_prefix("PAL_") {
+            // PAL_ always overwrites an earlier LANTERN_ twin...
             ns.insert(rest.to_owned(), v);
         } else if let Some(rest) = key.strip_prefix("LANTERN_") {
+            // ...and LANTERN_ never overwrites an earlier PAL_ one.
             if let Entry::Vacant(e) = ns.entry(rest.to_owned()) {
                 e.insert(v);
             }
