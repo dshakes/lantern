@@ -87,7 +87,7 @@ export function MobileNav() {
                     aria-current={active ? "page" : undefined}
                     className={clsx(
                       "flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-xl p-2 text-center transition-colors",
-                      active ? "bg-lantern-500/10 text-lantern-300" : "text-zinc-400 active:bg-surface-2",
+                      active ? "bg-pal-500/10 text-pal-300" : "text-zinc-400 active:bg-surface-2",
                     )}
                   >
                     <Icon className="h-5 w-5" />
@@ -116,12 +116,12 @@ export function MobileNav() {
                 aria-current={isActive ? "page" : undefined}
                 className={clsx(
                   "relative flex flex-1 flex-col items-center justify-center gap-0.5 transition-colors duration-150",
-                  isActive ? "text-lantern-300" : "text-zinc-500 active:text-zinc-200",
+                  isActive ? "text-pal-300" : "text-zinc-500 active:text-zinc-200",
                 )}
               >
                 <Icon className="h-5 w-5" />
                 <span className="text-[11px] font-medium">{item.label}</span>
-                {isActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-lantern-400" />}
+                {isActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-pal-400" />}
               </Link>
             );
           })}
@@ -131,12 +131,12 @@ export function MobileNav() {
             aria-expanded={moreOpen}
             className={clsx(
               "relative flex flex-1 flex-col items-center justify-center gap-0.5 transition-colors duration-150",
-              moreActive || moreOpen ? "text-lantern-300" : "text-zinc-500 active:text-zinc-200",
+              moreActive || moreOpen ? "text-pal-300" : "text-zinc-500 active:text-zinc-200",
             )}
           >
             <Menu className="h-5 w-5" />
             <span className="text-[11px] font-medium">More</span>
-            {moreActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-lantern-400" />}
+            {moreActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-pal-400" />}
           </button>
         </div>
       </nav>

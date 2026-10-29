@@ -78,19 +78,19 @@
 /* Dashboard scales, derived from the brand. Dark values here (dark is the
    default theme); the light remap lives at the bottom of this file under
    :root[data-theme="light"]. Tailwind v4 emits each as a CSS var, so the
-   ~2,900 zinc/surface/lantern utilities re-skin from here alone.
-   `lantern-*` is the accent scale = flame. */
+   ~2,900 zinc/surface/pal utilities re-skin from here alone.
+   `pal-*` is the accent scale = flame. */
 @theme {
-  --color-lantern-50: #fff6e8;
-  --color-lantern-100: #ffe9c7;
-  --color-lantern-200: #ffd89c;
-  --color-lantern-300: #ffc670;
-  --color-lantern-400: #ffb547; /* --lx-flame (dark) */
-  --color-lantern-500: #f5a32e;
-  --color-lantern-600: #d9861a;
-  --color-lantern-700: #a85e06;
-  --color-lantern-800: #6e3d05;
-  --color-lantern-900: #3a2a12;
+  --color-pal-50: #fff6e8;
+  --color-pal-100: #ffe9c7;
+  --color-pal-200: #ffd89c;
+  --color-pal-300: #ffc670;
+  --color-pal-400: #ffb547; /* --lx-flame (dark) */
+  --color-pal-500: #f5a32e;
+  --color-pal-600: #d9861a;
+  --color-pal-700: #a85e06;
+  --color-pal-800: #6e3d05;
+  --color-pal-900: #3a2a12;
   /* Warning = sulfur, not amber. Stock amber sits on top of the flame
      accent; flame (orange) and signal (red) already own the warm reds, so
      warnings take the one warm hue left that reads apart from both. The
@@ -198,8 +198,8 @@
   --color-border-default: var(--color-zinc-700);
   --color-border-strong: var(--color-zinc-600);
 
-  --color-accent: var(--color-lantern-400);
-  --color-accent-hover: var(--color-lantern-300);
+  --color-accent: var(--color-pal-400);
+  --color-accent-hover: var(--color-pal-300);
   --color-accent-soft: color-mix(in srgb, var(--lx-flame) 14%, transparent);
 
   --color-success: var(--lx-patina);
@@ -520,12 +520,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 /* Button variants */
 .btn-primary {
-  background: var(--color-lantern-500);
+  background: var(--color-pal-500);
   color: var(--color-on-flame);
   transition: background 0.15s ease;
 }
 .btn-primary:hover {
-  background: var(--color-lantern-400);
+  background: var(--color-pal-400);
 }
 .btn-secondary {
   border: 1px solid var(--color-zinc-700);
@@ -576,7 +576,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 .sidebar-item.active {
   background: var(--color-surface-3);
-  color: var(--color-lantern-400);
+  color: var(--color-pal-400);
 }
 
 .sidebar-item.active::before {
@@ -588,7 +588,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   width: 3px;
   height: 60%;
   border-radius: 0 2px 2px 0;
-  background: var(--color-lantern-400);
+  background: var(--color-pal-400);
 }
 
 /* Data table styles */
@@ -998,18 +998,18 @@ input[type="range"]::-webkit-slider-thumb {
   --color-zinc-800: #d6dee8;  /* hairline borders */
   --color-zinc-900: #e7edf3;
   --color-zinc-950: #f2f5f8;
-  /* Accent (flame) — inverted like zinc so text-lantern-300/400 stay AA on
+  /* Accent (flame) — inverted like zinc so text-pal-300/400 stay AA on
      white, and solid fills (500/600) carry white ink. */
-  --color-lantern-50:  #fdf6ec;
-  --color-lantern-100: #fbebd3;  /* --lx-flame-soft */
-  --color-lantern-200: #7a4304;
-  --color-lantern-300: #824704;
-  --color-lantern-400: #8f4f05;
-  --color-lantern-500: #985405;  /* --lx-flame (day) #a85e06, deepened to clear AA as text on surface-3 */
-  --color-lantern-600: #844804;
-  --color-lantern-700: #6e3d05;
-  --color-lantern-800: #f3cf9a;
-  --color-lantern-900: #fbebd3;
+  --color-pal-50:  #fdf6ec;
+  --color-pal-100: #fbebd3;  /* --lx-flame-soft */
+  --color-pal-200: #7a4304;
+  --color-pal-300: #824704;
+  --color-pal-400: #8f4f05;
+  --color-pal-500: #985405;  /* --lx-flame (day) #a85e06, deepened to clear AA as text on surface-3 */
+  --color-pal-600: #844804;
+  --color-pal-700: #6e3d05;
+  --color-pal-800: #f3cf9a;
+  --color-pal-900: #fbebd3;
   --color-on-flame: #ffffff;
   --elev-1: 0 1px 2px rgba(15, 27, 45, 0.06);
   --elev-2: 0 2px 6px rgba(15, 27, 45, 0.08), 0 1px 2px rgba(15, 27, 45, 0.06);

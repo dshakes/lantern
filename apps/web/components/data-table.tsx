@@ -154,9 +154,9 @@ export function DataTable<T>({
                       {col.sortable && (
                         <span className="inline-flex flex-col">
                           {isSorted && sortDir === "asc" ? (
-                            <ChevronUp className="h-3.5 w-3.5 text-lantern-400" />
+                            <ChevronUp className="h-3.5 w-3.5 text-pal-400" />
                           ) : isSorted && sortDir === "desc" ? (
-                            <ChevronDown className="h-3.5 w-3.5 text-lantern-400" />
+                            <ChevronDown className="h-3.5 w-3.5 text-pal-400" />
                           ) : (
                             <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-600" />
                           )}
@@ -165,7 +165,7 @@ export function DataTable<T>({
                     </div>
                     {/* Resize handle */}
                     <div
-                      className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-lantern-500/30"
+                      className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-pal-500/30"
                       onMouseDown={(e) => handleResizeStart(e, col.key, width ?? 150)}
                     />
                   </th>

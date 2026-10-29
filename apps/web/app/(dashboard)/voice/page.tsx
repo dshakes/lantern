@@ -208,7 +208,7 @@ export default function VoicePage() {
                       "h-3.5 w-3.5",
                       c.status === "completed" && "text-emerald-400",
                       c.status === "failed" && "text-red-400",
-                      (c.status === "ringing" || c.status === "active") && "animate-pulse text-lantern-400"
+                      (c.status === "ringing" || c.status === "active") && "animate-pulse text-pal-400"
                     )}
                   />
                   <div className="min-w-0 flex-1">
@@ -234,7 +234,7 @@ export default function VoicePage() {
                       "rounded-full px-2 py-0.5 text-[11px] font-medium",
                       c.status === "completed" && "bg-emerald-500/10 text-emerald-300",
                       c.status === "failed" && "bg-red-500/10 text-red-300",
-                      (c.status === "ringing" || c.status === "active") && "bg-lantern-500/10 text-lantern-300"
+                      (c.status === "ringing" || c.status === "active") && "bg-pal-500/10 text-pal-300"
                     )}
                   >
                     {c.status}
@@ -297,7 +297,7 @@ function AddNumberCard({
   const [greeting, setGreeting] = useState("");
 
   return (
-    <div className="space-y-4 rounded-xl border border-lantern-500/30 bg-lantern-500/5 p-5">
+    <div className="space-y-4 rounded-xl border border-pal-500/30 bg-pal-500/5 p-5">
       <h3 className="text-sm font-semibold text-zinc-100">Link a new phone number</h3>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <Field label="Agent">
@@ -305,14 +305,14 @@ function AddNumberCard({
             value={agentName}
             onChange={(e) => setAgentName(e.target.value)}
             placeholder="my-assistant"
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </Field>
         <Field label="Provider">
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           >
             <option value="twilio">Twilio</option>
             <option value="livekit" disabled>LiveKit (coming)</option>
@@ -324,7 +324,7 @@ function AddNumberCard({
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
             placeholder="+14155551234"
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </Field>
         <Field label="Display name (optional)">
@@ -332,7 +332,7 @@ function AddNumberCard({
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Customer support line"
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </Field>
         <Field label="Twilio Account SID" hint="From console.twilio.com">
@@ -340,7 +340,7 @@ function AddNumberCard({
             value={accountSid}
             onChange={(e) => setAccountSid(e.target.value)}
             placeholder="AC……"
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </Field>
         <Field label="Twilio Auth Token">
@@ -349,7 +349,7 @@ function AddNumberCard({
             value={authToken}
             onChange={(e) => setAuthToken(e.target.value)}
             placeholder="…"
-            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+            className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
           />
         </Field>
       </div>
@@ -358,7 +358,7 @@ function AddNumberCard({
           value={greeting}
           onChange={(e) => setGreeting(e.target.value)}
           placeholder="Hi, you've reached the assistant."
-          className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+          className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
         />
       </Field>
       <div className="flex items-center gap-2 pt-1">

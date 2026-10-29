@@ -95,7 +95,7 @@ export function applyGuardrails(text: string, config: GuardrailConfig): Guardrai
 }
 
 // localStorage helpers
-const GUARDRAILS_KEY_PREFIX = "lantern_guardrails_";
+const GUARDRAILS_KEY_PREFIX = "pal_guardrails_";
 
 export function getGuardrailConfig(agentName: string): GuardrailConfig {
   if (typeof window === "undefined") return DEFAULT_CONFIG;

@@ -8,7 +8,7 @@
 // We store instructions separately and merge them at runtime.
 // ---------------------------------------------------------------------------
 
-const INSTRUCTIONS_KEY_PREFIX = "lantern_agent_instructions_";
+const INSTRUCTIONS_KEY_PREFIX = "pal_agent_instructions_";
 
 export function getAgentInstructions(agentName: string): string {
   if (typeof window === "undefined") return "";

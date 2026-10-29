@@ -1,7 +1,7 @@
 // Typed client for the control-plane's WhatsApp personal-assistant
 // endpoints (VIPs, contact facts, pending drafts). Mirrors the
 // bridge-client pattern: pure functions, no state, single auth source
-// (the lantern_token cookie/localStorage via api.ts).
+// (the pal_token cookie/localStorage via api.ts).
 
 import { api } from "@/lib/api";
 

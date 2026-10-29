@@ -16,11 +16,11 @@ import { STEPS, stepStatus, type FixSuggestion, type Step } from "./onboarding-l
 export const ui = {
   panel: "rounded-xl border border-zinc-800 bg-surface-1",
   field:
-    "w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30",
+    "w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30",
   label: "mb-1.5 block text-xs font-medium text-zinc-300",
   muted: "text-sm text-zinc-400",
   mono: "font-mono text-xs",
-  lit: "bg-lantern-400",
+  lit: "bg-pal-400",
   ok: "text-emerald-400",
   bad: "text-red-400",
   warn: "text-amber-400",
@@ -71,8 +71,8 @@ export function ProgressRail({ current, blocked }: { current: Step; blocked: boo
               <span
                 className={clsx(
                   "relative z-10 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
-                  st === "done" && "border-lantern-400 bg-lantern-400 text-on-flame",
-                  st === "current" && !isBlocked && "border-lantern-400 bg-surface-0 text-lantern-300 ring-4 ring-lantern-500/25",
+                  st === "done" && "border-pal-400 bg-pal-400 text-on-flame",
+                  st === "current" && !isBlocked && "border-pal-400 bg-surface-0 text-pal-300 ring-4 ring-pal-500/25",
                   isBlocked && "border-amber-400 bg-surface-0 text-amber-400 ring-4 ring-amber-400/15",
                   st === "todo" && "border-zinc-700 bg-surface-0 text-zinc-500",
                 )}
@@ -101,7 +101,7 @@ export function AgentMessage({ children, busy }: { children: ReactNode; busy?: b
     <div className="flex gap-3">
       <span
         aria-hidden
-        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-lantern-400 text-xs font-bold text-on-flame"
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-pal-400 text-xs font-bold text-on-flame"
       >
         L
       </span>

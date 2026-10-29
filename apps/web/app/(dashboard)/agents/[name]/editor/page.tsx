@@ -14,12 +14,12 @@ import type { WorkflowTemplate } from "@/lib/sample-workflows";
 /** Build a basic workflow from an agent's stored prompt */
 function buildWorkflowFromAgent(agentName: string): WorkflowDefinition | null {
   // Check localStorage for agent prompt and settings
-  const promptsRaw = typeof window !== "undefined" ? localStorage.getItem("lantern_agent_prompts") : null;
+  const promptsRaw = typeof window !== "undefined" ? localStorage.getItem("pal_agent_prompts") : null;
   const prompts = promptsRaw ? JSON.parse(promptsRaw) : {};
   const prompt = prompts[agentName];
   if (!prompt) return null;
 
-  const settingsRaw = typeof window !== "undefined" ? localStorage.getItem(`lantern_agent_settings_${agentName}`) : null;
+  const settingsRaw = typeof window !== "undefined" ? localStorage.getItem(`pal_agent_settings_${agentName}`) : null;
   const settings = settingsRaw ? JSON.parse(settingsRaw) : {};
 
   const isEmailAgent = agentName.toLowerCase().includes("email") || agentName.toLowerCase().includes("gmail");
@@ -133,7 +133,7 @@ export default function EditorPage() {
 
       // 2) Try loading from localStorage
       try {
-        const localRaw = typeof window !== "undefined" ? localStorage.getItem(`lantern_workflow_${name}`) : null;
+        const localRaw = typeof window !== "undefined" ? localStorage.getItem(`pal_workflow_${name}`) : null;
         if (localRaw) {
           const localWorkflow = JSON.parse(localRaw) as WorkflowDefinition;
           if (localWorkflow.nodes && localWorkflow.nodes.length > 0) {
