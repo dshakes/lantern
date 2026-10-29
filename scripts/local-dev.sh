@@ -262,8 +262,8 @@ mode_kind() {
         local ctx="${rest#*:}"    # build context (repo root for Go services using replace ../../gen/go)
         if [[ -f "${dir}/Dockerfile" ]]; then
             info "Building ${img}..."
-            docker build -t "${img}:dev" -f "${dir}/Dockerfile" "${ctx}" || { warn "Failed to build ${img}, skipping"; continue; }
-            success "Built ${img}:dev"
+            docker build -t "pal/${img}:dev" -f "${dir}/Dockerfile" "${ctx}" || { warn "Failed to build ${img}, skipping"; continue; }
+            success "Built pal/${img}:dev"
         else
             warn "No Dockerfile for ${img} at ${dir}/Dockerfile, skipping"
         fi
@@ -274,10 +274,10 @@ mode_kind() {
     for entry in "${images[@]}"; do
         local img="${entry%%:*}"
         local ctx="${entry#*:}"
-        if docker image inspect "${img}:dev" &>/dev/null; then
-            info "Loading ${img}:dev..."
-            kind load docker-image "${img}:dev" --name "${CLUSTER_NAME}"
-            success "Loaded ${img}:dev"
+        if docker image inspect "pal/${img}:dev" &>/dev/null; then
+            info "Loading pal/${img}:dev..."
+            kind load docker-image "pal/${img}:dev" --name "${CLUSTER_NAME}"
+            success "Loaded pal/${img}:dev"
         fi
     done
 
@@ -326,7 +326,7 @@ mode_kind() {
     info "Gateway: localhost:8443"
 
     # Dashboard.
-    kubectl port-forward -n pal svc/pal-web 3001:3000 &>/dev/null &
+    kubectl port-forward -n pal svc/pal-dashboard 3001:3000 &>/dev/null &
     PIDS+=($!)
     info "Dashboard: localhost:3001"
 

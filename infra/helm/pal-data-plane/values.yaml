@@ -1,5 +1,10 @@
 # Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
 # LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
+#
+# Upgrading a release created before the PAL rename (ADR 0032): the chart name changed, so
+# resource names change with it (release "lantern" -> "lantern-<chart>"). To keep the old
+# names, and the Postgres/MinIO PVCs bound to them, pass --set fullnameOverride=<old fullname>.
+#
 # pal-data-plane values
 #
 # This chart deploys the PAL Runtime data plane into the customer's Kubernetes
