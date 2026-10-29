@@ -240,7 +240,7 @@ export function saveDocIngestState(state: DocIngestState, stateFile: string): vo
 /** Read allowed roots from LANTERN_PERSONAL_DOCS_ROOTS — same source as PersonalDocs. */
 export function getAllowedRoots(): string[] {
   const home = homedir();
-  const envRoots = (process.env.LANTERN_PERSONAL_DOCS_ROOTS || "")
+  const envRoots = (process.env.PAL_PERSONAL_DOCS_ROOTS || "")
     .split(":")
     .map((r) => r.trim().replace(/^~/, home))
     .filter(Boolean);

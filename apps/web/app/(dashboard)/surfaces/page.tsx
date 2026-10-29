@@ -168,7 +168,7 @@ const surfaces: SurfaceDefinition[] = [
     // configured" status driven by surface_configs. iMessage doesn't
     // need a config row — the bridge running on this Mac IS the
     // configuration.
-    livenessProbeUrl: process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200",
+    livenessProbeUrl: (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200",
     primaryActionHref: "/personal/setup",
     primaryActionLabel: "Manage on /personal",
   },
@@ -431,8 +431,8 @@ export default function SurfacesPage() {
       }
     }
     async function checkBoth() {
-      const waUrl = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL || "http://localhost:3100";
-      const imUrl = process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200";
+      const waUrl = (process.env.NEXT_PUBLIC_PAL_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL) || "http://localhost:3100";
+      const imUrl = (process.env.NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL || process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL) || "http://localhost:3200";
       await Promise.all([
         probe(`${waUrl}/health`, setWhatsappBridgeRunning),
         probe(`${imUrl}/health`, setImessageBridgeRunning),

@@ -1,3 +1,5 @@
+# Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
+# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
 # lantern-data-plane values
 #
 # This chart deploys the Lantern data plane into the customer's Kubernetes

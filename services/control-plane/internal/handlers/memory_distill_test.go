@@ -99,7 +99,7 @@ func TestBuildDistillPrompt_ContainsEvidence(t *testing.T) {
 }
 
 func TestMemoryDistillEnabled_DefaultOff(t *testing.T) {
-	os.Unsetenv("LANTERN_MEMORY_DISTILL")
+	os.Unsetenv("PAL_MEMORY_DISTILL")
 	if memoryDistillEnabled() {
 		t.Error("expected disabled by default")
 	}
@@ -107,7 +107,7 @@ func TestMemoryDistillEnabled_DefaultOff(t *testing.T) {
 
 func TestMemoryDistillEnabled_OnValues(t *testing.T) {
 	for _, v := range []string{"1", "true", "on", "TRUE", "ON"} {
-		t.Setenv("LANTERN_MEMORY_DISTILL", v)
+		t.Setenv("PAL_MEMORY_DISTILL", v)
 		if !memoryDistillEnabled() {
 			t.Errorf("expected enabled for %q", v)
 		}
@@ -265,7 +265,7 @@ func TestUpsertDistillates_CrossTenantIsolation(t *testing.T) {
 // is never called but if someone calls upsertDistillates with 0 items it
 // returns 0 without touching the DB.
 func TestMemoryDistillFlagOff_Inert(t *testing.T) {
-	os.Unsetenv("LANTERN_MEMORY_DISTILL")
+	os.Unsetenv("PAL_MEMORY_DISTILL")
 	if memoryDistillEnabled() {
 		t.Skip("LANTERN_MEMORY_DISTILL is set in env — skipping inertness test")
 	}

@@ -68,12 +68,12 @@ spec:
             # the startup guards refuse to boot without these rather than run
             # insecurely. Injected unconditionally, empty by default, so dev and
             # kind deployments are unchanged.
-            - name: LANTERN_CREDENTIAL_KEY
+            - name: PAL_CREDENTIAL_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: credential-key
-            - name: LANTERN_RECEIPT_SECRET
+            - name: PAL_RECEIPT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
@@ -83,7 +83,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: jwt-secret
-            - name: LANTERN_GRPC_SERVICE_TOKEN
+            - name: PAL_GRPC_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
@@ -94,13 +94,13 @@ spec:
             # here while values-staging.yaml declared them, which meant the flag
             # was silently dropped: the deployment came up healthy with RLS
             # completely off — a fail-open on the tenant-isolation control.
-            - name: LANTERN_ENV
+            - name: PAL_ENV
               value: {{ .Values.controlPlane.env.LANTERN_ENV | default "production" | quote }}
-            - name: LANTERN_RLS_ENFORCE
+            - name: PAL_RLS_ENFORCE
               value: {{ .Values.controlPlane.env.LANTERN_RLS_ENFORCE | default "" | quote }}
-            - name: LANTERN_AUTHZ_ENFORCE
+            - name: PAL_AUTHZ_ENFORCE
               value: {{ .Values.controlPlane.env.LANTERN_AUTHZ_ENFORCE | default "" | quote }}
-            - name: LANTERN_APP_DB_PASSWORD
+            - name: PAL_APP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
@@ -143,7 +143,7 @@ spec:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: minio-password
             # Prod/staging refuse to start on the stub scheduler (CheckSchedulerAddr).
-            - name: LANTERN_SCHEDULER_GRPC_ADDR
+            - name: PAL_SCHEDULER_GRPC_ADDR
               value: "{{ include "lantern.fullname" . }}-runtime-scheduler:{{ .Values.runtimeScheduler.service.grpcPort }}"
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}

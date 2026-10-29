@@ -17,7 +17,7 @@ const replayToken = "tok-secret-do-not-leak"
 // replayEnv starts the replay server and points every overridable connector at it.
 func replayEnv(t *testing.T) *connectorreplay.Server {
 	t.Helper()
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	rs, err := connectorreplay.New()
 	if err != nil {
 		t.Fatal(err)
@@ -40,11 +40,11 @@ func TestCheckConnectorBaseURLOverrides(t *testing.T) {
 		wantMsg   string
 	}{
 		{"prod unset", true, nil, false, ""},
-		{"prod set", true, map[string]string{"LANTERN_CONNECTOR_BASEURL_SLACK": "http://127.0.0.1:1"}, true, "LANTERN_CONNECTOR_BASEURL_SLACK"},
+		{"prod set", true, map[string]string{"PAL_CONNECTOR_BASEURL_SLACK": "http://127.0.0.1:1"}, true, "PAL_CONNECTOR_BASEURL_SLACK"},
 		{"dev unset", false, nil, false, ""},
-		{"dev valid", false, map[string]string{"LANTERN_CONNECTOR_BASEURL_GITHUB": "http://127.0.0.1:1"}, false, ""},
-		{"dev malformed", false, map[string]string{"LANTERN_CONNECTOR_BASEURL_GITHUB": "not-a-url"}, true, "malformed"},
-		{"dev non-http scheme", false, map[string]string{"LANTERN_CONNECTOR_BASEURL_GITHUB": "file:///etc"}, true, "malformed"},
+		{"dev valid", false, map[string]string{"PAL_CONNECTOR_BASEURL_GITHUB": "http://127.0.0.1:1"}, false, ""},
+		{"dev malformed", false, map[string]string{"PAL_CONNECTOR_BASEURL_GITHUB": "not-a-url"}, true, "malformed"},
+		{"dev non-http scheme", false, map[string]string{"PAL_CONNECTOR_BASEURL_GITHUB": "file:///etc"}, true, "malformed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,10 +64,10 @@ func (c *captureRT) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestBaseURLTransport_IgnoredInProd(t *testing.T) {
-	t.Setenv("LANTERN_CONNECTOR_BASEURL_SLACK", "http://127.0.0.1:1")
+	t.Setenv("PAL_CONNECTOR_BASEURL_SLACK", "http://127.0.0.1:1")
 	for env, want := range map[string]string{"production": "slack.com", "": "127.0.0.1:1"} {
 		t.Run("env="+env, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", env)
+			t.Setenv("PAL_ENV", env)
 			c := &captureRT{}
 			req, _ := http.NewRequest("GET", "https://slack.com/api/x", nil)
 			if _, err := (baseURLTransport{next: c}).RoundTrip(req); err != nil {

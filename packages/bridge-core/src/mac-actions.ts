@@ -95,7 +95,7 @@ export class MacActions {
     //   3. Common defaults: "Home", "Calendar", "Personal", "Work"
     // and fall back to any writable calendar excluding the known
     // silent ones.
-    const envDefault = (process.env.LANTERN_DEFAULT_CALENDAR || "").trim();
+    const envDefault = (process.env.PAL_DEFAULT_CALENDAR || "").trim();
     const tryNames = [
       ...(spec.calendarName ? [spec.calendarName] : []),
       ...(envDefault ? [envDefault] : []),

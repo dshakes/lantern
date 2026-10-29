@@ -135,7 +135,7 @@ const RELOAD_TTL_MS = 30_000;
 // the store mirrors the profile-derived timezone into the env so every
 // timezone reader (quiet hours, daily digest, calendar, pacing) uses the
 // single source of truth the owner wrote in "## My world" — no drift.
-const OWNER_TZ_ENV_EXPLICIT = !!process.env.LANTERN_OWNER_TIMEZONE?.trim();
+const OWNER_TZ_ENV_EXPLICIT = !!process.env.PAL_OWNER_TIMEZONE?.trim();
 
 export class OwnerProfileStore {
   private logger: Logger;
@@ -148,7 +148,7 @@ export class OwnerProfileStore {
     this.logger = logger.child({ component: "owner-profile" });
     this.path =
       path ||
-      process.env.LANTERN_OWNER_PROFILE ||
+      process.env.PAL_OWNER_PROFILE ||
       join(homedir(), ".lantern", "owner-profile.md");
   }
 
@@ -196,7 +196,7 @@ export class OwnerProfileStore {
       // digests, calendar and pacing can't drift from what the owner wrote.
       // Re-applied on every reload, so editing "## My world" takes effect.
       if (!OWNER_TZ_ENV_EXPLICIT && this.cache.timezone &&
-          process.env.LANTERN_OWNER_TIMEZONE !== this.cache.timezone) {
+          process.env.PAL_OWNER_TIMEZONE !== this.cache.timezone) {
         process.env.LANTERN_OWNER_TIMEZONE = this.cache.timezone;
         // Both names (ADR 0032): env-compat mirrored PAL_OWNER_TIMEZONE at boot.
         process.env.PAL_OWNER_TIMEZONE = this.cache.timezone;
@@ -420,7 +420,7 @@ export class OwnerProfileStore {
         if (first && first.length >= 2) out.add(first);
       }
     }
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "").trim().toLowerCase();
+    const ownerName = (process.env.PAL_OWNER_NAME || "").trim().toLowerCase();
     if (ownerName) out.add(ownerName);
     return Array.from(out);
   }

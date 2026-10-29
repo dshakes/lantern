@@ -33,8 +33,8 @@ func defaultRuntimeEnv(restURL, token string) runtimeEnv {
 		token:         token,
 		goos:          runtime.GOOS,
 		kvmPath:       "/dev/kvm",
-		schedulerAddr: firstNonEmptyStr(os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"), "localhost:50055"),
-		managerAddr:   firstNonEmptyStr(os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"), "localhost:50054"),
+		schedulerAddr: firstNonEmptyStr(os.Getenv("PAL_SCHEDULER_GRPC_ADDR"), "localhost:50055"),
+		managerAddr:   firstNonEmptyStr(os.Getenv("PAL_DEFAULT_MANAGER_ADDR"), "localhost:50054"),
 		lookPath:      exec.LookPath,
 	}
 }

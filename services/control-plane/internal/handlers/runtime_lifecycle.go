@@ -41,7 +41,7 @@ const (
 
 // maxForkCount returns the configured per-call fork limit for this process.
 func maxForkCount() int {
-	s := os.Getenv("LANTERN_MAX_FORK_COUNT")
+	s := os.Getenv("PAL_MAX_FORK_COUNT")
 	if s == "" {
 		return maxForkCountDefault
 	}

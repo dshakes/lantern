@@ -37,7 +37,7 @@ func (h *LlmProxyHandler) EmbedText(ctx context.Context, tenantID, text string) 
 	if err != nil {
 		return nil, fmt.Errorf("embed: no openai key: %w", err)
 	}
-	model := getEnvOr("LANTERN_EMBED_MODEL", "text-embedding-3-small")
+	model := getEnvOr("PAL_EMBED_MODEL", "text-embedding-3-small")
 
 	// Cap input — embeddings models have token limits and timeline rows
 	// can be long; the first ~8k chars carry the signal.

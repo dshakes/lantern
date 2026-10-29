@@ -21,9 +21,9 @@ func TestCheckLLMBaseURLOverrides(t *testing.T) {
 		wantMsg   string
 	}{
 		{"prod unset", true, nil, false, ""},
-		{"prod set", true, map[string]string{"LANTERN_LLM_BASEURL_OPENAI": "http://127.0.0.1:1"}, true, "LANTERN_LLM_BASEURL_OPENAI"},
-		{"dev valid", false, map[string]string{"LANTERN_LLM_BASEURL_ANTHROPIC": "http://127.0.0.1:1"}, false, ""},
-		{"dev malformed", false, map[string]string{"LANTERN_LLM_BASEURL_ANTHROPIC": "127.0.0.1:1"}, true, "malformed"},
+		{"prod set", true, map[string]string{"PAL_LLM_BASEURL_OPENAI": "http://127.0.0.1:1"}, true, "PAL_LLM_BASEURL_OPENAI"},
+		{"dev valid", false, map[string]string{"PAL_LLM_BASEURL_ANTHROPIC": "http://127.0.0.1:1"}, false, ""},
+		{"dev malformed", false, map[string]string{"PAL_LLM_BASEURL_ANTHROPIC": "127.0.0.1:1"}, true, "malformed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -44,11 +44,11 @@ func TestLLMBaseURLTransport(t *testing.T) {
 		{"other host untouched", "", "https://example.com/x", "example.com"},
 		{"prod ignores override", "production", "https://api.openai.com/v1/chat/completions", "api.openai.com"},
 	}
-	t.Setenv("LANTERN_LLM_BASEURL_OPENAI", "http://127.0.0.1:7")
-	t.Setenv("LANTERN_LLM_BASEURL_ANTHROPIC", "http://127.0.0.1:8")
+	t.Setenv("PAL_LLM_BASEURL_OPENAI", "http://127.0.0.1:7")
+	t.Setenv("PAL_LLM_BASEURL_ANTHROPIC", "http://127.0.0.1:8")
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", tc.env)
+			t.Setenv("PAL_ENV", tc.env)
 			c := &captureRT{}
 			req, _ := http.NewRequest("POST", tc.url, nil)
 			if _, err := (llmBaseURLTransport{next: c}).RoundTrip(req); err != nil {
@@ -67,12 +67,12 @@ func TestLLMBaseURLTransport(t *testing.T) {
 // fixtureLLM starts llm-replay and points both provider overrides at it.
 func fixtureLLM(t *testing.T, rules []llmreplay.Rule) *llmreplay.Server {
 	t.Helper()
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	fx := llmreplay.New(rules)
 	ts := httptest.NewServer(fx)
 	t.Cleanup(ts.Close)
-	t.Setenv("LANTERN_LLM_BASEURL_OPENAI", ts.URL)
-	t.Setenv("LANTERN_LLM_BASEURL_ANTHROPIC", ts.URL)
+	t.Setenv("PAL_LLM_BASEURL_OPENAI", ts.URL)
+	t.Setenv("PAL_LLM_BASEURL_ANTHROPIC", ts.URL)
 	t.Setenv("OPENAI_API_KEY", "sk-fixture")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	return fx

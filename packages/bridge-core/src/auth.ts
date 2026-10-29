@@ -9,9 +9,9 @@
 import type { Logger } from "pino";
 
 const API_BASE_URL =
-  process.env.LANTERN_API_URL || "http://localhost:8080";
+  process.env.PAL_API_URL || "http://localhost:8080";
 
-const RAW_STATIC_TOKEN = process.env.LANTERN_API_TOKEN || "";
+const RAW_STATIC_TOKEN = process.env.PAL_API_TOKEN || "";
 
 // Smart static-token validation. If the env var holds a JWT whose
 // `exp` claim is in the past, we treat it as if no static token were
@@ -38,8 +38,8 @@ function isJWTExpired(token: string): boolean {
 
 const STATIC_TOKEN = isJWTExpired(RAW_STATIC_TOKEN) ? "" : RAW_STATIC_TOKEN;
 
-const EMAIL = process.env.LANTERN_BRIDGE_EMAIL || "admin@lantern.dev";
-const PASSWORD = process.env.LANTERN_BRIDGE_PASSWORD || "lantern";
+const EMAIL = process.env.PAL_BRIDGE_EMAIL || "admin@lantern.dev";
+const PASSWORD = process.env.PAL_BRIDGE_PASSWORD || "lantern";
 
 let runtimeToken = STATIC_TOKEN;
 let loginInflight: Promise<string | null> | null = null;

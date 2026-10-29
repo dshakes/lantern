@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from typing import Any, Awaitable, Callable
 
+from lantern import _env
 from lantern.types import (
     AgentContext,
     AskOptions,
@@ -14,7 +14,6 @@ from lantern.types import (
     Logger,
     NotifyOptions,
 )
-
 
 # ---------------------------------------------------------------------------
 # Dev-mode logger that writes to stderr
@@ -108,9 +107,9 @@ def build_production_context(
     from lantern.runtime.memory_client import GrpcMemoryClient
     from lantern.runtime.tool_client import GrpcToolClient
 
-    run_id = os.environ.get("LANTERN_RUN_ID", "")
-    tenant_id = os.environ.get("LANTERN_TENANT_ID", "")
-    grpc_endpoint = os.environ.get("LANTERN_GRPC_ENDPOINT", "localhost:50051")
+    run_id = _env.get("RUN_ID", "")
+    tenant_id = _env.get("TENANT_ID", "")
+    grpc_endpoint = _env.get("GRPC_ENDPOINT", "localhost:50051")
 
     return AgentContext(
         run_id=run_id,

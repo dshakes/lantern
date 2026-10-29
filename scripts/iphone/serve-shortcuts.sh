@@ -12,8 +12,8 @@
 #   https://<your-mac>.<tailnet>.ts.net/shortcuts/
 set -euo pipefail
 
-WEB="${LANTERN_SHORTCUT_WEB:-$HOME/.lantern/shortcuts-web}"
-SRC="${LANTERN_SHORTCUT_SRC:-$HOME/Desktop}"
+WEB="${PAL_SHORTCUT_WEB:-${LANTERN_SHORTCUT_WEB:-$HOME/.lantern/shortcuts-web}}"
+SRC="${PAL_SHORTCUT_SRC:-${LANTERN_SHORTCUT_SRC:-$HOME/Desktop}}"
 TS="${TAILSCALE_BIN:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
 command -v "$TS" >/dev/null 2>&1 || TS="$(command -v tailscale || true)"
 [ -n "$TS" ] || { echo "tailscale CLI not found" >&2; exit 1; }
@@ -44,7 +44,7 @@ chmod 600 "$WEB"/*.shortcut
 # CAN proxy to a local port. So run a tiny local file server and proxy /shortcuts
 # to it. (--set-path strips the prefix, so the file server serving at root lines
 # up: /shortcuts/Foo.shortcut → 127.0.0.1:PORT/Foo.shortcut.)
-PORT="${LANTERN_SHORTCUT_PORT:-8899}"
+PORT="${PAL_SHORTCUT_PORT:-${LANTERN_SHORTCUT_PORT:-8899}}"
 # Restart any previous instance of our server on this port.
 pkill -f "http.server $PORT" 2>/dev/null || true
 nohup python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$WEB" >/dev/null 2>&1 &

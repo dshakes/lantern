@@ -33,14 +33,14 @@ const e2eImage = "python:3.11-slim"
 
 func runtimeE2EOrSkip(t *testing.T) (schedAddr string) {
 	t.Helper()
-	if os.Getenv("LANTERN_RUNTIME_E2E") != "1" {
+	if os.Getenv("PAL_RUNTIME_E2E") != "1" {
 		t.Skip("LANTERN_RUNTIME_E2E != 1 — skipping live runtime exec e2e")
 	}
-	schedAddr = os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR")
+	schedAddr = os.Getenv("PAL_SCHEDULER_GRPC_ADDR")
 	if schedAddr == "" {
 		t.Skip("LANTERN_SCHEDULER_GRPC_ADDR unset — skipping live runtime exec e2e")
 	}
-	if os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR") == "" {
+	if os.Getenv("PAL_DEFAULT_MANAGER_ADDR") == "" {
 		t.Skip("LANTERN_DEFAULT_MANAGER_ADDR unset — Exec dials the manager directly")
 	}
 	return schedAddr
@@ -104,7 +104,7 @@ func scheduleE2EVM(ctx context.Context, t *testing.T, c *grpcSchedulerClient, te
 
 func newE2EClient(t *testing.T, schedAddr string) *grpcSchedulerClient {
 	t.Helper()
-	c, err := NewGRPCSchedulerClient(schedAddr, os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"), zap.NewNop())
+	c, err := NewGRPCSchedulerClient(schedAddr, os.Getenv("PAL_GRPC_SERVICE_TOKEN"), zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewGRPCSchedulerClient: %v", err)
 	}

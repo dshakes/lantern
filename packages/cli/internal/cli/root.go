@@ -40,14 +40,14 @@ dashboard — not yet as CLI subcommands.`,
 
 	// Persistent flags available on every subcommand.
 	pf := root.PersistentFlags()
-	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("LANTERN_API_URL", "localhost:50051"), "Lantern API address (env: LANTERN_API_URL)")
-	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("LANTERN_API_KEY", ""), "API key for authentication (env: LANTERN_API_KEY)")
-	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("LANTERN_TENANT_ID", ""), "Tenant ID (env: LANTERN_TENANT_ID)")
+	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("PAL_API_URL", "localhost:50051"), "Lantern API address (env: LANTERN_API_URL)")
+	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("PAL_API_KEY", ""), "API key for authentication (env: LANTERN_API_KEY)")
+	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("PAL_TENANT_ID", ""), "Tenant ID (env: LANTERN_TENANT_ID)")
 	pf.StringVarP(&flags.output, "output", "o", "text", "Output format: text or json")
 	pf.BoolVar(&flags.rest, "rest", false, "Force REST API instead of gRPC (env: LANTERN_USE_REST)")
 
 	// Check env var for REST mode.
-	if envOrDefault("LANTERN_USE_REST", "") != "" {
+	if envOrDefault("PAL_USE_REST", "") != "" {
 		flags.rest = true
 	}
 

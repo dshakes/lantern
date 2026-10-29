@@ -23,13 +23,13 @@ import { withRetry, isTransientError, TransientHttpError } from "./retry.js";
 // Gmail search → another read. 90s was tight; 180s gives the model
 // headroom on multi-tool flows without leaving the user waiting
 // indefinitely on the rare runaway.
-const SSE_TIMEOUT_MS = Number(process.env.LANTERN_BRIDGE_AGENT_TIMEOUT_MS || "180000");
+const SSE_TIMEOUT_MS = Number(process.env.PAL_BRIDGE_AGENT_TIMEOUT_MS || "180000");
 
 // Transient-error retry config for agent HTTP calls (429, 503, ECONNREFUSED).
 // Override via env if needed; defaults are conservative for a chat bridge.
-const RETRY_MAX_ATTEMPTS = Number(process.env.LANTERN_BRIDGE_RETRY_ATTEMPTS || "3");
-const RETRY_BASE_DELAY_MS = Number(process.env.LANTERN_BRIDGE_RETRY_BASE_MS || "500");
-const RETRY_MAX_DELAY_MS = Number(process.env.LANTERN_BRIDGE_RETRY_MAX_MS || "4000");
+const RETRY_MAX_ATTEMPTS = Number(process.env.PAL_BRIDGE_RETRY_ATTEMPTS || "3");
+const RETRY_BASE_DELAY_MS = Number(process.env.PAL_BRIDGE_RETRY_BASE_MS || "500");
+const RETRY_MAX_DELAY_MS = Number(process.env.PAL_BRIDGE_RETRY_MAX_MS || "4000");
 
 export interface AgentClientOptions {
   agentName: string;

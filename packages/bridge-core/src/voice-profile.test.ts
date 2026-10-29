@@ -31,34 +31,34 @@ const GOOD_JSON = JSON.stringify(GOOD_HINT);
 
 describe("isVoiceReasoningEnabled", () => {
   it("returns false when env var is unset", () => {
-    const saved = process.env["LANTERN_VOICE_REASONING"];
-    delete process.env["LANTERN_VOICE_REASONING"];
+    const saved = process.env["PAL_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
     assert.equal(isVoiceReasoningEnabled(), false);
-    if (saved !== undefined) process.env["LANTERN_VOICE_REASONING"] = saved;
+    if (saved !== undefined) process.env["PAL_VOICE_REASONING"] = saved;
   });
 
   it("returns false when env var is '0'", () => {
-    process.env["LANTERN_VOICE_REASONING"] = "0";
+    process.env["PAL_VOICE_REASONING"] = "0";
     assert.equal(isVoiceReasoningEnabled(), false);
-    delete process.env["LANTERN_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
   });
 
   it("returns true when env var is '1'", () => {
-    process.env["LANTERN_VOICE_REASONING"] = "1";
+    process.env["PAL_VOICE_REASONING"] = "1";
     assert.equal(isVoiceReasoningEnabled(), true);
-    delete process.env["LANTERN_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
   });
 
   it("returns true when env var is 'true'", () => {
-    process.env["LANTERN_VOICE_REASONING"] = "true";
+    process.env["PAL_VOICE_REASONING"] = "true";
     assert.equal(isVoiceReasoningEnabled(), true);
-    delete process.env["LANTERN_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
   });
 
   it("returns true when env var is 'on'", () => {
-    process.env["LANTERN_VOICE_REASONING"] = "on";
+    process.env["PAL_VOICE_REASONING"] = "on";
     assert.equal(isVoiceReasoningEnabled(), true);
-    delete process.env["LANTERN_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
   });
 });
 
@@ -291,12 +291,12 @@ describe("VoiceProfileCache", () => {
   });
 
   it("flag-off proof: when LANTERN_VOICE_REASONING is unset, isVoiceReasoningEnabled() is false and the cache is never needed", () => {
-    const saved = process.env["LANTERN_VOICE_REASONING"];
-    delete process.env["LANTERN_VOICE_REASONING"];
+    const saved = process.env["PAL_VOICE_REASONING"];
+    delete process.env["PAL_VOICE_REASONING"];
     // The bridge checks isVoiceReasoningEnabled() before calling the cache.
     // Proving the flag is false is sufficient — the bridge test would confirm
     // the cache is never instantiated, but here we confirm the gate works.
     assert.equal(isVoiceReasoningEnabled(), false);
-    if (saved !== undefined) process.env["LANTERN_VOICE_REASONING"] = saved;
+    if (saved !== undefined) process.env["PAL_VOICE_REASONING"] = saved;
   });
 });

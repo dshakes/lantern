@@ -118,15 +118,15 @@ test("AI tell-words match on word boundaries, not substrings", () => {
 // clearing the lists would not have stopped group replies at all.
 test("group replies are OFF unless explicitly enabled", () => {
   // Default: absent / empty / falsy values must all mean OFF.
-  for (const env of [{}, { LANTERN_GROUP_REPLIES: "" }, { LANTERN_GROUP_REPLIES: "0" },
-                     { LANTERN_GROUP_REPLIES: "off" }, { LANTERN_GROUP_REPLIES: "false" },
-                     { LANTERN_GROUP_REPLIES: "no" }]) {
+  for (const env of [{}, { PAL_GROUP_REPLIES: "" }, { PAL_GROUP_REPLIES: "0" },
+                     { PAL_GROUP_REPLIES: "off" }, { PAL_GROUP_REPLIES: "false" },
+                     { PAL_GROUP_REPLIES: "no" }]) {
     assert.equal(groupRepliesEnabled(env as NodeJS.ProcessEnv), false,
       `should be OFF for ${JSON.stringify(env)}`);
   }
   // Only an explicit opt-in turns it back on.
   for (const v of ["1", "true", "on", "ON", " true "]) {
-    assert.equal(groupRepliesEnabled({ LANTERN_GROUP_REPLIES: v } as NodeJS.ProcessEnv), true,
+    assert.equal(groupRepliesEnabled({ PAL_GROUP_REPLIES: v } as NodeJS.ProcessEnv), true,
       `should be ON for ${JSON.stringify(v)}`);
   }
 });
@@ -141,7 +141,7 @@ test("isBlockedGroupSend blocks @g.us at the boundary when groups are off", () =
   assert.equal(isBlockedGroupSend("15126088977@s.whatsapp.net", {} as NodeJS.ProcessEnv), false);
   assert.equal(isBlockedGroupSend("241141156987027@lid", {} as NodeJS.ProcessEnv), false);
   // Explicit opt-in re-enables group sends.
-  assert.equal(isBlockedGroupSend("14085008008-1441049465@g.us", { LANTERN_GROUP_REPLIES: "1" } as NodeJS.ProcessEnv), false);
+  assert.equal(isBlockedGroupSend("14085008008-1441049465@g.us", { PAL_GROUP_REPLIES: "1" } as NodeJS.ProcessEnv), false);
 });
 
 test("the voice-note ack promises nothing", () => {

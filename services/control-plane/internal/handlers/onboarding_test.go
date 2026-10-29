@@ -328,7 +328,7 @@ func TestClip_RuneSafe(t *testing.T) {
 func TestOnboardingRoutes_ScopeEnforcement(t *testing.T) {
 	pool := openTestPool(t)
 	mustMigrate(t, pool)
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
 	logger, _ := zap.NewDevelopment()

@@ -70,8 +70,8 @@ export interface DigestConfig {
 }
 
 export function defaultDigestConfig(): DigestConfig {
-  const hour = parseInt(process.env.LANTERN_DIGEST_HOUR ?? "8", 10);
-  const timezone = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+  const hour = parseInt(process.env.PAL_DIGEST_HOUR ?? "8", 10);
+  const timezone = process.env.PAL_OWNER_TIMEZONE || undefined;
   return { hour: Number.isFinite(hour) ? hour : 8, timezone };
 }
 

@@ -42,8 +42,7 @@ const DEFAULT_NO_PROXY: &str = "127.0.0.1,localhost,::1,169.254.169.254";
 #[must_use]
 pub fn proxy_env_pairs(proxy_addr: &str) -> Vec<(String, String)> {
     let url = format!("http://{proxy_addr}");
-    let no_proxy =
-        std::env::var("LANTERN_NO_PROXY").unwrap_or_else(|_| DEFAULT_NO_PROXY.to_string());
+    let no_proxy = pal_env::var("PAL_NO_PROXY").unwrap_or_else(|_| DEFAULT_NO_PROXY.to_string());
     let mut pairs = Vec::with_capacity(9);
     for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
         pairs.push((key.to_string(), url.clone()));
@@ -82,8 +81,8 @@ fn parse_identity(uid: Option<&str>, gid: Option<&str>) -> Option<WorkloadIdenti
 /// (see `SecretCache::serve`).
 pub fn workload_identity() -> Option<WorkloadIdentity> {
     parse_identity(
-        std::env::var("LANTERN_WORKLOAD_UID").ok().as_deref(),
-        std::env::var("LANTERN_WORKLOAD_GID").ok().as_deref(),
+        pal_env::var("PAL_WORKLOAD_UID").ok().as_deref(),
+        pal_env::var("PAL_WORKLOAD_GID").ok().as_deref(),
     )
 }
 
@@ -188,7 +187,7 @@ pub fn as_workload(cmd: &mut Command) -> &mut Command {
 /// The proxy address the workload should be pointed at — the same bind the
 /// egress proxy listens on (`LANTERN_EGRESS_BIND`, default `127.0.0.1:3128`).
 fn egress_proxy_addr() -> String {
-    std::env::var("LANTERN_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".to_string())
+    pal_env::var("PAL_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".to_string())
 }
 
 #[derive(Clone)]
@@ -233,7 +232,7 @@ impl Supervisor {
     ) -> Self {
         Self {
             workload_cmd,
-            max_restarts: std::env::var("LANTERN_MAX_RESTARTS")
+            max_restarts: pal_env::var("PAL_MAX_RESTARTS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_MAX_RESTARTS),

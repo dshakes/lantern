@@ -547,7 +547,7 @@ func resolveManagerAddr(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	if v := os.Getenv("LANTERN_MANAGER_ADDR"); v != "" {
+	if v := os.Getenv("PAL_MANAGER_ADDR"); v != "" {
 		return v
 	}
 	return defaultManagerAddr
@@ -625,7 +625,7 @@ func runVmExec(cmd *cobra.Command, vmID, command string, argv []string, tty bool
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	// The manager requires the shared service token when it has one set;
 	// operators exec'ing directly pass it via the same env var.
-	if tok := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"); tok != "" {
+	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(serviceTokenCreds(tok)))
 	}
 	conn, err := grpc.NewClient(managerAddr, opts...)
@@ -819,7 +819,7 @@ func apiAuthHeader() string {
 			return "Bearer " + c.APIKey
 		}
 	}
-	if t := os.Getenv("LANTERN_API_TOKEN"); t != "" {
+	if t := os.Getenv("PAL_API_TOKEN"); t != "" {
 		return "Bearer " + t
 	}
 	return ""
@@ -924,7 +924,7 @@ func authHint() string {
 			stored = "API key from ~/.lantern/credentials.json"
 		}
 	}
-	envSet := os.Getenv("LANTERN_API_TOKEN") != ""
+	envSet := os.Getenv("PAL_API_TOKEN") != ""
 
 	switch {
 	case stored != "" && envSet:
