@@ -135,7 +135,7 @@ export default function LoginPage() {
           setError(message);
         }
       } else {
-        setError("Can't reach the Lantern API, so Google and GitHub sign-in are unavailable. In local dev, start it with make run-api.");
+        setError("Can't reach the PAL API, so Google and GitHub sign-in are unavailable. In local dev, start it with make run-api.");
       }
       setOauthLoading(null);
     }
@@ -206,7 +206,7 @@ export default function LoginPage() {
             {mode === "signin" ? "Welcome back" : "Create your account"}
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            {mode === "signin" ? "Sign in to your Lantern workspace" : "Get started in 30 seconds"}
+            {mode === "signin" ? "Sign in to your PAL workspace" : "Get started in 30 seconds"}
           </p>
         </div>
 

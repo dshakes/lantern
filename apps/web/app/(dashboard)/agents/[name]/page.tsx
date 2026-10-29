@@ -1261,7 +1261,7 @@ export default function AgentDetailPage() {
                   <Zap className="h-4 w-4 text-emerald-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-zinc-200">Managed Agent <span className="text-emerald-400">&#183;</span> Running on Lantern Cloud</p>
+                  <p className="text-sm font-medium text-zinc-200">Managed Agent <span className="text-emerald-400">&#183;</span> Running on PAL Cloud</p>
                   <p className="text-[11px] text-zinc-500">Zero-setup execution -- no code deployment required</p>
                 </div>
               </div>
@@ -2344,7 +2344,7 @@ export default function AgentDetailPage() {
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Agent Card Preview</label>
-                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[11px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "Lantern API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "Lantern", url: "https://lantern.run" } }, null, 2)}</pre>
+                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[11px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "PAL API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "PAL", url: "https://lantern.run" } }, null, 2)}</pre>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Input Schema (JSON)</label>
@@ -2362,13 +2362,13 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-cyan-500/20 bg-surface-1 p-5 space-y-4">
               <div className="flex items-center gap-2">
                 <Cloud className="h-4 w-4 text-cyan-400" />
-                <h3 className="text-sm font-semibold text-zinc-200">Deploy to Lantern Cloud</h3>
+                <h3 className="text-sm font-semibold text-zinc-200">Deploy to PAL Cloud</h3>
                 {cloudDeployStatus === "live" && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">Live</span>}
                 {cloudDeployStatus === "stopped" && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[9px] font-medium text-zinc-400">Stopped</span>}
               </div>
-              <p className="text-[11px] text-zinc-500">Deploy this agent to Lantern Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
+              <p className="text-[11px] text-zinc-500">Deploy this agent to PAL Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
               {cloudDeployStatus === "not_deployed" && (
-                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to Lantern Cloud"); } catch (err) { toast.error(`Deploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to PAL Cloud"); } catch (err) { toast.error(`Deploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
                   {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Deploy to Cloud</>}
                 </button>
               )}

@@ -51,7 +51,7 @@ Watches the local directory (default: current directory) for changes to
 agent.yaml or any *.yaml / *.ts / *.py / *.js / *.json file, then on each
 change:
 
-  1. Publishes the agent version to the running Lantern stack.
+  1. Publishes the agent version to the running PAL stack.
   2. Fires a smoke run (POST /v1/runs) with --input.
   3. Streams run events live (step_started / step_completed / step_failed /
      confidence_evaluated) as a waterfall to the terminal.

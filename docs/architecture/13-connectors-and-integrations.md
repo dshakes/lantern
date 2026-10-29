@@ -1,8 +1,8 @@
 # Connector Framework — Integrate the Apps People Already Use
 
-> **What this is:** the Zapier-shaped subsystem inside Lantern. A framework for building connectors to third-party SaaS apps, plus a library of 30+ prebuilt connectors at launch.
+> **What this is:** the Zapier-shaped subsystem inside PAL. A framework for building connectors to third-party SaaS apps, plus a library of 30+ prebuilt connectors at launch.
 >
-> **Why it matters:** for non-technical users (and most technical ones), the most valuable workflows are not "build an AI agent from scratch" — they are "when X happens in App A, have an AI do Y, then do Z in App B." Without first-class connectors, Lantern is a developer toy. With them, it's a personal automation platform that happens to be powered by agents.
+> **Why it matters:** for non-technical users (and most technical ones), the most valuable workflows are not "build an AI agent from scratch" — they are "when X happens in App A, have an AI do Y, then do Z in App B." Without first-class connectors, PAL is a developer toy. With them, it's a personal automation platform that happens to be powered by agents.
 
 ---
 
@@ -29,7 +29,7 @@ name: Gmail
 description: Send and read email through Gmail.
 icon: ./icon.svg
 publisher:
-  name: Lantern
+  name: PAL
   verified: true
 
 auth:

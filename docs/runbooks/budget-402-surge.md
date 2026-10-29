@@ -3,9 +3,9 @@
 > **Audience:** on-call operators.
 > **Fires from:** `SchedulerQuotaRejectionSurge` (warning, **real**),
 > `BudgetDenied402Surge` (warning, **TODO**).
-> **Dashboards:** Lantern — Platform Overview, Data Plane & Runtime.
+> **Dashboards:** PAL — Platform Overview, Data Plane & Runtime.
 
-Lantern enforces spend and concurrency as policy. Two distinct 402 paths exist:
+PAL enforces spend and concurrency as policy. Two distinct 402 paths exist:
 
 1. **Runtime quota** — `POST /v1/runtime/schedule` refuses a microVM when the
    tenant is over its max-concurrent-VM cap. Surfaced by the **real** metric

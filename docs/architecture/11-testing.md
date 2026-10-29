@@ -1,8 +1,8 @@
 # Testing — Production Grade
 
-> **What this is:** the testing strategy for Lantern. Unit, integration, end-to-end, security, performance, chaos, and replay. Read this if you're writing tests, setting up CI, or auditing coverage.
+> **What this is:** the testing strategy for PAL. Unit, integration, end-to-end, security, performance, chaos, and replay. Read this if you're writing tests, setting up CI, or auditing coverage.
 >
-> **Why it matters:** Lantern runs production agents holding production credentials against production SaaS apps. A regression that loses runs, leaks secrets, or escapes a sandbox is unacceptable. Test discipline is the difference.
+> **Why it matters:** PAL runs production agents holding production credentials against production SaaS apps. A regression that loses runs, leaks secrets, or escapes a sandbox is unacceptable. Test discipline is the difference.
 
 ---
 
@@ -26,7 +26,7 @@ The classic pyramid says many unit tests, fewer integration, fewer e2e. We adapt
                 └─────────────┘
 ```
 
-We add **security and chaos as peers**, not afterthoughts. Lantern is too risky to treat them as optional.
+We add **security and chaos as peers**, not afterthoughts. PAL is too risky to treat them as optional.
 
 ---
 
@@ -110,7 +110,7 @@ We never test against an in-memory mock of Postgres. The real schema, the real R
 
 ## End-to-end tests
 
-E2E tests boot a complete Lantern stack via docker-compose (or a Kind cluster for the K8s-specific paths) and exercise it through the public APIs.
+E2E tests boot a complete PAL stack via docker-compose (or a Kind cluster for the K8s-specific paths) and exercise it through the public APIs.
 
 ### What's covered
 

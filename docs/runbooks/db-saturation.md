@@ -3,7 +3,7 @@
 > **Audience:** on-call operators.
 > **Fires from:** `PostgresConnectionSaturation` (warning), `PostgresExporterDown`
 > (warning), and is the likely root cause behind `ControlPlaneNotReady`.
-> **Dashboards:** Lantern — Platform Overview.
+> **Dashboards:** PAL — Platform Overview.
 
 Postgres is the primary datastore (`runs`, `agents`, `journal_events`, sessions,
 budgets, receipts, connector creds, …). Every Go service connects via a

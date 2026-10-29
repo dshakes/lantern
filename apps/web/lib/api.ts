@@ -261,7 +261,7 @@ export interface SettingsInput {
 }
 
 // ---------------------------------------------------------------------------
-// Ask Lantern — agentic command-interpreter contract
+// Ask PAL — agentic command-interpreter contract
 // ---------------------------------------------------------------------------
 
 /**
@@ -282,7 +282,7 @@ export type AskLanternAction =
   | { kind: "navigate"; path: string; summary: string }
   | { kind: "answer"; answer: string; summary: string };
 
-const ASK_LANTERN_SYSTEM_PROMPT = `You are Lantern's runtime command interpreter inside a dashboard command palette. The operator types a free-form natural-language command; you reason over the provided compact fleet context and return ONE structured action.
+const ASK_LANTERN_SYSTEM_PROMPT = `You are the PAL runtime command interpreter inside a dashboard command palette. The operator types a free-form natural-language command; you reason over the provided compact fleet context and return ONE structured action.
 
 Output STRICT JSON ONLY — no markdown, no backticks, no prose around it — matching exactly one of:
 {"kind":"navigate","path":"/runs?status=failed","summary":"one short line describing the action"}
@@ -392,7 +392,7 @@ export class ApiUnavailableError extends Error {
   readonly operation: string;
   readonly cause?: unknown;
   constructor(operation: string, cause?: unknown) {
-    super(`Lantern API unavailable for ${operation}`);
+    super(`PAL API unavailable for ${operation}`);
     this.name = "ApiUnavailableError";
     this.operation = operation;
     this.cause = cause;
@@ -1173,7 +1173,7 @@ class LanternAPI {
       messages: [
         {
           role: "system",
-          content: `You are Lantern's agent architect. Given a user's description, generate a structured agent specification.
+          content: `You are the PAL agent architect. Given a user's description, generate a structured agent specification.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {
@@ -1229,7 +1229,7 @@ Generate a thoughtful, well-structured agent with appropriate steps for the task
       messages: [
         {
           role: "system",
-          content: `You are Lantern's code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
+          content: `You are the PAL code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {
@@ -1307,7 +1307,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
-  // ---- Ask Lantern (agentic command interpreter) ----------------------------
+  // ---- Ask PAL (agentic command interpreter) ----------------------------
 
   /**
    * Hand a free-form natural-language command to the LLM (via the same
@@ -1799,10 +1799,10 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         version: "0.1.0",
         capabilities: ["text-generation"],
         endpoint: `https://api.lantern.run/v1/agents/${agentName}/a2a/invoke`,
-        auth: { type: "bearer", description: "Lantern API key" },
+        auth: { type: "bearer", description: "PAL API key" },
         inputSchema: { type: "object", properties: { message: { type: "string" } } },
         outputSchema: { type: "object", properties: { result: { type: "string" } } },
-        provider: { name: "Lantern", url: "https://lantern.run" },
+        provider: { name: "PAL", url: "https://lantern.run" },
       };
     }
   }
@@ -1825,7 +1825,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       return await this.request("/.well-known/agent.json");
     } catch {
       notifySimulated("getAgentDirectory");
-      return { agents: [], provider: { name: "Lantern", url: "https://lantern.run" } };
+      return { agents: [], provider: { name: "PAL", url: "https://lantern.run" } };
     }
   }
 

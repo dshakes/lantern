@@ -1,4 +1,4 @@
-# CLAUDE.md -- Working in the Lantern repo
+# CLAUDE.md -- Working in the PAL repo
 
 This file is loaded automatically by Claude Code (and any AGENTS.md-aware AI assistant) when working in this repository. It is the **single source of truth for repo conventions, architectural invariants, and what NOT to do**.
 
@@ -6,9 +6,11 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ---
 
+> **Rename note (ADR 0032):** the product is now **PAL**. Real identifiers (`LANTERN_*` env vars, the `lantern` CLI, packages, `lantern.v1`, the repo URL) keep their current names; env vars also accept `PAL_*` equivalents (`PAL_X` wins when both are set).
+
 ## Project in one sentence
 
-Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 18 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
+PAL is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 18 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
 
 For the full vision read `README.md`. For the architecture read `docs/architecture/01-overview.md`.
 
@@ -1000,7 +1002,7 @@ receipts.
 ### Voice channel (W11d)
 
 Phone numbers (purchased or BYO via SIP) route inbound calls to a
-Lantern agent. Provider-pluggable via the `VoiceProvider` interface in
+PAL agent. Provider-pluggable via the `VoiceProvider` interface in
 `services/control-plane/internal/handlers/voice.go`. Built-in providers:
 **Twilio** (TwiML webhooks) and **LiveKit** (realtime). The control-plane
 mints LiveKit access tokens and verifies both providers' webhook

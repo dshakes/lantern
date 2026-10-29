@@ -1,4 +1,4 @@
-/* Lantern Webchat widget — embeddable on any website.
+/* PAL Webchat widget — embeddable on any website.
  *
  * Usage:
  *   <script src="https://your-lantern/widget.js"
@@ -12,7 +12,7 @@
  * What it does:
  *   1. Injects a chat-bubble button in the corner of the page.
  *   2. Clicking opens a chat window.
- *   3. Each message creates / continues a Lantern session via the real
+ *   3. Each message creates / continues a PAL session via the real
  *      /v1/sessions + /v1/sessions/{id}/messages endpoints, streaming
  *      replies over SSE through /v1/sessions/{id}/events.
  *   4. Support-desk agents (label handoff=human) can hand the conversation to
@@ -49,7 +49,7 @@
   var theme = script.getAttribute("data-theme") || "dark";
   var position = script.getAttribute("data-position") || "bottom-right";
   var greeting = script.getAttribute("data-greeting") || "How can I help?";
-  var brand = script.getAttribute("data-brand") || "Lantern";
+  var brand = script.getAttribute("data-brand") || "PAL";
 
   if (!apiKey || !agentName || !apiBase) {
     console.warn(
@@ -167,7 +167,7 @@
     '<textarea placeholder="Type a message…" rows="1" id="lantern-widget-textarea"></textarea>' +
     '<button id="lantern-widget-send">Send</button>' +
     '</div>' +
-    '<div id="lantern-widget-footer">Powered by <a href="https://lantern.run" target="_blank" rel="noopener">Lantern</a></div>';
+    '<div id="lantern-widget-footer">Powered by <a href="https://lantern.run" target="_blank" rel="noopener">PAL</a></div>';
 
   document.body.appendChild(bubble);
   document.body.appendChild(panel);

@@ -100,7 +100,7 @@ export default function HomePage() {
         ) : (
           <div className="text-center">
             <p className="text-sm font-semibold text-zinc-200">
-              Lantern API offline
+              PAL API offline
             </p>
             <p className="mt-1 max-w-sm text-xs text-zinc-500">
               The control-plane isn&apos;t reachable. If you&apos;re running locally,

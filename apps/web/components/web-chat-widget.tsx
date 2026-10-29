@@ -17,7 +17,7 @@ interface ChatMessage {
 }
 
 const mockConversation: ChatMessage[] = [
-  { id: 1, role: "agent", text: "Hi! I'm your Lantern agent. How can I help you today?", time: "10:01 AM" },
+  { id: 1, role: "agent", text: "Hi! I'm your PAL agent. How can I help you today?", time: "10:01 AM" },
   { id: 2, role: "user", text: "Can you check my calendar for tomorrow?", time: "10:02 AM" },
   { id: 3, role: "agent", text: "Sure! Let me look at your calendar for tomorrow. You have 3 events:\n\n- 9:00 AM: Team standup\n- 11:30 AM: Design review\n- 3:00 PM: 1:1 with Sarah\n\nWould you like me to prepare briefing docs for any of these?", time: "10:02 AM" },
   { id: 4, role: "user", text: "Yes, prepare a brief for the design review", time: "10:03 AM" },
@@ -92,7 +92,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
             <Bot className="h-4 w-4 text-lantern-400" />
           </div>
           <div>
-            <p className="text-sm font-medium text-zinc-100">Lantern Agent</p>
+            <p className="text-sm font-medium text-zinc-100">PAL Agent</p>
             <p className="text-[11px] text-emerald-400">Online</p>
           </div>
         </div>
@@ -191,7 +191,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p className="mt-1.5 text-center text-[11px] text-zinc-600">
-          Powered by Lantern
+          Powered by PAL
         </p>
       </div>
     </div>

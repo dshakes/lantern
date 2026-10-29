@@ -86,7 +86,7 @@ Edges carry **typed values**. The canvas validates that the output type of sourc
 
 ## Compilation: canvas → bundle
 
-When the user hits **Save**, the canvas serializes to a `canvas.json`, then compiles it into a regular Lantern agent bundle:
+When the user hits **Save**, the canvas serializes to a `canvas.json`, then compiles it into a regular PAL agent bundle:
 
 ```
 canvas.json ──► compiler ──► src/index.ts (generated TypeScript)

@@ -1,4 +1,4 @@
-# Local to production — running Lantern agents everywhere
+# Local to production — running PAL agents everywhere
 
 **What:** the promotion path, shared tier on your laptop, then local microVM tier with Docker, then a staging K8s cluster, then production.
 **Why:** each rung proves a different layer; the checklist in section D is what must be true before you flip the next one.

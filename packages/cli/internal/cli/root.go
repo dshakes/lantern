@@ -23,8 +23,8 @@ var flags globalFlags
 func NewRootCommand(version, commit, date string) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "lantern",
-		Short: "Lantern CLI — production runtime for AI agents",
-		Long: `Lantern is an open-source platform for building, running, and managing
+		Short: "PAL CLI — production runtime for AI agents",
+		Long: `PAL is an open-source platform for building, running, and managing
 production AI agents with multi-LLM routing, cost forecasting, and
 eval-in-CI.
 
@@ -40,7 +40,7 @@ dashboard — not yet as CLI subcommands.`,
 
 	// Persistent flags available on every subcommand.
 	pf := root.PersistentFlags()
-	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("LANTERN_API_URL", "localhost:50051"), "Lantern API address (env: LANTERN_API_URL)")
+	pf.StringVar(&flags.apiURL, "api-url", envOrDefault("LANTERN_API_URL", "localhost:50051"), "PAL API address (env: LANTERN_API_URL)")
 	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("LANTERN_API_KEY", ""), "API key for authentication (env: LANTERN_API_KEY)")
 	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("LANTERN_TENANT_ID", ""), "Tenant ID (env: LANTERN_TENANT_ID)")
 	pf.StringVarP(&flags.output, "output", "o", "text", "Output format: text or json")

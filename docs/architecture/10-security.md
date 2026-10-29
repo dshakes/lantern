@@ -2,7 +2,7 @@
 
 > **What this is:** the threat model, the controls, and the invariants. Read this if you're touching anything that handles secrets, user data, untrusted code, or cross-tenant flows.
 >
-> **Why it matters:** Lantern runs untrusted code that holds users' OAuth tokens to their entire digital lives. A single tenant escape, a single secret leak, a single SSRF = company-ending event. We design for that reality.
+> **Why it matters:** PAL runs untrusted code that holds users' OAuth tokens to their entire digital lives. A single tenant escape, a single secret leak, a single SSRF = company-ending event. We design for that reality.
 
 ---
 
@@ -32,7 +32,7 @@ What we explicitly do NOT defend against:
 4. **Untrusted code runs in a microVM, never in a bare pod.** No exceptions.
 5. **Egress is deny-by-default for `untrusted` and `hostile` classes.** Allowlist required.
 6. **Bundles are signed before they execute.** Cosign signatures verified by control plane against tenant-trusted keys.
-7. **Personal vault is end-to-end encrypted with a key Lantern operators do not hold.**
+7. **Personal vault is end-to-end encrypted with a key PAL operators do not hold.**
 8. **Every privileged action goes through an audit log entry** that cannot be deleted.
 9. **No backdoors. No master keys. No "support access mode."** If a customer locks themselves out of their personal vault, that data is unrecoverable. We will say so up front.
 10. **All inbound webhooks signature-verified.** SSRF defenses on every fetch.
@@ -123,7 +123,7 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 
 ### Personal mode (zero-knowledge)
 - The user's vault is encrypted with a key derived from their passphrase via Argon2id.
-- Lantern operators do not hold the key. We hold ciphertext.
+- PAL operators do not hold the key. We hold ciphertext.
 - A device with the unlocked passphrase derives an ephemeral session key via X3DH, sends it to the runtime manager over mTLS, and the sandbox decrypts there.
 - See [`15-personal-workflows.md`](15-personal-workflows.md) for the full design.
 
@@ -146,7 +146,7 @@ A leaked SDK key can do less than a leaked admin key. Keys are hashed in the DB 
 - DNS resolution goes through a Lantern-controlled resolver that only answers for allowlisted hosts.
 
 ### Egress for built-in tools
-- `lantern.web` (web search + fetch) has its own approved egress list managed by Lantern. Users can extend it per agent.
+- `lantern.web` (web search + fetch) has its own approved egress list managed by PAL. Users can extend it per agent.
 - The model router has its own egress list for LLM providers, managed centrally and rotated as new providers are added.
 
 ### SSRF defense

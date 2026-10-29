@@ -2,7 +2,7 @@
 
 > **Audience:** on-call operators.
 > **Fires from:** `RunFailureRateHigh` (critical) — **currently TODO**, see below.
-> **Dashboards:** Lantern — Platform Overview.
+> **Dashboards:** PAL — Platform Overview.
 
 A run is one execution of an agent. A spike in failed runs means agents are
 erroring for a class of input, a dependency (model-router, a connector, the

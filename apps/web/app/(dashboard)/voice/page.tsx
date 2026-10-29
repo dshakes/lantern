@@ -93,7 +93,7 @@ export default function VoicePage() {
     <div className="flex flex-1 flex-col overflow-auto">
       <PageHeader
         title="Voice"
-        description="Phone numbers routed to your Lantern agents. Pluggable provider (Twilio today; LiveKit + Vapi land via VoiceProvider). Inbound webhook: POST /v1/voice/webhook/{provider}."
+        description="Phone numbers routed to your PAL agents. Pluggable provider (Twilio today; LiveKit + Vapi land via VoiceProvider). Inbound webhook: POST /v1/voice/webhook/{provider}."
         action={
           <Button
             onClick={() => setShowAdd((v) => !v)}
@@ -357,7 +357,7 @@ function AddNumberCard({
         <input
           value={greeting}
           onChange={(e) => setGreeting(e.target.value)}
-          placeholder="Hi, you've reached Lantern's assistant."
+          placeholder="Hi, you've reached the assistant."
           className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
         />
       </Field>

@@ -3,7 +3,7 @@
 > **Audience:** on-call operators.
 > **Fires from:** `DataPlaneHeartbeatStale` (critical), `SchedulerNoRegisteredNodes`
 > (critical).
-> **Dashboards:** Lantern — Data Plane & Runtime.
+> **Dashboards:** PAL — Data Plane & Runtime.
 
 A **data plane** runs agent workloads in the customer's infra (EKS/GKE/AKS); the
 **control plane** never touches user code directly. The two are joined by the

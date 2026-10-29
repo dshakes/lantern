@@ -1,4 +1,4 @@
-# Lantern GA Readiness — validation matrix
+# PAL GA Readiness — validation matrix
 
 A faithful go/no-go checklist: what is validated, how, and what still needs a human
 hand before a true "ship to the world" claim. Updated 2026-10-28 (W3-G: e2e CI lane + docs truth); previously 2026-10-23, reflecting GA phases 0–3 and the `ga-nextgen` hardening wave (roadmap: `docs/roadmap/2026-10-nextgen-sandbox-and-harness.md`).

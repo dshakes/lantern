@@ -36,7 +36,7 @@ export default function KioskStart() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
-      <h1 className="text-2xl font-semibold text-zinc-50">Try Lantern</h1>
+      <h1 className="text-2xl font-semibold text-zinc-50">Try PAL</h1>
       <p className="max-w-md text-sm text-zinc-400">
         You get a private workspace with sample agents for 30 minutes, then it is deleted.
         Answers are recorded replays, not a live model.

@@ -1,17 +1,17 @@
-# Personal Workflows — Lantern for One
+# Personal Workflows — PAL for One
 
-> **What this is:** the personal-tier mode of Lantern where an individual user runs their own day-to-day automations securely against their own apps and accounts.
+> **What this is:** the personal-tier mode of PAL where an individual user runs their own day-to-day automations securely against their own apps and accounts.
 >
-> **Why it matters:** the most underserved persona in agent platforms today is the *individual*. Every other platform is built for teams or enterprises. Lantern has a first-class personal mode where one user can run real workflows against their real Gmail, Drive, Slack, and Calendar without ever talking to a salesperson.
+> **Why it matters:** the most underserved persona in agent platforms today is the *individual*. Every other platform is built for teams or enterprises. PAL has a first-class personal mode where one user can run real workflows against their real Gmail, Drive, Slack, and Calendar without ever talking to a salesperson.
 
 ---
 
 ## What "personal" means here
 
-A **personal workspace** is a Lantern tenant with these properties:
+A **personal workspace** is a PAL tenant with these properties:
 
 - **One user is the owner and the only member.** No collaborators (yet).
-- **The credential vault is end-to-end encrypted with a key derived from the user's passphrase.** Even Lantern operators cannot read the user's connector tokens or workflow secrets.
+- **The credential vault is end-to-end encrypted with a key derived from the user's passphrase.** Even PAL operators cannot read the user's connector tokens or workflow secrets.
 - **The default surface is mobile + chat**, not the dashboard. Onboarding is from the iOS/Android app; the dashboard is a power-user view.
 - **Free or low-cost tier with hard caps.** Personal users get a generous free monthly allowance; overages bill on a credit-card on file with hard cutoffs.
 - **Templates are front and center.** A first-time personal user is dropped into a curated template gallery, not a blank canvas.
@@ -57,7 +57,7 @@ Total time to first running workflow target: **< 3 minutes**, including OAuth.
 
 ## End-to-end encryption details
 
-The personal vault is **client-side encrypted** with a key the user controls. Lantern never sees the plaintext.
+The personal vault is **client-side encrypted** with a key the user controls. PAL never sees the plaintext.
 
 ```
 User passphrase
@@ -85,13 +85,13 @@ When a workflow runs:
 5. After the run finishes, the session key is destroyed and the sandbox is torn down.
 
 This means:
-- **Lantern operators cannot decrypt the user's tokens** without the user's passphrase, which we never see.
-- **A breach of the Lantern database does not expose tokens** — they're encrypted at rest with keys we don't hold.
+- **PAL operators cannot decrypt the user's tokens** without the user's passphrase, which we never see.
+- **A breach of the PAL database does not expose tokens** — they're encrypted at rest with keys we don't hold.
 - **Token use is tied to live device unlock** — a stolen vault is useless without the passphrase + an unlocked device.
 
 The trade-off: if the user forgets their passphrase, **we cannot recover their workflows** (we can recover their account metadata, runs history, and dashboard, but not their credentials). The mobile app encourages users to print or save a recovery phrase at signup.
 
-For users who want a less paranoid mode, there's an "easy mode" that uses a Lantern-managed KMS key instead of a user passphrase. Same key separation, but Lantern can in principle decrypt — used by users who care more about not losing access than maximum privacy.
+For users who want a less paranoid mode, there's an "easy mode" that uses a Lantern-managed KMS key instead of a user passphrase. Same key separation, but PAL can in principle decrypt — used by users who care more about not losing access than maximum privacy.
 
 ---
 

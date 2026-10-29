@@ -51,10 +51,10 @@ export default function DashboardLayout({
         {/* Top bar — command bar: search left, notifications + user chip right.
             `mc-glass` gives the faint top-highlight gradient line the mock calls for. */}
         <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
-          {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
-          <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
+          {/* Mobile: PAL wordmark → home (sidebar is hidden under md). */}
+          <Link href="/agents" aria-label="PAL — home" className="flex items-center gap-2 md:hidden">
             <LanternMark className="h-6 w-6" />
-            <span className="text-[15px] font-semibold tracking-tight text-zinc-50">Lantern</span>
+            <span className="text-[15px] font-semibold tracking-tight text-zinc-50">PAL</span>
           </Link>
 
           {/* Global search — opens the existing command palette. CommandPalette

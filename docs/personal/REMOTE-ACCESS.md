@@ -1,6 +1,6 @@
 # Remote access to the personal harness (Tailscale Serve)
 
-Stable, **private** access to the Lantern harness from your phone — the control-plane
+Stable, **private** access to the PAL harness from your phone — the control-plane
 API **and** the dashboard, on one HTTPS host, over your Tailscale network. Nothing is
 exposed to the public internet, and the URL never changes (survives reboots).
 
