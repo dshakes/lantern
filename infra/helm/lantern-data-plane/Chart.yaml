@@ -16,7 +16,7 @@ keywords:
   - data-plane
 home: https://lantern.run
 sources:
-  - https://github.com/dshakes/lantern
+  - https://github.com/dshakes/pal
 maintainers:
   - name: dshakes
 

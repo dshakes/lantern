@@ -2,47 +2,47 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 
-const gh = 'https://github.com/dshakes/lantern';
-const og = 'https://dshakes.github.io/lantern/og.png';
+const gh = 'https://github.com/dshakes/pal';
+const og = 'https://dshakes.github.io/pal/og.png';
 
 // Old flat doc slugs (pre-PAL docs) -> their new homes. Static redirect pages,
 // not indexed by search or listed in the sitemap. Destinations must carry the
-// base (/lantern); Astro does not add it to redirect targets.
+// base (/pal); Astro does not add it to redirect targets.
 const redirects = {
-  '/docs/accounts': '/lantern/docs/build/accounts/',
-  '/docs/agents': '/lantern/docs/build/agents/',
-  '/docs/api': '/lantern/docs/reference/api/',
-  '/docs/architecture': '/lantern/docs/runtime/architecture/',
-  '/docs/budgets': '/lantern/docs/build/budgets/',
-  '/docs/cli': '/lantern/docs/reference/cli/',
-  '/docs/connectors': '/lantern/docs/build/connectors/',
-  '/docs/demo': '/lantern/docs/start/demo/',
-  '/docs/deployment': '/lantern/docs/operate/deployment/',
-  '/docs/env-vars': '/lantern/docs/reference/env-vars/',
-  '/docs/evaluations': '/lantern/docs/build/evaluations/',
-  '/docs/examples': '/lantern/docs/start/examples/',
-  '/docs/human-in-the-loop': '/lantern/docs/pal/human-in-the-loop/',
-  '/docs/installation': '/lantern/docs/start/installation/',
-  '/docs/knowledge': '/lantern/docs/pal/knowledge/',
-  '/docs/marketplace': '/lantern/docs/build/marketplace/',
-  '/docs/models': '/lantern/docs/build/models/',
-  '/docs/operations': '/lantern/docs/operate/operations/',
-  '/docs/personal': '/lantern/docs/pal/',
-  '/docs/quickstart': '/lantern/docs/start/quickstart/',
-  '/docs/scheduling': '/lantern/docs/build/scheduling/',
-  '/docs/sdk': '/lantern/docs/reference/sdk/',
-  '/docs/security': '/lantern/docs/runtime/security/',
-  '/docs/stack': '/lantern/docs/runtime/stack/',
-  '/docs/surfaces': '/lantern/docs/pal/surfaces/',
-  '/docs/testing': '/lantern/docs/build/testing/',
-  '/docs/triggers': '/lantern/docs/build/triggers/',
+  '/docs/accounts': '/pal/docs/build/accounts/',
+  '/docs/agents': '/pal/docs/build/agents/',
+  '/docs/api': '/pal/docs/reference/api/',
+  '/docs/architecture': '/pal/docs/runtime/architecture/',
+  '/docs/budgets': '/pal/docs/build/budgets/',
+  '/docs/cli': '/pal/docs/reference/cli/',
+  '/docs/connectors': '/pal/docs/build/connectors/',
+  '/docs/demo': '/pal/docs/start/demo/',
+  '/docs/deployment': '/pal/docs/operate/deployment/',
+  '/docs/env-vars': '/pal/docs/reference/env-vars/',
+  '/docs/evaluations': '/pal/docs/build/evaluations/',
+  '/docs/examples': '/pal/docs/start/examples/',
+  '/docs/human-in-the-loop': '/pal/docs/pal/human-in-the-loop/',
+  '/docs/installation': '/pal/docs/start/installation/',
+  '/docs/knowledge': '/pal/docs/pal/knowledge/',
+  '/docs/marketplace': '/pal/docs/build/marketplace/',
+  '/docs/models': '/pal/docs/build/models/',
+  '/docs/operations': '/pal/docs/operate/operations/',
+  '/docs/personal': '/pal/docs/pal/',
+  '/docs/quickstart': '/pal/docs/start/quickstart/',
+  '/docs/scheduling': '/pal/docs/build/scheduling/',
+  '/docs/sdk': '/pal/docs/reference/sdk/',
+  '/docs/security': '/pal/docs/runtime/security/',
+  '/docs/stack': '/pal/docs/runtime/stack/',
+  '/docs/surfaces': '/pal/docs/pal/surfaces/',
+  '/docs/testing': '/pal/docs/build/testing/',
+  '/docs/triggers': '/pal/docs/build/triggers/',
 };
 
-// Landing is src/pages/index.astro at /lantern/; Starlight docs live in
-// src/content/docs/docs/** so they publish under /lantern/docs/<slug>/.
+// Landing is src/pages/index.astro at /pal/; Starlight docs live in
+// src/content/docs/docs/** so they publish under /pal/docs/<slug>/.
 export default defineConfig({
   site: 'https://dshakes.github.io',
-  base: '/lantern/',
+  base: '/pal/',
   trailingSlash: 'ignore',
   redirects,
   integrations: [

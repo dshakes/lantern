@@ -21,7 +21,7 @@ lantern --version
 
 Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `lantern-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
 
-Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/lantern/docs/start/demo/).
+Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/pal/docs/start/demo/).
 
 ```bash
 lantern demo             # start (first run builds images)
@@ -31,7 +31,7 @@ lantern demo --down      # stop and delete all demo data
 
 ## onboard
 
-First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/lantern/docs/start/quickstart/).
+First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/pal/docs/start/quickstart/).
 
 ```bash
 lantern onboard                 # interactive
@@ -167,7 +167,7 @@ $ lantern --api-url http://localhost:8080 deploy --json
 
 ## hooks
 
-Manage inbound webhook triggers: a public `POST /v1/hooks/{id}` URL bound to an agent, so GitHub, Sentry, PagerDuty or any HMAC-signing sender starts a run. Aliased as `hook` and `triggers`. See [Webhook triggers](/lantern/docs/build/triggers/).
+Manage inbound webhook triggers: a public `POST /v1/hooks/{id}` URL bound to an agent, so GitHub, Sentry, PagerDuty or any HMAC-signing sender starts a run. Aliased as `hook` and `triggers`. See [Webhook triggers](/pal/docs/build/triggers/).
 
 `create` prints the signing secret once; `--secret-stdin` reads one from stdin instead (Sentry and PagerDuty generate their own). `--template` maps the payload into run input. `update` needs at least one of its flags; `--enable` / `--disable` and `--template` / `--clear-template` are mutually exclusive, and a disabled trigger answers deliveries with 404.
 

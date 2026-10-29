@@ -120,7 +120,7 @@ A single call can still overshoot the cap, since the check happens before the ca
 
 ## Per-tool limits in workflows
 
-`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. Hard-fail blocks the step; soft logs and proceeds. A tool that was never dispatched (runtime not wired) is not counted. See [workflow tool nodes](/lantern/docs/build/agents/).
+`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. Hard-fail blocks the step; soft logs and proceeds. A tool that was never dispatched (runtime not wired) is not counted. See [workflow tool nodes](/pal/docs/build/agents/).
 
 ## Tenant-wide cap
 

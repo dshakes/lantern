@@ -8,7 +8,7 @@ mergeable change.
 See the [README](README.md#try-it-in-60-seconds). The fastest path needs only Docker:
 
 ```bash
-git clone https://github.com/dshakes/lantern.git
+git clone https://github.com/dshakes/pal.git
 cd lantern
 make dev        # full platform stack in Docker
 # or: lantern dev   (host hot-reload — see README Option B)

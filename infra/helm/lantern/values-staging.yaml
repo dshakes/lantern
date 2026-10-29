@@ -28,7 +28,7 @@
 
 global:
   image:
-    registry: ghcr.io          # published images: ghcr.io/dshakes/lantern/<name> (build-images.yml)
+    registry: ghcr.io          # published images: ghcr.io/dshakes/pal/<name> (build-images.yml)
     repository: dshakes/lantern
     tag: staging
     pullPolicy: IfNotPresent

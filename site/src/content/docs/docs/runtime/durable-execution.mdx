@@ -145,4 +145,4 @@ The journal gives exactly-once completion: the `run_completed` event and the mov
 - **No babysitting.** The 30 s recovery sweep re-drives crashed shared-tier runs and re-schedules microVM runs (up to 3 attempts) without intervention.
 - **Retry visibility.** `step_retrying` events appear in the waterfall so you see how many attempts a step took.
 
-Each resume is still one trace per span (see [Observability](/lantern/docs/runtime/observability/)), and the completed run's journal is what the [verifiable receipt](/lantern/docs/runtime/receipts/) is signed over.
+Each resume is still one trace per span (see [Observability](/pal/docs/runtime/observability/)), and the completed run's journal is what the [verifiable receipt](/pal/docs/runtime/receipts/) is signed over.

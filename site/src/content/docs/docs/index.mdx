@@ -18,39 +18,39 @@ The data-plane agent dials out to the control plane, so your VPC opens no inboun
 ## Where to start
 
 <CardGrid>
-  <LinkCard title="Try the demo" description="make demo: Docker only, no API key. A private sample workspace at localhost:3001/kiosk with recorded answers." href="/lantern/docs/start/demo/" />
-  <LinkCard title="Run your own agent" description="With a provider key: make dev, then lantern onboard." href="/lantern/docs/start/quickstart/" />
-  <LinkCard title="Run code in a sandbox" description="Write an agent.yaml, pick an isolation class, and lantern run it in a microVM." href="/lantern/docs/runtime/quickstart/" />
-  <LinkCard title="Understand the security model" description="What the workload can reach, where credentials live, and which boundary checks what." href="/lantern/docs/runtime/egress/" />
-  <LinkCard title="Ship to your cloud" description="Control plane and data plane on your Kubernetes, with Helm and Terraform." href="/lantern/docs/operate/deployment/" />
+  <LinkCard title="Try the demo" description="make demo: Docker only, no API key. A private sample workspace at localhost:3001/kiosk with recorded answers." href="/pal/docs/start/demo/" />
+  <LinkCard title="Run your own agent" description="With a provider key: make dev, then lantern onboard." href="/pal/docs/start/quickstart/" />
+  <LinkCard title="Run code in a sandbox" description="Write an agent.yaml, pick an isolation class, and lantern run it in a microVM." href="/pal/docs/runtime/quickstart/" />
+  <LinkCard title="Understand the security model" description="What the workload can reach, where credentials live, and which boundary checks what." href="/pal/docs/runtime/egress/" />
+  <LinkCard title="Ship to your cloud" description="Control plane and data plane on your Kubernetes, with Helm and Terraform." href="/pal/docs/operate/deployment/" />
 </CardGrid>
 
 ## The six groups
 
 <CardGrid>
-  <LinkCard title="Start" description="Demo, quickstart, installation and runnable examples." href="/lantern/docs/start/demo/" />
-  <LinkCard title="PAL (personal agent)" description="Channels, knowledge base, human handoff and approvals." href="/lantern/docs/pal/" />
-  <LinkCard title="Runtime" description="Durable execution, isolation classes, token streaming, observability, signed receipts." href="/lantern/docs/runtime/" />
-  <LinkCard title="Build" description="Agents, connectors, models, triggers, scheduling, budgets, evaluations." href="/lantern/docs/build/agents/" />
-  <LinkCard title="Reference" description="REST API, SDKs (TypeScript, Python, Go), CLI, environment variables." href="/lantern/docs/reference/api/" />
-  <LinkCard title="Operate" description="Deployment with Helm or Terraform, and day-two operations." href="/lantern/docs/operate/deployment/" />
+  <LinkCard title="Start" description="Demo, quickstart, installation and runnable examples." href="/pal/docs/start/demo/" />
+  <LinkCard title="PAL (personal agent)" description="Channels, knowledge base, human handoff and approvals." href="/pal/docs/pal/" />
+  <LinkCard title="Runtime" description="Durable execution, isolation classes, token streaming, observability, signed receipts." href="/pal/docs/runtime/" />
+  <LinkCard title="Build" description="Agents, connectors, models, triggers, scheduling, budgets, evaluations." href="/pal/docs/build/agents/" />
+  <LinkCard title="Reference" description="REST API, SDKs (TypeScript, Python, Go), CLI, environment variables." href="/pal/docs/reference/api/" />
+  <LinkCard title="Operate" description="Deployment with Helm or Terraform, and day-two operations." href="/pal/docs/operate/deployment/" />
 </CardGrid>
 
 ## What the runtime gives you
 
-- **Durable execution.** A crash mid-step resumes from the journal. Completed steps are skipped and idempotency keys stop double side effects. See [Durable execution](/lantern/docs/runtime/durable-execution/).
-- **Isolation classes.** runc, gVisor, Kata and Firecracker by declared class. Untrusted code is refused rather than downgraded when the hardened runtime is missing. See [Isolation](/lantern/docs/runtime/isolation/).
-- **Token streaming.** Session replies stream token by token over SSE, with no buffering between provider and client. Tool-using turns return one completed message. See [Streaming](/lantern/docs/runtime/streaming/).
-- **Observability.** Control-plane HTTP/gRPC and step spans carry `tenant_id`, `run_id` and `step_id`; the trace context propagates into the in-VM harness. See [Observability](/lantern/docs/runtime/observability/).
-- **Budgets.** Hard caps on cost, tokens and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and tool nodes respect per-tool limits. See [Budgets](/lantern/docs/build/budgets/).
-- **Evaluations.** Pin a baseline per branch and fail CI on regression with HTTP 422. Replay past failures before promoting a version. See [Evaluations](/lantern/docs/build/evaluations/).
+- **Durable execution.** A crash mid-step resumes from the journal. Completed steps are skipped and idempotency keys stop double side effects. See [Durable execution](/pal/docs/runtime/durable-execution/).
+- **Isolation classes.** runc, gVisor, Kata and Firecracker by declared class. Untrusted code is refused rather than downgraded when the hardened runtime is missing. See [Isolation](/pal/docs/runtime/isolation/).
+- **Token streaming.** Session replies stream token by token over SSE, with no buffering between provider and client. Tool-using turns return one completed message. See [Streaming](/pal/docs/runtime/streaming/).
+- **Observability.** Control-plane HTTP/gRPC and step spans carry `tenant_id`, `run_id` and `step_id`; the trace context propagates into the in-VM harness. See [Observability](/pal/docs/runtime/observability/).
+- **Budgets.** Hard caps on cost, tokens and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and tool nodes respect per-tool limits. See [Budgets](/pal/docs/build/budgets/).
+- **Evaluations.** Pin a baseline per branch and fail CI on regression with HTTP 422. Replay past failures before promoting a version. See [Evaluations](/pal/docs/build/evaluations/).
 
 ## Reference
 
 <CardGrid>
-  <LinkCard title="REST API" description="Every endpoint on the control plane." href="/lantern/docs/reference/api/" />
-  <LinkCard title="SDKs" description="TypeScript, Python and Go." href="/lantern/docs/reference/sdk/" />
-  <LinkCard title="CLI" description="onboard, doctor, demo, run, vm, hooks and more." href="/lantern/docs/reference/cli/" />
+  <LinkCard title="REST API" description="Every endpoint on the control plane." href="/pal/docs/reference/api/" />
+  <LinkCard title="SDKs" description="TypeScript, Python and Go." href="/pal/docs/reference/sdk/" />
+  <LinkCard title="CLI" description="onboard, doctor, demo, run, vm, hooks and more." href="/pal/docs/reference/cli/" />
 </CardGrid>
 
-Architecture detail, with every sequence diagram, is in [Architecture](/lantern/docs/runtime/architecture/).
+Architecture detail, with every sequence diagram, is in [Architecture](/pal/docs/runtime/architecture/).

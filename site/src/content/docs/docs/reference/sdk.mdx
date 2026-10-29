@@ -9,7 +9,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Three SDKs: TypeScript (`@lantern/sdk`), Python (`lantern-sdk`, imported as `lantern`) and Go (`github.com/dshakes/lantern/packages/sdk-go`). They cover agents, runs, sessions, connectors, budgets, evals, experiments, marketplace, MCP, receipts, feedback, rehearsals and sandbox VMs. The TypeScript client has the most surface; the listings below show what each one exposes.
 
-The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...)` instead of writing HTTP. Use them to trigger agents from your app, wire runs into your backend, or script bulk operations. For the raw endpoints see the [API reference](/lantern/docs/reference/api/).
+The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...)` instead of writing HTTP. Use them to trigger agents from your app, wire runs into your backend, or script bulk operations. For the raw endpoints see the [API reference](/pal/docs/reference/api/).
 
 ## TypeScript SDK
 
@@ -136,7 +136,7 @@ try {
 
 Retries are built in. The TypeScript client retries HTTP 429, 503 and network errors up to 3 attempts with full-jitter backoff (500 ms base, 4 s cap). It never retries other 4xx or 5xx. There is no separate `@lantern/retry` package.
 
-Sandbox VMs live under `client.runtime` in TypeScript and Python; Go has `ScheduleVM`, `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`. See [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/).
+Sandbox VMs live under `client.runtime` in TypeScript and Python; Go has `ScheduleVM`, `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/).
 
 ## Python SDK
 
@@ -229,7 +229,7 @@ export default agent<{ query: string }>({
 });
 ```
 
-Use capability names like `auto`, `reasoning-large`, `chat-small`, `vision-large`. Do not hardcode a vendor model. The model router maps the capability to a concrete model at call time. See [Models](/lantern/docs/build/models/) for the full list.
+Use capability names like `auto`, `reasoning-large`, `chat-small`, `vision-large`. Do not hardcode a vendor model. The model router maps the capability to a concrete model at call time. See [Models](/pal/docs/build/models/) for the full list.
 
 ### Parallel fan-out
 

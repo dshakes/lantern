@@ -13,7 +13,7 @@ A receipt is proof, not a promise. When an agent claims it did the task, the rec
 
 ## What a receipt attests
 
-The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/lantern/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
+The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/pal/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
 
 ## Payload fields
 
@@ -57,7 +57,7 @@ GET /.well-known/lantern-receipts
 Anyone holding an Ed25519 receipt and the public key published there can confirm the receipt was signed by this deployment's key. Matching the journal hash against the run's actual event log (that is, confirming nothing was altered after the fact) additionally requires the run's journal export. An HMAC-SHA256 receipt can only be checked by the deployment that holds the secret.
 
 <Aside>
-A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/lantern/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
+A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/pal/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
 </Aside>
 
 You do not need a terminal to check one: the dashboard's public `/proof` page (no sign-in) accepts a receipt and calls `POST /v1/runs/receipts/verify`, which needs no auth either.
@@ -68,4 +68,4 @@ You do not need a terminal to check one: the dashboard's public `/proof` page (n
 - **Tamper-evidence.** Editing the journal after the fact invalidates the signature.
 - **Offline verification.** The key fingerprint at `/.well-known/lantern-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
 
-Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/lantern/docs/reference/api/) for the full request/response shape.
+Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/pal/docs/reference/api/) for the full request/response shape.

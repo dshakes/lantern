@@ -36,11 +36,11 @@ DELETE /v1/sessions/sess_abc123
 
 ### Token streaming
 
-Session replies stream via `GET /v1/sessions/{id}/events` (SSE). The three named events (`message_delta`, `message_completed`, `message_error`) and the TypeScript SDK `sessions.streamMessage()` async iterator are covered in full in [Token streaming](/lantern/docs/runtime/streaming/).
+Session replies stream via `GET /v1/sessions/{id}/events` (SSE). The three named events (`message_delta`, `message_completed`, `message_error`) and the TypeScript SDK `sessions.streamMessage()` async iterator are covered in full in [Token streaming](/pal/docs/runtime/streaming/).
 
 ### Durability
 
-Session turns are not journaled. A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run (see [Durable execution](/lantern/docs/runtime/durable-execution/)).
+Session turns are not journaled. A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run (see [Durable execution](/pal/docs/runtime/durable-execution/)).
 
 ### SDK
 
@@ -121,4 +121,4 @@ Any error (DB, LLM, parse) results in no writes, never a crash. PII in session c
 
 The `memory_distillates` table is RLS-enforced (migration 0013). All DB writes use `db.WithTenantConn`; reads use `srv.WithTenant`. No cross-tenant data can be read or written by the distillation pass.
 
-Related: [Token streaming](/lantern/docs/runtime/streaming/) is the event contract for session turns. The [API reference](/lantern/docs/reference/api/) has the full session and memory endpoint shapes.
+Related: [Token streaming](/pal/docs/runtime/streaming/) is the event contract for session turns. The [API reference](/pal/docs/reference/api/) has the full session and memory endpoint shapes.

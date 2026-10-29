@@ -11,7 +11,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 PAL splits into a **control plane** (scheduling, routing, dashboard) and a **data plane** (microVMs, execution, secrets). The data plane runs in your cloud: agent data never leaves your VPC.
 
-The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/lantern/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
+The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/pal/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
 
 ## Architecture: the control plane / data plane split
 
@@ -126,10 +126,10 @@ Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This pro
 
 ## Monitoring
 
-Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `LANTERN_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/lantern/docs/runtime/observability/) for details.
+Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `LANTERN_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/pal/docs/runtime/observability/) for details.
 
 <Aside type="caution">
-The [Operations](/lantern/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`LANTERN_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
+The [Operations](/pal/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`LANTERN_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
 </Aside>
 
 ## Database migrations

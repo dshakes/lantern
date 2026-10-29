@@ -3,18 +3,18 @@ title: Changelog
 description: What shipped in PAL Runtime since the 0.2.0 release.
 ---
 
-The CLI and packages are still named `lantern` while the rename lands. The full history is in [CHANGELOG.md](https://github.com/dshakes/lantern/blob/master/CHANGELOG.md).
+The CLI and packages are still named `lantern` while the rename lands. The full history is in [CHANGELOG.md](https://github.com/dshakes/pal/blob/master/CHANGELOG.md).
 
 ## New since 0.2.0
 
-- **[Demo mode](/lantern/docs/start/demo/).** `make demo` or `lantern demo`: Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes.
-- **[Knowledge base and handoff](/lantern/docs/pal/knowledge/).** Upload docs for cited answers, and hand a chat to a human with a Slack ping.
-- **[Examples](/lantern/docs/start/examples/).** Runnable end-to-end examples, starting with a support desk.
-- **[Webhook triggers](/lantern/docs/build/triggers/).** A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated.
-- **[Accounts and sign-up](/lantern/docs/build/accounts/).** Gated sign-up, email verification, password reset, invite codes, captcha, data export and workspace deletion.
-- **[Budgets, enforced](/lantern/docs/build/budgets/#what-is-enforced-where).** Tokens per day, per-run caps inside workflows, per-tool limits, and fail-closed 503 when a hard-fail budget cannot be read.
-- **[Capability names](/lantern/docs/build/models/#capability-names).** Every capability and optimize target, and the model it resolves to per provider.
-- **[Connector actions](/lantern/docs/build/connectors/#newer-actions).** Slack thread replies, GitHub PR comments, Sentry issues, Calendar events, PagerDuty, and a recorded test mode.
-- **[Disk snapshots](/lantern/docs/runtime/sandbox-lifecycle/#snapshots).** Snapshots capture the VM disk; restore and fork stage from it.
-- **[Real microVMs on a Mac](/lantern/docs/runtime/local-microvms/).** `make lima-up`, then `make lima-e2e`: Firecracker on KVM inside a Lima guest, on Apple Silicon M3+.
-- **[End-to-end tests](/lantern/docs/build/testing/).** `make test-e2e` against a live stack, with a spend policy and `make e2e-clean`.
+- **[Demo mode](/pal/docs/start/demo/).** `make demo` or `lantern demo`: Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes.
+- **[Knowledge base and handoff](/pal/docs/pal/knowledge/).** Upload docs for cited answers, and hand a chat to a human with a Slack ping.
+- **[Examples](/pal/docs/start/examples/).** Runnable end-to-end examples, starting with a support desk.
+- **[Webhook triggers](/pal/docs/build/triggers/).** A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated.
+- **[Accounts and sign-up](/pal/docs/build/accounts/).** Gated sign-up, email verification, password reset, invite codes, captcha, data export and workspace deletion.
+- **[Budgets, enforced](/pal/docs/build/budgets/#what-is-enforced-where).** Tokens per day, per-run caps inside workflows, per-tool limits, and fail-closed 503 when a hard-fail budget cannot be read.
+- **[Capability names](/pal/docs/build/models/#capability-names).** Every capability and optimize target, and the model it resolves to per provider.
+- **[Connector actions](/pal/docs/build/connectors/#newer-actions).** Slack thread replies, GitHub PR comments, Sentry issues, Calendar events, PagerDuty, and a recorded test mode.
+- **[Disk snapshots](/pal/docs/runtime/sandbox-lifecycle/#snapshots).** Snapshots capture the VM disk; restore and fork stage from it.
+- **[Real microVMs on a Mac](/pal/docs/runtime/local-microvms/).** `make lima-up`, then `make lima-e2e`: Firecracker on KVM inside a Lima guest, on Apple Silicon M3+.
+- **[End-to-end tests](/pal/docs/build/testing/).** `make test-e2e` against a live stack, with a spend policy and `make e2e-clean`.

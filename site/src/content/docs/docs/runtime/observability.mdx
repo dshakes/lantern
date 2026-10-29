@@ -24,7 +24,7 @@ lantern.run_id
 lantern.step_id     # per-step spans in the inline executor
 ```
 
-On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/lantern/docs/runtime/identity/) for the per-spawn identity). A [durable resume](/lantern/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
+On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/pal/docs/runtime/identity/) for the per-spawn identity). A [durable resume](/pal/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
 
 The trace spine, with W3C `traceparent` propagated at every boundary:
 
@@ -152,7 +152,7 @@ lantern vm logs <vm-id>                                    # or: GET /v1/runtime
 curl "$API/v1/runtime/audit?limit=50" -H "Authorization: Bearer $TOKEN"
 ```
 
-Logs are stored in `runtime_vm_logs` with a retention sweep (`LANTERN_RUNTIME_LOG_RETENTION_DAYS`, see [Environment variables](/lantern/docs/reference/env-vars/)). Audit events are also attached to the trace as span events.
+Logs are stored in `runtime_vm_logs` with a retention sweep (`LANTERN_RUNTIME_LOG_RETENTION_DAYS`, see [Environment variables](/pal/docs/reference/env-vars/)). Audit events are also attached to the trace as span events.
 
 ## Prometheus alerts, dashboards, runbooks
 

@@ -109,7 +109,7 @@ Anything else returns **400**, including embedding, rerank and speech capabiliti
 
 The model that answered is shown on the run's `llm:main` step.
 
-See [Models](/lantern/docs/build/models/) for the full list of capabilities and how to configure providers.
+See [Models](/pal/docs/build/models/) for the full list of capabilities and how to configure providers.
 
 ## Testing an agent
 
@@ -135,12 +135,12 @@ Agents can be triggered in several ways:
 - **CLI**: `lantern runs create --agent <name>`
 - **REST API**: `POST /v1/runs` (with `agentName` in the body)
 - **Schedule**: cron-based recurring runs
-- **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/lantern/docs/build/triggers/).
-- **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/lantern/docs/pal/surfaces/).
+- **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/pal/docs/build/triggers/).
+- **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/pal/docs/pal/surfaces/).
 
 ## Scheduling agents
 
-Run an agent on a cron expression. See [Scheduling](/lantern/docs/build/scheduling/).
+Run an agent on a cron expression. See [Scheduling](/pal/docs/build/scheduling/).
 
 ## Workflow tool nodes
 
@@ -172,7 +172,7 @@ The first two mean no runtime-manager is reachable from the control plane (for e
 budget limit exceeded: tool "web_search" budget exhausted (50/50 today)
 ```
 
-See [Budgets](/lantern/docs/build/budgets/#per-tool-limits-in-workflows).
+See [Budgets](/pal/docs/build/budgets/#per-tool-limits-in-workflows).
 
 ## Agent lifecycle
 

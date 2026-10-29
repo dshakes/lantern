@@ -188,7 +188,7 @@ Every error body is `{"error": "..."}`. The signature checks never say which par
 | `413` | `{"error":"payload too large"}` | Body over 1 MiB (1,048,576 bytes). Checked before the trigger lookup. |
 | `429` | `{"error":"rate limited"}` | This trigger's delivery rate was exceeded (after the signature passed). |
 | `429` | `{"error":"rate limited: too many runs, slow down"}` | The tenant's run-spawn limit (shared with `POST /v1/runs`) was hit. |
-| `402` | `{"error":"agent budget limit reached: REASON","reason":"REASON"}` | The agent has a hard-fail [budget](/lantern/docs/build/budgets/) that is already reached. |
+| `402` | `{"error":"agent budget limit reached: REASON","reason":"REASON"}` | The agent has a hard-fail [budget](/pal/docs/build/budgets/) that is already reached. |
 | `400` | `{"error":"could not read body"}` | The request body could not be read. |
 | `500` | `{"error":"run creation failed"}` or `{"error":"internal error"}` | Run creation failed for any reason other than 402/429 (including a budget check that was unavailable), or a server error such as an unreadable stored secret. Detail is logged, not returned. |
 
@@ -234,7 +234,7 @@ lantern hooks create my-agent --provider github \
 
 ## Budgets and spend
 
-A delivery creates a run through the same handler as `POST /v1/runs`, so the agent's [budget](/lantern/docs/build/budgets/) and the tenant spawn limit apply unchanged. With `hardFail` on and a cap reached, the delivery gets 402 and no run starts. A signed sender can therefore spend only the budget of the one agent its trigger is bound to.
+A delivery creates a run through the same handler as `POST /v1/runs`, so the agent's [budget](/pal/docs/build/budgets/) and the tenant spawn limit apply unchanged. With `hardFail` on and a cap reached, the delivery gets 402 and no run starts. A signed sender can therefore spend only the budget of the one agent its trigger is bound to.
 
 <Aside type="tip">
 Set a budget on any agent you expose this way.
@@ -245,7 +245,7 @@ Set a budget on any agent you expose this way.
 - **Signature only.** The route takes no token. The one query before verification is the trigger lookup by id; the trigger's tenant is taken from that row, never from the request.
 - **Constant-time compare** of the MAC (`hmac.Equal`); every candidate signature is checked with no early exit.
 - **404 vs 401.** Unknown, disabled and bad-UUID ids all return the same 404 body before any signature check, so an outsider cannot tell which of those ids exist. 401 appears only for an existing, enabled trigger, including one whose agent was deleted: that trigger returns 404 only after a valid signature. The rate limit is spent only after the signature passes, so an unsigned flood cannot use up a real sender's allowance.
-- **Secret storage.** Stored encrypted with AES-256-GCM when `LANTERN_CREDENTIAL_KEY` is set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner [data export](/lantern/docs/build/accounts/).
+- **Secret storage.** Stored encrypted with AES-256-GCM when `LANTERN_CREDENTIAL_KEY` is set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner [data export](/pal/docs/build/accounts/).
 - **Tenant scoping.** Trigger CRUD runs under row-level security by tenant; get, update and delete of another tenant's trigger return 404. The run is created in the trigger's tenant.
 - **Replay.** Only `generic` signs a timestamp (five-minute window). The others rely on the duplicate check above.
 
@@ -256,4 +256,4 @@ Set a budget on any agent you expose this way.
 - Per-replica rate limit; no per-IP limit at this layer.
 - No event filter: every verified delivery, including a GitHub `ping`, starts a run.
 
-Related: [API reference](/lantern/docs/reference/api/), [Budgets](/lantern/docs/build/budgets/), [CLI](/lantern/docs/reference/cli/), [SDKs](/lantern/docs/reference/sdk/).
+Related: [API reference](/pal/docs/reference/api/), [Budgets](/pal/docs/build/budgets/), [CLI](/pal/docs/reference/cli/), [SDKs](/pal/docs/reference/sdk/).

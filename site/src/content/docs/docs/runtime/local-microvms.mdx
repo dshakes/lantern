@@ -154,7 +154,7 @@ Build and run the runtime-manager inside the guest (it needs `/dev/kvm`) with `R
 The repo does not spell out the forward end to end: `firecracker-dev.yaml` defines no explicit `portForwards` and `infra/lima/README.md` only says to use "the Lima port forward". Confirm that `localhost:50054` reaches the manager before debugging anything else.
 </Aside>
 
-Dev setups without a shared service token warn and allow unauthenticated gRPC; production requires `LANTERN_GRPC_SERVICE_TOKEN` on every hop. See [Isolation classes](/lantern/docs/runtime/isolation/) for the other backends.
+Dev setups without a shared service token warn and allow unauthenticated gRPC; production requires `LANTERN_GRPC_SERVICE_TOKEN` on every hop. See [Isolation classes](/pal/docs/runtime/isolation/) for the other backends.
 
 ## Verify it works
 
@@ -171,7 +171,7 @@ Dev setups without a shared service token warn and allow unauthenticated gRPC; p
 | Fork step prints `SKIP: fork test SKIPPED (manual run)` | `FIRECRACKER_JAILER_PATH` unset. Set it to `/usr/local/bin/jailer` (`make lima-e2e` sets it for you). |
 | Build refuses to start: VM disk over the limit | `make lima-clean`, or raise `LIMA_DISK_MAX_PCT`. |
 | An e2e target sits waiting on `:50054` | Another manager run is using the port in the VM. It waits up to `LIMA_PORT_WAIT_SECS`; check `ss -ltnp \| grep 50054` in the guest. |
-| First exec after a restore takes about 3 s | The manager holds it until the restored harness re-identifies and heartbeats; the guest work is slow under nested virtualization. See [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/). |
+| First exec after a restore takes about 3 s | The manager holds it until the restored harness re-identifies and heartbeats; the guest work is slow under nested virtualization. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/). |
 | Node shows `node-stub` | `LANTERN_SCHEDULER_GRPC_ADDR` is unset on the control-plane, so its stub scheduler client fakes placement. |
 
 ## Limits
@@ -181,4 +181,4 @@ Dev setups without a shared service token warn and allow unauthenticated gRPC; p
 - The repo mount is read-only, so build outputs land inside the guest.
 - Not a supported production topology.
 
-Related: [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/lantern/docs/runtime/egress/).
+Related: [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/pal/docs/runtime/egress/).

@@ -9,7 +9,7 @@ Every environment variable the control plane, schedulers, runtime manager, in-VM
 
 ## How to use this page
 
-Local development needs none of these: `make run-api` sets the database, Redis and S3 values, and every security variable has a dev default or is skipped with a warning. For production, start from the [checklist below](#production-checklist), then see [Operations](/lantern/docs/operate/operations/) for how the Helm chart supplies them. A production process that is missing a required value logs it by name and exits at startup.
+Local development needs none of these: `make run-api` sets the database, Redis and S3 values, and every security variable has a dev default or is skipped with a warning. For production, start from the [checklist below](#production-checklist), then see [Operations](/pal/docs/operate/operations/) for how the Helm chart supplies them. A production process that is missing a required value logs it by name and exits at startup.
 
 ## Production checklist
 
@@ -78,7 +78,7 @@ These are the production-required ones. With `LANTERN_ENV=production` the contro
 
 ## Control plane: sign-up, mail, OAuth
 
-Behaviour and rationale are on [Accounts & sign-up](/lantern/docs/build/accounts/).
+Behaviour and rationale are on [Accounts & sign-up](/pal/docs/build/accounts/).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -160,7 +160,7 @@ Flags marked *on* are on unless set to a disabling value.
 | `LANTERN_CLAIM_VERIFY` | on | Claim-verify guard on completed-action claims. `0`/`off`/`false` disables; read on every call. |
 | `LANTERN_BROWSER_SKILL` | off | `on`/`1`/`true` enables browser-as-skill. |
 | `LANTERN_CROSS_APP` | off | `on`/`1`/`true` enables cross-app workflows. |
-| `LANTERN_CONFIDENCE_GATE` | off | `1`/`true`/`on` diverts low-confidence tool and connector steps to approval. See [Human-in-the-loop](/lantern/docs/pal/human-in-the-loop/). |
+| `LANTERN_CONFIDENCE_GATE` | off | `1`/`true`/`on` diverts low-confidence tool and connector steps to approval. See [Human-in-the-loop](/pal/docs/pal/human-in-the-loop/). |
 | `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score in [0,1] for auto-execution. |
 | `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` (also `self_consistency`, `sampling`) polls the model; anything else uses the heuristic. |
 | `LANTERN_CONFIDENCE_SAMPLES` | `5 (1 to 9)` | Independent judgments per self-consistency estimate; each is one LLM call. |
@@ -298,7 +298,7 @@ Binary: `services/runtime-manager` (Rust). Spawns workloads and owns the exec ch
 | `FIRECRACKER_CHROOT_BASE` | `/srv/jailer` | Jailer chroot base. |
 | `LANTERN_WORKLOAD_UID_DEFAULT` | `1000` | Workload uid written to `spawn.json`; a caller-supplied `LANTERN_WORKLOAD_UID` is dropped. |
 | `LANTERN_WORKLOAD_GID_DEFAULT` | same as the uid | Workload gid. |
-| `LANTERN_EGRESS_MODE` | `guest` | `broker` (Firecracker only) gives VMs no NIC and enforces egress on the host over vsock. See [Egress and credentials](/lantern/docs/runtime/egress/). |
+| `LANTERN_EGRESS_MODE` | `guest` | `broker` (Firecracker only) gives VMs no NIC and enforces egress on the host over vsock. See [Egress and credentials](/pal/docs/runtime/egress/). |
 | `LANTERN_EGRESS_ALLOWED_PORTS` | `443` | Comma list of ports the broker will dial. |
 | `LANTERN_EGRESS_PLAIN_INJECT` | unset | `1` permits credential injection over plain HTTP on port 80. Off by default. |
 | `LANTERN_HARNESS_EXEC_PORT` | `50056` | Port of the harness exec channel. |

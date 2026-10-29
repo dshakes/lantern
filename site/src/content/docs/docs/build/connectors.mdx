@@ -7,7 +7,7 @@ sidebar:
 
 import { Aside } from '@astrojs/starlight/components';
 
-A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/lantern/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
+A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/pal/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
 
 ## Available connectors (18)
 
@@ -209,7 +209,7 @@ curl -X POST "http://localhost:8080/v1/connectors/gmail/execute?action=search" \
   -d '{"query": "from:boss@company.com subject:urgent"}'
 ```
 
-PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/lantern/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
+PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/pal/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
 
 ## Connector permissions
 

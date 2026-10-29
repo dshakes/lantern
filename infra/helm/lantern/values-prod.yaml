@@ -13,7 +13,7 @@
 
 global:
   image:
-    # Published images: ghcr.io/dshakes/lantern/<name> (build-images.yml). The
+    # Published images: ghcr.io/dshakes/pal/<name> (build-images.yml). The
     # per-component image.name comes from values.yaml; an empty registry used to
     # render "/lantern/lantern-gateway:tag", which no runtime can pull.
     registry: ghcr.io

@@ -47,15 +47,15 @@ secrets:
     secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
 ```
 
-The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/lantern/docs/runtime/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
+The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/pal/docs/runtime/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
 
 <Aside type="caution">
-Pair secret vending with the right [isolation class](/lantern/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
+Pair secret vending with the right [isolation class](/pal/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
 </Aside>
 
 ## Broker mode: credentials never enter the VM
 
-Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`LANTERN_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/lantern/docs/runtime/egress/).
+Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`LANTERN_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/pal/docs/runtime/egress/).
 
 ## What you get
 
@@ -69,4 +69,4 @@ Vending still puts a short-lived value inside the VM, so a compromised workload 
 - **The relay is fail-closed.** It needs the pre-shared `LANTERN_RUNTIME_SECRET_TOKEN` on both the control plane and the manager (unset on the control plane: 403), and is not reachable with an end-user JWT.
 - **Per-VM mTLS.** The manager binds the `vm_id` reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
 - **Dev stub.** Without a manager, the harness reads secrets from its own environment when `LANTERN_ALLOW_SECRET_STUB=1`. Never set it in production.
-- **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `LANTERN_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/lantern/docs/reference/env-vars/).
+- **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `LANTERN_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/pal/docs/reference/env-vars/).

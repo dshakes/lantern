@@ -268,7 +268,7 @@ imageVerification:
   keyless:
     # The GitHub Actions workflow OIDC identity that signs the images. Update
     # the org/repo to match your fork before enabling Enforce.
-    subject: "https://github.com/dshakes/lantern/.github/workflows/build-images.yml@refs/heads/master"
+    subject: "https://github.com/dshakes/pal/.github/workflows/build-images.yml@refs/heads/master"
     issuer: "https://token.actions.githubusercontent.com"
     rekorURL: "https://rekor.sigstore.dev"
   # Static cosign public key (PEM). Only used when mode: "key".

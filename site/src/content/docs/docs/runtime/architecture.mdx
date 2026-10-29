@@ -228,7 +228,7 @@ The workflow engine never runs tools itself: it asks the runtime manager, which 
 `LANTERN_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
 </Aside>
 
-The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/lantern/docs/runtime/egress/).
+The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/pal/docs/runtime/egress/).
 
 <Diagram name="sandbox-egress" />
 
@@ -257,7 +257,7 @@ The workload's request leaves the VM over vsock; the host broker decides, dials,
 
 ### Sandbox lifecycle
 
-Schedule, idle-suspend with transparent resume, explicit pause and resume, and copy-on-write forks. See [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/).
+Schedule, idle-suspend with transparent resume, explicit pause and resume, and copy-on-write forks. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/).
 
 **Schedule**
 

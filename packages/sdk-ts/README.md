@@ -1,6 +1,6 @@
 # @lantern/sdk
 
-The official TypeScript SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
+The official TypeScript SDK for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
 Registry packages are not published yet: `npm install @lantern/sdk` fails. Install from a checkout of the repo:
 

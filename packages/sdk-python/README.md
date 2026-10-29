@@ -1,6 +1,6 @@
 # lantern-sdk (Python)
 
-The official Python SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the
+The official Python SDK for [PAL Runtime](https://github.com/dshakes/pal) — the
 open-source runtime for production AI agents with VPC deployment, pre-run cost
 forecasts, policy budgets, and eval-in-CI.
 
@@ -17,7 +17,7 @@ unrelated project: do not `pip install lantern-sdk`. Install from the repo:
 ```bash
 pip install "path/to/lantern/packages/sdk-python"          # add [deepagents] for the extra below
 # or in CI:
-pip install "git+https://github.com/dshakes/lantern.git#subdirectory=packages/sdk-python"
+pip install "git+https://github.com/dshakes/pal.git#subdirectory=packages/sdk-python"
 ```
 
 Dependencies pulled in automatically: `httpx>=0.27`, `pydantic>=2.0`, `grpcio>=1.62`,

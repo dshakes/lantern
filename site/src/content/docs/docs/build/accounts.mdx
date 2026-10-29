@@ -206,7 +206,7 @@ Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#work
 
 ## Free-tier caps
 
-Every new workspace, whether created by password sign-up or the first Google login, starts with a hard-fail daily spend cap and a sandbox quota so a new account cannot run up cost. The cap is the tenant-wide budget (the same row `PUT /v1/budgets/tenant` edits, see [Budgets](/lantern/docs/build/budgets/)) and the quota is the same one `PUT /v1/runtime/quota` edits, so an owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` to skip that cap.
+Every new workspace, whether created by password sign-up or the first Google login, starts with a hard-fail daily spend cap and a sandbox quota so a new account cannot run up cost. The cap is the tenant-wide budget (the same row `PUT /v1/budgets/tenant` edits, see [Budgets](/pal/docs/build/budgets/)) and the quota is the same one `PUT /v1/runtime/quota` edits, so an owner can raise or remove either. Existing workspaces and the seeded dev workspace are never touched. Set a variable to `off` to skip that cap.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -241,4 +241,4 @@ Where verification is required (production), `POST /v1/runs` from an unverified 
 - Invite codes cannot be listed or revoked; to cancel one, rotate `LANTERN_SIGNUP_INVITE_SECRET` (which invalidates all of them).
 - Rate limiting needs Redis; without it only the captcha and sign-up mode protect `/auth/*`.
 
-See also [Security](/lantern/docs/runtime/security/) and the [API reference](/lantern/docs/reference/api/).
+See also [Security](/pal/docs/runtime/security/) and the [API reference](/pal/docs/reference/api/).
