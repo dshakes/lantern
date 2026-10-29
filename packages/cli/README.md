@@ -39,11 +39,11 @@ lantern deploy [--dry-run] [--json]
 
 | Flag | Env | Purpose |
 |---|---|---|
-| `--api-url` | `LANTERN_API_URL` | Control-plane address (gRPC `:50051` by default, REST `:8080` with `--rest`) |
-| `--api-key` | `LANTERN_API_KEY` | API key; falls back to token stored by `lantern login` |
-| `--tenant-id` | `LANTERN_TENANT_ID` | Override tenant (multi-tenant enterprise accounts) |
+| `--api-url` | `PAL_API_URL` | Control-plane address (gRPC `:50051` by default, REST `:8080` with `--rest`) |
+| `--api-key` | `PAL_API_KEY` | API key; falls back to token stored by `lantern login` |
+| `--tenant-id` | `PAL_TENANT_ID` | Override tenant (multi-tenant enterprise accounts) |
 | `-o, --output` | — | `text` (default) or `json` |
-| `--rest` | `LANTERN_USE_REST` | Force REST transport instead of gRPC |
+| `--rest` | `PAL_USE_REST` | Force REST transport instead of gRPC |
 
 ## Eval-in-CI example
 
@@ -51,7 +51,7 @@ lantern deploy [--dry-run] [--json]
 # .github/workflows/agent-ci.yml
 - run: lantern test --agent=triage --suite=golden --against=last-green
   env:
-    LANTERN_API_KEY: ${{ secrets.LANTERN_API_KEY }}
+    PAL_API_KEY: ${{ secrets.PAL_API_KEY }}
 ```
 
 On a regression, the control plane returns HTTP 422 and the CLI exits non-zero — so your pre-merge check fails. Pin a new baseline once a PR lands:

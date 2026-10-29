@@ -14,7 +14,7 @@ support for live migration).
 4. Responds to `SIGUSR1` (harness snapshot signal) by flushing state and
    writing `/run/lantern/snapshot.ready`. The harness then triggers
    Firecracker to take a microVM snapshot.
-5. On resume from snapshot: the workload sees `LANTERN_RESTORE_HINT` set,
+5. On resume from snapshot: the workload sees `PAL_RESTORE_HINT` set,
    loads `state.json`, and continues from where it left off.
 
 ## Run it

@@ -3,12 +3,12 @@
 // The owner's iOS Shortcuts "Personal Automations" POST a tiny JSON event here
 // (one per app-open / location / focus change) over the SAME cloudflare tunnel
 // that already serves this dashboard. We append each event as one JSON line to
-// ~/.lantern/device-signals.jsonl (mode 0600) on the Mac. The imessage-bridge
+// <state dir>/device-signals.jsonl (mode 0600; dir = lib/state-dir.ts) on the Mac. The imessage-bridge
 // reads recent lines, summarizes them, and injects the result into the OWNER's
 // self-chat assistant context (never a contact reply).
 //
 // PRIVACY: signals stay on the Mac except the iPhone→tunnel hop that delivers
-// them. The endpoint is token-gated (x-lantern-signal-token == LANTERN_SIGNAL_TOKEN,
+// them. The endpoint is token-gated (x-pal-signal-token or legacy x-lantern-signal-token == PAL_SIGNAL_TOKEN,
 // a SERVER-SIDE env, never NEXT_PUBLIC). The file is owner-only (0600), its dir
 // 0700.
 //
@@ -17,8 +17,8 @@
 //                              page / debugging).
 
 import { NextRequest, NextResponse } from "next/server";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { stateDir } from "@/lib/state-dir";
 import {
   appendFileSync,
   chmodSync,
@@ -41,7 +41,7 @@ const MAX_LINES = 5000;
 const TRIM_TO = 4000;
 
 function signalsDir(): string {
-  return join(homedir(), ".lantern");
+  return stateDir();
 }
 function signalsFile(): string {
   return join(signalsDir(), "device-signals.jsonl");
@@ -62,7 +62,9 @@ function authorized(req: NextRequest): boolean {
   const expected = (process.env.PAL_SIGNAL_TOKEN || process.env.LANTERN_SIGNAL_TOKEN);
   // Fail closed: no token configured server-side → reject everything.
   if (!expected) return false;
-  const given = req.headers.get("x-lantern-signal-token") ?? "";
+  // Legacy x-lantern-signal-token is what already-installed iPhone Shortcuts send.
+  const given =
+    req.headers.get("x-pal-signal-token") ?? req.headers.get("x-lantern-signal-token") ?? "";
   return safeEqual(given, expected);
 }
 

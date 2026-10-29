@@ -1,6 +1,6 @@
-# AGENT.md — The Lantern Agent Bundle Specification
+# AGENT.md — The PAL Runtime Agent Bundle Specification
 
-> **What this document is:** the file-format spec for a Lantern agent bundle. Read this if you are writing an agent, building an SDK, or implementing the agent loader.
+> **What this document is:** the file-format spec for a PAL Runtime agent bundle. Read this if you are writing an agent, building an SDK, or implementing the agent loader.
 >
 > **What this document is not:** a tutorial. For that, see `docs/user-guides/quickstart.md`.
 

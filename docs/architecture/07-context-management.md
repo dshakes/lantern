@@ -142,7 +142,7 @@ Three tiers, each with different inclusion rules:
 
 The boundary between recall and archival is "did the agent decide to look it up." Core is always present; recall is included automatically if relevant; archival requires the agent to ask.
 
-This is the Letta model adapted to fit Lantern's prompt budgeter.
+This is the Letta model adapted to fit PAL Runtime's prompt budgeter.
 
 ---
 

@@ -10,13 +10,13 @@ interface IllustrationProps {
   size?: number;
 }
 
-const grad = "url(#lantern-grad)";
+const grad = "url(#pal-grad)";
 const stroke = "var(--color-accent)";
 
 function GradDef() {
   return (
     <defs>
-      <linearGradient id="lantern-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <linearGradient id="pal-grad" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop offset="0%" stopColor="color-mix(in srgb, var(--color-accent) 25%, transparent)" />
         <stop offset="100%" stopColor="color-mix(in srgb, var(--color-accent) 5%, transparent)" />
       </linearGradient>

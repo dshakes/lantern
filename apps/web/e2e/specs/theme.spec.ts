@@ -5,7 +5,7 @@ const theme = (page: import("@playwright/test").Page) => page.evaluate(() => doc
 
 for (const t of ["dark", "light"] as const) {
   test(`login page renders in ${t}`, async ({ page }) => {
-    await page.addInitScript((v) => localStorage.setItem("lantern-theme", v), t);
+    await page.addInitScript((v) => localStorage.setItem("pal-theme", v), t);
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
     expect(await theme(page)).toBe(t);
@@ -19,10 +19,23 @@ test("theme toggle flips, persists across reload", async ({ page }) => {
   expect(await theme(page)).toBe("dark"); // dark is the default
   await page.getByRole("button", { name: "Switch to light theme" }).click();
   expect(await theme(page)).toBe("light");
-  expect(await page.evaluate(() => localStorage.getItem("lantern-theme"))).toBe("light");
+  expect(await page.evaluate(() => localStorage.getItem("pal-theme"))).toBe("light");
   await page.reload();
   expect(await theme(page)).toBe("light");
   await page.getByRole("button", { name: "Switch to dark theme" }).click();
   await page.reload();
   expect(await theme(page)).toBe("dark");
+});
+
+test("legacy lantern-theme value migrates to pal-theme", async ({ page }) => {
+  // Seed only the legacy key (once, so the reload below isn't re-seeded).
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("seeded")) {
+      sessionStorage.setItem("seeded", "1");
+      localStorage.setItem("lantern-theme", "light");
+    }
+  });
+  await page.goto("/login");
+  expect(await theme(page)).toBe("light");
+  expect(await page.evaluate(() => localStorage.getItem("pal-theme"))).toBe("light");
 });

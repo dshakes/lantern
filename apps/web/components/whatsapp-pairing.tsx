@@ -175,7 +175,7 @@ function Stepper({ stage, error }: { stage: Stage; error?: boolean }) {
               className={clsx(
                 "flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold transition-colors",
                 isDone && "bg-emerald-500/15 text-emerald-400",
-                isActive && !error && "bg-lantern-500/20 text-lantern-300 ring-2 ring-lantern-500/30",
+                isActive && !error && "bg-pal-500/20 text-pal-300 ring-2 ring-pal-500/30",
                 isActive && error && "bg-red-500/20 text-red-300 ring-2 ring-red-500/30",
                 !isDone && !isActive && "bg-surface-2 text-zinc-600"
               )}
@@ -209,9 +209,9 @@ function StatePill({ state }: { state: ConnectionState }) {
     bridge_offline: { label: "Bridge offline", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
     auth_required: { label: "Auth required", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-500" },
     idle: { label: "Ready", cls: "bg-zinc-500/10 text-zinc-300", dot: "bg-zinc-400" },
-    starting: { label: "Starting", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
-    qr_ready: { label: "Scan QR", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
-    connecting: { label: "Connecting", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
+    starting: { label: "Starting", cls: "bg-pal-500/10 text-pal-300", dot: "bg-pal-400 animate-pulse" },
+    qr_ready: { label: "Scan QR", cls: "bg-pal-500/10 text-pal-300", dot: "bg-pal-400 animate-pulse" },
+    connecting: { label: "Connecting", cls: "bg-pal-500/10 text-pal-300", dot: "bg-pal-400 animate-pulse" },
     connected: { label: "Connected", cls: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
     reconnecting: { label: "Reconnecting", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-400 animate-pulse" },
     logged_out: { label: "Unlinked", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
@@ -309,7 +309,7 @@ function GroupPicker({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={`Search ${allGroups?.length ?? 0} groups…`}
-              className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 placeholder-zinc-600 outline-none focus:border-lantern-500/50"
+              className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 placeholder-zinc-600 outline-none focus:border-pal-500/50"
             />
           </div>
           <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
@@ -419,7 +419,7 @@ const ACTIVITY_ICON: Record<ActivityKind, { icon: typeof Bell; cls: string }> = 
   attention_dm: { icon: AlertTriangle, cls: "text-amber-300" },
   agent_skipped: { icon: ChevronRight, cls: "text-zinc-500" },
   message_in: { icon: MessageSquare, cls: "text-zinc-400" },
-  agent_reply: { icon: Zap, cls: "text-lantern-400" },
+  agent_reply: { icon: Zap, cls: "text-pal-400" },
   system: { icon: HelpCircle, cls: "text-zinc-500" },
 };
 
@@ -469,7 +469,7 @@ function ActivityRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] text-zinc-200">
           {isAgentReply && agentName ? (
-            <span className="mr-1 font-medium text-lantern-300">{agentName}</span>
+            <span className="mr-1 font-medium text-pal-300">{agentName}</span>
           ) : null}
           {event.summary}
         </p>
@@ -1367,7 +1367,7 @@ export function WhatsAppPairing({
                   key={row.cmd}
                   className="flex items-start gap-3 rounded-lg border border-zinc-800/60 bg-surface-2/40 px-3 py-2"
                 >
-                  <code className="shrink-0 rounded bg-surface-3 px-2 py-0.5 font-mono text-[12px] text-lantern-300">
+                  <code className="shrink-0 rounded bg-surface-3 px-2 py-0.5 font-mono text-[12px] text-pal-300">
                     {row.cmd}
                   </code>
                   <span className="text-zinc-400">{row.what}</span>
@@ -1634,17 +1634,17 @@ function PairingPanel({
           </h3>
           <ol className="space-y-2 text-[12px] leading-relaxed text-zinc-300">
             <li className="flex gap-2">
-              <span className="font-semibold text-lantern-400">1.</span>
+              <span className="font-semibold text-pal-400">1.</span>
               Open <span className="font-medium">WhatsApp</span> on your phone.
             </li>
             <li className="flex gap-2">
-              <span className="font-semibold text-lantern-400">2.</span>
+              <span className="font-semibold text-pal-400">2.</span>
               Tap <span className="font-medium">⋮</span> or{" "}
               <span className="font-medium">Settings</span>, then{" "}
               <span className="font-medium">Linked devices</span>.
             </li>
             <li className="flex gap-2">
-              <span className="font-semibold text-lantern-400">3.</span>
+              <span className="font-semibold text-pal-400">3.</span>
               Tap <span className="font-medium">Link a device</span> and point your camera here.
             </li>
           </ol>
@@ -1879,7 +1879,7 @@ function ConnectedPanel({
             </Button>
           )}
           {testMode === "waiting" && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-lantern-500/10 px-2 py-1 text-[12px] font-medium text-lantern-300">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-pal-500/10 px-2 py-1 text-[12px] font-medium text-pal-300">
               <Loader2 className="h-3 w-3 animate-spin" />
               Waiting
             </span>

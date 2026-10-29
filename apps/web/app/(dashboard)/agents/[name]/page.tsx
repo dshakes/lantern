@@ -98,7 +98,7 @@ function describeCron(expr: string): string {
   return desc;
 }
 
-const PROMPTS_KEY = "lantern_agent_prompts";
+const PROMPTS_KEY = "pal_agent_prompts";
 function getAgentPrompt(n: string): string {
   if (typeof window === "undefined") return "";
   try { return JSON.parse(localStorage.getItem(PROMPTS_KEY) || "{}")[n] || ""; } catch { return ""; }
@@ -109,7 +109,7 @@ function setAgentPrompt(n: string, p: string) {
 }
 function getAgentSettings(n: string): Record<string, unknown> {
   if (typeof window === "undefined") return {};
-  try { return JSON.parse(localStorage.getItem(`lantern_agent_settings_${n}`) || "{}"); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(`pal_agent_settings_${n}`) || "{}"); } catch { return {}; }
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ function getAgentSettings(n: string): Record<string, unknown> {
 
 function ModelSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={clsx("rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50", className)}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={clsx("rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50", className)}>
       <option value="auto">Auto (recommended)</option>
       <optgroup label="Anthropic">
         <option value="reasoning-frontier">Reasoning Frontier -- Claude Opus 4</option>
@@ -194,7 +194,7 @@ interface ToolCallEvent {
   status: "started" | "completed" | "failed";
 }
 interface ChatMessage { role: "user" | "assistant"; content: string; timestamp: string; toolCalls?: ToolCallEvent[]; }
-const CHAT_KEY = (n: string) => `lantern_chat_${n}`;
+const CHAT_KEY = (n: string) => `pal_chat_${n}`;
 function loadChat(n: string): ChatMessage[] { if (typeof window === "undefined") return []; try { return JSON.parse(localStorage.getItem(CHAT_KEY(n)) || "[]"); } catch { return []; } }
 function saveChat(n: string, msgs: ChatMessage[]) { if (typeof window === "undefined") return; localStorage.setItem(CHAT_KEY(n), JSON.stringify(msgs)); }
 
@@ -203,7 +203,7 @@ function saveChat(n: string, msgs: ChatMessage[]) { if (typeof window === "undef
 // ---------------------------------------------------------------------------
 
 interface SharingConfig { isPublic: boolean; accessLevel: "view" | "run" | "fork"; publicId: string; }
-const SHARING_KEY = (n: string) => `lantern_agent_sharing_${n}`;
+const SHARING_KEY = (n: string) => `pal_agent_sharing_${n}`;
 function loadSharing(n: string): SharingConfig { if (typeof window === "undefined") return { isPublic: false, accessLevel: "view", publicId: "" }; try { const raw = localStorage.getItem(SHARING_KEY(n)); if (!raw) return { isPublic: false, accessLevel: "view", publicId: `pub_${Date.now().toString(36)}` }; return JSON.parse(raw); } catch { return { isPublic: false, accessLevel: "view", publicId: `pub_${Date.now().toString(36)}` }; } }
 function saveSharing(n: string, cfg: SharingConfig) { if (typeof window === "undefined") return; localStorage.setItem(SHARING_KEY(n), JSON.stringify(cfg)); }
 
@@ -413,7 +413,7 @@ export default function AgentDetailPage() {
     if (s.maxTokens) setSettingsMaxTokens(s.maxTokens as number);
     if (s.maxCostUsd) setSettingsMaxCost(s.maxCostUsd as number);
     if (s.cron) setSettingsCron(s.cron as string);
-    try { const c = JSON.parse(localStorage.getItem("lantern_connectors") || "{}"); setGmailConnected(c.gmail?.installed === true); } catch { /* */ }
+    try { const c = JSON.parse(localStorage.getItem("pal_connectors") || "{}"); setGmailConnected(c.gmail?.installed === true); } catch { /* */ }
     const isEmail = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
     // Set smart default test input based on agent name
     const n = name.toLowerCase();
@@ -435,7 +435,7 @@ export default function AgentDetailPage() {
     // Load prompt versions
     setPromptVersions(getPromptVersions(name));
     // Load saved docs
-    try { const d = localStorage.getItem(`lantern_agent_docs_${name}`); if (d) setAgentDocs(d); } catch { /* */ }
+    try { const d = localStorage.getItem(`pal_agent_docs_${name}`); if (d) setAgentDocs(d); } catch { /* */ }
     // Load instructions
     setInstructions(getAgentInstructions(name));
     setInstructionsDirty(false);
@@ -451,7 +451,7 @@ export default function AgentDetailPage() {
     setSharing(loadSharing(name));
     // Load managed environment settings (Gap 2)
     try {
-      const envSettings = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}");
+      const envSettings = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}");
       if (envSettings.runtime) setEnvRuntime(envSettings.runtime);
       if (envSettings.memory) setEnvMemory(envSettings.memory);
       if (envSettings.timeout) setEnvTimeout(envSettings.timeout);
@@ -460,7 +460,7 @@ export default function AgentDetailPage() {
     } catch { /* */ }
     // Load A2A config (Gap 4)
     try {
-      const a2aConfig = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}");
+      const a2aConfig = JSON.parse(localStorage.getItem(`pal_a2a_${name}`) || "{}");
       if (a2aConfig.enabled) setA2aEnabled(a2aConfig.enabled);
       if (a2aConfig.inputSchema) setA2aInputSchema(a2aConfig.inputSchema);
       if (a2aConfig.outputSchema) setA2aOutputSchema(a2aConfig.outputSchema);
@@ -471,14 +471,14 @@ export default function AgentDetailPage() {
       if (d.url) setCloudDeployUrl(d.url);
     }).catch(() => {
       try {
-        const deployConfig = JSON.parse(localStorage.getItem(`lantern_deploy_${name}`) || "{}");
+        const deployConfig = JSON.parse(localStorage.getItem(`pal_deploy_${name}`) || "{}");
         if (deployConfig.status) setCloudDeployStatus(deployConfig.status);
         if (deployConfig.url) setCloudDeployUrl(deployConfig.url);
       } catch { /* */ }
     });
     // Restore session ID from localStorage (Gap 1)
     try {
-      const savedSessionId = localStorage.getItem(`lantern_session_${name}`);
+      const savedSessionId = localStorage.getItem(`pal_session_${name}`);
       if (savedSessionId) {
         setSessionId(savedSessionId);
         // Verify the session is still valid
@@ -499,7 +499,7 @@ export default function AgentDetailPage() {
             setSessionConnected(true);
           } else {
             // Session is stopped/deleted, clear it
-            localStorage.removeItem(`lantern_session_${name}`);
+            localStorage.removeItem(`pal_session_${name}`);
             setSessionId(null);
           }
         }).catch(() => {
@@ -741,7 +741,7 @@ export default function AgentDetailPage() {
     if (isEmailAgent) {
       // Auto-fetch emails and include them
       try {
-        const cs = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+        const cs = JSON.parse(localStorage.getItem("pal_connectors") || "{}");
         if (cs.gmail?.installed && cs.gmail?.credentials) await api.installConnector({ connectorId: "gmail", displayName: "Gmail", config: cs.gmail.credentials }).catch(() => {});
         setTestOutput("Fetching emails...\n");
         const raw = await api.executeConnector("gmail", "list_messages", { limit: 15 });
@@ -784,7 +784,7 @@ export default function AgentDetailPage() {
   const handleFetchEmails = useCallback(async () => {
     setFetchingEmails(true);
     try {
-      const cs = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+      const cs = JSON.parse(localStorage.getItem("pal_connectors") || "{}");
       if (cs.gmail?.installed && cs.gmail?.credentials) await api.installConnector({ connectorId: "gmail", displayName: "Gmail", config: cs.gmail.credentials }).catch(() => {});
       const result = await api.executeConnector("gmail", "list_messages", { limit: 20 });
       const data = result.data as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }>; count?: number } | undefined;
@@ -833,7 +833,7 @@ export default function AgentDetailPage() {
         { role: "system", content: "Generate a concise README documentation for this AI agent. Include: purpose, how it works, expected input/output, and any limitations. Use markdown. Keep it under 300 words." },
         { role: "user", content: `Agent: ${name}\nDescription: ${agent?.description || ""}\nSystem Prompt: ${systemPrompt}\nRuns: ${agentRuns.length}, Success rate: ${agentRuns.length > 0 ? Math.round((agentRuns.filter(r => r.status === "succeeded").length / agentRuns.length) * 100) : 0}%` }
       ], model: "auto", stream: false });
-      if (resp.ok) { const d = await resp.json(); const docs = (d.content || "").trim(); if (docs) { setAgentDocs(docs); localStorage.setItem(`lantern_agent_docs_${name}`, docs); setShowDocs(true); toast.success("Documentation generated"); return; } }
+      if (resp.ok) { const d = await resp.json(); const docs = (d.content || "").trim(); if (docs) { setAgentDocs(docs); localStorage.setItem(`pal_agent_docs_${name}`, docs); setShowDocs(true); toast.success("Documentation generated"); return; } }
       toast.error("Failed to generate docs");
     } catch { toast.error("LLM unavailable"); } finally { setGeneratingDocs(false); }
   }, [name, agent?.description, systemPrompt, agentRuns, toast]);
@@ -948,7 +948,7 @@ export default function AgentDetailPage() {
         // Response will arrive via SSE (handled in useEffect above)
       } catch (err) {
         // Session API failed — fall back to direct LLM
-        console.warn("[lantern] Session API unavailable, falling back to direct LLM");
+        console.warn("[pal] Session API unavailable, falling back to direct LLM");
         setSessionConnected(false);
         await fallbackDirectLLM(updated, content);
       }
@@ -959,7 +959,7 @@ export default function AgentDetailPage() {
           const session = await api.createSession(name);
           setSessionId(session.id);
           setSessionConnected(true);
-          localStorage.setItem(`lantern_session_${name}`, session.id);
+          localStorage.setItem(`pal_session_${name}`, session.id);
           // Send the message via the new session
           setChatStreaming(true);
           setSessionStatus("thinking");
@@ -967,7 +967,7 @@ export default function AgentDetailPage() {
           return;
         } catch {
           // API unavailable — fall through to direct LLM
-          console.warn("[lantern] Session creation failed, using direct LLM");
+          console.warn("[pal] Session creation failed, using direct LLM");
         }
       }
       await fallbackDirectLLM(updated, content);
@@ -1111,7 +1111,7 @@ export default function AgentDetailPage() {
         <p className="mt-1 max-w-sm text-xs text-zinc-500">
           The agent <code className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-zinc-400">{name}</code> does not exist or may have been deleted.
         </p>
-        <button onClick={() => router.push("/agents")} className="mt-3 text-sm text-lantern-400 hover:text-lantern-300">Back to Agents</button>
+        <button onClick={() => router.push("/agents")} className="mt-3 text-sm text-pal-400 hover:text-pal-300">Back to Agents</button>
       </div>
     </div>
   );
@@ -1326,7 +1326,7 @@ export default function AgentDetailPage() {
                   className={clsx(
                     "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium",
                     identityDirty
-                      ? "bg-lantern-500 text-on-flame hover:bg-lantern-400"
+                      ? "bg-pal-500 text-on-flame hover:bg-pal-400"
                       : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
                   )}
                 >
@@ -1358,7 +1358,7 @@ export default function AgentDetailPage() {
                       value={avatarUrl}
                       onChange={(e) => { setAvatarUrl(e.target.value); setIdentityDirty(true); }}
                       placeholder="https://example.com/avatar.png"
-                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
                     />
                   </div>
                   <div>
@@ -1372,7 +1372,7 @@ export default function AgentDetailPage() {
                       rows={4}
                       spellCheck={false}
                       placeholder={"e.g.\n- keep replies under 15 words\n- lowercase, no greetings\n- use contractions, skip em-dashes\n- never apologize for being slow"}
-                      className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-xs leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                      className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-xs leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
                     />
                   </div>
                 </div>
@@ -1388,13 +1388,13 @@ export default function AgentDetailPage() {
                   <button onClick={handleOptimizePrompt} disabled={optimizingPrompt || !systemPrompt.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">
                     {optimizingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Optimize
                   </button>
-                  <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 hover:bg-lantern-500/10"><Sparkles className="h-3 w-3" /> Generate</button>
-                  <button onClick={handleSavePrompt} disabled={savingPrompt || (!promptDirty && !instructionsDirty)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", (promptDirty || instructionsDirty) ? "bg-lantern-500 text-on-flame hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
+                  <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-pal-500/30 px-3 py-1.5 text-xs font-medium text-pal-400 hover:bg-pal-500/10"><Sparkles className="h-3 w-3" /> Generate</button>
+                  <button onClick={handleSavePrompt} disabled={savingPrompt || (!promptDirty && !instructionsDirty)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", (promptDirty || instructionsDirty) ? "bg-pal-500 text-on-flame hover:bg-pal-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
                     {savingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} {savingPrompt ? "Saving..." : "Save"}
                   </button>
                 </div>
               </div>
-              <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="You are a helpful assistant that responds in a professional tone. Always format output as structured bullet points..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20" />
+              <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="You are a helpful assistant that responds in a professional tone. Always format output as structured bullet points..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20" />
               {promptDirty && <p className="mt-1.5 text-[12px] text-amber-400">Unsaved changes</p>}
 
               {/* Version History */}
@@ -1440,7 +1440,7 @@ export default function AgentDetailPage() {
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
                 <h4 className="mb-2 text-xs font-medium text-zinc-500">Privacy</h4>
                 <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-200">
-                  {settingsEncrypt ? <><Lock className="h-3.5 w-3.5 text-lantern-400" /> Encrypted</> : settingsAuditLog ? <><Shield className="h-3.5 w-3.5 text-blue-400" /> Audit-logged</> : "Standard"}
+                  {settingsEncrypt ? <><Lock className="h-3.5 w-3.5 text-pal-400" /> Encrypted</> : settingsAuditLog ? <><Shield className="h-3.5 w-3.5 text-blue-400" /> Audit-logged</> : "Standard"}
                 </p>
                 <p className="mt-0.5 text-[11px] text-zinc-500">Data encrypted at rest</p>
               </div>
@@ -1543,7 +1543,7 @@ export default function AgentDetailPage() {
             {/* Visual Editor link */}
             <p className="text-sm text-zinc-500">
               For multi-step workflows:{" "}
-              <button onClick={() => router.push(`/agents/${encodeURIComponent(name)}/editor`)} className="inline-flex items-center gap-1 text-lantern-400 hover:text-lantern-300">
+              <button onClick={() => router.push(`/agents/${encodeURIComponent(name)}/editor`)} className="inline-flex items-center gap-1 text-pal-400 hover:text-pal-300">
                 Open Visual Editor <ExternalLink className="h-3 w-3" />
               </button>
             </p>
@@ -1554,11 +1554,11 @@ export default function AgentDetailPage() {
                 don't ship two near-identical chat surfaces. */}
             <button
               onClick={() => setActiveTab("chat")}
-              className="group flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 p-5 text-left transition-colors hover:border-lantern-500/30 hover:bg-surface-2"
+              className="group flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 p-5 text-left transition-colors hover:border-pal-500/30 hover:bg-surface-2"
             >
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
-                  <MessageSquare className="h-5 w-5 text-lantern-400" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-pal-500/10">
+                  <MessageSquare className="h-5 w-5 text-pal-400" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-zinc-100">Try this agent</h3>
@@ -1567,7 +1567,7 @@ export default function AgentDetailPage() {
                   </p>
                 </div>
               </div>
-              <span className="text-xs font-medium text-lantern-400 transition-transform group-hover:translate-x-0.5">
+              <span className="text-xs font-medium text-pal-400 transition-transform group-hover:translate-x-0.5">
                 Open Chat →
               </span>
             </button>
@@ -1641,7 +1641,7 @@ export default function AgentDetailPage() {
                   </span>
                 )}
                 {sessionStatus === "thinking" && (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-lantern-400">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-pal-400">
                     <Brain className="h-3 w-3 animate-pulse" /> Processing...
                   </span>
                 )}
@@ -1659,7 +1659,7 @@ export default function AgentDetailPage() {
                   <button onClick={async () => {
                     try { await api.stopSession(sessionId); } catch { /* */ }
                     setSessionId(null); setSessionConnected(false);
-                    localStorage.removeItem(`lantern_session_${name}`);
+                    localStorage.removeItem(`pal_session_${name}`);
                     toast.success("Session ended");
                   }} className="text-[12px] text-zinc-500 hover:text-amber-400">End session</button>
                 )}
@@ -1668,7 +1668,7 @@ export default function AgentDetailPage() {
                   if (sessionId) {
                     api.deleteSession(sessionId).catch(() => {});
                     setSessionId(null); setSessionConnected(false);
-                    localStorage.removeItem(`lantern_session_${name}`);
+                    localStorage.removeItem(`pal_session_${name}`);
                   }
                   toast.success("Conversation cleared");
                 }} className="text-[12px] text-zinc-500 hover:text-red-400">Clear conversation</button>
@@ -1688,7 +1688,7 @@ export default function AgentDetailPage() {
               )}
               {chatMessages.map((msg, i) => (
                 <div key={i} className={clsx("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
-                  <div className={clsx("max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm", msg.role === "user" ? "bg-lantern-500/20 text-zinc-200" : "bg-surface-2 text-zinc-300")}>
+                  <div className={clsx("max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm", msg.role === "user" ? "bg-pal-500/20 text-zinc-200" : "bg-surface-2 text-zinc-300")}>
                     {/* Tool calls executed before this assistant turn. Match
                         the ChatGPT/Claude "used X" indicator — collapsed by
                         default, click to expand the args/result. */}
@@ -1755,14 +1755,14 @@ export default function AgentDetailPage() {
                     <div className="max-w-[80%] rounded-xl bg-surface-2 px-3.5 py-2.5 text-sm text-zinc-300">
                       <div className="whitespace-pre-wrap leading-relaxed">
                         {streamingDraft}
-                        <span className="ml-px inline-block h-3.5 w-0.5 animate-pulse bg-lantern-400 align-middle" />
+                        <span className="ml-px inline-block h-3.5 w-0.5 animate-pulse bg-pal-400 align-middle" />
                       </div>
                     </div>
                   ) : (
                     // Fallback pulse dots while waiting for first token.
                     <div className="rounded-xl bg-surface-2 px-3.5 py-2.5">
                       <div className="flex items-center gap-1.5">
-                        <div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" />
+                        <div className="h-2 w-2 animate-pulse rounded-full bg-pal-400" />
                         <span className="text-xs text-zinc-500">
                           {sessionStatus === "thinking" ? "Thinking..." : "Processing..."}
                         </span>
@@ -1786,9 +1786,9 @@ export default function AgentDetailPage() {
               </div>
             )}
             {chatStreaming && sessionConnected && (
-              <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-lantern-500/5 border border-lantern-500/20 px-3 py-1.5">
-                <Zap className="h-3 w-3 text-lantern-400" />
-                <span className="text-[11px] text-lantern-400">Agent is responding -- you can send another message to steer the conversation</span>
+              <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-pal-500/5 border border-pal-500/20 px-3 py-1.5">
+                <Zap className="h-3 w-3 text-pal-400" />
+                <span className="text-[11px] text-pal-400">Agent is responding -- you can send another message to steer the conversation</span>
               </div>
             )}
             <div className="mt-3 flex items-center gap-2">
@@ -1799,13 +1799,13 @@ export default function AgentDetailPage() {
                 type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
                 placeholder={chatStreaming && sessionConnected ? "Steer the agent -- send a follow-up..." : "Type a message..."}
-                className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
+                className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50"
               />
               <button
                 onClick={handleChatSend}
                 disabled={(!chatInput.trim() && chatFiles.length === 0) || !setupReady}
                 title={!setupReady ? "Finish setup before sending" : undefined}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-4 py-2.5 text-xs font-medium text-on-flame hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {chatStreaming && !sessionConnected ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </button>
@@ -1821,7 +1821,7 @@ export default function AgentDetailPage() {
                 onClick={async () => {
                   setTestRunning(true);
                   try {
-                    const agentConf = JSON.parse(localStorage.getItem(`lantern_agent_settings_${name}`) || "{}");
+                    const agentConf = JSON.parse(localStorage.getItem(`pal_agent_settings_${name}`) || "{}");
                     const run = await api.createRun({ agentName: name, input: { connectors: agentConf.connectors || [] } });
                     toast.success(`Run started: ${run.id.slice(0, 12)}...`);
                     // Refresh runs list after a delay
@@ -1835,7 +1835,7 @@ export default function AgentDetailPage() {
                   }
                 }}
                 disabled={testRunning}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-pal-400 disabled:opacity-50"
               >
                 {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
               </button>
@@ -1983,7 +1983,7 @@ export default function AgentDetailPage() {
                               <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
                             </div>
                           ) : run.status === "running" ? (
-                            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
+                            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-pal-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
                           ) : <p className="text-xs text-zinc-600">No output available.</p>}
                         </div>
                       )}
@@ -2001,7 +2001,7 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-zinc-200">Cron Schedule</h3>
-                <button type="button" role="switch" aria-checked={scheduleEnabled} onClick={() => setScheduleEnabled(!scheduleEnabled)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", scheduleEnabled ? "bg-lantern-500" : "bg-zinc-700")}>
+                <button type="button" role="switch" aria-checked={scheduleEnabled} onClick={() => setScheduleEnabled(!scheduleEnabled)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", scheduleEnabled ? "bg-pal-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", scheduleEnabled ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
@@ -2010,7 +2010,7 @@ export default function AgentDetailPage() {
                   <label className="text-xs text-zinc-400">Cron expression</label>
                   <AiAssistButton mode="cron" value={settingsCron} onChange={setSettingsCron} placeholder="e.g., every weekday at 9am" />
                 </div>
-                <input type="text" value={settingsCron} onChange={(e) => setSettingsCron(e.target.value)} placeholder="0 9 * * 1-5" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 font-mono placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+                <input type="text" value={settingsCron} onChange={(e) => setSettingsCron(e.target.value)} placeholder="0 9 * * 1-5" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 font-mono placeholder:text-zinc-600 outline-none focus:border-pal-500/50" />
                 {settingsCron && <p className="mt-1 text-[11px] text-zinc-500">{describeCron(settingsCron)}</p>}
                 {nextFireAt && <p className="mt-1 text-[11px] text-zinc-500">Next fire: {new Date(nextFireAt).toLocaleString()}</p>}
               </div>
@@ -2018,11 +2018,11 @@ export default function AgentDetailPage() {
               <div className="border-t border-zinc-800 pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div><label className="text-xs font-medium text-zinc-300">Email delivery</label><p className="text-[11px] text-zinc-500">Send run output via email</p></div>
-                  <button type="button" role="switch" aria-checked={deliveryEmailEnabled} onClick={() => setDeliveryEmailEnabled(!deliveryEmailEnabled)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", deliveryEmailEnabled ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <button type="button" role="switch" aria-checked={deliveryEmailEnabled} onClick={() => setDeliveryEmailEnabled(!deliveryEmailEnabled)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", deliveryEmailEnabled ? "bg-pal-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", deliveryEmailEnabled ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
-                {deliveryEmailEnabled && <input type="email" value={deliveryEmail} onChange={(e) => setDeliveryEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />}
+                {deliveryEmailEnabled && <input type="email" value={deliveryEmail} onChange={(e) => setDeliveryEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50" />}
               </div>
 
               {/* Webhook */}
@@ -2034,7 +2034,7 @@ export default function AgentDetailPage() {
                 </div>
               </div>
 
-              <button onClick={handleSaveSchedule} disabled={savingSchedule || !settingsCron.trim()} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50">
+              <button onClick={handleSaveSchedule} disabled={savingSchedule || !settingsCron.trim()} className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-xs font-medium text-on-flame hover:bg-pal-400 disabled:opacity-50">
                 {savingSchedule ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving...</> : <><Save className="h-3 w-3" /> Save Schedule</>}
               </button>
             </div>
@@ -2068,8 +2068,8 @@ export default function AgentDetailPage() {
                   { value: "standard", label: "Standard", desc: "Lightweight container isolation" },
                   { value: "untrusted", label: "Untrusted MicroVM", desc: "Full microVM sandbox (Firecracker)" },
                 ].map((level) => (
-                  <label key={level.value} className={clsx("flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-all", settingsIsolation === level.value ? "border-lantern-500/50 bg-lantern-500/5" : "border-zinc-800 hover:border-zinc-600")}>
-                    <input type="radio" name="isolation" value={level.value} checked={settingsIsolation === level.value} onChange={(e) => setSettingsIsolation(e.target.value)} className="accent-lantern-500" />
+                  <label key={level.value} className={clsx("flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-all", settingsIsolation === level.value ? "border-pal-500/50 bg-pal-500/5" : "border-zinc-800 hover:border-zinc-600")}>
+                    <input type="radio" name="isolation" value={level.value} checked={settingsIsolation === level.value} onChange={(e) => setSettingsIsolation(e.target.value)} className="accent-pal-500" />
                     <div><div className="text-xs font-medium text-zinc-200">{level.label}</div><div className="text-[11px] text-zinc-500">{level.desc}</div></div>
                   </label>
                 ))}
@@ -2087,7 +2087,7 @@ export default function AgentDetailPage() {
               <div className="space-y-3">
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Runtime</label>
-                  <select value={envRuntime} onChange={(e) => { setEnvRuntime(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.runtime = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                  <select value={envRuntime} onChange={(e) => { setEnvRuntime(e.target.value); try { const s = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}"); s.runtime = e.target.value; localStorage.setItem(`pal_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
                     <option value="node22">Node.js 22 (default)</option>
                     <option value="python312">Python 3.12</option>
                     <option value="custom">Custom</option>
@@ -2095,7 +2095,7 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Memory</label>
-                  <select value={envMemory} onChange={(e) => { setEnvMemory(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.memory = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                  <select value={envMemory} onChange={(e) => { setEnvMemory(e.target.value); try { const s = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}"); s.memory = e.target.value; localStorage.setItem(`pal_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
                     <option value="256mb">256MB</option>
                     <option value="512mb">512MB (default)</option>
                     <option value="1gb">1GB</option>
@@ -2104,7 +2104,7 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Timeout</label>
-                  <select value={envTimeout} onChange={(e) => { setEnvTimeout(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.timeout = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                  <select value={envTimeout} onChange={(e) => { setEnvTimeout(e.target.value); try { const s = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}"); s.timeout = e.target.value; localStorage.setItem(`pal_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
                     <option value="1m">1 minute</option>
                     <option value="5m">5 minutes (default)</option>
                     <option value="15m">15 minutes</option>
@@ -2114,7 +2114,7 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Network Access</label>
-                  <select value={envNetwork} onChange={(e) => { setEnvNetwork(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.network = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                  <select value={envNetwork} onChange={(e) => { setEnvNetwork(e.target.value); try { const s = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}"); s.network = e.target.value; localStorage.setItem(`pal_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
                     <option value="allow-all">Allow all</option>
                     <option value="restricted">Restricted</option>
                     <option value="no-egress">No egress</option>
@@ -2122,7 +2122,7 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Additional Packages (comma-separated)</label>
-                  <input type="text" value={envPackages} onChange={(e) => { setEnvPackages(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.packages = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} placeholder="e.g., axios, lodash, cheerio" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-emerald-500/50" />
+                  <input type="text" value={envPackages} onChange={(e) => { setEnvPackages(e.target.value); try { const s = JSON.parse(localStorage.getItem(`pal_env_${name}`) || "{}"); s.packages = e.target.value; localStorage.setItem(`pal_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} placeholder="e.g., axios, lodash, cheerio" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-emerald-500/50" />
                 </div>
               </div>
             </div>
@@ -2132,15 +2132,15 @@ export default function AgentDetailPage() {
               <h3 className="text-sm font-semibold text-zinc-200">Resource Limits</h3>
               <div className="space-y-3">
                 <div><label className="mb-1 block text-xs text-zinc-400">Timeout</label>
-                  <select value={settingsTimeout} onChange={(e) => setSettingsTimeout(e.target.value)} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50">
+                  <select value={settingsTimeout} onChange={(e) => setSettingsTimeout(e.target.value)} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50">
                     <option value="1m">1 minute</option><option value="5m">5 minutes</option><option value="15m">15 minutes</option><option value="30m">30 minutes</option><option value="1h">1 hour</option>
                   </select>
                 </div>
                 <div><label className="mb-1 flex items-center justify-between text-xs text-zinc-400">Max tokens <span className="font-mono text-zinc-500">{settingsMaxTokens.toLocaleString()}</span></label>
-                  <input type="range" min={1000} max={500000} step={1000} value={settingsMaxTokens} onChange={(e) => setSettingsMaxTokens(parseInt(e.target.value))} className="w-full accent-lantern-500" />
+                  <input type="range" min={1000} max={500000} step={1000} value={settingsMaxTokens} onChange={(e) => setSettingsMaxTokens(parseInt(e.target.value))} className="w-full accent-pal-500" />
                 </div>
                 <div><label className="mb-1 flex items-center justify-between text-xs text-zinc-400">Max cost <span className="font-mono text-zinc-500">${settingsMaxCost.toFixed(2)}</span></label>
-                  <input type="range" min={0.1} max={50} step={0.1} value={settingsMaxCost} onChange={(e) => setSettingsMaxCost(parseFloat(e.target.value))} className="w-full accent-lantern-500" />
+                  <input type="range" min={0.1} max={50} step={0.1} value={settingsMaxCost} onChange={(e) => setSettingsMaxCost(parseFloat(e.target.value))} className="w-full accent-pal-500" />
                 </div>
               </div>
             </div>
@@ -2149,19 +2149,19 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <h3 className="text-sm font-semibold text-zinc-200">Privacy & Security</h3>
               <div><label className="mb-1 block text-xs text-zinc-400">Data retention period</label>
-                <select value={settingsRetention} onChange={(e) => setSettingsRetention(e.target.value)} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50">
+                <select value={settingsRetention} onChange={(e) => setSettingsRetention(e.target.value)} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50">
                   <option value="30d">30 days</option><option value="90d">90 days</option><option value="180d">180 days</option><option value="365d">1 year</option><option value="forever">Forever</option>
                 </select>
               </div>
               <div className="flex items-center justify-between">
                 <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDD12"} Encrypt all run data</span><p className="text-[11px] text-zinc-500">End-to-end encryption for all inputs and outputs</p></div>
-                <button type="button" role="switch" aria-checked={settingsEncrypt} onClick={() => setSettingsEncrypt(!settingsEncrypt)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsEncrypt ? "bg-lantern-500" : "bg-zinc-700")}>
+                <button type="button" role="switch" aria-checked={settingsEncrypt} onClick={() => setSettingsEncrypt(!settingsEncrypt)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsEncrypt ? "bg-pal-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", settingsEncrypt ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
               <div className="flex items-center justify-between">
                 <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDEE1\uFE0F"} Enable audit logging</span><p className="text-[11px] text-zinc-500">Full audit trail for compliance</p></div>
-                <button type="button" role="switch" aria-checked={settingsAuditLog} onClick={() => setSettingsAuditLog(!settingsAuditLog)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsAuditLog ? "bg-lantern-500" : "bg-zinc-700")}>
+                <button type="button" role="switch" aria-checked={settingsAuditLog} onClick={() => setSettingsAuditLog(!settingsAuditLog)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsAuditLog ? "bg-pal-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", settingsAuditLog ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
@@ -2243,29 +2243,29 @@ export default function AgentDetailPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div><span className="text-xs font-medium text-zinc-300">Enable content filtering</span><p className="text-[11px] text-zinc-500">Flag and redact potential secrets in output</p></div>
-                  <button type="button" role="switch" aria-checked={guardrails.contentFilter} onClick={() => handleSaveGuardrails({ ...guardrails, contentFilter: !guardrails.contentFilter })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.contentFilter ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <button type="button" role="switch" aria-checked={guardrails.contentFilter} onClick={() => handleSaveGuardrails({ ...guardrails, contentFilter: !guardrails.contentFilter })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.contentFilter ? "bg-pal-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.contentFilter ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
                   <div><span className="text-xs font-medium text-zinc-300">Block PII in output</span><p className="text-[11px] text-zinc-500">Redact emails, phone numbers, SSNs, card numbers</p></div>
-                  <button type="button" role="switch" aria-checked={guardrails.blockPII} onClick={() => handleSaveGuardrails({ ...guardrails, blockPII: !guardrails.blockPII })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockPII ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <button type="button" role="switch" aria-checked={guardrails.blockPII} onClick={() => handleSaveGuardrails({ ...guardrails, blockPII: !guardrails.blockPII })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockPII ? "bg-pal-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockPII ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
                   <div><span className="text-xs font-medium text-zinc-300">Block toxic content</span><p className="text-[11px] text-zinc-500">Block output containing harmful or toxic content</p></div>
-                  <button type="button" role="switch" aria-checked={guardrails.blockToxic} onClick={() => handleSaveGuardrails({ ...guardrails, blockToxic: !guardrails.blockToxic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockToxic ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <button type="button" role="switch" aria-checked={guardrails.blockToxic} onClick={() => handleSaveGuardrails({ ...guardrails, blockToxic: !guardrails.blockToxic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockToxic ? "bg-pal-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockToxic ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Blocked topics (comma-separated)</label>
-                  <input type="text" value={blockedTopicsInput} onChange={(e) => { setBlockedTopicsInput(e.target.value); const topics = e.target.value.split(",").map(t => t.trim()).filter(Boolean); handleSaveGuardrails({ ...guardrails, blockedTopics: topics }); }} placeholder="e.g., politics, religion, violence" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+                  <input type="text" value={blockedTopicsInput} onChange={(e) => { setBlockedTopicsInput(e.target.value); const topics = e.target.value.split(",").map(t => t.trim()).filter(Boolean); handleSaveGuardrails({ ...guardrails, blockedTopics: topics }); }} placeholder="e.g., politics, religion, violence" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50" />
                 </div>
                 <div>
                   <label className="mb-1 flex items-center justify-between text-xs text-zinc-400">Max response length <span className="font-mono text-zinc-500">{guardrails.maxResponseLength === 0 ? "Unlimited" : `${guardrails.maxResponseLength.toLocaleString()} chars`}</span></label>
-                  <input type="range" min={0} max={10000} step={100} value={guardrails.maxResponseLength} onChange={(e) => handleSaveGuardrails({ ...guardrails, maxResponseLength: parseInt(e.target.value) })} className="w-full accent-lantern-500" />
+                  <input type="range" min={0} max={10000} step={100} value={guardrails.maxResponseLength} onChange={(e) => handleSaveGuardrails({ ...guardrails, maxResponseLength: parseInt(e.target.value) })} className="w-full accent-pal-500" />
                 </div>
               </div>
               {hasActiveGuardrails(guardrails) && (
@@ -2275,7 +2275,7 @@ export default function AgentDetailPage() {
               )}
             </div>
 
-            <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-on-flame hover:bg-lantern-400 disabled:opacity-50">
+            <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-5 py-2.5 text-sm font-medium text-on-flame hover:bg-pal-400 disabled:opacity-50">
               {savingSettings ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...</> : "Save Settings"}
             </button>
 
@@ -2283,7 +2283,7 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Share2 className="h-4 w-4 text-violet-400" /> Sharing</h3>
-                <button type="button" role="switch" aria-checked={sharing.isPublic} onClick={() => handleSharingChange({ isPublic: !sharing.isPublic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", sharing.isPublic ? "bg-lantern-500" : "bg-zinc-700")}>
+                <button type="button" role="switch" aria-checked={sharing.isPublic} onClick={() => handleSharingChange({ isPublic: !sharing.isPublic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", sharing.isPublic ? "bg-pal-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", sharing.isPublic ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
@@ -2292,7 +2292,7 @@ export default function AgentDetailPage() {
                 <>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Access level</label>
-                    <select value={sharing.accessLevel} onChange={(e) => handleSharingChange({ accessLevel: e.target.value as SharingConfig["accessLevel"] })} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50">
+                    <select value={sharing.accessLevel} onChange={(e) => handleSharingChange({ accessLevel: e.target.value as SharingConfig["accessLevel"] })} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500/50">
                       <option value="view">View only</option>
                       <option value="run">Can run</option>
                       <option value="fork">Can fork</option>
@@ -2326,7 +2326,7 @@ export default function AgentDetailPage() {
                   <h3 className="text-sm font-semibold text-zinc-200">A2A Agent Card</h3>
                   <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[9px] font-medium text-indigo-400">A2A Protocol</span>
                 </div>
-                <button type="button" role="switch" aria-checked={a2aEnabled} onClick={() => { const next = !a2aEnabled; setA2aEnabled(next); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.enabled = next; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } toast.success(next ? "A2A Agent Card published" : "A2A Agent Card unpublished"); }} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", a2aEnabled ? "bg-lantern-500" : "bg-zinc-700")}>
+                <button type="button" role="switch" aria-checked={a2aEnabled} onClick={() => { const next = !a2aEnabled; setA2aEnabled(next); try { const cfg = JSON.parse(localStorage.getItem(`pal_a2a_${name}`) || "{}"); cfg.enabled = next; localStorage.setItem(`pal_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } toast.success(next ? "A2A Agent Card published" : "A2A Agent Card unpublished"); }} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", a2aEnabled ? "bg-pal-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", a2aEnabled ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
@@ -2348,11 +2348,11 @@ export default function AgentDetailPage() {
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Input Schema (JSON)</label>
-                    <textarea value={a2aInputSchema} onChange={(e) => { setA2aInputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.inputSchema = e.target.value; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
+                    <textarea value={a2aInputSchema} onChange={(e) => { setA2aInputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`pal_a2a_${name}`) || "{}"); cfg.inputSchema = e.target.value; localStorage.setItem(`pal_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Output Schema (JSON)</label>
-                    <textarea value={a2aOutputSchema} onChange={(e) => { setA2aOutputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.outputSchema = e.target.value; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
+                    <textarea value={a2aOutputSchema} onChange={(e) => { setA2aOutputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`pal_a2a_${name}`) || "{}"); cfg.outputSchema = e.target.value; localStorage.setItem(`pal_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
                   </div>
                 </>
               )}
@@ -2368,7 +2368,7 @@ export default function AgentDetailPage() {
               </div>
               <p className="text-[11px] text-zinc-500">Deploy this agent to PAL Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
               {cloudDeployStatus === "not_deployed" && (
-                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to PAL Cloud"); } catch (err) { toast.error(`Deploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`pal_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to PAL Cloud"); } catch (err) { toast.error(`Deploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
                   {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Deploy to Cloud</>}
                 </button>
               )}
@@ -2399,7 +2399,7 @@ export default function AgentDetailPage() {
                     <button onClick={async () => { setDeploying(true); try { await api.deployAgent(name); toast.success("Agent redeployed"); } catch (err) { toast.error(`Redeploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-surface-3 disabled:opacity-50">
                       {deploying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />} Redeploy
                     </button>
-                    <button onClick={async () => { setStopping(true); try { await api.stopCloudDeployment(name); setCloudDeployStatus("stopped"); setCloudDeployUrl(""); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "stopped", url: "" })); toast.success("Deployment stopped"); } catch (err) { toast.error(`Failed to stop deployment — ${err instanceof Error ? err.message : String(err)}`); } finally { setStopping(false); } }} disabled={stopping} className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-50">
+                    <button onClick={async () => { setStopping(true); try { await api.stopCloudDeployment(name); setCloudDeployStatus("stopped"); setCloudDeployUrl(""); localStorage.setItem(`pal_deploy_${name}`, JSON.stringify({ status: "stopped", url: "" })); toast.success("Deployment stopped"); } catch (err) { toast.error(`Failed to stop deployment — ${err instanceof Error ? err.message : String(err)}`); } finally { setStopping(false); } }} disabled={stopping} className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-50">
                       {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />} Stop
                     </button>
                   </div>
@@ -2408,7 +2408,7 @@ export default function AgentDetailPage() {
               {cloudDeployStatus === "stopped" && (
                 <div className="space-y-3">
                   <p className="text-xs text-zinc-500">This agent was previously deployed and is now stopped.</p>
-                  <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent redeployed"); } catch (err) { toast.error(`Redeploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                  <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`pal_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent redeployed"); } catch (err) { toast.error(`Redeploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
                     {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Redeploy</>}
                   </button>
                 </div>

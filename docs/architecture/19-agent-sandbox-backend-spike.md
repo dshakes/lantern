@@ -228,7 +228,7 @@ pod*: the agent-sandbox controller instead of `K8sBackend`.
 
 ---
 
-## 5. What stays Lantern's (the value-add wrapper)
+## 5. What stays PAL Runtime's (the value-add wrapper)
 
 Nothing in this backend touches the differentiators — that's the design:
 

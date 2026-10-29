@@ -138,7 +138,7 @@ export function OneClickTemplates() {
   return (
     <section>
       <div className="mb-4 flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-lantern-400" />
+        <Sparkles className="h-4 w-4 text-pal-400" />
         <h2 className="text-sm font-semibold text-zinc-100">
           One-click recipes
         </h2>
@@ -150,14 +150,14 @@ export function OneClickTemplates() {
         {tiles.map((t) => {
           const visual = TEMPLATE_VISUALS[t.id] ?? {
             icon: Sparkles,
-            tint: "text-lantern-300",
-            bg: "bg-lantern-500/10",
+            tint: "text-pal-300",
+            bg: "bg-pal-500/10",
           };
           const Icon = visual.icon;
           return (
             <article
               key={t.id}
-              className="group flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-all duration-150 hover:border-lantern-500/40 hover:shadow-md"
+              className="group flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-all duration-150 hover:border-pal-500/40 hover:shadow-md"
             >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", visual.bg)}>
@@ -205,7 +205,7 @@ export function OneClickTemplates() {
               <button
                 onClick={() => apply(t)}
                 disabled={!!applying}
-                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-2 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md disabled:opacity-50"
+                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-pal-500 px-3 py-2 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-pal-400 hover:shadow-md disabled:opacity-50"
               >
                 {applying === t.id ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

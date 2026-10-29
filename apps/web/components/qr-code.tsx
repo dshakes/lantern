@@ -115,7 +115,7 @@ export function QRCode({
             <p className="mb-2 text-sm font-medium text-zinc-300">Code expired</p>
             <button
               onClick={handleRefresh}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-400"
             >
               <RefreshCw className="h-3 w-3" />
               Refresh
@@ -127,7 +127,7 @@ export function QRCode({
         {!loading && !expired && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-0 border border-zinc-800 shadow-lg">
-              <Smartphone className="h-5 w-5 text-lantern-400" />
+              <Smartphone className="h-5 w-5 text-pal-400" />
             </div>
           </div>
         )}

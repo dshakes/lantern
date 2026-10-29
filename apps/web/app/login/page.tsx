@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2, ArrowRight, MailCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
-import { LanternMark } from "@/components/lantern-mark";
+import { PalMark } from "@/components/pal-mark";
 import { Turnstile, TURNSTILE_SITE_KEY } from "@/components/turnstile";
 
 function GoogleIcon() {
@@ -201,7 +201,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[380px]">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <LanternMark className="mx-auto mb-4 h-11 w-11" />
+          <PalMark className="mx-auto mb-4 h-11 w-11" />
           <h1 className="text-xl font-semibold text-zinc-100">
             {mode === "signin" ? "Welcome back" : "Create your account"}
           </h1>
@@ -214,7 +214,7 @@ export default function LoginPage() {
         {checkEmail ? (
           <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-5 text-sm text-zinc-400">
             <div className="mb-2 flex items-center gap-2 font-medium text-zinc-100">
-              <MailCheck className="h-4 w-4 text-lantern-400" />
+              <MailCheck className="h-4 w-4 text-pal-400" />
               Check your email
             </div>
             We sent a verification link to <span className="text-zinc-200">{email}</span>. Open it to
@@ -284,7 +284,7 @@ export default function LoginPage() {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Your name"
                   autoComplete="name"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
                 />
               </div>
             )}
@@ -298,7 +298,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
                 autoComplete="email"
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
               />
             </div>
 
@@ -311,7 +311,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={mode === "signup" ? "At least 12 characters" : "••••••••"}
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
               />
             </div>
 
@@ -333,7 +333,7 @@ export default function LoginPage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
                   autoComplete="new-password"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
                 />
               </div>
             )}
@@ -349,7 +349,7 @@ export default function LoginPage() {
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
                   autoComplete="off"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
                 />
               </div>
             )}
@@ -359,7 +359,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-lantern-500 py-2.5 text-sm font-medium text-on-flame transition-all hover:bg-lantern-400 disabled:opacity-50 active:scale-[0.98]"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-pal-500 py-2.5 text-sm font-medium text-on-flame transition-all hover:bg-pal-400 disabled:opacity-50 active:scale-[0.98]"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -376,14 +376,14 @@ export default function LoginPage() {
             {mode === "signin" ? (
               <>
                 No account?{" "}
-                <button onClick={() => { setMode("signup"); setError(null); }} className="text-lantern-400 hover:text-lantern-300 transition-colors">
+                <button onClick={() => { setMode("signup"); setError(null); }} className="text-pal-400 hover:text-pal-300 transition-colors">
                   Sign up
                 </button>
               </>
             ) : (
               <>
                 Already have an account?{" "}
-                <button onClick={() => { setMode("signin"); setError(null); }} className="text-lantern-400 hover:text-lantern-300 transition-colors">
+                <button onClick={() => { setMode("signin"); setError(null); }} className="text-pal-400 hover:text-pal-300 transition-colors">
                   Sign in
                 </button>
               </>

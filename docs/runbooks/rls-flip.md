@@ -1,4 +1,4 @@
-# Runbook: Flip LANTERN_RLS_ENFORCE=1
+# Runbook: Flip PAL_RLS_ENFORCE=1
 
 **Audience**: operators deploying the PAL control-plane.  
 **Risk level**: medium — flipping the flag activates RLS enforcement for
@@ -11,7 +11,7 @@ tenants until rolled back.
 
 ## What this changes
 
-When `LANTERN_RLS_ENFORCE=1` AND `LANTERN_APP_DB_PASSWORD` is set, the
+When `PAL_RLS_ENFORCE=1` AND `PAL_APP_DB_PASSWORD` is set, the
 control-plane opens a second database connection pool (`AppPool`) as the
 `lantern_app` role — a non-superuser with no `BYPASSRLS` grant.
 
@@ -70,7 +70,7 @@ DATABASE_URL=postgres://lantern:<pw>@<host>:5432/lantern?sslmode=require \
 
 | Validated by `make rls-validate` | Requires the target cluster |
 |---|---|
-| RLS policies enabled + forced on all ~40 tenant tables | `LANTERN_APP_DB_PASSWORD` accepted by target Postgres |
+| RLS policies enabled + forced on all ~40 tenant tables | `PAL_APP_DB_PASSWORD` accepted by target Postgres |
 | `lantern_app` role exists and is RLS-subject | AppPool actually connects as `lantern_app` in the live process |
 | Cross-tenant reads return 0 rows | Live traffic / RLS miss-rate under production load |
 | Same-tenant reads still return rows (no regression) | Response time impact under real concurrency |
@@ -88,7 +88,7 @@ ALTER ROLE lantern_app PASSWORD '<strong-random-password>';
 ```
 
 Keep the password in your secrets store.  It will be set as
-`LANTERN_APP_DB_PASSWORD` in the next step.
+`PAL_APP_DB_PASSWORD` in the next step.
 
 ---
 
@@ -98,12 +98,12 @@ Add or update these environment variables for the control-plane process
 (Kubernetes Secret, docker-compose env, launchd plist, etc.):
 
 ```
-LANTERN_RLS_ENFORCE=1
-LANTERN_APP_DB_PASSWORD=<strong-random-password>
+PAL_RLS_ENFORCE=1
+PAL_APP_DB_PASSWORD=<strong-random-password>
 ```
 
-The two vars must be set **together**.  Setting `LANTERN_RLS_ENFORCE=1`
-without `LANTERN_APP_DB_PASSWORD` logs a warning and aliases `AppPool` to
+The two vars must be set **together**.  Setting `PAL_RLS_ENFORCE=1`
+without `PAL_APP_DB_PASSWORD` logs a warning and aliases `AppPool` to
 the superuser pool — enforcement is not active.
 
 ---
@@ -151,21 +151,21 @@ Monitor:
   security` — this would indicate a write path that sets the wrong `tenant_id`.
 - **AppPool connection errors**: if `lantern_app` cannot log in, the API
   will log connection errors and fall through to the superuser alias (RLS
-  inactive but not fatal — check `LANTERN_APP_DB_PASSWORD` matches the
+  inactive but not fatal — check `PAL_APP_DB_PASSWORD` matches the
   ALTER ROLE).
 
 ---
 
 ## Rollback
 
-Rollback is instant: unset `LANTERN_RLS_ENFORCE` (or set it to `0`) and
+Rollback is instant: unset `PAL_RLS_ENFORCE` (or set it to `0`) and
 restart the process.  The `AppPool` aliases back to the superuser pool;
 all queries behave as before the flip.  No database changes are required
 to roll back.
 
 ```
 # Remove or set to 0:
-LANTERN_RLS_ENFORCE=0
+PAL_RLS_ENFORCE=0
 ```
 
 Then restart the control-plane (same as step 4).
@@ -176,7 +176,7 @@ Then restart the control-plane (same as step 4).
 
 ### "AppPool aliased to privileged pool; RLS not enforced at runtime"
 
-`LANTERN_RLS_ENFORCE=1` is set but `LANTERN_APP_DB_PASSWORD` is missing
+`PAL_RLS_ENFORCE=1` is set but `PAL_APP_DB_PASSWORD` is missing
 or wrong.  Run `ALTER ROLE lantern_app PASSWORD '...'` and update the
 secret.
 

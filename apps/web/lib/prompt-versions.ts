@@ -8,7 +8,7 @@ export interface PromptVersion {
   version: number;
 }
 
-const KEY_PREFIX = "lantern_prompt_versions_";
+const KEY_PREFIX = "pal_prompt_versions_";
 const MAX_VERSIONS = 10;
 
 export function getPromptVersions(agentName: string): PromptVersion[] {

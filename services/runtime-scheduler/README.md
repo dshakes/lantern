@@ -1,6 +1,6 @@
 # runtime-scheduler
 
-Cluster-scoped placement service for the Lantern runtime. Picks which
+Cluster-scoped placement service for the PAL Runtime runtime. Picks which
 node should host a candidate microVM, dispatches the spawn to that
 node's `runtime-manager`, and streams `StatusEvent`s back to callers.
 

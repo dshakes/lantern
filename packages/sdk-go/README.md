@@ -1,6 +1,6 @@
 # lantern-go
 
-The official Go SDK for [Lantern](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
+The official Go SDK for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 
 ```bash
 go get github.com/dshakes/lantern/packages/sdk-go
@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-    // Reads LANTERN_API_URL and LANTERN_API_KEY from the environment by default.
+    // Reads PAL_API_URL and PAL_API_KEY from the environment by default.
     c := lantern.New()
     ctx := context.Background()
 
