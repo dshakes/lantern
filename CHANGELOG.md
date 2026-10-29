@@ -36,10 +36,19 @@ This project is pre-1.0; there are no stable release branches yet.
   references in prod. Image hashes are streamed and cached per file identity.
   **HOST-ASSERTED only** — proves what the host recorded it launched, NOT what ran
   inside the VM; images are hashed by path and opened later by Firecracker (TOCTOU,
-  documented). Hardware attestation (ADR 0023) remains UNVERIFIED. Credential-named
-  env values (e.g. `LANTERN_AGENT_INSTANCE_TOKEN`) are no longer put on the kernel
-  cmdline (the guest echoes it to the console log) — `spawn.json` carries them.
-  Live check: `make lima-measurement-e2e`.
+  documented). Hardware attestation (ADR 0023) remains UNVERIFIED. Secret-named env
+  values (whole `_` segments: TOKEN, SECRET, PASSWORD, KEY, AUTH, PAT, DSN, …) are
+  blanked and URL userinfo (`scheme://user:pass@`) is scrubbed from every env value
+  before hashing; the snapshot store is inside the trust boundary (unsigned
+  metadata; signing is a follow-up). Live check: `make lima-measurement-e2e`.
+- **Breaking (Firecracker guests): caller env is no longer sent on the kernel
+  cmdline.** `spawn.json` is the only caller-env channel; the cmdline carries just
+  the manager-owned `LANTERN_ENV` / `LANTERN_MANAGER_ADDR` / `LANTERN_WORKLOAD_UID`
+  (values whitespace-sanitized). The guest echoes its cmdline to the console the
+  manager logs, so caller values there (an instance token, a `DATABASE_URL`
+  password) leaked into logs. Harness builds older than `spawn.json` support are no
+  longer supported for caller env; `lantern.env.RUST_LOG` from a caller no longer
+  reaches the harness.
 - **Egress DLP (ADR 0030)** — per-tenant data-loss-prevention policy applied by the egress broker to TLS-terminated and plain-HTTP egress. Detectors: Luhn-validated card numbers, secret-key prefixes (AWS/GitHub/Slack/PEM), email (threshold-based), phone (threshold-based), custom regex. Modes: `off | audit | block`. Fails closed: unknown detector/mode or bad regex fails the spawn (regex also 400 at write), a block rule on a node without a broker refuses the spawn, ambiguous body framing (CL+TE, conflicting CL, bad chunks) is a 400, and in block mode a body that cannot be fully inspected up to the cap is a 403. Chunked bodies are de-chunked before scanning; `Expect: 100-continue` is answered by the broker. The policy survives pause/resume/fork; DLP VMs skip the warm pool. Not inspected (documented): opaque CONNECT tunnels, bytes past `max_inspect_bytes` (64 KiB, ≤1 MiB), keep-alive follow-on requests. Audit action `dlp` carries rule id, detector, host, byte offset/count, decision — never the matched value (invariant #10). Policy stored in `dlp_policies` (RLS-enforced, migration 0028). REST CRUD at `GET/PUT /v1/egress/dlp-policy` + `POST/DELETE /v1/egress/dlp-policy/rules`. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy` (proto field 19). e2e: `broker-e2e.sh` DLP block cases (card number, custom_regex).
 - **Prod enforces API-key scopes** — `values-prod.yaml` (and staging) set `LANTERN_AUTHZ_ENFORCE=1`; a first-class `controlPlane.env.LANTERN_AUTHZ_ENFORCE` chart value, a boot log line stating the mode, a `ControlPlane403RateElevated` alert, a chart render test (`infra/helm/lantern/tests/authz-enforce.sh`, run in CI), and the soak/rollback/re-scoping steps in `docs/runbooks/ga-staged-rollout.md`. JWT sessions and unscoped legacy keys are unaffected.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,

@@ -70,12 +70,24 @@ before the spawn-contract hash is computed:
 - `declared_secrets` — vault references (URIs only, but URIs reveal vault topology)
 - `exec_token` — bearer credential used by the harness for `VendSecret` calls
 - `egress_rules[*].inject` — per-rule credential injection specifications
-- the **values** of env keys whose name looks credential-bearing (contains
-  `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY`,
-  `CREDENTIAL`) — the key is still measured, the value is blanked. A published
-  measurement must never be a hash over a live secret. This is a name
-  heuristic: a credential under an innocuous name is measured; declare
-  credentials as secrets (`lantern.secret/…`) rather than plain env.
+- the **values** of env keys whose name is credential-bearing — any whole
+  `_`-delimited name segment equal to `TOKEN`, `SECRET(S)`, `PASSWORD`,
+  `PASSWD`, `KEY`, `APIKEY`, `CREDENTIAL(S)`, `AUTH`, `PAT` or `DSN` (so
+  `OPENAI_KEY`, `GITHUB_PAT`, `PRIVATE_KEY`, `SENTRY_DSN` are blanked while
+  `MAX_TOKENS` and `TOKENIZERS_PARALLELISM` keep their values measured). The key
+  is still measured, the value is blanked. A published measurement must never be
+  a hash over a live secret.
+- URL userinfo in **every** env value, whatever the key is called:
+  `scheme://user:pass@host` is measured as `scheme://***@host` (a
+  `DATABASE_URL` carries its password in the value, not the name).
+
+**Blanked values are unmeasured input.** A blanked env value can be changed
+without changing the measurement. Reference approvers must therefore NOT approve
+a spec whose workload *executes or interprets* a secret-named env value (e.g. a
+`*_TOKEN` that is really a script, a `*_KEY` that selects code) — that input is
+invisible to the gate. Credentials belong in `declared_secrets`
+(`lantern.secret/…`), not plain env; the name heuristic is a backstop, and a
+credential under an innocuous name that is not a URL is still measured.
 
 ### "Minus identity" rule
 
@@ -86,11 +98,15 @@ the caller-set per-incarnation env keys (`CALLER_LANTERN_KEYS`:
 `LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN` — a live bearer
 credential — `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`); and from the cmdline the
 `ip=`, `lantern.vm_id=`, `lantern.run_id=`, `lantern.tls_cert=`/`lantern.tls_key=`
-(per-VM paths), `lantern.secret.*` tokens, and **every** `lantern.env.*` token.
-The `lantern.env.*` tokens are a lossy legacy copy of the contract env, emitted
-in `HashMap` iteration order (so identical specs produced different cmdlines)
-and carrying the instance id/token; the harness ignores them when `spawn.json`
-is present, and the authoritative env is measured in the contract.
+(per-VM paths), `lantern.manager_ca=` (host-path dependent), `lantern.secret.*`
+tokens, and **every** `lantern.env.*` token. The `lantern.env.*` tokens are now
+only the manager-owned keys the harness needs before reading `spawn.json`
+(`LANTERN_ENV`, `LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`): caller env is no
+longer emitted on the cmdline at all (the guest kernel echoes the cmdline to the
+console the manager logs, so a caller value there would be a log leak), and
+cmdline values have every whitespace character replaced. For any key both
+channels carry, the contract key wins over the cmdline key; the authoritative env
+is measured in the contract.
 
 All other spawn-contract fields (workload command, env, egress rules *sans inject*,
 uid/gid, egress mode, `LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`) and the
@@ -143,6 +159,15 @@ would fail closed under `enforce`. Instead:
 4. A snapshot with no recorded measurement (taken before this field, or from an
    unmeasured source) is refused under `enforce` with references, and restores
    unmeasured under `warn`/`off`.
+
+**Trust boundary.** The snapshot store — local disk and the S3 tier — is
+*inside* the measurement trust boundary: `meta.software_measurement` carries no
+MAC or signature, so whoever can write the store can make a restore inherit any
+value (and pass `enforce` with it). That is the same trust already placed in the
+store for the snapshot bytes themselves, but it is weaker than the spawn path.
+**Follow-up:** sign `SnapshotMeta` (at least `{id, sha256, tenant_id,
+software_measurement}`) with a manager key at snapshot time and verify on
+restore, so an S3-tier compromise cannot launder a measurement.
 
 The inherited value attests the lineage's *original boot*, not the snapshot's
 memory/disk state (which the workload has mutated since); relying parties
@@ -217,10 +242,9 @@ Firecracker) proves on real hardware: identical specs measure identically;
 `enforce` admits the reference spec and refuses a changed env value or
 command; snapshot → restore and fork inherit the measurement under `enforce`;
 the startup refusals; and that no manager log carries the measurement or an
-instance token. That last check also pins a fix: credential-named env keys
-(e.g. `LANTERN_AGENT_INSTANCE_TOKEN`) are no longer copied onto the kernel
-cmdline, which the guest kernel echoes to the console the manager logs; they
-reach the harness via `spawn.json` only.
+instance token. That last check also pins a fix: caller env is no longer copied
+onto the kernel cmdline, which the guest kernel echoes to the console the
+manager logs; it reaches the harness via `spawn.json` only.
 
 ---
 

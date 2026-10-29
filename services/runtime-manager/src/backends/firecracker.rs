@@ -818,6 +818,21 @@ fn manager_addr_for_guest(net: &VmNetwork) -> String {
     format!("{}:{}", net.host_ip, port)
 }
 
+/// A value safe to place in one kernel-cmdline token: every whitespace char
+/// (`char::is_whitespace`, not just ASCII space) and quotes become `_`, so a
+/// value can never split into, or inject, another token.
+fn cmdline_value(v: &str) -> String {
+    v.chars()
+        .map(|c| {
+            if c.is_whitespace() || c == '"' || c == '\'' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 // Flat positional args mirror the cmdline fields 1:1; a params struct for a
 // single pure builder would add indirection without clarity.
 #[allow(clippy::too_many_arguments)]
@@ -831,29 +846,19 @@ pub fn build_boot_args(
     req: &ScheduleRequest,
     workload_uid: u32,
 ) -> String {
-    // Encode extra env vars from the ScheduleRequest as k=v pairs on the
-    // command line under the `lantern.env.` prefix so the init process can
-    // export them into the harness environment.
-    // Legacy channel (ADR 0025): `spawn.json` carries env byte-exact; this
-    // lossy copy is kept for harness builds that predate the file. The
-    // manager-owned LANTERN_WORKLOAD_UID is appended below, never caller-set.
-    // Credential-named keys (e.g. LANTERN_AGENT_INSTANCE_TOKEN) never go on
-    // the cmdline: the guest kernel echoes it to the serial console, which the
-    // manager logs (invariant #10). They reach the harness via `spawn.json`.
+    // No caller env on the cmdline (ADR 0025/0031): `spawn.json` is the
+    // authoritative env channel, and the guest kernel echoes its cmdline to the
+    // serial console the manager logs — a caller value here (an instance token,
+    // a `DATABASE_URL` with a password) would land in the log (invariant #10).
+    // Only the manager-owned keys the harness reads BEFORE `spawn.json` are
+    // emitted: LANTERN_ENV (prod-ness decides how a malformed contract is
+    // handled), plus LANTERN_MANAGER_ADDR / LANTERN_WORKLOAD_UID below.
+    // Harnesses that predate `spawn.json` no longer receive caller env.
     let extra_env: String = req
         .env
-        .iter()
-        .filter(|(k, _)| {
-            k.as_str() != ENV_WORKLOAD_UID && !crate::measurement::is_secret_env_name(k)
-        })
-        .map(|(k, v)| {
-            // Sanitise: strip spaces and quotes to avoid breaking the
-            // command line.  Real production would use a structured config
-            // file rather than kernel args for large env sets.
-            let v_clean = v.replace([' ', '"', '\''], "_");
-            format!(" lantern.env.{k}={v_clean}")
-        })
-        .collect();
+        .get(ENV_LANTERN_ENV)
+        .map(|v| format!(" lantern.env.{ENV_LANTERN_ENV}={}", cmdline_value(v)))
+        .unwrap_or_default();
 
     // Static addressing via the kernel's ip= parameter, plus the manager
     // endpoint the harness should dial. Without these the guest has no L3
@@ -875,12 +880,15 @@ pub fn build_boot_args(
         .iter()
         .filter(|s| !s.env_var.is_empty() && !s.vault_ref.is_empty())
         .map(|s| {
-            let env = s.env_var.replace([' ', '"', '\'', '='], "_");
-            let uri = s.vault_ref.replace([' ', '"', '\''], "_");
+            let env = cmdline_value(&s.env_var).replace('=', "_");
+            let uri = cmdline_value(&s.vault_ref);
             format!(" lantern.secret.{env}={uri}")
         })
         .collect();
 
+    let (vm_id, run_id) = (cmdline_value(vm_id), cmdline_value(run_id));
+    let (tls_cert_path, tls_key_path) = (cmdline_value(tls_cert_path), cmdline_value(tls_key_path));
+    let manager_ca_path = cmdline_value(manager_ca_path);
     format!(
         "console=ttyS0 reboot=k panic=1 pci=off \
          {ip_param} \
@@ -4678,18 +4686,47 @@ mod tests {
         assert_ne!(a, measure("inst-a", "tok-a", "slow"));
     }
 
-    /// Invariant #10: a credential env value never lands on the kernel
-    /// cmdline (echoed to the console log); it still reaches spawn.json.
+    /// Invariant #10: NO caller env value — secret-named or not — lands on
+    /// the kernel cmdline (echoed to the console log); spawn.json carries it.
+    /// Caller-controlled fields cannot inject extra tokens via any whitespace.
     #[test]
-    fn boot_args_omit_credential_env_values() {
+    fn boot_args_carry_no_caller_env_and_no_injected_tokens() {
         let mut req = minimal_schedule_req();
         req.vm_id = Uuid::new_v4().to_string();
-        req.env
-            .insert("LANTERN_AGENT_INSTANCE_TOKEN".into(), "tok-SECRET".into());
-        req.env.insert("MODE".into(), "fast".into());
+        req.run_id = "run\u{2003}lantern.vm_id=evil\tx".into();
+        for (k, v) in [
+            ("LANTERN_AGENT_INSTANCE_TOKEN", "tok-SECRET"),
+            ("DATABASE_URL", "postgres://u:pw@h/x"),
+            ("MODE", "fast-mode-value"),
+            ("LANTERN_ENV", "prod"),
+        ] {
+            req.env.insert(k.into(), v.into());
+        }
         let cfg = VmConfig::from_schedule_in_mode(&req, "/k", "/r", EgressMode::Guest).unwrap();
-        assert!(!cfg.boot_args.contains("tok-SECRET"), "{}", cfg.boot_args);
-        assert!(cfg.boot_args.contains("lantern.env.MODE=fast"));
+        let args = &cfg.boot_args;
+        for leaked in [
+            "tok-SECRET",
+            "postgres://",
+            "pw@",
+            "fast-mode-value",
+            "DATABASE_URL",
+            "MODE=",
+        ] {
+            assert!(!args.contains(leaked), "{leaked} in boot args: {args}");
+        }
+        assert!(args.contains("lantern.env.LANTERN_ENV=prod"), "{args}");
+        assert!(args.contains("lantern.env.LANTERN_MANAGER_ADDR="), "{args}");
+        assert_eq!(
+            args.split_whitespace()
+                .filter(|t| t.starts_with("lantern.vm_id="))
+                .count(),
+            1,
+            "run_id whitespace injected a token: {args}"
+        );
+        assert_eq!(
+            cfg.spawn_contract.env["DATABASE_URL"],
+            "postgres://u:pw@h/x"
+        );
         assert_eq!(
             cfg.spawn_contract.env["LANTERN_AGENT_INSTANCE_TOKEN"],
             "tok-SECRET"
@@ -5391,10 +5428,12 @@ mod tests {
     }
 
     #[test]
-    fn boot_args_injects_env_vars() {
+    fn boot_args_carry_only_manager_owned_env() {
         let mut req = minimal_schedule_req();
         req.env
             .insert("LANTERN_TENANT_ID".to_string(), "t-999".to_string());
+        req.env
+            .insert("LANTERN_ENV".to_string(), "staging".to_string());
         let args = build_boot_args(
             "vm-1",
             "run-1",
@@ -5405,10 +5444,10 @@ mod tests {
             &req,
             1000,
         );
-        assert!(
-            args.contains("lantern.env.LANTERN_TENANT_ID=t-999"),
-            "env var must appear in boot args: {args}"
-        );
+        // spawn.json is the env channel; only manager-owned keys the harness
+        // reads before it (LANTERN_ENV, manager addr, uid) are on the cmdline.
+        assert!(!args.contains("t-999"), "caller env on the cmdline: {args}");
+        assert!(args.contains("lantern.env.LANTERN_ENV=staging"), "{args}");
     }
 
     // ---- ADR 0025: spawn contract (spawn.json) ----
@@ -5536,8 +5575,10 @@ mod tests {
     #[test]
     fn boot_args_sanitizes_spaces_in_env_values() {
         let mut req = minimal_schedule_req();
-        req.env
-            .insert("MY_VAR".to_string(), "value with spaces".to_string());
+        req.env.insert(
+            "LANTERN_ENV".to_string(),
+            "dev\u{a0}x\tlantern.vm_id=y".to_string(),
+        );
         let args = build_boot_args(
             "vm-1",
             "run-1",
@@ -5548,14 +5589,17 @@ mod tests {
             &req,
             1000,
         );
-        // Spaces replaced with underscores so the kernel cmdline isn't split.
+        // ALL whitespace (not just ASCII space) becomes `_`, so a value can
+        // never split into another token.
         assert!(
-            !args.contains("value with spaces"),
-            "raw spaces must be sanitized"
-        );
-        assert!(
-            args.contains("lantern.env.MY_VAR=value_with_spaces"),
+            args.contains("lantern.env.LANTERN_ENV=dev_x_lantern.vm_id=y"),
             "sanitized value must appear: {args}"
+        );
+        assert_eq!(
+            args.split_whitespace()
+                .filter(|t| t.starts_with("lantern.vm_id="))
+                .count(),
+            1
         );
     }
 

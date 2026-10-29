@@ -357,12 +357,10 @@ fn hash_bytes(data: &[u8]) -> [u8; 32] {
 
 /// Kernel cmdline reduced to its stable boot configuration. Removed:
 /// per-incarnation tokens (VM/run identity, per-VM cert paths, `ip=`),
-/// declared-secret refs (minus-secrets), and EVERY `lantern.env.*` token. The
-/// env tokens are a lossy legacy copy of `spawn.json`'s env (the harness
-/// ignores them when `spawn.json` is present), emitted in `HashMap` order —
-/// keeping them made identical specs measure differently, and they carry
-/// per-VM identity and caller credentials (`LANTERN_AGENT_INSTANCE_*`). The
-/// authoritative env is measured, sanitized, in the contract.
+/// declared-secret refs (minus-secrets), the host-path-dependent manager CA
+/// path, and EVERY `lantern.env.*` token. Those are now only manager-owned
+/// keys the harness needs before `spawn.json` (contract keys win over cmdline
+/// keys); the authoritative env is measured, sanitized, in the contract.
 fn canonical_boot_args(args: &str) -> String {
     const PER_VM: &[&str] = &[
         "ip=",
@@ -370,6 +368,8 @@ fn canonical_boot_args(args: &str) -> String {
         "lantern.run_id=",
         "lantern.tls_cert=",
         "lantern.tls_key=",
+        // Host-path dependent (VM cert dir), not part of what was booted.
+        "lantern.manager_ca=",
         "lantern.env.",
         "lantern.secret.",
     ];
@@ -382,19 +382,54 @@ fn canonical_boot_args(args: &str) -> String {
 /// Env key names whose VALUES are credentials: the value is blanked before
 /// hashing (the key's presence is still measured). A published measurement
 /// must never be a hash over a live secret (ADR 0031 "minus secrets").
-pub(crate) fn is_secret_env_name(key: &str) -> bool {
-    const MARKERS: &[&str] = &[
+///
+/// Matches whole `_`-delimited name segments, so `GITHUB_PAT`, `OPENAI_KEY`,
+/// `SENTRY_DSN` are credentials while `MAX_TOKENS` / `TOKENIZERS_PARALLELISM`
+/// keep their values measured.
+fn is_secret_env_name(key: &str) -> bool {
+    const SEGMENTS: &[&str] = &[
         "TOKEN",
         "SECRET",
+        "SECRETS",
         "PASSWORD",
         "PASSWD",
-        "API_KEY",
+        "KEY",
         "APIKEY",
-        "PRIVATE_KEY",
         "CREDENTIAL",
+        "CREDENTIALS",
+        "AUTH",
+        "PAT",
+        "DSN",
     ];
-    let k = key.to_ascii_uppercase();
-    MARKERS.iter().any(|m| k.contains(m))
+    key.to_ascii_uppercase()
+        .split('_')
+        .any(|seg| SEGMENTS.contains(&seg))
+}
+
+/// Replace URL userinfo (`scheme://user:pass@host` → `scheme://***@host`) in
+/// any env value, whatever the key is called — a `DATABASE_URL` carries its
+/// password in the value, not the name.
+fn scrub_url_userinfo(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    let mut rest = v;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c == '/' || c == '?' || c == '#' || c.is_whitespace())
+            .unwrap_or(tail.len());
+        let authority = &tail[..end];
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str("***");
+                out.push_str(&authority[at..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Serialize `contract` to canonical JSON with secret-bearing fields zeroed
@@ -414,6 +449,8 @@ fn contract_bytes_sans_secrets(contract: &SpawnContract) -> anyhow::Result<Vec<u
     for (k, v) in &mut s.env {
         if is_secret_env_name(k) {
             v.clear();
+        } else {
+            *v = scrub_url_userinfo(v);
         }
     }
     // Per-incarnation identity: unique for every VM, so hashing it would make
@@ -703,6 +740,75 @@ mod tests {
         assert_ne!(
             contract_bytes_sans_secrets(&c).unwrap(),
             contract_bytes_sans_secrets(&mk("i", "t", "k", "v")).unwrap()
+        );
+    }
+
+    /// Segment-matched credential names: blanked; look-alikes stay measured.
+    #[test]
+    fn secret_env_names_match_whole_segments() {
+        for k in [
+            "OPENAI_KEY",
+            "OPENAI_API_KEY",
+            "GITHUB_PAT",
+            "DB_PASSWORD",
+            "SENTRY_DSN",
+            "AWS_SECRET_ACCESS_KEY",
+            "AUTH",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "LANTERN_AGENT_INSTANCE_TOKEN",
+            "token",
+        ] {
+            assert!(is_secret_env_name(k), "{k} must be treated as a credential");
+        }
+        for k in [
+            "MAX_TOKENS",
+            "TOKENIZERS_PARALLELISM",
+            "MODE",
+            "KEYBOARD",
+            "PATH",
+            "DATABASE_URL",
+        ] {
+            assert!(!is_secret_env_name(k), "{k} must stay measured");
+        }
+    }
+
+    /// URL userinfo is scrubbed from EVERY env value before hashing, so a
+    /// password in `DATABASE_URL` never feeds the published hash; the rest of
+    /// the value (host, db) is still measured.
+    #[test]
+    fn url_userinfo_is_scrubbed_from_any_env_value() {
+        assert_eq!(
+            scrub_url_userinfo("postgres://u:pw@h:5432/x"),
+            "postgres://***@h:5432/x"
+        );
+        assert_eq!(
+            scrub_url_userinfo("a=redis://:s3cr3t@r/0 b=https://example.com/p@th"),
+            "a=redis://***@r/0 b=https://example.com/p@th"
+        );
+        assert_eq!(scrub_url_userinfo("no url here"), "no url here");
+        let mk = |url: &str, max: &str| {
+            let mut c = empty_contract();
+            c.env.insert("DATABASE_URL".into(), url.into());
+            c.env.insert("MAX_TOKENS".into(), max.into());
+            c.env.insert("GITHUB_PAT".into(), format!("ghp_{url}"));
+            contract_bytes_sans_secrets(&c).unwrap()
+        };
+        let a = mk("postgres://u:pwA@h/x", "100");
+        assert_eq!(
+            a,
+            mk("postgres://u:pwB@h/x", "100"),
+            "password must not feed the hash"
+        );
+        assert!(!String::from_utf8(a.clone()).unwrap().contains("pwA"));
+        assert_ne!(
+            a,
+            mk("postgres://u:pwA@other/x", "100"),
+            "host still measured"
+        );
+        assert_ne!(
+            a,
+            mk("postgres://u:pwA@h/x", "200"),
+            "MAX_TOKENS still measured"
         );
     }
 

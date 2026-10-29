@@ -1036,14 +1036,19 @@ impl RuntimeManagerGrpc {
 
         // ADR 0031: the inherited measurement comes only from this manager's
         // snapshot store, never from the caller. Non-store URIs inherit none
-        // (refused under an enforcing gate with references).
+        // (refused under an enforcing gate with references). A store READ
+        // error fails the restore with that error — never silently "no
+        // measurement", which would misreport the cause (and under warn boot
+        // a VM whose snapshot metadata could not be read).
         req.inherited_measurement = match req.snapshot_uri.strip_prefix("store://") {
             Some(id) => self
                 .snapshot_store
                 .find(id)
                 .await
-                .ok()
-                .flatten()
+                .map_err(|e| {
+                    tracing::error!(snapshot_id = %id, error = format!("{e:#}"), "restore: snapshot metadata lookup failed");
+                    Status::internal("snapshot store lookup failed; cannot read the snapshot's measurement")
+                })?
                 .map(|m| m.software_measurement)
                 .filter(|m| !m.is_empty()),
             None => None,
@@ -5407,6 +5412,37 @@ mod tests {
             "restore must be handed the source's measurement"
         );
         assert_eq!(fork.handle.unwrap().software_measurement, "a".repeat(64));
+    }
+
+    /// ADR 0031: a snapshot-store READ error on restore fails the restore with
+    /// that cause — it is never swallowed into "no measurement to inherit".
+    #[tokio::test]
+    async fn restore_store_lookup_error_fails_with_accurate_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_dir = tmp.path().join("store-file");
+        tokio::fs::write(&not_a_dir, b"x").await.unwrap();
+        let svc = fc_manager(crate::snapshot_store::SnapshotStore::new(&not_a_dir));
+        let err = svc
+            .restore(Request::new(proto::RestoreRequest {
+                snapshot_uri: "store://00000000-0000-4000-8000-000000000000".into(),
+                run_id: "r".into(),
+                tenant_id: "t".into(),
+                input: serde_json::Value::Null,
+                env: HashMap::new(),
+                secrets: vec![],
+                vm_id: String::new(),
+                egress_rules: vec![],
+                dlp_policy: None,
+                inherited_measurement: Some("forged-by-caller".into()),
+            }))
+            .await
+            .expect_err("unreadable store must fail the restore");
+        assert_eq!(err.code(), tonic::Code::Internal, "{err:?}");
+        assert!(
+            err.message().contains("snapshot store lookup failed"),
+            "{}",
+            err.message()
+        );
     }
 
     /// Snapshot requires a registered vm (the owner record); no fallback to a
