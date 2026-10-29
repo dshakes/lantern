@@ -30,6 +30,8 @@ const LC = "services/runtime-scheduler/internal/handlers/lifecycle.go";
 const IS = "services/runtime-scheduler/internal/handlers/idle_sweeper.go";
 const RL = `${H}/runtime_lifecycle.go`;
 const PROTO = "packages/proto/lantern/v1/runtime.proto";
+const DLP = "docs/adr/0030-egress-dlp.md";
+const RT = `${H}/runtime.go`;
 
 // ---------------------------------------------------------------------------
 // (a) A run
@@ -286,6 +288,19 @@ export const EGRESS_SEQUENCE: SequenceDef = {
         { from: "br", to: "wl", label: "403 Forbidden", kind: "deny", note: "The credential never rides a request addressed elsewhere.", src: [B(EB, 823)] },
       ],
     },
+    {
+      id: "dlp",
+      label: "DLP block",
+      steps: [
+        connect("api.github.com"),
+        vsock,
+        { from: "br", to: "wl", label: "200 + TLS terminated", kind: "return", note: "DLP inspects only paths the broker can read: TLS-terminated injecting hosts and plain HTTP. Opaque CONNECT tunnels are never inspected.", src: [M(DLP, 25)] },
+        { from: "wl", to: "br", label: "POST /gists · body has a card number", note: "The workload tries to send sensitive data through an allowlisted host." },
+        { from: "br", to: "br", label: "read body before dialling", note: "Up to max_inspect_bytes (64 KiB default, 1 MiB ceiling), de-chunked so chunk sizes cannot split a value. Ambiguous framing is a 400.", src: [M(DLP, 89), M(DLP, 96)] },
+        { from: "br", to: "br", label: "detector card_number → block", kind: "deny", note: "Luhn and an issuer prefix. Detectors: card_number, secret_key, email, phone, custom_regex. Block beats audit.", src: [M(DLP, 65), M(DLP, 83)] },
+        { from: "br", to: "wl", label: "403 · X-Lantern-Reason: dlp-block", kind: "deny", note: "Audited as dlp, decision=block. Nothing was dialled and no secret was resolved. DLP is a guard rail and an audit trail; the allowlist stays the boundary.", src: [M(DLP, 87), M(DLP, 62)] },
+      ],
+    },
   ],
 };
 
@@ -358,6 +373,101 @@ export const LIFECYCLE_SEQUENCE: SequenceDef = {
         { from: "rs", to: "rm", label: "Spawn ×N (new vm_ids)", note: "Bounded concurrency; a child that fails is reported and its slot released.", src: [M(LC, 342), M(LC, 379)] },
         { from: "rm", to: "vm", label: "hard-link read-only mem", note: "MAP_PRIVATE copy-on-write via the host page cache. Lima nested-virt, indicative: fork spawns took 131, 145 and 160 ms.", src: [M("services/runtime-manager/src/backends/firecracker.rs", 2230), M("docs/benchmarks/runtime-latency.md", 90)] },
         { from: "rs", to: "cp", label: "forks [{ vmId, state }]", kind: "return", note: "Each child RUNNING or FAILED with its error.", src: [M(LC, 401)] },
+      ],
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// (e) A run on the microVM tier (gap analysis 3c)
+// ---------------------------------------------------------------------------
+
+const SEC = `${H}/runtime_secrets.go`;
+
+export const MICROVM_RUN_SEQUENCE: SequenceDef = {
+  id: "microvm-run",
+  title: "A run on the microVM tier",
+  caption: "From a scheduled AgentSpec to streamed output: quota, placement, boot, secrets, egress, model calls and the journal.",
+  lifelines: [
+    { id: "c", label: "CLI / SDK", tone: "client" },
+    { id: "gw", label: "Gateway", sub: ":8443", tone: "plain" },
+    { id: "cp", label: "Control plane", sub: ":8080 · :50051", tone: "plain" },
+    { id: "sc", label: "Scheduler", sub: ":50055", tone: "plain" },
+    { id: "rm", label: "Runtime manager", sub: ":50054", tone: "host" },
+    { id: "vm", label: "microVM", sub: "harness PID 1", tone: "guest" },
+    { id: "eb", label: "Egress broker", sub: "host", tone: "host" },
+    { id: "mr", label: "Model router", sub: ":50053", tone: "plain" },
+  ],
+  scenarios: [
+    {
+      id: "happy",
+      label: "Scheduled run",
+      steps: [
+        { from: "c", to: "gw", label: "POST /v1/runtime/schedule", note: "An AgentSpec: image, isolation, limits, egress rules, secret refs, idleTimeoutSecs." },
+        { from: "gw", to: "cp", label: "authenticated", note: "TLS plus a JWT or an API key. The tenant comes from the credential, never the body." },
+        { from: "cp", to: "cp", label: "quota gate", note: "Resolves the agent version and stamps tenant_id and run_id. Over the tenant's concurrent-VM quota the answer is HTTP 402 and nothing is placed.", src: [M(RT, 1814)] },
+        { from: "cp", to: "sc", label: "RuntimeScheduler.Schedule", note: "Carries x-lantern-service-token; the scheduler's port refuses callers without it (fail-closed in prod).", src: [M(PROTO, 215)] },
+        { from: "sc", to: "sc", label: "placement", note: "Warm pool, region, fair share, cost and health pick a node." },
+        { from: "sc", to: "rm", label: "RuntimeManager.Spawn", note: "Service token plus client TLS. The manager refuses any per-VM certificate on its RuntimeManager methods." },
+        { from: "rm", to: "vm", label: "boot or restore snapshot", note: "spawn.json on a read-only image gives the harness its command, env, egress rules and workload uid." },
+        { from: "vm", to: "rm", label: "Heartbeat (every 5 s)", note: "Over vsock. A VM silent for 30 s is treated as stale." },
+        { from: "vm", to: "rm", label: "VendSecret", note: "The workload asks the harness over a peer-authenticated socket; the harness asks the manager." },
+        { from: "rm", to: "cp", label: "POST /v1/runtime/secrets/resolve", note: "The manager relays; only the control plane holds the decryption key. Short-TTL value back.", src: [M(SEC, 116)] },
+        { from: "vm", to: "eb", label: "egress → vsock (broker mode)", note: "No NIC in the guest. The host broker applies the allowlist and injects credentials; the secret never enters the VM." },
+        { from: "vm", to: "mr", label: "ctx.llm.* (capability)", note: "Models are addressed by capability, never by vendor name. The router picks, caches and fails over." },
+        { from: "vm", to: "rm", label: "Report stream", note: "stdout, OTLP spans and metrics, and security audits (logged locally first, never silently dropped)." },
+        { from: "cp", to: "c", label: "SSE text/event-stream", kind: "return", note: "Flushed per event; no service buffers the whole response." },
+        { from: "cp", to: "cp", label: "journal + billing", note: "The terminal event is journaled; usage feeds the daily rollup." },
+      ],
+    },
+    {
+      id: "quota",
+      label: "Over quota",
+      steps: [
+        { from: "c", to: "gw", label: "POST /v1/runtime/schedule", note: "Same request." },
+        { from: "gw", to: "cp", label: "authenticated", note: "Tenant from the credential." },
+        { from: "cp", to: "cp", label: "quota gate → over", kind: "deny", note: "The tenant is at its concurrent-VM cap.", src: [M(RT, 1814)] },
+        { from: "cp", to: "c", label: "402 Payment Required", kind: "deny", note: "Nothing is placed, no VM boots, nothing is billed." },
+      ],
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// (f) Checkpoint and crash-resume (gap analysis 3f)
+// ---------------------------------------------------------------------------
+
+const DR = `${H}/durable_replay.go`;
+const REC = `${H}/recovery.go`;
+
+export const CHECKPOINT_SEQUENCE: SequenceDef = {
+  id: "checkpoint",
+  title: "Checkpoint and crash-resume",
+  caption: "Every step is journaled before and after. A crash between the two is reclaimed by the recovery sweep and resumed, not restarted.",
+  lifelines: [
+    { id: "w1", label: "Worker 1", sub: "executor", tone: "plain" },
+    { id: "l", label: "run_locks", sub: "lease", tone: "store" },
+    { id: "j", label: "journal_events", sub: "Postgres", tone: "store" },
+    { id: "rec", label: "Recovery sweep", sub: "every 30 s", tone: "host" },
+    { id: "w2", label: "Worker 2", sub: "re-drive", tone: "plain" },
+  ],
+  scenarios: [
+    {
+      id: "resume",
+      label: "Crash mid-step",
+      steps: [
+        { from: "w1", to: "l", label: "acquireRunLease(run_id)", note: "A lease with an expiry: one worker owns a run at a time.", src: [M(DR, 93)] },
+        { from: "w1", to: "j", label: "step 1: step_started", note: "Written before the side effect, so recovery knows the step began." },
+        { from: "w1", to: "j", label: "step 1: step_completed + output", note: "The full output is persisted: this row is the checkpoint." },
+        { from: "w1", to: "j", label: "step 2: step_started", note: "The next step is in flight." },
+        { from: "w1", to: "w1", label: "process dies", kind: "deny", note: "Deploy, restart or crash before step 2 completes. The lease stops being renewed." },
+        { from: "rec", to: "l", label: "find runs with expired locks", note: "Runs in running or queued whose run_locks row is absent or expired (PAL_RECOVERY_INTERVAL, default 30 s).", src: [M(REC, 163)] },
+        { from: "rec", to: "l", label: "acquireRecoveryLock", note: "An UPSERT that only steals an expired lock: two replicas never re-drive the same run.", src: [M(REC, 188)] },
+        { from: "rec", to: "w2", label: "redriveRun", note: "Re-enters the executor or the workflow interpreter.", src: [M(REC, 228)] },
+        { from: "w2", to: "j", label: "CompletedStep(step 1)?", note: "Walks the graph from the trigger; for every side-effecting node it asks the journal first.", src: [M("services/control-plane/internal/workflow/interpreter.go", 213), M(`${H}/rest.go`, 2372)] },
+        { from: "j", to: "w2", label: "cached output → skip", kind: "return", note: "Step 1 is not re-executed; its stored output is reused." },
+        { from: "w2", to: "j", label: "claimSideEffect(run:step:attempt)", note: "Before any external delivery, so a re-drive cannot send twice. LLM calls carry the same key as Idempotency-Key.", src: [M(DR, 258)] },
+        { from: "w2", to: "j", label: "step 2: step_completed → RunCompleted", note: "The run resumes at the first incomplete step and finishes." },
       ],
     },
   ],
