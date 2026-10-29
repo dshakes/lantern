@@ -164,14 +164,16 @@ Renders a `SecretStore` (or `ClusterSecretStore` when
 
 ---
 
-## CI: image signing (`.github/workflows/sign-images.yml`)
+## CI: image signing (`.github/workflows/build-images.yml`)
 
-Signs the published runtime images with cosign **keyless** signing (Fulcio +
-Rekor) using the GitHub Actions **OIDC token** (`id-token: write`) — no
-long-lived keys, no secrets. The signature's identity IS the workflow, which is
-exactly what `imageVerification.keyless.subject` trusts. Invoke it via
-`workflow_call` from your image-publish workflow (pass digest-pinned image
-refs), or `workflow_dispatch` to backfill.
+Every image `build-images.yml` pushes is signed by digest with cosign
+**keyless** signing (Fulcio + Rekor) using the GitHub Actions **OIDC token**
+(`id-token: write`) — no long-lived keys, no secrets — and carries a SLSA build
+provenance attestation and an SPDX SBOM attestation (ADR 0044). The signature's
+identity IS that workflow on `master`, which is exactly what
+`imageVerification.keyless.subject` trusts. `sign-images.yml` (manual backfill)
+signs under a DIFFERENT identity; add it as a second attestor if you rely on it.
+Tenant workload images are verified by `infra/k8s/supply-chain/`.
 
 ---
 
