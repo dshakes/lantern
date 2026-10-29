@@ -119,7 +119,10 @@ ip link show "${TAP}" >/dev/null 2>&1 && fail "TAP ${TAP} exists — broker VM m
 pass "host has no TAP for the VM (${TAP} absent)"
 
 tool() { # tool <name> <args-json>
-  g "$(jq -n --arg id "${VM_ID}" --arg n "$1" --argjson a "$2" '{vm_id:$id, run_id:"broker-e2e", step_id:"s", tool_name:$n, args:$a, idempotency_key:("broker-e2e:"+$n+":"+($a|tostring))}')" ExecTool 2>>"${LOG}"
+  # Hash the args into the key, as real callers do: the manager logs the key,
+  # and the args can carry what the DLP check asserts never reaches the log.
+  local h; h=$(printf '%s%s' "$1" "$2" | sha256sum | cut -c1-16)
+  g "$(jq -n --arg id "${VM_ID}" --arg n "$1" --argjson a "$2" --arg h "$h" '{vm_id:$id, run_id:"broker-e2e", step_id:"s", tool_name:$n, args:$a, idempotency_key:("broker-e2e:"+$n+":"+$h)}')" ExecTool 2>>"${LOG}"
 }
 
 # (2)+(3) exec over host-initiated vsock (retry while the harness comes up).
@@ -193,12 +196,12 @@ TEST_PAN="4532015112830366"   # Luhn-valid Visa test number, not a real card.
 post() { tool http_fetch "$(jq -n --arg u "https://${INJECT_HOST}/post" --arg b "$1" '{url:$u, method:"POST", body:$b, headers:{"Content-Type":"text/plain"}}')"; }
 OUT=$(post "order total 42")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | grep -q '"status":403' && fail "DLP control: a clean POST was refused:\n${OUT}"
+[ "$(printf '%s' "${OUT}" | jq -r '.result.status')" = 200 ] || fail "DLP control: a clean POST did not get 200:\n${OUT}"
 pass "DLP control: clean POST to ${INJECT_HOST} is not blocked"
 OUT=$(post "card ${TEST_PAN} exp 12/30")
 printf '%s\n' "${OUT}" | jq -c . >&2
-printf '%s' "${OUT}" | grep -q '"status":403' || fail "DLP: card number was NOT blocked:\n${OUT}\n$(tail -30 "${LOG}")"
-printf '%s' "${OUT}" | grep -q 'dlp-block' || fail "DLP: 403 without dlp-block reason:\n${OUT}"
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lantern-reason"] == "dlp-block"' >/dev/null \
+  || fail "DLP: card number was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
 grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number appeared in the manager log (invariant #10)"
 pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
 
