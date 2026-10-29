@@ -12,13 +12,15 @@ package handlers
 // Rules are stored in dlp_policies (tenant_id, rule_id, detector, pattern,
 // mode, threshold). The control-plane loads them at schedule time and attaches
 // them to AgentSpec.DlpPolicy so the runtime-manager's egress broker can
-// compile them (broker egress mode, ADR 0026); in guest mode they are silently
-// ignored.
+// compile them (broker egress mode, ADR 0026). A node without a broker refuses
+// a policy with a block rule (the spawn fails) and records audit-only rules as
+// not enforced.
 
 import (
 	"encoding/json"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +59,9 @@ type dlpRuleDTO struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// valid detectors and modes (mirrors the DB CHECK constraints).
+// valid detectors and modes (mirrors the DB CHECK constraints). The
+// runtime-manager compiles exactly these names and refuses any other at spawn
+// (dlp::DETECTORS); services/testdata/dlp_detectors.json pins the parity.
 var (
 	validDetectors = map[string]bool{
 		"card_number":  true,
@@ -158,6 +162,10 @@ func (h *DLPPolicyHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule[" + idx + "].pattern is required for custom_regex detector"})
 			return
 		}
+		if msg := badDLPPattern(rule.Detector, rule.Pattern); msg != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule[" + idx + "]." + msg})
+			return
+		}
 	}
 
 	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
@@ -223,6 +231,10 @@ func (h *DLPPolicyHandler) UpsertRule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "pattern is required for custom_regex detector"})
 		return
 	}
+	if msg := badDLPPattern(rule.Detector, rule.Pattern); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
 	threshold := rule.Threshold
 	if threshold < 1 {
 		threshold = 1
@@ -283,4 +295,19 @@ func (h *DLPPolicyHandler) DeleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// badDLPPattern validates a custom_regex pattern at write time, so a typo is a
+// 400 now rather than every later spawn failing at the manager's compile (which
+// still refuses it — fail closed). Go RE2 and the manager's Rust `regex` share
+// RE2 syntax; a pattern using a construct only one side accepts is still
+// refused at spawn. Returns "" when valid.
+func badDLPPattern(detector, pattern string) string {
+	if detector != "custom_regex" {
+		return ""
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return "pattern is not a valid regular expression"
+	}
+	return ""
 }
