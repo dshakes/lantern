@@ -5,7 +5,7 @@ mergeable change.
 
 ## Get it running
 
-See the [README](README.md#quickstart). The fastest path needs only Docker:
+See the [README](README.md#try-it-in-60-seconds). The fastest path needs only Docker:
 
 ```bash
 git clone https://github.com/dshakes/lantern.git
@@ -23,8 +23,8 @@ make dev        # full platform stack in Docker
   invariant won't be merged.
 - For a load-bearing or cross-service change, read/add an
   [ADR](docs/adr/) first.
-- Prerequisites and versions: [README → Quickstart](README.md#quickstart)
-  (Go 1.23+, Rust 1.85+ edition 2024, Node 20 LTS+, Docker). Toolchains are
+- Prerequisites and versions: [README → Try it in 60 seconds](README.md#try-it-in-60-seconds)
+  (Go 1.26+, Rust 1.85+ edition 2024, Node 22+, Docker). Toolchains are
   pinned via `.nvmrc` and `rust-toolchain.toml`.
 
 ## Standards
