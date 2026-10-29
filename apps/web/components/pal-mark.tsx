@@ -1,13 +1,23 @@
-// The PAL "Held" mark (same geometry as site/public/brand/mark.svg): a ring
-// holding an ember beside a stem. The ring follows the theme via currentColor.
-// Renamed from LanternMark (ADR 0032); all importers updated.
+import { useId } from "react";
+
+// The PAL "Held" p-mark (geometry of site/public/brand/mark.svg): a stem and a
+// ring holding an ember. The strokes follow the theme via currentColor; the
+// ember is the brand coral -> magenta gradient.
 export function PalMark({ className = "h-6 w-6 text-zinc-50" }: { className?: string }) {
+  const id = `pal-ember-${useId().replace(/:/g, "")}`;
   return (
-    <svg viewBox="0 0 64 64" className={className} role="img" aria-label="PAL">
-      <circle cx="32" cy="34" r="15" stroke="currentColor" fill="none" strokeWidth="8" strokeLinecap="round" />
-      <path d="M47 19 V49" stroke="currentColor" fill="none" strokeWidth="8" strokeLinecap="round" />
-      <circle cx="32" cy="34" r="6" fill="#ff5b2e" />
+    <svg viewBox="8 5.5 49 56" className={className} role="img" aria-label="PAL">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff7a3d" />
+          <stop offset="1" stopColor="#e5207f" />
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke="currentColor" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17.5 13 V54" />
+        <circle cx="32.5" cy="28" r="15" />
+      </g>
+      <circle cx="32.5" cy="28" r="6.5" fill={`url(#${id})`} />
     </svg>
   );
 }
-

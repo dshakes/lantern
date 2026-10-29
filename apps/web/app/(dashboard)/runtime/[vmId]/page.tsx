@@ -215,7 +215,7 @@ export default function RuntimeVmPage() {
   const active = v.state !== "terminated" && v.state !== "failed";
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="theme-runtime space-y-6 p-8">
       <PageHeader
         title={v.vmId}
         description={`${v.state}${v.node ? " on " + v.node : ""} · ${v.isolationClass} · created ${formatDistanceToNow(new Date(v.createdAt), { addSuffix: true })}`}
