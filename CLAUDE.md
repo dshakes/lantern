@@ -1248,7 +1248,7 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 `LANTERN_EGRESS_MODE=broker`, `LANTERN_EGRESS_CA_PEM`,
 `LANTERN_EGRESS_VSOCK_PORT`, `LANTERN_MANAGER_VSOCK_PORT`.
 
-**Host-asserted software measurement env vars (runtime-manager; ADR 0030):**
+**Host-asserted software measurement env vars (runtime-manager; ADR 0031):**
 
 | Var | Default | Purpose |
 |-----|---------|---------|

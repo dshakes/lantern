@@ -221,7 +221,7 @@ pub struct ScheduleResponse {
     pub handle_id: String,
     pub node_name: String,
     pub cold_start_ms: f64,
-    /// Host-asserted software measurement (ADR 0030). `None` when not computed.
+    /// Host-asserted software measurement (ADR 0031). `None` when not computed.
     #[serde(default)]
     pub software_measurement: Option<String>,
 }

@@ -83,7 +83,7 @@ type receiptPayload struct {
 	ConfidentialCompute *confidentialComputeBlock `json:"confidentialCompute,omitempty"`
 	// SoftwareMeasurement is the host-asserted SHA-256 over (kernel, rootfs,
 	// harness, boot args, spawn contract minus secrets) computed by the
-	// runtime-manager at spawn time (ADR 0030). Absent for runs that did not
+	// runtime-manager at spawn time (ADR 0031). Absent for runs that did not
 	// use a microVM, or when measurement was not configured. Additive:
 	// omitempty keeps existing receipts byte-identical.
 	SoftwareMeasurement string `json:"softwareMeasurement,omitempty"`
@@ -464,7 +464,7 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 		}
 		p.ConfidentialCompute = block
 	}
-	// Host-asserted software measurement (ADR 0030). Present for any run that
+	// Host-asserted software measurement (ADR 0031). Present for any run that
 	// used a microVM and where the manager computed the measurement at spawn.
 	// Independent of the confidential-compute block: a non-confidential VM can
 	// still have a recorded measurement.

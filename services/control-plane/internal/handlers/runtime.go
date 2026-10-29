@@ -72,7 +72,7 @@ type VMStateInfo struct {
 	State  string
 	Reason string
 	// SoftwareMeasurement is the host-asserted SHA-256 measurement stamped by
-	// the runtime-manager at spawn time (ADR 0030). Empty until spawn
+	// the runtime-manager at spawn time (ADR 0031). Empty until spawn
 	// completes; backfilled into runtime_vms by the reconciler.
 	SoftwareMeasurement string
 }

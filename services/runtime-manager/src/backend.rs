@@ -196,7 +196,7 @@ pub trait RuntimeBackend: Send + Sync {
         None
     }
 
-    /// Host-asserted software measurement for `handle_id`'s boot (ADR 0030).
+    /// Host-asserted software measurement for `handle_id`'s boot (ADR 0031).
     ///
     /// SHA-256 hex over the canonical inputs the manager booted from (kernel,
     /// rootfs, harness, boot args, spawn contract sans secrets). Default

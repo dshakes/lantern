@@ -349,10 +349,10 @@ pub fn generate_vm_client_cert(
     leaf_params.not_before = now;
     leaf_params.not_after = now + time::Duration::days(VM_CERT_TTL_DAYS);
 
-    // Bind the host-asserted software measurement (ADR 0030) into the cert so
+    // Bind the host-asserted software measurement (ADR 0031) into the cert so
     // a receipt verifier can correlate the cert identity to the booted image.
     // Extension value is a DER UTF8String (tag 0x0C) containing the 64-char hex.
-    // Not critical — a relying party that doesn't know about ADR 0030 can skip it.
+    // Not critical — a relying party that doesn't know about ADR 0031 can skip it.
     if let Some(m) = software_measurement {
         let s = m.as_bytes();
         // Single-byte DER length is correct for <= 127 bytes; a SHA-256 hex is

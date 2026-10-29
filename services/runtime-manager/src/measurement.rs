@@ -1,4 +1,4 @@
-//! Host-asserted software measurement (ADR 0030).
+//! Host-asserted software measurement (ADR 0031).
 //!
 //! At spawn/restore the manager computes a SHA-256 over the five canonical
 //! inputs it directly controls: kernel image, rootfs image, harness binary
@@ -16,7 +16,7 @@
 //! measurement is available on every Firecracker node; hardware attestation
 //! requires CC hardware and Kata-CC.
 //!
-//! # Canonical input order (ADR 0030 §Measurement algorithm)
+//! # Canonical input order (ADR 0031 §Measurement algorithm)
 //!
 //! 1. **kernel image** — SHA-256 of file bytes at `FC_KERNEL_PATH`
 //! 2. **rootfs image** — SHA-256 of file bytes at `FC_ROOTFS_PATH`
@@ -61,7 +61,9 @@ use crate::backends::firecracker::SpawnContract;
 /// OID arc for the Lantern software-measurement X.509 extension.
 ///
 /// `1.3.6.1.4.1.99999.3` — private arc under a placeholder PEN.
-/// Replace 99999 with the assigned PEN before production deployment.
+/// PLACEHOLDER: 99999 is not ours. A registered IANA Private Enterprise
+/// Number is required; replace 99999 with it before production deployment
+/// (relying parties pin this OID, so changing it later is a breaking change).
 ///
 /// The extension DER value is a UTF8String containing the 64-character
 /// lowercase hex measurement.

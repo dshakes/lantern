@@ -1,4 +1,4 @@
-# ADR 0030 — Host-Asserted Software Measurement
+# ADR 0031 — Host-Asserted Software Measurement
 
 **Status:** Accepted  
 **Date:** 2026-10-28  
@@ -98,7 +98,7 @@ The measurement flows through the system as follows:
 4. **Proto propagation**: `VmHandle.software_measurement` (field 5) carries it
    from the manager through the scheduler to the control-plane.
 5. **Database**: `runtime_vms.software_measurement TEXT` (migration
-   `0028_software_measurement`). Written by the reconciler the first time
+   `0029_software_measurement`). Written by the reconciler the first time
    `ListStates` returns a non-empty value (i.e., after spawn completes).
 6. **Run receipts**: included as `softwareMeasurement` in the signed
    `receiptPayload` (additive — `omitempty` keeps existing receipts byte-identical
@@ -127,7 +127,8 @@ response arrives, and the control-plane's periodic reconciler reads it via
 - `enforce` mode is an ops decision. Deployers MUST populate
   `LANTERN_REFERENCE_MEASUREMENTS` before enabling it, or every spawn will be
   refused (the empty-list fast-path is a safety valve, not a default).
-- The X.509 OID uses a private-arc PEN placeholder (`99999`). This must be
+- The X.509 OID `1.3.6.1.4.1.99999.3` is a PLACEHOLDER: Lantern holds no
+  registered IANA Private Enterprise Number yet, and one is needed. It must be
   replaced with the assigned IANA PEN before cross-organisation certificate
   verification is meaningful.
 - This mechanism does NOT replace ADR 0023. It is a complement: cheaper,

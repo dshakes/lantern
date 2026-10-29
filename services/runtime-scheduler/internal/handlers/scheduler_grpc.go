@@ -603,7 +603,7 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 		Handle: handle,
 	})
 	if err == nil && resp != nil && resp.Handle != nil && resp.Handle.SoftwareMeasurement != "" {
-		// Stamp the host-asserted measurement onto the handle (ADR 0030).
+		// Stamp the host-asserted measurement onto the handle (ADR 0031).
 		// handle is a pointer held by the cluster store — the write is visible
 		// to anyone who reads the VM after this point (heartbeats, list, receipt).
 		handle.SoftwareMeasurement = resp.Handle.SoftwareMeasurement

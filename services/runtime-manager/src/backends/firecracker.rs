@@ -1030,7 +1030,7 @@ fn provision_vm_cert(cfg: &VmConfig, software_measurement: Option<&str>) -> Resu
     Ok(pin)
 }
 
-/// Compute and gate-check the host-asserted software measurement (ADR 0030).
+/// Compute and gate-check the host-asserted software measurement (ADR 0031).
 ///
 /// Returns `Ok(Some(hex))` on success, `Ok(None)` if file-hashing fails
 /// (the VM still boots — fail-open for compute errors), or `Err` if the
@@ -1047,7 +1047,7 @@ struct MeasurementInput {
     vm_id: String,
 }
 
-/// Compute and gate-check the host-asserted software measurement (ADR 0030).
+/// Compute and gate-check the host-asserted software measurement (ADR 0031).
 ///
 /// Returns `Ok(Some(hex))` on success, `Ok(None)` when the computation itself
 /// fails (fail-open so a missing image file doesn't prevent boot), or `Err` when
@@ -2989,7 +2989,7 @@ pub struct FirecrackerBackend {
     /// When `None` the harness is baked into the rootfs; its measurement
     /// component is 32 zero bytes.
     harness_path: Option<String>,
-    /// Software measurement gate (ADR 0030). `LANTERN_MEASUREMENT_GATE`.
+    /// Software measurement gate (ADR 0031). `LANTERN_MEASUREMENT_GATE`.
     measurement_gate: crate::measurement::MeasurementGate,
     /// Known-good measurement hex strings (`LANTERN_REFERENCE_MEASUREMENTS`).
     reference_measurements: Vec<String>,
@@ -3009,7 +3009,7 @@ struct BrokerVm {
 struct Incarnation {
     cert_sha256: String,
     exec_token: String,
-    /// Host-asserted software measurement computed at spawn/restore (ADR 0030).
+    /// Host-asserted software measurement computed at spawn/restore (ADR 0031).
     software_measurement: Option<String>,
 }
 
@@ -3257,7 +3257,7 @@ impl FirecrackerBackend {
     }
 
     /// Issue this VM's cert + pack its cert image (blocking I/O off the
-    /// executor) and record the identity pin + software measurement (ADR 0030).
+    /// executor) and record the identity pin + software measurement (ADR 0031).
     async fn provision_identity(
         &self,
         cfg: &VmConfig,
@@ -3614,7 +3614,7 @@ impl FirecrackerBackend {
             "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
         // Compute host-asserted software measurement before provisioning
-        // identity (ADR 0030). Same fail-open semantics as schedule().
+        // identity (ADR 0031). Same fail-open semantics as schedule().
         let measurement = {
             let inp = MeasurementInput {
                 kernel_path: cfg.kernel_image_path.clone(),
@@ -3833,7 +3833,7 @@ impl RuntimeBackend for FirecrackerBackend {
             "Firecracker: booting microVM (LINUX-ONLY)"
         );
 
-        // Compute host-asserted software measurement before boot (ADR 0030).
+        // Compute host-asserted software measurement before boot (ADR 0031).
         // Enforce gate returns Err here and refuses the spawn; Warn logs and
         // continues; Off always succeeds. Computation errors are non-fatal.
         let measurement = {

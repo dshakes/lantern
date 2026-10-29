@@ -10,13 +10,13 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
-- **Host-asserted software measurement (ADR 0030, ACE A5)** — at every Firecracker
+- **Host-asserted software measurement (ADR 0031, ACE A5)** — at every Firecracker
   spawn and restore the runtime-manager computes a SHA-256 over the five canonical
   inputs it directly controls: kernel image, rootfs image, harness binary (32 zero
   bytes when baked into rootfs), kernel boot arguments, and the spawn contract with
   secret fields zeroed. The 64-character hex measurement is:
   - Embedded in the per-VM X.509 cert as a custom extension (OID `1.3.6.1.4.1.99999.3`).
-  - Stored in `runtime_vms.software_measurement` (migration `0028_software_measurement`)
+  - Stored in `runtime_vms.software_measurement` (migration `0029_software_measurement`)
     via the reconciler after spawn completes.
   - Included in signed run receipts as `softwareMeasurement` (additive; omitempty
     keeps existing receipts byte-identical and their signatures valid).
