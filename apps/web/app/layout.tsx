@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { THEME_INIT_SCRIPT } from "@/lib/theme-init-script";
 import { Bricolage_Grotesque, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -30,7 +31,7 @@ export default function RootLayout({
         {/* No-flash theme init: set data-theme before paint. Dark is default (light via the toggle). */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('lantern-theme')||'dark';document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='dark';}`,
+            __html: THEME_INIT_SCRIPT,
           }}
         />
       </head>

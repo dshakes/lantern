@@ -49,7 +49,7 @@ export function AgentTabsBar({ name }: { name: string }) {
         </button>
         <Link
           href={`/agents/${encodeURIComponent(name)}`}
-          className="truncate font-mono text-sm font-semibold text-zinc-100 hover:text-lantern-300"
+          className="truncate font-mono text-sm font-semibold text-zinc-100 hover:text-pal-300"
           title={name}
         >
           {name}

@@ -386,7 +386,7 @@ function TimeAxis({
         ))}
         {cursorMs != null && (
           <span
-            className="absolute -top-0.5 z-20 -translate-x-1/2 rounded bg-lantern-500/90 px-1 py-0.5 text-[8px] font-semibold tabular-nums text-white"
+            className="absolute -top-0.5 z-20 -translate-x-1/2 rounded bg-pal-500/90 px-1 py-0.5 text-[8px] font-semibold tabular-nums text-white"
             style={{ left: `${(Math.min(cursorMs, scaleEnd) / scaleEnd) * 100}%` }}
           >
             T {formatMs(cursorMs)}
@@ -445,7 +445,7 @@ function LaneRow({
             timeline track, so its % maps directly to the shared time scale. */}
         {cursorMs != null && (
           <div
-            className="pointer-events-none absolute inset-y-0 z-10 w-px bg-lantern-400/70"
+            className="pointer-events-none absolute inset-y-0 z-10 w-px bg-pal-400/70"
             style={{ left: `${(Math.min(cursorMs, scaleEnd) / scaleEnd) * 100}%` }}
             aria-hidden
           />
@@ -519,7 +519,7 @@ function LaneSpan({
       ? "bg-red-500/40 border-red-500/60"
       : span.status === "succeeded"
         ? "bg-emerald-500/30 border-emerald-500/50"
-        : "bg-lantern-500/30 border-lantern-500/50";
+        : "bg-pal-500/30 border-pal-500/50";
 
   const reasonText = expanded && reasoning ? reasoningText(span) : null;
 
@@ -535,7 +535,7 @@ function LaneSpan({
         className={clsx(
           "group flex w-full items-center gap-2 px-3 py-1 text-left transition-all hover:bg-surface-2",
           future && "opacity-30",
-          highlight && "bg-lantern-500/10",
+          highlight && "bg-pal-500/10",
         )}
       >
         <span className="shrink-0 text-zinc-500">
@@ -550,7 +550,7 @@ function LaneSpan({
           {reasoning ? (
             <Brain className="h-3 w-3 text-violet-400" />
           ) : span.status === "running" ? (
-            <Loader2 className="h-3 w-3 animate-spin text-lantern-400" />
+            <Loader2 className="h-3 w-3 animate-spin text-pal-400" />
           ) : span.status === "failed" ? (
             <XCircle className="h-3 w-3 text-red-400" />
           ) : (
@@ -565,8 +565,8 @@ function LaneSpan({
               "absolute top-0 flex h-full items-center gap-1 overflow-hidden rounded border px-1.5",
               barColor,
               (open || inFlight) && "animate-pulse",
-              inFlight && "ring-1 ring-lantern-300/80",
-              highlight && "ring-2 ring-lantern-400",
+              inFlight && "ring-1 ring-pal-300/80",
+              highlight && "ring-2 ring-pal-400",
             )}
             style={{
               left: `${leftPct}%`,

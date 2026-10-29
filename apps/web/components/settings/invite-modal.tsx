@@ -83,7 +83,7 @@ export function InviteModal({ open, onClose, onInvited }: InviteModalProps) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="colleague@company.com"
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 pl-10 pr-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 pl-10 pr-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
               />
             </div>
           </div>
@@ -95,7 +95,7 @@ export function InviteModal({ open, onClose, onInvited }: InviteModalProps) {
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as "admin" | "member" | "viewer")}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
             >
               <option value="admin">Admin -- Full access, can manage team</option>
               <option value="member">Developer -- Can create and run agents</option>
@@ -120,7 +120,7 @@ export function InviteModal({ open, onClose, onInvited }: InviteModalProps) {
           <button
             onClick={handleInvite}
             disabled={!email.trim() || !email.includes("@") || sending}
-            className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {sending ? (
               <>

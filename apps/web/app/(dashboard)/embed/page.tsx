@@ -52,7 +52,7 @@ export default function EmbedPage() {
   // and dev (where the widget points back to localhost:8080). At publish
   // time the user replaces this with their public URL.
   const apiBase = useMemo(() => {
-    if (typeof window === "undefined") return "https://your-lantern";
+    if (typeof window === "undefined") return "https://your-pal";
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
       return "http://localhost:8080";
     }
@@ -62,7 +62,7 @@ export default function EmbedPage() {
   const widgetSrc = useMemo(() => {
     return typeof window !== "undefined"
       ? `${window.location.origin}/widget.js`
-      : "https://your-lantern/widget.js";
+      : "https://your-pal/widget.js";
   }, []);
 
   const snippet = useMemo(() => {
@@ -113,13 +113,13 @@ export default function EmbedPage() {
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="agent-name"
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               />
             ) : (
               <select
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.name}>{a.name}</option>
@@ -134,7 +134,7 @@ export default function EmbedPage() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="lk_..."
-              className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+              className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 font-mono text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
             />
           </ConfigField>
 
@@ -143,7 +143,7 @@ export default function EmbedPage() {
               <select
                 value={theme}
                 onChange={(e) => setTheme(e.target.value as Theme)}
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               >
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
@@ -153,7 +153,7 @@ export default function EmbedPage() {
               <select
                 value={position}
                 onChange={(e) => setPosition(e.target.value as Position)}
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               >
                 <option value="bottom-right">Bottom right</option>
                 <option value="bottom-left">Bottom left</option>
@@ -167,7 +167,7 @@ export default function EmbedPage() {
                 type="text"
                 value={brand}
                 onChange={(e) => setBrand(e.target.value)}
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               />
             </ConfigField>
             <ConfigField label="Greeting">
@@ -175,7 +175,7 @@ export default function EmbedPage() {
                 type="text"
                 value={greeting}
                 onChange={(e) => setGreeting(e.target.value)}
-                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-lantern-500/40"
+                className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 outline-none focus:border-pal-500/40"
               />
             </ConfigField>
           </div>

@@ -100,7 +100,7 @@ export function ConnectorChips({ description }: { description: string }) {
                 "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors duration-150",
                 ok
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
-                  : "border-zinc-700 bg-surface-2 text-zinc-300 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200"
+                  : "border-zinc-700 bg-surface-2 text-zinc-300 hover:border-pal-500/40 hover:bg-pal-500/5 hover:text-pal-200"
               )}
               title={ok ? "Already installed at the workspace level" : `Click to install ${d.label}`}
             >
