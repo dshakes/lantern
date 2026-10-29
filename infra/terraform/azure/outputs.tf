@@ -21,7 +21,7 @@ output "data_plane_status" {
     Tenant ID: ${var.tenant_id}
 
     Verify the connection:
-      ${self.kubeconfig_command}
+      az aks get-credentials --resource-group ${local.rg_name} --name ${local.cluster_name}
       kubectl -n lantern logs -l app.kubernetes.io/component=data-plane-agent -f
       kubectl -n lantern port-forward svc/lantern-dp-lantern-data-plane-data-plane-agent 8090:8090
       curl http://localhost:8090/status

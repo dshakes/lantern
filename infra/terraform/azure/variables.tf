@@ -53,9 +53,9 @@ variable "existing_resource_group" {
 }
 
 variable "kubernetes_version" {
-  description = "Kubernetes version for the AKS cluster."
+  description = "Pin a Kubernetes version (e.g. \"1.33\"). null = the provider/cloud's current default, which avoids pinning a version the cloud has already retired. Kubernetes version for the AKS cluster."
   type        = string
-  default     = "1.29"
+  default     = null
 }
 
 variable "vnet_cidr" {
@@ -88,7 +88,7 @@ variable "agent_token" {
 }
 
 variable "lantern_version" {
-  description = "Version of the Lantern data plane Helm chart to deploy."
+  description = "Data plane image tag (global.image.tag). The chart itself is the in-repo infra/helm/lantern-data-plane."
   type        = string
   default     = "0.1.0"
 }

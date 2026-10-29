@@ -50,12 +50,19 @@ resource "kubernetes_namespace" "lantern" {
 # ---------------------------------------------------------------------------
 
 resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.lantern.metadata[0].name
+  chart     = "${path.module}/../../helm/lantern-data-plane"
+  # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
+  # so helm must fetch them or the release fails "missing in charts/".
+  dependency_update = true
+  wait              = true
+  timeout           = 600
+
+  set {
+    name  = "global.image.tag"
+    value = var.lantern_version
+  }
 
   set {
     name  = "controlPlane.endpoint"

@@ -144,3 +144,22 @@ jobs:
 
       - name: eslint (dashboard)
         run: cd apps/web && npm ci && npx eslint .
+
+      # ---- Terraform (infra/terraform: EKS / GKE / AKS data plane) ----------
+      # Credential-free: validate + `terraform test`, whose plans run against
+      # mocked providers (tests/plan.tftest.hcl). Nothing is applied.
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: terraform fmt / validate / test
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive infra/terraform
+          for d in infra/terraform/aws infra/terraform/gcp infra/terraform/azure; do
+            terraform -chdir="$d" init -backend=false -input=false -no-color
+            terraform -chdir="$d" validate -no-color
+            terraform -chdir="$d" test -no-color
+          done

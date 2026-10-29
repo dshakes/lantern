@@ -86,10 +86,31 @@ resource "google_service_account" "data_plane" {
   display_name = "Lantern Data Plane Service Account"
 }
 
-resource "google_project_iam_member" "data_plane_storage" {
+# Scoped to the bundles bucket, not the project: objectAdmin at project level
+# would let the data plane read/write every bucket in the project.
+resource "google_storage_bucket_iam_member" "data_plane_bundles" {
+  bucket = google_storage_bucket.bundles.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.data_plane.email}"
+}
+
+# Nodes run as their own least-privilege account (logs/metrics only). Pods get
+# the data-plane identity through Workload Identity, never the node's.
+resource "google_service_account" "nodes" {
+  account_id   = "${var.cluster_name}-nodes"
+  display_name = "PAL data plane GKE nodes"
+}
+
+resource "google_project_iam_member" "nodes" {
+  for_each = toset([
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/monitoring.viewer",
+    "roles/stackdriver.resourceMetadata.writer",
+  ])
   project = var.project_id
-  role    = "roles/storage.objectAdmin"
-  member  = "serviceAccount:${google_service_account.data_plane.email}"
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.nodes.email}"
 }
 
 # ---------------------------------------------------------------------------
@@ -107,9 +128,8 @@ resource "google_storage_bucket" "bundles" {
     enabled = true
   }
 
-  encryption {
-    default_kms_key_name = ""  # Uses Google-managed encryption by default.
-  }
+  # Google-managed encryption. (An empty default_kms_key_name is rejected by the API.)
+  public_access_prevention = "enforced"
 
   labels = var.labels
 }
@@ -175,7 +195,7 @@ resource "google_container_node_pool" "lantern" {
   node_config {
     machine_type = var.machine_type
 
-    service_account = google_service_account.data_plane.email
+    service_account = google_service_account.nodes.email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
     ]
@@ -254,12 +274,19 @@ resource "kubernetes_namespace" "lantern" {
 # ---------------------------------------------------------------------------
 
 resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.lantern.metadata[0].name
+  chart     = "${path.module}/../../helm/lantern-data-plane"
+  # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
+  # so helm must fetch them or the release fails "missing in charts/".
+  dependency_update = true
+  wait              = true
+  timeout           = 600
+
+  set {
+    name  = "global.image.tag"
+    value = var.lantern_version
+  }
 
   set {
     name  = "controlPlane.endpoint"

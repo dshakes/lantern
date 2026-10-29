@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.25"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -37,9 +41,11 @@ data "aws_caller_identity" "current" {}
 
 locals {
   create_cluster = var.existing_cluster_name == ""
-  create_vpc     = var.existing_vpc_id == ""
-  cluster_name   = local.create_cluster ? var.cluster_name : var.existing_cluster_name
-  account_id     = data.aws_caller_identity.current.account_id
+  # A VPC is only created alongside a new cluster: node groups for an existing
+  # cluster must land in that cluster's subnets (existing_subnet_ids).
+  create_vpc   = local.create_cluster && var.existing_vpc_id == ""
+  cluster_name = local.create_cluster ? var.cluster_name : var.existing_cluster_name
+  account_id   = data.aws_caller_identity.current.account_id
 
   azs = slice(data.aws_availability_zones.available.names, 0, 3)
 }
@@ -69,7 +75,7 @@ resource "aws_subnet" "private" {
 
   tags = {
     Name                                        = "${var.cluster_name}-private-${local.azs[count.index]}"
-    "kubernetes.io/role/internal-elb"            = "1"
+    "kubernetes.io/role/internal-elb"           = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
@@ -84,7 +90,7 @@ resource "aws_subnet" "public" {
 
   tags = {
     Name                                        = "${var.cluster_name}-public-${local.azs[count.index]}"
-    "kubernetes.io/role/elb"                     = "1"
+    "kubernetes.io/role/elb"                    = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
@@ -230,7 +236,42 @@ resource "aws_iam_role_policy_attachment" "node_ecr" {
   role       = aws_iam_role.node_group.name
 }
 
-# Data plane service account role (IRSA)
+# Data plane service account role (IRSA). The trust policy's Federated
+# principal must be the IAM OIDC provider ARN (not the issuer URL), so a new
+# cluster gets a provider here and an existing cluster must already have one
+# (eksctl utils associate-iam-oidc-provider) — the data source fails plan if not.
+data "aws_eks_cluster" "existing" {
+  count = local.create_cluster ? 0 : 1
+  name  = var.existing_cluster_name
+}
+
+locals {
+  oidc_issuer = local.create_cluster ? aws_eks_cluster.this[0].identity[0].oidc[0].issuer : data.aws_eks_cluster.existing[0].identity[0].oidc[0].issuer
+}
+
+data "tls_certificate" "oidc" {
+  count = local.create_cluster ? 1 : 0
+  url   = local.oidc_issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  count = local.create_cluster ? 1 : 0
+
+  url             = local.oidc_issuer
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.oidc[0].certificates[0].sha1_fingerprint]
+}
+
+data "aws_iam_openid_connect_provider" "existing" {
+  count = local.create_cluster ? 0 : 1
+  url   = local.oidc_issuer
+}
+
+locals {
+  oidc_provider_arn    = local.create_cluster ? aws_iam_openid_connect_provider.eks[0].arn : data.aws_iam_openid_connect_provider.existing[0].arn
+  oidc_issuer_hostpath = replace(local.oidc_issuer, "https://", "")
+}
+
 resource "aws_iam_role" "data_plane" {
   name = "${local.cluster_name}-data-plane-role"
 
@@ -240,11 +281,12 @@ resource "aws_iam_role" "data_plane" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Effect = "Allow"
       Principal = {
-        Federated = local.create_cluster ? aws_eks_cluster.this[0].identity[0].oidc[0].issuer : "arn:aws:iam::${local.account_id}:oidc-provider/oidc.eks.${var.region}.amazonaws.com/id/EXISTING"
+        Federated = local.oidc_issuer
       }
       Condition = {
         StringEquals = {
-          "${replace(local.create_cluster ? aws_eks_cluster.this[0].identity[0].oidc[0].issuer : "https://oidc.eks.${var.region}.amazonaws.com/id/EXISTING", "https://", "")}:sub" = "system:serviceaccount:lantern:lantern-data-plane"
+          "${local.oidc_issuer_hostpath}:sub" = "system:serviceaccount:lantern:lantern-data-plane"
+          "${local.oidc_issuer_hostpath}:aud" = "sts.amazonaws.com"
         }
       }
     }]
@@ -321,6 +363,13 @@ resource "aws_eks_node_group" "this" {
 
   labels = {
     "lantern.run/component" = "data-plane"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(local.subnet_ids) > 0
+      error_message = "No subnets: set existing_subnet_ids when using existing_vpc_id or existing_cluster_name."
+    }
   }
 
   depends_on = [
