@@ -37,6 +37,12 @@ spec:
                 configMapKeyRef:
                   name: {{ include "lantern-dp.fullname" . }}-config
                   key: CONTROL_PLANE_ENDPOINT
+            {{- with .Values.controlPlane.endpoints }}
+            # Multi-region failover (ADR 0046): ordered, primary first; the
+            # agent uses the first that health-checks SERVING and fails back.
+            - name: PAL_CONTROL_PLANE_ENDPOINTS
+              value: {{ join "," . | quote }}
+            {{- end }}
             - name: TENANT_ID
               valueFrom:
                 configMapKeyRef:

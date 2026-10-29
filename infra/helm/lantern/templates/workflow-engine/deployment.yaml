@@ -109,6 +109,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: minio-password
+            {{- include "lantern.regionEnv" . | nindent 12 }}
           livenessProbe:
             grpc:
               port: 50052

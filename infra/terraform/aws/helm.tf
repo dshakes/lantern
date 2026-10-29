@@ -62,6 +62,14 @@ resource "helm_release" "lantern_data_plane" {
     value = var.lantern_control_plane_endpoint
   }
 
+  dynamic "set" {
+    for_each = length(var.lantern_control_plane_endpoints) > 0 ? [1] : []
+    content {
+      name  = "controlPlane.endpoints"
+      value = "{${join(",", var.lantern_control_plane_endpoints)}}"
+    }
+  }
+
   set {
     name  = "controlPlane.tenantId"
     value = var.tenant_id

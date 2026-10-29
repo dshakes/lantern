@@ -1,0 +1,37 @@
+# values-region-standby.yaml -- PASSIVE (warm standby) region (ADR 0046).
+#
+# Layer on top of values-prod.yaml in the standby region:
+#   helm upgrade --install lantern infra/helm/lantern \
+#     -f infra/helm/lantern/values.yaml \
+#     -f infra/helm/lantern/values-prod.yaml \
+#     -f infra/helm/lantern/values-region-standby.yaml \
+#     --set region.name=us-west-2 --set region.fenceEpoch=1 \
+#     --set externalDatabase.host=<this region's streaming REPLICA endpoint> \
+#     --set externalS3.endpoint=https://s3.us-west-2.amazonaws.com --set externalS3.region=us-west-2 \
+#     --set externalS3.bucket=<the CRR destination bucket>
+#
+# What standby means here:
+#   * the control plane serves reads off the local streaming replica and
+#     refuses every mutation (HTTP 503 + Retry-After, gRPC UNAVAILABLE);
+#   * it reports lantern.v1.DataPlaneService NOT_SERVING, so data-plane agents
+#     (PAL_CONTROL_PLANE_ENDPOINTS) keep using the active region;
+#   * it runs no migrations, cron, crash recovery or janitors;
+#   * nothing executes runs: the workflow engine and runtime scheduler are
+#     scaled to zero (their replica counts come back with the promotion
+#     upgrade, which swaps this file for values-region-primary.yaml).
+region:
+  name: ""          # REQUIRED, e.g. us-west-2
+  fenceEpoch: ""    # the CURRENT epoch; bumped at promotion
+  readOnly: true
+
+workflowEngine:
+  replicas: 0
+  autoscaling:
+    enabled: false
+
+runtimeScheduler:
+  replicas: 0
+
+# Keep the control plane warm so promotion is a config flip, not a cold start.
+controlPlane:
+  replicas: 2
