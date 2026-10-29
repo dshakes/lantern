@@ -20,6 +20,9 @@
 //! File location: $LANTERN_OWNER_PROFILE, else ~/.lantern/owner-profile.md.
 //! Hot-reloaded with a short TTL so edits take effect without a restart.
 
+// Mirror LANTERN_X -> PAL_X before this module's top-level env reads, for any
+// entrypoint that did not import env-compat first (ADR 0032).
+import "./env-compat.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
