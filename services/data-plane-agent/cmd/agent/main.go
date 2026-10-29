@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ func main() {
 
 	logger.Info("starting data-plane-agent",
 		zap.String("control_plane_endpoint", cfg.ControlPlaneEndpoint),
+		zap.Strings("control_plane_endpoints", cfg.ControlPlaneEndpoints),
 		zap.String("tenant_id", cfg.TenantID),
 	)
 
@@ -43,6 +45,8 @@ func main() {
 	// --- Tunnel: maintains the gRPC connection to the control plane ---
 	tunnelCfg := tunnel.Config{
 		ControlPlaneEndpoint:  cfg.ControlPlaneEndpoint,
+		ControlPlaneEndpoints: cfg.ControlPlaneEndpoints,
+		FailbackInterval:      cfg.FailbackInterval,
 		TenantID:              cfg.TenantID,
 		AgentToken:            cfg.AgentToken,
 		HeartbeatInterval:     time.Duration(cfg.HeartbeatIntervalSec) * time.Second,
@@ -78,8 +82,9 @@ func main() {
 		status := tun.Status()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"connected":%t,"plane_id":%q,"tenant_id":%q,"uptime_seconds":%d,"active_runs":%d,"last_heartbeat":%q}`,
+		fmt.Fprintf(w, `{"connected":%t,"endpoint":%q,"plane_id":%q,"tenant_id":%q,"uptime_seconds":%d,"active_runs":%d,"last_heartbeat":%q}`,
 			status.Connected,
+			status.Endpoint,
 			status.PlaneID,
 			status.TenantID,
 			int(status.Uptime.Seconds()),
@@ -134,6 +139,8 @@ func main() {
 // config holds values read from environment variables.
 type config struct {
 	ControlPlaneEndpoint    string
+	ControlPlaneEndpoints   []string      // PAL_CONTROL_PLANE_ENDPOINTS: ordered, primary region first
+	FailbackInterval        time.Duration // PAL_CONTROL_PLANE_FAILBACK_INTERVAL
 	TenantID                string
 	AgentToken              string
 	WorkflowEngineAddr      string
@@ -150,6 +157,8 @@ type config struct {
 func loadConfig() config {
 	return config{
 		ControlPlaneEndpoint:    envOrDefault("CONTROL_PLANE_ENDPOINT", "https://api.lantern.run"),
+		ControlPlaneEndpoints:   splitEndpoints(os.Getenv("PAL_CONTROL_PLANE_ENDPOINTS")),
+		FailbackInterval:        envDuration("PAL_CONTROL_PLANE_FAILBACK_INTERVAL", 60*time.Second),
 		TenantID:                envOrDefault("TENANT_ID", ""),
 		AgentToken:              envOrDefault("AGENT_TOKEN", ""),
 		WorkflowEngineAddr:      envOrDefault("WORKFLOW_ENGINE_ADDR", "localhost:50052"),
@@ -167,6 +176,24 @@ func loadConfig() config {
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// splitEndpoints parses a comma-separated endpoint list, dropping blanks.
+func splitEndpoints(v string) []string {
+	var out []string
+	for _, e := range strings.Split(v, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil && d > 0 {
+		return d
 	}
 	return fallback
 }
