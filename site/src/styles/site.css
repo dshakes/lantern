@@ -86,7 +86,7 @@ sup.fn a { font-family: var(--p-mono); font-size: 0.7em; color: var(--p-accent-t
   .nav-gh { display: none !important; }
   /* the drawer: full width under the bar */
   .menu-panel { position: fixed; left: 0; right: 0; top: 64px; min-width: 0; border-radius: 0 0 20px 20px; border-width: 0 0 1px; padding: 12px var(--p-gutter) 20px; background: var(--p-bg); display: grid; gap: 2px; }
-  .menu-panel a { min-height: 52px; font-size: 18px; font-weight: 550; font-family: var(--p-display); border-bottom: 1px solid var(--p-border); border-radius: 0; }
+  .menu-panel a { justify-content: flex-start; padding: 0 4px; min-height: 52px; font-size: 18px; font-weight: 550; font-family: var(--p-display); border-bottom: 1px solid var(--p-border); border-radius: 0; }
   .menu-panel a:last-child { border-bottom: 0; }
   .menu[open] summary { color: var(--p-text); background: var(--p-surface); }
   .menu[open]::before { content: ''; position: fixed; inset: 64px 0 0; background: rgba(0, 0, 0, 0.45); }
@@ -282,8 +282,8 @@ sup.fn a { font-family: var(--p-mono); font-size: 0.7em; color: var(--p-accent-t
 .grad { background: var(--p-brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .grad-pal { background: var(--p-pal-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .grad-rt { background: var(--p-rt-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.pal-k { color: var(--p-pal-text); font-weight: 500; }
-.rt-k { color: var(--p-rt-text); font-weight: 500; }
+.pal-k, .eyebrow .pal-k { color: var(--p-pal-text); font-weight: 500; }
+.rt-k, .eyebrow .rt-k { color: var(--p-rt-text); font-weight: 500; }
 .btn-pal, .btn-rt { color: #fff; border: 0; }
 .btn-pal { background: var(--p-pal-btn); box-shadow: 0 10px 30px -12px rgba(229, 32, 127, 0.6); }
 .btn-rt { background: var(--p-rt-btn); box-shadow: 0 10px 30px -12px rgba(108, 92, 255, 0.6); }
@@ -403,10 +403,12 @@ sup.fn a { font-family: var(--p-mono); font-size: 0.7em; color: var(--p-accent-t
 .lc-bar { height: 4px; border-radius: 4px; background: var(--p-surface-2); overflow: hidden; margin-top: 6px; }
 .lc-bar i { display: block; height: 100%; width: 0; background: var(--p-rt-grad); transition: width .6s var(--ease); }
 .lc-t { font: 500 12px var(--p-mono); color: var(--p-rt-text); }
-.lc-snap { display: grid; justify-items: center; gap: 2px; padding: 12px 14px; border-radius: 12px; font-size: 12px; color: var(--p-text-3); border: 1px solid var(--p-rt-line); background: var(--p-rt-bg); opacity: 0; transform: scale(.9); transition: all .45s var(--ease); }
+.lc-snap { display: grid; justify-items: center; gap: 2px; padding: 12px 14px; border-radius: 12px; font-size: 12px; color: var(--p-text-3); border: 1px solid var(--p-rt-line); background: var(--p-rt-bg); opacity: .28; transform: scale(.94); transition: all .45s var(--ease); }
 .lc-snap b { font: 600 13px var(--p-mono); color: var(--p-text); }
 .lc-forks { display: grid; gap: 10px; }
-.lc-fork { opacity: 0; transform: translateX(-16px); }
+.lc-fork { opacity: .28; border-style: dashed; transform: translateX(-8px); }
+.lc-fork .lc-state, .lc-fork .lc-t { visibility: hidden; }
+.lc:is([data-state='fork'], [data-state='resume']) .lc-fork :is(.lc-state, .lc-t) { visibility: visible; }
 .lc[data-state='idle'] .lc-src { opacity: .45; border-style: dashed; }
 .lc[data-state='spawn'] .lc-src, .lc[data-state='resume'] .lc-src { border-color: var(--p-rt-line); box-shadow: var(--p-glow-rt); }
 .lc[data-state='spawn'] .lc-bar i, .lc[data-state='resume'] .lc-bar i { width: 100%; }
@@ -414,7 +416,7 @@ sup.fn a { font-family: var(--p-mono); font-size: 0.7em; color: var(--p-accent-t
 .lc[data-state='pause'] .lc-src, .lc[data-state='fork'] .lc-src { opacity: .6; }
 .lc[data-state='pause'] .lc-state, .lc[data-state='fork'] .lc-state { color: var(--p-amber); }
 .lc:is([data-state='pause'], [data-state='fork'], [data-state='resume']) .lc-snap { opacity: 1; transform: none; }
-.lc:is([data-state='fork'], [data-state='resume']) .lc-fork { opacity: 1; transform: none; border-color: var(--p-rt-line); }
+.lc:is([data-state='fork'], [data-state='resume']) .lc-fork { opacity: 1; transform: none; border-style: solid; border-color: var(--p-rt-line); }
 .lc:is([data-state='fork'], [data-state='resume']) .lc-fork .lc-state { color: var(--p-ok-text); }
 .lc-fork:nth-child(2) { transition-delay: .1s; } .lc-fork:nth-child(3) { transition-delay: .2s; }
 .lc-read { margin-top: 20px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 20px; align-items: baseline; }

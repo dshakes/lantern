@@ -147,7 +147,7 @@ const TRUST = [
       <div class="term" data-reveal>
         <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>terminal</span></div>
         <pre tabindex="0" aria-label="Demo commands"><code><span class="c"># needs Docker and openssl</span>
-{DEMO}
+{DEMO.split(' && ').join('\n')}
 <span class="o">demo: http://localhost:3001/kiosk</span>
 
 <span class="c"># stop and delete all demo data</span>
