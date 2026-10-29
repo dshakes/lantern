@@ -956,6 +956,14 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 		idemKey = uuid.NewString()
 	}
 
+	// Load DLP policy (ADR 0030) BEFORE minting identity. Fail closed: a tenant
+	// in block mode expects enforcement, so a policy we cannot read must not
+	// become a VM with no DLP — and loading first leaves no orphan identity.
+	dlpRules, dlpMaxBytes, err := h.loadDLPRules(ctx, tenantID)
+	if err != nil {
+		return "", "", "", "", time.Time{}, fmt.Errorf("load DLP policy: %w", err)
+	}
+
 	// Mint per-VM identity. Fail closed: an agent that cannot be identified must not be scheduled.
 	// The instance id is derived from the idempotency key: when a retry is
 	// deduped by the scheduler it returns the VM that booted with the FIRST
@@ -1011,11 +1019,8 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
 	specMap["env"] = env
 
-	// Attach DLP policy (ADR 0030). Fail-open: a DB error logs a warning and
-	// the VM is scheduled without DLP rather than blocking the spawn.
-	if dlpRules, dlpMaxBytes, dlpErr := h.loadDLPRules(ctx, tenantID); dlpErr != nil {
-		h.logger().Warn("DLP policy load failed — scheduling without DLP", zap.Error(dlpErr))
-	} else if len(dlpRules) > 0 {
+	// Attach DLP policy (ADR 0030), loaded above.
+	if len(dlpRules) > 0 {
 		specMap["dlp_rules"] = dlpRules
 		if dlpMaxBytes > 0 {
 			specMap["dlp_max_inspect_bytes"] = dlpMaxBytes
@@ -1528,9 +1533,8 @@ func (h *RuntimeHandler) logger() *zap.Logger {
 
 // loadDLPRules returns the tenant's DLP rules from dlp_policies, and the
 // configured max_inspect_bytes (0 → manager uses its own default of 64 KiB).
-// Fail-open: an error is logged and returns (nil, 0, err) so the caller can
-// schedule without DLP rather than blocking the entire VM spawn. RLS is
-// enforced via WithTenant.
+// An error is returned to the caller, which refuses to schedule (fail closed).
+// RLS is enforced via WithTenant.
 func (h *RuntimeHandler) loadDLPRules(ctx context.Context, tenantID string) ([]map[string]any, int64, error) {
 	var rules []map[string]any
 	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {

@@ -14,7 +14,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,10 +32,14 @@ import (
 func newDLPHandler(t *testing.T) (*DLPPolicyHandler, *AuthHandler) {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	srv := &server.Server{
-		Pool:   nil, // nil: panics on DB access — safe for pre-DB validation tests
-		Logger: logger,
+	// Lazy pool to a closed port: never connects, so any DB call fails with an
+	// error (→ 500) instead of panicking — fine for pre-DB validation tests.
+	pool, err := pgxpool.New(context.Background(), "postgres://x:x@127.0.0.1:1/x?connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(pool.Close)
+	srv := &server.Server{Pool: pool, Logger: logger}
 	auth := NewAuthHandler(srv, testJWTSecret)
 	return NewDLPPolicyHandler(srv, auth), auth
 }

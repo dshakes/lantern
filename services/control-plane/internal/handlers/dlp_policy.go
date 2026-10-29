@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,7 +83,7 @@ func (h *DLPPolicyHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 
 	var rules []dlpRuleDTO
 	if dbErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
@@ -159,7 +160,7 @@ func (h *DLPPolicyHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	if dbErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		// Delete all existing rules for this tenant, then insert new ones.
 		if _, dErr := tx.Exec(ctx, `DELETE FROM dlp_policies WHERE tenant_id = $1`, claims.TenantID); dErr != nil {
@@ -227,7 +228,7 @@ func (h *DLPPolicyHandler) UpsertRule(w http.ResponseWriter, r *http.Request) {
 		threshold = 1
 	}
 
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	if dbErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, iErr := tx.Exec(ctx, `
 			INSERT INTO dlp_policies (tenant_id, rule_id, detector, pattern, mode, threshold)
@@ -261,7 +262,7 @@ func (h *DLPPolicyHandler) DeleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	var deleted bool
 	if dbErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		tag, dErr := tx.Exec(ctx,
