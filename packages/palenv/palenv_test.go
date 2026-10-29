@@ -25,8 +25,12 @@ func TestPlan(t *testing.T) {
 			map[string]string{}, nil},
 		{"both differ: PAL wins", []string{"LANTERN_ENV=dev", "PAL_ENV=prod"},
 			map[string]string{"LANTERN_ENV": "prod"}, []string{"ENV"}},
-		{"explicitly empty PAL still wins", []string{"PAL_X=", "LANTERN_X=v"},
-			map[string]string{"LANTERN_X": ""}, []string{"X"}},
+		{"empty PAL never blanks a non-empty LANTERN", []string{"PAL_X=", "LANTERN_X=v"},
+			map[string]string{"PAL_X": "v"}, nil},
+		{"empty PAL with empty LANTERN: nothing to set", []string{"PAL_X=", "LANTERN_X="},
+			map[string]string{}, nil},
+		{"empty PAL alone is mirrored", []string{"PAL_X="},
+			map[string]string{"LANTERN_X": ""}, nil},
 		{"value with '=' kept intact", []string{"LANTERN_DSN=a=b=c"},
 			map[string]string{"PAL_DSN": "a=b=c"}, nil},
 		{"bare prefixes and unrelated keys ignored",
@@ -94,7 +98,7 @@ func TestGet(t *testing.T) {
 		{"unset", nil, ""},
 		{"legacy fallback", map[string]string{"LANTERN_PALENV_GET": "l"}, "l"},
 		{"PAL preferred", map[string]string{"LANTERN_PALENV_GET": "l", "PAL_PALENV_GET": "p"}, "p"},
-		{"empty PAL wins", map[string]string{"LANTERN_PALENV_GET": "l", "PAL_PALENV_GET": ""}, ""},
+		{"empty PAL falls back", map[string]string{"LANTERN_PALENV_GET": "l", "PAL_PALENV_GET": ""}, "l"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

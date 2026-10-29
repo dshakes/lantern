@@ -1,6 +1,8 @@
 // Package palenv is the Go side of the Lantern→PAL env compat contract
 // (ADR 0032): every PAL_X / LANTERN_X variable is visible under both names,
-// and PAL_X wins when both are set and differ.
+// and PAL_X wins when both are set and differ — except that an EMPTY PAL_X
+// never overrides a non-empty LANTERN_X: it is treated as unset, so a stray
+// `PAL_CREDENTIAL_KEY=` cannot silently switch off at-rest encryption.
 //
 // Binaries call Bridge() as the first statement of main(), so existing
 // os.Getenv("LANTERN_X") reads keep working when an operator sets PAL_X, and
@@ -32,10 +34,10 @@ func Bridge() {
 	}
 }
 
-// Get reads PAL_<suffix>, falling back to LANTERN_<suffix>. A PAL_ value that
-// is set (even empty) wins, matching Bridge.
+// Get reads PAL_<suffix>, falling back to LANTERN_<suffix>. An empty PAL_
+// value counts as unset when LANTERN_ is non-empty, matching Bridge.
 func Get(suffix string) string {
-	if v, ok := os.LookupEnv(palPrefix + suffix); ok {
+	if v := os.Getenv(palPrefix + suffix); v != "" {
 		return v
 	}
 	return os.Getenv(legacyPrefix + suffix)
@@ -60,6 +62,10 @@ func plan(env []string) (sets map[string]string, conflicts []string) {
 	sets = map[string]string{}
 	for s, v := range pal {
 		lv, ok := legacy[s]
+		if v == "" && lv != "" {
+			delete(pal, s) // empty PAL_ is unset: the LANTERN_ loop mirrors lv
+			continue
+		}
 		if !ok || lv != v {
 			sets[legacyPrefix+s] = v
 		}

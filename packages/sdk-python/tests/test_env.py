@@ -10,7 +10,9 @@ from lantern import _env
         ({"LANTERN_API_URL": "l"}, "l"),
         ({"PAL_API_URL": "p"}, "p"),
         ({"PAL_API_URL": "p", "LANTERN_API_URL": "l"}, "p"),
-        ({"PAL_API_URL": "", "LANTERN_API_URL": "l"}, ""),
+        ({"PAL_API_URL": "", "LANTERN_API_URL": "l"}, "l"),
+        ({"PAL_API_URL": "", "LANTERN_API_URL": ""}, ""),
+        ({"PAL_API_URL": ""}, ""),
     ],
 )
 def test_get_prefers_pal(env: dict[str, str], want: str) -> None:
