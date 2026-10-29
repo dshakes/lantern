@@ -12,6 +12,7 @@ mod dlp;
 mod egress_broker;
 mod handle_registry;
 mod measurement;
+mod metrics;
 mod otel;
 mod pool;
 mod proto;
@@ -239,6 +240,8 @@ async fn main() -> anyhow::Result<()> {
         wake: Some(inventory_changed),
         activity: Some(activity_cache),
     });
+
+    metrics::serve_from_env().await;
 
     tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");
 

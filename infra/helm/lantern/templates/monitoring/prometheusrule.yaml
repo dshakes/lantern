@@ -1,0 +1,124 @@
+{{- if .Values.monitoring.alerts.enabled }}
+# SLO recording rules + multi-window multi-burn-rate alerts (ADR 0041).
+# Generated from .Values.monitoring.slos; see docs/adr/0041-slo-error-budgets.md.
+# Burn tiers (Google SRE workbook ch.5, 28d window):
+#   page   14.4x over 1h & 5m   (2% of budget in 1h)
+#   page    6x   over 6h & 30m  (5% of budget in 6h)
+#   ticket  3x   over 1d & 2h   (10% of budget in 1d)
+#   ticket  1x   over 3d & 6h   (budget gone in exactly the window)
+{{- $windows := list "5m" "30m" "1h" "2h" "6h" "1d" "3d" }}
+{{- $tiers := list
+  (dict "burn" 14.4 "long" "1h" "short" "5m" "for" "2m" "sev" "critical")
+  (dict "burn" 6.0 "long" "6h" "short" "30m" "for" "15m" "sev" "critical")
+  (dict "burn" 3.0 "long" "1d" "short" "2h" "for" "1h" "sev" "warning")
+  (dict "burn" 1.0 "long" "3d" "short" "6h" "for" "3h" "sev" "warning") }}
+{{- $base := .Values.monitoring.alerts.runbookBaseUrl }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "lantern.fullname" . }}-slo
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.alerts.ruleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: lantern-slo-recording
+      rules:
+        {{- range $name, $s := .Values.monitoring.slos }}
+        {{- $job := printf "job=%q" $s.job }}
+        {{- range $w := $windows }}
+        - record: slo:sli_error:ratio_rate{{ $w }}
+          expr: clamp_min({{ $s.bad | replace "__W__" $w | replace "__J__" $job }}, 0) / {{ $s.total | replace "__W__" $w | replace "__J__" $job }}
+          labels: {slo: {{ $name | quote }}, service: {{ $s.service | quote }}}
+        {{- end }}
+        - record: slo:sli_total:rate1h
+          expr: {{ $s.total | replace "__W__" "1h" | replace "__J__" $job }}
+          labels: {slo: {{ $name | quote }}, service: {{ $s.service | quote }}}
+        - record: slo:error_budget:ratio
+          expr: vector({{ printf "%.6g" (subf 1.0 $s.objective) }})
+          labels: {slo: {{ $name | quote }}, service: {{ $s.service | quote }}}
+        {{- end }}
+    # 28d windows are expensive: evaluate rarely.
+    - name: lantern-slo-recording-28d
+      interval: 5m
+      rules:
+        {{- range $name, $s := .Values.monitoring.slos }}
+        {{- $job := printf "job=%q" $s.job }}
+        - record: slo:sli_error:ratio_rate28d
+          expr: clamp_min({{ $s.bad | replace "__W__" "28d" | replace "__J__" $job }}, 0) / {{ $s.total | replace "__W__" "28d" | replace "__J__" $job }}
+          labels: {slo: {{ $name | quote }}, service: {{ $s.service | quote }}}
+        - record: slo:error_budget_remaining:ratio
+          expr: 1 - (slo:sli_error:ratio_rate28d{slo={{ $name | quote }}} / on(slo) slo:error_budget:ratio{slo={{ $name | quote }}})
+          labels: {slo: {{ $name | quote }}, service: {{ $s.service | quote }}}
+        {{- end }}
+    - name: lantern-slo-alerts
+      rules:
+        {{- range $name, $s := .Values.monitoring.slos }}
+        {{- $budget := subf 1.0 $s.objective }}
+        {{- range $t := $tiers }}
+        {{- $thr := printf "%.6g" (mulf $t.burn $budget) }}
+        - alert: SLOErrorBudgetBurn
+          expr: |-
+            slo:sli_error:ratio_rate{{ $t.long }}{slo={{ $name | quote }}} > {{ $thr }}
+            and
+            slo:sli_error:ratio_rate{{ $t.short }}{slo={{ $name | quote }}} > {{ $thr }}
+            {{- if $s.minEventsPerHour }}
+            and
+            slo:sli_total:rate1h{slo={{ $name | quote }}} * 3600 >= {{ $s.minEventsPerHour }}
+            {{- end }}
+          for: {{ $t.for }}
+          labels:
+            severity: {{ $t.sev }}
+            slo: {{ $name | quote }}
+            service: {{ $s.service | quote }}
+            burn_rate: {{ $t.burn | quote }}
+            window: "{{ $t.long }}/{{ $t.short }}"
+          annotations:
+            summary: "{{ $name }}: burning error budget at {{ $t.burn }}x ({{ $t.long }}/{{ $t.short }})"
+            description: >-
+              {{ $s.description }} The error ratio is above {{ $t.burn }}x the
+              {{ printf "%.6g" $budget }} budget on both the {{ $t.long }} and {{ $t.short }}
+              windows (SLO target {{ $s.objective }} over 28d). Current {{ $t.long }} ratio:
+              {{ `{{ $value | humanizePercentage }}` }}.
+            runbook_url: {{ printf "%s/%s" $base $s.runbook | quote }}
+        {{- end }}
+        {{- if $s.expectTraffic }}
+        - alert: SLOSignalAbsent
+          expr: absent(slo:sli_error:ratio_rate5m{slo={{ $name | quote }}})
+          for: 30m
+          labels:
+            severity: warning
+            slo: {{ $name | quote }}
+            service: {{ $s.service | quote }}
+          annotations:
+            summary: "{{ $name }}: SLI has no data for 30m"
+            description: >-
+              The SLI for {{ $name }} produced no series for 30m, so the burn alerts
+              above cannot fire. Check the scrape target and the `job` label
+              ({{ $s.job }}); a silent SLO is worse than a red one.
+            runbook_url: {{ printf "%s/%s" $base $s.runbook | quote }}
+        {{- end }}
+        {{- end }}
+        - alert: EgressBrokerDenySpike
+          # Policy denies are not an SLO breach (the broker did its job) but a
+          # sustained majority-deny rate means a guest is probing the allowlist
+          # or a rule is wrong. Ticket, not page.
+          expr: |-
+            sum(rate(lantern_egress_broker_decisions_total{outcome="deny"}[15m]))
+              / sum(rate(lantern_egress_broker_decisions_total[15m])) > 0.5
+            and
+            sum(rate(lantern_egress_broker_decisions_total[15m])) * 900 >= 50
+          for: 30m
+          labels:
+            severity: warning
+            service: runtime-manager
+          annotations:
+            summary: "More than half of egress broker decisions are denies"
+            description: >-
+              {{ `{{ $value | humanizePercentage }}` }} of egress decisions over 15m were
+              policy denies. Either a workload is probing blocked hosts or an
+              allowlist rule is wrong.
+            runbook_url: {{ printf "%s/slo-egress-broker.md" $base | quote }}
+{{- end }}

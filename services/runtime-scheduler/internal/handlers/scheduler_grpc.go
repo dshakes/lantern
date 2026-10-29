@@ -122,6 +122,17 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
 	}
 
+	if s.Metrics != nil {
+		start := time.Now()
+		defer func() {
+			result := "ok"
+			if retErr != nil {
+				result = "error"
+			}
+			s.Metrics.ScheduleDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+		}()
+	}
+
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		if s.Metrics != nil {

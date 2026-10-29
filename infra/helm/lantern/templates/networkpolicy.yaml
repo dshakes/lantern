@@ -99,7 +99,8 @@ spec:
                 values: [{{ join ", " $callers }}]
 {{- end }}
 ---
-# Scrape path: Prometheus -> control-plane :9464 (LANTERN_METRICS_ADDR) and scheduler :8085.
+# Scrape path: Prometheus -> control-plane :9464 (LANTERN_METRICS_ADDR), scheduler :8085,
+# model-router :9465 and runtime-manager :9466 (PAL_METRICS_ADDR, ADR 0041).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -110,7 +111,7 @@ spec:
   podSelector:
     matchExpressions:
       - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
-      - {key: app.kubernetes.io/component, operator: In, values: [control-plane, runtime-scheduler]}
+      - {key: app.kubernetes.io/component, operator: In, values: [control-plane, runtime-scheduler, model-router, runtime-manager]}
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -118,6 +119,8 @@ spec:
       ports:
         - {port: 9464, protocol: TCP}
         - {port: 8085, protocol: TCP}
+        - {port: 9465, protocol: TCP}
+        - {port: 9466, protocol: TCP}
 ---
 # Public entrypoints: ingress controller (or anyone, if ingressFrom is empty).
 apiVersion: networking.k8s.io/v1

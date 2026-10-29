@@ -34,6 +34,7 @@ dashmap = "6"
 libc = "0.2"
 tower = { version = "0.5", features = ["util"] }
 tokio-util = "0.7"
+prometheus = { version = "0.14", default-features = false }
 http = "1"
 # mTLS: explicit deps so we control the crypto provider (ring, not aws-lc-rs)
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
