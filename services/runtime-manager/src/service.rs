@@ -594,7 +594,8 @@ fn caller_env_key_allowed(key: &str) -> bool {
 
 /// Make a request's env safe to hand to the harness: drop caller-supplied
 /// `LANTERN_*` keys outside [`CALLER_LANTERN_KEYS`] and EVERY `PAL_*` key
-/// (see [`caller_env_key_allowed`]; names logged, never values), THEN stamp the manager-owned values — its own `LANTERN_ENV` and
+/// (see [`caller_env_key_allowed`]; names logged, never values), THEN stamp
+/// the manager-owned values — its own `LANTERN_ENV` and
 /// the identity taken from the request's authenticated typed fields
 /// (`LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`). Sanitize-then-inject, so
 /// a caller can neither downgrade a prod guest / switch off its egress/uid
