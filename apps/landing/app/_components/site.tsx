@@ -14,27 +14,27 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-40 border-b border-line/70 bg-bg/85 backdrop-blur-md">
       <div className={`${wrap} flex h-16 items-center justify-between gap-4`}>
-        <Link href="/" className="flex items-center gap-2 font-semibold" aria-label="Lantern home">
+        <Link href="/" className="flex min-h-10 items-center gap-2 font-semibold" aria-label="Lantern home">
           <LanternMark className="h-7 w-7" />
           <span className="text-lg tracking-tight">Lantern</span>
         </Link>
         <nav aria-label="Primary" className="hidden items-center gap-1 text-sm text-ink-2 md:flex">
-          <Link href="/#how" className="rounded-md px-3 py-1.5 hover:text-ink">
+          <Link href="/#how" className="flex min-h-10 items-center rounded-md px-3 hover:text-ink">
             How it works
           </Link>
-          <Link href="/#measured" className="rounded-md px-3 py-1.5 hover:text-ink">
+          <Link href="/#measured" className="flex min-h-10 items-center rounded-md px-3 hover:text-ink">
             Benchmarks
           </Link>
-          <Link href="/compare/" className="rounded-md px-3 py-1.5 hover:text-ink">
+          <Link href="/compare/" className="flex min-h-10 items-center rounded-md px-3 hover:text-ink">
             Compare
           </Link>
-          <a href={DOCS} className="rounded-md px-3 py-1.5 hover:text-ink">
+          <a href={DOCS} className="flex min-h-10 items-center rounded-md px-3 hover:text-ink">
             Docs
           </a>
         </nav>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <a href={GITHUB} className="btn btn-quiet !px-3 !py-1.5 text-sm">
+          <a href={GITHUB} className="btn btn-quiet !px-3 text-sm">
             GitHub
           </a>
         </div>
@@ -51,19 +51,19 @@ export function Footer() {
           <LanternMark className="h-5 w-5" /> Lantern is open source under Apache-2.0.
         </span>
         <nav aria-label="Footer" className="flex flex-wrap gap-5">
-          <a href={DOCS} className="hover:text-ink">
+          <a href={DOCS} className="flex min-h-10 min-w-[2.5rem] items-center hover:text-ink">
             Docs
           </a>
-          <Link href="/compare/" className="hover:text-ink">
+          <Link href="/compare/" className="flex min-h-10 min-w-[2.5rem] items-center hover:text-ink">
             Compare
           </Link>
-          <a href={GITHUB} className="hover:text-ink">
+          <a href={GITHUB} className="flex min-h-10 min-w-[2.5rem] items-center hover:text-ink">
             GitHub
           </a>
-          <Link href="/privacy/" className="hover:text-ink">
+          <Link href="/privacy/" className="flex min-h-10 min-w-[2.5rem] items-center hover:text-ink">
             Privacy
           </Link>
-          <Link href="/terms/" className="hover:text-ink">
+          <Link href="/terms/" className="flex min-h-10 min-w-[2.5rem] items-center hover:text-ink">
             Terms
           </Link>
         </nav>

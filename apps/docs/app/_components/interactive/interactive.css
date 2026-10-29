@@ -9,7 +9,7 @@
 /* Toolbar */
 .ix-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .ix-btn {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 34px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; min-width: 40px;
   border: 1px solid var(--lx-line); border-radius: var(--lx-radius-s);
   background: var(--lx-surface); color: var(--lx-ink-2);
   padding: 4px 10px; font-size: 13px; line-height: 1.2; cursor: pointer;
@@ -85,6 +85,7 @@
 .ix-meta dt { color: var(--lx-ink-3); }
 .ix-meta dd { margin: 0; font-family: var(--lx-font-mono); font-size: 12.5px; }
 .ix-src { display: flex; flex-wrap: wrap; gap: 4px 10px; font-family: var(--lx-font-mono); font-size: 12px; }
+.ix-src a { display: inline-flex; align-items: center; min-height: 2.5rem; padding-block: 0.25rem; }
 .ix-link { background: none; border: 0; padding: 0; color: var(--lx-glass); cursor: pointer; text-align: left; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .ix-badge { display: inline-block; font-size: 12px; border: 1px solid var(--lx-flame); color: var(--lx-ink); background: var(--lx-flame-soft); border-radius: 999px; padding: 2px 10px; }
 

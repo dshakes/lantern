@@ -241,6 +241,7 @@ body {
   gap: 0.35rem;
   border-radius: var(--lx-radius-s);
   padding: 0.45rem 0.65rem;
+  min-height: 2.5rem;
   font-family: var(--lx-font-text);
   font-size: 0.8rem;
   font-weight: 500;
@@ -395,7 +396,7 @@ body {
   border-top: 1px solid var(--dm-line);
   padding: 0.6rem 1rem;
   font-family: var(--lx-font-text);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--dm-ink-3);
 }
 .console-foot a { color: var(--dm-ink-2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--dm-line); }
@@ -406,7 +407,11 @@ body {
   border-radius: 6px;
   padding: 0.2rem 0.55rem;
   font-family: var(--lx-font-text);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
+  min-height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .console-btn:hover { color: var(--dm-ink); border-color: var(--dm-ink-3); }
 
@@ -619,7 +624,7 @@ body {
   background: var(--lx-surface);
 }
 .site-foot { padding-bottom: calc(3rem + env(safe-area-inset-bottom)); }
-.console-rec { display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.console-rec { display: inline-flex; align-items: center; gap: 0.5rem; white-space: nowrap; min-height: 2.5rem; }
 .console-rec img { width: 96px; height: auto; border-radius: 3px; border: 1px solid var(--dm-line); }
 .code .k { color: #c7a6ff; }
 .code .s { color: #9fd8a8; }

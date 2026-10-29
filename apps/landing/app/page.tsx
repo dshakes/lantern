@@ -13,7 +13,7 @@ const CLONE = "git clone https://github.com/dshakes/lantern.git && cd lantern &&
 export default function LandingPage() {
   return (
     <div className="min-h-screen">
-      <a href="#main" className="btn btn-primary sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50">
+      <a href="#main" className="btn btn-primary sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:min-h-10">
         Skip to content
       </a>
       <Nav />
@@ -346,7 +346,7 @@ function Compare() {
           </tbody>
         </table>
         <p className="mt-6">
-          <Link href="/compare/" className="link inline-flex items-center gap-1.5 font-medium text-ink">
+          <Link href="/compare/" className="link inline-flex min-h-10 items-center gap-1.5 font-medium text-ink">
             Full comparison, column by column <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </p>

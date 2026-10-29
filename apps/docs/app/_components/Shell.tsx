@@ -42,7 +42,7 @@ function ThemeToggle() {
         try { localStorage.setItem("lantern-theme", next); } catch { /* storage blocked: this page view only */ }
         setDark(!dark);
       }}
-      className="rounded-md p-2 text-ink-2 hover:text-ink"
+      className="rounded-md p-3 text-ink-2 hover:text-ink"
     >
       {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </button>
@@ -198,12 +198,12 @@ function Chrome({ onSearch }: { onSearch: () => void }) {
   return (
     <>
       <button type="button" onClick={onSearch} aria-label="Search docs"
-        className="flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 text-xs text-ink-3 hover:text-ink sm:w-56">
+        className="flex h-10 min-w-[2.5rem] items-center gap-2 rounded-lg border border-line bg-surface px-2.5 text-xs text-ink-3 hover:text-ink sm:w-56">
         <SearchIcon className="h-3.5 w-3.5" />
         <span className="hidden flex-1 text-left sm:inline">Search docs</span>
         <kbd className="hidden rounded border border-line px-1 font-mono text-[10px] sm:inline">⌘K</kbd>
       </button>
-      <a href={REPO} target="_blank" rel="noopener noreferrer" aria-label="Lantern on GitHub" className="rounded-md p-2 text-ink-2 hover:text-ink">
+      <a href={REPO} target="_blank" rel="noopener noreferrer" aria-label="Lantern on GitHub" className="rounded-md p-3 text-ink-2 hover:text-ink">
         <Github className="h-4 w-4" />
       </a>
       <ThemeToggle />
@@ -239,7 +239,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <SearchDialog open={searching} onClose={() => setSearching(false)} />
         {/* Mobile top bar (hidden on lg+) */}
         <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-line bg-bg/95 px-4 backdrop-blur">
-          <a href={HOME} className="flex items-center gap-2.5" aria-label="Lantern home">
+          <a href={HOME} className="flex min-h-10 items-center gap-2.5" aria-label="Lantern home">
             <LanternMark />
             <span className="text-sm font-semibold text-ink">Lantern</span>
             <span className="text-sm text-ink-3">Docs</span>
@@ -250,7 +250,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => setOpen((v) => !v)}
               aria-label={open ? "Close menu" : "Open menu"}
-              className="-mr-2 rounded-lg p-2 text-ink-2 hover:bg-surface"
+              className="-mr-2 rounded-lg p-2.5 text-ink-2 hover:bg-surface"
             >
               {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -276,7 +276,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             {/* Logo */}
             <div className="px-5 py-4 border-b border-line">
-              <Link href="/" className="flex items-center gap-2.5">
+              <Link href="/" className="flex min-h-10 items-center gap-2.5">
                 <LanternMark />
                 <div>
                   <span className="text-sm font-semibold text-ink">Lantern</span>
@@ -297,7 +297,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                         <div key={item.href}>
                           <Link href={item.href}
                             className={clsx(
-                              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors",
+                              "flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors",
                               isActive
                                 ? "bg-surface text-ink font-medium shadow-[inset_2px_0_0_var(--lx-flame)]"
                                 : "text-ink-2 hover:bg-surface hover:text-ink"
@@ -340,7 +340,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className={clsx("w-full min-w-0", !wide && "max-w-3xl")}>
                 <article className="prose w-full min-w-0">{children}</article>
                 <footer className="mt-12 border-t border-line pt-4 text-sm">
-                  <a href={`${REPO}/edit/master/${editPath}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-ink-3 hover:text-ink">
+                  <a href={`${REPO}/edit/master/${editPath}`} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center gap-1.5 text-ink-3 hover:text-ink">
                     <Pencil className="h-3.5 w-3.5" /> Edit this page on GitHub
                   </a>
                 </footer>

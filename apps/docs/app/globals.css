@@ -159,6 +159,9 @@ a.card:hover { border-color: var(--lx-ink-3); }
 .prose table { display: block; max-width: 100%; overflow-x: auto; width: 100%; font-size: 0.875rem; border-collapse: collapse; margin-bottom: 1.5rem; }
 .prose th { text-align: left; font-weight: 600; color: var(--lx-ink); padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--lx-line); background: var(--lx-surface); white-space: nowrap; }
 .prose td { padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--lx-line); color: var(--lx-ink-2); }
+/* Prevent long env-var names / paths from blowing out the layout; pre code scrolls, inline code wraps */
+.prose code { overflow-wrap: anywhere; word-break: break-all; }
+.prose pre code { overflow-wrap: normal; word-break: normal; }
 
 /* ── Inlined architecture diagrams ── */
 .diagram { margin: 2rem 0 2.5rem; }
@@ -168,7 +171,7 @@ a.card:hover { border-color: var(--lx-ink-3); }
 /* ── Code chrome (added by CodeEnhancer) ── */
 .code-chrome { position: absolute; top: 0; left: 0; right: 0; height: 2.1rem; display: flex; align-items: center; gap: 0.4rem; padding: 0 0.95rem; border-bottom: 1px solid var(--lx-line); background: var(--lx-surface-2); border-radius: var(--lx-radius-m) var(--lx-radius-m) 0 0; }
 .code-chrome .dot { width: 0.55rem; height: 0.55rem; border-radius: 999px; background: var(--lx-line); }
-.copy-btn { position: absolute; top: 0.35rem; right: 0.55rem; z-index: 2; font-size: 0.72rem; font-weight: 500; color: var(--lx-ink-2); background: var(--lx-surface); border: 1px solid var(--lx-line); border-radius: var(--lx-radius-s); padding: 0.2rem 0.55rem; cursor: pointer; }
+.copy-btn { position: absolute; top: 0.35rem; right: 0.55rem; z-index: 2; font-size: 0.75rem; font-weight: 500; color: var(--lx-ink-2); background: var(--lx-surface); border: 1px solid var(--lx-line); border-radius: var(--lx-radius-s); padding: 0.2rem 0.55rem; min-height: 2.5rem; display: inline-flex; align-items: center; cursor: pointer; }
 .copy-btn:hover { color: var(--lx-ink); }
 .copy-btn.copied { color: var(--lx-patina); border-color: var(--lx-patina); }
 
@@ -273,7 +276,7 @@ a, button { transition: color var(--lx-dur-ui) var(--lx-ease), background-color 
 .harness-edge { border: 1px solid var(--lx-line); border-radius: var(--lx-radius-l); background: var(--lx-surface); padding: 0.7rem 0.85rem; }
 .harness-edge-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; font-weight: 600; color: var(--lx-ink-2); margin-bottom: 0.5rem; }
 .harness-edge-cells { display: flex; flex-wrap: wrap; gap: 0.45rem; }
-.harness-surface { font-size: 0.8rem; font-weight: 600; color: var(--lx-ink); text-decoration: none; background: var(--lx-surface-2); border-radius: var(--lx-radius-s); padding: 0.34rem 0.7rem; }
+.harness-surface { display: inline-flex; align-items: center; min-height: 2.5rem; font-size: 0.8rem; font-weight: 600; color: var(--lx-ink); text-decoration: none; background: var(--lx-surface-2); border-radius: var(--lx-radius-s); padding: 0.34rem 0.7rem; }
 .harness-surface:hover { background: var(--lx-glass-soft); }
 .harness-body { display: block; }
 .harness-stack { display: flex; flex-direction: column; gap: 0.55rem; }
