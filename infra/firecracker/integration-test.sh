@@ -349,7 +349,7 @@ setsid bash -c 'echo $$ >"$1"; shift; exec "$@"' _ "${MANAGER_PGID_FILE}" \
   LANTERN_MANAGER_TLS_KEY="${WORK}/server.key" \
   LANTERN_VM_SIGNING_CA_CERT="${WORK}/ca.crt" \
   LANTERN_VM_SIGNING_CA_KEY="${WORK}/ca.key" \
-  LANTERN_MEASUREMENT_GATE="${LANTERN_MEASUREMENT_GATE:-warn}" \
+  LANTERN_MEASUREMENT_GATE="${PAL_MEASUREMENT_GATE:-${LANTERN_MEASUREMENT_GATE:-warn}}" \
   LANTERN_VM_CERT_DIR="${WORK}/vm-certs" \
   "${SECRET_ENV_KEY}=${SECRET_VALUE}" \
   "${MANAGER_BIN}" >"${MANAGER_LOG}" 2>&1 &
@@ -1001,7 +1001,7 @@ else
   FICLONE_LOG="${WORK}/manager.log"
   if [ ! -f "${FICLONE_LOG}" ]; then
     # Manager log written to a separate path when LANTERN_MANAGER_LOG is set.
-    FICLONE_LOG="${LANTERN_MANAGER_LOG:-${MANAGER_LOG}}"
+    FICLONE_LOG="${PAL_MANAGER_LOG:-${LANTERN_MANAGER_LOG:-${MANAGER_LOG}}}"
   fi
 
   # grep -c exits 1 on 0 matches (prints "0") and exits 2 when the file is

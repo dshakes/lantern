@@ -38,7 +38,7 @@ type MemoryIngestor struct {
 
 func NewMemoryIngestor(pool *pgxpool.Pool, logger *zap.Logger, identity *IdentityHandler) *MemoryIngestor {
 	interval := 15 * time.Minute
-	if v := strings.TrimSpace(os.Getenv("LANTERN_MEMORY_INGEST_INTERVAL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PAL_MEMORY_INGEST_INTERVAL")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= time.Minute {
 			interval = d
 		}
@@ -47,14 +47,14 @@ func NewMemoryIngestor(pool *pgxpool.Pool, logger *zap.Logger, identity *Identit
 		pool:     pool,
 		logger:   logger.Named("memory-ingest"),
 		identity: identity,
-		tenantID: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		tenantID: getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 		interval: interval,
 	}
 }
 
 // Enabled reports whether ingestion should run (default on; off via env).
 func (m *MemoryIngestor) Enabled() bool {
-	return strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_MEMORY_INGEST"))) != "off"
+	return strings.ToLower(strings.TrimSpace(os.Getenv("PAL_MEMORY_INGEST"))) != "off"
 }
 
 // Run loops until ctx is cancelled. First tick fires after a short delay
@@ -102,7 +102,7 @@ func (m *MemoryIngestor) tick(ctx context.Context) {
 
 // ownerEmail returns the lowercased owner email, used to skip self.
 func ownerEmail() string {
-	return strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL")))
+	return strings.ToLower(strings.TrimSpace(os.Getenv("PAL_OWNER_EMAIL")))
 }
 
 // ingestGmail pulls recent messages and records them against the sender.

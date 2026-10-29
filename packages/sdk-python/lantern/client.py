@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import random
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
+from lantern import _env
 from lantern.errors import LanternApiError
 from lantern.types import (
     AgentInfo,
@@ -61,10 +61,10 @@ class LanternClient:
         timeout: float = 30.0,
         route_strategy: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("LANTERN_API_URL") or "https://api.lantern.run").rstrip("/")
-        self._api_key = api_key or os.environ.get("LANTERN_API_KEY") or ""
+        self.base_url = (base_url or _env.get("API_URL") or "https://api.lantern.run").rstrip("/")
+        self._api_key = api_key or _env.get("API_KEY") or ""
         self._timeout = timeout
-        self._route_strategy = route_strategy or os.environ.get("LANTERN_ROUTE_STRATEGY") or "auto"
+        self._route_strategy = route_strategy or _env.get("ROUTE_STRATEGY") or "auto"
         self._client: httpx.AsyncClient | None = None
 
         # Bind sub-resource namespaces

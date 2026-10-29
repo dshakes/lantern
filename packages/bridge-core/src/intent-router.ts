@@ -53,7 +53,7 @@ export type IntentLLM = (
  *  The bridge gates every router call on this synchronously, so when off the
  *  router is never constructed, awaited, or reached — dispatch is unchanged. */
 export function intentRouterEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  const v = (env.LANTERN_INTENT_ROUTER ?? "").trim().toLowerCase();
+  const v = (env.PAL_INTENT_ROUTER ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "on" || v === "yes";
 }
 

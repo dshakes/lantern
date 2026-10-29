@@ -387,7 +387,7 @@ func resolveTenantID(ctx context.Context, srv *server.Server, raw string) string
 // the env var is unset the endpoint refuses every request, so an
 // unconfigured prod deployment can't be silently spammed by a stray bridge.
 func (h *SurfaceHandler) BridgeHeartbeat(w http.ResponseWriter, r *http.Request) {
-	expected := os.Getenv("LANTERN_BRIDGE_HEARTBEAT_TOKEN")
+	expected := os.Getenv("PAL_BRIDGE_HEARTBEAT_TOKEN")
 	if expected == "" {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "heartbeat endpoint disabled (set LANTERN_BRIDGE_HEARTBEAT_TOKEN to enable)",

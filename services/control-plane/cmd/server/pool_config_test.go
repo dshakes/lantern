@@ -11,65 +11,65 @@ import (
 )
 
 func TestEnvIntMain_Default(t *testing.T) {
-	os.Unsetenv("LANTERN_TEST_INT")
-	got := envIntMain("LANTERN_TEST_INT", 42)
+	os.Unsetenv("PAL_TEST_INT")
+	got := envIntMain("PAL_TEST_INT", 42)
 	if got != 42 {
 		t.Fatalf("expected default 42, got %d", got)
 	}
 }
 
 func TestEnvIntMain_Set(t *testing.T) {
-	t.Setenv("LANTERN_TEST_INT", "99")
-	got := envIntMain("LANTERN_TEST_INT", 42)
+	t.Setenv("PAL_TEST_INT", "99")
+	got := envIntMain("PAL_TEST_INT", 42)
 	if got != 99 {
 		t.Fatalf("expected 99, got %d", got)
 	}
 }
 
 func TestEnvIntMain_NonPositiveIgnored(t *testing.T) {
-	t.Setenv("LANTERN_TEST_INT", "0")
-	got := envIntMain("LANTERN_TEST_INT", 42)
+	t.Setenv("PAL_TEST_INT", "0")
+	got := envIntMain("PAL_TEST_INT", 42)
 	if got != 42 {
 		t.Fatalf("expected default 42 for non-positive value, got %d", got)
 	}
 }
 
 func TestEnvIntMain_InvalidIgnored(t *testing.T) {
-	t.Setenv("LANTERN_TEST_INT", "notanumber")
-	got := envIntMain("LANTERN_TEST_INT", 42)
+	t.Setenv("PAL_TEST_INT", "notanumber")
+	got := envIntMain("PAL_TEST_INT", 42)
 	if got != 42 {
 		t.Fatalf("expected default 42 for invalid value, got %d", got)
 	}
 }
 
 func TestEnvDurationMain_Default(t *testing.T) {
-	os.Unsetenv("LANTERN_TEST_DUR")
-	got := envDurationMain("LANTERN_TEST_DUR", time.Hour)
+	os.Unsetenv("PAL_TEST_DUR")
+	got := envDurationMain("PAL_TEST_DUR", time.Hour)
 	if got != time.Hour {
 		t.Fatalf("expected default 1h, got %v", got)
 	}
 }
 
 func TestEnvDurationMain_Set(t *testing.T) {
-	t.Setenv("LANTERN_TEST_DUR", "45m")
-	got := envDurationMain("LANTERN_TEST_DUR", time.Hour)
+	t.Setenv("PAL_TEST_DUR", "45m")
+	got := envDurationMain("PAL_TEST_DUR", time.Hour)
 	if got != 45*time.Minute {
 		t.Fatalf("expected 45m, got %v", got)
 	}
 }
 
 func TestEnvDurationMain_InvalidIgnored(t *testing.T) {
-	t.Setenv("LANTERN_TEST_DUR", "notaduration")
-	got := envDurationMain("LANTERN_TEST_DUR", time.Hour)
+	t.Setenv("PAL_TEST_DUR", "notaduration")
+	got := envDurationMain("PAL_TEST_DUR", time.Hour)
 	if got != time.Hour {
 		t.Fatalf("expected default 1h for invalid value, got %v", got)
 	}
 }
 
 func TestParsePgxPoolConfig_Defaults(t *testing.T) {
-	os.Unsetenv("LANTERN_PG_MAX_CONNS")
-	os.Unsetenv("LANTERN_PG_MAX_CONN_LIFETIME")
-	os.Unsetenv("LANTERN_PG_MAX_CONN_IDLE_TIME")
+	os.Unsetenv("PAL_PG_MAX_CONNS")
+	os.Unsetenv("PAL_PG_MAX_CONN_LIFETIME")
+	os.Unsetenv("PAL_PG_MAX_CONN_IDLE_TIME")
 
 	cfg, err := parsePgxPoolConfig("postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable")
 	if err != nil {
@@ -87,9 +87,9 @@ func TestParsePgxPoolConfig_Defaults(t *testing.T) {
 }
 
 func TestParsePgxPoolConfig_EnvOverrides(t *testing.T) {
-	t.Setenv("LANTERN_PG_MAX_CONNS", "50")
-	t.Setenv("LANTERN_PG_MAX_CONN_LIFETIME", "2h")
-	t.Setenv("LANTERN_PG_MAX_CONN_IDLE_TIME", "15m")
+	t.Setenv("PAL_PG_MAX_CONNS", "50")
+	t.Setenv("PAL_PG_MAX_CONN_LIFETIME", "2h")
+	t.Setenv("PAL_PG_MAX_CONN_IDLE_TIME", "15m")
 
 	cfg, err := parsePgxPoolConfig("postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable")
 	if err != nil {

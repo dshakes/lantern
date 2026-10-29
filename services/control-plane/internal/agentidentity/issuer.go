@@ -61,14 +61,14 @@ const (
 	tokenIssuer = "lantern-agent"
 
 	// envIdentitySecret is the environment variable for the HS256 signing key.
-	envIdentitySecret = "LANTERN_AGENT_IDENTITY_SECRET"
+	envIdentitySecret = "PAL_AGENT_IDENTITY_SECRET"
 
 	// envIdentityTTL is the environment variable for the token TTL.
-	envIdentityTTL = "LANTERN_AGENT_IDENTITY_TTL"
+	envIdentityTTL = "PAL_AGENT_IDENTITY_TTL"
 
 	// envIdentityEd25519Seed is the environment variable for the Ed25519 seed.
 	// When set, Issue() uses EdDSA instead of HS256.
-	envIdentityEd25519Seed = "LANTERN_AGENT_IDENTITY_ED25519_SEED"
+	envIdentityEd25519Seed = "PAL_AGENT_IDENTITY_ED25519_SEED"
 
 	// defaultTTL is used when LANTERN_AGENT_IDENTITY_TTL is unset.
 	defaultTTL = time.Hour

@@ -23,6 +23,7 @@ package examples_e2e
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -224,7 +225,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 
 	// Slack handoff ping (optional; see the package comment).
 	var slack *slackFixture
-	if addr := os.Getenv("LANTERN_E2E_SLACK_FIXTURE_ADDR"); addr != "" {
+	if addr := cmp.Or(os.Getenv("PAL_E2E_SLACK_FIXTURE_ADDR"), os.Getenv("LANTERN_E2E_SLACK_FIXTURE_ADDR")); addr != "" {
 		var existing []struct{ ID, ConnectorID string }
 		k.DoAuth(t, "GET", "/v1/connectors", nil, &existing)
 		for _, c := range existing {
@@ -262,7 +263,7 @@ func TestSupportDesk_KBAnswerThenHumanHandoff(t *testing.T) {
 	if !strings.Contains(string(srcs), resetDocID) {
 		t.Fatalf("message_completed sources = %s, want the seeded password-reset doc %s", srcs, resetDocID)
 	}
-	if os.Getenv("LANTERN_E2E_FIXTURE_LLM") == "1" {
+	if cmp.Or(os.Getenv("PAL_E2E_FIXTURE_LLM"), os.Getenv("LANTERN_E2E_FIXTURE_LLM")) == "1" {
 		if text, _ := done.Data["text"].(string); !strings.Contains(text, "[doc:"+resetDocID+"]") {
 			t.Fatalf("fixture answer %q does not cite [doc:%s]", text, resetDocID)
 		}

@@ -53,7 +53,7 @@ export class DislikeMemory {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.LANTERN_DISLIKE_FILE || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_DISLIKE_FILE || DEFAULT_PATH;
     this.logger = opts.logger?.child({ component: "dislike-memory" });
     try {
       mkdirSync(dirname(this.path), { recursive: true });

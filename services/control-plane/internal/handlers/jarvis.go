@@ -343,7 +343,7 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	if h.llm == nil || fallback == "" {
 		return withActionBlock(fallback, urgent)
 	}
-	ownerName := strings.TrimSpace(os.Getenv("LANTERN_OWNER_NAME"))
+	ownerName := strings.TrimSpace(os.Getenv("PAL_OWNER_NAME"))
 	if ownerName == "" {
 		h.logger().Warn("LANTERN_OWNER_NAME not set; brief will use neutral phrasing (set this env var for personalised output)")
 		ownerName = "the owner"
@@ -460,7 +460,7 @@ func stripAssistantPreamble(s string) string {
 // LANTERN_TWILIO_NUMBER + LANTERN_OWNER_PHONE are set, else via email to
 // LANTERN_OWNER_EMAIL. Best-effort; loops until ctx is cancelled.
 func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
-	hourStr := strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_HOUR"))
+	hourStr := strings.TrimSpace(os.Getenv("PAL_JARVIS_BRIEF_HOUR"))
 	if hourStr == "" {
 		h.logger().Info("jarvis morning brief disabled (LANTERN_JARVIS_BRIEF_HOUR unset)")
 		return
@@ -470,7 +470,7 @@ func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
 		h.logger().Warn("invalid LANTERN_JARVIS_BRIEF_HOUR — disabling brief push", zap.String("value", hourStr))
 		return
 	}
-	tenantID := getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+	tenantID := getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001")
 	h.logger().Info("jarvis morning brief scheduled", zap.Int("hour", hour))
 
 	ticker := time.NewTicker(10 * time.Minute)
@@ -545,14 +545,14 @@ func (h *JarvisHandler) briefChannel() string {
 			}
 		}
 	}
-	return strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_CHANNEL")))
+	return strings.ToLower(strings.TrimSpace(os.Getenv("PAL_JARVIS_BRIEF_CHANNEL")))
 }
 
 // twilioFromNumber resolves the SMS sending number: env override, else the
 // phoneNumber on the installed twilio connector — so SMS works without a
 // dedicated env var once the connector is configured.
 func (h *JarvisHandler) twilioFromNumber(ctx context.Context, tenantID string) string {
-	if n := strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER")); n != "" {
+	if n := strings.TrimSpace(os.Getenv("PAL_TWILIO_NUMBER")); n != "" {
 		return n
 	}
 	var cfg []byte
@@ -579,7 +579,7 @@ func (h *JarvisHandler) twilioFromNumber(ctx context.Context, tenantID string) s
 
 func (h *JarvisHandler) sendBriefSMS(ctx context.Context, tenantID, brief string) bool {
 	from := h.twilioFromNumber(ctx, tenantID)
-	owner := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	owner := strings.TrimSpace(os.Getenv("PAL_OWNER_PHONE"))
 	if from == "" || owner == "" {
 		return false
 	}
@@ -596,7 +596,7 @@ func (h *JarvisHandler) sendBriefSMS(ctx context.Context, tenantID, brief string
 }
 
 func (h *JarvisHandler) sendBriefEmail(ctx context.Context, tenantID, brief string) bool {
-	owner := strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL"))
+	owner := strings.TrimSpace(os.Getenv("PAL_OWNER_EMAIL"))
 	if owner == "" {
 		return false
 	}
@@ -611,7 +611,7 @@ func (h *JarvisHandler) sendBriefEmail(ctx context.Context, tenantID, brief stri
 // sendBriefWhatsApp posts the brief to the owner's WhatsApp self-chat via
 // the bridge's send-self endpoint. Returns true on a 2xx.
 func (h *JarvisHandler) sendBriefWhatsApp(ctx context.Context, tenantID, brief string) bool {
-	bridgeURL := getEnvOr("LANTERN_BRIDGE_URL", "http://localhost:3100")
+	bridgeURL := getEnvOr("PAL_BRIDGE_URL", "http://localhost:3100")
 	payload := `{"message":` + strconv.Quote("🌅 *Morning brief*\n\n"+brief) + `}`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(bridgeURL, "/")+"/session/"+tenantID+"/send-self", strings.NewReader(payload))

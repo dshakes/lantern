@@ -20,17 +20,17 @@ import {
 import { synthesizeSpeech } from "./call-orchestrator.ts";
 
 const FULL_ENV = {
-  LANTERN_VOICE_CLONE: "1",
-  LANTERN_ELEVENLABS_API_KEY: "sk-secret-key",
-  LANTERN_ELEVENLABS_VOICE_ID: "voice-abc",
+  PAL_VOICE_CLONE: "1",
+  PAL_ELEVENLABS_API_KEY: "sk-secret-key",
+  PAL_ELEVENLABS_VOICE_ID: "voice-abc",
 } as NodeJS.ProcessEnv;
 
 // ── resolveVoiceCloneConfig / isVoiceCloneEnabled ──────────────────
 
 test("gate CLOSED when LANTERN_VOICE_CLONE unset, even with key+voice", () => {
   const env = {
-    LANTERN_ELEVENLABS_API_KEY: "sk-secret-key",
-    LANTERN_ELEVENLABS_VOICE_ID: "voice-abc",
+    PAL_ELEVENLABS_API_KEY: "sk-secret-key",
+    PAL_ELEVENLABS_VOICE_ID: "voice-abc",
   } as NodeJS.ProcessEnv;
   assert.equal(resolveVoiceCloneConfig(env), null);
   assert.equal(isVoiceCloneEnabled(env), false);
@@ -38,16 +38,16 @@ test("gate CLOSED when LANTERN_VOICE_CLONE unset, even with key+voice", () => {
 
 test("gate CLOSED when flag on but API key missing", () => {
   const env = {
-    LANTERN_VOICE_CLONE: "1",
-    LANTERN_ELEVENLABS_VOICE_ID: "voice-abc",
+    PAL_VOICE_CLONE: "1",
+    PAL_ELEVENLABS_VOICE_ID: "voice-abc",
   } as NodeJS.ProcessEnv;
   assert.equal(resolveVoiceCloneConfig(env), null);
 });
 
 test("gate CLOSED when flag on but voice id missing", () => {
   const env = {
-    LANTERN_VOICE_CLONE: "1",
-    LANTERN_ELEVENLABS_API_KEY: "sk-secret-key",
+    PAL_VOICE_CLONE: "1",
+    PAL_ELEVENLABS_API_KEY: "sk-secret-key",
   } as NodeJS.ProcessEnv;
   assert.equal(resolveVoiceCloneConfig(env), null);
 });
@@ -62,9 +62,9 @@ test("gate OPEN only when all three present", () => {
 
 test("legacy LANTERN_ELEVENLABS_KEY alias is accepted", () => {
   const env = {
-    LANTERN_VOICE_CLONE: "1",
-    LANTERN_ELEVENLABS_KEY: "sk-legacy",
-    LANTERN_ELEVENLABS_VOICE_ID: "voice-abc",
+    PAL_VOICE_CLONE: "1",
+    PAL_ELEVENLABS_KEY: "sk-legacy",
+    PAL_ELEVENLABS_VOICE_ID: "voice-abc",
   } as NodeJS.ProcessEnv;
   const cfg = resolveVoiceCloneConfig(env);
   assert.ok(cfg);
@@ -73,14 +73,14 @@ test("legacy LANTERN_ELEVENLABS_KEY alias is accepted", () => {
 
 test("flag accepts 1/true/on; rejects 0/off/garbage", () => {
   const base = {
-    LANTERN_ELEVENLABS_API_KEY: "k",
-    LANTERN_ELEVENLABS_VOICE_ID: "v",
+    PAL_ELEVENLABS_API_KEY: "k",
+    PAL_ELEVENLABS_VOICE_ID: "v",
   };
   for (const v of ["1", "true", "on", "TRUE", "On"]) {
-    assert.ok(resolveVoiceCloneConfig({ ...base, LANTERN_VOICE_CLONE: v } as NodeJS.ProcessEnv), `"${v}" should enable`);
+    assert.ok(resolveVoiceCloneConfig({ ...base, PAL_VOICE_CLONE: v } as NodeJS.ProcessEnv), `"${v}" should enable`);
   }
   for (const v of ["0", "off", "no", "", "yes-ish"]) {
-    assert.equal(resolveVoiceCloneConfig({ ...base, LANTERN_VOICE_CLONE: v } as NodeJS.ProcessEnv), null, `"${v}" should NOT enable`);
+    assert.equal(resolveVoiceCloneConfig({ ...base, PAL_VOICE_CLONE: v } as NodeJS.ProcessEnv), null, `"${v}" should NOT enable`);
   }
 });
 

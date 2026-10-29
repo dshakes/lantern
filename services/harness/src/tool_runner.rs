@@ -857,9 +857,9 @@ fn broker_ca_cert() -> Option<reqwest::Certificate> {
     // the new incarnation's CA; the boot env would still hold the old one.
     let pem = std::fs::read_to_string(crate::egress::BROKER_CA_FILE)
         .ok()
-        .or_else(|| std::env::var("LANTERN_EGRESS_CA_PEM").ok());
+        .or_else(|| pal_env::var("PAL_EGRESS_CA_PEM").ok());
     broker_ca_from(
-        std::env::var("LANTERN_EGRESS_MODE").ok().as_deref(),
+        pal_env::var("PAL_EGRESS_MODE").ok().as_deref(),
         pem.as_deref(),
     )
 }

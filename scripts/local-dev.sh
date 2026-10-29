@@ -250,8 +250,8 @@ mode_kind() {
     header "Building Docker images"
     local images=(
         "lantern-control-plane:${REPO_ROOT}/services/control-plane:${REPO_ROOT}"
-        "lantern-gateway:${REPO_ROOT}/services/gateway:${REPO_ROOT}/services/gateway"
-        "lantern-model-router:${REPO_ROOT}/services/model-router:${REPO_ROOT}/services/model-router"
+        "lantern-gateway:${REPO_ROOT}/services/gateway:${REPO_ROOT}"
+        "lantern-model-router:${REPO_ROOT}/services/model-router:${REPO_ROOT}"
         "lantern-web:${REPO_ROOT}/apps/web:${REPO_ROOT}/apps/web"
     )
 

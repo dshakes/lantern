@@ -70,7 +70,7 @@ func NewIdentityHandler(srv *server.Server, auth *AuthHandler, llm *LlmProxyHand
 var embedSem = make(chan struct{}, embedConcurrency())
 
 func embedConcurrency() int {
-	if v := strings.TrimSpace(os.Getenv("LANTERN_EMBED_CONCURRENCY")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PAL_EMBED_CONCURRENCY")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 32 {
 			return n
 		}

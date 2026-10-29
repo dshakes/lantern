@@ -131,14 +131,14 @@ func TestEnterRawModeNoopsOnNonTerminal(t *testing.T) {
 // --- manager address resolution --------------------------------------------------
 
 func TestResolveManagerAddrPrecedence(t *testing.T) {
-	t.Setenv("LANTERN_MANAGER_ADDR", "env-host:50054")
+	t.Setenv("PAL_MANAGER_ADDR", "env-host:50054")
 	if got := resolveManagerAddr("flag-host:50054"); got != "flag-host:50054" {
 		t.Fatalf("flag must win, got %q", got)
 	}
 	if got := resolveManagerAddr(""); got != "env-host:50054" {
 		t.Fatalf("env must be next, got %q", got)
 	}
-	t.Setenv("LANTERN_MANAGER_ADDR", "")
+	t.Setenv("PAL_MANAGER_ADDR", "")
 	if got := resolveManagerAddr(""); got != defaultManagerAddr {
 		t.Fatalf("default must be last, got %q", got)
 	}

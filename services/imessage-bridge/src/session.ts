@@ -542,20 +542,20 @@ function localPlus30(startIso: string): string {
 // and the bot resumes ~5 min after the owner goes quiet — per-thread, never
 // silencing other contacts. Explicit handoffs use the longer window below.
 const PAUSE_DURATION_MS =
-  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 5) * 60_000;
+  Math.max(1, Number(process.env.PAL_AGENT_PAUSE_MIN) || 5) * 60_000;
 // Longer pause when the owner's manual message is an explicit handoff/
 // commitment ("I'll call you this evening", "human here") — a flat 60-min
 // pause let the bot barge back into a thread the owner said they'd handle.
 // Default 12h; override via LANTERN_AGENT_HANDOFF_PAUSE_HOURS (shared with WA).
 const HANDOFF_PAUSE_MS =
-  Math.max(1, Number(process.env.LANTERN_AGENT_HANDOFF_PAUSE_HOURS) || 12) * 60 * 60_000;
+  Math.max(1, Number(process.env.PAL_AGENT_HANDOFF_PAUSE_HOURS) || 12) * 60 * 60_000;
 const HISTORY_DEPTH = 20; // per-contact inbound message ring buffer
 // Per-contact depth of the owner's OWN sent messages kept as verbatim
 // few-shot voice samples + style-fingerprint signal. Deeper than inbound
 // history so frequent contacts carry enough authentic voice to mimic;
 // still bounded so memory stays flat across many contacts.
 const OWNER_SENT_DEPTH = 30;
-const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
+const OWNER_NAME = process.env.PAL_OWNER_NAME || "the owner";
 
 // One channel's recent thread for a person — the unit exchanged between bridges
 // over loopback so "what did X say" answers identically on both.
@@ -605,7 +605,7 @@ export class IMessageSession {
   // authentic auto-reply. Seeded from LANTERN_DRAFT_APPROVALS env on
   // first boot; persisted on disk so phone commands stick.
   private draftApprovalsEnabled =
-    (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+    (process.env.PAL_DRAFT_APPROVALS || "").toLowerCase() === "on";
   // Panic-channels master switch (Pushover siren + Twilio voice +
   // macOS notif). Default ON. Primary alerts (WA self / iMessage
   // self / email) always fire on life-threat regardless of this.
@@ -670,7 +670,7 @@ export class IMessageSession {
       const lines = transcript.split("\n").filter(Boolean).length;
       const inboundCount = (this.inboundHistory.get(handle) ?? []).length;
       if (!shouldInferRelationship(cached, lines, inboundCount)) return cached;
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const ownerName = (process.env.PAL_OWNER_NAME || "the owner").split(/\s+/)[0];
       const knownLabels = [...new Set([...(this.ownerProfileStore.get()?.relationships.values() ?? [])])];
       const raw = await this.agent.respondTo(`${handle}::relationship`, relationshipInferPrompt({ ownerName, contactName, transcript, knownLabels }), undefined, { withTools: false, timeoutMs: 12_000 });
       const parsed = parseRelationshipInference(raw);
@@ -691,7 +691,7 @@ export class IMessageSession {
     }
   }
   private getVoiceModel(): VoiceModel | null {
-    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_FLOOR ?? "")) return null;
+    if (/^(0|off|false)$/i.test(process.env.PAL_VOICE_FLOOR ?? "")) return null;
     if (this.ownerVoiceGlobal.length !== this.voiceModelN) {
       this.voiceModelN = this.ownerVoiceGlobal.length;
       this.voiceModel = fitVoiceModel(this.ownerVoiceGlobal);
@@ -705,11 +705,11 @@ export class IMessageSession {
   // really sent. Accepted only when measurably not further from the owner's
   // voice AND clean on the bot-tell guard; otherwise the draft stands.
   private async refineToOwnerVoice(jid: string, draft: string, inbound: string, botTellCtx: BotTellContext): Promise<string> {
-    if (/^(0|off|false)$/i.test(process.env.LANTERN_VOICE_REFINE ?? "")) return draft;
+    if (/^(0|off|false)$/i.test(process.env.PAL_VOICE_REFINE ?? "")) return draft;
     try {
       const exemplars = ownerVoiceExemplars(this.ownerVoiceGlobal.map((text) => ({ text })), { max: 5, relevantTo: draft });
       if (exemplars.length < 3) return draft;
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "the owner").split(/\s+/)[0];
+      const ownerName = (process.env.PAL_OWNER_NAME || "the owner").split(/\s+/)[0];
       const raw = await this.agent.respondTo(`${jid}::refine`, buildRefinePrompt({ ownerName, draft, inbound, exemplars }), undefined, { withTools: false, timeoutMs: 15_000 });
       const refined = parseRefine(raw, draft);
       if (!refined || refined === draft) return draft;
@@ -740,12 +740,12 @@ export class IMessageSession {
   private selfChatReplyTimes: number[] = [];
   private selfChatBreakerNotifiedAt = 0;
   private static readonly SELFCHAT_WINDOW_MS =
-    Number(process.env.LANTERN_SELFCHAT_WINDOW_MS) > 0
-      ? Number(process.env.LANTERN_SELFCHAT_WINDOW_MS)
+    Number(process.env.PAL_SELFCHAT_WINDOW_MS) > 0
+      ? Number(process.env.PAL_SELFCHAT_WINDOW_MS)
       : 120_000;
   private static readonly SELFCHAT_MAX_REPLIES =
-    Number(process.env.LANTERN_SELFCHAT_MAX_REPLIES) > 0
-      ? Number(process.env.LANTERN_SELFCHAT_MAX_REPLIES)
+    Number(process.env.PAL_SELFCHAT_MAX_REPLIES) > 0
+      ? Number(process.env.PAL_SELFCHAT_MAX_REPLIES)
       : 12;
 
   // Last non-empty handle we saw on an isFromMe row. iMessage's
@@ -777,15 +777,15 @@ export class IMessageSession {
   // a 60-min window let aged sends slip through and the bot replied to itself,
   // flooding the self-chat. 24h covers any realistic echo/aging lag.
   private static readonly BRIDGE_SEND_DEDUP_MS =
-    Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS) > 0
-      ? Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS)
+    Number(process.env.PAL_BRIDGE_SEND_DEDUP_MS) > 0
+      ? Number(process.env.PAL_BRIDGE_SEND_DEDUP_MS)
       : 24 * 60 * 60_000;
   // 2000 entries (was 500): on a busy day the bot easily sends >500 messages;
   // a count cap below the day's volume evicts older sends before the TTL and
   // reopens the same loop. Short strings — 2000 is cheap to keep + persist.
   private static readonly BRIDGE_SEND_MAX_ENTRIES =
-    Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES) > 0
-      ? Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES)
+    Number(process.env.PAL_BRIDGE_SEND_MAX_ENTRIES) > 0
+      ? Number(process.env.PAL_BRIDGE_SEND_MAX_ENTRIES)
       : 2000;
   private bridgeSendsPersistPath: string = "";
   private bridgeSendsDirty: boolean = false;
@@ -845,8 +845,8 @@ export class IMessageSession {
   private quietReplayInFlight = false;
   // Cap so a flood of overnight messages can't unbounded-grow the file.
   private static readonly QUIET_QUEUE_MAX =
-    Number(process.env.LANTERN_QUIET_QUEUE_MAX) > 0
-      ? Number(process.env.LANTERN_QUIET_QUEUE_MAX)
+    Number(process.env.PAL_QUIET_QUEUE_MAX) > 0
+      ? Number(process.env.PAL_QUIET_QUEUE_MAX)
       : 200;
   // Per-handle daily-dedup of "what did we already replay" — defends a
   // restart mid-drain from re-replaying an entry the file still holds.
@@ -857,12 +857,12 @@ export class IMessageSession {
   // to [floor, ceil] so the gap is believable without dragging the whole
   // drain past quiet hours. Overridable per-deployment.
   private static readonly QUIET_REPLAY_GAP_FLOOR_MS =
-    Number(process.env.LANTERN_QUIET_REPLAY_GAP_FLOOR_MS) > 0
-      ? Number(process.env.LANTERN_QUIET_REPLAY_GAP_FLOOR_MS)
+    Number(process.env.PAL_QUIET_REPLAY_GAP_FLOOR_MS) > 0
+      ? Number(process.env.PAL_QUIET_REPLAY_GAP_FLOOR_MS)
       : 25_000; // ~25s minimum between backlog replies
   private static readonly QUIET_REPLAY_GAP_CEIL_MS =
-    Number(process.env.LANTERN_QUIET_REPLAY_GAP_CEIL_MS) > 0
-      ? Number(process.env.LANTERN_QUIET_REPLAY_GAP_CEIL_MS)
+    Number(process.env.PAL_QUIET_REPLAY_GAP_CEIL_MS) > 0
+      ? Number(process.env.PAL_QUIET_REPLAY_GAP_CEIL_MS)
       : 4 * 60_000; // ~4min maximum between backlog replies
 
   // Per-chat concurrency lock. A single doc-query / natural-chat
@@ -1045,8 +1045,8 @@ export class IMessageSession {
   private watchStore: WatchStore | null = null;
   private watchTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly LIVE_WATCH_ENABLED =
-    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "0" &&
-    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "off";
+    (process.env.PAL_LIVE_WATCH ?? "on").toLowerCase() !== "0" &&
+    (process.env.PAL_LIVE_WATCH ?? "on").toLowerCase() !== "off";
   private static readonly WATCH_TICK_MS = 5 * 60_000; // due-check granularity
 
   // DRAFT-AND-CONFIRM (high-stakes) — held contact drafts awaiting a
@@ -1096,18 +1096,18 @@ export class IMessageSession {
   // targeted foreign-language `forceDraftCaution` and the PII/injection
   // refusals still hold their replies independently.
   private static readonly DRAFT_CONFIRM_DEFAULT =
-    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "on" ||
-    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "1";
+    (process.env.PAL_DRAFT_CONFIRM || "").toLowerCase() === "on" ||
+    (process.env.PAL_DRAFT_CONFIRM || "").toLowerCase() === "1";
 
   // 4) Concierge edge — task-capture + nudge + 1-click resolution.
   //    DEFAULT OFF. Set LANTERN_CONCIERGE=on to enable.
   // ponytail: ships dark; owner flips LANTERN_CONCIERGE=on to enable.
   private static readonly CONCIERGE_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_CONCIERGE ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_CONCIERGE ?? "").toLowerCase());
   // Spouse-nudge-agent: agentic handling of the inner circle's action items
   // (todos + calendar + owner heads-up). Default ON (owner asked for it).
   private static readonly SPOUSE_AGENT_ENABLED =
-    !["off", "0", "false"].includes((process.env.LANTERN_SPOUSE_AGENT ?? "on").toLowerCase());
+    !["off", "0", "false"].includes((process.env.PAL_SPOUSE_AGENT ?? "on").toLowerCase());
   private static readonly CONCIERGE_INTERVAL_MS = 35 * 60_000; // 35 min poll
   private conciergeTimer: ReturnType<typeof setInterval> | null = null;
   // Pending 1-click nudges: commitment id → nudge entry. Owner's reply within
@@ -1123,7 +1123,7 @@ export class IMessageSession {
   // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
   // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
   private static readonly COMMUTE_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_COMMUTE ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_COMMUTE ?? "").toLowerCase());
   private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
   private commuteTimer: ReturnType<typeof setInterval> | null = null;
   private commuteDriveFired = false;
@@ -1131,7 +1131,7 @@ export class IMessageSession {
   // Proactive "top AI drops": push only high-signal news, deduped, quiet-hours
   // aware. ON by default (the owner asked for proactive news); LANTERN_NEWS_PROACTIVE=off to silence.
   private static readonly NEWS_PROACTIVE_ENABLED =
-    !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
+    !["off", "0", "false"].includes((process.env.PAL_NEWS_PROACTIVE ?? "on").toLowerCase());
   private static readonly NEWS_PROACTIVE_INTERVAL_MS = 12 * 60_000; // ~12 min — near-real-time major-release alerts
   private newsTimer: ReturnType<typeof setInterval> | null = null;
   private newsPushed = new Set<string>();
@@ -1150,14 +1150,14 @@ export class IMessageSession {
   // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
   // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
   private static readonly ENERGY_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_ENERGY ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_ENERGY ?? "").toLowerCase());
   private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD
   // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
   // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
   private static readonly HEALTH_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_HEALTH ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_HEALTH ?? "").toLowerCase());
   private static readonly HEALTH_INTERVAL_MS = 60 * 60_000; // 60 min
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private healthNudgedDate = ""; // YYYY-MM-DD
@@ -1166,7 +1166,7 @@ export class IMessageSession {
   // ponytail: ships dark; owner flips LANTERN_FOCUS=on to enable.
   // Holds non-urgent owner nudges during heads-down focus; recaps on release.
   private static readonly FOCUS_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_FOCUS ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_FOCUS ?? "").toLowerCase());
   private focusWasActive = false; // updated each health + anticipation tick
   private focusHeldItems: string[] = []; // nudge texts buffered during focus
   private focusActiveStartMs: number | null = null; // for duration calc
@@ -1176,7 +1176,7 @@ export class IMessageSession {
   // structured records to /v1/domain-records. Owner-only; path-gated.
   // ponytail: ships dark; owner flips LANTERN_DOC_INGEST=on to enable.
   private static readonly DOC_INGEST_ENABLED =
-    ["on", "1"].includes((process.env.LANTERN_DOC_INGEST ?? "").toLowerCase());
+    ["on", "1"].includes((process.env.PAL_DOC_INGEST ?? "").toLowerCase());
   private static readonly DOC_INGEST_INTERVAL_MS = 24 * 60 * 60_000; // 24h
   private docIngestTimer: ReturnType<typeof setInterval> | null = null;
   private readonly docIngestClient = new DomainRecordsClient(authedFetch);
@@ -1227,7 +1227,7 @@ export class IMessageSession {
     this.db = new ChatDB(this.logger);
     this.sender = new IMessageSender(this.logger);
     this.agent = new AgentClient(this.logger, {
-      agentName: process.env.LANTERN_IMESSAGE_AGENT_NAME || process.env.LANTERN_AGENT_NAME || "imessage-assistant",
+      agentName: process.env.PAL_IMESSAGE_AGENT_NAME || process.env.PAL_AGENT_NAME || "imessage-assistant",
       sessionsFile: join(this.stateDir, "agent_sessions.json"),
     });
     this.media = new MediaHandler(this.logger, () => this.ownerProfileStore.nativity());
@@ -1274,9 +1274,9 @@ export class IMessageSession {
           const { fileURLToPath } = await import("url");
           const here = fileURLToPath(import.meta.url);
           const ocrScript =
-            process.env.LANTERN_OCR_SCRIPT ||
+            process.env.PAL_OCR_SCRIPT ||
             join(here, "..", "..", "..", "..", "scripts", "ocr", "vision-ocr.py");
-          const py = process.env.LANTERN_OCR_PYTHON || "/usr/bin/python3";
+          const py = process.env.PAL_OCR_PYTHON || "/usr/bin/python3";
           return await new Promise<string>((resolve) => {
             const proc = spawn(py, [ocrScript, pngPath]);
             let out = "";
@@ -1368,11 +1368,11 @@ export class IMessageSession {
     if (this.configSummaryLogged) return;
     this.configSummaryLogged = true;
     const has = (v: string | undefined) => !!(v && v.trim());
-    const ownerHandle = has(process.env.LANTERN_IMESSAGE_OWNER_HANDLE);
-    const docsRoots = has(process.env.LANTERN_PERSONAL_DOCS_ROOTS);
-    const calendar = has(process.env.LANTERN_DEFAULT_CALENDAR);
-    const ownerName = has(process.env.LANTERN_OWNER_NAME);
-    const tz = has(process.env.LANTERN_OWNER_TIMEZONE);
+    const ownerHandle = has(process.env.PAL_IMESSAGE_OWNER_HANDLE);
+    const docsRoots = has(process.env.PAL_PERSONAL_DOCS_ROOTS);
+    const calendar = has(process.env.PAL_DEFAULT_CALENDAR);
+    const ownerName = has(process.env.PAL_OWNER_NAME);
+    const tz = has(process.env.PAL_OWNER_TIMEZONE);
     const summary = {
       // Self-chat detection (owner messages themselves on the same Apple ID)
       // works WITHOUT the handle — that's a valid topology, not a misconfig.
@@ -1460,7 +1460,7 @@ export class IMessageSession {
         ]);
 
         const overdue = this.gatherAwaitingReply(now);
-        const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
+        const ownerName = (process.env.PAL_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
         const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, false);
 
         const data = {
@@ -1540,7 +1540,7 @@ export class IMessageSession {
     const norm = (s: string) => (s || "").toLowerCase().replace(/[^a-z0-9@.]/g, "");
     const t = norm(to);
     if (!t) return false;
-    const env = norm(process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "");
+    const env = norm(process.env.PAL_IMESSAGE_OWNER_HANDLE || "");
     if (env && t === env) return true;
     const self = norm(this.ownerSelfChatTarget());
     return !!self && t === self;
@@ -1784,7 +1784,7 @@ export class IMessageSession {
   // each NEW one (deduped on disk, quiet-hours-respecting, capped).
   private startAnticipationNudges(): void {
     if (this.nudgeTimer) return;
-    if ((process.env.LANTERN_PROACTIVE_NUDGES || "1") === "0") {
+    if ((process.env.PAL_PROACTIVE_NUDGES || "1") === "0") {
       this.logger.info("anticipation nudges disabled (LANTERN_PROACTIVE_NUDGES=0)");
       return;
     }
@@ -1860,7 +1860,7 @@ export class IMessageSession {
             const followUp = await composeWatchFollowUp({
               watch: w,
               summary: result.summary,
-              ownerName: (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0],
+              ownerName: (process.env.PAL_OWNER_NAME || "Ada").split(/\s+/)[0],
               llmCall: async (p) => (await this.agent.respondTo(`${w.jid}::watchfollowup`, p, "", { withTools: false })) || "",
             });
             const tell = followUp ? detectBotTells(followUp, w.topic) : { ok: false as const, reason: "empty follow-up" };
@@ -1962,7 +1962,7 @@ export class IMessageSession {
       // Daily news digest: once per day at/after the digest hour (default 9am
       // owner-local), push a top-8 cross-source roundup. Persisted to a sibling
       // file so a same-day restart doesn't re-send it.
-      const digestHour = parseInt(process.env.LANTERN_NEWS_DIGEST_HOUR ?? "9", 10);
+      const digestHour = parseInt(process.env.PAL_NEWS_DIGEST_HOUR ?? "9", 10);
       const now = new Date();
       const ymd = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
       const digestDayPath = this.newsPushedPath.replace(/[^/]+$/, "news-digest-day.txt");
@@ -2149,7 +2149,7 @@ export class IMessageSession {
       }
 
       // ── Daily step-goal / workout nudge ───────────────────────────────────
-      const stepGoal = parseInt(process.env.LANTERN_STEP_GOAL || "", 10) || 8000;
+      const stepGoal = parseInt(process.env.PAL_STEP_GOAL || "", 10) || 8000;
       const nudge = computeHealthCoachNudge(signals, {
         alreadyNudgedToday: this.healthNudgedDate === today,
         hour,
@@ -2305,11 +2305,11 @@ export class IMessageSession {
   // re-auth warning then backs off (never spams); network blips retry next tick.
   private startGmailIngest(): void {
     if (this.gmailIngestTimer) return;
-    if ((process.env.LANTERN_GMAIL_INGEST || "off").toLowerCase() !== "on") {
+    if ((process.env.PAL_GMAIL_INGEST || "off").toLowerCase() !== "on") {
       this.logger.info("gmail ingestion disabled (set LANTERN_GMAIL_INGEST=on after re-authing Google)");
       return;
     }
-    const sec = Math.max(60, parseInt(process.env.LANTERN_GMAIL_POLL_SEC || "", 10) || IMessageSession.GMAIL_INGEST_DEFAULT_SEC);
+    const sec = Math.max(60, parseInt(process.env.PAL_GMAIL_POLL_SEC || "", 10) || IMessageSession.GMAIL_INGEST_DEFAULT_SEC);
     const t = setInterval(() => {
       void this.runGmailIngestTick();
     }, sec * 1000);
@@ -2378,13 +2378,13 @@ export class IMessageSession {
   // reader fails closed (no FDA / missing DB / schema drift → empty, no crash).
   private startMacUsage(): void {
     if (this.macUsageTimer) return;
-    if ((process.env.LANTERN_MAC_USAGE || "off").toLowerCase() !== "on") {
+    if ((process.env.PAL_MAC_USAGE || "off").toLowerCase() !== "on") {
       this.logger.info("mac app-usage signal disabled (set LANTERN_MAC_USAGE=on to enable; owner-only)");
       return;
     }
     const sec = Math.max(
       60,
-      parseInt(process.env.LANTERN_MAC_USAGE_SEC || "", 10) || IMessageSession.MAC_USAGE_DEFAULT_SEC,
+      parseInt(process.env.PAL_MAC_USAGE_SEC || "", 10) || IMessageSession.MAC_USAGE_DEFAULT_SEC,
     );
     const t = setInterval(() => {
       void this.runMacUsageTick();
@@ -2560,13 +2560,13 @@ export class IMessageSession {
   // LANTERN_IPHONE_SIGNALS=off. The reader fails closed (missing file → empty).
   private startIphoneSignals(): void {
     if (this.iphoneSignalsTimer) return;
-    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") {
+    if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() === "off") {
       this.logger.info("iPhone app-context signal disabled (LANTERN_IPHONE_SIGNALS=off)");
       return;
     }
     const sec = Math.max(
       60,
-      parseInt(process.env.LANTERN_IPHONE_SIGNALS_SEC || "", 10) ||
+      parseInt(process.env.PAL_IPHONE_SIGNALS_SEC || "", 10) ||
         IMessageSession.IPHONE_SIGNALS_DEFAULT_SEC,
     );
     const t = setInterval(() => {
@@ -2604,7 +2604,7 @@ export class IMessageSession {
   // (or LANTERN_IPHONE_SIGNALS=off) falls back to the last-known cached line so
   // a transient empty read never blanks the context. Never throws.
   private async freshIphoneSignalsLine(): Promise<string> {
-    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") return "";
+    if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() === "off") return "";
     try {
       const { readDeviceSignalsSummary } = await import("./device-signals-reader.js");
       const summary = readDeviceSignalsSummary(this.logger);
@@ -2624,7 +2624,7 @@ export class IMessageSession {
   // when disabled or no usable signal (caller falls back to macOS Focus /
   // calendar / free). Never throws.
   private async contactIphonePresence(): Promise<import("@lantern/bridge-core/device-signals").SignalPresence | null> {
-    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") return null;
+    if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() === "off") return null;
     try {
       const { readDevicePresence } = await import("./device-signals-reader.js");
       return readDevicePresence(this.logger);
@@ -2966,8 +2966,8 @@ export class IMessageSession {
   private worldModelLastRunAt = 0;
 
   private maybeRefreshWorldModel(target: string, now: number): void {
-    if ((process.env.LANTERN_WORLD_MODEL || "1") === "0") return;
-    const hours = Math.max(1, Number(process.env.LANTERN_WORLD_MODEL_HOURS) || 6);
+    if ((process.env.PAL_WORLD_MODEL || "1") === "0") return;
+    const hours = Math.max(1, Number(process.env.PAL_WORLD_MODEL_HOURS) || 6);
     if (this.worldModelLastRunAt === 0) {
       try {
         const st = JSON.parse(readFileSync(join(this.stateDir, "world-model.json"), "utf8")) as { lastRunAt?: number };
@@ -2982,7 +2982,7 @@ export class IMessageSession {
     if (this.worldModelInFlight) return;
     this.worldModelInFlight = true;
     try {
-      const todayISO = localISODate(new Date(), process.env.LANTERN_OWNER_TIMEZONE || undefined);
+      const todayISO = localISODate(new Date(), process.env.PAL_OWNER_TIMEZONE || undefined);
       const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
       const mail = listRecentMail(since, 80, this.logger);
       const mailLines = mail.ok ? mail.hits.map((h) => `${h.date} · ${h.from} · ${h.subject}`) : [];
@@ -2995,7 +2995,7 @@ export class IMessageSession {
       // are the highest authority ("opening moved to the 18th"); a friend
       // asking "still on for the 18th?" is evidence too. The bot's own
       // replies are excluded by construction — they may be the stale claim.
-      const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+      const ownerEnv = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
       const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9@.]/g, "");
       const imRows = this.db.recentMessagesSince({ sinceDays: 7, limit: 1500 }).map((r) => ({
         ...r,
@@ -3004,9 +3004,9 @@ export class IMessageSession {
       const imEv = imessageEvidence(imRows, { nameFor: (h) => this.contactNames.get(h) || h });
       let waEv = { selfChat: [] as string[], threads: [] as string[] };
       try {
-        const waFile = process.env.LANTERN_WA_HISTORY_FILE || join(process.cwd(), "..", "whatsapp-bridge", "auth_sessions", this.tenantId, "wa-history.jsonl");
+        const waFile = process.env.PAL_WA_HISTORY_FILE || join(process.cwd(), "..", "whatsapp-bridge", "auth_sessions", this.tenantId, "wa-history.jsonl");
         if (existsSync(waFile)) {
-          waEv = waHistoryEvidence(readFileSync(waFile, "utf8"), { sinceMs: Date.now() - 7 * 86_400_000, ownerJid: process.env.LANTERN_WA_OWNER_JID });
+          waEv = waHistoryEvidence(readFileSync(waFile, "utf8"), { sinceMs: Date.now() - 7 * 86_400_000, ownerJid: process.env.PAL_WA_OWNER_JID });
         }
       } catch { /* WhatsApp history is optional evidence */ }
       const chat = mergeEvidence(imEv, waEv);
@@ -3017,7 +3017,7 @@ export class IMessageSession {
       const profile = this.ownerProfileStore.get();
       const inputs = {
         todayISO,
-        ownerName: process.env.LANTERN_OWNER_NAME?.trim() || "the owner",
+        ownerName: process.env.PAL_OWNER_NAME?.trim() || "the owner",
         mailLines,
         calendarBlock,
         selfChatLines: chat.selfChat,
@@ -3051,7 +3051,7 @@ export class IMessageSession {
 
   /** Closes open commitments the owner's own recent messages/actions show are done (≤ once / ~6h; cadence persisted in commitment-ledger.json). */
   private async maybeJudgeCommitments(target: string, now: number): Promise<void> {
-    if ((process.env.LANTERN_COMMITMENT_LEDGER || "1") === "0" || this.commitJudgeInFlight) return;
+    if ((process.env.PAL_COMMITMENT_LEDGER || "1") === "0" || this.commitJudgeInFlight) return;
     this.commitJudgeInFlight = true;
     try {
       await runCommitmentJudgment({
@@ -3059,7 +3059,7 @@ export class IMessageSession {
         stateFile: join(this.stateDir, "commitment-ledger.json"),
         now,
         gatherEvidence: () => {
-          const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+          const ownerEnv = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
           const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9@.]/g, "");
           const rows = this.db.recentMessagesSince({ sinceDays: 3, limit: 800 }).map((r) => ({
             ...r,
@@ -3080,7 +3080,7 @@ export class IMessageSession {
   }
 
   private maybeRunEventScout(target: string, now: number): void {
-    if ((process.env.LANTERN_EVENT_SCOUT || "1") === "0") return;
+    if ((process.env.PAL_EVENT_SCOUT || "1") === "0") return;
     const st = this.ensureScoutState();
     // Remind about events that are ACTUALLY APPROACHING, independently of the
     // weekly scan. Discovery and reminding were the same event before, so an
@@ -3145,7 +3145,7 @@ export class IMessageSession {
       let batchesFailed = 0;
       for (let i = 0; i < batches.length; i++) {
         const prompt = buildScoutPrompt(st, new Date(), batches[i]);
-        this.scoutAgent ??= new AgentClient(this.logger, { agentName: process.env.LANTERN_EVENT_SCOUT_AGENT || "event-scout" });
+        this.scoutAgent ??= new AgentClient(this.logger, { agentName: process.env.PAL_EVENT_SCOUT_AGENT || "event-scout" });
 
         // Retry an empty batch once. The observed failure is an SSE
         // AbortError mid-stream — transient, and exactly what a retry is for.
@@ -3311,7 +3311,7 @@ export class IMessageSession {
     if (!request) return false;
     void (async () => {
       try {
-        const prompt = buildSkillSpecPrompt(request, new Date(), process.env.LANTERN_OWNER_TIMEZONE);
+        const prompt = buildSkillSpecPrompt(request, new Date(), process.env.PAL_OWNER_TIMEZONE);
         const raw = (await this.agent.respondTo("skillforge::spec", prompt, "Return only valid JSON. No prose.", { timeoutMs: 30_000 })) || "";
         const spec = parseSkillSpec(raw);
         if (!spec) {
@@ -3334,7 +3334,7 @@ export class IMessageSession {
   private maybeRunSkills(target: string, now: number): void {
     const st = this.ensureSkillState();
     if (st.skills.length === 0) return;
-    const tz = process.env.LANTERN_OWNER_TIMEZONE;
+    const tz = process.env.PAL_OWNER_TIMEZONE;
     const due = dueSkills(st, new Date(now), tz, 50);
     for (const s of due) {
       // Mark BEFORE executing: a crash mid-run must not double-fire (missing
@@ -3399,7 +3399,7 @@ export class IMessageSession {
   private async runPlanDecompose(jid: string, request: string): Promise<void> {
     const prompt = buildPlanPrompt(request, {
       now: new Date(),
-      timezone: process.env.LANTERN_OWNER_TIMEZONE,
+      timezone: process.env.PAL_OWNER_TIMEZONE,
       contacts: [...new Set(this.contactNames.values())].filter(Boolean).slice(0, 40),
     });
     let raw: string | null = null;
@@ -4251,7 +4251,7 @@ export class IMessageSession {
         } else {
           this.proactiveMuteUntil = Date.now() + hours * 3_600_000;
           try { writeFileSync(mutePath, String(this.proactiveMuteUntil), { mode: 0o600 }); } catch { /* best-effort */ }
-          const until = new Date(this.proactiveMuteUntil).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: process.env.LANTERN_OWNER_TIMEZONE || undefined });
+          const until = new Date(this.proactiveMuteUntil).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: process.env.PAL_OWNER_TIMEZONE || undefined });
           text = buildQuietAck(hours, until);
         }
       } else {
@@ -4394,7 +4394,7 @@ export class IMessageSession {
         if (isQuietHours(new Date(), defaultQuietHours())) return;
         const all = loadReminders(this.stateDir);
         if (all.length === 0) return;
-        const now = ownerLocalClock(Date.now(), process.env.LANTERN_OWNER_TIMEZONE);
+        const now = ownerLocalClock(Date.now(), process.env.PAL_OWNER_TIMEZONE);
         let changed = false;
         for (const r of all) {
           if (isDue(r, now)) {
@@ -4424,7 +4424,7 @@ export class IMessageSession {
    */
   private async runSpouseAgent(handle: string, text: string, displayName?: string): Promise<boolean> {
     try {
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "him";
+      const ownerName = (process.env.PAL_OWNER_NAME || "").split(/\s+/)[0] || "him";
       const spouseName = displayName || "your wife";
       // Her still-open items (for truthful status/done reasoning). assignedBy is
       // set to her name when we create them, so that's the filter.
@@ -4747,14 +4747,14 @@ export class IMessageSession {
   // classifier. OWNER-FACING ONLY — never targets the third-party sender.
   // Returns "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
   private async maybeIngestUnknownInbound(handle: string, text: string): Promise<"handled" | "pass"> {
-    if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
+    if ((process.env.PAL_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
     if (!handle || !text) return "pass";
     // Only UNKNOWN senders — never reclassify a saved contact / known person.
     if (this.contactNames.has(handle)) return "pass";
     if (this.ownerProfileStore.relationshipFor(handle, undefined)) return "pass";
 
     // ── LIFE-EVENT ENGINE (owner-facing) ──
-    if ((process.env.LANTERN_LIFE_EVENTS || "on").toLowerCase() !== "off") {
+    if ((process.env.PAL_LIFE_EVENTS || "on").toLowerCase() !== "off") {
       try {
         const handled = await this.surfaceLifeEvent(handle, text);
         if (handled) return "handled";
@@ -4775,7 +4775,7 @@ export class IMessageSession {
       // trip the spam heuristic (a shortlink, the word "deal"), and silencing
       // them is exactly the live-demo failure. Default = fall through to a
       // normal auto-reply. Set LANTERN_SUPPRESS_SPAM=on to restore silencing.
-      if (["on", "1"].includes((process.env.LANTERN_SUPPRESS_SPAM ?? "").toLowerCase())) {
+      if (["on", "1"].includes((process.env.PAL_SUPPRESS_SPAM ?? "").toLowerCase())) {
         this.logger.warn({ handle, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (LANTERN_SUPPRESS_SPAM on)");
         return "handled";
       }
@@ -4784,7 +4784,7 @@ export class IMessageSession {
     }
     // appointment
     this.logger.info({ handle, signals }, "ingest: appointment confirmation from unknown sender");
-    const ownerHandle = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    const ownerHandle = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
     const snippet = text.replace(/\s+/g, " ").trim().slice(0, 240);
     if (ownerHandle) {
       const offerText = `📅 Looks like an appointment text from ${handle}:\n"${snippet}"\nReply "yes" to add it to your calendar.`;
@@ -4833,7 +4833,7 @@ export class IMessageSession {
     if (!isActionableKind(event.kind)) return false; // promo/personal/other → legacy path
 
     const prefs = loadLifeEventPrefs();
-    const owner = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim() || this.ownerSelfChatTarget();
+    const owner = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim() || this.ownerSelfChatTarget();
 
     // ── AUTO-ACT LADDER ──
     // For SAFE, REVERSIBLE kinds (delivery → Deliveries note; appointment /
@@ -4841,7 +4841,7 @@ export class IMessageSession {
     // arms an undo. Money/fraud/OTP/sending are NEVER auto. Kill switch
     // (LANTERN_LIFE_EVENT_AUTOACT, default on) gates the whole ladder.
     const autoEnabled =
-      (process.env.LANTERN_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
+      (process.env.PAL_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
     const auto = autoActDecision(event, prefs, { enabled: autoEnabled });
     this.logger.info(
       { kind: event.kind, urgency: event.urgency, conf: event.confidence, autoMode: auto.mode, reason: auto.reason },
@@ -5113,7 +5113,7 @@ export class IMessageSession {
   // Apply an owner presence/status command from self-chat (set place + timer,
   // or clear), then confirm back to the owner.
   private async applyPresenceCommand(pres: PresenceCommand, replyHandle: string): Promise<void> {
-    const owner = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim() || replyHandle;
+    const owner = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim() || replyHandle;
     if (pres.action === "clear") {
       this.presence.clearOverride();
       await this.send(owner, "✅ status cleared — you're marked available again.").catch(() => {});
@@ -5285,7 +5285,7 @@ export class IMessageSession {
   // optional peer-resolved who/gender/email (when fetched by name).
   private async fetchPeerPeek(contactName: string, canon: string[]): Promise<{ messages: Array<{ ts: number; fromMe: boolean; text: string }>; who?: string; gender?: "m" | "f" | null; emailHints?: string[] }> {
     try {
-      const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+      const waBase = (process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 4000);
       try {
@@ -5361,7 +5361,7 @@ export class IMessageSession {
         tout(eventsP, [] as CalendarEventRead[]),
       ]);
       const overdue = this.gatherAwaitingReply(now).slice(0, 5);
-      const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+      const tz = process.env.PAL_OWNER_TIMEZONE || undefined;
       const sections: string[] = [];
       if (events.length) {
         sections.push("Today's calendar:");
@@ -5414,12 +5414,12 @@ export class IMessageSession {
     if (now - this.knownPeopleCache.at < 300_000 && this.knownPeopleCache.block) return this.knownPeopleCache.block;
     let block = "";
     try {
-      const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
+      const ownerFirst = (process.env.PAL_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
       // Robust self-exclusion: the owner's OWN handle by canonical match (don't
       // rely on a name substring) — the self-chat must never appear as a "person".
       const ownCanon = new Set<string>();
       const og = this.ownerSelfChatTarget(); if (og) ownCanon.add(canonicalHandle(og));
-      const envOwn = process.env.LANTERN_IMESSAGE_OWNER_HANDLE; if (envOwn) ownCanon.add(canonicalHandle(envOwn));
+      const envOwn = process.env.PAL_IMESSAGE_OWNER_HANDLE; if (envOwn) ownCanon.add(canonicalHandle(envOwn));
       const threads: Array<{ handle: string; name?: string; msgs: number; lastTs: number }> = [];
       for (const a of this.db.topActiveContacts({ sinceDays: 30, limit: 15 })) {
         if (ownCanon.has(canonicalHandle(a.handle))) continue;
@@ -5515,7 +5515,7 @@ export class IMessageSession {
    * message still gets there. Best-effort; unref'd so it never holds the process.
    */
   private scheduleDeliveryWatch(to: string, text: string): void {
-    const delayMs = Number(process.env.LANTERN_DELIVERY_WATCH_MS) || 30000;
+    const delayMs = Number(process.env.PAL_DELIVERY_WATCH_MS) || 30000;
     const t = setTimeout(() => {
       try {
         const st = this.db.recentSendStatus(to);
@@ -5541,7 +5541,7 @@ export class IMessageSession {
   // Without this, a confirmed doc silently never arrives while the owner is told
   // it did — the exact GA incident.
   private scheduleFileDeliveryWatch(to: string, filePath: string, request: string): void {
-    const delayMs = Number(process.env.LANTERN_DELIVERY_WATCH_MS) || 30000;
+    const delayMs = Number(process.env.PAL_DELIVERY_WATCH_MS) || 30000;
     const t = setTimeout(() => {
       void (async () => {
         try {
@@ -5653,7 +5653,7 @@ export class IMessageSession {
     hit: { path: string; name: string },
   ): Promise<string> {
     const ctx: DocRelayContext = {
-      ownerName: (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0] || "you",
+      ownerName: (process.env.PAL_OWNER_NAME || "").trim().split(/\s+/)[0] || "you",
       contactLabel,
       relationship: this.ownerProfileStore?.relationshipFor(contactHandle, contactLabel) || undefined,
       request,
@@ -5880,8 +5880,8 @@ export class IMessageSession {
       return { ok: false, reason: "couldn't read the file" };
     }
     const staged = await stageDownloadLink({
-      controlPlaneUrl: process.env.LANTERN_CONTROL_PLANE_URL || "http://127.0.0.1:8080",
-      serviceToken: process.env.LANTERN_GRPC_SERVICE_TOKEN,
+      controlPlaneUrl: process.env.PAL_CONTROL_PLANE_URL || "http://127.0.0.1:8080",
+      serviceToken: process.env.PAL_GRPC_SERVICE_TOKEN,
       filename: filePath.split("/").pop() || "file",
       content,
       ttlSeconds: 3600,
@@ -5905,7 +5905,7 @@ export class IMessageSession {
       // back — so the ✅ ack stays delivery-backed, never a cross-channel lie.
       if (pending.channel === "whatsapp") {
         return this.relayDocToPeer(
-          (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, ""),
+          (process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, ""),
           pending.target,
           pending.filePath,
           pending.inbound || "file",
@@ -5914,9 +5914,9 @@ export class IMessageSession {
       return this.deliverFileToContact(pending.target, pending.filePath, pending.inbound || "file");
     }
     if (pending.channel === "whatsapp" && pending.waJid) {
-      const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+      const waBase = (process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      const tok = process.env.LANTERN_BRIDGE_TOKEN;
+      const tok = process.env.PAL_BRIDGE_TOKEN;
       if (tok) headers["Authorization"] = `Bearer ${tok}`;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -5996,7 +5996,7 @@ export class IMessageSession {
     // Duplicate-send backstop. Only contact-facing substantive replies — bot
     // self-acks/nudges and owner self-chat may legitimately repeat. If the
     // exact same text just went to this contact, drop it (a double-dispatch).
-    const ownerSelf = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    const ownerSelf = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
     if (text && !isBotSelfMessage(text) && to !== ownerSelf) {
       if (this.outboundDedupe.check(to, text, Date.now())) {
         this.logger.warn(
@@ -6907,7 +6907,7 @@ export class IMessageSession {
               type: "activity",
               data: { kind: "system", summary: ok ? `📝 noted about ${label}: ${fact.slice(0, 80)}` : `failed to save fact for ${label}`, jid: contactHandle, timestamp: Date.now() },
             });
-            const selfHandle = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+            const selfHandle = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
             if (selfHandle) {
               void this.send(selfHandle, ok ? `📝 got it — noted about ${label}: ${fact}` : `couldn't save that note about ${label}, try again`);
             }
@@ -6993,7 +6993,7 @@ export class IMessageSession {
     // through the owner pipeline with a raw "[[NO_REPLY]]". This is a trust
     // boundary (owner path = personal docs + agentic actions), so identity
     // here is decided ONLY by the handle comparison below.
-    if (!isOwnerChatRow(chatRowid, handle, process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "", this.selfChatRowIds)) {
+    if (!isOwnerChatRow(chatRowid, handle, process.env.PAL_IMESSAGE_OWNER_HANDLE || "", this.selfChatRowIds)) {
       return false;
     }
     // Identity confirmed by handle (the ONLY admissible signal — the prior
@@ -7031,7 +7031,7 @@ export class IMessageSession {
     if (!row.handle) return false;
     if (isGroupRow(row)) return false;
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9@.]/g, "");
-    const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    const ownerEnv = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
     if (ownerEnv && norm(row.handle) === norm(ownerEnv)) return true;
     // Self-chat fallback when env not set OR env was set but doesn't
     // match (covers users who run BOTH topologies on the same Mac).
@@ -7338,7 +7338,7 @@ export class IMessageSession {
         return;
       }
       if (isTrivialChatter(text)) {
-        const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+        const nlEnabled = (process.env.PAL_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
         if (nlEnabled && !this.muted) {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "owner trivial chatter → natural chat");
           void this.handleOwnerNaturalChat(row.handle, text).catch((err) =>
@@ -7593,7 +7593,7 @@ export class IMessageSession {
     // owner is the judge. Deterministic, no LLM on the hot path.
     let forceDraftCaution = false;
     if (!isGroup) {
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
+      const ownerName = (process.env.PAL_OWNER_NAME || "Ada").split(/\s+/)[0];
       const lifeThreat = detectLifeThreat(text);
       if (lifeThreat) {
         this.logger.warn(
@@ -7661,7 +7661,7 @@ export class IMessageSession {
       // probes and silenced normal chat. Deterministic injection + PII refusal
       // above still apply. Parity with the WhatsApp bridge.
       if (
-        ["on", "1"].includes((process.env.LANTERN_NONENGLISH_DRAFT ?? "").toLowerCase()) &&
+        ["on", "1"].includes((process.env.PAL_NONENGLISH_DRAFT ?? "").toLowerCase()) &&
         !this.isOwnerChatRow(row)
       ) {
         const langHintForCaution = detectLanguageHints(text);
@@ -7757,7 +7757,7 @@ export class IMessageSession {
     const history = this.inboundHistory.get(styleKey) ?? [];
     const style = inferStyle(history);
     const ownerSamples = isGroup ? [] : this.ownerSentHistory.get(row.handle) ?? [];
-    const ownerName = process.env.LANTERN_OWNER_NAME || OWNER_NAME;
+    const ownerName = process.env.PAL_OWNER_NAME || OWNER_NAME;
     // Resolve the sender's real name from the macOS AddressBook (and, for an
     // unknown alias / second number, the owner profile's canonical name) BEFORE
     // the relationship + address-rule lookups below, so an alias number still
@@ -7885,7 +7885,7 @@ export class IMessageSession {
         ? this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
         : Promise.resolve([]),
       !isGroup && inboundTopics.length > 0
-        ? this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4, excludeHandles: [this.ownerSelfChatTarget(), process.env.LANTERN_IMESSAGE_OWNER_HANDLE || ""].filter(Boolean) })
+        ? this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4, excludeHandles: [this.ownerSelfChatTarget(), process.env.PAL_IMESSAGE_OWNER_HANDLE || ""].filter(Boolean) })
         : Promise.resolve([]),
       this.presence.current({
         nextEvent: async () => {
@@ -7966,7 +7966,7 @@ export class IMessageSession {
     // Reuses already-loaded allEpisodes + related; no new network calls.
     const proactiveRecallBlock =
       !isGroup &&
-      ["1", "true", "on"].includes((process.env.LANTERN_PROACTIVE_RECALL ?? "").toLowerCase())
+      ["1", "true", "on"].includes((process.env.PAL_PROACTIVE_RECALL ?? "").toLowerCase())
         ? assembleRelevantRecall(text, { episodes: allEpisodes, topics: related }) ?? undefined
         : undefined;
 
@@ -8044,7 +8044,7 @@ export class IMessageSession {
       // Current-time anchor so the model never re-proposes a time that
       // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
       now: new Date(),
-      ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
+      ownerTimezone: process.env.PAL_OWNER_TIMEZONE || undefined,
       // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
       inboundUrgent,
       // Proactive recall — the top-ranked relevant memory for this inbound.
@@ -8110,14 +8110,14 @@ export class IMessageSession {
     // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
     // "hard" (frontier tier) so contact replies get the best model — set
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
-    const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
+    const replyTier = process.env.PAL_REPLY_MODEL_TIER || "hard";
     // OWNER LOCATION GROUND-TRUTH — injected for EVERY 1:1 reply so the LLM can
     // never INVENT the owner's whereabouts. Inner circle (spouse/siblings/family)
     // may hear the real place from signals; everyone else gets a hard
     // deflect-and-never-fabricate rule. Either way the model has the truth (or an
     // explicit "unknown"), so it reasons instead of guessing "still out".
     let truthfulLocationKnown = false;
-    if (!isGroup && (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
+    if (!isGroup && (process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
         const canShare = isInnerCircle(relationship) && !denyLoc;
         const known = canShare ? readKnownLocation(this.logger) : null;
@@ -8129,7 +8129,7 @@ export class IMessageSession {
     // AGENTIC ARTICLE READING: if the contact shared a link, FETCH + READ it so
     // the reply grounds on the article's real content (not the title). Best-
     // effort; a slow/failed fetch just means no block. Only 1:1.
-    if (!isGroup && (process.env.LANTERN_ARTICLE_READ || "on").toLowerCase() !== "off") {
+    if (!isGroup && (process.env.PAL_ARTICLE_READ || "on").toLowerCase() !== "off") {
       try {
         const articleUrl = extractArticleUrl(text);
         if (articleUrl) {
@@ -9283,7 +9283,7 @@ export class IMessageSession {
   // bot-tell). All facts/numbers are preserved by rephraseNudge's guards; any
   // doubt falls back to the deterministic text. Off via LANTERN_NUDGE_VOICE=off.
   private async nudgeVoice(text: string): Promise<string> {
-    if ((process.env.LANTERN_NUDGE_VOICE || "on").toLowerCase() === "off") return text;
+    if ((process.env.PAL_NUDGE_VOICE || "on").toLowerCase() === "off") return text;
     return rephraseNudge(
       text,
       async (p) => {
@@ -9293,7 +9293,7 @@ export class IMessageSession {
           return "";
         }
       },
-      { ownerName: process.env.LANTERN_OWNER_NAME },
+      { ownerName: process.env.PAL_OWNER_NAME },
     );
   }
 
@@ -9341,11 +9341,11 @@ export class IMessageSession {
       const deps: OrchestratorDeps = {
         logger: this.logger as any,
         twilioFromNumber: twilioFrom,
-        ownerPhone: process.env.LANTERN_OWNER_PHONE,
+        ownerPhone: process.env.PAL_OWNER_PHONE,
         // Show the owner's own (verified) number to contacts so they answer.
-        callerId: process.env.LANTERN_VOICE_CALLER_ID || undefined,
-        ownerName: process.env.LANTERN_OWNER_NAME || undefined,
-        smsHeadsUp: (process.env.LANTERN_VOICE_SMS_HEADSUP || "on").toLowerCase() !== "off",
+        callerId: process.env.PAL_VOICE_CALLER_ID || undefined,
+        ownerName: process.env.PAL_OWNER_NAME || undefined,
+        smsHeadsUp: (process.env.PAL_VOICE_SMS_HEADSUP || "on").toLowerCase() !== "off",
         resolveContact: async (nameOrNumber) => this.resolveCallTarget(nameOrNumber),
         // On a resolve miss, surface the "did you mean: …" candidates the
         // resolver stashed (populated by the resolveCallTarget call above).
@@ -9382,7 +9382,7 @@ export class IMessageSession {
 
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string; unique?: boolean } | null> {
     const result = await universalResolveContact(input, {
-      ownerPhone: process.env.LANTERN_OWNER_PHONE,
+      ownerPhone: process.env.PAL_OWNER_PHONE,
       bridgeContactCache: this.contactNames,
       profileRelationships: this.ownerProfileStore.get()?.relationships,
       logger: this.logger as any,
@@ -9415,7 +9415,7 @@ export class IMessageSession {
   // from; Twilio fetches the audio there when it dials. Synthesis is
   // best-effort and never throws into the call path.
   private makeVoiceRenderer(): ((text: string) => Promise<string | null>) | undefined {
-    const publicUrlBase = process.env.LANTERN_VOICE_CACHE_PUBLIC_URL;
+    const publicUrlBase = process.env.PAL_VOICE_CACHE_PUBLIC_URL;
     // Gate + credentials live in bridge-core; hosting is bridge-owned.
     if (!resolveVoiceCloneConfig() || !publicUrlBase) return undefined;
     return async (text: string) =>
@@ -9625,7 +9625,7 @@ export class IMessageSession {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
+    const ownerName = (process.env.PAL_OWNER_NAME || "Ada").split(/\s+/)[0];
 
     // PRE-FETCH appointment-style queries — runs Gmail + Calendar in
     // parallel and stuffs results into the prompt so the LLM has
@@ -9747,7 +9747,7 @@ export class IMessageSession {
   // replies. iMessage doesn't expose this directly via chat.db without
   // extra joins; we read LANTERN_IMESSAGE_OWNER_HANDLE env when set.
   private ownHandleGuess(): string {
-    return process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "";
+    return process.env.PAL_IMESSAGE_OWNER_HANDLE || "";
   }
 
   // --- style/history helpers ----------------------------------------------
@@ -10201,7 +10201,7 @@ export class IMessageSession {
   // loopback to the WhatsApp bridge.
   private buildSubTaskAdapters(originalQuery: string): SubTaskAdapters {
     const tenantId = this.tenantId;
-    const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+    const waBase = (process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
     return {
       // iMessage adapters — direct chat.db access.
       imessageHistory: async (_instruction, hints) => {
@@ -10528,7 +10528,7 @@ export class IMessageSession {
     // Authenticate to the PEER's token: this helper only ever dials the WhatsApp
     // bridge, whose /session routes validate LANTERN_BRIDGE_TOKEN (NOT our own
     // LANTERN_IMESSAGE_BRIDGE_TOKEN). Matches the existing cross-bridge text hop.
-    const tok = process.env.LANTERN_BRIDGE_TOKEN;
+    const tok = process.env.PAL_BRIDGE_TOKEN;
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
@@ -10738,7 +10738,7 @@ export class IMessageSession {
       },
     });
     // WhatsApp groups — proxy to the WhatsApp bridge over loopback.
-    const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+    const waBase = (process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
     rosterAdapters.push({
       surface: "whatsapp",
       listGroups: async () => {
@@ -10849,7 +10849,7 @@ export class IMessageSession {
     const effectiveChatRowid = chatRowid || (this.selfChatRowIds.size > 0 ? Array.from(this.selfChatRowIds)[0] : 0);
     const recentTranscript = effectiveChatRowid ? this.buildRecentTranscript(effectiveChatRowid) : "";
     const today = new Date().toISOString().slice(0, 10);
-    const ownerName = process.env.LANTERN_OWNER_NAME || "Ada";
+    const ownerName = process.env.PAL_OWNER_NAME || "Ada";
     // Language modality applies to owner self-chat too — if he asks
     // something in Telugu, reply in Telugu (Telangana dialect, owner
     // vocab preferences from profile).
@@ -10863,7 +10863,7 @@ export class IMessageSession {
     // #3 — owner self-chat grounding: a CLOCK (so "am I free right now" has a
     // reference) + the fused presence snapshot (the contact path already uses
     // this; the owner asking himself "where am I / am I free" deserves it too).
-    const ownerTz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+    const ownerTz = process.env.PAL_OWNER_TIMEZONE || undefined;
     const nowLine = formatNowContext(new Date(), ownerTz);
     const presenceSnap = await this.presence.current({
       nextEvent: async () => {
@@ -10881,7 +10881,7 @@ export class IMessageSession {
     // marks itself authoritative over the (2h-window) app-usage summary. Cheap
     // local read; gated by the same env as the contact path; fails closed.
     let ownerLocationBlock = "";
-    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
+    if ((process.env.PAL_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
         ownerLocationBlock = formatOwnerSelfLocationBlock(readKnownLocation(this.logger), ownerName);
       } catch { /* fail-closed: no block */ }
@@ -11353,7 +11353,7 @@ export class IMessageSession {
   // a native @mention metadata field (group chats just use plain
   // text), so text matching is what we have.
   private isAddressedToOwner(text: string): boolean {
-    const owner = (process.env.LANTERN_OWNER_NAME || OWNER_NAME).trim();
+    const owner = (process.env.PAL_OWNER_NAME || OWNER_NAME).trim();
     if (!owner || owner === "the owner") return false;
     const firstName = owner.split(/\s+/)[0];
     const patterns = [
@@ -11410,7 +11410,7 @@ export class IMessageSession {
     const body = lines.join("\n");
 
     // 1. iMessage self-chat send (primary on this bridge).
-    const ownerSelf = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    const ownerSelf = (process.env.PAL_IMESSAGE_OWNER_HANDLE || "").trim();
     if (ownerSelf) {
       void this.send(ownerSelf, body).catch((err) =>
         this.logger.warn({ err }, "owner escalation: iMessage self-send failed"),
@@ -11418,7 +11418,7 @@ export class IMessageSession {
     }
 
     // 2. WhatsApp loopback — secondary channel.
-    const waUrl = process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100";
+    const waUrl = process.env.PAL_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100";
     // Address the owner's session on the peer bridge by THIS session's tenant,
     // not a process-wide default (keeps cross-bridge loopback correct per-tenant).
     const tenantId = this.tenantId;
@@ -11441,7 +11441,7 @@ export class IMessageSession {
     // 3. Email via Gmail connector (inbox-grabbing, not skip-inbox).
     void (async () => {
       try {
-        const ownerEmail = process.env.LANTERN_OWNER_EMAIL;
+        const ownerEmail = process.env.PAL_OWNER_EMAIL;
         if (!ownerEmail) return;
         const { authedFetch } = await import("@lantern/bridge-core/auth");
         const subject =
@@ -11487,7 +11487,7 @@ export class IMessageSession {
       // 5. Twilio voice call to LANTERN_OWNER_PHONE.
       void (async () => {
         try {
-          const ownerPhone = process.env.LANTERN_OWNER_PHONE;
+          const ownerPhone = process.env.PAL_OWNER_PHONE;
           if (!ownerPhone) {
             this.logger.warn(
               "owner escalation: LANTERN_OWNER_PHONE not set — voice call skipped",
@@ -11542,8 +11542,8 @@ export class IMessageSession {
       void (async () => {
         try {
           if (!this.pushoverEnabled) return;
-          const token = process.env.LANTERN_PUSHOVER_TOKEN;
-          const user = process.env.LANTERN_PUSHOVER_USER;
+          const token = process.env.PAL_PUSHOVER_TOKEN;
+          const user = process.env.PAL_PUSHOVER_USER;
           if (!token || !user) return;
           const senderLabel = (who || "").replace(/[^A-Za-z0-9\s]/g, " ").trim() || "an unknown contact";
           const msg = `${senderLabel} flagged an emergency. They said: "${opts.contactText.slice(0, 400)}"`;
@@ -11584,7 +11584,7 @@ export class IMessageSession {
   }
 
   private async mirrorToEmail(text: string): Promise<void> {
-    const to = process.env.LANTERN_OWNER_EMAIL;
+    const to = process.env.PAL_OWNER_EMAIL;
     if (!to) return;
     if (text.length < 8) return;
     const lastAt = this.lastEmailedAt.get(text);

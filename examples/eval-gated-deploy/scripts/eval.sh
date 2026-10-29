@@ -17,8 +17,9 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 dir=${1:-.}
-: "${LANTERN_API_URL:?set LANTERN_API_URL}" "${LANTERN_API_KEY:?set LANTERN_API_KEY}"
-api=${LANTERN_API_URL%/}
+: "${PAL_API_URL:=${LANTERN_API_URL:-}}" "${PAL_API_KEY:=${LANTERN_API_KEY:-}}"
+: "${PAL_API_URL:?set PAL_API_URL (LANTERN_API_URL still accepted)}" "${PAL_API_KEY:?set PAL_API_KEY (LANTERN_API_KEY still accepted)}"
+api=${PAL_API_URL%/}
 branch=${EVAL_BRANCH:-main}
 out=${EVAL_RESULT:-.eval-result.json}
 tmp=$(mktemp -d)
@@ -26,7 +27,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 # call METHOD PATH [JSON-BODY] -> $status, body in $tmp/body
 call() {
-  local args=(-sS -o "$tmp/body" -w '%{http_code}' -X "$1" -H "Authorization: Bearer $LANTERN_API_KEY" "$api$2")
+  local args=(-sS -o "$tmp/body" -w '%{http_code}' -X "$1" -H "Authorization: Bearer $PAL_API_KEY" "$api$2")
   [ $# -ge 3 ] && args+=(-H 'Content-Type: application/json' -d "$3")
   status=$(curl "${args[@]}") || { echo "eval: cannot reach $api" >&2; exit 2; }
 }

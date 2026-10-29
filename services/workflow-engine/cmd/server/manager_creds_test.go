@@ -20,9 +20,9 @@ func TestManagerTransportCreds(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_CA", tc.ca)
-			t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_CERT", tc.crt)
-			t.Setenv("LANTERN_RUNTIME_MANAGER_TLS_KEY", tc.key)
+			t.Setenv("PAL_RUNTIME_MANAGER_TLS_CA", tc.ca)
+			t.Setenv("PAL_RUNTIME_MANAGER_TLS_CERT", tc.crt)
+			t.Setenv("PAL_RUNTIME_MANAGER_TLS_KEY", tc.key)
 			_, err := managerTransportCreds(tc.prod)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)

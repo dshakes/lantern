@@ -34,7 +34,7 @@ URL = os.environ.get(
 
 
 def resolve_token() -> str:
-    tok = os.environ.get("LANTERN_SIGNAL_TOKEN", "").strip()
+    tok = (os.environ.get("PAL_SIGNAL_TOKEN") or os.environ.get("LANTERN_SIGNAL_TOKEN", "")).strip()
     if tok:
         return tok
     plist = Path.home() / "Library/LaunchAgents/dev.lantern.api.plist"
@@ -138,7 +138,7 @@ def main() -> None:
         "WFWorkflowActions": [get_now_playing, post],
     }
 
-    out_dir = Path(os.environ.get("LANTERN_SHORTCUT_OUT", str(Path.home() / "Desktop")))
+    out_dir = Path(os.environ.get("PAL_SHORTCUT_OUT") or os.environ.get("LANTERN_SHORTCUT_OUT", str(Path.home() / "Desktop")))
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "Lantern-NowPlaying.shortcut"
     with tempfile.NamedTemporaryFile(suffix=".shortcut", delete=False) as tf:

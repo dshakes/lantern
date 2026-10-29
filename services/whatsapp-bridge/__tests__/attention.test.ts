@@ -73,8 +73,8 @@ describe("AttentionClassifier.enabled", () => {
 
 describe("AttentionClassifier.classify", () => {
   beforeEach(() => {
-    process.env.LANTERN_API_TOKEN = "test-token";
-    process.env.LANTERN_API_URL = "http://localhost:8080";
+    process.env.PAL_API_TOKEN = "test-token";
+    process.env.PAL_API_URL = "http://localhost:8080";
   });
 
   afterEach(() => {
@@ -213,12 +213,12 @@ describe("AttentionClassifier.classify", () => {
 
 describe("AttentionClassifier dedup", () => {
   beforeEach(() => {
-    process.env.LANTERN_API_TOKEN = "t";
-    process.env.LANTERN_ATTENTION_DEDUP_MIN = "30";
+    process.env.PAL_API_TOKEN = "t";
+    process.env.PAL_ATTENTION_DEDUP_MIN = "30";
   });
 
   afterEach(() => {
-    delete process.env.LANTERN_ATTENTION_DEDUP_MIN;
+    delete process.env.PAL_ATTENTION_DEDUP_MIN;
     vi.useRealTimers();
   });
 
@@ -287,7 +287,7 @@ describe("AttentionClassifier dedup", () => {
     // The expression is: Math.max(1, Number(env) || DEFAULT_DEDUP_MIN) * 60_000
     // When env="0", Number("0")=0 which is falsy → 0 || 30 = 30.
     // So setting to "0" acts as "use the default", not "clamp to 1 minute".
-    process.env.LANTERN_ATTENTION_DEDUP_MIN = "0";
+    process.env.PAL_ATTENTION_DEDUP_MIN = "0";
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-18T10:00:00Z"));
 
@@ -303,6 +303,6 @@ describe("AttentionClassifier dedup", () => {
     vi.advanceTimersByTime(6 * 60_000 + 1000);
     expect(c.shouldNotify(jid)).toBe(true);
 
-    delete process.env.LANTERN_ATTENTION_DEDUP_MIN;
+    delete process.env.PAL_ATTENTION_DEDUP_MIN;
   });
 });
