@@ -281,7 +281,7 @@ resource "aws_iam_role" "data_plane" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Effect = "Allow"
       Principal = {
-        Federated = local.oidc_issuer
+        Federated = local.oidc_provider_arn
       }
       Condition = {
         StringEquals = {
