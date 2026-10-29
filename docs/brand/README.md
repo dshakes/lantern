@@ -1,80 +1,176 @@
-# PAL brand: glass and flame
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../site/public/brand/logo-animated-on-dark.svg">
+    <img src="../../site/public/brand/logo-animated.svg" alt="pal" width="200">
+  </picture>
+</p>
 
-A lantern is a flame you can carry because glass keeps it contained. That is the
-product: the agent's untrusted code is the flame, the microVM is the glass, and
-the host is the brass frame that decides what gets in or out. Every color,
-shape and motion below encodes one of those roles, so a reader can tell from a
-diagram alone which side of a boundary something lives on.
+# PAL brand guide
 
-Canonical tokens: [`tokens.css`](tokens.css). Diagram source:
-[`diagram-template.svg`](diagram-template.svg). Gate: `scripts/check-diagrams.sh`.
+PAL is the Personal Agentic Layer. Two products share one name and one mark:
 
-## Color
+- **pal**: the personal agent that lives in your iMessage and WhatsApp. Warm.
+- **PAL Runtime**: the runtime pal runs on, for the agents you build. Electric.
 
-Each hue is a role, never decoration. Light ("day") and dark ("night") are both
-first-class; the system preference decides, and `<html data-theme="light|dark">`
-overrides it.
+Everything here is generated from source in [`build/`](build/), so changing a
+colour or a curve means changing it once and re-running the build.
 
-| Token | Role | Day | Night |
+## The mark: Held
+
+<img src="../../site/public/brand/mark.svg" alt="The pal mark" width="72"> &nbsp; <img src="../../site/public/brand/runtime-mark.svg" alt="The PAL Runtime mark" width="72"> &nbsp; <img src="../../site/public/brand/app-icon.svg" alt="pal app icon" width="72"> &nbsp; <img src="../../site/public/brand/runtime-app-icon.svg" alt="PAL Runtime app icon" width="72">
+
+A p whose bowl holds a dot. The p is the first letter of the name, so the mark
+and the wordmark are one drawing. The dot is the moment pal keeps for you, and
+the bowl is the layer that holds it until you say yes. पल means "a moment".
+
+PAL Runtime keeps the same p and squares the bowl into a container: same
+family, machine register.
+
+Eight directions were explored and scored before choosing this one: open
+[`explorations/index.html`](explorations/index.html) in a browser.
+
+### Construction
+
+Monoline, stroke 9, bowl radius 15, round caps, on a 64-unit grid. The dot is
+radius 6.5 and sits at the bowl's centre. The wordmark "pal" is drawn, not typed:
+single-storey a, and an l with a foot that turns toward the next word. Geometry
+lives once in [`build/brand.mjs`](build/brand.mjs) (`MARK`, `WORD`) and is
+mirrored by `site/src/components/Logo.astro`.
+
+### Files (`site/public/brand/`)
+
+| File | Use |
+|---|---|
+| `lockup.svg`, `lockup-on-dark.svg` | primary logo: the wordmark |
+| `lockup-horizontal*.svg`, `lockup-stacked*.svg` | wordmark with "Personal Agentic Layer" |
+| `mark*.svg` | the p alone, when the name is already on screen |
+| `runtime-lockup*.svg`, `runtime-mark*.svg` | PAL Runtime |
+| `*-mono-black.svg`, `*-mono-white.svg` | one-colour print, embossing, partner pages |
+| `app-icon.svg`, `runtime-app-icon.svg` | rounded-square icons |
+| `logo-animated.svg`, `logo-animated-on-dark.svg`, `runtime-logo-animated-on-dark.svg` | hero animation (≈2 KB, CSS only, still under reduced motion) |
+| `../favicon.svg`, `../favicon-32.png`, `../apple-touch-icon.png`, `../icon-512.png` | browser and home-screen icons |
+| `../og.png` | 1200×630 social card ([source](build/og.html)) |
+
+### Clear space and size
+
+- Clear space on every side: the bowl's diameter (the height of the a).
+- Minimum size: wordmark 56 px wide on screen, 14 mm in print; the mark alone 16 px.
+- Below 24 px use the mark, not the wordmark.
+
+### Don'ts
+
+- Don't set "pal" in a font. Use the drawn wordmark.
+- Don't recolour the strokes with a ramp. Strokes are ink or paper; only the dot carries colour.
+- Don't put the warm dot on a Runtime lockup or the electric dot on a pal one.
+- Don't outline, shadow, bevel, rotate or stretch the mark.
+- Don't place the colour mark on a busy photo; use mono white on a dark scrim.
+- Don't animate it beyond the supplied motion (draw, land, one slow ripple).
+
+## Colour
+
+Tokens: [`tokens.css`](tokens.css). Dark is the reference theme; light is
+first-class. Ramp colours are for fills, marks and gradients only; text uses
+the `*-text` tokens, which pass WCAG AA (4.5:1) on the page background.
+
+| Token | Hex | OKLCH | Role |
 |---|---|---|---|
-| `--lx-bg` | page / canvas | `#f2f5f8` | `#0b1220` |
-| `--lx-surface` | neutral node, card | `#ffffff` | `#111b2e` |
-| `--lx-surface-2` | grouping band | `#e7edf3` | `#17243b` |
-| `--lx-ink` / `-2` / `-3` | text, secondary, tertiary | `#0f1b2d` `#44546a` `#5d6d83` | `#e8eef5` `#a9b6c8` `#7a8aa2` |
-| `--lx-line` | neutral stroke | `#c3cedb` | `#2b3b57` |
-| `--lx-flame` | untrusted code, the guest workload | `#a85e06` | `#ffb547` |
-| `--lx-glass` | the microVM wall, isolation | `#1c76a6` | `#7cc4e8` |
-| `--lx-patina` | trusted host infrastructure (manager, broker, control plane internals) | `#17785f` | `#4fc1a6` |
-| `--lx-signal` | denied, refused, a boundary that must not be crossed | `#c23b29` | `#ff7262` |
+| `--pal-coral` | `#ff7a3d` | `oklch(72.6% 0.178 43.2)` | pal ramp start |
+| `--pal-magenta` | `#e5207f` | `oklch(60.8% 0.232 359.1)` | pal ramp end |
+| `--rt-indigo` | `#6c5cff` | `oklch(58.6% 0.232 280.9)` | Runtime ramp start |
+| `--rt-cyan` | `#14c8f0` | `oklch(77.1% 0.137 219.5)` | Runtime ramp end |
+| `--pal-bg` | `#0b0c0f` / `#fafaf8` | `oklch(15.5% 0.007 271)` / `oklch(98.5% 0.003 106)` | ink / paper |
+| `--pal-surface` | `#131419` / `#ffffff` | `oklch(19.2% 0.010 276.5)` | cards |
+| `--pal-surface-2` | `#1a1c22` / `#f1f0ec` | `oklch(22.7% 0.012 270.8)` | raised cards |
+| `--pal-text` | `#fafaf8` / `#0b0c0f` | | body, 18.7:1 |
+| `--pal-text-2` | `#b9bac0` / `#45474e` | `oklch(79.0% 0.008 279)` / `oklch(39.9% 0.012 273)` | secondary, 10.1:1 / 8.9:1 |
+| `--pal-text-3` | `#8c8e96` / `#62656d` | `oklch(64.8% 0.012 275)` / `oklch(50.7% 0.013 269)` | tertiary, 6.0:1 / 5.6:1 |
+| `--pal-accent-text` | `#ff8a6b` / `#c81e5a` | `oklch(75.6% 0.149 35.8)` / `oklch(54.5% 0.202 7.7)` | pal links and highlights, 8.5:1 / 5.3:1 |
+| `--rt-accent-text` | `#6fe3ff` / `#4a3ee6` | `oklch(85.9% 0.112 215.8)` / `oklch(49.7% 0.240 276.3)` | Runtime links and highlights, 13.1:1 / 6.4:1 |
+| `--sig-ok` | `#5fd3a6` / `#146b4b` | | allowed, sent, verified |
+| `--sig-hold` | `#ffb547` / `#a8460a` | | held, waiting for you |
+| `--sig-bad` | `#ff8a8a` / `#b42323` | | refused, crashed, blocked |
 
-Each role color has a `-soft` fill for node backgrounds. Text sits on `ink`,
-`ink-2` or `ink-3` only (all ≥ 4.5:1 on `bg` and `surface` in both themes);
-role colors are for strokes, fills and large text.
-
-Control-plane things stay neutral (`surface` + `line`). Color is spent only
-where trust changes.
+Gradients run at 135° from the warmer or darker stop. One gradient per view:
+on the dot, a button, or a hero glow, never all three.
 
 ## Type
 
 | Face | Use |
 |---|---|
-| Bricolage Grotesque (600–800, tight tracking) | display headlines on landing and docs home only |
-| IBM Plex Sans (400/500/600) | all body copy, UI, and every diagram label |
-| IBM Plex Mono (400/500) | code, commands, env vars, ports, file paths |
+| Inter Tight (600–700, −0.03em) | headlines |
+| Inter (400/500/600) | body and UI |
+| JetBrains Mono (400/500) | code, commands, env vars, ports, paths |
 
-Sentence case everywhere. No all-caps labels, no eyebrow text above headings.
-Diagrams fall back to `system-ui` / `ui-monospace` where web fonts are not
-loaded (GitHub renders SVG via `<img>`).
-
-Scale (rem, 1.25 ratio from 1rem): 0.8 · 1 · 1.25 · 1.56 · 1.95 · 2.44 · 3.05 ·
-clamp() up to 4.75 for the landing hero.
-
-## Shape
-
-- Radius: 6px chips/inputs, 10px nodes and code, 18px groups and the microVM wall.
-- Strokes: 1.5px nodes and edges, 2.5px for the microVM wall (the thickest line in any diagram), 1.25px dashed for a trust boundary, dashed signal for a denied path.
-- Arrows: one filled triangle marker per role color.
+Sentence case everywhere. No all-caps labels except the word HELD, which is a
+status, not a heading. Diagrams use the system stack because GitHub renders SVG
+without web fonts.
 
 ## Motion
 
-Motion means something moved through the system, so it is reserved for that.
+Motion means something moved through the system.
 
-- **Packet**: a dot travels a conduit at constant speed (linear, `--lx-dur-packet` 2.8s), never eased. When it crosses the microVM wall the wall brightens for 160ms.
-- **State**: lifecycle states change with a 160ms cross-fade (`--lx-ease`).
-- **Response**: UI responds to a person's action in `--lx-dur-ui` (160ms). No entrance animations on scroll, no hover lifts.
-- `prefers-reduced-motion: reduce` shows the final static frame; nothing loops.
+- A packet is a dot with a soft halo travelling a path at constant speed.
+- State changes cross-fade in 300 ms; UI responds in 160 ms.
+- Every animation ships its finished frame for `prefers-reduced-motion: reduce`.
+- No scroll-triggered entrances, no hover lifts, no confetti.
 
 ## Diagrams
 
-Copy `diagram-template.svg`: keep its `<style class="lx-style">` block byte-for-byte,
-prefix every `id` with the file name, put an accessible `<title>`/`<desc>` first,
-title states the claim in sentence case, legend bottom-left listing only roles
-used. All diagrams live in `docs/assets/diagrams/`; the docs site inlines them
-from there and `scripts/check-diagrams.sh` gates them.
+Ten animated diagrams live in `site/public/media/` (SVG, 11–15 KB each) with
+GIF renders in [`docs/media/pal/`](../media/pal/) for places that can't run SVG.
+Each is one CSS-keyframe loop on its own dark stage, so it reads the same on a
+light or dark page. The static markup is the poster frame.
 
-## Adopting in the dashboard
+| pal | PAL Runtime |
+|---|---|
+| `pal-brief`: what needs you, ranked | `runtime-architecture`: control plane and your-cloud data plane |
+| `pal-holds`: money and promises held for your yes | `runtime-lifecycle`: pause, resume, fork |
+| `pal-voice`: scored against your own messages | `runtime-egress`: allowlist, credential injection, DLP |
+| `pal-memory`: one person across chats | `runtime-durable`: crash-resume and signed receipts |
+| `pal-world`: world model and nudges | `runtime-guardrails`: budgets, routing, eval gates |
 
-`apps/web` keeps its own theme for now. To adopt: import the `:root` blocks from
-`tokens.css`, map `--lx-surface*`/`--lx-ink*` onto the existing neutral scale, and
-use the role colors only for trust-related UI (sandbox state, egress decisions,
-denials).
+Rules: show the real mechanism with real names (ports, endpoints, event kinds),
+never boxes labelled "AI". Warm ramp for pal, electric for Runtime, amber for
+anything held, red only for refused or crashed. Example people are fictional.
+
+```bash
+node docs/brand/build/diagrams.mjs                       # SVGs
+NODE_PATH=<scratch>/node_modules node docs/brand/build/render.mjs gif \
+  site/public/media/pal-brief.svg docs/media/pal/pal-brief.gif 960 540 13 12 --bg=#0b0c0f
+```
+
+`brand.mjs` and `render.mjs` need `opentype.js` and `playwright-core` from a
+scratch directory (not repo dependencies), the Inter Tight 500/600 `.woff`
+files, system Chrome and `ffmpeg`. The header of each script has the setup.
+
+## Voice
+
+Human, crisp, confident. Say what it does, then stop.
+
+- Write like a friend who is good at their job: "Holds money and promises for your yes."
+- Concrete over clever: name the behaviour ("held at the send boundary"), not the category ("AI-powered safety").
+- No hype words: revolutionary, seamless, magical, supercharge, unleash, next-generation, game-changing, effortless.
+- No exclamation marks in product copy. pal's own messages may use them when the owner does.
+- Claims must be true today. If it's behind a flag, say so.
+
+## Naming
+
+| Write | Not |
+|---|---|
+| pal (lowercase, also at the start of a sentence) | Pal, PAL for the personal agent |
+| PAL Runtime | Pal Runtime, PAL runtime, the PAL |
+| PAL (the company and the layer) | P.A.L. |
+| "your pal", "two agents on PAL Runtime" | PALs, Pals, palz |
+
+Never coin "PAL Pay" or other PAL-plus-noun product names without a trademark
+check. The CLI, packages and env vars still say `lantern` until the rename
+lands; write them as they are in code.
+
+Taglines: **Your pal for every moment.** · **PAL Runtime: agents that finish,
+stay contained, and stay yours.**
+
+## Origin
+
+We started as Lantern: a flame you could carry because glass kept it contained.
+As the product became a companion, we kept the light and dropped the lamp. The
+flame became a dot, a single moment of attention.
