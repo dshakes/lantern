@@ -1,10 +1,10 @@
 /* PAL Webchat widget — embeddable on any website.
  *
  * Usage:
- *   <script src="https://your-lantern/widget.js"
+ *   <script src="https://your-pal/widget.js"
  *           data-api-key="lk_..."
  *           data-agent="my-assistant"
- *           data-api-base="https://your-lantern"
+ *           data-api-base="https://your-pal"
  *           data-theme="dark"
  *           data-position="bottom-right"
  *           async defer></script>
@@ -33,8 +33,8 @@
   "use strict";
 
   // ---- Bail-out if already loaded ---------------------------------------
-  if (window.__lanternWidgetLoaded) return;
-  window.__lanternWidgetLoaded = true;
+  if (window.__palWidgetLoaded) return;
+  window.__palWidgetLoaded = true;
 
   // ---- Config from script-tag data attributes ---------------------------
   var script = document.currentScript;
@@ -53,7 +53,7 @@
 
   if (!apiKey || !agentName || !apiBase) {
     console.warn(
-      "[lantern-widget] Missing required attributes. Need data-api-key, data-agent, data-api-base."
+      "[pal-widget] Missing required attributes. Need data-api-key, data-agent, data-api-base."
     );
     return;
   }
@@ -83,91 +83,91 @@
       };
 
   var css = [
-    "#lantern-widget-bubble{position:fixed;width:56px;height:56px;border-radius:50%;cursor:pointer;",
+    "#pal-widget-bubble{position:fixed;width:56px;height:56px;border-radius:50%;cursor:pointer;",
     "background:linear-gradient(135deg," + palette.accent + "," + palette.accentDark + ");",
     "box-shadow:0 8px 24px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;",
     "z-index:2147483646;border:none;transition:transform .15s ease;}",
-    "#lantern-widget-bubble:hover{transform:scale(1.05);}",
-    "#lantern-widget-bubble svg{width:24px;height:24px;color:#fff;}",
-    "#lantern-widget-bubble." + position + "{",
+    "#pal-widget-bubble:hover{transform:scale(1.05);}",
+    "#pal-widget-bubble svg{width:24px;height:24px;color:#fff;}",
+    "#pal-widget-bubble." + position + "{",
     position === "bottom-left" ? "left:24px;bottom:24px;" : "right:24px;bottom:24px;",
     "}",
 
-    "#lantern-widget-panel{position:fixed;width:380px;max-width:calc(100vw - 32px);height:560px;",
+    "#pal-widget-panel{position:fixed;width:380px;max-width:calc(100vw - 32px);height:560px;",
     "max-height:calc(100vh - 100px);background:" + palette.bg + ";color:" + palette.text + ";",
     "border:1px solid " + palette.border + ";border-radius:16px;overflow:hidden;",
     "box-shadow:0 24px 64px rgba(0,0,0,0.35);display:none;flex-direction:column;z-index:2147483647;",
     "font:14px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}",
-    "#lantern-widget-panel.open{display:flex;}",
-    "#lantern-widget-panel." + position + "{",
+    "#pal-widget-panel.open{display:flex;}",
+    "#pal-widget-panel." + position + "{",
     position === "bottom-left" ? "left:24px;bottom:88px;" : "right:24px;bottom:88px;",
     "}",
 
-    "#lantern-widget-header{display:flex;align-items:center;gap:8px;padding:12px 16px;",
+    "#pal-widget-header{display:flex;align-items:center;gap:8px;padding:12px 16px;",
     "border-bottom:1px solid " + palette.border + ";}",
-    "#lantern-widget-header .brand{font-weight:600;flex:1;}",
-    "#lantern-widget-header button{background:transparent;border:none;color:" + palette.textMuted + ";",
+    "#pal-widget-header .brand{font-weight:600;flex:1;}",
+    "#pal-widget-header button{background:transparent;border:none;color:" + palette.textMuted + ";",
     "cursor:pointer;padding:4px;border-radius:6px;}",
-    "#lantern-widget-header button:hover{background:" + palette.surface + ";color:" + palette.text + ";}",
+    "#pal-widget-header button:hover{background:" + palette.surface + ";color:" + palette.text + ";}",
 
-    "#lantern-widget-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;}",
-    "#lantern-widget-messages .msg{max-width:80%;padding:8px 12px;border-radius:14px;word-wrap:break-word;white-space:pre-wrap;}",
-    "#lantern-widget-messages .msg.user{align-self:flex-end;background:" + palette.accent + ";color:#fff;border-bottom-right-radius:4px;}",
-    "#lantern-widget-messages .msg.assistant{align-self:flex-start;background:" + palette.surface + ";color:" + palette.text + ";border-bottom-left-radius:4px;}",
-    "#lantern-widget-messages .msg.assistant.streaming::after{content:'\\25CF';margin-left:4px;opacity:.6;animation:lanternPulse 1s infinite;}",
-    "@keyframes lanternPulse{0%,100%{opacity:.3;}50%{opacity:1;}}",
-    "#lantern-widget-messages .msg.operator{align-self:flex-start;background:" + palette.bg + ";color:" + palette.text + ";",
+    "#pal-widget-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;}",
+    "#pal-widget-messages .msg{max-width:80%;padding:8px 12px;border-radius:14px;word-wrap:break-word;white-space:pre-wrap;}",
+    "#pal-widget-messages .msg.user{align-self:flex-end;background:" + palette.accent + ";color:#fff;border-bottom-right-radius:4px;}",
+    "#pal-widget-messages .msg.assistant{align-self:flex-start;background:" + palette.surface + ";color:" + palette.text + ";border-bottom-left-radius:4px;}",
+    "#pal-widget-messages .msg.assistant.streaming::after{content:'\\25CF';margin-left:4px;opacity:.6;animation:palPulse 1s infinite;}",
+    "@keyframes palPulse{0%,100%{opacity:.3;}50%{opacity:1;}}",
+    "#pal-widget-messages .msg.operator{align-self:flex-start;background:" + palette.bg + ";color:" + palette.text + ";",
     "border:1px solid " + palette.accent + ";border-bottom-left-radius:4px;}",
-    "#lantern-widget-messages .msg .sources{margin-top:6px;font-size:11px;color:" + palette.textMuted + ";}",
-    "#lantern-widget-status{display:none;padding:6px 16px;font-size:12px;text-align:center;",
+    "#pal-widget-messages .msg .sources{margin-top:6px;font-size:11px;color:" + palette.textMuted + ";}",
+    "#pal-widget-status{display:none;padding:6px 16px;font-size:12px;text-align:center;",
     "background:" + palette.surface + ";color:" + palette.textMuted + ";border-bottom:1px solid " + palette.border + ";}",
-    "#lantern-widget-status.show{display:block;}",
-    "#lantern-widget-messages .greeting{color:" + palette.textMuted + ";text-align:center;padding:24px 12px;font-size:13px;}",
+    "#pal-widget-status.show{display:block;}",
+    "#pal-widget-messages .greeting{color:" + palette.textMuted + ";text-align:center;padding:24px 12px;font-size:13px;}",
 
-    "#lantern-widget-input{display:flex;gap:8px;padding:12px;border-top:1px solid " + palette.border + ";",
+    "#pal-widget-input{display:flex;gap:8px;padding:12px;border-top:1px solid " + palette.border + ";",
     "background:" + palette.bg + ";}",
-    "#lantern-widget-input textarea{flex:1;resize:none;background:" + palette.surface + ";",
+    "#pal-widget-input textarea{flex:1;resize:none;background:" + palette.surface + ";",
     "border:1px solid " + palette.border + ";border-radius:10px;padding:8px 12px;color:" + palette.text + ";",
     "font:inherit;outline:none;height:38px;max-height:120px;line-height:1.45;}",
-    "#lantern-widget-input textarea:focus{border-color:" + palette.accent + ";}",
-    "#lantern-widget-input button{background:" + palette.accent + ";color:#fff;border:none;border-radius:10px;",
+    "#pal-widget-input textarea:focus{border-color:" + palette.accent + ";}",
+    "#pal-widget-input button{background:" + palette.accent + ";color:#fff;border:none;border-radius:10px;",
     "padding:0 14px;cursor:pointer;font-weight:500;}",
-    "#lantern-widget-input button:disabled{opacity:.4;cursor:not-allowed;}",
+    "#pal-widget-input button:disabled{opacity:.4;cursor:not-allowed;}",
 
-    "#lantern-widget-footer{padding:8px 16px;font-size:11px;color:" + palette.textMuted + ";text-align:center;",
+    "#pal-widget-footer{padding:8px 16px;font-size:11px;color:" + palette.textMuted + ";text-align:center;",
     "border-top:1px solid " + palette.border + ";}",
-    "#lantern-widget-footer a{color:inherit;}",
+    "#pal-widget-footer a{color:inherit;}",
   ].join("");
 
   var styleEl = document.createElement("style");
-  styleEl.id = "lantern-widget-style";
+  styleEl.id = "pal-widget-style";
   styleEl.appendChild(document.createTextNode(css));
   document.head.appendChild(styleEl);
 
   // ---- DOM construction -------------------------------------------------
   var bubble = document.createElement("button");
-  bubble.id = "lantern-widget-bubble";
+  bubble.id = "pal-widget-bubble";
   bubble.className = position;
   bubble.setAttribute("aria-label", "Open chat");
   bubble.innerHTML =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 
   var panel = document.createElement("div");
-  panel.id = "lantern-widget-panel";
+  panel.id = "pal-widget-panel";
   panel.className = position;
   panel.innerHTML =
-    '<div id="lantern-widget-header">' +
+    '<div id="pal-widget-header">' +
     '<div class="brand">' + escapeHtml(brand) + '</div>' +
-    '<button aria-label="Close" id="lantern-widget-close">' +
+    '<button aria-label="Close" id="pal-widget-close">' +
     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
     '</button></div>' +
-    '<div id="lantern-widget-status"></div>' +
-    '<div id="lantern-widget-messages"><div class="greeting">' + escapeHtml(greeting) + '</div></div>' +
-    '<div id="lantern-widget-input">' +
-    '<textarea placeholder="Type a message…" rows="1" id="lantern-widget-textarea"></textarea>' +
-    '<button id="lantern-widget-send">Send</button>' +
+    '<div id="pal-widget-status"></div>' +
+    '<div id="pal-widget-messages"><div class="greeting">' + escapeHtml(greeting) + '</div></div>' +
+    '<div id="pal-widget-input">' +
+    '<textarea placeholder="Type a message…" rows="1" id="pal-widget-textarea"></textarea>' +
+    '<button id="pal-widget-send">Send</button>' +
     '</div>' +
-    '<div id="lantern-widget-footer">Powered by <a href="https://lantern.run" target="_blank" rel="noopener">PAL</a></div>';
+    '<div id="pal-widget-footer">Powered by <a href="https://lantern.run" target="_blank" rel="noopener">PAL</a></div>';
 
   document.body.appendChild(bubble);
   document.body.appendChild(panel);
@@ -177,16 +177,16 @@
   var inflight = false;
   var stream = null; // one EventSource for the session's lifetime
   var turn = null; // the in-flight agent turn, if any
-  var messagesEl = panel.querySelector("#lantern-widget-messages");
-  var statusEl = panel.querySelector("#lantern-widget-status");
-  var textareaEl = panel.querySelector("#lantern-widget-textarea");
-  var sendEl = panel.querySelector("#lantern-widget-send");
+  var messagesEl = panel.querySelector("#pal-widget-messages");
+  var statusEl = panel.querySelector("#pal-widget-status");
+  var textareaEl = panel.querySelector("#pal-widget-textarea");
+  var sendEl = panel.querySelector("#pal-widget-send");
 
   bubble.addEventListener("click", function () {
     panel.classList.toggle("open");
     if (panel.classList.contains("open")) textareaEl.focus();
   });
-  panel.querySelector("#lantern-widget-close").addEventListener("click", function () {
+  panel.querySelector("#pal-widget-close").addEventListener("click", function () {
     panel.classList.remove("open");
   });
 

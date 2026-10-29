@@ -145,11 +145,11 @@ func TestBuildImmigrationPrompt_EmptyMaterial(t *testing.T) {
 // ---------- flag-gate tests (no DB, no LLM) ----------
 
 func TestImmigrationSentinelEnabled_OffByDefault(t *testing.T) {
-	prev := os.Getenv("LANTERN_IMMIGRATION_SENTINEL")
-	_ = os.Unsetenv("LANTERN_IMMIGRATION_SENTINEL")
+	prev := os.Getenv("PAL_IMMIGRATION_SENTINEL")
+	_ = os.Unsetenv("PAL_IMMIGRATION_SENTINEL")
 	defer func() {
 		if prev != "" {
-			_ = os.Setenv("LANTERN_IMMIGRATION_SENTINEL", prev)
+			_ = os.Setenv("PAL_IMMIGRATION_SENTINEL", prev)
 		}
 	}()
 
@@ -159,11 +159,11 @@ func TestImmigrationSentinelEnabled_OffByDefault(t *testing.T) {
 }
 
 func TestImmigrationSentinelEnabled_OnValues(t *testing.T) {
-	prev := os.Getenv("LANTERN_IMMIGRATION_SENTINEL")
-	defer func() { _ = os.Setenv("LANTERN_IMMIGRATION_SENTINEL", prev) }()
+	prev := os.Getenv("PAL_IMMIGRATION_SENTINEL")
+	defer func() { _ = os.Setenv("PAL_IMMIGRATION_SENTINEL", prev) }()
 
 	for _, v := range []string{"1", "true", "on", "TRUE", "ON"} {
-		_ = os.Setenv("LANTERN_IMMIGRATION_SENTINEL", v)
+		_ = os.Setenv("PAL_IMMIGRATION_SENTINEL", v)
 		if !immigrationSentinelEnabled() {
 			t.Errorf("sentinel must be ON for env=%q", v)
 		}
@@ -171,11 +171,11 @@ func TestImmigrationSentinelEnabled_OnValues(t *testing.T) {
 }
 
 func TestImmigrationSentinelEnabled_OffValues(t *testing.T) {
-	prev := os.Getenv("LANTERN_IMMIGRATION_SENTINEL")
-	defer func() { _ = os.Setenv("LANTERN_IMMIGRATION_SENTINEL", prev) }()
+	prev := os.Getenv("PAL_IMMIGRATION_SENTINEL")
+	defer func() { _ = os.Setenv("PAL_IMMIGRATION_SENTINEL", prev) }()
 
 	for _, v := range []string{"0", "false", "off", "", "no"} {
-		_ = os.Setenv("LANTERN_IMMIGRATION_SENTINEL", v)
+		_ = os.Setenv("PAL_IMMIGRATION_SENTINEL", v)
 		if immigrationSentinelEnabled() {
 			t.Errorf("sentinel must be OFF for env=%q", v)
 		}

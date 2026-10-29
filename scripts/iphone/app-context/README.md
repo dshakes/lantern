@@ -1,6 +1,6 @@
 # iPhone App-Context Signals — Setup
 
-Feed "what I'm using on my iPhone" into your Lantern bot. When you open an app
+Feed "what I'm using on my iPhone" into your PAL Runtime bot. When you open an app
 (Instagram, Slack, Maps…), arrive somewhere, or switch a Focus mode, your phone
 quietly POSTs a one-line signal to your Mac. The bridge tails those signals,
 summarizes them ("On iPhone (last 2h): Instagram, Slack, Maps — mostly
@@ -19,7 +19,7 @@ your dashboard.
 ## What you need (one-time)
 
 1. **The tunnel host** — the same `https://…` URL you already use to open your
-   Lantern dashboard from your phone. Example: `https://macbook-pro-2.tail0be192.ts.net`.
+   PAL Runtime dashboard from your phone. Example: `https://macbook-pro-2.tail0be192.ts.net`.
    Everything below posts to `<that host>/v1/signals`.
 
 2. **The signal token** — a shared secret. Pick any long random string (e.g.
@@ -28,14 +28,14 @@ your dashboard.
 
    - **Dashboard** (`apps/web` env, e.g. `.env.local`):
      ```
-     LANTERN_SIGNAL_TOKEN=<your-token>
+     PAL_SIGNAL_TOKEN=<your-token>
      ```
      This is server-side only — do NOT prefix it with `NEXT_PUBLIC_`. If this is
      unset, the endpoint rejects everything (fails closed).
 
    - **Bridge process** (the imessage-bridge env) — only needed if you also want
      a kill switch; the bridge just reads the local file, so the token isn't
-     required for it to work. Set `LANTERN_IPHONE_SIGNALS=off` there to disable
+     required for it to work. Set `PAL_IPHONE_SIGNALS=off` there to disable
      the feature entirely.
 
 3. The **Shortcuts** app (built into iOS).
@@ -169,6 +169,6 @@ returns **400**.
   The bot is instructed to never volunteer it and never reveal it to a contact.
 - The token gates the endpoint; keep it secret. It's server-side only and never
   shipped to a browser.
-- Turn the whole feature off any time by setting `LANTERN_IPHONE_SIGNALS=off` on
-  the bridge, or by unsetting `LANTERN_SIGNAL_TOKEN` on the dashboard (which
+- Turn the whole feature off any time by setting `PAL_IPHONE_SIGNALS=off` on
+  the bridge, or by unsetting `PAL_SIGNAL_TOKEN` on the dashboard (which
   makes the endpoint reject every request).

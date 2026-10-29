@@ -11,7 +11,7 @@ export interface MemoryEntry {
   createdAt: string;
 }
 
-const MEMORY_KEY_PREFIX = "lantern_agent_memory_";
+const MEMORY_KEY_PREFIX = "pal_agent_memory_";
 
 export function getAgentMemory(agentName: string): MemoryEntry[] {
   if (typeof window === "undefined") return [];

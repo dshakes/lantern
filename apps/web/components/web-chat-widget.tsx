@@ -68,7 +68,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
       <div className="fixed bottom-6 right-6 z-50">
         <button
           onClick={() => setIsOpen(true)}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-lantern-500 text-on-flame shadow-lg shadow-lantern-500/30 transition-transform hover:scale-105"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-pal-500 text-on-flame shadow-lg shadow-pal-500/30 transition-transform hover:scale-105"
         >
           <MessageSquare className="h-6 w-6" />
         </button>
@@ -88,8 +88,8 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-800 bg-surface-2 px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-lantern-500/10">
-            <Bot className="h-4 w-4 text-lantern-400" />
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-pal-500/10">
+            <Bot className="h-4 w-4 text-pal-400" />
           </div>
           <div>
             <p className="text-sm font-medium text-zinc-100">PAL Agent</p>
@@ -125,11 +125,11 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
             <div
               className={clsx(
                 "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
-                msg.role === "agent" ? "bg-lantern-500/10" : "bg-surface-3"
+                msg.role === "agent" ? "bg-pal-500/10" : "bg-surface-3"
               )}
             >
               {msg.role === "agent" ? (
-                <Bot className="h-3 w-3 text-lantern-400" />
+                <Bot className="h-3 w-3 text-pal-400" />
               ) : (
                 <User className="h-3 w-3 text-zinc-400" />
               )}
@@ -139,13 +139,13 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
                 "max-w-[75%] rounded-xl px-3 py-2",
                 msg.role === "agent"
                   ? "bg-surface-2 text-zinc-300"
-                  : "bg-lantern-500/10 text-zinc-200"
+                  : "bg-pal-500/10 text-zinc-200"
               )}
             >
               <p className="text-xs leading-relaxed whitespace-pre-line">{msg.text}</p>
               <p className={clsx(
                 "mt-1 text-[11px]",
-                msg.role === "agent" ? "text-zinc-600" : "text-lantern-400/50"
+                msg.role === "agent" ? "text-zinc-600" : "text-pal-400/50"
               )}>
                 {msg.time}
               </p>
@@ -155,8 +155,8 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
 
         {isTyping && (
           <div className="flex gap-2">
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lantern-500/10">
-              <Bot className="h-3 w-3 text-lantern-400" />
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-pal-500/10">
+              <Bot className="h-3 w-3 text-pal-400" />
             </div>
             <div className="rounded-xl bg-surface-2 px-3 py-2">
               <div className="flex items-center gap-1">
@@ -180,12 +180,12 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type a message..."
-            className="flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500"
+            className="flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500"
           />
           <button
             onClick={handleSend}
             disabled={!input.trim()}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500 text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-pal-500 text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Send className="h-3.5 w-3.5" />
           </button>

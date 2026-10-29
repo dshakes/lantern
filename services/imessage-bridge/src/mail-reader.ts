@@ -41,7 +41,7 @@ export type MailSearchOutcome =
   | { ok: false; error: string };
 
 export function mailIndexEnabled(): boolean {
-  const v = (process.env.LANTERN_MAIL_INDEX || "").toLowerCase();
+  const v = (process.env.PAL_MAIL_INDEX || "").toLowerCase();
   return v !== "0" && v !== "off" && v !== "false";
 }
 

@@ -2,4 +2,4 @@
 // module-load-time `PAUSE_WARN_ENABLED` const sees the flag. The pause-expiry
 // warning is opt-in in prod (owner found it noisy); the ticker tests assert
 // the opt-in behavior.
-process.env.LANTERN_PAUSE_WARN = "1";
+process.env.PAL_PAUSE_WARN = "1";

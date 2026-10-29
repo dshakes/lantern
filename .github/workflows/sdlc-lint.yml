@@ -31,6 +31,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ADR 0032: code reads PAL_*; the compat layer serves LANTERN_*.
+      - name: env-read-check (no new direct LANTERN_* env reads)
+        run: bash scripts/env-read-check.sh
+
       # ---- Go ---------------------------------------------------------------
       - name: Set up Go
         uses: actions/setup-go@v5

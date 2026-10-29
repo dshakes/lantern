@@ -46,7 +46,7 @@ import {
   Zap,
 } from "lucide-react";
 import clsx from "clsx";
-import { LanternMark } from "@/components/lantern-mark";
+import { PalMark } from "@/components/pal-mark";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useAgents } from "@/lib/hooks";
@@ -128,7 +128,7 @@ export function Sidebar() {
           aria-label="Home"
         >
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-surface-2 transition-transform duration-150 group-hover:scale-105">
-            <LanternMark className="h-5 w-5" />
+            <PalMark className="h-5 w-5" />
           </div>
           {!collapsed && (
             <div className="flex flex-col leading-tight">
@@ -143,7 +143,7 @@ export function Sidebar() {
           <>
             <span className="flex-1" />
             {isDemoMode && (
-              <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-[12px] font-medium text-lantern-300">
+              <span className="rounded-full bg-pal-500/10 px-2 py-0.5 text-[12px] font-medium text-pal-300">
                 demo
               </span>
             )}
@@ -159,7 +159,7 @@ export function Sidebar() {
         {collapsed && (
           <button
             onClick={() => setCollapsed(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50"
             title="Expand sidebar"
             aria-label="Expand sidebar"
           >
@@ -174,7 +174,7 @@ export function Sidebar() {
           <div className="px-4 pt-4">
             <Link
               href="/agents/create"
-              className="group flex w-full items-center gap-2 rounded-xl bg-lantern-400 px-3 py-2 text-xs font-semibold text-on-flame hover:bg-lantern-300 transition-transform duration-150 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
+              className="group flex w-full items-center gap-2 rounded-xl bg-pal-400 px-3 py-2 text-xs font-semibold text-on-flame hover:bg-pal-300 transition-transform duration-150 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
             >
               <Plus className="h-4 w-4 transition-transform duration-150 group-hover:rotate-90" />
               New agent
@@ -190,7 +190,7 @@ export function Sidebar() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search agents…"
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-7 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors duration-150 focus:border-lantern-500/40"
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-7 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors duration-150 focus:border-pal-500/40"
               />
               <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-zinc-700 bg-surface-2 px-1 font-mono text-[12px] text-zinc-500">
                 /
@@ -217,7 +217,7 @@ export function Sidebar() {
         ) : sortedAgents.length === 0 ? (
           !collapsed && (
             <p className="px-2 py-1 text-[12px] text-zinc-500">
-              No agents yet. <Link href="/agents/create" className="text-lantern-400 hover:text-lantern-300">Create one →</Link>
+              No agents yet. <Link href="/agents/create" className="text-pal-400 hover:text-pal-300">Create one →</Link>
             </p>
           )
         ) : (
@@ -230,7 +230,7 @@ export function Sidebar() {
                   <Link
                     href={href}
                     className={clsx(
-                      "group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
+                      "group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
                       isActive
                         ? "bg-surface-3 text-zinc-100"
                         : "text-zinc-400 hover:bg-surface-3/60 hover:text-zinc-100",
@@ -258,9 +258,9 @@ export function Sidebar() {
               <li>
                 <Link
                   href="/agents"
-                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-surface-3/60 hover:text-lantern-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-pal-400 transition-colors hover:bg-surface-3/60 hover:text-pal-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
                 >
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md border border-lantern-500/30 text-[11px] tabular-nums">+{hiddenCount}</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md border border-pal-500/30 text-[11px] tabular-nums">+{hiddenCount}</span>
                   View all {agents.length} agents
                 </Link>
               </li>
@@ -414,7 +414,7 @@ function SecondaryLink({
     <Link
       href={href}
       className={clsx(
-        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
+        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pal-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
         active
           ? "bg-surface-3 text-zinc-100"
           : "text-zinc-400 hover:bg-surface-3/60 hover:text-zinc-100",

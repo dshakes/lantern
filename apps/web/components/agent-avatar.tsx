@@ -93,7 +93,7 @@ export function AgentAvatar({
             DOT_CLS[size],
             status === "succeeded" && "bg-emerald-400",
             status === "failed" && "bg-red-400",
-            (status === "running" || status === "paused") && "bg-lantern-400 animate-pulse",
+            (status === "running" || status === "paused") && "bg-pal-400 animate-pulse",
             (status === "queued" || status === "cancelled") && "bg-zinc-500"
           )}
           aria-label={`status: ${status}`}

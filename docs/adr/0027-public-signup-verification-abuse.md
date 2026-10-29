@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-27
-- **Deciders:** Lantern control-plane, security
+- **Deciders:** PAL Runtime control-plane, security
 - **Tags:** auth, trust-boundary, multi-tenant, abuse, gdpr
 
 ## Context
@@ -20,11 +20,11 @@ export for GDPR Art. 20.
 
 ## Decision
 
-### 1. One switch for who may sign up — `LANTERN_SIGNUP_MODE`
+### 1. One switch for who may sign up — `PAL_SIGNUP_MODE`
 
 | Mode     | Behaviour |
 | -------- | --------- |
-| `closed` | `POST /auth/signup` returns 403. **Default in prod** (`LANTERN_ENV=prod/production/staging`). |
+| `closed` | `POST /auth/signup` returns 403. **Default in prod** (`PAL_ENV=prod/production/staging`). |
 | `invite` | Sign-up needs an `inviteCode` bound to the email (below). |
 | `open`   | Anyone may sign up, subject to captcha + rate limits. **Default in dev.** |
 
@@ -32,7 +32,7 @@ Any other value fails startup. Closed-by-default in prod means a deploy that
 forgets the flag is safe; opening sign-up is a deliberate act.
 
 **Invite codes are stateless and email-bound:**
-`<expiryUnix>.<hex HMAC-SHA256(LANTERN_SIGNUP_INVITE_SECRET, lower(email) + "|" + expiryUnix)>`.
+`<expiryUnix>.<hex HMAC-SHA256(PAL_SIGNUP_INVITE_SECRET, lower(email) + "|" + expiryUnix)>`.
 A code only works for the email it was minted for and only until its expiry.
 It is effectively single-use because emails are unique — once that address
 has an account the code has nothing left to create. No table, no admin API.
@@ -40,14 +40,14 @@ Mint one with:
 
 ```bash
 EXP=$(( $(date +%s) + 7*86400 )); EMAIL=new.user@example.com
-echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTERN_SIGNUP_INVITE_SECRET" -r | cut -d' ' -f1)"
+echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$PAL_SIGNUP_INVITE_SECRET" -r | cut -d' ' -f1)"
 ```
 
-`invite` mode without `LANTERN_SIGNUP_INVITE_SECRET` fails startup.
+`invite` mode without `PAL_SIGNUP_INVITE_SECRET` fails startup.
 
 ### 2. Captcha — Cloudflare Turnstile, verified server-side
 
-`LANTERN_TURNSTILE_SECRET` set → every sign-up must carry a `captchaToken`,
+`PAL_TURNSTILE_SECRET` set → every sign-up must carry a `captchaToken`,
 checked against Turnstile's `siteverify` with the caller IP. **Open sign-up in
 prod without the secret fails startup**, and the handler refuses the request
 too (defence in depth if the guard is bypassed). In dev, unset means off.
@@ -90,16 +90,16 @@ cannot reveal whether an account exists.
 
 ### 5. Mailer — one interface, three drivers (`internal/mailer`)
 
-`LANTERN_MAILER` = `log` (default) | `smtp` | `http`.
+`PAL_MAILER` = `log` (default) | `smtp` | `http`.
 
 - `log` prints the message to the server log. In dev it prints the body (the
   link). In prod it prints recipient + subject only — **never the token**.
-- `smtp` uses stdlib `net/smtp` (`LANTERN_SMTP_ADDR`, `LANTERN_SMTP_USER`,
-  `LANTERN_SMTP_PASSWORD`); STARTTLS when the server offers it.
+- `smtp` uses stdlib `net/smtp` (`PAL_SMTP_ADDR`, `PAL_SMTP_USER`,
+  `PAL_SMTP_PASSWORD`); STARTTLS when the server offers it.
 - `http` POSTs `{from,to,subject,text}` with a bearer token to
-  `LANTERN_MAIL_HTTP_URL` (Resend's `/emails` API shape; `LANTERN_MAIL_HTTP_TOKEN`).
+  `PAL_MAIL_HTTP_URL` (Resend's `/emails` API shape; `PAL_MAIL_HTTP_TOKEN`).
 
-All drivers send from `LANTERN_MAIL_FROM`. A driver missing its settings
+All drivers send from `PAL_MAIL_FROM`. A driver missing its settings
 fails startup, and so does prod with sign-up `open`/`invite` on the `log`
 driver: users could never receive their link. Links point at
 `OAUTH_DASHBOARD_URL` (the existing dashboard base URL) under `/auth/verify`
@@ -109,7 +109,7 @@ and `/auth/reset`, which the dashboard middleware already treats as public.
 
 Redis fixed-window counters (same mechanism as the existing login limiter),
 keyed by `remoteIP(r)` — which honours `X-Forwarded-For` only from
-`LANTERN_TRUSTED_PROXIES` — and by account where there is one. Login previously
+`PAL_TRUSTED_PROXIES` — and by account where there is one. Login previously
 trusted the leftmost `X-Forwarded-For` unconditionally, so any client could
 rotate its "IP"; it now uses `remoteIP` too. Limits: login 10/min per IP and
 per email (unchanged); sign-up 10/hour per IP; forgot + resend 5/hour per email
@@ -147,7 +147,7 @@ exemption list with its reason: pre-auth `/auth/*`, provider-signed webhooks
 heartbeat, signals, runtime report/secret relay, receipt verify), and the
 runtime routes, which check `runtime:*` scopes inside the handler. Mutators
 that already authenticated with a JWT/API key but had no annotation are now
-wrapped. With `LANTERN_AUTHZ_ENFORCE` off (the default) this changes nothing at
+wrapped. With `PAL_AUTHZ_ENFORCE` off (the default) this changes nothing at
 runtime; it is what makes flipping the flag on safe.
 
 ## Consequences
@@ -168,10 +168,10 @@ runtime; it is what makes flipping the flag on safe.
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_SIGNUP_MODE` | `closed` prod / `open` dev | `open` \| `invite` \| `closed` |
-| `LANTERN_SIGNUP_INVITE_SECRET` | — | HMAC key for invite codes (required for `invite`) |
-| `LANTERN_TURNSTILE_SECRET` | — | Turnstile server secret; required for prod `open` |
-| `LANTERN_MAILER` | `log` | `log` \| `smtp` \| `http` |
-| `LANTERN_MAIL_FROM` | `Lantern <no-reply@localhost>` | Sender address |
-| `LANTERN_SMTP_ADDR` / `_USER` / `_PASSWORD` | — | SMTP driver |
-| `LANTERN_MAIL_HTTP_URL` / `LANTERN_MAIL_HTTP_TOKEN` | — | HTTP (Resend-shaped) driver |
+| `PAL_SIGNUP_MODE` | `closed` prod / `open` dev | `open` \| `invite` \| `closed` |
+| `PAL_SIGNUP_INVITE_SECRET` | — | HMAC key for invite codes (required for `invite`) |
+| `PAL_TURNSTILE_SECRET` | — | Turnstile server secret; required for prod `open` |
+| `PAL_MAILER` | `log` | `log` \| `smtp` \| `http` |
+| `PAL_MAIL_FROM` | `PAL Runtime <no-reply@localhost>` | Sender address |
+| `PAL_SMTP_ADDR` / `_USER` / `_PASSWORD` | — | SMTP driver |
+| `PAL_MAIL_HTTP_URL` / `PAL_MAIL_HTTP_TOKEN` | — | HTTP (Resend-shaped) driver |

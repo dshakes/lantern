@@ -35,7 +35,7 @@ export class EmailMirror {
   // Send `text` as an email to the configured owner address. No-op
   // when LANTERN_OWNER_EMAIL isn't set. Fire-and-forget safe.
   async send(text: string): Promise<void> {
-    const to = process.env.LANTERN_OWNER_EMAIL;
+    const to = process.env.PAL_OWNER_EMAIL;
     if (!to) return;
     if (text.length < EMAIL_MIN_LEN) return;
     const lastAt = this.lastSentAt.get(text);

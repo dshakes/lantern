@@ -157,7 +157,7 @@ VM=$(curl -s -X POST http://localhost:8080/v1/runtime/schedule \
     "isolation": "trusted",
     "limits": {"vcpu": "100m", "memory": "64Mi", "timeout_secs": 30},
     "command": ["sh", "-c", "echo '"'"'{\"name\":\"Ada\"}'"'"' | python /app/workload.py"],
-    "env": {"LANTERN_RUN_ID": "run-hello-local", "LANTERN_VM_ID": "vm-hello-local"}
+    "env": {"PAL_RUN_ID": "run-hello-local", "PAL_VM_ID": "vm-hello-local"}
   }')
 echo "$VM" | jq '{vmId, node, az}'
 VM_ID=$(echo "$VM" | jq -r .vmId)
@@ -191,8 +191,8 @@ to the scheduler.
 
 ```bash
 ( cd packages/cli && go install ./cmd/lantern )
-export LANTERN_API_URL=http://localhost:8080
-export LANTERN_API_TOKEN=$TOKEN
+export PAL_API_URL=http://localhost:8080
+export PAL_API_TOKEN=$TOKEN
 
 lantern run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name":"Ada"}'
@@ -316,7 +316,7 @@ RuntimeClass (standard/untrusted), or Pods with Kata RuntimeClass (hostile).
   REST/gRPC         │  control-plane  :8080/:50051  │
   ──────────────►   │  runtime.go → scheduler gRPC  │
                     └────────────┬─────────────────┘
-                                 │ LANTERN_SCHEDULER_GRPC_ADDR
+                                 │ PAL_SCHEDULER_GRPC_ADDR
                     ┌────────────▼─────────────────┐
                     │  runtime-scheduler  :50055    │
                     │  placement + fair-share        │
@@ -333,12 +333,12 @@ RuntimeClass (standard/untrusted), or Pods with Kata RuntimeClass (hostile).
 
 | Var | Default | Effect when unset |
 |-----|---------|------------------|
-| `LANTERN_SCHEDULER_GRPC_ADDR` | — | **Fatal in prod** — `CheckSchedulerAddr` aborts startup |
-| `LANTERN_DEFAULT_MANAGER_ADDR` | — | **Fatal in prod** — scheduler startup guard aborts |
-| `LANTERN_ENV` | `development` | `prod`/`production`/`staging` enables all prod guards |
-| `LANTERN_GRPC_SERVICE_TOKEN` | — | **Fatal in prod** — gRPC ports fail-closed without token |
+| `PAL_SCHEDULER_GRPC_ADDR` | — | **Fatal in prod** — `CheckSchedulerAddr` aborts startup |
+| `PAL_DEFAULT_MANAGER_ADDR` | — | **Fatal in prod** — scheduler startup guard aborts |
+| `PAL_ENV` | `development` | `prod`/`production`/`staging` enables all prod guards |
+| `PAL_GRPC_SERVICE_TOKEN` | — | **Fatal in prod** — gRPC ports fail-closed without token |
 
-Set `LANTERN_ENV=production` (or `staging`) before deploying. All prod guards
+Set `PAL_ENV=production` (or `staging`) before deploying. All prod guards
 are keyed on this value — they are no-ops in development.
 
 ### K8s RuntimeClasses
@@ -348,14 +348,14 @@ RuntimeClasses:
 
 | Isolation class | RuntimeClass env var | Default |
 |-----------------|---------------------|---------|
-| `STANDARD` / `DEVCONTAINER` | `LANTERN_RUNTIMECLASS_GVISOR` | bare runc (degraded) |
-| `HOSTILE` | `LANTERN_RUNTIMECLASS_KATA` | — (required; fatal if absent) |
-| `WASM` | `LANTERN_RUNTIMECLASS_WASM` | in-process wasmtime |
+| `STANDARD` / `DEVCONTAINER` | `PAL_RUNTIMECLASS_GVISOR` | bare runc (degraded) |
+| `HOSTILE` | `PAL_RUNTIMECLASS_KATA` | — (required; fatal if absent) |
+| `WASM` | `PAL_RUNTIMECLASS_WASM` | in-process wasmtime |
 
-Set `LANTERN_RUNTIMECLASS_GVISOR=gvisor` (or your cluster's gVisor class
-name) and `LANTERN_RUNTIMECLASS_KATA=kata-qemu` to get real sandboxing.
-Without `LANTERN_RUNTIMECLASS_GVISOR`, `STANDARD` workloads run as bare runc
-**unless** `LANTERN_ALLOW_RUNC_FALLBACK=false` is set (default false = allow).
+Set `PAL_RUNTIMECLASS_GVISOR=gvisor` (or your cluster's gVisor class
+name) and `PAL_RUNTIMECLASS_KATA=kata-qemu` to get real sandboxing.
+Without `PAL_RUNTIMECLASS_GVISOR`, `STANDARD` workloads run as bare runc
+**unless** `PAL_ALLOW_RUNC_FALLBACK=false` is set (default false = allow).
 For `HOSTILE` the Kata class is always required — there is no runc fallback.
 
 ### Cluster validation
@@ -381,13 +381,13 @@ interpretation, and the GKE setup script.
 | `make dev-infra` + `make run-api` | Required | — | — |
 | `make run-scheduler` + `make run-runtime-manager` | Required for microVM tier | — | — |
 | Node registration (heartbeat) | Manual / `SCHEDULER_URL` env | Auto (SCHEDULER_URL in Deployment) | Auto |
-| `LANTERN_ENV` | `development` | `staging` | `production` |
-| `LANTERN_GRPC_SERVICE_TOKEN` | Optional | **Required** | **Required** |
-| `LANTERN_SCHEDULER_GRPC_ADDR` | Set for microVM tier | **Required** | **Required** |
-| `LANTERN_DEFAULT_MANAGER_ADDR` | Set for microVM tier | **Required** | **Required** |
-| `LANTERN_RUNTIMECLASS_GVISOR` | — (Docker, no isolation) | Set to `gvisor` | **Required** |
-| `LANTERN_RUNTIMECLASS_KATA` | — | Set to `kata-qemu` | **Required** for HOSTILE |
-| `LANTERN_RLS_ENFORCE` | 0 (off) | 1 (on) | 1 (on) |
+| `PAL_ENV` | `development` | `staging` | `production` |
+| `PAL_GRPC_SERVICE_TOKEN` | Optional | **Required** | **Required** |
+| `PAL_SCHEDULER_GRPC_ADDR` | Set for microVM tier | **Required** | **Required** |
+| `PAL_DEFAULT_MANAGER_ADDR` | Set for microVM tier | **Required** | **Required** |
+| `PAL_RUNTIMECLASS_GVISOR` | — (Docker, no isolation) | Set to `gvisor` | **Required** |
+| `PAL_RUNTIMECLASS_KATA` | — | Set to `kata-qemu` | **Required** for HOSTILE |
+| `PAL_RLS_ENFORCE` | 0 (off) | 1 (on) | 1 (on) |
 | Cluster validation (`lantern vm validate`) | — | operator-validated | **Required** |
 | Shared-tier run succeeds (`POST /v1/runs`) | Verified (this guide) | Smoke test | Re-run on every deploy |
 | MicroVM-tier run succeeds (`POST /v1/runtime/schedule`) | Verified (this guide, Docker) | Kata smoke test | Kata + gVisor smoke |

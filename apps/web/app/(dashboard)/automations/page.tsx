@@ -80,7 +80,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  suggested: "bg-lantern-500/15 text-lantern-300",
+  suggested: "bg-pal-500/15 text-pal-300",
   auto_acted: "bg-emerald-500/15 text-emerald-300",
   undone: "bg-zinc-700/40 text-zinc-400",
   dismissed: "bg-zinc-700/30 text-zinc-500",
@@ -323,7 +323,7 @@ function SummaryStrip({
           className={clsx(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors",
             activeFilter === item.filterId
-              ? "bg-lantern-500/20 text-lantern-200"
+              ? "bg-pal-500/20 text-pal-200"
               : "text-zinc-400 hover:text-zinc-200",
           )}
         >
@@ -356,7 +356,7 @@ function FilterChips({
             "inline-flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors",
             "min-h-[34px]", // large enough tap target on mobile
             active === chip.id
-              ? "bg-lantern-500/20 text-lantern-200 ring-1 ring-lantern-500/40"
+              ? "bg-pal-500/20 text-pal-200 ring-1 ring-pal-500/40"
               : "border border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200",
           )}
         >
@@ -559,7 +559,7 @@ function PrefRow({
             className={clsx(
               "min-h-[32px] min-w-[48px] px-3 text-[12px] font-medium transition-colors",
               pref.mode === m
-                ? "bg-lantern-500/20 text-lantern-300"
+                ? "bg-pal-500/20 text-pal-300"
                 : "text-zinc-500 hover:bg-surface-3/60 hover:text-zinc-300",
             )}
           >

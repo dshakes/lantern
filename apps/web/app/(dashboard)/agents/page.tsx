@@ -388,7 +388,7 @@ export default function AgentsPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search agents…"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-12 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-all duration-150 focus:border-lantern-500/60 focus:bg-surface-2 focus:ring-2 focus:ring-lantern-500/30"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-12 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-all duration-150 focus:border-pal-500/60 focus:bg-surface-2 focus:ring-2 focus:ring-pal-500/30"
                 />
                 <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-700 bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-zinc-500">
                   /
@@ -453,7 +453,7 @@ export default function AgentsPage() {
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <Search className="mb-3 h-8 w-8 text-zinc-600" />
                     <p className="text-sm text-zinc-400">No agents match your search.</p>
-                    <button onClick={() => setSearch("")} className="mt-2 text-xs text-lantern-400 transition-colors hover:text-lantern-300">
+                    <button onClick={() => setSearch("")} className="mt-2 text-xs text-pal-400 transition-colors hover:text-pal-300">
                       Clear search
                     </button>
                   </div>
@@ -677,7 +677,7 @@ function AgentCard({
       )}>
         <button
           onClick={(e) => onRun(agent, e)}
-          className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-lantern-500/10 hover:text-lantern-400"
+          className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-pal-500/10 hover:text-pal-400"
           title="Run agent"
         >
           <Play className="h-3.5 w-3.5" />

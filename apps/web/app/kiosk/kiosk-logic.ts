@@ -1,6 +1,6 @@
 // Pure kiosk helpers (ADR 0029) — no React, unit-tested in kiosk-logic.test.mts.
 
-export const KIOSK_STORAGE_KEY = "lantern_kiosk";
+export const KIOSK_STORAGE_KEY = "pal_kiosk";
 export const IDLE_LIMIT_MS = 120_000;
 
 export interface KioskMeta {

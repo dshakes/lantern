@@ -44,7 +44,7 @@ pub fn should_attest(confidential_var: Option<&str>) -> bool {
 ///
 /// Returns "sev-snp", "tdx", or "" (unknown / no device).
 fn resolve_cc_tech() -> String {
-    if let Ok(v) = std::env::var("LANTERN_CC_TECH")
+    if let Ok(v) = pal_env::var("PAL_CC_TECH")
         && !v.is_empty()
     {
         return v;
@@ -75,7 +75,7 @@ fn resolve_cc_tech() -> String {
 /// `measurement_present = "false"`.
 fn read_measurement() -> Option<Vec<u8>> {
     // 1. Explicit path override.
-    if let Ok(path) = std::env::var("LANTERN_CC_MEASUREMENT_PATH")
+    if let Ok(path) = pal_env::var("PAL_CC_MEASUREMENT_PATH")
         && !path.is_empty()
         && let Ok(b) = std::fs::read(&path)
         && !b.is_empty()
@@ -169,13 +169,13 @@ pub fn build_frame(
 /// Emit the cc_attestation audit frame. Best-effort — never panics, never
 /// blocks boot on I/O failure.
 pub async fn run(manager: &ManagerClient) {
-    let confidential = std::env::var("LANTERN_CONFIDENTIAL").ok();
+    let confidential = pal_env::var("PAL_CONFIDENTIAL").ok();
     if !should_attest(confidential.as_deref()) {
         return;
     }
 
     let cc_tech = resolve_cc_tech();
-    let runtime_class = std::env::var("LANTERN_RUNTIME_CLASS").unwrap_or_default();
+    let runtime_class = pal_env::var("PAL_RUNTIME_CLASS").unwrap_or_default();
     let measurement = read_measurement();
     let measurement_present = measurement.is_some();
 

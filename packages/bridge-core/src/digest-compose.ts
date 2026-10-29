@@ -221,7 +221,7 @@ export async function composeDigestNarrative(
   data: DigestData,
   opts?: ComposeOpts,
 ): Promise<string> {
-  const narrativeEnabled = process.env.LANTERN_DIGEST_NARRATIVE !== "0";
+  const narrativeEnabled = process.env.PAL_DIGEST_NARRATIVE !== "0";
 
   if (narrativeEnabled && opts?.llmCompose) {
     try {
