@@ -574,12 +574,13 @@ func (x *SecretRef) GetSecretUri() string {
 
 // Per-tenant egress DLP policy (ADR 0030). Shipped from the control-plane in
 // AgentSpec.dlp_policy and compiled into the egress broker at spawn time.
-// Only effective in broker egress mode (ADR 0026); silently ignored in guest
-// mode (no broker on that path).
+// Enforced only by the broker (ADR 0026): the manager REFUSES a spawn whose
+// policy has a block rule on a node without one; audit-only rules there are
+// recorded as not enforced.
 type DlpPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Rules []*DlpRule             `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
-	// Cap on bytes inspected per request. 0 → default (65536).
+	// Cap on bytes inspected per request. 0 → default (65536); clamped to 1 MiB.
 	MaxInspectBytes int64 `protobuf:"varint,2,opt,name=max_inspect_bytes,json=maxInspectBytes,proto3" json:"max_inspect_bytes,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -634,11 +635,12 @@ type DlpRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Tenant-assigned stable ID, used in audit events.
 	RuleId string `protobuf:"bytes,1,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
-	// Detector: "card_number" | "secret_key" | "email" | "phone" | "regex".
+	// Detector: "card_number" | "secret_key" | "email" | "phone" | "custom_regex".
+	// Any other name fails the spawn.
 	Detector string `protobuf:"bytes,2,opt,name=detector,proto3" json:"detector,omitempty"`
-	// For "regex" detector: the RE2 pattern. Ignored for built-ins.
+	// For "custom_regex": the RE2-syntax pattern. Ignored for built-ins.
 	Pattern string `protobuf:"bytes,3,opt,name=pattern,proto3" json:"pattern,omitempty"`
-	// "off" | "audit" | "block".  Default "audit".
+	// "off" | "audit" | "block". Anything else (including "") fails the spawn.
 	Mode string `protobuf:"bytes,4,opt,name=mode,proto3" json:"mode,omitempty"`
 	// For email/phone: minimum match count to trigger. Default 1.
 	Threshold     int32 `protobuf:"varint,5,opt,name=threshold,proto3" json:"threshold,omitempty"`

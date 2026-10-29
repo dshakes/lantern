@@ -101,7 +101,8 @@ SPAWN=$(jq -n --arg t "${TENANT}" --arg host "${INJECT_HOST}" --arg uri "${SECRE
   tenant_id:$t, image_digest:"sha256:0000000000000000000000000000000000000000000000000000000000000002",
   isolation:"ISOLATION_HOSTILE", limits:{vcpu:"1", memory:"256Mi", timeout:"120s"}, run_id:"broker-e2e",
   egress_rules:[{pattern:$host, inject:[{header:"Authorization", secret_uri:$uri, value_prefix:"Basic "}]}],
-  dlp_policy:{rules:[{rule_id:"block-cards", detector:"card_number", mode:"block"}]}
+  dlp_policy:{rules:[{rule_id:"block-cards", detector:"card_number", mode:"block"},
+                     {rule_id:"block-ssn", detector:"custom_regex", pattern:"SSN-[0-9]{3}-[0-9]{2}-[0-9]{4}", mode:"block"}]}
 }}')
 RESP=$(g "${SPAWN}" Spawn 2>>"${LOG}") || fail "Spawn failed:\n$(tail -30 "${LOG}")"
 VM_ID=$(printf '%s' "${RESP}" | jq -r '.handle.vmId // empty')
@@ -204,6 +205,15 @@ printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lante
   || fail "DLP: card number was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
 grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number appeared in the manager log (invariant #10)"
 pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
+# The API's custom_regex name compiles and enforces in the manager (it was once
+# inert: the manager only knew "regex").
+TEST_SSN="SSN-123-45-6789"
+OUT=$(post "ref ${TEST_SSN}")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lantern-reason"] == "dlp-block"' >/dev/null \
+  || fail "DLP: custom_regex match was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
+grep -q "${TEST_SSN}" "${LOG}" && fail "DLP: custom_regex match appeared in the manager log (invariant #10)"
+pass "DLP: custom_regex blocked (403 dlp-block); value absent from manager log"
 
 grep 'egress broker audit' "${LOG}" | tail -6 >&2
 pass "ALL BROKER-MODE ASSERTIONS PASSED (vm ${VM_ID})"
