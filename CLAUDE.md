@@ -6,7 +6,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ---
 
-> **Rename note (ADR 0032):** the product is now **PAL**. Real identifiers (`LANTERN_*` env vars, the `lantern` CLI, packages, `lantern.v1`, the repo URL) keep their current names; env vars also accept `PAL_*` equivalents (`PAL_X` wins when both are set).
+> **Rename note (ADR 0032):** the product is now **PAL**. Real identifiers (`LANTERN_*` env vars, the `lantern` CLI, packages, `lantern.v1`, the repo URL) keep their current names; env vars also accept `PAL_*` equivalents (`PAL_X` wins when both are set). This file documents the `PAL_*` names; `LANTERN_*` names are still accepted as legacy aliases.
 
 ## Project in one sentence
 
@@ -40,7 +40,7 @@ Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors
 
 **Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
 
-**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under Lantern's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install from a checkout with `pip install "./packages/sdk-python[deepagents]"` (registry packages are not published yet, and the PyPI name `lantern-sdk` belongs to an unrelated project); conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
+**Framework integrations** (`lantern/integrations/`): optional extras, each importing its framework lazily so the base SDK stays dependency-free. `deepagents_sandbox.LanternSandbox` implements LangChain deepagents' `SandboxBackendProtocol` over the microVM runtime (`POST /v1/runtime/schedule` + `/vms/{id}/exec`), so a deepagents agent's shell/filesystem runs under PAL Runtime's egress allowlist, secret vending, and tenant quota rather than on the host (invariant #5). Install from a checkout with `pip install "./packages/sdk-python[deepagents]"` (registry packages are not published yet, and the PyPI name `lantern-sdk` belongs to an unrelated project); conformance tests skip when the extra is absent. Sync `runtime_client.py` on purpose — the backend protocol is sync and bridging the async `LanternClient` mid-event-loop is fragile.
 
 **Known endpoint fixes (2026-06)**:
 - `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
@@ -58,9 +58,9 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 4. **Streaming is end-to-end.** Token streams flow runtime -> gateway -> SDK -> dashboard with no buffering points other than backpressure-aware channels. No service may collect a full response and then forward.
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
-7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
+7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `PAL_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
 8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key, and the key also folds in a hash of the request body so distinct requests within one run no longer collide. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
-9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `LANTERN_OTEL_ENABLED` unset).
+9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `PAL_OTEL_ENABLED` unset).
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
 
 ---
@@ -230,12 +230,12 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `run_locks`             | Distributed run locking                                                                                                                                                                          | `run_id`, `worker_id`, `expires_at`                                                                                          |
 | `sessions`              | Interactive multi-turn agent sessions                                                                                                                                                            | `tenant_id`, `agent_name`, `status`, `messages` (JSONB)                                                                      |
 | `schedules`             | Cron-based agent execution                                                                                                                                                                       | `tenant_id`, `agent_name`, `cron_expr`, `enabled`, `next_fire_at`, `config` (JSONB)                                          |
-| `connector_installs`    | OAuth / API-key integration state. `config` + `oauth_token_encrypted` are AES-256-GCM-encrypted at rest via `internal/secrets` (set `LANTERN_CREDENTIAL_KEY`; plaintext pass-through when unset) | `tenant_id`, `connector_id`, `oauth_token_encrypted`, `config` (JSONB)                                                       |
+| `connector_installs`    | OAuth / API-key integration state. `config` + `oauth_token_encrypted` are AES-256-GCM-encrypted at rest via `internal/secrets` (set `PAL_CREDENTIAL_KEY`; plaintext pass-through when unset) | `tenant_id`, `connector_id`, `oauth_token_encrypted`, `config` (JSONB)                                                       |
 | `surface_configs`       | Channel configuration                                                                                                                                                                            | `tenant_id`, `surface_id`, `webhook_url`                                                                                     |
 | `api_keys`              | API key management                                                                                                                                                                               | `tenant_id`, `key_hash`, `key_prefix`, `scopes`                                                                              |
 | `deployments`           | Deployment tracking                                                                                                                                                                              | `tenant_id`, `agent_name`, `version`, `environment`, `status`                                                                |
 | `data_planes`           | Registered data planes                                                                                                                                                                           | `tenant_id`, `cloud`, `region`, `status`, `last_heartbeat`                                                                   |
-| `llm_provider_configs`  | LLM API keys per tenant. `api_key_encrypted` is AES-256-GCM-encrypted at rest via `internal/secrets` (`LANTERN_CREDENTIAL_KEY`; plaintext pass-through when unset)                               | `tenant_id`, `provider`, `api_key_encrypted`                                                                                 |
+| `llm_provider_configs`  | LLM API keys per tenant. `api_key_encrypted` is AES-256-GCM-encrypted at rest via `internal/secrets` (`PAL_CREDENTIAL_KEY`; plaintext pass-through when unset)                               | `tenant_id`, `provider`, `api_key_encrypted`                                                                                 |
 | `agent_budgets`         | Policy-as-code spend + rate limits                                                                                                                                                               | `tenant_id`, `agent_name`, `max_cost_usd_per_day`, `max_cost_usd_per_run`, `tool_limits` (JSONB), `hard_fail`                |
 | `agent_usage_daily`     | Daily rollup for budget enforcement                                                                                                                                                              | `tenant_id`, `agent_name`, `usage_date`, `cost_usd`, `runs_count`, `tool_counts` (JSONB)                                     |
 | `cost_forecasts`        | Pre-run cost forecast audit trail                                                                                                                                                                | `tenant_id`, `agent_name`, `estimated_tokens_in/out`, `estimated_cost_usd`, `confidence`                                     |
@@ -250,9 +250,9 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
-Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `LANTERN_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `PAL_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
-**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **`LANTERN_RLS_ENFORCE=1` is now safe to flip per-env** (set `LANTERN_APP_DB_PASSWORD` and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
+**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **`PAL_RLS_ENFORCE=1` is now safe to flip per-env** (set `PAL_APP_DB_PASSWORD` and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
 
 A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
 
@@ -266,7 +266,7 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 
 | Method | Path                     | Description          |
 | ------ | ------------------------ | -------------------- |
-| `POST` | `/auth/signup`           | Register new user (gated by `LANTERN_SIGNUP_MODE`) |
+| `POST` | `/auth/signup`           | Register new user (gated by `PAL_SIGNUP_MODE`) |
 | `POST` | `/auth/login`            | Email+password login |
 | `GET`  | `/auth/me`               | Current user info    |
 | `GET`  | `/auth/oauth/google/...` | Google OAuth flow    |
@@ -275,17 +275,17 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `GET`  | `/v1/tenants/{id}/export` | Owner-only data export (GDPR access) |
 | `DELETE` | `/v1/tenants/{id}`     | Owner-only workspace erasure (GDPR) |
 
-**Account lifecycle (ADR 0027).** `LANTERN_SIGNUP_MODE` = `open`/`invite`/`closed`
+**Account lifecycle (ADR 0027).** `PAL_SIGNUP_MODE` = `open`/`invite`/`closed`
 (unset → `closed` in prod, `open` in dev; invalid → refuse to start). `invite` needs
-`LANTERN_SIGNUP_INVITE_SECRET`; `LANTERN_TURNSTILE_SECRET` enables captcha (required
-for `open` in prod). Mailer: `LANTERN_MAILER` = `log` (default) / `smtp` / `http` with
-`LANTERN_MAIL_FROM`, `LANTERN_SMTP_*`, `LANTERN_MAIL_HTTP_*`; prod with `open`/`invite`
-sign-up and `LANTERN_MAILER=log` refuses to start (`CheckSignupConfig`). Pre-auth routes are
+`PAL_SIGNUP_INVITE_SECRET`; `PAL_TURNSTILE_SECRET` enables captcha (required
+for `open` in prod). Mailer: `PAL_MAILER` = `log` (default) / `smtp` / `http` with
+`PAL_MAIL_FROM`, `PAL_SMTP_*`, `PAL_MAIL_HTTP_*`; prod with `open`/`invite`
+sign-up and `PAL_MAILER=log` refuses to start (`CheckSignupConfig`). Pre-auth routes are
 Redis rate-limited per IP (+ email), fail-open on Redis errors;
-`LANTERN_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
+`PAL_TRUSTED_PROXIES` controls `X-Forwarded-For` trust. Full reference:
 `site/src/content/docs/docs/` (accounts page).
 
-**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `LANTERN_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `LANTERN_FREE_TIER_MAX_VMS` (2), `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
+**Free tier + starter gallery (W2-S).** New tenants (password `Signup` and first Google login) get a hard-fail tenant-wide cap (`agent_budgets` row `agent_name='*'`) and a `runtime_quotas` row in the sign-up transaction (`handlers/tenant_defaults.go`; `DO NOTHING` on conflict, so owner edits survive; the seeded dev tenant is untouched). Env: `PAL_FREE_TIER_COST_USD_PER_DAY` (default 2.00), `PAL_FREE_TIER_MAX_VMS` (2), `PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY` (1.00); `off`/`0` skips that cap. `POST /v1/runs` returns `403 {code:"email_unverified"}` for an unverified local user when `requireEmailVerification()` (prod); OAuth users are stored verified. `GET /v1/agents/templates` marks six `gallery` templates (support-desk, pr-triage, incident-responder, daily-digest, data-analyst, telegram-assistant; models `fast`/`balanced`; only gallery templates expose `systemPrompt`) which the onboarding goal step offers as cards. OTel counter `lantern.onboarding.step.total{lantern.onboarding_step,lantern.onboarding_event}` fires on `PUT /v1/onboarding` step transitions.
 
 ### Agents
 
@@ -375,14 +375,14 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 **Timezone.** Cron matching is timezone-aware. `POST`/`PUT` accept an optional
 `timezone` (IANA, e.g. `America/New_York`; invalid → 400), stored on
 `schedules.timezone`. `NextCronTime` is computed in that zone via
-`scheduler.ResolveLocation(tz)` (priority: schedule tz → `LANTERN_DEFAULT_TIMEZONE`
+`scheduler.ResolveLocation(tz)` (priority: schedule tz → `PAL_DEFAULT_TIMEZONE`
 env → **UTC**). Without a per-schedule tz AND without the env, everything stays
 UTC — identical to prior behavior (so `0 9 * * *` only fires at 9am *local* once
 a zone is configured; before this it fired at 09:00 UTC). The same
 `ResolveLocation("")` drives the budget/usage **day boundary** (`usageDate()` in
 `internal/handlers/tz.go`, used by all `agent_usage_daily.usage_date` sites) so a
 `max_cost_usd_per_day` rolls at the deployment's local midnight, not UTC. Env:
-`LANTERN_DEFAULT_TIMEZONE` (deployment-wide IANA; unset → UTC, a no-op).
+`PAL_DEFAULT_TIMEZONE` (deployment-wide IANA; unset → UTC, a no-op).
 
 ### Webhook triggers (ADR 0028)
 
@@ -402,8 +402,8 @@ per-trigger rate limit (after verification) → 429, budget → 402. Dedup on th
 id AND a hash of the signed bytes (GitHub/Sentry/PagerDuty don't sign their delivery
 id): duplicate → `200 {"duplicate":true}`, no second run; a failed run creation frees
 the delivery so the provider's retry works. Secret encrypted via `internal/secrets`.
-Mutators carry `agents:write`. Env: `LANTERN_HOOK_RATE_PER_MIN` (default 60),
-`LANTERN_HOOK_BURST` (default 10). SDKs `triggers.*` / `CreateTrigger…`; CLI
+Mutators carry `agents:write`. Env: `PAL_HOOK_RATE_PER_MIN` (default 60),
+`PAL_HOOK_BURST` (default 10). SDKs `triggers.*` / `CreateTrigger…`; CLI
 `lantern hooks`; dashboard `/agents/[name]/triggers`.
 
 ### Completions (LLM proxy)
@@ -416,7 +416,7 @@ Mutators carry `agents:write`. Env: `LANTERN_HOOK_RATE_PER_MIN` (default 60),
 
 The control-plane can route PLAIN provider completions through the
 model-router service instead of calling OpenAI/Anthropic directly, gated by
-`LANTERN_USE_MODEL_ROUTER` (default OFF) and wired at the
+`PAL_USE_MODEL_ROUTER` (default OFF) and wired at the
 `callLLMWithFailover` seam in `internal/handlers/llm_proxy.go`.
 
 - **Default OFF.** Unset / `0` → existing direct path, exactly as before. This
@@ -436,27 +436,27 @@ Env vars (control-plane):
 
 | Var                        | Default              | Purpose                                            |
 | -------------------------- | -------------------- | -------------------------------------------------- |
-| `LANTERN_USE_MODEL_ROUTER` | _(off)_              | `1`/`true`/`on` enables the cutover. Default OFF.  |
-| `LANTERN_MODEL_ROUTER_ADDR`| `model-router:50053` | gRPC address the control-plane dials.              |
+| `PAL_USE_MODEL_ROUTER` | _(off)_              | `1`/`true`/`on` enables the cutover. Default OFF.  |
+| `PAL_MODEL_ROUTER_ADDR`| `model-router:50053` | gRPC address the control-plane dials.              |
 
 **Rollout (staged):** enable on a NON-bridge tenant first → watch traces
 (`gen_ai.*` + router spans) and error rate → only then enable on the bridge
 tenant. The fallback guarantee keeps the bridges safe at every step.
 
-#### Connector test mode (`LANTERN_CONNECTOR_BASEURL_<NAME>`)
+#### Connector test mode (`PAL_CONNECTOR_BASEURL_<NAME>`)
 
-Dev/test only. `LANTERN_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,GOOGLE,PAGERDUTY}=http://127.0.0.1:9191`
+Dev/test only. `PAL_CONNECTOR_BASEURL_{SLACK,GITHUB,SENTRY,GOOGLE,PAGERDUTY}=http://127.0.0.1:9191`
 re-points that vendor's outbound calls (scheme+host only; path preserved) at the recorded-fixture
 server `services/control-plane/cmd/connector-replay` (`go run ./cmd/connector-replay`; recorded calls at
-`GET /__requests`, Authorization never stored). **Refused in prod**: `LANTERN_ENV=prod/production/staging`
+`GET /__requests`, Authorization never stored). **Refused in prod**: `PAL_ENV=prod/production/staging`
 with any override set is a startup error (`CheckConnectorBaseURLOverrides`), and the transport ignores
 overrides in prod regardless. New actions: Slack `reply_thread` (+ `thread_ts` on `post_message`), GitHub
 `comment_pr`, Sentry `get_issue`, Google Calendar `create_event`, and a PagerDuty connector
 (`list_incidents`, `get_incident`, `create_incident`, `update_incident`, `add_note`; key in `apiKey`).
 
-#### Fixture LLM tier (`LANTERN_LLM_BASEURL_{OPENAI,ANTHROPIC}`)
+#### Fixture LLM tier (`PAL_LLM_BASEURL_{OPENAI,ANTHROPIC}`)
 
-Dev/test only. `LANTERN_LLM_BASEURL_OPENAI` / `LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192`
+Dev/test only. `PAL_LLM_BASEURL_OPENAI` / `PAL_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192`
 re-point `api.openai.com` / `api.anthropic.com` (scheme+host only) for EVERY control-plane provider call
 (`internal/handlers/llm_baseurl.go` wraps `http.DefaultTransport` once, so completions, streaming, tool
 loop, `web_search`, and any future call site route through it; embeddings/speech reach the fixture host but 404). Target:
@@ -479,15 +479,15 @@ error and the transport ignores overrides regardless.
 
 | Method | Path                           | Description                                                                                                                                                                     |
 | ------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/internal/auth/introspect-key` | Validate a raw API key for the gateway. Body `{"key":"..."}`, header `x-lantern-service-token` (= `LANTERN_GRPC_SERVICE_TOKEN`). 200 `{tenantId, scopes}` or 401; 403 fail-closed in prod when the token env is unset. |
+| `POST` | `/internal/auth/introspect-key` | Validate a raw API key for the gateway. Body `{"key":"..."}`, header `x-lantern-service-token` (= `PAL_GRPC_SERVICE_TOKEN`). 200 `{tenantId, scopes}` or 401; 403 fail-closed in prod when the token env is unset. |
 
 The gateway's `X-API-Key` hot path calls this endpoint (60s in-memory cache
 keyed by SHA-256 of the key; fail-closed on any error). Gateway env:
-`LANTERN_CONTROL_PLANE_URL` (introspection base URL) +
-`LANTERN_GRPC_SERVICE_TOKEN` (same shared token as the gRPC trust boundary).
+`PAL_CONTROL_PLANE_URL` (introspection base URL) +
+`PAL_GRPC_SERVICE_TOKEN` (same shared token as the gRPC trust boundary).
 Unset → API-key auth stays fail-closed-disabled; JWT auth is unaffected.
 
-#### Per-endpoint scope authorization (`LANTERN_AUTHZ_ENFORCE`, default OFF)
+#### Per-endpoint scope authorization (`PAL_AUTHZ_ENFORCE`, default OFF)
 
 API keys carry `scopes` (stored in `api_keys`); mutating endpoints are annotated
 with a required scope via `AuthHandler.WithScope(scope, handler)` in
@@ -499,12 +499,12 @@ with a required scope via `AuthHandler.WithScope(scope, handler)` in
 handlers already used (caching claims in ctx so `contextWithTenant` reuses them —
 no double token validation / DB hit), so it is **not** a new auth surface.
 
-**Staged like RLS — FLAG-GATED, DEFAULT OFF.** When `LANTERN_AUTHZ_ENFORCE` is
+**Staged like RLS — FLAG-GATED, DEFAULT OFF.** When `PAL_AUTHZ_ENFORCE` is
 unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
 zero behavior change, safe to merge/run against the live bridges + dashboard.
 When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
 keep full access. **Prod/staging Helm values enable it** (`values-prod.yaml` /
-`values-staging.yaml` set `controlPlane.env.LANTERN_AUTHZ_ENFORCE: "1"`; base `values.yaml`
+`values-staging.yaml` set `controlPlane.env.PAL_AUTHZ_ENFORCE: "1"`; base `values.yaml`
 stays off, rollout + rollback in `docs/runbooks/ga-staged-rollout.md`); the control-plane
 logs `authz: API-key scope enforcement {enforced}` at boot. Annotated today: the agents/runs/sessions/connectors/
 deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
@@ -519,16 +519,16 @@ previously unscoped mutators now carry `WithScope` annotations.
 ### Kiosk / demo mode (ADR 0029)
 
 `lantern demo` / `make demo` run the stack with `infra/docker/docker-compose.kiosk.yml`
-(project `lantern-demo`). `POST /v1/kiosk/session` exists only when `LANTERN_KIOSK=1`
+(project `lantern-demo`). `POST /v1/kiosk/session` exists only when `PAL_KIOSK=1`
 (404 otherwise; unscoped by design, listed in `routes_scope_test.go`). It creates a
 `kiosk-<rand>` tenant (marker in `tenants.settings`, no migration), seeds agents/runs
 in `handlers/kiosk.go`, and returns a JWT with role `kiosk` + explicit scopes
-(`HasScope` treats `kiosk` like a scoped service key, so `LANTERN_AUTHZ_ENFORCE=1`
+(`HasScope` treats `kiosk` like a scoped service key, so `PAL_AUTHZ_ENFORCE=1`
 bites). `RunKioskSweep` purges expired sessions via `purgeTenantRows` (extracted from
 `gdpr.go`; walks the catalog, no hardcoded table list). `CheckKioskConfig` is fatal in
-prod without `LANTERN_KIOSK_ALLOW_PROD=1`, without RLS+authz enforcement, or with a
-provider key lacking its `LANTERN_LLM_BASEURL_*`. Kiosk never seeds the dev admin.
-LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `LANTERN_KIOSK`,
+prod without `PAL_KIOSK_ALLOW_PROD=1`, without RLS+authz enforcement, or with a
+provider key lacking its `PAL_LLM_BASEURL_*`. Kiosk never seeds the dev admin.
+LLM answers are replays from `cmd/llm-replay` (W2-0). Env: `PAL_KIOSK`,
 `_ALLOW_PROD`, `_TTL_MIN` (30), `_SWEEP_SEC` (60), `_MAX_SESSIONS` (20),
 `_IP_PER_HOUR` (3). Dashboard: public `/kiosk` start page, `components/kiosk-tour.tsx`.
 
@@ -656,7 +656,7 @@ The dashboard `/evaluations` page renders these (quality-trend sparkline + top-f
 
 ### Verifiable receipts
 
-Tamper-evident Ed25519-signed proof of execution (HMAC-SHA256 legacy/dev fallback when `LANTERN_RECEIPT_ED25519_SEED` is unset). Every receipt includes the SHA-256 of the run's `journal_events` stream so any post-hoc tampering invalidates the signature. Self-hosted deployments expose the signing algorithm and key fingerprint via `/.well-known/lantern-receipts` for external verifiers.
+Tamper-evident Ed25519-signed proof of execution (HMAC-SHA256 legacy/dev fallback when `PAL_RECEIPT_ED25519_SEED` is unset). Every receipt includes the SHA-256 of the run's `journal_events` stream so any post-hoc tampering invalidates the signature. Self-hosted deployments expose the signing algorithm and key fingerprint via `/.well-known/lantern-receipts` for external verifiers.
 
 | Method | Path                            | Description                                          |
 | ------ | ------------------------------- | ---------------------------------------------------- |
@@ -688,7 +688,7 @@ Reuses the eval-in-CI baseline machinery to gate merges.
 
 ### Knowledge base + human handoff (W2-X1, support desk)
 
-Per-agent docs in `agent_documents` / `agent_document_chunks` (migration 0027, RLS; ids are unique per `(tenant, agent)`). Chunks are embedded via `EmbedText` (pgvector cosine; Postgres full-text fallback with no OpenAI key; floor `LANTERN_KB_MIN_SCORE`, default 0.2). `SessionHandler.processMessage` appends retrieved excerpts to the system prompt (fenced as data) and puts `sources` on `message_completed`. An agent labelled `handoff=human` (+ optional `handoff_slack_channel`) gets ONLY the `handoff_to_human` tool: it sets `sessions.status='handoff'`, emits `session.handoff`, pings Slack once (the status transition is the idempotency guard); in handoff the LLM is silent and `appendAssistantMessage` keeps the status. Operator endpoints need the coarse `write` scope so a public widget key (`runs:execute`) cannot act as the operator. Example: `examples/support-desk/`; e2e: `e2e/examples`. The fixture `llm-replay` serves a deterministic `/v1/embeddings`.
+Per-agent docs in `agent_documents` / `agent_document_chunks` (migration 0027, RLS; ids are unique per `(tenant, agent)`). Chunks are embedded via `EmbedText` (pgvector cosine; Postgres full-text fallback with no OpenAI key; floor `PAL_KB_MIN_SCORE`, default 0.2). `SessionHandler.processMessage` appends retrieved excerpts to the system prompt (fenced as data) and puts `sources` on `message_completed`. An agent labelled `handoff=human` (+ optional `handoff_slack_channel`) gets ONLY the `handoff_to_human` tool: it sets `sessions.status='handoff'`, emits `session.handoff`, pings Slack once (the status transition is the idempotency guard); in handoff the LLM is silent and `appendAssistantMessage` keeps the status. Operator endpoints need the coarse `write` scope so a public widget key (`runs:execute`) cannot act as the operator. Example: `examples/support-desk/`; e2e: `e2e/examples`. The fixture `llm-replay` serves a deterministic `/v1/embeddings`.
 
 | Method | Path | Scope |
 | ------ | ---- | ----- |
@@ -724,7 +724,7 @@ side-effecting steps). It doesn't. Two mechanisms cooperate, both reading the
 existing `journal_events` event log — no new store:
 
 - **Reclaim.** The recovery sweep (`internal/handlers/recovery.go`,
-  `RunRecoveryLoop`, default every 30s, `LANTERN_RECOVERY_INTERVAL`) finds
+  `RunRecoveryLoop`, default every 30s, `PAL_RECOVERY_INTERVAL`) finds
   runs in `running`/`queued` whose `run_locks` row is absent or expired,
   wins a fresh lock via `acquireRecoveryLock` (UPSERT that only steals an
   expired lock — the distributed guard), and re-drives them through
@@ -754,7 +754,7 @@ REST SSE path `GetRunEvents` (`internal/handlers/run_events.go`) exactly:
 same query, ordering, tenant-ownership gate, poll interval, and
 `isRunTerminal` stop condition.
 
-#### Confidence-gated execution (`LANTERN_CONFIDENCE_GATE`)
+#### Confidence-gated execution (`PAL_CONFIDENCE_GATE`)
 
 Before a side-effecting node executes, the interpreter can evaluate a confidence
 score and route low-confidence steps to the human-approval mechanism instead of
@@ -777,7 +777,7 @@ Diverted-then-approved steps additionally emit the normal `step_completed` after
 the human grants. Diverted-then-denied steps emit `step_failed`.
 
 **Estimators (`ConfidenceEstimator` in `internal/workflow/confidence.go`).** Two
-are wired; select with `LANTERN_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
+are wired; select with `PAL_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
 `Estimate(ctx, node, vars, sample Sampler) float64` + `Name() string`; the gate
 passes the tenant-scoped `Deps.CallLLM` as the `sample` (nil-safe — estimators
 degrade gracefully when no LLM is wired). See ADR 0021.
@@ -791,7 +791,7 @@ degrade gracefully when no LLM is wired). See ADR 0021.
   every estimator's safe fallback.
 - **`self_consistency`** (`SelfConsistencyEstimator`) — scores confidence from the
   model's INDEPENDENT agreement, not its self-report: it re-poses the pending
-  action to the model `N` times (`LANTERN_CONFIDENCE_SAMPLES`, default 5, clamped
+  action to the model `N` times (`PAL_CONFIDENCE_SAMPLES`, default 5, clamped
   [1,9]) as a fresh skeptical YES/NO judgment and returns the fraction voting
   "execute". Consensus → high; a split vote → low → divert. A prior verbalized
   self-doubt signal, if lower than the consensus, wins (`min`) — the model's own
@@ -801,7 +801,7 @@ degrade gracefully when no LLM is wired). See ADR 0021.
   it is **always safe to enable**. Grounded self-consistency; the outcome
   calibration below turns it into statistical calibration.
 
-**Outcome calibration (`CalibratedEstimator`, opt-in `LANTERN_CONFIDENCE_CALIBRATE`).**
+**Outcome calibration (`CalibratedEstimator`, opt-in `PAL_CONFIDENCE_CALIBRATE`).**
 Wraps whichever base estimator is selected and lowers its score by this
 `(agent, node_type)`'s realized **regret rate** — the fraction of auto-executed
 steps of that type later thumbs-downed (`run_feedback.score <= 2`) or ended in a
@@ -820,11 +820,11 @@ The `confidence_evaluated` journal event tags which estimator ran via
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LANTERN_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
-| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
-| `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
-| `LANTERN_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
-| `LANTERN_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
+| `PAL_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
+| `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
+| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
+| `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
+| `PAL_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
 
 Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
@@ -833,7 +833,7 @@ Rollout: enable the gate on non-production agents first → inspect
 #### Workflow-engine RLS (invariant #7)
 
 The engine writes run state for **every** tenant and, until this landed, set
-`app.tenant_id` **nowhere** — so under `LANTERN_RLS_ENFORCE=1` its queries sat
+`app.tenant_id` **nowhere** — so under `PAL_RLS_ENFORCE=1` its queries sat
 outside the policies the rest of the platform relies on. That is worse than a
 leak: an unset GUC matches *nothing*, so enforcement would have made the engine
 silently stop working (updates affecting 0 rows, reads returning nothing).
@@ -885,7 +885,7 @@ executors (`internal/engine/step_executor.go`) do real dispatch:
   `tenant_id` and the idempotency key `run_id:step_id:attempt` (invariant
   #8), and maps `model_used`/`tokens_in`/`tokens_out`/`cost_usd` from the
   response into the step result. Dial address is
-  `LANTERN_MODEL_ROUTER_ADDR` (default `model-router:50053`). When unset,
+  `PAL_MODEL_ROUTER_ADDR` (default `model-router:50053`). When unset,
   llm_call steps fail with the typed `ErrModelRouterUnavailable` rather than
   a fabricated completion.
 - **`tool_call` steps** dispatch to the **runtime-manager** via
@@ -896,14 +896,14 @@ executors (`internal/engine/step_executor.go`) do real dispatch:
   (invariant #8). The response's typed `ToolStatus` is mapped: `OK` → step
   output `{tool_name, result}`; `ERROR` → step failure with the manager's
   detail; `UNAVAILABLE` → step failure wrapping `ErrRuntimeManagerUnavailable`.
-  Dial address is `LANTERN_RUNTIME_MANAGER_ADDR` (default
+  Dial address is `PAL_RUNTIME_MANAGER_ADDR` (default
   `runtime-manager:50054`); when unset, the client stays nil and tool_call
   steps fail with the typed `ErrRuntimeManagerUnavailable` rather than faking
   output. The request also carries `tenant_id` (field 8, set from the run's
   tenant); the manager returns `NotFound` on a tenant mismatch (ADR 0025). The
   in-guest typed tool runner (`services/harness/src/tool_runner.rs`) serves
   `shell_exec`, `http_fetch`, `read_file`, `write_file`, `list_dir`; file tools
-  are confined to `LANTERN_WORKSPACE` (default `/workspace`) via `openat2`
+  are confined to `PAL_WORKSPACE` (default `/workspace`) via `openat2`
   `RESOLVE_BENEATH`, and tool output is capped at 1 MiB. An unknown tool or a
   VM without a runner still yields `TOOL_STATUS_UNAVAILABLE`, never a
   fabricated success.
@@ -959,7 +959,7 @@ per stateless tier (`<component>.autoscaling.enabled`, needs metrics-server), PD
 default-deny `NetworkPolicy` (`networkPolicy.enabled`, CNI must enforce) with per-target allow
 rules; `networkPolicy.extraEgress` for managed Postgres/Redis on private IPs. Prod TLS/mTLS
 Secrets for the control-plane/scheduler are still operator-supplied (the chart cannot mint them).
-The control-plane serves Prometheus `/metrics` on its own listener `LANTERN_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
+The control-plane serves Prometheus `/metrics` on its own listener `PAL_METRICS_ADDR` (default `:9464`, never the `:8080` API port) (OTel instruments bridged by
 `internal/telemetry/metrics.go`; unauthenticated, so scrape via `networkPolicy.metricsFrom`, never
 expose through the ingress). The `lantern-instrumented-slos` alert group in
 `infra/monitoring/prometheus/alerts.yml` is enabled against those series. `backup.enabled` adds a
@@ -1052,7 +1052,7 @@ context. A parallel dashboard route at `apps/web/app/api/signals/route.ts`
 writes the same contract on `:3001`; this endpoint is the tunnel-reachable twin.
 
 Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
-`LANTERN_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
+`PAL_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
 closed** (401) when the env var is unset or the `x-lantern-signal-token`
 header is missing/mismatched. The token is never logged. The JSONL file is
 mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
@@ -1078,7 +1078,7 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `LANTERN_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
+| `PAL_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
 
 ### Surface-gateway reply loop + example suites (W2-X3)
 
@@ -1090,8 +1090,8 @@ it) and, for **Telegram and WhatsApp**, `dispatcher::deliver_reply` polls
 session's `active_run_id`. Before this the answer was dropped. The agent must already have
 a promoted version (first REST run creates it) or CreateRun returns `FailedPrecondition`.
 `TELEGRAM_API_BASE_URL` re-points the Bot API at a fixture; the gateway refuses to start
-with it when `LANTERN_ENV` is prod/production/staging (same stance as
-`LANTERN_LLM_BASEURL_*`). Signature negatives (Telegram secret token, WhatsApp
+with it when `PAL_ENV` is prod/production/staging (same stance as
+`PAL_LLM_BASEURL_*`). Signature negatives (Telegram secret token, WhatsApp
 `X-Hub-Signature-256`) boot the real binary: `services/surface-gateway/tests/`.
 
 `make test-e2e-examples` (`scripts/e2e-examples.sh`) runs `e2e/examples` on a private
@@ -1117,7 +1117,7 @@ reasoning over two sources, not a keyword scan. Control-plane only
 brief. Persisted in `immigration_deadlines` (tenant-scoped, RLS-enforced,
 `ON CONFLICT (tenant_id, who, doc_type, deadline)` dedup; in the RLS catalog gate).
 
-**Flag-gated, default OFF** (`LANTERN_IMMIGRATION_SENTINEL`): unset → scan is inert,
+**Flag-gated, default OFF** (`PAL_IMMIGRATION_SENTINEL`): unset → scan is inert,
 endpoints return `{enabled:false}`, no brief section — zero behavior change.
 **Anti-hallucination:** a deadline is dropped unless the LLM grounds it in a
 NON-BLANK `source_ref` AND `confidence >= 0.6` (matches the prompt's own floor);
@@ -1132,7 +1132,7 @@ invariant #6); doc/mail PII never logged (invariant #10). Fail-safe throughout
 
 | Env var                        | Purpose                                                              |
 | ------------------------------ | ------------------------------------------------------------------- |
-| `LANTERN_IMMIGRATION_SENTINEL` | `1`/`true`/`on` enables the sentinel. Default OFF (fully inert).    |
+| `PAL_IMMIGRATION_SENTINEL` | `1`/`true`/`on` enables the sentinel. Default OFF (fully inert).    |
 
 ### Life-event engine (bridge "Automations" feed)
 
@@ -1172,9 +1172,9 @@ controls, all fail-safe:
 
 - **Secrets socket peer auth.** `/run/lantern/secrets.sock` authenticates every
   connecting peer with `SO_PEERCRED` (kernel-attested uid/pid, unspoofable). It
-  only vends to the workload uid the manager injects as `LANTERN_WORKLOAD_UID`
+  only vends to the workload uid the manager injects as `PAL_WORKLOAD_UID`
   (plus the harness's own uid). Unset → dev path: a loud one-time WARN, allow.
-  **In production the manager MUST inject `LANTERN_WORKLOAD_UID`** so the socket
+  **In production the manager MUST inject `PAL_WORKLOAD_UID`** so the socket
   is fail-closed against any other in-VM process. Unauthorized attempts emit a
   `secret_access_denied` audit event.
 - **Egress enforcement is two-layer, and the harness fails closed without the
@@ -1186,10 +1186,10 @@ controls, all fail-safe:
   host/image to install that REDIRECT rule** (see the header comment in
   `services/harness/src/egress.rs`); env injection alone is bypassable by a
   client that ignores proxy vars. When rules are declared but REDIRECT is
-  absent: **prod (`LANTERN_ENV=prod/production/staging`) is ALWAYS
+  absent: **prod (`PAL_ENV=prod/production/staging`) is ALWAYS
   fail-closed** — the harness refuses to start the workload, and an explicit
-  `LANTERN_EGRESS_FAIL_CLOSED=0` is ignored with a WARN (prod never
-  fail-open). In dev, `LANTERN_EGRESS_FAIL_CLOSED=1` opts in to the same
+  `PAL_EGRESS_FAIL_CLOSED=0` is ignored with a WARN (prod never
+  fail-open). In dev, `PAL_EGRESS_FAIL_CLOSED=1` opts in to the same
   refusal; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
   Decision logic: `resolve_fail_closed` in `egress.rs`.
 - **Spawn contract (`spawn.json`, ADR 0025).** The manager writes
@@ -1197,11 +1197,11 @@ controls, all fail-safe:
   (`{version, workload_cmd, env, egress_rules, workload_uid, workload_gid}`);
   the harness reads it at boot (unknown `version` rejected) and ignores the
   kernel-cmdline env when it is present (cmdline kept for older harness builds).
-  uid/gid come from the manager's `LANTERN_WORKLOAD_UID_DEFAULT` (default 1000) /
-  `LANTERN_WORKLOAD_GID_DEFAULT` (default = uid); a caller-supplied
-  `LANTERN_WORKLOAD_UID` in the spec env is dropped.
+  uid/gid come from the manager's `PAL_WORKLOAD_UID_DEFAULT` (default 1000) /
+  `PAL_WORKLOAD_GID_DEFAULT` (default = uid); a caller-supplied
+  `PAL_WORKLOAD_UID` in the spec env is dropped.
 - **Privilege drop + env isolation.** The workload, VM exec and shell children
-  run as `LANTERN_WORKLOAD_UID`/`GID`, not the harness uid, so SO_PEERCRED, the
+  run as `PAL_WORKLOAD_UID`/`GID`, not the harness uid, so SO_PEERCRED, the
   egress REDIRECT and cert-key isolation actually bind. Children get an explicit
   env: every `LANTERN_*` key is withheld except an allowlist of non-secret
   identity/locator values (`WORKLOAD_VISIBLE_LANTERN_KEYS` in `supervisor.rs`).
@@ -1215,7 +1215,7 @@ controls, all fail-safe:
   `egress_preflight`) are logged locally at WARN *before* any forward attempt
   and preserved across a transient manager outage (never dropped on a full
   buffer); routine observability frames stay best-effort.
-- **Broker egress mode (ADR 0026, opt-in `LANTERN_EGRESS_MODE=broker` on the
+- **Broker egress mode (ADR 0026, opt-in `PAL_EGRESS_MODE=broker` on the
   manager; default `guest` = everything above).** Firecracker cold boots get
   **no NIC at all** (no TAP, no `ip=`) — the strongest isolation: egress only
   over vsock. The harness replaces the in-guest proxy with a byte forwarder
@@ -1239,7 +1239,7 @@ controls, all fail-safe:
   VM's registry tenant — the control-plane relay binds them to that tenant.
   Schedule accepts `egress[].inject {header, secretRef, valuePrefix}` (400 on a
   non-`lantern.secret/` ref). Hardened per review: plain-HTTP injection 403 unless
-  `LANTERN_EGRESS_PLAIN_INJECT=1` + port 80; injected requests must be bound to
+  `PAL_EGRESS_PLAIN_INJECT=1` + port 80; injected requests must be bound to
   the exact approved host (target authority + exactly one `Host:`); injecting
   rules are exact hostnames; 128 conns/VM, 10 s handshake, 300 s idle; prod
   broker mode refuses to start without the relay. Live check:
@@ -1265,24 +1265,24 @@ controls, all fail-safe:
   incompletely read body → 403 `dlp-incomplete`. Audit action `dlp`, attr
   `decision` — NEVER the matched value (invariant #10).
 
-Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
-`LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
-egress at spawn), `LANTERN_EGRESS_FAIL_CLOSED=1` (refuse to boot without
+Harness env vars: `PAL_WORKLOAD_UID` (workload uid for peer auth),
+`PAL_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
+egress at spawn), `PAL_EGRESS_FAIL_CLOSED=1` (refuse to boot without
 iptables REDIRECT when egress declared — implied and non-overridable in
-prod), `LANTERN_NO_PROXY` (override the injected `NO_PROXY`; defaults keep
+prod), `PAL_NO_PROXY` (override the injected `NO_PROXY`; defaults keep
 loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
-`LANTERN_EGRESS_MODE=broker`, `LANTERN_EGRESS_CA_PEM`,
-`LANTERN_EGRESS_VSOCK_PORT`, `LANTERN_MANAGER_VSOCK_PORT`.
+`PAL_EGRESS_MODE=broker`, `PAL_EGRESS_CA_PEM`,
+`PAL_EGRESS_VSOCK_PORT`, `PAL_MANAGER_VSOCK_PORT`.
 
 **Host-asserted software measurement env vars (runtime-manager; ADR 0031):**
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` = record only; `warn` = log mismatch, proceed; `enforce` = refuse VM on mismatch. Unknown value → manager refuses to start. |
-| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected SHA-256 hex measurements (each must be 64 hex or startup fails). Empty = no comparison; `enforce` + empty in prod → refuses to start. |
+| `PAL_MEASUREMENT_GATE` | `warn` | `off` = record only; `warn` = log mismatch, proceed; `enforce` = refuse VM on mismatch. Unknown value → manager refuses to start. |
+| `PAL_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected SHA-256 hex measurements (each must be 64 hex or startup fails). Empty = no comparison; `enforce` + empty in prod → refuses to start. |
 | `FC_HARNESS_PATH` | _(unset)_ | Path to a separately-installed harness binary for measurement. 32 zero bytes when unset (harness baked into rootfs). |
 
-The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads (by path; Firecracker opens them later — a documented TOCTOU). It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). Embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER; a registered IANA PEN is required before production), `sched_vms`/`runtime_vms.software_measurement` (write-once via the reconciler), and signed run receipts (`softwareMeasurement`). **Reproducible:** per-VM identity (vm/run id, IPs, per-VM cert paths/CA, `LANTERN_AGENT_INSTANCE_ID`/`_TOKEN`, trace parent, the whole `lantern.env.*` cmdline copy) and secrets (declared-secret refs, exec token, injection specs, values of env keys with a whole `_`-segment TOKEN/SECRET/PASSWORD/PASSWD/KEY/APIKEY/CREDENTIAL(S)/AUTH/PAT/DSN — so `MAX_TOKENS` stays measured — and URL userinfo scrubbed from every env value) are excluded; a blanked value is UNMEASURED input, so never approve a reference for a spec whose workload executes a secret-named value — put credentials in `declared_secrets`, so VMs from the same images+spec measure identically. **Restore/resume/fork INHERIT** the source's spawn measurement from `SnapshotMeta.software_measurement` (set by the manager, never by a caller) and re-check it against the current references; a snapshot without one is refused under `enforce` with references. The snapshot store (incl. S3) is inside the trust boundary — `SnapshotMeta` is unsigned (signing is a follow-up). **Firecracker cmdline carries no caller env** (the guest echoes it to the console the manager logs): only `LANTERN_ENV`/`LANTERN_MANAGER_ADDR`/`LANTERN_WORKLOAD_UID`, whitespace-sanitized; `spawn.json` is the env channel. The value is never logged. `enforce` with references is fail-closed when the measurement cannot be computed.
+The measurement is **HOST-ASSERTED** — computed by the manager from the files it reads (by path; Firecracker opens them later — a documented TOCTOU). It proves what the host recorded it launched, NOT what ran inside the VM (hardware attestation, ADR 0023, is a separate stronger guarantee requiring CC hardware). Embedded in: the per-VM X.509 cert (OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER; a registered IANA PEN is required before production), `sched_vms`/`runtime_vms.software_measurement` (write-once via the reconciler), and signed run receipts (`softwareMeasurement`). **Reproducible:** per-VM identity (vm/run id, IPs, per-VM cert paths/CA, `PAL_AGENT_INSTANCE_ID`/`_TOKEN`, trace parent, the whole `lantern.env.*` cmdline copy) and secrets (declared-secret refs, exec token, injection specs, values of env keys with a whole `_`-segment TOKEN/SECRET/PASSWORD/PASSWD/KEY/APIKEY/CREDENTIAL(S)/AUTH/PAT/DSN — so `MAX_TOKENS` stays measured — and URL userinfo scrubbed from every env value) are excluded; a blanked value is UNMEASURED input, so never approve a reference for a spec whose workload executes a secret-named value — put credentials in `declared_secrets`, so VMs from the same images+spec measure identically. **Restore/resume/fork INHERIT** the source's spawn measurement from `SnapshotMeta.software_measurement` (set by the manager, never by a caller) and re-check it against the current references; a snapshot without one is refused under `enforce` with references. The snapshot store (incl. S3) is inside the trust boundary — `SnapshotMeta` is unsigned (signing is a follow-up). **Firecracker cmdline carries no caller env** (the guest echoes it to the console the manager logs): only `PAL_ENV`/`PAL_MANAGER_ADDR`/`PAL_WORKLOAD_UID`, whitespace-sanitized; `spawn.json` is the env channel. The value is never logged. `enforce` with references is fail-closed when the measurement cannot be computed.
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -1291,10 +1291,10 @@ The measurement is **HOST-ASSERTED** — computed by the manager from the files 
 | `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
 | `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
 | `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state. **Auto-resume**: exec / ExecTool / file-API requests to a VM auto-suspended with `idleTimeoutSecs > 0` resume it transparently (409 for manually-paused VMs) |
-| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. The disk (rootfs) snapshot is staged via `FICLONE` ioctl (O(1) CoW on XFS/btrfs). **Default on non-reflink FS** (ext4, Lima, GitHub KVM): falls back to full byte copy with a once-per-process WARN + per-staging `disk_staging="full_copy"` metric (`bytes`, `elapsed_ms`) — pause/resume/fork keep working. Set `LANTERN_REQUIRE_REFLINK=1` on XFS/btrfs nodes to enforce FICLONE (fail with typed error instead of fallback). Manager logs `disk_staging=ficlone` per fork on success. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
+| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`PAL_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`PAL_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. The disk (rootfs) snapshot is staged via `FICLONE` ioctl (O(1) CoW on XFS/btrfs). **Default on non-reflink FS** (ext4, Lima, GitHub KVM): falls back to full byte copy with a once-per-process WARN + per-staging `disk_staging="full_copy"` metric (`bytes`, `elapsed_ms`) — pause/resume/fork keep working. Set `PAL_REQUIRE_REFLINK=1` on XFS/btrfs nodes to enforce FICLONE (fail with typed error instead of fallback). Manager logs `disk_staging=ficlone` per fork on success. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
-| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
+| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `PAL_RUNTIME_E2E=1`) |
 | `GET`    | `/v1/runtime/vms/{id}/files`      | List a dir under `/workspace` (`?path=`, default root) → `{path, entries:[{name,type,size}], truncated}`. Via `RuntimeManager.ExecTool` → harness `list_dir` (confined to `/workspace`, workload fsuid); VM ownership checked (404 cross-tenant), `tenant_id` stamped on the RPC. `runtime:read` |
 | `GET`    | `/v1/runtime/vms/{id}/files/content` | `?path=` → raw UTF-8 text (harness `read_file`, 1 MiB cap; cut reads set `X-Lantern-Truncated: true`). Tool error → 400 (path escape) / 404 (missing); `UNAVAILABLE` (non-Firecracker / no harness) → 503. `runtime:read` |
 | `PUT`    | `/v1/runtime/vms/{id}/files/content` | `?path=`, body = file bytes (UTF-8, >1 MiB → 413) → `{path, bytesWritten}` (harness `write_file`). Idempotency key = sha256(vm_id, path, body). Contents never logged. `runtime:admin` (same as exec) |
@@ -1329,36 +1329,36 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 
 **Wiring env vars (set on control-plane + scheduler):**
 
-- `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
+- `PAL_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
   the scheduler. Unset → falls back to `stubSchedulerClient` (synthesizes
   vm-ids, returns `node-stub`/`az-stub`; useful for dashboard-only work).
-  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
+  **REQUIRED in production** (`PAL_ENV=prod/production/staging`): the
   control-plane refuses to start when this is unset in prod because the stub
   fabricates fake VM IDs and spawns nothing — silent data loss, not graceful
   degradation. Guard: `handlers.CheckSchedulerAddr` called from `runStartupGuards`.
-- `LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054` — scheduler dials this
+- `PAL_DEFAULT_MANAGER_ADDR=localhost:50054` — scheduler dials this
   node when the placement chooses `node-local` / `node-stub` / empty.
   Also used by the control-plane's Logs SSE proxy to reach the manager
   directly. Unset → scheduler keeps the `LogOnlyDialer` stub.
-  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
-  scheduler refuses to start when this is unset (or when `LANTERN_DIALER=stub`)
+  **REQUIRED in production** (`PAL_ENV=prod/production/staging`): the
+  scheduler refuses to start when this is unset (or when `PAL_DIALER=stub`)
   in prod because the stub logs a fake success and spawns nothing. Guard:
   `dialer.CheckManagerDialer` called from `cmd/scheduler/main.go`.
-- `LANTERN_RUNTIME_MANAGER_ADDR=runtime-manager:50054` — the
+- `PAL_RUNTIME_MANAGER_ADDR=runtime-manager:50054` — the
   **workflow-engine** dials this to dispatch `tool_call` steps via
   `RuntimeManager.ExecTool` (ADR 0015). Unset → the engine's runtime client
   stays nil and tool_call steps fail with the typed
   `ErrRuntimeManagerUnavailable` rather than fabricating tool output.
-- `LANTERN_RUNTIME_MANAGER_TLS_CA` / `_CERT` / `_KEY` — client TLS material the
+- `PAL_RUNTIME_MANAGER_TLS_CA` / `_CERT` / `_KEY` — client TLS material the
   manager's callers (control-plane exec/pause/fork client, workflow-engine,
   scheduler dialer) use to dial the manager. Prod requires the CA + client cert.
-- `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
+- `PAL_NODE_ADDR_<NODE>=host:port` — explicit per-node override
   when the scheduler picks a named node and its IP isn't discoverable
   via DNS.
-- `LANTERN_DIALER=stub` — force the stub dialer even when
-  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
-  `LANTERN_DEFAULT_MANAGER_ADDR` above.
-- `LANTERN_REQUIRE_REFLINK=1` — **runtime-manager only.** Set on production
+- `PAL_DIALER=stub` — force the stub dialer even when
+  `PAL_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
+  `PAL_DEFAULT_MANAGER_ADDR` above.
+- `PAL_REQUIRE_REFLINK=1` — **runtime-manager only.** Set on production
   nodes whose snapshot directory is on XFS (`reflink=1`) or btrfs to enforce
   `FICLONE` disk staging. Without this (the default), the manager falls back
   to a full byte copy on non-reflink filesystems (ext4, tmpfs) with a WARN —
@@ -1366,21 +1366,21 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   `FICLONE` failure (`EOPNOTSUPP`/`EXDEV`) returns a typed error immediately
   rather than silently falling back. Off in every shipped values file (node
   filesystems vary); add it under `runtimeManager.env` once your nodes are XFS/btrfs.
-- `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
+- `PAL_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on
   the control-plane the endpoint returns 403 (fail-closed). See ADR 0008.
-- `LANTERN_CONTROL_PLANE_URL` — base URL the runtime-manager uses to call the
+- `PAL_CONTROL_PLANE_URL` — base URL the runtime-manager uses to call the
   relay endpoint (e.g. `http://control-plane:8080`). Must be set together with
-  `LANTERN_RUNTIME_SECRET_TOKEN` to activate `RelaySecretResolver`; otherwise
+  `PAL_RUNTIME_SECRET_TOKEN` to activate `RelaySecretResolver`; otherwise
   dev `EnvSecretResolver` is used.
-- `LANTERN_GRPC_SERVICE_TOKEN` — shared service token authenticating callers to
+- `PAL_GRPC_SERVICE_TOKEN` — shared service token authenticating callers to
   the control-plane gRPC port (`:50051`). Set on **both** the control-plane (to
   accept) and the gateway (to send as `x-lantern-service-token`). A
   `UnaryServiceAuthInterceptor`/`StreamServiceAuthInterceptor` runs **before**
   the tenant-extraction interceptor and constant-time-compares the token, so only
   authenticated callers may set `tenant_id`. **Fail-closed:** when
-  `LANTERN_ENV` is prod/production/staging and this is unset the control-plane
+  `PAL_ENV` is prod/production/staging and this is unset the control-plane
   **refuses to start**. When unset in dev it warns and allows unauthenticated
   calls (so `make dev` works). Health-check + `DataPlaneService` methods are
   exempt (the latter has its own bootstrap-token + JWT auth). mTLS is the stronger
@@ -1390,7 +1390,7 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   check (cross-tenant run-control / microVM-compute takeover). Both run the
   service-auth interceptor before tenant extraction, fail-closed in prod, and the
   control-plane caller (`internal/handlers/runtime.go`) attaches the token as
-  `PerRPCCredentials`. Set `LANTERN_GRPC_SERVICE_TOKEN` to the **same value** on
+  `PerRPCCredentials`. Set `PAL_GRPC_SERVICE_TOKEN` to the **same value** on
   control-plane, gateway, workflow-engine, runtime-scheduler, **model-router
   (`:50053`, which carries tenant provider keys; fail-closed in prod)**, and
   **runtime-manager (`:50054`)**. The manager adds per-call authz (ADR 0025): a
@@ -1401,12 +1401,12 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   token, so set it on the callers before the manager. Manager refuses to start
   in prod without it.
 
-**Production guards (`LANTERN_ENV=prod/production/staging`).** The Helm chart
-(`infra/helm/lantern`) now defaults `LANTERN_ENV=production`, wires `JWT_SECRET`
+**Production guards (`PAL_ENV=prod/production/staging`).** The Helm chart
+(`infra/helm/lantern`) now defaults `PAL_ENV=production`, wires `JWT_SECRET`
 into the control-plane from the chart secret (`jwt-secret`), and ships
-`values-prod.yaml` — previously `LANTERN_ENV` defaulted to `""`, which left every
+`values-prod.yaml` — previously `PAL_ENV` defaulted to `""`, which left every
 prod guard off. In prod the control-plane additionally: refuses to start with
-`LANTERN_TWILIO_WEBHOOK_AUTH=off` or `LANTERN_USE_CLAUDE_CODE=1`
+`PAL_TWILIO_WEBHOOK_AUTH=off` or `PAL_USE_CLAUDE_CODE=1`
 (`insecureFlagsDecision`); refuses unsigned Slack slash commands when
 `SLACK_SIGNING_SECRET` is unset (request-time 4xx, dev only warns).
 
@@ -1481,7 +1481,7 @@ lines still read and age out — no migration). **Full reference + owner self-ch
   bot Apple ID / WA number). DMs from non-owner contacts never reach the
   doc/action pipeline.
 - **Path-restricted.** Personal-docs search/read only inside
-  `LANTERN_PERSONAL_DOCS_ROOTS` (defaults: `~/Documents`, `~/Desktop`,
+  `PAL_PERSONAL_DOCS_ROOTS` (defaults: `~/Documents`, `~/Desktop`,
   iCloud Drive). All reads go through `isAllowedPath` which blocks
   traversal.
 - **OCR cache 0600.** `~/.lantern/ocr-cache/<sha1>.txt` files are written
@@ -1523,7 +1523,7 @@ lines still read and age out — no migration). **Full reference + owner self-ch
 
 The bridge reads this markdown file (hot-reloaded every 30s or on mtime
 change) and injects sections as ground truth into every reply prompt. File
-location overridable via `LANTERN_OWNER_PROFILE`.
+location overridable via `PAL_OWNER_PROFILE`.
 
 **`## Facts` section** — structured biographical ground truth. Parsed into
 typed fields; the bot must NEVER deny or contradict these when a contact
@@ -1592,9 +1592,9 @@ person.
 Messages arriving inside quiet hours are queued to
 `~/.lantern/<bridge>/quiet-queue.jsonl` (mode 0600) and replayed when the
 window reopens, with natural morning pacing. The queue is drained in
-chronological order; `LANTERN_QUIET_QUEUE_MAX` caps its size (default 200).
+chronological order; `PAL_QUIET_QUEUE_MAX` caps its size (default 200).
 Quiet hours default: 01:00–06:00 owner-local time, overridable via
-`LANTERN_QUIET_START` / `LANTERN_QUIET_END` (24h integers).
+`PAL_QUIET_START` / `PAL_QUIET_END` (24h integers).
 
 ### Reply pipeline gates (ADR 0024 — "sounds like me, never a bot")
 
@@ -1623,7 +1623,7 @@ widens inner-circle/location/`## Now`/contact-sharing gates; the owner gets one
 mute/kill/pause suppression. All pure decision functions live in
 `packages/bridge-core/src/{commitment-gate,voice-score,voice-refine,
 natural,verifiable-claims,working-memory,emotional-register}.ts` with tests;
-env switches: `LANTERN_VOICE_FLOOR`, `LANTERN_VOICE_REFINE`.
+env switches: `PAL_VOICE_FLOOR`, `PAL_VOICE_REFINE`.
 
 ### Authentic-voice + bot-tell guards
 
@@ -1662,7 +1662,7 @@ When the owner taps 👎 on a bot reply:
    improves globally, not just for the one contact.
 4. LLM clustering pass for fuzzy/novel patterns the regexes miss: **on by
    default** (both bridges wire the `llmCall`); opt out with
-   `LANTERN_DISLIKE_LLM_CLUSTER=0`. Fail-safe (any LLM/parse error →
+   `PAL_DISLIKE_LLM_CLUSTER=0`. Fail-safe (any LLM/parse error →
    deterministic lessons only) and an LLM cluster can only ADD or RAISE a lesson
    through the same minSupport/graduation guards, never clobber a higher-support
    deterministic one. Uses a throwaway `owner::dislike-cluster::<ts>` session key
@@ -1687,7 +1687,7 @@ Four nudge kinds, by priority:
 
 Nudges carry stable `dedupeKey`s persisted to `~/.lantern/<bridge>/fired-nudges.json`
 so the same nudge never fires twice in a day. Respect quiet hours.
-Disable with `LANTERN_PROACTIVE_NUDGES=0`.
+Disable with `PAL_PROACTIVE_NUDGES=0`.
 
 ### Attention Engine (Brief v2 — LLM-ranked "what needs you")
 
@@ -1777,7 +1777,7 @@ can't loop.
 grammar) + wiring in the iMessage session. Weekly (rides the anticipation
 tick, so killswitch + quiet hours apply), the bridge runs a web_search-grounded
 LLM scan (sessions under the registered `event-scout` agent — visible on the
-dashboard Agents page; override with `LANTERN_EVENT_SCOUT_AGENT`; keys
+dashboard Agents page; override with `PAL_EVENT_SCOUT_AGENT`; keys
 `${owner}::eventscout<i>`) for the next 60 days of events
 near the owner — kids/family, fireworks, Indian community (Telugu shows,
 melas, temple events), circus, expos, light shows, fairs, county/state/DC —
@@ -1805,14 +1805,14 @@ failure falls back to the plain grouped list.
 State: `bridge_state/<tenant>/event-scout.json` (0600) — categories, location,
 audience, seen-event dedupe keys (120-day TTL), last shown list. Bot-self
 prefixes `🎪 ` / `🎟 ` are registered in `bot-self.ts`. Env:
-`LANTERN_EVENT_SCOUT=0` disables the scheduled scan (commands still work);
-`LANTERN_EVENT_SCOUT_LOCATION` / `LANTERN_EVENT_SCOUT_AUDIENCE` override the
+`PAL_EVENT_SCOUT=0` disables the scheduled scan (commands still work);
+`PAL_EVENT_SCOUT_LOCATION` / `PAL_EVENT_SCOUT_AUDIENCE` override the
 defaults baked into `defaultScoutState()`. Each scan runs one LLM call per
 category batch (`chunkCategories`, 3/call) with a 480s per-call `timeoutMs`
 (`AgentClient.respondTo` now takes a per-call timeout) — a single
 all-category turn exceeds the 180s SSE default. The WhatsApp bridge mirrors
 the full command surface; its SCHEDULED scan defaults OFF
-(`LANTERN_EVENT_SCOUT_WA=1` to enable) so the weekly list isn't texted on
+(`PAL_EVENT_SCOUT_WA=1` to enable) so the weekly list isn't texted on
 two channels.
 
 ### Scheduling negotiation
@@ -1828,8 +1828,8 @@ applies; the marker is never emitted for unconfirmed proposals.
 LOW-confidence replies (money amounts, future-date commitments, medical
 topics, cold contacts, prior 👎 history) are held and DM'd to the owner's
 self-chat as "draft to X: …, reply 'send' to approve" before sending.
-**Default OFF on both bridges — opt in explicitly.** iMessage: `LANTERN_DRAFT_CONFIRM=on`.
-WhatsApp: `LANTERN_DRAFT_HIGH_STAKES=on` (a different variable — check both). When off,
+**Default OFF on both bridges — opt in explicitly.** iMessage: `PAL_DRAFT_CONFIRM=on`.
+WhatsApp: `PAL_DRAFT_HIGH_STAKES=on` (a different variable — check both). When off,
 a LOW-confidence reply is held briefly and then auto-sent, with a heads-up to the owner;
 a money/legal escalation still pages the owner but the reply still goes out. It was made
 opt-in on purpose: on-by-default silently drafted ordinary short / cold-contact family
@@ -1904,8 +1904,8 @@ model judges `[image …]` captions, and `classifyConfidence` finally reads
 
 `packages/bridge-core/src/world-model.ts` (pure: prompt / anti-hallucination
 parse / profile apply / owner FYI) + `refreshWorldModel` in the iMessage bridge,
-riding the anticipation tick every `LANTERN_WORLD_MODEL_HOURS` (default 6;
-`LANTERN_WORLD_MODEL=0` disables). Inputs: the last 7 days of Apple Mail
+riding the anticipation tick every `PAL_WORLD_MODEL_HOURS` (default 6;
+`PAL_WORLD_MODEL=0` disables). Inputs: the last 7 days of Apple Mail
 envelope-index subjects (`listRecentMail`, read-only, never logged), the next
 30 days of the device calendar, the owner's OWN self-chat notes on BOTH
 channels (highest authority — "opening moved to the 18th" overrides mail),
@@ -1913,8 +1913,8 @@ INBOUND contact messages on both channels (a friend's "still on for the
 18th?" is evidence; the bot's own replies are excluded by construction — they
 may be the stale claim), and the current `## Now` / `## Public` lines.
 iMessage rows come from `chat.db` (`recentMessagesSince`); WhatsApp from the
-WA bridge's `wa-history.jsonl` (`LANTERN_WA_HISTORY_FILE` override; self-chat
-slice needs `LANTERN_WA_OWNER_JID`). Pure readers: `imessageEvidence`,
+WA bridge's `wa-history.jsonl` (`PAL_WA_HISTORY_FILE` override; self-chat
+slice needs `PAL_WA_OWNER_JID`). Pure readers: `imessageEvidence`,
 `waHistoryEvidence`, `mergeEvidence`.
 One purpose-keyed call (`owner::worldmodel`) returns strict JSON; every item
 must cite a `source` that appears VERBATIM in the inputs (a subject or an
@@ -1952,7 +1952,7 @@ iPhone usage is deferred). Lives in `packages/bridge-core/src/mac-usage.ts`
 
 Privacy posture (HARD rules):
 
-- **OFF by default.** Requires `LANTERN_MAC_USAGE=on`. When off, nothing reads
+- **OFF by default.** Requires `PAL_MAC_USAGE=on`. When off, nothing reads
   knowledgeC.db and nothing is stored.
 - **Owner-only.** The summary is injected ONLY into the owner's self-chat
   assistant prompt (`handleOwnerDocQuery`) — NEVER into a contact reply. A
@@ -1975,7 +1975,7 @@ open commitments instead of only surfacing them: an LLM judge (session key
 it quotes verbatim evidence present in the inputs; a closure is FYI'd to
 self-chat as `✅ closed: <title> — saw: "<evidence>"` (prefix registered in
 `bot-self.ts`). Wired above the mute gate on the proactive tick; fail-safe
-(any error → nothing closed). `LANTERN_COMMITMENT_LEDGER=0` disables.
+(any error → nothing closed). `PAL_COMMITMENT_LEDGER=0` disables.
 
 ### Quality telemetry + gates
 
@@ -1992,42 +1992,42 @@ self-chat as `✅ closed: <title> — saw: "<evidence>"` (prefix registered in
 
 | Var                                   | Purpose                                                                                                                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `LANTERN_OWNER_NAME`                  | First name used for ranker boost ("Ada" → boost files whose path contains "ada" when the query says "my")                                                                                |
-| `LANTERN_OWNER_EMAIL`                 | Mirror destination for bot status updates                                                                                                                                                        |
-| `LANTERN_OWNER_TIMEZONE`              | IANA timezone (e.g. `America/Los_Angeles`). Used by quiet hours, daily digest scheduling, and calendar lookups. Defaults to process timezone when unset.                                         |
-| `LANTERN_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
-| `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
-| `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Downloads:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
-| `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
-| `LANTERN_MAIL_INDEX`                  | (Optional) Set to `0`/`off` to disable the OWNER-ONLY `search_email` tool (read-only search over Apple Mail's local "Envelope Index" SQLite — sender/subject/date of the owner's ENTIRE synced mailbox incl. Gmail, no OAuth). Default ON. Fails closed; live read-only open, never copied, so results are never stale. |
-| `LANTERN_MAC_USAGE`                   | (Optional) `on` to enable the OWNER-ONLY Mac app-usage signal (reads knowledgeC.db, distills one "what you've been doing today" line into the owner's self-chat context). Default OFF. Summaries only; fails closed. |
-| `LANTERN_MAC_USAGE_SEC`               | (Optional) Mac app-usage refresh interval in seconds (min 60, default 1800 = 30 min).                                                                                                            |
-| `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
-| `LANTERN_QUIET_START`                 | Start of quiet-hours window, 24h integer (default `1` = 1 AM). No auto-reply; messages queued for morning replay.                                                                                |
-| `LANTERN_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
-| `LANTERN_QUIET_QUEUE_MAX`             | Max messages buffered in the overnight queue per bridge (default 200).                                                                                                                           |
-| `LANTERN_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
-| `LANTERN_LIVE_WATCH`                  | Set to `0`/`off` to disable live watches (default on) — LLM-detected follow-ups on live public situations a contact mentioned (flight in the air, game, outage): re-checked via `web_search` every 15–120 min, resolved with one short follow-up text ("just saw he landed"). One active watch per contact, ≤8 total, ≤12h, killswitch/mute/quiet-hours aware. State: `<stateDir>/live-watches.jsonl` (0600). |
-| `LANTERN_DRAFT_CONFIRM` / `LANTERN_DRAFT_HIGH_STAKES` | **Default OFF.** Set to `on` to hold LOW-confidence replies for owner approval — `LANTERN_DRAFT_CONFIRM` on iMessage, `LANTERN_DRAFT_HIGH_STAKES` on WhatsApp. Off → brief hold then auto-send + owner heads-up. Made opt-in because on-by-default drafted benign family messages ("bot isn't responding"). |
-| `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `0` to DISABLE the LLM fuzzy-clustering pass in the 👎 flywheel (the novel-preference learner). Default ON; fail-safe (deterministic pass always runs). Both bridges wire the `llmCall`. |
-| `LANTERN_VOICE_REFINE`                | (Optional) `0`/`off` disables critique-refine (ADR 0024 W3.4). Default ON: a MEDIUM/LOW contact draft gets one purpose-keyed call (`<jid>::refine`) editing it against the 5 most similar messages the owner really sent; accepted only when its voice delta is not worse AND it clears the bot-tell guard, else the draft stands. Never the owner channel, groups, or HIGH-tier drafts. Logs `voice refine {before, after, accepted}`. |
-| `LANTERN_VOICE_FLOOR`                 | (Optional) `0`/`off` disables the authorship floor (ADR 0024 W4). Default ON: each contact draft is scored by stylometric distance from the owner's OWN sent corpus (fit in-process, ≥50 samples); a draft further off than 95% of the owner's real messages is suppressed as `voice-drift` with a feature hint and regenerated once. Every contact draft logs `voice score {delta, floor, ok}`. Never scores the owner channel, groups, or 1–2-word acks. |
-| `LANTERN_VOICE_REASONING`             | (Optional) `1`/`true`/`on` → replace the static `inferStyle` heuristic with an LLM-reasoned owner-voice profile (register/code-switching/emoji-meaning/warmth), derived from the owner's own recent messages, cached + refreshed slowly. Default OFF (heuristic runs, byte-identical). Fail-safe → heuristic on any error; dedicated `owner::voice-profile` session key. |
-| `LANTERN_INTENT_ROUTER`               | (Optional) `1`/`true`/`on` → run an LLM intent-reasoning classifier upstream of the owner-message regex gate stack (disclosure-deny-led; also recap). Default OFF (the regex gates run, byte-identical). Additive: on ANY uncertainty/error/timeout it falls back to the regex gates (the floor); owner-only; throwaway `owner::intent::<ts>` session key; only routes to EXISTING handlers. |
-| `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
-| `LANTERN_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
-| `LANTERN_TWILIO_NUMBER` / `LANTERN_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
-| `LANTERN_VOICE_CLONE`                 | (Optional) **deepfake-class; OFF by default.** Set `1`/`true`/`on` to speak outbound calls in the owner's OWN cloned voice via ElevenLabs `<Play>` instead of generic Polly `<Say>`. Requires `LANTERN_ELEVENLABS_API_KEY` + `LANTERN_ELEVENLABS_VOICE_ID` + `LANTERN_VOICE_CACHE_PUBLIC_URL`. Any missing → clean Polly fallback. The 2-party-consent announcement still fires regardless. |
+| `PAL_OWNER_NAME`                  | First name used for ranker boost ("Ada" → boost files whose path contains "ada" when the query says "my")                                                                                |
+| `PAL_OWNER_EMAIL`                 | Mirror destination for bot status updates                                                                                                                                                        |
+| `PAL_OWNER_TIMEZONE`              | IANA timezone (e.g. `America/Los_Angeles`). Used by quiet hours, daily digest scheduling, and calendar lookups. Defaults to process timezone when unset.                                         |
+| `PAL_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
+| `PAL_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
+| `PAL_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Downloads:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
+| `PAL_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
+| `PAL_MAIL_INDEX`                  | (Optional) Set to `0`/`off` to disable the OWNER-ONLY `search_email` tool (read-only search over Apple Mail's local "Envelope Index" SQLite — sender/subject/date of the owner's ENTIRE synced mailbox incl. Gmail, no OAuth). Default ON. Fails closed; live read-only open, never copied, so results are never stale. |
+| `PAL_MAC_USAGE`                   | (Optional) `on` to enable the OWNER-ONLY Mac app-usage signal (reads knowledgeC.db, distills one "what you've been doing today" line into the owner's self-chat context). Default OFF. Summaries only; fails closed. |
+| `PAL_MAC_USAGE_SEC`               | (Optional) Mac app-usage refresh interval in seconds (min 60, default 1800 = 30 min).                                                                                                            |
+| `PAL_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
+| `PAL_QUIET_START`                 | Start of quiet-hours window, 24h integer (default `1` = 1 AM). No auto-reply; messages queued for morning replay.                                                                                |
+| `PAL_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
+| `PAL_QUIET_QUEUE_MAX`             | Max messages buffered in the overnight queue per bridge (default 200).                                                                                                                           |
+| `PAL_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
+| `PAL_LIVE_WATCH`                  | Set to `0`/`off` to disable live watches (default on) — LLM-detected follow-ups on live public situations a contact mentioned (flight in the air, game, outage): re-checked via `web_search` every 15–120 min, resolved with one short follow-up text ("just saw he landed"). One active watch per contact, ≤8 total, ≤12h, killswitch/mute/quiet-hours aware. State: `<stateDir>/live-watches.jsonl` (0600). |
+| `PAL_DRAFT_CONFIRM` / `PAL_DRAFT_HIGH_STAKES` | **Default OFF.** Set to `on` to hold LOW-confidence replies for owner approval — `PAL_DRAFT_CONFIRM` on iMessage, `PAL_DRAFT_HIGH_STAKES` on WhatsApp. Off → brief hold then auto-send + owner heads-up. Made opt-in because on-by-default drafted benign family messages ("bot isn't responding"). |
+| `PAL_DISLIKE_LLM_CLUSTER`         | Set to `0` to DISABLE the LLM fuzzy-clustering pass in the 👎 flywheel (the novel-preference learner). Default ON; fail-safe (deterministic pass always runs). Both bridges wire the `llmCall`. |
+| `PAL_VOICE_REFINE`                | (Optional) `0`/`off` disables critique-refine (ADR 0024 W3.4). Default ON: a MEDIUM/LOW contact draft gets one purpose-keyed call (`<jid>::refine`) editing it against the 5 most similar messages the owner really sent; accepted only when its voice delta is not worse AND it clears the bot-tell guard, else the draft stands. Never the owner channel, groups, or HIGH-tier drafts. Logs `voice refine {before, after, accepted}`. |
+| `PAL_VOICE_FLOOR`                 | (Optional) `0`/`off` disables the authorship floor (ADR 0024 W4). Default ON: each contact draft is scored by stylometric distance from the owner's OWN sent corpus (fit in-process, ≥50 samples); a draft further off than 95% of the owner's real messages is suppressed as `voice-drift` with a feature hint and regenerated once. Every contact draft logs `voice score {delta, floor, ok}`. Never scores the owner channel, groups, or 1–2-word acks. |
+| `PAL_VOICE_REASONING`             | (Optional) `1`/`true`/`on` → replace the static `inferStyle` heuristic with an LLM-reasoned owner-voice profile (register/code-switching/emoji-meaning/warmth), derived from the owner's own recent messages, cached + refreshed slowly. Default OFF (heuristic runs, byte-identical). Fail-safe → heuristic on any error; dedicated `owner::voice-profile` session key. |
+| `PAL_INTENT_ROUTER`               | (Optional) `1`/`true`/`on` → run an LLM intent-reasoning classifier upstream of the owner-message regex gate stack (disclosure-deny-led; also recap). Default OFF (the regex gates run, byte-identical). Additive: on ANY uncertainty/error/timeout it falls back to the regex gates (the floor); owner-only; throwaway `owner::intent::<ts>` session key; only routes to EXISTING handlers. |
+| `PAL_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
+| `PAL_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
+| `PAL_TWILIO_NUMBER` / `PAL_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
+| `PAL_VOICE_CLONE`                 | (Optional) **deepfake-class; OFF by default.** Set `1`/`true`/`on` to speak outbound calls in the owner's OWN cloned voice via ElevenLabs `<Play>` instead of generic Polly `<Say>`. Requires `PAL_ELEVENLABS_API_KEY` + `PAL_ELEVENLABS_VOICE_ID` + `PAL_VOICE_CACHE_PUBLIC_URL`. Any missing → clean Polly fallback. The 2-party-consent announcement still fires regardless. |
 | `LANTERN_ELEVENLABS_API_KEY`          | (Optional) ElevenLabs API key for voice-clone TTS (legacy alias `LANTERN_ELEVENLABS_KEY` accepted). Only used when `LANTERN_VOICE_CLONE` is on. Never logged. |
-| `LANTERN_ELEVENLABS_VOICE_ID`         | (Optional) ElevenLabs voice id to synthesize in (the owner's cloned voice). Only used when `LANTERN_VOICE_CLONE` is on. |
+| `PAL_ELEVENLABS_VOICE_ID`         | (Optional) ElevenLabs voice id to synthesize in (the owner's cloned voice). Only used when `PAL_VOICE_CLONE` is on. |
 
 ### RCS messaging (to & fro)
 
 The iMessage bridge handles RCS in both directions:
 
 - **Inbound (fro).** Newer macOS + RCS/SMS leave `chat.db.message.text` NULL and store the body in `attributedBody` (an `NSAttributedString` typedstream blob). `services/imessage-bridge/src/attributed-body.ts` decodes it (dependency-free, best-effort, never throws) so RCS/newer messages aren't seen as empty — wired into `chat-db.ts` polling **and** the context/history-search reads. Automatic; no config.
-- **Outbound (to).** Replies prefer iMessage. When the iMessage send fails (the contact is SMS/RCS-only), the bridge re-delivers via the control-plane Twilio connector's `send_sms` action. That action sends through a **Twilio Messaging Service** when one is configured (`messagingServiceSid` on the Twilio connector config, or the `messagingServiceSid` param) — a Messaging Service with an **RCS sender** attached delivers **RCS (rich) and auto-falls back to SMS** for handsets that can't do RCS. With no Messaging Service it sends plain SMS from `LANTERN_TWILIO_NUMBER`. So the one path covers RCS + SMS.
-  - To enable RCS: in Twilio, create a Messaging Service, attach your RCS sender, and set its SID as `messagingServiceSid` on the Twilio connector (dashboard → Integrations → Twilio), **and** set `LANTERN_TWILIO_NUMBER` for the plain-SMS fallback.
+- **Outbound (to).** Replies prefer iMessage. When the iMessage send fails (the contact is SMS/RCS-only), the bridge re-delivers via the control-plane Twilio connector's `send_sms` action. That action sends through a **Twilio Messaging Service** when one is configured (`messagingServiceSid` on the Twilio connector config, or the `messagingServiceSid` param) — a Messaging Service with an **RCS sender** attached delivers **RCS (rich) and auto-falls back to SMS** for handsets that can't do RCS. With no Messaging Service it sends plain SMS from `PAL_TWILIO_NUMBER`. So the one path covers RCS + SMS.
+  - To enable RCS: in Twilio, create a Messaging Service, attach your RCS sender, and set its SID as `messagingServiceSid` on the Twilio connector (dashboard → Integrations → Twilio), **and** set `PAL_TWILIO_NUMBER` for the plain-SMS fallback.
 
 ### Always-on
 
@@ -2058,8 +2058,8 @@ me posted", never narrate the tool.
 
 | Env var (control-plane)          | Default                      | Purpose                          |
 | -------------------------------- | ---------------------------- | -------------------------------- |
-| `LANTERN_WEBSEARCH_MODEL`        | `claude-sonnet-4-6`          | Anthropic search-summarizer model |
-| `LANTERN_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model             |
+| `PAL_WEBSEARCH_MODEL`        | `claude-sonnet-4-6`          | Anthropic search-summarizer model |
+| `PAL_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model             |
 
 ### Transient-error retry (control-plane / LLM 429 / 503)
 
@@ -2067,9 +2067,9 @@ me posted", never narrate the tool.
 `authedFetch` for session create and message post with bounded exponential
 backoff via `packages/bridge-core/src/retry.ts`. HTTP 429 / 503 and
 network errors (ECONNREFUSED, socket hang-up, etc.) are retried up to
-`LANTERN_BRIDGE_RETRY_ATTEMPTS` times (default 3) with full-jitter
-backoff between `0` and `LANTERN_BRIDGE_RETRY_MAX_MS` (default 4000 ms,
-base step `LANTERN_BRIDGE_RETRY_BASE_MS` = 500 ms). 401 / 403 / 404 /
+`PAL_BRIDGE_RETRY_ATTEMPTS` times (default 3) with full-jitter
+backoff between `0` and `PAL_BRIDGE_RETRY_MAX_MS` (default 4000 ms,
+base step `PAL_BRIDGE_RETRY_BASE_MS` = 500 ms). 401 / 403 / 404 /
 409 are never retried — the existing dead-session 404/409 recovery path
 is preserved inside the outer loop. Note: `@lantern/retry` does not yet
 exist as a shared package; `retry.ts` is a local shim to be replaced

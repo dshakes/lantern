@@ -1,6 +1,6 @@
 # runtime-manager
 
-Per-node orchestration service for the Lantern W12 headless-agent runtime. It
+Per-node orchestration service for the PAL Runtime W12 headless-agent runtime. It
 receives spawn/stop/logs/exec/stats requests over gRPC, delegates to an isolation
 backend, tracks live handles, and serves the `RuntimeHarness` endpoint that VM
 harnesses call for heartbeats and secret vending.
@@ -163,15 +163,15 @@ All env vars; no config file.
 | `NODE_ADVERTISE_ADDR` | `<LISTEN_ADDR with 0.0.0.0→localhost>` | Address the scheduler dials to reach this manager |
 | `NODE_REGION` | `local` | Region tag used in scheduler placement scoring |
 | `NODE_ZONE` | `local-a` | Availability zone tag |
-| `LANTERN_ENV` | _(unset)_ | Set to `prod`, `production`, or `staging` to enable fail-closed mTLS enforcement |
+| `PAL_ENV` | _(unset)_ | Set to `prod`, `production`, or `staging` to enable fail-closed mTLS enforcement |
 | `KATA_RUNTIME_NAME` | `kata-runtime` | OCI runtime name registered in `/etc/docker/daemon.json`. Only used when `RUNTIME_BACKEND=kata` |
 | `SNAPSHOT_DIR` | `/var/lib/lantern/snapshots` | Root directory for `SnapshotStore` filesystem persistence (`src/snapshot_store.rs`). Tier-2 retention: keep last 3 per `(agent_version_id, vm_id)`, delete after 7 days (ADR 0007) |
 | `S3_ENDPOINT` | _(unset)_ | S3 / MinIO endpoint URL for the `SnapshotStore` S3 tier (e.g. `http://localhost:9000`). Must be set together with `S3_BUCKET` to activate the tier. Path-style URLs are used (required for MinIO). |
 | `S3_BUCKET` | _(unset)_ | Bucket name for snapshot uploads. Objects are stored under `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/`. S3 upload failures on `put` are warn-logged and non-fatal; the local copy is always written first. |
 | `AWS_ACCESS_KEY_ID` | _(unset)_ | S3 / MinIO access key. Required when `S3_ENDPOINT` is set. |
 | `AWS_SECRET_ACCESS_KEY` | _(unset)_ | S3 / MinIO secret key. Required when `S3_ENDPOINT` is set. |
-| `LANTERN_CONTROL_PLANE_URL` | _(unset)_ | Base URL of the control-plane for the `RelaySecretResolver` (e.g. `http://control-plane:8080`). Both this and `LANTERN_RUNTIME_SECRET_TOKEN` must be set to activate the relay |
-| `LANTERN_RUNTIME_SECRET_TOKEN` | _(unset)_ | Pre-shared token sent as `X-Lantern-Runtime-Token` when calling `POST /v1/runtime/secrets/resolve`. Both this and `LANTERN_CONTROL_PLANE_URL` must be set. Unset → dev `EnvSecretResolver` (ADR 0008) |
+| `PAL_CONTROL_PLANE_URL` | _(unset)_ | Base URL of the control-plane for the `RelaySecretResolver` (e.g. `http://control-plane:8080`). Both this and `PAL_RUNTIME_SECRET_TOKEN` must be set to activate the relay |
+| `PAL_RUNTIME_SECRET_TOKEN` | _(unset)_ | Pre-shared token sent as `X-Lantern-Runtime-Token` when calling `POST /v1/runtime/secrets/resolve`. Both this and `PAL_CONTROL_PLANE_URL` must be set. Unset → dev `EnvSecretResolver` (ADR 0008) |
 
 ### mTLS (harness ↔ manager)
 
@@ -179,11 +179,11 @@ Three env vars must be set together; see `src/tls.rs`:
 
 | Env | Purpose |
 |---|---|
-| `LANTERN_MANAGER_TLS_CA` | Path to PEM CA cert. Harness client certs must be signed by this CA |
-| `LANTERN_MANAGER_TLS_CERT` | Path to PEM server cert for the manager |
-| `LANTERN_MANAGER_TLS_KEY` | Path to PEM private key for the manager cert |
+| `PAL_MANAGER_TLS_CA` | Path to PEM CA cert. Harness client certs must be signed by this CA |
+| `PAL_MANAGER_TLS_CERT` | Path to PEM server cert for the manager |
+| `PAL_MANAGER_TLS_KEY` | Path to PEM private key for the manager cert |
 
-When `LANTERN_ENV` is `prod`/`staging` and any of the three are absent the manager
+When `PAL_ENV` is `prod`/`staging` and any of the three are absent the manager
 **exits with status 1** rather than start in plaintext.
 
 In dev (env unset or `dev`): missing mTLS vars → `WARN` log, plaintext gRPC. No
@@ -193,9 +193,9 @@ Optional overrides for the signing CA (used to issue per-VM client certs at spaw
 
 | Env | Purpose |
 |---|---|
-| `LANTERN_VM_SIGNING_CA_CERT` | Path to PEM CA cert used to sign per-VM client certs. Defaults to `LANTERN_MANAGER_TLS_CA` |
-| `LANTERN_VM_SIGNING_CA_KEY` | Path to its private key. Defaults to `LANTERN_MANAGER_TLS_KEY` |
-| `LANTERN_VM_CERT_DIR` | Host directory for per-VM cert material. Default `/run/lantern/certs` |
+| `PAL_VM_SIGNING_CA_CERT` | Path to PEM CA cert used to sign per-VM client certs. Defaults to `PAL_MANAGER_TLS_CA` |
+| `PAL_VM_SIGNING_CA_KEY` | Path to its private key. Defaults to `PAL_MANAGER_TLS_KEY` |
+| `PAL_VM_CERT_DIR` | Host directory for per-VM cert material. Default `/run/lantern/certs` |
 
 ---
 
@@ -252,5 +252,5 @@ curl -s -X POST http://localhost:8080/v1/runtime/schedule \
 | `Exec` / `Stats` — Docker, Kata, K8s | `service.rs` / `backends/k8s.rs` | All three are now backed. Docker/Kata use bollard; K8s uses kube `ws` (exec) and `metrics.k8s.io` (stats) |
 | `Stats` — Firecracker | `service.rs` | Served from the heartbeat cache (30 s staleness threshold); no direct guest poll |
 | Snapshot persistence — Docker `commit` URI | Docker backend | `docker commit` produces a local image. The `SnapshotStore` S3 tier covers the Firecracker case; a Docker-to-S3 URI path is still open |
-| Secret relay — Vault / cloud SM | `secret_resolver.rs` | `RelaySecretResolver` (ADR 0008) now wired: set `LANTERN_CONTROL_PLANE_URL` + `LANTERN_RUNTIME_SECRET_TOKEN` to activate. Vault / AWS Secrets Manager remain future options |
+| Secret relay — Vault / cloud SM | `secret_resolver.rs` | `RelaySecretResolver` (ADR 0008) now wired: set `PAL_CONTROL_PLANE_URL` + `PAL_RUNTIME_SECRET_TOKEN` to activate. Vault / AWS Secrets Manager remain future options |
 | Live mTLS handshake (multi-process) | `tls.rs` | Unit tests cover cert issuance + identity check. The live two-process handshake is exercised by `.github/workflows/microvm-integration.yml` on a KVM runner — unverified until that CI runs green |

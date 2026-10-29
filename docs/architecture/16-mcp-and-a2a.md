@@ -113,7 +113,7 @@ Authenticated with a PAL MCP key (separate from API keys; scoped to MCP usage so
   "lantern": {
     "transport": "http+sse",
     "url": "https://mcp.acme.lantern.run",
-    "auth": { "type": "bearer", "token": "${LANTERN_MCP_KEY}" }
+    "auth": { "type": "bearer", "token": "${PAL_MCP_KEY}" }
   }
 }
 ```

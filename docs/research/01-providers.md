@@ -196,7 +196,7 @@ We grouped the field into four buckets and evaluated each on the same dimensions
 
 **Differentiator:** **Fully managed long-horizon agent execution from the model vendor.** Initial customers: Notion, Rakuten, Asana.
 
-**Limitation:** **Single model vendor** (this is the whole point of Lantern's existence). The $0.08/session-hour fee scales linearly.
+**Limitation:** **Single model vendor** (this is the whole point of PAL Runtime's existence). The $0.08/session-hour fee scales linearly.
 
 **What we steal:** The "decoupling brain from hands" mental model. Computer use is a tier-1 tool category.
 
@@ -218,9 +218,9 @@ We grouped the field into four buckets and evaluated each on the same dimensions
 
 **Limitation:** **Steep learning curve.** Workflow code must be deterministic, which catches everyone the first time. Operations is non-trivial — Temporal Cloud helps but isn't free.
 
-**What we steal:** **The entire durable execution model.** Lantern's workflow engine is Temporal-shaped: deterministic functions, event journal, replay on restart. We borrow signals, queries, child workflows.
+**What we steal:** **The entire durable execution model.** PAL Runtime's workflow engine is Temporal-shaped: deterministic functions, event journal, replay on restart. We borrow signals, queries, child workflows.
 
-**What we avoid:** Forcing users to write deterministic code by hand. Lantern's `step()` API hides the determinism trap by making non-step code an explicit error.
+**What we avoid:** Forcing users to write deterministic code by hand. PAL Runtime's `step()` API hides the determinism trap by making non-step code an explicit error.
 
 ---
 

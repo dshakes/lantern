@@ -5,7 +5,7 @@ This guide gets PAL off your **personal** self-chat and onto its own
 friend; the bot reads your Mac, runs OCR, executes calendar/note/mail
 actions, and replies — same features as self-chat mode, cleaner UX.
 
-The bridge supports **both** topologies simultaneously. If `LANTERN_IMESSAGE_OWNER_HANDLE` or `LANTERN_WA_OWNER_JID` is set, owner-DMs-bot mode is active; otherwise it falls back to self-chat. You can switch any time by toggling the env var.
+The bridge supports **both** topologies simultaneously. If `PAL_IMESSAGE_OWNER_HANDLE` or `PAL_WA_OWNER_JID` is set, owner-DMs-bot mode is active; otherwise it falls back to self-chat. You can switch any time by toggling the env var.
 
 ---
 
@@ -30,9 +30,9 @@ The bridge supports **both** topologies simultaneously. If `LANTERN_IMESSAGE_OWN
 Add to your shell env (or `~/.lantern/env`):
 
 ```bash
-export LANTERN_IMESSAGE_OWNER_HANDLE="+15125551234"   # your primary phone
+export PAL_IMESSAGE_OWNER_HANDLE="+15125551234"   # your primary phone
 # OR an email if your primary Apple ID uses one:
-# export LANTERN_IMESSAGE_OWNER_HANDLE="ada@icloud.com"
+# export PAL_IMESSAGE_OWNER_HANDLE="ada@icloud.com"
 ```
 
 Restart the bridge: `make run-imessage-bridge`.
@@ -45,7 +45,7 @@ From your phone, DM the bot: **"when does my passport expire"** — you should s
 
 - **Normalization**: phone numbers are matched after stripping spaces, dashes, parens, dots. `+1 (512) 555-1234` and `+15125551234` both match.
 - **Backward compatibility**: if you also self-chat (the old way), that still works as a fallback path.
-- **Security**: only messages whose `row.handle` matches `LANTERN_IMESSAGE_OWNER_HANDLE` trigger personal-docs / commands / actions. A random contact who messages the bot gets the normal auto-reply (or nothing if you mute), never doc access.
+- **Security**: only messages whose `row.handle` matches `PAL_IMESSAGE_OWNER_HANDLE` trigger personal-docs / commands / actions. A random contact who messages the bot gets the normal auto-reply (or nothing if you mute), never doc access.
 
 ---
 
@@ -81,9 +81,9 @@ Visit [http://localhost:3000/personal/whatsapp](http://localhost:3000/personal/w
 ### Wiring the env
 
 ```bash
-export LANTERN_WA_OWNER_JID="15125551234@s.whatsapp.net"
+export PAL_WA_OWNER_JID="15125551234@s.whatsapp.net"
 # OR just the digits — the bridge appends "@s.whatsapp.net" automatically:
-# export LANTERN_WA_OWNER_JID="15125551234"
+# export PAL_WA_OWNER_JID="15125551234"
 ```
 
 Restart the bridge: `make run-whatsapp-bridge`.
@@ -96,7 +96,7 @@ From your primary WhatsApp, DM the bot: **"status"** → should reply with the b
 
 - **JID format**: WhatsApp uses two JID forms. Phone-format `<digits>@s.whatsapp.net` is what you typically set. Newer privacy IDs (`@lid`) also work; the bridge normalizes both.
 - **Group support**: the bot can be added to family groups. Group auto-reply still requires explicit @mention or the existing `/bot monitor on` opt-in.
-- **Backward compatibility**: if `LANTERN_WA_OWNER_JID` is unset, self-chat mode remains the gate.
+- **Backward compatibility**: if `PAL_WA_OWNER_JID` is unset, self-chat mode remains the gate.
 
 ---
 
@@ -126,7 +126,7 @@ Look for inbound rows showing the sender's handle/JID — set your env to that e
 
 ## 4. Switching back to self-chat
 
-Just `unset LANTERN_IMESSAGE_OWNER_HANDLE` / `unset LANTERN_WA_OWNER_JID` and restart the bridge. Self-chat mode resumes immediately. No data loss; OCR cache and bot-state files survive the switch.
+Just `unset PAL_IMESSAGE_OWNER_HANDLE` / `unset PAL_WA_OWNER_JID` and restart the bridge. Self-chat mode resumes immediately. No data loss; OCR cache and bot-state files survive the switch.
 
 ---
 
@@ -171,7 +171,7 @@ I'm Ada — founder building PAL. Currently heads-down on launch.
 
 **`## Style lessons (managed)`** — written by the 👎 flywheel; do not hand-edit the `<!-- id:... -->` tags. Delete a bullet to retire a rule.
 
-**Profile path override:** `export LANTERN_OWNER_PROFILE=/path/to/profile.md`
+**Profile path override:** `export PAL_OWNER_PROFILE=/path/to/profile.md`
 
 ---
 
@@ -181,13 +181,13 @@ Add these to your `~/.lantern/env` or LaunchAgent plist alongside the existing v
 
 | Var | Purpose | Default |
 |---|---|---|
-| `LANTERN_OWNER_TIMEZONE` | IANA TZ for quiet hours + digest scheduling | process TZ |
-| `LANTERN_QUIET_START` | Quiet-hours start, 24h int — no auto-reply, messages queued | `1` (1 AM) |
-| `LANTERN_QUIET_END` | Quiet-hours end, 24h int | `6` (6 AM) |
-| `LANTERN_QUIET_QUEUE_MAX` | Max overnight queued messages per bridge | `200` |
-| `LANTERN_PROACTIVE_NUDGES` | Set `0` to disable anticipation nudges (overdue replies, upcoming dates, open commitments) | on |
-| `LANTERN_DRAFT_CONFIRM` | Set `0`/`off` to revert LOW-confidence replies from draft-to-owner back to 5s-hold-then-send | on |
-| `LANTERN_DISLIKE_LLM_CLUSTER` | Set `1` to enable LLM fuzzy clustering in the 👎 flywheel (costs tokens) | off |
+| `PAL_OWNER_TIMEZONE` | IANA TZ for quiet hours + digest scheduling | process TZ |
+| `PAL_QUIET_START` | Quiet-hours start, 24h int — no auto-reply, messages queued | `1` (1 AM) |
+| `PAL_QUIET_END` | Quiet-hours end, 24h int | `6` (6 AM) |
+| `PAL_QUIET_QUEUE_MAX` | Max overnight queued messages per bridge | `200` |
+| `PAL_PROACTIVE_NUDGES` | Set `0` to disable anticipation nudges (overdue replies, upcoming dates, open commitments) | on |
+| `PAL_DRAFT_CONFIRM` | Set `0`/`off` to revert LOW-confidence replies from draft-to-owner back to 5s-hold-then-send | on |
+| `PAL_DISLIKE_LLM_CLUSTER` | Set `1` to enable LLM fuzzy clustering in the 👎 flywheel (costs tokens) | off |
 
 ### Verifying quiet-hours + nudges
 
@@ -223,15 +223,15 @@ default**; you must opt in explicitly.
 2. Copy your ElevenLabs **API key** (Profile → API Keys).
 3. Stand up a publicly-reachable host for the generated MP3s — Twilio fetches
    them when it dials. The bridge serves `/voice-cache/<sha>.mp3`; expose it
-   via Cloudflare Tunnel or ngrok and set `LANTERN_VOICE_CACHE_PUBLIC_URL` to
+   via Cloudflare Tunnel or ngrok and set `PAL_VOICE_CACHE_PUBLIC_URL` to
    that public base URL.
 4. Add to `~/.lantern/env` (or the LaunchAgent plist):
 
    ```bash
-   export LANTERN_VOICE_CLONE=1                       # master opt-in (off by default)
-   export LANTERN_ELEVENLABS_API_KEY="sk-..."         # never logged
-   export LANTERN_ELEVENLABS_VOICE_ID="your-voice-id"
-   export LANTERN_VOICE_CACHE_PUBLIC_URL="https://<your-tunnel-host>"
+   export PAL_VOICE_CLONE=1                       # master opt-in (off by default)
+   export PAL_ELEVENLABS_API_KEY="sk-..."         # never logged
+   export PAL_ELEVENLABS_VOICE_ID="your-voice-id"
+   export PAL_VOICE_CACHE_PUBLIC_URL="https://<your-tunnel-host>"
    ```
 
 Restart the bridge. If **any** of the three voice-clone vars (or the public
@@ -241,7 +241,7 @@ mid-call, it also falls back to Polly: voice-clone never fails a call.
 
 | Var | Purpose | Default |
 |---|---|---|
-| `LANTERN_VOICE_CLONE` | Master opt-in (`1`/`true`/`on`). Deepfake-class — keep off unless intended | off |
+| `PAL_VOICE_CLONE` | Master opt-in (`1`/`true`/`on`). Deepfake-class — keep off unless intended | off |
 | `LANTERN_ELEVENLABS_API_KEY` | ElevenLabs API key (legacy alias `LANTERN_ELEVENLABS_KEY`) | — |
-| `LANTERN_ELEVENLABS_VOICE_ID` | The cloned voice to speak in | — |
-| `LANTERN_VOICE_CACHE_PUBLIC_URL` | Public base URL the bridge serves `/voice-cache/<sha>.mp3` from | — |
+| `PAL_ELEVENLABS_VOICE_ID` | The cloned voice to speak in | — |
+| `PAL_VOICE_CACHE_PUBLIC_URL` | Public base URL the bridge serves `/voice-cache/<sha>.mp3` from | — |

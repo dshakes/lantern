@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-28
-- **Deciders:** Lantern personal-harness, control-plane
+- **Deciders:** PAL Runtime personal-harness, control-plane
 - **Tags:** loop-agents, personal-harness, pii, encryption, commitments
 
 ## Context
@@ -48,7 +48,7 @@ records. Key design choices:
 
 1. **`fields_encrypted text`** — the structured detail blob (medications, VIN,
    salary range, …) is AES-256-GCM encrypted via the same `internal/secrets`
-   envelope used for connector credentials. In dev (no `LANTERN_CREDENTIAL_KEY`)
+   envelope used for connector credentials. In dev (no `PAL_CREDENTIAL_KEY`)
    it stores plaintext and decrypts transparently — the rollout is migration-free.
    The column is `text` not `jsonb` because an encrypted envelope is opaque to
    Postgres operators.
@@ -83,7 +83,7 @@ independently from `inbox_autopilot`'s `'inbox'` cursor.
 |---------|----------|
 | Email content | Treated as **untrusted data**. The LLM system prompt explicitly forbids following email instructions. Extraction is parse-only. |
 | LLM output | Stored as structured records for the owner's review. Never executed server-side. |
-| PII at rest | `fields_encrypted` is AES-256-GCM via `LANTERN_CREDENTIAL_KEY`. Decrypted only in the handler response; never logged, never traced (invariant #10). |
+| PII at rest | `fields_encrypted` is AES-256-GCM via `PAL_CREDENTIAL_KEY`. Decrypted only in the handler response; never logged, never traced (invariant #10). |
 | Idempotency | Extraction keyed on `(domain, msg_id, kind, title)`. Obligations keyed on `(domain, msg_id, kind, title)`. Both use `ON CONFLICT DO NOTHING`. LLM calls carry `WithLLMIdempotencyBase` (invariant #8). |
 | Cross-tenant | RLS enforced at Postgres. HTTP handlers route through `WithTenant`. The loop body uses explicit `tenant_id` filter (same as `runFinancialSentinel`). |
 | Owner confirm | All three agents seed with `trust: "ask"` — no auto-action without owner confirmation. |

@@ -11,7 +11,7 @@ one command instead of a curl checklist.
 | ---- | ------- | ----- | -- |
 | Unit | `make test` | toolchains | `sdlc-qa.yml` |
 | Fixture e2e (examples) | `make test-e2e-examples` (`scripts/e2e-examples.sh`) | go, cargo, psql, python3, Postgres + Redis; no provider key | `sdlc-e2e.yml` job `examples` |
-| Fixture e2e (deploy CLI) | `LANTERN_E2E_API_URL=... go test -tags e2e ./...` in `e2e/deploy` against a running control-plane | Postgres + Redis | `sdlc-e2e.yml` job `deploy-cli` |
+| Fixture e2e (deploy CLI) | `PAL_E2E_API_URL=... go test -tags e2e ./...` in `e2e/deploy` against a running control-plane | Postgres + Redis | `sdlc-e2e.yml` job `deploy-cli` |
 | Browser | `cd apps/web && npm run test:e2e` | node, chromium, go, psql | `sdlc-e2e.yml` job `browser` |
 | Live real-LLM | `make test-e2e-llm` | a dev stack on a real provider key; spend-capped (see below) | no, local gate only |
 | KVM full-stack | `microvm-integration.yml` | a KVM runner (`vars.MICROVM_RUNNER_LABEL`) | not provisioned yet |
@@ -38,9 +38,9 @@ make test-e2e    # the suites (terminal 2)
 
 Targets the **single-tier** topology (stub scheduler — no microVM/KVM
 needed, the macOS default; this is the verified-green path). Against a
-**two-tier** run (`LANTERN_SCHEDULER_GRPC_ADDR` + Docker-backend
+**two-tier** run (`PAL_SCHEDULER_GRPC_ADDR` + Docker-backend
 runtime-manager) the real backend pulls the scheduled image, so you must set
-`LANTERN_E2E_IMAGE_DIGEST` to a locally pullable image — with the default
+`PAL_E2E_IMAGE_DIGEST` to a locally pullable image — with the default
 placeholder digest, schedule returns 500 on two-tier (observed).
 
 ## Stack-down semantics
@@ -61,12 +61,12 @@ A reachable API with broken dev credentials is always a failure, never a skip.
 
 | Env var | Default | Purpose |
 | ------- | ------- | ------- |
-| `LANTERN_E2E_API_URL` | `http://localhost:8080` | **Target API URL** (canonical). Always set this — never rely on the default, which silently points at `:8080`. |
-| `LANTERN_API_URL` | — | Alias for `LANTERN_E2E_API_URL`; checked when the canonical var is unset. |
+| `PAL_E2E_API_URL` | `http://localhost:8080` | **Target API URL** (canonical). Always set this — never rely on the default, which silently points at `:8080`. |
+| `PAL_API_URL` | — | Alias for `PAL_E2E_API_URL`; checked when the canonical var is unset. |
 | `E2E_ALLOW_SKIP` | — | Set to `1` to skip (instead of fail) when the stack is unreachable. |
-| `LANTERN_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
-| `LANTERN_E2E_PASSWORD` | `lantern` | Login password |
-| `LANTERN_E2E_IMAGE_DIGEST` | `lantern/demos/hello@sha256:00…01` (placeholder) | Image to schedule; override with a pullable image on two-tier stacks |
+| `PAL_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
+| `PAL_E2E_PASSWORD` | `lantern` | Login password |
+| `PAL_E2E_IMAGE_DIGEST` | `lantern/demos/hello@sha256:00…01` (placeholder) | Image to schedule; override with a pullable image on two-tier stacks |
 
 Both suites (`runtime/` and `quickstart/`) print the resolved target URL at
 the start of every run, so there is no silent fallback confusion.
@@ -75,7 +75,7 @@ the start of every run, so there is no silent fallback confusion.
 
 For CI and kiosk mode, run the control-plane against the deterministic fixture LLM instead of a real
 provider: `go run ./cmd/llm-replay` (in `services/control-plane`, `127.0.0.1:9192`), then start the API with
-`LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192` and
+`PAL_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 PAL_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192` and
 any dummy `OPENAI_API_KEY`. Replies are `fixture: <first 60 chars of the user message>` with realistic token
 counts; `-rules rules.json` scripts replies and tool calls. Refused in prod. See the docs `/testing` page.
 
@@ -115,4 +115,4 @@ counts; `-rules rules.json` scripts replies and tool calls. Refused in prod. See
 
 ## Support desk (`examples/`)
 
-`e2e/examples` drives `examples/support-desk` (KB answer with a cited source, refund question handed to a human, Slack ping, operator reply over SSE). Setup for the fixture tier and the env vars (`LANTERN_E2E_FIXTURE_LLM`, `LANTERN_E2E_SLACK_FIXTURE_ADDR`) are in `examples/support-desk/README.md`.
+`e2e/examples` drives `examples/support-desk` (KB answer with a cited source, refund question handed to a human, Slack ping, operator reply over SSE). Setup for the fixture tier and the env vars (`PAL_E2E_FIXTURE_LLM`, `PAL_E2E_SLACK_FIXTURE_ADDR`) are in `examples/support-desk/README.md`.
