@@ -1315,8 +1315,8 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   to a full byte copy on non-reflink filesystems (ext4, tmpfs) with a WARN —
   pause/resume/fork continue to work on any filesystem. With this set, any
   `FICLONE` failure (`EOPNOTSUPP`/`EXDEV`) returns a typed error immediately
-  rather than silently falling back. Enabled in `infra/helm/lantern/values-prod.yaml`
-  under `runtimeManager.env`; remove the line if your prod nodes use ext4.
+  rather than silently falling back. Off in every shipped values file (node
+  filesystems vary); add it under `runtimeManager.env` once your nodes are XFS/btrfs.
 - `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on

@@ -154,14 +154,6 @@ runtimeManager:
   env:
     LOG_LEVEL: "info"
     LANTERN_ENV: "production"
-    # Enforce CoW disk staging for fork/pause/resume: FICLONE must succeed or
-    # the operation fails with a typed error instead of silently doing an O(n)
-    # full byte copy.  Requires the snapshot directory (LANTERN_SNAPSHOT_DIR)
-    # and FIRECRACKER_CHROOT_BASE to be on the SAME XFS (mkfs.xfs -m reflink=1)
-    # or btrfs filesystem.  Remove or set to "" to allow the full-copy fallback
-    # on nodes whose snapshot dir is on ext4 (logs a WARN per staging + once
-    # per process; safe but degrades fork fan-out from O(1) to O(n × disk)).
-    LANTERN_REQUIRE_REFLINK: "1"
 
 runtimeScheduler:
   replicas: 2
