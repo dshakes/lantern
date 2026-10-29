@@ -603,14 +603,13 @@ func (s *SchedulerService) dispatchSpawn(nodeAddr string, spec *lanternv1.AgentS
 		Handle: handle,
 	})
 	if err == nil && resp != nil && resp.Handle != nil && resp.Handle.SoftwareMeasurement != "" {
-		// Stamp the host-asserted measurement onto the handle (ADR 0031).
-		// handle is a pointer held by the cluster store — the write is visible
-		// to anyone who reads the VM after this point (heartbeats, list, receipt).
-		handle.SoftwareMeasurement = resp.Handle.SoftwareMeasurement
-		s.Logger.Info("software measurement recorded",
-			zap.String("vm_id", handle.VmId),
-			zap.String("measurement", resp.Handle.SoftwareMeasurement),
-		)
+		// Stamp the host-asserted measurement onto the stored VM (ADR 0031).
+		// Through the store (copy-on-write under its lock), never by mutating
+		// the shared *VmHandle: list/heartbeat readers hold it outside the lock.
+		// The value itself is not logged; it reaches relying parties via the
+		// receipt and the VM cert, not via logs.
+		s.Store.SetVMMeasurement(handle.VmId, resp.Handle.SoftwareMeasurement)
+		s.Logger.Info("software measurement recorded", zap.String("vm_id", handle.VmId))
 	}
 	if err != nil {
 		s.Logger.Error("spawn dispatch failed",

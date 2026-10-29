@@ -385,3 +385,31 @@ func TestReservation_TwoVMsOnSameNode(t *testing.T) {
 		t.Errorf("FreeVcpuMillis after 2 VMs: got %d, want 4000", got.FreeVcpuMillis)
 	}
 }
+
+// TestSetVMMeasurement_CopyOnWrite verifies the measurement lands on the stored
+// VM without mutating a *VmHandle a reader already holds (ADR 0031).
+func TestSetVMMeasurement_CopyOnWrite(t *testing.T) {
+	s := cluster.NewInMemoryStore()
+	s.CreateVM(&cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-m", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{TenantId: "t1"},
+		State:    lanternv1.VmState_VM_STATE_PENDING,
+		TenantID: "t1",
+		NodeName: "n1",
+	})
+	before, _ := s.GetVM("vm-m")
+
+	if !s.SetVMMeasurement("vm-m", "ab12") {
+		t.Fatal("SetVMMeasurement: got false for an existing VM")
+	}
+	if s.SetVMMeasurement("vm-missing", "ab12") {
+		t.Error("SetVMMeasurement: got true for an unknown VM")
+	}
+	after, _ := s.GetVM("vm-m")
+	if after.Handle.SoftwareMeasurement != "ab12" {
+		t.Errorf("stored measurement: got %q, want ab12", after.Handle.SoftwareMeasurement)
+	}
+	if before.Handle.SoftwareMeasurement != "" {
+		t.Error("reader's earlier handle was mutated in place (data race)")
+	}
+}

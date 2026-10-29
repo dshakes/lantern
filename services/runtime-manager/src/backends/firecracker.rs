@@ -1030,10 +1030,6 @@ fn provision_vm_cert(cfg: &VmConfig, software_measurement: Option<&str>) -> Resu
     Ok(pin)
 }
 
-/// Compute and gate-check the host-asserted software measurement (ADR 0031).
-///
-/// Returns `Ok(Some(hex))` on success, `Ok(None)` if file-hashing fails
-/// (the VM still boots — fail-open for compute errors), or `Err` if the
 /// Inputs bundled for the blocking measurement task (avoids the 8-argument
 /// clippy lint on `compute_and_check_measurement`).
 struct MeasurementInput {
@@ -1052,6 +1048,8 @@ struct MeasurementInput {
 /// Returns `Ok(Some(hex))` on success, `Ok(None)` when the computation itself
 /// fails (fail-open so a missing image file doesn't prevent boot), or `Err` when
 /// gate is `Enforce` and the measurement does not match any reference value.
+/// An enforcing gate with a reference set is fail-CLOSED on a compute error too:
+/// otherwise an unmeasurable boot would slip past the very gate meant to stop it.
 ///
 /// Intended to be called from `tokio::task::spawn_blocking`.
 fn compute_and_check_measurement(inp: MeasurementInput) -> Result<Option<String>> {
@@ -1064,6 +1062,14 @@ fn compute_and_check_measurement(inp: MeasurementInput) -> Result<Option<String>
     ) {
         Ok(m) => m,
         Err(e) => {
+            if inp.gate == crate::measurement::MeasurementGate::Enforce
+                && !inp.reference_measurements.is_empty()
+            {
+                return Err(e.context(
+                    "SECURITY: refusing to start VM — software measurement could not be \
+                     computed (gate=enforce)",
+                ));
+            }
             tracing::warn!(
                 vm_id = inp.vm_id,
                 error = %e,
@@ -3799,14 +3805,7 @@ impl FirecrackerBackend {
         // Step 2: this VM's own identity + contract.
         let vm_id = resolve_vm_id(&req.vm_id)?;
 
-        // Record the fork staging reference BEFORE provisioning identity so
-        // that if provisioning or restore fails, `cancel()` can release it.
-        // (The vm_id is not in any registry yet, but the refcount is harmless
-        // until a matching `cancel()` clears it.)
         let shared_mem = snapshot_id_for_refcount.is_some();
-        if let Some(ref snap_id) = snapshot_id_for_refcount {
-            self.record_fork_staging(&vm_id, snap_id);
-        }
 
         let mut cfg = VmConfig::from_schedule_with_mode(
             &restore_schedule_view(req, &vm_id),
@@ -3826,7 +3825,7 @@ impl FirecrackerBackend {
             "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
         // Compute host-asserted software measurement before provisioning
-        // identity (ADR 0031). Same fail-open semantics as schedule().
+        // identity (ADR 0031). Same gate semantics as schedule().
         let measurement = {
             let inp = MeasurementInput {
                 kernel_path: cfg.kernel_image_path.clone(),
@@ -3842,6 +3841,15 @@ impl FirecrackerBackend {
                 .await
                 .context("measurement task join (restore)")??
         };
+        // Record the fork staging reference BEFORE provisioning identity so
+        // that if provisioning or restore fails, `cancel()` can release it.
+        // (The vm_id is not in any registry yet, but the refcount is harmless
+        // until a matching `cancel()` clears it.) Recorded AFTER the
+        // measurement gate: a refused restore returns early and would
+        // otherwise leak the refcount.
+        if let Some(ref snap_id) = snapshot_id_for_refcount {
+            self.record_fork_staging(&vm_id, snap_id);
+        }
         self.provision_identity(&cfg, measurement).await?;
 
         // Broker mode (ADR 0026): no NIC — no TAP, no network override.
@@ -4061,7 +4069,8 @@ impl RuntimeBackend for FirecrackerBackend {
 
         // Compute host-asserted software measurement before boot (ADR 0031).
         // Enforce gate returns Err here and refuses the spawn; Warn logs and
-        // continues; Off always succeeds. Computation errors are non-fatal.
+        // continues; Off always succeeds. Computation errors are non-fatal
+        // except under an enforcing gate with references (fail-closed).
         let measurement = {
             let inp = MeasurementInput {
                 kernel_path: cfg.kernel_image_path.clone(),
@@ -4597,6 +4606,35 @@ mod tests {
     // -----------------------------------------------------------------------
     // Helper builders
     // -----------------------------------------------------------------------
+
+    /// ADR 0031: an enforcing gate with references must not let an
+    /// unmeasurable boot through; warn/no-refs stay fail-open.
+    #[test]
+    fn measurement_compute_error_fails_closed_only_when_enforcing() {
+        use crate::measurement::MeasurementGate;
+        let inp = |gate, refs: Vec<String>| MeasurementInput {
+            kernel_path: "/nonexistent/lantern-kernel".into(),
+            rootfs_path: "/nonexistent/lantern-rootfs".into(),
+            harness_path: None,
+            boot_args: String::new(),
+            contract: SpawnContract::from_schedule(&minimal_schedule_req()),
+            reference_measurements: refs,
+            gate,
+            vm_id: "vm-m".into(),
+        };
+        let refs = vec!["a".repeat(64)];
+        assert!(
+            compute_and_check_measurement(inp(MeasurementGate::Enforce, refs.clone())).is_err()
+        );
+        assert!(matches!(
+            compute_and_check_measurement(inp(MeasurementGate::Warn, refs)),
+            Ok(None)
+        ));
+        assert!(matches!(
+            compute_and_check_measurement(inp(MeasurementGate::Enforce, vec![])),
+            Ok(None)
+        ));
+    }
 
     fn minimal_schedule_req() -> ScheduleRequest {
         ScheduleRequest {

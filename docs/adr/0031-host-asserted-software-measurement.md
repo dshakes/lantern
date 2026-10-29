@@ -46,7 +46,7 @@ fixed order:
 | 1 | **kernel image** | SHA-256 of file bytes at `FC_KERNEL_PATH` |
 | 2 | **rootfs image** | SHA-256 of file bytes at `FC_ROOTFS_PATH` |
 | 3 | **harness binary** | SHA-256 of file bytes at `FC_HARNESS_PATH` (32 zero bytes when unset — harness baked into rootfs) |
-| 4 | **boot arguments** | SHA-256 of kernel cmdline UTF-8 bytes |
+| 4 | **boot arguments** | SHA-256 of the kernel cmdline with per-VM tokens removed (see below) |
 | 5 | **spawn contract** | SHA-256 of `spawn.json` canonical JSON with secret-bearing fields zeroed (see below) |
 
 **Final value:** SHA-256 of the 160-byte concatenation of the five 32-byte
@@ -62,9 +62,24 @@ before the spawn-contract hash is computed:
 - `exec_token` — bearer credential used by the harness for `VendSecret` calls
 - `egress_rules[*].inject` — per-rule credential injection specifications
 
+### "Minus identity" rule
+
+The measurement must be reproducible across VMs launched from the same images
+and spec, or no reference set could ever match it. So per-incarnation values are
+excluded too: the contract's `vm_id`, `network` and per-VM `egress_ca_pem`; and
+from the cmdline the `ip=`, `lantern.vm_id=`, `lantern.run_id=`,
+`lantern.tls_cert=`/`lantern.tls_key=` (per-VM paths),
+`lantern.env.LANTERN_MANAGER_ADDR=` (per-VM host IP) and `lantern.secret.*`
+tokens (minus-secrets).
+
 All other spawn-contract fields (workload command, env, egress rules *sans inject*,
-uid/gid, vm_id, egress mode) are included. A changed workload command, changed
-uid, or changed egress policy changes the measurement.
+uid/gid, egress mode) and the remaining cmdline are included. A changed workload
+command, changed uid, or changed egress policy changes the measurement.
+
+The value is never written to logs (gate warnings carry only `vm_id`); it reaches
+relying parties through the signed receipt, the VM cert extension and
+`runtime_vms`. Obtain reference values by running the target images/spec once
+with `gate=warn` and reading the receipt.
 
 ### Enforce gate
 
@@ -90,8 +105,9 @@ The measurement flows through the system as follows:
    side effects; called from `tokio::task::spawn_blocking` at spawn/restore time.
 2. **Per-VM cert (X.509 extension)**: embedded by
    `tls::generate_vm_client_cert(vm_id, ca_cert, ca_key, Some(measurement))` as a
-   custom extension with OID `1.3.6.1.4.1.99999.3` (private PEN placeholder;
-   replace 99999 with the assigned PEN before wider production use). The DER value
+   custom extension with OID `1.3.6.1.4.1.99999.3` — a PLACEHOLDER: a
+   registered IANA Private Enterprise Number is needed and must replace 99999
+   before production use. The DER value
    is a UTF8String containing the 64-character hex measurement.
 3. **Handle registry**: stored in `HandleInfo.software_measurement` so the
    manager can return it in `ScheduleResponse` and `List` responses.
@@ -108,9 +124,9 @@ The measurement flows through the system as follows:
 
 The scheduler's `Schedule` gRPC RPC returns a `VmHandle` immediately (before
 spawn completes, because spawn is an async goroutine). The `software_measurement`
-field is therefore empty in the initial `VmHandle`. The measurement is stamped
-onto the in-memory handle pointer in `dispatchSpawn` after the manager's Spawn
-response arrives, and the control-plane's periodic reconciler reads it via
+field is therefore empty in the initial `VmHandle`. The measurement is recorded
+on the stored VM (`ClusterStore.SetVMMeasurement`, copy-on-write under the store
+lock) in `dispatchSpawn` after the manager's Spawn response arrives, and the control-plane's periodic reconciler reads it via
 `ListStates` within its next sweep interval (default 5 s). Receipt generation
 (which happens after run completion) therefore always sees the measurement.
 
@@ -122,11 +138,14 @@ response arrives, and the control-plane's periodic reconciler reads it via
   small byte strings in a blocking task. The cost is proportional to image size
   (~100 ms per GiB on a typical SSD); it is measured once, not at runtime.
 - A missing image file makes the computation fail-open (measurement is `None`,
-  warn-logged, VM starts normally). This is intentional: a measurement gap is
-  better than an unbootable cluster because the harness binary moved.
+  warn-logged, VM starts normally) under `off`/`warn`: a measurement gap is
+  better than an unbootable cluster because the harness binary moved. Under
+  `enforce` with a reference set it is fail-CLOSED — an unmeasurable boot must
+  not slip past the gate meant to stop it.
 - `enforce` mode is an ops decision. Deployers MUST populate
-  `LANTERN_REFERENCE_MEASUREMENTS` before enabling it, or every spawn will be
-  refused (the empty-list fast-path is a safety valve, not a default).
+  `LANTERN_REFERENCE_MEASUREMENTS` before enabling it; with an empty list the
+  gate passes everything (it cannot fail closed against an unspecified set), so
+  `enforce` without references is NOT protection.
 - The X.509 OID `1.3.6.1.4.1.99999.3` is a PLACEHOLDER: Lantern holds no
   registered IANA Private Enterprise Number yet, and one is needed. It must be
   replaced with the assigned IANA PEN before cross-organisation certificate

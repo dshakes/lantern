@@ -153,3 +153,38 @@ func TestBuildReceipt_NonConfidential_OmitsBlock(t *testing.T) {
 		t.Error("non-confidential run must NOT carry a confidentialCompute block")
 	}
 }
+
+// TestBuildReceipt_SoftwareMeasurement verifies the host-asserted measurement
+// (ADR 0031) lands in the signed receipt payload for a NON-confidential VM,
+// independent of the confidential-compute block.
+func TestBuildReceipt_SoftwareMeasurement(t *testing.T) {
+	pool := openTestPool(t)
+	migrateRuntimeTables(t, pool)
+
+	tenantID := uniqueTenantID("tenant-swm")
+	seedTestTenant(t, pool, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, pool, tenantID) })
+
+	ctx := middleware.InjectTenantID(context.Background(), tenantID)
+	runID := seedCCRun(t, pool, tenantID, "swm-agent")
+
+	const m = "5f2b8c0d9e1a4b7c6d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_vms (vm_id, tenant_id, run_id, state, spec, software_measurement)
+		VALUES ($1, $2, $3, 'running', '{}'::jsonb, $4)
+	`, "vm-swm-1", tenantID, runID, m); err != nil {
+		t.Fatalf("seed runtime_vms: %v", err)
+	}
+
+	h := &ReceiptHandler{srv: &server.Server{Pool: pool}}
+	rc, err := h.buildReceipt(ctx, tenantID, runID)
+	if err != nil {
+		t.Fatalf("buildReceipt: %v", err)
+	}
+	if rc.Payload.SoftwareMeasurement != m {
+		t.Errorf("SoftwareMeasurement = %q, want %q", rc.Payload.SoftwareMeasurement, m)
+	}
+	if rc.Payload.ConfidentialCompute != nil {
+		t.Error("non-confidential run must NOT carry a confidentialCompute block")
+	}
+}

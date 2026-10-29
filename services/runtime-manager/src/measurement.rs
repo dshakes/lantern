@@ -140,7 +140,7 @@ pub fn compute(
         Some(p) => hash_file(p)?,
         None => [0u8; 32],
     };
-    let args_hash = hash_bytes(boot_args.as_bytes());
+    let args_hash = hash_bytes(canonical_boot_args(boot_args).as_bytes());
     let contract_hash = hash_bytes(&contract_bytes_sans_secrets(contract)?);
 
     // Final measurement: SHA-256 of the five 32-byte component hashes in order.
@@ -210,7 +210,6 @@ pub fn check(
             tracing::warn!(
                 target: "lantern_audit",
                 vm_id,
-                measurement,
                 "SECURITY: software measurement does not match any reference value \
                  (gate=warn — proceeding; set LANTERN_MEASUREMENT_GATE=enforce to block)"
             );
@@ -220,12 +219,11 @@ pub fn check(
             tracing::error!(
                 target: "lantern_audit",
                 vm_id,
-                measurement,
                 "SECURITY: refusing to start VM — software measurement does not match \
                  any reference value (gate=enforce)"
             );
             Err(anyhow::anyhow!(
-                "SECURITY: software measurement {measurement} does not match any \
+                "SECURITY: software measurement does not match any \
                  configured reference value; set LANTERN_MEASUREMENT_GATE=warn \
                  to allow with a warning, or update LANTERN_REFERENCE_MEASUREMENTS"
             ))
@@ -250,6 +248,26 @@ fn hash_bytes(data: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Kernel cmdline with per-incarnation tokens removed (VM/run identity, per-VM
+/// cert paths, `ip=`, the host-side manager address) and declared-secret refs
+/// removed (same "minus secrets" rule as the contract). What remains is the
+/// stable boot configuration plus the workload env.
+fn canonical_boot_args(args: &str) -> String {
+    const PER_VM: &[&str] = &[
+        "ip=",
+        "lantern.vm_id=",
+        "lantern.run_id=",
+        "lantern.tls_cert=",
+        "lantern.tls_key=",
+        "lantern.env.LANTERN_MANAGER_ADDR=",
+        "lantern.secret.",
+    ];
+    args.split_whitespace()
+        .filter(|t| !PER_VM.iter().any(|p| t.starts_with(p)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Serialize `contract` to canonical JSON with secret-bearing fields zeroed.
 fn contract_bytes_sans_secrets(contract: &SpawnContract) -> anyhow::Result<Vec<u8>> {
     let mut s = contract.clone();
@@ -258,6 +276,11 @@ fn contract_bytes_sans_secrets(contract: &SpawnContract) -> anyhow::Result<Vec<u
     for rule in &mut s.egress_rules {
         rule.inject = Vec::new();
     }
+    // Per-incarnation identity: unique for every VM, so hashing it would make
+    // every measurement unique and a reference set unmatchable.
+    s.vm_id = String::new();
+    s.network = None;
+    s.egress_ca_pem = String::new();
     serde_json::to_vec(&s).map_err(|e| anyhow::anyhow!("measurement: serialize contract: {e}"))
 }
 
@@ -450,6 +473,55 @@ mod tests {
         // The non-secret fields are the same, so the JSON must be the same
         // (declared_secrets is cleared in both).
         assert_eq!(bytes_with_secret, bytes_different_secret);
+    }
+
+    /// Two VMs from the same spec measure the same: per-VM identity (vm_id,
+    /// network, per-VM CA, cmdline identity/IP/cert paths) is excluded, so a
+    /// reference set can actually match (ADR 0031).
+    #[test]
+    fn identity_free_across_vms() {
+        use crate::backends::firecracker::ContractNetwork;
+        let mut c1 = empty_contract();
+        let mut c2 = empty_contract();
+        c1.vm_id = "vm-a".into();
+        c2.vm_id = "vm-b".into();
+        c1.egress_ca_pem = "CA-A".into();
+        c2.egress_ca_pem = "CA-B".into();
+        c2.network = Some(ContractNetwork {
+            guest_ip: "172.16.0.6".into(),
+            host_ip: "172.16.0.5".into(),
+            netmask: "255.255.255.252".into(),
+        });
+        assert_eq!(
+            contract_bytes_sans_secrets(&c1).unwrap(),
+            contract_bytes_sans_secrets(&c2).unwrap()
+        );
+        let a = "console=ttyS0 ip=172.16.0.2::172.16.0.1 lantern.vm_id=vm-a \
+                 lantern.run_id=r1 lantern.tls_cert=/c/vm-a/tls.crt lantern.tls_key=/c/vm-a/tls.key \
+                 lantern.manager_ca=/c/manager-ca.crt lantern.env.LANTERN_MANAGER_ADDR=172.16.0.1:50054 \
+                 lantern.secret.K=lantern.secret/x lantern.env.FOO=1";
+        let b = "console=ttyS0 ip=172.16.0.6::172.16.0.5 lantern.vm_id=vm-b \
+                 lantern.run_id=r2 lantern.tls_cert=/c/vm-b/tls.crt lantern.tls_key=/c/vm-b/tls.key \
+                 lantern.manager_ca=/c/manager-ca.crt lantern.env.LANTERN_MANAGER_ADDR=172.16.0.5:50054 \
+                 lantern.secret.K=lantern.secret/y lantern.env.FOO=1";
+        assert_eq!(canonical_boot_args(a), canonical_boot_args(b));
+        // A real configuration change still changes it.
+        assert_ne!(
+            canonical_boot_args(a),
+            canonical_boot_args(&a.replace("FOO=1", "FOO=2"))
+        );
+    }
+
+    /// The gate never puts the measurement value in its error (invariant #10
+    /// posture: measurements reach relying parties via receipt/cert, not logs).
+    #[test]
+    fn check_error_omits_measurement() {
+        let unknown = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let refs = vec!["a".repeat(64)];
+        let msg = check(unknown, &refs, MeasurementGate::Enforce, "vm-x")
+            .unwrap_err()
+            .to_string();
+        assert!(!msg.contains(unknown));
     }
 
     /// Changing a non-secret field of the contract changes the hash.

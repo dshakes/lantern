@@ -1489,7 +1489,7 @@ func (h *RuntimeHandler) reconcileOnce() {
 					WHERE vm_id = $2 AND tenant_id = $3
 					  AND (state <> $1
 					       OR (state_reason IS DISTINCT FROM $4 AND $4 <> '')
-					       OR (software_measurement IS DISTINCT FROM $5 AND $5 <> ''))
+					       OR (software_measurement IS NULL AND $5 <> ''))
 				`, info.State, vmID, tenantID, info.Reason, info.SoftwareMeasurement)
 				return e
 			})
