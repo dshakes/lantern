@@ -87,7 +87,7 @@ The runtime watches the live event stream for pathological shapes, such as a too
 
 ## Peer-service health sweep
 
-A background loop in the control-plane TCP-probes its peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`; set `"0"` or `"off"` to disable). After 3 consecutive failures it declares a peer **DOWN** and sends one alert to the owner's self-chat. It sends one more when the peer recovers. There are no alert storms: only state transitions fire notifications.
+A background loop in the control-plane TCP-probes its peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`; set `"0"` or `"off"` to disable). After 3 consecutive failures it declares a peer **DOWN** and sends one alert to the operator's notification channel. It sends one more when the peer recovers. There are no alert storms: only state transitions fire notifications.
 
 Services probed when their address env var is set:
 

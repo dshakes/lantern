@@ -34,7 +34,7 @@ curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duratio
 
 You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
-Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/lantern/docs/runtime/observability/#data-path)).
+Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/lantern/docs/runtime/observability/#gateway-and-model-router-traces)).
 
 ## Alert groups
 

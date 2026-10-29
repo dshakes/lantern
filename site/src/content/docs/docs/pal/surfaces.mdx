@@ -47,7 +47,7 @@ Connect a Telegram bot to an agent:
 2. Add the bot token under **Channels**
 3. Assign the surface to an agent
 
-**How a message becomes a reply.** Telegram POSTs the update to the surface-gateway at `/webhooks/telegram`. The gateway checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_SECRET_TOKEN` (a missing or wrong token is a 401 and nothing runs), creates a run for `LANTERN_AGENT_NAME` in `LANTERN_TENANT_ID`, waits for it to finish, and sends the run's output to the same chat with `sendMessage`. The same loop serves WhatsApp Cloud, whose POSTs are verified with `X-Hub-Signature-256` (`WHATSAPP_APP_SECRET`). Try it end to end with `examples/telegram-assistant` (calendar-aware assistant) and see [the fixture suite](/lantern/docs/build/testing/#examples).
+**How a message becomes a reply.** Telegram POSTs the update to the surface-gateway at `/webhooks/telegram`. The gateway checks the `X-Telegram-Bot-Api-Secret-Token` header against `TELEGRAM_SECRET_TOKEN` (a missing or wrong token is a 401 and nothing runs), creates a run for `LANTERN_AGENT_NAME` in `LANTERN_TENANT_ID`, waits for it to finish, and sends the run's output to the same chat with `sendMessage`. The same loop serves WhatsApp Cloud, whose POSTs are verified with `X-Hub-Signature-256` (`WHATSAPP_APP_SECRET`). Try it end to end with `examples/telegram-assistant` (calendar-aware assistant) and see [the fixture suite](/lantern/docs/build/testing/#example-suites-on-a-fixture-stack).
 
 Limits:
 
@@ -67,7 +67,7 @@ Phone numbers route inbound calls to an agent. Two providers are supported:
 
 Voice spend counts against the same `agent_budgets` as runs. A Twilio inbound call over a hard-fail budget is declined with `<Reject>` (no carrier cost). A LiveKit join token is refused with HTTP 402 (no token means no media). A flat cost estimate is recorded on connect; the provider's status callback at `POST /v1/voice/calls/status/{provider}` reconciles to actual duration cost when the call ends.
 
-Both Twilio endpoints verify `X-Twilio-Signature` (HMAC-SHA1 over the public URL plus the sorted form fields, keyed with the number's auth token) and answer a bad or missing one with 403 before touching any state, so a forged status callback cannot move a budget. Billing is by started minute: a 61-second call is two minutes at $0.03, so the $0.05 connect-time reservation reconciles to $0.06; a call that never connects refunds it to zero. Try it with `examples/voice-receptionist`; the signed-webhook flow is asserted in [the fixture suite](/lantern/docs/build/testing/#examples). The inbound reply is a fixed greeting today; the realtime conversation needs the LiveKit worker (media last mile).
+Both Twilio endpoints verify `X-Twilio-Signature` (HMAC-SHA1 over the public URL plus the sorted form fields, keyed with the number's auth token) and answer a bad or missing one with 403 before touching any state, so a forged status callback cannot move a budget. Billing is by started minute: a 61-second call is two minutes at $0.03, so the $0.05 connect-time reservation reconciles to $0.06; a call that never connects refunds it to zero. Try it with `examples/voice-receptionist`; the signed-webhook flow is asserted in [the fixture suite](/lantern/docs/build/testing/#example-suites-on-a-fixture-stack). The inbound reply is a fixed greeting today; the realtime conversation needs the LiveKit worker (media last mile).
 
 #### Voice API
 

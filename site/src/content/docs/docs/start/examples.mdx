@@ -78,7 +78,7 @@ The priming run is needed because the gateway starts runs over gRPC, which refus
 
 ## Voice receptionist
 
-**What:** a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an over-budget call is declined with `<Reject/>` before it connects, and the status callback reconciles the $0.05 reservation to the real per-started-minute cost. Path: `examples/voice-receptionist/`; details in [Voice](/lantern/docs/pal/surfaces/#twilio).
+**What:** a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an over-budget call is declined with `<Reject/>` before it connects, and the status callback reconciles the $0.05 reservation to the real per-started-minute cost. Path: `examples/voice-receptionist/`; details in [Voice](/lantern/docs/pal/surfaces/#voice-twilio-and-livekit).
 
 ```bash
 cd examples/voice-receptionist
@@ -106,7 +106,7 @@ Try it in CI form: `make test-e2e-analyst` runs `TestDataAnalystSandbox` against
 
 ## Eval-gated deploy
 
-**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/lantern/docs/build/evaluations/#eval-runs).
+**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/lantern/docs/build/evaluations/#recording-a-run-and-the-ci-gate).
 
 ```bash
 cd examples/eval-gated-deploy

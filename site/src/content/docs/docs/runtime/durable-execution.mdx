@@ -5,13 +5,15 @@ sidebar:
   order: 3
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 import { Aside, Steps } from '@astrojs/starlight/components';
 
 A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. The shared tier (inline executor) recovers through an event-sourced `journal_events` table and a `CompletedStep` replay gate, with external deliveries de-duplicated by idempotency key. MicroVM runs are re-scheduled by the same recovery sweep (see below).
 
 Consider an agent three steps into a five-step task that has already sent an email and spent money on model calls, when the server restarts. Without durability you either lose the run or start over and send the email twice. PAL Runtime writes each step to the database as it finishes. After a crash the run reloads at the last completed step: finished steps are skipped and their saved results reused, and only the unfinished work runs again.
 
-{/* DIAGRAM: crash-resume */}
+<Diagram name="crash-resume" />
 
 ## Event-sourced journal
 

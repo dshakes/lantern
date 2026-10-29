@@ -5,6 +5,8 @@ sidebar:
   order: 1
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 import { Aside } from '@astrojs/starlight/components';
 
 An agent takes input, works through steps (LLM calls, tool calls, API requests) and returns output. Every step is journaled, so a crashed run resumes where it stopped. This page covers creating, configuring, testing, running and scheduling agents.
@@ -170,7 +172,7 @@ The first two mean no runtime-manager is reachable from the control plane (for e
 budget limit exceeded: tool "web_search" budget exhausted (50/50 today)
 ```
 
-See [Budgets](/lantern/docs/build/budgets/#tool-limits).
+See [Budgets](/lantern/docs/build/budgets/#per-tool-limits-in-workflows).
 
 ## Agent lifecycle
 
@@ -184,7 +186,7 @@ Each agent run goes through these states:
 
 A run that crashes mid-step is picked up by the recovery sweep (every 30 s by default, `LANTERN_RECOVERY_INTERVAL`). Workflow steps that already completed are skipped, not re-run.
 
-{/* DIAGRAM: crash-resume */}
+<Diagram name="crash-resume" />
 
 <Aside>
 Each step is idempotent and journaled. Side effects (API calls, webhooks) carry an idempotency key derived from the run ID, step ID and attempt number to prevent duplicate actions.

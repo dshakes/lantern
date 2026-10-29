@@ -3,13 +3,15 @@ title: PAL documentation
 description: Run agents in production on infrastructure you control - durable runs, hard budgets, capability-routed models, microVM isolation and signed receipts.
 ---
 
+import Diagram from '../../../components/Diagram.astro';
+
 import { LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 PAL is the self-hosted runtime for AI agents. The agent loop runs on your control plane; untrusted code runs in its own microVM. Durable runs, hard budgets, capability-routed models and signed receipts come with it.
 
 The control plane owns the agent: workflow interpreter, journal, model router and budgets. When a durable `tool_call` step runs code, the workflow engine calls `ExecTool` on the runtime-manager on a data-plane host, which runs the code inside a microVM whose PID 1 is the harness. In broker mode (`LANTERN_EGRESS_MODE=broker`, opt-in, Firecracker only) the VM has no network device; its requests leave over vsock through a host broker that checks the allowlist and adds the credential.
 
-{/* DIAGRAM: your-cloud */}
+<Diagram name="your-cloud" />
 
 The data-plane agent dials out to the control plane, so your VPC opens no inbound ports. Untrusted code and its data run in your cluster; self-host the control plane too and prompts, keys and run data never leave your infrastructure.
 

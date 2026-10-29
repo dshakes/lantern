@@ -35,7 +35,7 @@ A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, pos
 - **Linear** (`linear`): list and create issues; API key or OAuth
 - **Jira** (`jira`): list and create issues; email + API token + domain, or OAuth
 - **Sentry** (`sentry`): list and get issues; auth token
-- **PagerDuty** (`pagerduty`): list and get incidents, create and update incidents; REST API key. No dashboard card yet; install over the API (see [Newer actions](#newer-actions))
+- **PagerDuty** (`pagerduty`): list and get incidents, create and update incidents, add notes; REST API key. No dashboard card yet; install over the API (see [Newer actions](#newer-actions))
 - **Vercel** (`vercel`): list projects and deployments; access token
 
 ### CRM and sales
@@ -57,7 +57,7 @@ A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, pos
 
 ## Newer actions
 
-Four actions and one connector (PagerDuty, four actions) were added after the original set. All run through `POST /v1/connectors/{id}/execute?action=<action>` with a JSON body of params (the connector must be installed and connected first). A successful call returns `{"connector", "action", "data"}`; a failed vendor call returns 502 with `{"error", "connector", "action"}`; an uninstalled connector returns 404.
+Four actions and one connector (PagerDuty, five actions) were added after the original set. All run through `POST /v1/connectors/{id}/execute?action=<action>` with a JSON body of params (the connector must be installed and connected first). A successful call returns `{"connector", "action", "data"}`; a failed vendor call returns 502 with `{"error", "connector", "action"}`; an uninstalled connector returns 404.
 
 Required params are marked **(required)**.
 

@@ -5,13 +5,15 @@ sidebar:
   order: 6
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 import { Aside } from '@astrojs/starlight/components';
 
 Per-agent spend and rate limits, set as policy. With `hardFail: true`, a call that would start while a limit is already reached is refused **before the model is called**: HTTP 402 on the REST paths, a failed step inside workflows. With `false`, the breach is logged and the call proceeds. If the budget cannot be read, hard-fail budgets fail closed.
 
 A buggy loop can burn a month of model spend in an afternoon. Set a cap per agent: dollars per day, runs per day, tokens per day. With hard-fail on, the next call is refused before it reaches a model, not flagged afterward.
 
-{/* DIAGRAM: budget-gate */}
+<Diagram name="budget-gate" />
 
 ## Setting a budget
 

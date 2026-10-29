@@ -5,11 +5,13 @@ sidebar:
   order: 13
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 import { Aside } from '@astrojs/starlight/components';
 
 Every component below is a real process and every arrow a real call. For each one this page gives what it does, the port it listens on, and the trust boundary it enforces. The runtime manager and the harness are broken out into their own component sections.
 
-{/* DIAGRAM: system-map */}
+<Diagram name="your-cloud" />
 
 ## System map
 
@@ -184,7 +186,7 @@ From `POST /v1/runs` to a journaled result, including the budget gate, the optio
 7. The provider call is made only if not cached. If the crash came before `step_completed`, the call is made again under the same idempotency key derivation, so the provider can dedup it.
 8. Journal `step_completed`. The run resumes from the first incomplete step; it does not restart.
 
-{/* DIAGRAM: crash-resume */}
+<Diagram name="crash-resume" />
 
 **Data plane (engine)**
 
@@ -228,7 +230,7 @@ The workflow engine never runs tools itself: it asks the runtime manager, which 
 
 The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/lantern/docs/runtime/egress/).
 
-{/* DIAGRAM: sandbox-egress */}
+<Diagram name="sandbox-egress" />
 
 **Allowed, credential injected** (example: `api.github.com`)
 

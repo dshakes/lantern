@@ -59,7 +59,7 @@ The in-guest tool runner gives the harness a typed tool registry: `shell_exec`, 
 
 ## Service-health sweep
 
-A background loop TCP-probes peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it declares the peer DOWN and sends a message to the owner's self-chat, once on transition, so there are no alert storms. Read the current snapshot:
+A background loop TCP-probes peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it declares the peer DOWN and sends a message to the operator's notification channel, once on transition, so there are no alert storms. Read the current snapshot:
 
 ```
 GET /v1/system/health   # JWT-authed

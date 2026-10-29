@@ -5,11 +5,13 @@ sidebar:
   order: 14
 ---
 
+import Diagram from '../../../../components/Diagram.astro';
+
 import { Aside } from '@astrojs/starlight/components';
 
 Each hop between the caller, the control plane, the data-plane host and the microVM is a trust boundary with its own credential, and untrusted code sits behind all of them.
 
-{/* DIAGRAM: trust-boundaries */}
+<Diagram name="sandbox-egress" />
 
 How a sandbox reaches the network, and why it never holds a credential in broker mode: [Egress and credentials](/lantern/docs/runtime/egress/).
 
@@ -60,7 +62,7 @@ These constraints are enforced by the platform, outside the model, so a prompt i
 - **Human approval.** Workflow approval nodes block on a takeover request until an operator grants it. Nested approvals inside child runs fail today rather than wait.
 - **Confidence gate.** Low-confidence tool and connector steps divert to approval. Off by default (`LANTERN_CONFIDENCE_GATE`).
 
-{/* DIAGRAM: budget-gate */}
+<Diagram name="budget-gate" />
 
 <Aside type="caution">
 The dashboard also has output filters (blocked topics and similar). These run in the browser on displayed output. They are a convenience, not a security control.
