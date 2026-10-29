@@ -14,7 +14,7 @@ Support agent that classifies tickets, requests approval for sensitive actions, 
 ## How to run
 
 ```bash
-lantern run customer-support --input '{"ticketId": "ZD-4821", "customerMessage": "I was charged twice for my Pro subscription last month. I need a refund for the duplicate charge of $149.", "customerEmail": "jane@acme.co"}'
+pal run customer-support --input '{"ticketId": "ZD-4821", "customerMessage": "I was charged twice for my Pro subscription last month. I need a refund for the duplicate charge of $149.", "customerEmail": "jane@acme.co"}'
 ```
 
 ## Example input

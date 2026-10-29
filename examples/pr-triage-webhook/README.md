@@ -41,4 +41,4 @@ Or replay the fixture: `./send-fixture.sh $API/v1/hooks/<trigger-id> <secret>`. 
 
 - The prompt asks for one plain line because the reply is templated into connector parameters.
 - Comments use the PR conversation (`comment_pr`), not inline diff comments.
-- `agent.yaml` is the deploy manifest; the workflow and trigger are applied with the API calls above until `lantern deploy` applies them.
+- `agent.yaml` is the deploy manifest; the workflow and trigger are applied with the API calls above until `pal deploy` applies them.

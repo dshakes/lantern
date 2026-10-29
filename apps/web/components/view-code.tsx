@@ -151,13 +151,13 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
 
 export function snippetsForGetRun(runId: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   return {
-    ts: `import { PAL } from "@lantern/sdk";
+    ts: `import { PAL } from "@pal-runtime/sdk";
 
 const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
 const run = await lantern.runs.get("${runId}");
 console.log(run.status, run.output);`,
-    python: `from lantern_sdk import PAL
+    python: `from pal import PAL
 
 lantern = PAL(api_key="...")  # or set LANTERN_API_KEY env var
 
@@ -186,7 +186,7 @@ func main() {
 export function snippetsForCreateRun(agentName: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   const inputJSON = `{"message": "your input here"}`;
   return {
-    ts: `import { PAL } from "@lantern/sdk";
+    ts: `import { PAL } from "@pal-runtime/sdk";
 
 const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
@@ -195,7 +195,7 @@ const run = await lantern.runs.create({
   input: ${inputJSON},
 });
 console.log("started:", run.id);`,
-    python: `from lantern_sdk import PAL
+    python: `from pal import PAL
 
 lantern = PAL(api_key="...")
 
@@ -232,7 +232,7 @@ func main() {
 
 export function snippetsForSubmitFeedback(runId: string, apiBase = "http://localhost:8080"): ViewCodeSnippets {
   return {
-    ts: `import { PAL } from "@lantern/sdk";
+    ts: `import { PAL } from "@pal-runtime/sdk";
 
 const lantern = new PAL({ apiKey: process.env.LANTERN_API_KEY });
 
@@ -241,7 +241,7 @@ await lantern.runs.feedback("${runId}", {
   comment: "nailed it",
   source: "sdk",
 });`,
-    python: `from lantern_sdk import PAL
+    python: `from pal import PAL
 
 lantern = PAL(api_key="...")
 lantern.runs.feedback(

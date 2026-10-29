@@ -16,15 +16,15 @@ Personal WhatsApp agent that manages your calendar, email, tasks, reminders, and
 This agent is triggered automatically when you message it on WhatsApp. To test locally:
 
 ```bash
-lantern run whatsapp-assistant --input '{"message": "What do I have on my calendar tomorrow?"}'
+pal run whatsapp-assistant --input '{"message": "What do I have on my calendar tomorrow?"}'
 ```
 
 ```bash
-lantern run whatsapp-assistant --input '{"message": "Remind me to call the dentist in 2 hours"}'
+pal run whatsapp-assistant --input '{"message": "Remind me to call the dentist in 2 hours"}'
 ```
 
 ```bash
-lantern run whatsapp-assistant --input '{"message": "Log this receipt", "attachments": [{"type": "image", "url": "https://example.com/receipt.jpg", "mimeType": "image/jpeg"}]}'
+pal run whatsapp-assistant --input '{"message": "Log this receipt", "attachments": [{"type": "image", "url": "https://example.com/receipt.jpg", "mimeType": "image/jpeg"}]}'
 ```
 
 ## Example input

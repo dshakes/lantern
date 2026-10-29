@@ -14,7 +14,7 @@ A simple greeting agent that demonstrates the basics of building a Lantern agent
 ## How to run
 
 ```bash
-lantern run hello-world --input '{"name": "Alice"}'
+pal run hello-world --input '{"name": "Alice"}'
 ```
 
 ## Example input

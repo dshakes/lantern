@@ -13,7 +13,7 @@ function compileToTypeScript(def: WorkflowDefinition): string {
   const config = compileWorkflow(def);
   const lines: string[] = [];
 
-  lines.push('import { agent, step } from "@lantern/sdk";');
+  lines.push('import { agent, step } from "@pal-runtime/sdk";');
   lines.push("");
   lines.push(`export default agent({`);
   lines.push(`  name: "${config.name}",`);

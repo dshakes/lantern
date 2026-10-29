@@ -11,7 +11,7 @@ hands the conversation to a human when it cannot answer, with a Slack ping.
 | `rules.json` | Scripted replies for the fixture LLM (CI / no provider key). |
 | `demo.html` | A page with the widget pasted in. |
 
-`setup.py` deploys over REST (agent, knowledge docs and widget key in one go); `lantern deploy` from this directory deploys the agent itself.
+`setup.py` deploys over REST (agent, knowledge docs and widget key in one go); `pal deploy` from this directory deploys the agent itself.
 
 ## Try it
 

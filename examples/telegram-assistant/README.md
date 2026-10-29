@@ -8,7 +8,7 @@ gateway rejecting forged webhooks before anything runs.
 
 | File | Role |
 | --- | --- |
-| `agent.yaml` | The manifest `lantern deploy` reads: `system_prompt` and the `workflow` (`trigger -> google-calendar.list_events -> ai-step -> end`; the message is `{{input.text}}`) |
+| `agent.yaml` | The manifest `pal deploy` reads: `system_prompt` and the `workflow` (`trigger -> google-calendar.list_events -> ai-step -> end`; the message is `{{input.text}}`) |
 
 ## Try it with fixtures (no accounts, no keys)
 
@@ -24,7 +24,7 @@ WhatsApp's `X-Hub-Signature-256` negatives: `cargo test` in `services/surface-ga
 ## Try it with your accounts
 
 1. Create the bot with `@BotFather`; pick a random `TELEGRAM_SECRET_TOKEN`.
-2. `lantern deploy` from this directory, install the calendar (OAuth: Connectors page, "Sign in with Google"), then
+2. `pal deploy` from this directory, install the calendar (OAuth: Connectors page, "Sign in with Google"), then
    **run the agent once** (`POST /v1/runs`, or Run in the dashboard). Deploy does not give the agent the promoted
    version the gateway's gRPC `CreateRun` needs; the first REST run does, which is why this step stays.
 3. Run the gateway with a public HTTPS URL:

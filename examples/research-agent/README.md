@@ -14,7 +14,7 @@ Researches a topic using web search and produces a structured report with source
 ## How to run
 
 ```bash
-lantern run research-agent --input '{"topic": "advances in solid-state batteries 2026", "depth": "medium", "maxSources": 5}'
+pal run research-agent --input '{"topic": "advances in solid-state batteries 2026", "depth": "medium", "maxSources": 5}'
 ```
 
 ## Example input

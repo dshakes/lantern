@@ -1,19 +1,19 @@
 # Eval-gated deploy
 
 A CI pipeline that cannot ship a worse agent: run the eval suite, record it, and let the control plane's
-`422` stop the job before `lantern deploy`. A passing change deploys and gets a signed receipt that anyone
+`422` stop the job before `pal deploy`. A passing change deploys and gets a signed receipt that anyone
 can verify.
 
 ```
 eval.sh   stage candidate -> run each case (POST /v1/runs) -> score -> POST /v1/eval-runs
               422 regressed vs. baseline  -> exit 1, job stops, nothing deploys
               200                         -> .eval-result.json
-release.sh   lantern deploy --json -> POST /v1/runs/{id}/receipt -> POST /v1/runs/receipts/verify
+release.sh   pal deploy --json -> POST /v1/runs/{id}/receipt -> POST /v1/runs/receipts/verify
 ```
 
 | Path | What |
 | --- | --- |
-| `agent.yaml` | The version on main (what `lantern deploy` reads) |
+| `agent.yaml` | The version on main (what `pal deploy` reads) |
 | `candidates/regressed/` | A PR change that breaks the `standard-delivery` case (score 2/3, gate fails) |
 | `candidates/improved/` | A PR change that keeps every case passing (gate passes, deploys) |
 | `eval/suite.json` | Three cases with `assert.contains` |
@@ -56,5 +56,5 @@ deploys, and its receipt verifies while a corrupted or re-pointed one does not.
 - The receipt is for the eval run that gated the deploy (it carries the `eval_result` journal event), not for a
   production run.
 - `eval.sh` reads only a `system_prompt: |` block scalar from `agent.yaml`.
-- `lantern test` is not used: it expects HTTP 200 and a finished run from `POST /v1/runs`, which answers 201 and
+- `pal test` is not used: it expects HTTP 200 and a finished run from `POST /v1/runs`, which answers 201 and
   runs asynchronously, so `eval.sh` does that part itself.

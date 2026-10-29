@@ -14,7 +14,7 @@ AI talent search agent that finds candidates across LinkedIn, GitHub, Stack Over
 ## How to run
 
 ```bash
-lantern run talent-scout --input '{"role": "Senior ML Engineer", "skills": ["PyTorch", "transformers", "distributed training"], "experience": "5+ years", "location": "US / Remote", "count": 5}'
+pal run talent-scout --input '{"role": "Senior ML Engineer", "skills": ["PyTorch", "transformers", "distributed training"], "experience": "5+ years", "location": "US / Remote", "count": 5}'
 ```
 
 ## Example input

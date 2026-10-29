@@ -9,7 +9,7 @@ status callback.
 
 | File | Role |
 | --- | --- |
-| `agent.yaml` | The manifest `lantern deploy` reads: description and the receptionist `system_prompt` (greet, take name + call-back number, offer a booking) |
+| `agent.yaml` | The manifest `pal deploy` reads: description and the receptionist `system_prompt` (greet, take name + call-back number, offer a booking) |
 | `number.json` | Body for `POST /v1/voice/numbers`: links `+15125550100` to the agent with your Twilio credentials |
 
 ## Try it with fixtures (no Twilio account)
@@ -26,7 +26,7 @@ budget -> `<Reject/>` with no call row and no spend.
 
 ## Try it with a real number
 
-1. `lantern deploy` from this directory, then set a hard-fail budget (not a manifest field, so REST):
+1. `pal deploy` from this directory, then set a hard-fail budget (not a manifest field, so REST):
    `PUT /v1/agents/voice-receptionist/budget` with `{"maxCostUsdPerDay": 2, "hardFail": true}`.
 2. Put your SID, auth token and number in `number.json`, then `POST /v1/voice/numbers` (numbers are not deployable either).
 3. In Twilio, set the number's **Voice webhook** to `https://<public-host>/v1/voice/webhook/twilio` and its

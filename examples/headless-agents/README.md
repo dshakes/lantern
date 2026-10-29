@@ -7,7 +7,7 @@ layer (`packages/proto/lantern/v1/runtime.proto`, `services/runtime-scheduler`,
 1. Has its own `agent.yaml` declaring image, isolation class, resources, secrets, egress rules.
 2. Has minimal workload code (`workload.py` or similar).
 3. Has a `README.md` explaining what it demonstrates and why this isolation class was picked.
-4. Runs end-to-end via `lantern run agent.yaml --input <payload>`.
+4. Runs end-to-end via `pal run agent.yaml --input <payload>`.
 
 > **Trying things out?** [`MANUAL-TEST.md`](./MANUAL-TEST.md) is a step-by-step
 > guide for exercising the runtime today: scheduling, listing, quotas
@@ -54,7 +54,7 @@ docker build -t lantern/demos/stateful-research:latest examples/headless-agents/
 docker build -t lantern/demos/ml-inference:latest examples/headless-agents/04-ml-inference
 
 # Schedule + tail logs for one demo
-lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
+pal run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
 # Or via REST directly (imageDigest field, camelCase)
 curl -X POST http://localhost:8080/v1/runtime/schedule \
