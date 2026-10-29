@@ -31,6 +31,7 @@ WORK="$(mktemp -d /tmp/measurement-e2e.XXXXXX)"
 TENANT="00000000-0000-0000-0000-000000000001"
 HARNESS_CMD="/usr/local/bin/lantern-harness"
 VM_IDS=()
+RESP=""
 TOKENS=()
 SNAPSHOT_ID=""
 LOG=""
@@ -75,6 +76,11 @@ cleanup() {
       tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -qF "${id}" && kill -KILL "${pid}" 2>/dev/null
     done
   done
+  # This run's jails only (ids are recorded BEFORE each Spawn RPC).
+  local jail_root="${FIRECRACKER_CHROOT_BASE:-/srv/jailer}/firecracker"
+  for id in "${VM_IDS[@]}"; do
+    [ -n "${id}" ] && [ -d "${jail_root}/${id}" ] && rm -rf -- "${jail_root:?}/${id:?}"
+  done
   if [ -n "${SNAPSHOT_ID}" ]; then
     find /var/lib/lantern/snapshots -mindepth 3 -maxdepth 3 -type d -name "${SNAPSHOT_ID}" \
       -exec rm -r -- {} + 2>/dev/null
@@ -91,7 +97,7 @@ for who in server client; do
     -subj "/CN=${who}" >/dev/null 2>&1 || fail "${who} csr"
 done
 openssl x509 -req -in "${WORK}/server.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
-  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
+  -days 1 -out "${WORK}/server.crt" -extfile <(printf 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:manager.lantern.internal\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail server
 openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/ca.key" -CAcreateserial \
   -days 1 -out "${WORK}/client.crt" -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail client
 
@@ -135,30 +141,33 @@ spec() {
     env:{MODE:$mode, LANTERN_AGENT_INSTANCE_ID:("inst-" + ($tok | explode | reverse | implode)), LANTERN_AGENT_INSTANCE_TOKEN:$tok}}'
 }
 
-# spawn <spec-json> [handle-vm-id] — echoes the Spawn response; records vm id.
+new_id() { tr -d '\n' </proc/sys/kernel/random/uuid; }
+
+# spawn <spec-json> <vm-id> — Spawn under an explicit wire vm id, recorded in
+# VM_IDS BEFORE the RPC so cleanup always knows it. Sets RESP. Called directly,
+# never in $(...): a subshell would drop the VM_IDS append (that leaked jails).
 spawn() {
-  local req resp id
-  if [ -n "${2:-}" ]; then
-    req=$(jq -n --argjson s "$1" --arg id "$2" '{spec:$s, handle:{vm_id:$id}}')
-  else
-    req=$(jq -n --argjson s "$1" '{spec:$s}')
-  fi
-  resp=$(g "${req}" Spawn 2>>"${LOG}") || return 1
-  id=$(printf '%s' "${resp}" | jq -r '.handle.vmId // empty')
-  [ -n "${id}" ] && VM_IDS+=("${id}")
-  printf '%s' "${resp}"
+  VM_IDS+=("$2")
+  RESP=$(g "$(jq -n --argjson s "$1" --arg id "$2" '{spec:$s, handle:{vm_id:$id}}')" Spawn 2>>"${LOG}")
 }
-measurement_of() { printf '%s' "$1" | jq -r '.handle.softwareMeasurement // empty'; }
+measurement_of() { printf '%s' "${RESP}" | jq -r '.handle.softwareMeasurement // empty'; }
 is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
 newtok() { printf 'tok-%s' "$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"; }
 
-wait_booted() { # wait_booted <n> — n harness boot banners in the current log
-  for _ in $(seq 150); do
-    [ "$(grep -c "starting lantern-harness (PID 1)" "${LOG}")" -ge "$1" ] && return 0
-    grep -q "Kernel panic" "${LOG}" && fail "guest panicked:\n$(grep -B8 'Kernel panic' "${LOG}" | tail -20)"
-    sleep 0.3
+# wait_ready <vm-id> — per-VM readiness: an ExecTool shell_exec round-trip
+# (serial consoles of concurrent VMs interleave in the log, so banner counting
+# is unreliable).
+wait_ready() {
+  local out=""
+  for _ in $(seq 90); do
+    out=$(g "$(jq -n --arg id "$1" '{vm_id:$id, run_id:"measurement-e2e", step_id:"ready",
+      tool_name:"shell_exec", args:{command:"echo measurement-e2e-ready"},
+      idempotency_key:("measurement-e2e:ready:" + $id + ":" + (now|tostring))}')" ExecTool 2>>"${LOG}") \
+      && printf '%s' "${out}" | grep -q measurement-e2e-ready && return 0
+    grep -q "Kernel panic" "${LOG}" && fail "guest ${1} panicked:\n$(grep -B8 'Kernel panic' "${LOG}" | tail -20)"
+    sleep 1
   done
-  fail "guest never came up:\n$(tail -40 "${LOG}")"
+  fail "guest ${1} never answered ExecTool:\n${out}\n$(tail -40 "${LOG}")"
 }
 
 # ---------------------------------------------------------------------------
@@ -186,15 +195,16 @@ refuses_start "production + enforce + no references" "LANTERN_MEASUREMENT_GATE=e
 start_manager warn LANTERN_MEASUREMENT_GATE=warn
 pass "manager up (gate=warn)"
 T1=$(newtok); T2=$(newtok); TOKENS+=("${T1}" "${T2}")
-R1=$(spawn "$(spec fast "${T1}")") || fail "warn spawn #1 failed:\n$(tail -30 "${LOG}")"
-R2=$(spawn "$(spec fast "${T2}")") || fail "warn spawn #2 failed:\n$(tail -30 "${LOG}")"
-M=$(measurement_of "${R1}"); M2=$(measurement_of "${R2}")
-V1=$(printf '%s' "${R1}" | jq -r .handle.vmId); V2=$(printf '%s' "${R2}" | jq -r .handle.vmId)
-[ "${V1}" != "${V2}" ] || fail "spawns got the same vm id ${V1}"
-is_hex64 "${M}" || fail "spawn #1 reported no 64-hex measurement: ${R1}"
+V1=$(new_id); V2=$(new_id)
+spawn "$(spec fast "${T1}")" "${V1}" || fail "warn spawn #1 failed:\n$(tail -30 "${LOG}")"
+M=$(measurement_of)
+is_hex64 "${M}" || fail "spawn #1 reported no 64-hex measurement: ${RESP}"
+wait_ready "${V1}"
+spawn "$(spec fast "${T2}")" "${V2}" || fail "warn spawn #2 failed:\n$(tail -30 "${LOG}")"
+M2=$(measurement_of)
+wait_ready "${V2}"
 [ "${M}" = "${M2}" ] || fail "same spec, different measurements:\n  ${V1}: ${M}\n  ${V2}: ${M2}"
 pass "two cold spawns of one spec (vm ${V1} / ${V2}, different instance tokens) report the same measurement"
-wait_booted 2
 stop_vm "${V1}"; stop_vm "${V2}"
 stop_manager
 
@@ -204,15 +214,16 @@ stop_manager
 start_manager enforce LANTERN_MEASUREMENT_GATE=enforce LANTERN_REFERENCE_MEASUREMENTS="${M}"
 pass "manager up (gate=enforce, reference = the warn-run measurement)"
 T3=$(newtok); TOKENS+=("${T3}")
-R3=$(spawn "$(spec fast "${T3}")") || fail "enforce: the reference spec was refused:\n$(tail -30 "${LOG}")"
-SRC=$(printf '%s' "${R3}" | jq -r .handle.vmId)
-[ "$(measurement_of "${R3}")" = "${M}" ] || fail "enforce: reference spec measured $(measurement_of "${R3}"), want ${M}"
+SRC=$(new_id)
+spawn "$(spec fast "${T3}")" "${SRC}" || fail "enforce: the reference spec was refused:\n$(tail -30 "${LOG}")"
+[ "$(measurement_of)" = "${M}" ] || fail "enforce: reference spec measured $(measurement_of), want ${M}"
+wait_ready "${SRC}"
 pass "enforce: the reference spec boots (vm ${SRC})"
 
 refused() { # refused <label> <spec-json>
   local before
   before=$(grep -c "does not match any reference" "${LOG}")
-  spawn "$2" >/dev/null && fail "enforce: ${1} was NOT refused"
+  spawn "$2" "$(new_id)" && fail "enforce: ${1} was NOT refused"
   [ "$(grep -c "does not match any reference" "${LOG}")" -gt "${before}" ] \
     || fail "enforce: ${1} refused, but not by the measurement gate:\n$(tail -20 "${LOG}")"
   pass "enforce: ${1} refused (log: does not match any reference)"
@@ -224,7 +235,6 @@ refused "changed command" "$(spec fast "${T5}" /bin/sh)"
 # ---------------------------------------------------------------------------
 # (3) under enforce: snapshot -> stop -> resume, and a fork, inherit M.
 # ---------------------------------------------------------------------------
-wait_booted 1
 SNAP=$(g "$(jq -n --arg id "${SRC}" '{vm_id:$id}')" Snapshot 2>>"${LOG}") \
   || fail "Snapshot failed:\n$(tail -30 "${LOG}")"
 SNAPSHOT_ID=$(printf '%s' "${SNAP}" | jq -r '.snapshotId // empty')
@@ -238,15 +248,17 @@ done
 
 RESTORE_SPEC() { spec fast "$1" | jq --arg s "${SNAPSHOT_ID}" '. + {restore_snapshot_id:$s}'; }
 T6=$(newtok); T7=$(newtok); TOKENS+=("${T6}" "${T7}")
-RR=$(spawn "$(RESTORE_SPEC "${T6}")" "${SRC}") || fail "enforce: resume (restore of ${SRC}) refused:\n$(tail -30 "${LOG}")"
-[ "$(printf '%s' "${RR}" | jq -r '.fromSnapshot // false')" = true ] || fail "resume did not come from the snapshot: ${RR}"
-[ "$(measurement_of "${RR}")" = "${M}" ] || fail "resumed VM measurement $(measurement_of "${RR}"), want inherited ${M}"
+spawn "$(RESTORE_SPEC "${T6}")" "${SRC}" || fail "enforce: resume (restore of ${SRC}) refused:\n$(tail -30 "${LOG}")"
+[ "$(printf '%s' "${RESP}" | jq -r '.fromSnapshot // false')" = true ] || fail "resume did not come from the snapshot: ${RESP}"
+[ "$(measurement_of)" = "${M}" ] || fail "resumed VM measurement $(measurement_of), want inherited ${M}"
+wait_ready "${SRC}"
 pass "enforce: snapshot -> stop -> restore succeeded and carries the source's measurement"
 
-FORK_ID="meas-fork-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-RF=$(spawn "$(RESTORE_SPEC "${T7}")" "${FORK_ID}") || fail "enforce: fork refused:\n$(tail -30 "${LOG}")"
-[ "$(printf '%s' "${RF}" | jq -r .handle.vmId)" = "${FORK_ID}" ] || fail "fork got the wrong vm id: ${RF}"
-[ "$(measurement_of "${RF}")" = "${M}" ] || fail "fork measurement $(measurement_of "${RF}"), want inherited ${M}"
+FORK_ID=$(new_id)
+spawn "$(RESTORE_SPEC "${T7}")" "${FORK_ID}" || fail "enforce: fork refused:\n$(tail -30 "${LOG}")"
+[ "$(printf '%s' "${RESP}" | jq -r .handle.vmId)" = "${FORK_ID}" ] || fail "fork got the wrong vm id: ${RESP}"
+[ "$(measurement_of)" = "${M}" ] || fail "fork measurement $(measurement_of), want inherited ${M}"
+wait_ready "${FORK_ID}"
 pass "enforce: fork ${FORK_ID} succeeded and carries the source's measurement"
 grep -q "inherited from snapshot source" "${LOG}" || fail "no 'inherited from snapshot source' audit line"
 pass "restore/fork audited as inherited"
