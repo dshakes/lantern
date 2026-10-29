@@ -106,6 +106,7 @@ export default defineConfig({
         { label: 'Start', items: [{ autogenerate: { directory: 'docs/start' } }] },
         { label: 'PAL', items: [{ autogenerate: { directory: 'docs/pal' } }] },
         { label: 'PAL Runtime', items: [{ autogenerate: { directory: 'docs/runtime' } }] },
+        { label: 'Architecture', items: [{ autogenerate: { directory: 'docs/architecture' } }] },
         { label: 'Build', items: [{ autogenerate: { directory: 'docs/build' } }] },
         { label: 'Reference', items: [{ autogenerate: { directory: 'docs/reference' } }], collapsed: true },
         { label: 'Operate', items: [{ autogenerate: { directory: 'docs/operate' } }], collapsed: true },
