@@ -2372,6 +2372,7 @@ fn restore_schedule_view(req: &RestoreRequest, vm_id: &str) -> ScheduleRequest {
         agent_version_id: String::new(),
         restore_snapshot_id: String::new(),
         vm_id: vm_id.to_string(),
+        dlp_policy: req.dlp_policy.clone(),
     }
 }
 
@@ -3026,6 +3027,7 @@ impl FirecrackerBackend {
         tenant_id: &str,
         rules: &[EgressRule],
         mitm: Option<Arc<MitmCa>>,
+        dlp_policy: Option<&crate::dlp::DlpPolicy>,
     ) -> Result<()> {
         let deps = self
             .broker_deps
@@ -3038,13 +3040,26 @@ impl FirecrackerBackend {
         };
         let egress_listener = bind(EGRESS_VSOCK_PORT)?;
         let control_listener = bind(MANAGER_VSOCK_PORT)?;
-        let broker = Arc::new(Broker::new(
+        // ADR 0030: compile DLP engine from per-tenant policy if provided and
+        // has active rules. Compilation validates regex patterns fail-closed.
+        let dlp_engine: Option<Arc<crate::dlp::DlpEngine>> = match dlp_policy {
+            Some(p) if p.has_active_rules() => Some(Arc::new(
+                crate::dlp::DlpEngine::compile(p.clone())
+                    .map_err(|e| anyhow::anyhow!("DLP policy compile error: {e}"))?,
+            )),
+            _ => None,
+        };
+        let mut broker_val = Broker::new(
             &cfg.vm_id,
             tenant_id,
             Policy::from_env(rules.to_vec()),
             mitm,
             deps,
-        )?);
+        )?;
+        if let Some(engine) = dlp_engine {
+            broker_val = broker_val.with_dlp(engine);
+        }
+        let broker = Arc::new(broker_val);
         let tasks = vec![
             tokio::spawn(broker.serve(egress_listener)).abort_handle(),
             tokio::spawn(crate::egress_broker::relay_to_tcp(
@@ -3572,7 +3587,15 @@ impl FirecrackerBackend {
         }
 
         // Each incarnation gets its own broker + CA (ADR 0026).
-        if broker && let Err(e) = self.start_broker(&cfg, &req.tenant_id, &req.egress_rules, mitm) {
+        if broker
+            && let Err(e) = self.start_broker(
+                &cfg,
+                &req.tenant_id,
+                &req.egress_rules,
+                mitm,
+                req.dlp_policy.as_ref(),
+            )
+        {
             if let Err(ce) = self.cancel(&vm_id, "egress broker failed to start").await {
                 tracing::warn!(vm_id = %vm_id, error = %ce, "teardown after broker failure failed");
             }
@@ -3743,7 +3766,13 @@ impl RuntimeBackend for FirecrackerBackend {
         }
 
         if cfg.egress_mode == EgressMode::Broker
-            && let Err(e) = self.start_broker(&cfg, &req.tenant_id, &req.egress_rules, mitm)
+            && let Err(e) = self.start_broker(
+                &cfg,
+                &req.tenant_id,
+                &req.egress_rules,
+                mitm,
+                req.dlp_policy.as_ref(),
+            )
         {
             // A broker-mode guest without its broker has no control channel
             // and no egress: tear it down rather than leave it orphaned.
@@ -4262,6 +4291,7 @@ mod tests {
             agent_version_id: String::new(),
             restore_snapshot_id: String::new(),
             vm_id: String::new(),
+            dlp_policy: None,
         }
     }
 
@@ -5159,6 +5189,7 @@ mod tests {
             secrets: vec![],
             vm_id: String::new(),
             egress_rules: vec![],
+            dlp_policy: None,
         };
         let err = backend.restore("fc:///snap", &req).await.unwrap_err();
         assert!(err.to_string().contains("not available"));
@@ -6253,6 +6284,7 @@ mod tests {
             secrets: vec![],
             vm_id: String::new(),
             egress_rules: vec![],
+            dlp_policy: None,
         };
         let err = backend.restore(&uri, &req).await.unwrap_err().to_string();
 
@@ -6370,6 +6402,7 @@ mod tests {
                 pattern: "api.example.com".into(),
                 ..Default::default()
             }],
+            dlp_policy: None,
         };
         let view = restore_schedule_view(&req, WIRE);
         let cfg = VmConfig::from_schedule_with_id(&view, "/k", "/r", WIRE);

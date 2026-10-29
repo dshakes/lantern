@@ -10,6 +10,7 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Egress DLP (ADR 0030)** — per-tenant data-loss-prevention policy applied by the egress broker to TLS-terminated and plain-HTTP egress. Detectors: Luhn-validated card numbers, secret-key prefixes (AWS/GitHub/Slack/PEM), email (threshold-based), phone (threshold-based), custom regex. Modes: `off | audit | block`. Block mode fails closed on inspection error. Audit events carry rule id, detector, host, byte offset/count — never the matched value (invariant #10). Policy stored in `dlp_policies` (RLS-enforced, migration 0028). REST CRUD at `GET/PUT /v1/egress/dlp-policy` + `POST/DELETE /v1/egress/dlp-policy/rules`. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy` (proto field 19). Opaque CONNECT tunnels not inspected. e2e: `broker-e2e.sh` DLP block case.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
   `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
 - **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.

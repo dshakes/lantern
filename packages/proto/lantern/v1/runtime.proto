@@ -106,6 +106,30 @@ message SecretRef {
   string secret_uri = 2;
 }
 
+// Per-tenant egress DLP policy (ADR 0030). Shipped from the control-plane in
+// AgentSpec.dlp_policy and compiled into the egress broker at spawn time.
+// Only effective in broker egress mode (ADR 0026); silently ignored in guest
+// mode (no broker on that path).
+message DlpPolicy {
+  repeated DlpRule rules     = 1;
+  // Cap on bytes inspected per request. 0 → default (65536).
+  int64 max_inspect_bytes    = 2;
+}
+
+// One DLP rule.
+message DlpRule {
+  // Tenant-assigned stable ID, used in audit events.
+  string rule_id   = 1;
+  // Detector: "card_number" | "secret_key" | "email" | "phone" | "regex".
+  string detector  = 2;
+  // For "regex" detector: the RE2 pattern. Ignored for built-ins.
+  string pattern   = 3;
+  // "off" | "audit" | "block".  Default "audit".
+  string mode      = 4;
+  // For email/phone: minimum match count to trigger. Default 1.
+  int32 threshold  = 5;
+}
+
 message AgentSpec {
   // Image digest is REQUIRED — tags are not allowed for reproducibility.
   string image_digest                    = 1;
@@ -144,6 +168,9 @@ message AgentSpec {
   // 0 (default) = never auto-suspend. Only VMs with idle_timeout_secs > 0
   // are eligible for idle-suspend. On resume the VM resumes from its snapshot.
   int32 idle_timeout_secs                = 18;
+  // Egress DLP policy (ADR 0030). Only active in broker egress mode (ADR 0026).
+  // The control-plane loads the tenant's dlp_policies rows and ships them here.
+  DlpPolicy dlp_policy                   = 19;
 }
 
 message PlacementHint {

@@ -1238,6 +1238,20 @@ controls, all fail-safe:
   rules are exact hostnames; 128 conns/VM, 10 s handshake, 300 s idle; prod
   broker mode refuses to start without the relay. Live check:
   `infra/firecracker/broker-e2e.sh`.
+- **DLP on egress (ADR 0030).** The broker can scan request bodies and headers
+  for sensitive data before forwarding. Inspectable surfaces: TLS-terminated
+  injecting hosts (broker MitM path) and plain-HTTP allowlisted hosts. Opaque
+  CONNECT tunnels (non-injecting allowlisted rules) are NEVER inspected — only
+  host/port + byte-rate policy applies there. Policy is per-tenant, stored in
+  `dlp_policies` (RLS-enforced), managed via `GET/PUT /v1/egress/dlp-policy` +
+  `POST/DELETE /v1/egress/dlp-policy/rules`, and compiled into the broker at VM
+  spawn time via `AgentSpec.dlp_policy` (proto field 19). Detectors: `card_number`
+  (Luhn-validated), `secret_key` (AWS/GitHub/Slack/PEM prefixes), `email`,
+  `phone` (both threshold-based), `custom_regex`. Modes: `off | audit | block`.
+  Block mode fails closed on inspection error (I/O errors are never silently
+  swallowed). **Invariant #10:** audit events carry rule id, detector, host,
+  byte offset/count — NEVER the matched value. `max_inspect_bytes` (default 64 KiB)
+  caps per-request scanning. Broker is wired via `Broker::with_dlp(Arc<DlpEngine>)`.
 
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
@@ -1266,6 +1280,19 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 | `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
+
+### Egress DLP policy (ADR 0030)
+
+Per-tenant content-inspection rules applied by the egress broker to TLS-terminated and plain-HTTP egress on allowlisted hosts. Opaque CONNECT tunnels are never inspected. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy`.
+
+| Method   | Path                                       | Description                                                                           |
+| -------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/egress/dlp-policy`                    | List tenant's DLP rules (`settings:read` or owner)                                   |
+| `PUT`    | `/v1/egress/dlp-policy`                    | Replace full ruleset atomically (`settings:write`)                                    |
+| `POST`   | `/v1/egress/dlp-policy/rules`              | Upsert one rule `{ruleId, detector, pattern?, mode, threshold?}` (`settings:write`)   |
+| `DELETE` | `/v1/egress/dlp-policy/rules/{ruleId}`     | Delete one rule (`settings:write`)                                                    |
+
+Detectors: `card_number` | `secret_key` | `email` | `phone` | `custom_regex`. Modes: `off` | `audit` | `block`. Audit events: `rule_id`, `detector`, `host`, `byte_offset`, `byte_count`, `decision` — **never the matched value** (invariant #10).
 
 **Idle-suspend auto-pause (Google ACE model).** Set `idleTimeoutSecs > 0` on the schedule spec (REST `idleTimeoutSecs`, proto `idle_timeout_secs`, CLI `--idle-timeout N`). The scheduler's idle sweeper (10 s tick) auto-snapshots-and-stops any RUNNING VM idle longer than the threshold (`VM.LastActivityAt` stamped by the harness heartbeat's `has_active_exec` / `last_activity_unix_ms` signals); state transitions `RUNNING → DRAINING+idle-pausing → PAUSED` via the same crash-safe CAS as operator Pause. The quota slot is released. Exec, ExecTool, and file-API requests to an idle-enabled VM first call `scheduler.Resume` (the sweeper does not update the control-plane shadow row, so the shadow can't tell); `FailedPrecondition` = already running. A VM paused via `POST /pause` (shadow `paused`) is never auto-resumed → 409. Known limitation: `GET /v1/runtime/vms` shows an auto-suspended VM as `running`. `auto_resume` audit event on each transparent resume.
 

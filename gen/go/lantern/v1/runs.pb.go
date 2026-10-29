@@ -1417,7 +1417,7 @@ type CreateRunRequest struct {
 	Stream         bool                   `protobuf:"varint,5,opt,name=stream,proto3" json:"stream,omitempty"`
 	Labels         map[string]string      `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	IdempotencyKey string                 `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	// SessionId, when non-empty, groups this run with others under the same session.
+	// session_id optionally links this run to an interactive session.
 	SessionId     string `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1559,7 +1559,7 @@ type ListRunsRequest struct {
 	StatusFilter RunStatus              `protobuf:"varint,2,opt,name=status_filter,json=statusFilter,proto3,enum=lantern.v1.RunStatus" json:"status_filter,omitempty"`
 	PageSize     int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken    string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
-	// SessionId, when non-empty, filters results to runs belonging to this session.
+	// session_id filters runs to those belonging to a specific session.
 	SessionId     string `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2067,7 +2067,7 @@ var File_lantern_v1_runs_proto protoreflect.FileDescriptor
 const file_lantern_v1_runs_proto_rawDesc = "" +
 	"\n" +
 	"\x15lantern/v1/runs.proto\x12\n" +
-	"lantern.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xc8\x06\n" +
+	"lantern.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xe7\x06\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x19\n" +
@@ -2091,7 +2091,9 @@ const file_lantern_v1_runs_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\"\n" +
 	"\rparent_run_id\x18\x11 \x01(\tR\vparentRunId\x123\n" +
-	"\x06labels\x18\x12 \x03(\v2\x1b.lantern.v1.Run.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\x12 \x03(\v2\x1b.lantern.v1.Run.LabelsEntryR\x06labels\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x13 \x01(\tR\tsessionId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x01\n" +
@@ -2178,7 +2180,7 @@ const file_lantern_v1_runs_proto_rawDesc = "" +
 	"expires_at\x18\x03 \x01(\tR\texpiresAt\"\v\n" +
 	"\tHeartbeat\"#\n" +
 	"\tStreamEnd\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"\x96\x03\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xb5\x03\n" +
 	"\x10CreateRunRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12-\n" +
@@ -2187,19 +2189,23 @@ const file_lantern_v1_runs_proto_rawDesc = "" +
 	"\ftrigger_meta\x18\x04 \x01(\v2\x17.google.protobuf.StructR\vtriggerMeta\x12\x16\n" +
 	"\x06stream\x18\x05 \x01(\bR\x06stream\x12@\n" +
 	"\x06labels\x18\x06 \x03(\v2(.lantern.v1.CreateRunRequest.LabelsEntryR\x06labels\x12'\n" +
-	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x1a9\n" +
+	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\b \x01(\tR\tsessionId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1f\n" +
 	"\rGetRunRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\xa8\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xc7\x01\n" +
 	"\x0fListRunsRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12:\n" +
 	"\rstatus_filter\x18\x02 \x01(\x0e2\x15.lantern.v1.RunStatusR\fstatusFilter\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x04 \x01(\tR\tpageToken\"\x80\x01\n" +
+	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"\x80\x01\n" +
 	"\x10ListRunsResponse\x12#\n" +
 	"\x04runs\x18\x01 \x03(\v2\x0f.lantern.v1.RunR\x04runs\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x1f\n" +

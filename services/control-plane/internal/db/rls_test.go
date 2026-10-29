@@ -392,6 +392,7 @@ var rlsTenantTables = []string{
 	"auth_tokens",
 	"agent_triggers", "agent_trigger_deliveries",
 	"agent_documents", "agent_document_chunks",
+	"dlp_policies",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,

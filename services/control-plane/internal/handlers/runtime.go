@@ -661,6 +661,22 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 		sr.SecretUri, _ = firstOf(r, "secret_uri", "secretUri").(string)
 		a.Secrets = append(a.Secrets, sr)
 	}
+	// DLP policy — loaded from DB by scheduleAgentSpec and injected as structured
+	// keys so the map-based plumbing doesn't need typed structs on this path.
+	if rules := mapSlice(spec["dlp_rules"]); len(rules) > 0 {
+		p := &lanternv1.DlpPolicy{}
+		p.MaxInspectBytes = int64Of(firstOf(spec, "dlp_max_inspect_bytes", "dlpMaxInspectBytes"))
+		for _, r := range rules {
+			dr := &lanternv1.DlpRule{}
+			dr.RuleId, _ = r["rule_id"].(string)
+			dr.Detector, _ = r["detector"].(string)
+			dr.Pattern, _ = r["pattern"].(string)
+			dr.Mode, _ = r["mode"].(string)
+			dr.Threshold = int32(int64Of(r["threshold"]))
+			p.Rules = append(p.Rules, dr)
+		}
+		a.DlpPolicy = p
+	}
 	return a
 }
 
@@ -994,6 +1010,17 @@ func (h *RuntimeHandler) scheduleAgentSpec(ctx context.Context, tenantID, princi
 	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
 	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
 	specMap["env"] = env
+
+	// Attach DLP policy (ADR 0030). Fail-open: a DB error logs a warning and
+	// the VM is scheduled without DLP rather than blocking the spawn.
+	if dlpRules, dlpMaxBytes, dlpErr := h.loadDLPRules(ctx, tenantID); dlpErr != nil {
+		h.logger().Warn("DLP policy load failed — scheduling without DLP", zap.Error(dlpErr))
+	} else if len(dlpRules) > 0 {
+		specMap["dlp_rules"] = dlpRules
+		if dlpMaxBytes > 0 {
+			specMap["dlp_max_inspect_bytes"] = dlpMaxBytes
+		}
+	}
 
 	vmID, node, az, err = h.scheduler.Schedule(ctx, specMap)
 	if err != nil {
@@ -1497,6 +1524,47 @@ func (h *RuntimeHandler) WithScheduler(c SchedulerClient) *RuntimeHandler {
 
 func (h *RuntimeHandler) logger() *zap.Logger {
 	return h.srv.Logger.Named("runtime")
+}
+
+// loadDLPRules returns the tenant's DLP rules from dlp_policies, and the
+// configured max_inspect_bytes (0 → manager uses its own default of 64 KiB).
+// Fail-open: an error is logged and returns (nil, 0, err) so the caller can
+// schedule without DLP rather than blocking the entire VM spawn. RLS is
+// enforced via WithTenant.
+func (h *RuntimeHandler) loadDLPRules(ctx context.Context, tenantID string) ([]map[string]any, int64, error) {
+	var rules []map[string]any
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT rule_id, detector, pattern, mode, threshold
+			FROM dlp_policies
+			WHERE tenant_id = $1 AND mode != 'off'
+			ORDER BY created_at, rule_id
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				ruleID, detector, pattern, mode string
+				threshold                       int32
+			)
+			if sErr := rows.Scan(&ruleID, &detector, &pattern, &mode, &threshold); sErr != nil {
+				return sErr
+			}
+			rules = append(rules, map[string]any{
+				"rule_id":   ruleID,
+				"detector":  detector,
+				"pattern":   pattern,
+				"mode":      mode,
+				"threshold": int64(threshold),
+			})
+		}
+		return rows.Err()
+	}); err != nil {
+		return nil, 0, err
+	}
+	return rules, 0, nil
 }
 
 // ---------- DTOs ----------
