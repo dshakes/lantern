@@ -48,7 +48,7 @@ Response: 200 OK
 | `hardFail` | boolean | `true`: a reached limit blocks the call. `false`: the breach is logged and the call proceeds |
 | `notifyAtPct` | integer | Stored; defaults to 80 when omitted or outside 1-100. No alert is sent on it today |
 
-**Day boundary.** The daily rollup resets at local midnight using `LANTERN_DEFAULT_TIMEZONE` (deployment-wide IANA zone; defaults to UTC when unset). A schedule's own `timezone` affects only when its cron fires, not the budget day.
+**Day boundary.** The daily rollup resets at local midnight using `PAL_DEFAULT_TIMEZONE` (deployment-wide IANA zone; defaults to UTC when unset). A schedule's own `timezone` affects only when its cron fires, not the budget day.
 
 ## What is enforced where
 
@@ -120,7 +120,7 @@ A single call can still overshoot the cap, since the check happens before the ca
 
 ## Per-tool limits in workflows
 
-`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. Hard-fail blocks the step; soft logs and proceeds. A tool that was never dispatched (runtime not wired) is not counted. See [workflow tool nodes](/lantern/docs/build/agents/).
+`toolLimits` is checked before a workflow `tool` or `connector` node dispatches, and one use is counted after dispatch. Hard-fail blocks the step; soft logs and proceeds. A tool that was never dispatched (runtime not wired) is not counted. See [workflow tool nodes](/docs/build/agents/).
 
 ## Tenant-wide cap
 

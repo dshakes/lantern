@@ -13,7 +13,7 @@ Agents ask for a **capability** such as `reasoning-large`. PAL Runtime maps it t
 
 Two LLM providers today:
 
-- **Anthropic**: Opus, Sonnet and Haiku (defaults `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`; override with `LANTERN_OPUS_MODEL`, `LANTERN_SONNET_MODEL`, `LANTERN_HAIKU_MODEL`)
+- **Anthropic**: Opus, Sonnet and Haiku (defaults `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`; override with `PAL_OPUS_MODEL`, `PAL_SONNET_MODEL`, `PAL_HAIKU_MODEL`)
 - **OpenAI**: `gpt-4o` and `gpt-4o-mini`
 
 Add a provider key under **Settings** (LLM providers) or via the API below. Scored picks (`auto`, `cheap`, `best`) only consider providers you have keyed.
@@ -24,7 +24,7 @@ Use these strings in `model` fields or `capability` arguments. Resolution happen
 
 | Name | Kind | Resolves to |
 | --- | --- | --- |
-| `reasoning-frontier` | capability | Opus (`LANTERN_OPUS_MODEL`), always Anthropic |
+| `reasoning-frontier` | capability | Opus (`PAL_OPUS_MODEL`), always Anthropic |
 | `reasoning-large` | capability | Sonnet, always Anthropic |
 | `reasoning-small` | capability | Haiku, always Anthropic |
 | `code-large` | capability | Sonnet, always Anthropic |
@@ -43,14 +43,14 @@ Use these strings in `model` fields or `capability` arguments. Resolution happen
 ### Resolution rules
 
 - **Unknown names** (anything not in the table and not a vendor model name) route to the balanced default, same as `auto`. The control plane logs one WARN per distinct name (capped at 256 names) and never routes unknowns to a hardcoded model.
-- **`fast` and `cheap`** both map to the cheap tier (Haiku, else `gpt-4o-mini`). Neither optimizes for latency here; use `LANTERN_ROUTE_STRATEGY=fast` for that.
+- **`fast` and `cheap`** both map to the cheap tier (Haiku, else `gpt-4o-mini`). Neither optimizes for latency here; use `PAL_ROUTE_STRATEGY=fast` for that.
 - **Literal vendor model names** pass through unchanged: a name starting with `gpt`, `o1` or `o3` goes to OpenAI, one starting with `claude` goes to Anthropic. The match is a plain prefix and the name is not checked against any list; a wrong id fails at the provider. Prefer a capability (models are addressed by capability).
 - **Precedence**, first match wins: (1) `auto` / `balanced` / empty, (2) `fast` / `cheap` / `chat-edge` / `code-small`, (3) `best`, (4) the non-completion names, (5) the fixed-tier capabilities and vendor model names, (6) anything else is unknown.
-- **Which callers**: workflow `ai-step` nodes resolve a capability string with this table. Session turns use complexity routing by default (each turn classified trivial, balanced or hard); set `LANTERN_COMPLEXITY_ROUTING=0` (or `off`/`false`) for plain `auto` scoring. Neither uses this table.
+- **Which callers**: workflow `ai-step` nodes resolve a capability string with this table. Session turns use complexity routing by default (each turn classified trivial, balanced or hard); set `PAL_COMPLEXITY_ROUTING=0` (or `off`/`false`) for plain `auto` scoring. Neither uses this table.
 
 ### How `auto` works
 
-`auto` scores each model in a built-in catalog (Opus, Sonnet, Haiku, `gpt-4o`, `gpt-4o-mini`) on quality, speed and cost, and picks the top scorer among providers you have keyed. With neither provider keyed it returns `gpt-4o` and the call fails with a missing-key error. `LANTERN_ROUTE_STRATEGY` changes the weighting and applies to every name that resolves to the scored pick (`auto`, `balanced`, unknown names, the non-completion names).
+`auto` scores each model in a built-in catalog (Opus, Sonnet, Haiku, `gpt-4o`, `gpt-4o-mini`) on quality, speed and cost, and picks the top scorer among providers you have keyed. With neither provider keyed it returns `gpt-4o` and the call fails with a missing-key error. `PAL_ROUTE_STRATEGY` changes the weighting and applies to every name that resolves to the scored pick (`auto`, `balanced`, unknown names, the non-completion names).
 
 The default `balanced` strategy scores quality first, speed second, and subtracts a real price penalty (`balancedScore` in `llm_proxy.go`). It picks Sonnet when Anthropic is keyed and `gpt-4o` when only OpenAI is; Opus scores lower because of its price, and the mini tier lower because of quality. Pin `reasoning-frontier` or `best` if you want Opus.
 
@@ -58,16 +58,16 @@ The default `balanced` strategy scores quality first, speed second, and subtract
 
 ```bash
 # Default: quality first, price as a real penalty (Sonnet, else gpt-4o)
-LANTERN_ROUTE_STRATEGY=balanced
+PAL_ROUTE_STRATEGY=balanced
 
 # Cheapest available (Haiku or gpt-4o-mini)
-LANTERN_ROUTE_STRATEGY=cheap
+PAL_ROUTE_STRATEGY=cheap
 
 # Highest quality regardless of cost (Opus, else gpt-4o)
-LANTERN_ROUTE_STRATEGY=quality
+PAL_ROUTE_STRATEGY=quality
 
 # Fastest response time (Haiku, else gpt-4o-mini)
-LANTERN_ROUTE_STRATEGY=fast
+PAL_ROUTE_STRATEGY=fast
 ```
 
 ## Per-agent model
@@ -117,11 +117,11 @@ POST /v1/settings/llm-providers
 { "provider": "openai", "apiKey": "sk-..." }
 ```
 
-Keys are AES-256-GCM encrypted at rest when `LANTERN_CREDENTIAL_KEY` is set (plaintext otherwise, so set it outside dev). They never appear in logs, traces or run state. The control plane resolves them per tenant at call time.
+Keys are AES-256-GCM encrypted at rest when `PAL_CREDENTIAL_KEY` is set (plaintext otherwise, so set it outside dev). They never appear in logs, traces or run state. The control plane resolves them per tenant at call time.
 
 ## Model-router service
 
-A separate Rust model-router service exists (gRPC `:50053`, Anthropic and OpenAI providers). The control plane only routes plain completions through it when `LANTERN_USE_MODEL_ROUTER=1`; it is **off by default**, and any router error falls back to the direct path.
+A separate Rust model-router service exists (gRPC `:50053`, Anthropic and OpenAI providers). The control plane only routes plain completions through it when `PAL_USE_MODEL_ROUTER=1`; it is **off by default**, and any router error falls back to the direct path.
 
 <Aside type="tip">
 Enable the router on a non-critical tenant first.
@@ -142,7 +142,7 @@ The router has its own, separate mapping. The control plane resolves a model fir
 `auto` and unspecified become `chat-large`.
 
 <Aside type="caution">
-Router model ids are fixed in the service (not overridable by `LANTERN_OPUS_MODEL` and friends), so with the router on the Opus tier is `claude-opus-4-6`, not the control-plane default `claude-opus-4-8`.
+Router model ids are fixed in the service (not overridable by `PAL_OPUS_MODEL` and friends), so with the router on the Opus tier is `claude-opus-4-6`, not the control-plane default `claude-opus-4-8`.
 </Aside>
 
 Among providers that support the capability, the optimize target orders them: cheap by price, fast by p50 latency, best by quality score, balanced by a fixed provider preference.

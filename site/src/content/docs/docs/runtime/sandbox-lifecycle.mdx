@@ -15,7 +15,7 @@ Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0
 
 The snapshot stays in storage while suspended. Lifecycle latency numbers (Lima nested-virt, Apple M4 Max, aarch64, indicative, not bare metal) are in `docs/benchmarks/runtime-latency.md`.
 
-Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `LANTERN_MAX_FORK_COUNT` (ceiling 1000).
+Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `PAL_MAX_FORK_COUNT` (ceiling 1000).
 
 ## Snapshots
 
@@ -54,7 +54,7 @@ Indicative numbers from `docs/benchmarks/runtime-latency.md`, measured in a Lima
 
 The snapshot row predates disk capture, so add the `rootfs` copy (reflinked on XFS/btrfs, a full copy elsewhere) to snapshot time. The benchmark doc estimates the per-VM rootfs copy at about 5 to 50 ms for a 20 to 100 MiB image.
 
-After a restore the runtime-manager holds the first exec until the restored harness has re-identified and sent its first heartbeat (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. On Lima that first exec lands in 2.6 to 3.1 s, almost all of it slow CPU-bound guest work under nested virtualization; bare-metal KVM has not been measured.
+After a restore the runtime-manager holds the first exec until the restored harness has re-identified and sent its first heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. On Lima that first exec lands in 2.6 to 3.1 s, almost all of it slow CPU-bound guest work under nested virtualization; bare-metal KVM has not been measured.
 
 ## REST
 
@@ -67,7 +67,7 @@ POST /v1/runtime/vms/{id}/pause
 POST /v1/runtime/vms/{id}/resume
 → { "vmId": "...", "snapshotId": "...", "state": "running" }
 
-# Fork: count 1..100 by default (LANTERN_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
+# Fork: count 1..100 by default (PAL_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
 POST /v1/runtime/vms/{id}/fork
 { "count": 3 }
 → { "sourceVmId": "...", "snapshotId": "...",
@@ -152,4 +152,4 @@ lantern vm put <id> <local-file|-> <path>
 
 The dashboard VM detail page (`/runtime/{vm}`) has Pause, Resume and Fork actions.
 
-Related: [Isolation classes](/lantern/docs/runtime/isolation/), [Durable execution](/lantern/docs/runtime/durable-execution/), [CLI reference](/lantern/docs/reference/cli/).
+Related: [Isolation classes](/docs/runtime/isolation/), [Durable execution](/docs/runtime/durable-execution/), [CLI reference](/docs/reference/cli/).

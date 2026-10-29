@@ -68,7 +68,7 @@ The idempotency key protects the delivery; writing the step to tolerate re-invoc
 
 ## Shared-tier recovery sweep
 
-The shared tier uses `run_locks` to detect orphaned runs. Each in-flight run holds a lock row `(run_id, worker_id, expires_at)`. A background loop, `RunRecoveryLoop`, runs every 30 s (override: `LANTERN_RECOVERY_INTERVAL`, a Go duration; invalid or 0-or-negative values fall back to 30 s, so the sweep cannot be disabled). Each pass:
+The shared tier uses `run_locks` to detect orphaned runs. Each in-flight run holds a lock row `(run_id, worker_id, expires_at)`. A background loop, `RunRecoveryLoop`, runs every 30 s (override: `PAL_RECOVERY_INTERVAL`, a Go duration; invalid or 0-or-negative values fall back to 30 s, so the sweep cannot be disabled). Each pass:
 
 <Steps>
 
@@ -112,14 +112,14 @@ The recovery sweep handles microVM runs separately from shared-tier runs. When t
 1. If a live (non-terminal) VM exists for this run, skip. The VM is self-managing.
 2. Count all `runtime_vms` rows for this run (total VMs ever spawned equals resume attempts).
 3. If attempts are 3 or more, mark the run `failed` with code `microvm_resume_exhausted`. No further retries.
-4. Otherwise re-schedule a new VM via the dispatcher, injecting `LANTERN_RESUME=1` in the environment.
+4. Otherwise re-schedule a new VM via the dispatcher, injecting `PAL_RESUME=1` in the environment.
 
 ```bash
 # environment injected into the re-scheduled VM
-LANTERN_RESUME=1
+PAL_RESUME=1
 ```
 
-`LANTERN_RESUME=1` signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
+`PAL_RESUME=1` signals a re-drive; skipping completed work is the workload's responsibility (no SDK helper reads it yet). The 3-attempt cap is a hard constant (`maxMicroVMResumeAttempts = 3`). On exhaustion the run is marked `failed` and its error field carries `{code: microvm_resume_exhausted, attempts}`.
 
 ## Inspecting and recovering a run
 
@@ -145,4 +145,4 @@ The journal gives exactly-once completion: the `run_completed` event and the mov
 - **No babysitting.** The 30 s recovery sweep re-drives crashed shared-tier runs and re-schedules microVM runs (up to 3 attempts) without intervention.
 - **Retry visibility.** `step_retrying` events appear in the waterfall so you see how many attempts a step took.
 
-Each resume is still one trace per span (see [Observability](/lantern/docs/runtime/observability/)), and the completed run's journal is what the [verifiable receipt](/lantern/docs/runtime/receipts/) is signed over.
+Each resume is still one trace per span (see [Observability](/docs/runtime/observability/)), and the completed run's journal is what the [verifiable receipt](/docs/runtime/receipts/) is signed over.

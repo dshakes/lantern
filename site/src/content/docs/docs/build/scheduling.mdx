@@ -90,15 +90,15 @@ Response: 204 No Content
 
 ## Timezone handling
 
-`timezone` is an optional IANA name (an invalid one returns 400). Cron then matches the schedule's local time. Resolution order: the schedule's zone, then `LANTERN_DEFAULT_TIMEZONE`, then UTC. With neither set, `0 9 * * *` fires at 09:00 UTC.
+`timezone` is an optional IANA name (an invalid one returns 400). Cron then matches the schedule's local time. Resolution order: the schedule's zone, then `PAL_DEFAULT_TIMEZONE`, then UTC. With neither set, `0 9 * * *` fires at 09:00 UTC.
 
-The deployment default (not a per-schedule zone) also sets the [budget](/lantern/docs/build/budgets/) day boundary: daily limits roll at local midnight in that zone.
+The deployment default (not a per-schedule zone) also sets the [budget](/docs/build/budgets/) day boundary: daily limits roll at local midnight in that zone.
 
 ## Example: weekday digest to Slack
 
 `examples/daily-digest` is a workflow (GitHub open PRs, an AI step, a Slack post) on the schedule `0 9 * * 1-5` in `America/New_York`. Run `lantern deploy` in that directory (the manifest carries the prompt and workflow), install the Slack and GitHub connectors, then post `schedule.json` to `POST /v1/schedules`. The response's `nextFireAt` is the next weekday 09:00 New York time.
 
-The scheduler polls every 60 seconds, so a due schedule fires within a minute. To test without waiting for 09:00, set the row due (`UPDATE schedules SET next_fire_at = now() WHERE id = ...`) and watch `GET /v1/runs?agent=...`. The e2e suite does exactly this against fixtures (see [Testing](/lantern/docs/build/testing/)). An agent over its hard-fail budget does not fire at all, so an unattended schedule cannot run past its cap.
+The scheduler polls every 60 seconds, so a due schedule fires within a minute. To test without waiting for 09:00, set the row due (`UPDATE schedules SET next_fire_at = now() WHERE id = ...`) and watch `GET /v1/runs?agent=...`. The e2e suite does exactly this against fixtures (see [Testing](/docs/build/testing/)). An agent over its hard-fail budget does not fire at all, so an unattended schedule cannot run past its cap.
 
 <Aside type="note">
 Setting `deliveryEmail` also mails the run output. That path is not covered by the fixture suite.
@@ -106,4 +106,4 @@ Setting `deliveryEmail` also mails the run output. That path is not covered by t
 
 ## Surfaces trigger runs too
 
-Inbound messages on a channel start runs. They are not schedules but follow the same run lifecycle. See [Surfaces](/lantern/docs/pal/surfaces/). Signed webhooks start runs as well; see [Webhook triggers](/lantern/docs/build/triggers/).
+Inbound messages on a channel start runs. They are not schedules but follow the same run lifecycle. See [Surfaces](/docs/pal/surfaces/). Signed webhooks start runs as well; see [Webhook triggers](/docs/build/triggers/).

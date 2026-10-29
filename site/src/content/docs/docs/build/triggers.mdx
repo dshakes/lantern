@@ -30,7 +30,7 @@ A trigger binds a public URL, `POST /v1/hooks/{id}`, to one agent. GitHub, Sentr
 
 ```bash
 curl -X POST http://localhost:8080/v1/agents/my-agent/triggers \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider":"github"}'
 
@@ -46,10 +46,10 @@ curl -X POST http://localhost:8080/v1/agents/my-agent/triggers \
 # }
 
 # list, get, disable, delete
-curl http://localhost:8080/v1/agents/my-agent/triggers -H "Authorization: Bearer $LANTERN_API_KEY"
-curl http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $LANTERN_API_KEY"
-curl -X PATCH http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $LANTERN_API_KEY" -d '{"enabled":false}'
-curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $LANTERN_API_KEY"   # 204
+curl http://localhost:8080/v1/agents/my-agent/triggers -H "Authorization: Bearer $PAL_API_KEY"
+curl http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $PAL_API_KEY"
+curl -X PATCH http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $PAL_API_KEY" -d '{"enabled":false}'
+curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $PAL_API_KEY"   # 204
 ```
 
 </TabItem>
@@ -57,7 +57,7 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 
 ```ts
 import { LanternClient } from "@lantern/sdk";
-const client = new LanternClient({ apiKey: process.env.LANTERN_API_KEY, baseUrl: "http://localhost:8080" });
+const client = new LanternClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });
 console.log(t.hookPath, t.secret); // secret is present only here
@@ -188,7 +188,7 @@ Every error body is `{"error": "..."}`. The signature checks never say which par
 | `413` | `{"error":"payload too large"}` | Body over 1 MiB (1,048,576 bytes). Checked before the trigger lookup. |
 | `429` | `{"error":"rate limited"}` | This trigger's delivery rate was exceeded (after the signature passed). |
 | `429` | `{"error":"rate limited: too many runs, slow down"}` | The tenant's run-spawn limit (shared with `POST /v1/runs`) was hit. |
-| `402` | `{"error":"agent budget limit reached: REASON","reason":"REASON"}` | The agent has a hard-fail [budget](/lantern/docs/build/budgets/) that is already reached. |
+| `402` | `{"error":"agent budget limit reached: REASON","reason":"REASON"}` | The agent has a hard-fail [budget](/docs/build/budgets/) that is already reached. |
 | `400` | `{"error":"could not read body"}` | The request body could not be read. |
 | `500` | `{"error":"run creation failed"}` or `{"error":"internal error"}` | Run creation failed for any reason other than 402/429 (including a budget check that was unavailable), or a server error such as an unreadable stored secret. Detail is logged, not returned. |
 
@@ -197,7 +197,7 @@ When run creation fails (402, 429, 500), the delivery id is released, so the pro
 ## Limits
 
 - **Body size:** 1 MiB. Larger gets 413.
-- **Rate:** per trigger, 60 deliveries per minute with a burst of 10 by default. Set `LANTERN_HOOK_RATE_PER_MIN` and `LANTERN_HOOK_BURST` on the control plane to change them. Buckets are in memory per replica, so with several replicas the effective limit is higher.
+- **Rate:** per trigger, 60 deliveries per minute with a burst of 10 by default. Set `PAL_HOOK_RATE_PER_MIN` and `PAL_HOOK_BURST` on the control plane to change them. Buckets are in memory per replica, so with several replicas the effective limit is higher.
 - **Delivery id:** longer than 200 characters is replaced by its SHA-256 for storage.
 
 ## Duplicate deliveries
@@ -234,7 +234,7 @@ lantern hooks create my-agent --provider github \
 
 ## Budgets and spend
 
-A delivery creates a run through the same handler as `POST /v1/runs`, so the agent's [budget](/lantern/docs/build/budgets/) and the tenant spawn limit apply unchanged. With `hardFail` on and a cap reached, the delivery gets 402 and no run starts. A signed sender can therefore spend only the budget of the one agent its trigger is bound to.
+A delivery creates a run through the same handler as `POST /v1/runs`, so the agent's [budget](/docs/build/budgets/) and the tenant spawn limit apply unchanged. With `hardFail` on and a cap reached, the delivery gets 402 and no run starts. A signed sender can therefore spend only the budget of the one agent its trigger is bound to.
 
 <Aside type="tip">
 Set a budget on any agent you expose this way.
@@ -245,7 +245,7 @@ Set a budget on any agent you expose this way.
 - **Signature only.** The route takes no token. The one query before verification is the trigger lookup by id; the trigger's tenant is taken from that row, never from the request.
 - **Constant-time compare** of the MAC (`hmac.Equal`); every candidate signature is checked with no early exit.
 - **404 vs 401.** Unknown, disabled and bad-UUID ids all return the same 404 body before any signature check, so an outsider cannot tell which of those ids exist. 401 appears only for an existing, enabled trigger, including one whose agent was deleted: that trigger returns 404 only after a valid signature. The rate limit is spent only after the signature passes, so an unsigned flood cannot use up a real sender's allowance.
-- **Secret storage.** Stored encrypted with AES-256-GCM when `LANTERN_CREDENTIAL_KEY` is set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner [data export](/lantern/docs/build/accounts/).
+- **Secret storage.** Stored encrypted with AES-256-GCM when `PAL_CREDENTIAL_KEY` is set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner [data export](/docs/build/accounts/).
 - **Tenant scoping.** Trigger CRUD runs under row-level security by tenant; get, update and delete of another tenant's trigger return 404. The run is created in the trigger's tenant.
 - **Replay.** Only `generic` signs a timestamp (five-minute window). The others rely on the duplicate check above.
 
@@ -256,4 +256,4 @@ Set a budget on any agent you expose this way.
 - Per-replica rate limit; no per-IP limit at this layer.
 - No event filter: every verified delivery, including a GitHub `ping`, starts a run.
 
-Related: [API reference](/lantern/docs/reference/api/), [Budgets](/lantern/docs/build/budgets/), [CLI](/lantern/docs/reference/cli/), [SDKs](/lantern/docs/reference/sdk/).
+Related: [API reference](/docs/reference/api/), [Budgets](/docs/build/budgets/), [CLI](/docs/reference/cli/), [SDKs](/docs/reference/sdk/).

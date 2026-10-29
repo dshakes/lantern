@@ -36,11 +36,11 @@ DELETE /v1/sessions/sess_abc123
 
 ### Token streaming
 
-Session replies stream via `GET /v1/sessions/{id}/events` (SSE). The three named events (`message_delta`, `message_completed`, `message_error`) and the TypeScript SDK `sessions.streamMessage()` async iterator are covered in full in [Token streaming](/lantern/docs/runtime/streaming/).
+Session replies stream via `GET /v1/sessions/{id}/events` (SSE). The three named events (`message_delta`, `message_completed`, `message_error`) and the TypeScript SDK `sessions.streamMessage()` async iterator are covered in full in [Token streaming](/docs/runtime/streaming/).
 
 ### Durability
 
-Session turns are not journaled. A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run (see [Durable execution](/lantern/docs/runtime/durable-execution/)).
+Session turns are not journaled. A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run (see [Durable execution](/docs/runtime/durable-execution/)).
 
 ### SDK
 
@@ -66,15 +66,15 @@ await client.sessions.delete(session.id);
 
 ### Session-scoped microVMs (flag-gated)
 
-When an agent declares `isolation: "microvm"`, sessions optionally reuse a single long-lived VM across all turns (*session-scoped microVMs*, ADR 0022). The VM is spawned on the first turn and kept alive between turns, so later messages skip the per-turn VM boot. The VM is terminated when the session is deleted or stopped, or reaped after `LANTERN_SESSION_VM_IDLE_TTL` (default 30 minutes) of inactivity.
+When an agent declares `isolation: "microvm"`, sessions optionally reuse a single long-lived VM across all turns (*session-scoped microVMs*, ADR 0022). The VM is spawned on the first turn and kept alive between turns, so later messages skip the per-turn VM boot. The VM is terminated when the session is deleted or stopped, or reaped after `PAL_SESSION_VM_IDLE_TTL` (default 30 minutes) of inactivity.
 
 ## Memory distillates
 
 <Aside type="caution" title="Flag-gated, default OFF">
-Set `LANTERN_MEMORY_DISTILL=1` to enable. When unset, the distillation loop is a no-op and the endpoints return empty responses. Zero behavior change when the flag is off.
+Set `PAL_MEMORY_DISTILL=1` to enable. When unset, the distillation loop is a no-op and the endpoints return empty responses. Zero behavior change when the flag is off.
 </Aside>
 
-Raw timeline events (stored by `memory_ingest.go` and `identity.go`) and recent session transcripts accumulate over time. The memory distillation pass runs every 6 hours by default (override: `LANTERN_MEMORY_DISTILL_INTERVAL`, Go duration string; minimum 1 minute) and uses the LLM to extract durable facts, preferences and relationship notes, one compact row per (topic, person) in the `memory_distillates` table.
+Raw timeline events (stored by `memory_ingest.go` and `identity.go`) and recent session transcripts accumulate over time. The memory distillation pass runs every 6 hours by default (override: `PAL_MEMORY_DISTILL_INTERVAL`, Go duration string; minimum 1 minute) and uses the LLM to extract durable facts, preferences and relationship notes, one compact row per (topic, person) in the `memory_distillates` table.
 
 ### Quality bar
 
@@ -114,11 +114,11 @@ Any error (DB, LLM, parse) results in no writes, never a crash. PII in session c
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_MEMORY_DISTILL` | off | `1` / `true` / `on` enables the distillation loop and endpoints. |
-| `LANTERN_MEMORY_DISTILL_INTERVAL` | `6h` | Go duration string for how often the loop runs. Minimum 1 minute. |
+| `PAL_MEMORY_DISTILL` | off | `1` / `true` / `on` enables the distillation loop and endpoints. |
+| `PAL_MEMORY_DISTILL_INTERVAL` | `6h` | Go duration string for how often the loop runs. Minimum 1 minute. |
 
 ### RLS and multi-tenancy
 
 The `memory_distillates` table is RLS-enforced (migration 0013). All DB writes use `db.WithTenantConn`; reads use `srv.WithTenant`. No cross-tenant data can be read or written by the distillation pass.
 
-Related: [Token streaming](/lantern/docs/runtime/streaming/) is the event contract for session turns. The [API reference](/lantern/docs/reference/api/) has the full session and memory endpoint shapes.
+Related: [Token streaming](/docs/runtime/streaming/) is the event contract for session turns. The [API reference](/docs/reference/api/) has the full session and memory endpoint shapes.

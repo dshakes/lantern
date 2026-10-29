@@ -50,7 +50,7 @@ A run in `waiting` status holds no goroutine, so a long wait costs no compute. O
 
 ## Confidence gate
 
-Off by default. Set `LANTERN_CONFIDENCE_GATE=1` to turn it on. Before a side-effecting node runs, the interpreter scores it. Below the threshold (`LANTERN_CONFIDENCE_GATE_THRESHOLD`, default 0.75) the step goes to human approval instead of executing. If no approval handler is wired, the step auto-approves so unattended workflows still finish.
+Off by default. Set `PAL_CONFIDENCE_GATE=1` to turn it on. Before a side-effecting node runs, the interpreter scores it. Below the threshold (`PAL_CONFIDENCE_GATE_THRESHOLD`, default 0.75) the step goes to human approval instead of executing. If no approval handler is wired, the step auto-approves so unattended workflows still finish.
 
 ### Gated node types
 
@@ -59,15 +59,15 @@ Off by default. Set `LANTERN_CONFIDENCE_GATE=1` to turn it on. Before a side-eff
 
 ### Estimators
 
-Select the estimator with `LANTERN_CONFIDENCE_ESTIMATOR`.
+Select the estimator with `PAL_CONFIDENCE_ESTIMATOR`.
 
 **`verbalization` (default).** Scans prior step text for self-reported confidence ("Confidence: 85%"). Falls back to 0.9 when none is found. Failure mode: silence leads to 0.9 and auto-execute; a model that hallucinates an action also writes "confidence: 95%".
 
-**`self-consistency`.** Re-poses the pending action to the model `LANTERN_CONFIDENCE_SAMPLES` times (default 5) as a fresh YES/NO judgment and returns the fraction voting "execute". Consensus gives a high score; a split vote gives a low score and diverts. Safer than verbalization because silence is actively probed. Falls back to the verbalization heuristic when no LLM sampler is wired.
+**`self-consistency`.** Re-poses the pending action to the model `PAL_CONFIDENCE_SAMPLES` times (default 5) as a fresh YES/NO judgment and returns the fraction voting "execute". Consensus gives a high score; a split vote gives a low score and diverts. Safer than verbalization because silence is actively probed. Falls back to the verbalization heuristic when no LLM sampler is wired.
 
 ### Outcome calibration
 
-Off by default; `LANTERN_CONFIDENCE_CALIBRATE=1` enables it. Wraps the base estimator and lowers its score by the realized **regret rate**: the fraction of auto-executed steps of that type later thumbs-downed (feedback score of 2 or lower) or ending in a failed run: `adjusted = base × (1 − regret)`. Action types that have gone wrong get gated harder over time. Fail-safe: any error or fewer than 3 samples gives regret 0, so the base score is unchanged.
+Off by default; `PAL_CONFIDENCE_CALIBRATE=1` enables it. Wraps the base estimator and lowers its score by the realized **regret rate**: the fraction of auto-executed steps of that type later thumbs-downed (feedback score of 2 or lower) or ending in a failed run: `adjusted = base × (1 − regret)`. Action types that have gone wrong get gated harder over time. Fail-safe: any error or fewer than 3 samples gives regret 0, so the base score is unchanged.
 
 ### Journal events
 
@@ -77,11 +77,11 @@ Every gated step emits a `confidence_evaluated` journal event with `{ score, thr
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_CONFIDENCE_GATE` | off | `1`/`true`/`on` enables gating |
-| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution |
-| `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement |
-| `LANTERN_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]) |
-| `LANTERN_CONFIDENCE_CALIBRATE` | off | `1` wraps the estimator in outcome-regret calibration |
+| `PAL_CONFIDENCE_GATE` | off | `1`/`true`/`on` enables gating |
+| `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution |
+| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement |
+| `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]) |
+| `PAL_CONFIDENCE_CALIBRATE` | off | `1` wraps the estimator in outcome-regret calibration |
 
 <Aside title="Rollout order">
 Enable the gate on non-production agents first. Inspect `confidence_evaluated` events in the run waterfall. Switch to `self-consistency` and tune threshold and samples. Then production.

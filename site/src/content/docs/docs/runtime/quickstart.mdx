@@ -26,7 +26,7 @@ make run-scheduler        # scheduler on :50055 / :8085
 make run-api-runtime      # control-plane wired to the scheduler, :8080
 ```
 
-Docker on the host is enough for the `trusted` and `standard` classes. You also need an API token exported as `LANTERN_API_TOKEN` for the REST calls below.
+Docker on the host is enough for the `trusted` and `standard` classes. You also need an API token exported as `PAL_API_TOKEN` for the REST calls below.
 
 ## 1. Write the spec
 
@@ -53,7 +53,7 @@ spec:
   idempotent: true
 ```
 
-`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed. Choosing the isolation class is the decision that matters most; the [isolation classes guide](/lantern/docs/runtime/isolation/) is the decision tree.
+`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed. Choosing the isolation class is the decision that matters most; the [isolation classes guide](/docs/runtime/isolation/) is the decision tree.
 
 ## 2. Pick the isolation class
 
@@ -64,7 +64,7 @@ Rule of thumb:
 - Loads internet packages or drives a browser: `untrusted`.
 - Adversarial input: `hostile`.
 
-Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beautifulsoup4` from PyPI. The full tree is in [Isolation classes](/lantern/docs/runtime/isolation/).
+Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beautifulsoup4` from PyPI. The full tree is in [Isolation classes](/docs/runtime/isolation/).
 
 ## 3. Run it
 
@@ -85,17 +85,17 @@ Stream the harness log lines over SSE:
 
 ```bash
 curl -N http://localhost:8080/v1/runtime/vms/<vm_id>/logs \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+  -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
 Inspect the instance and its recent audit events:
 
 ```bash
 curl http://localhost:8080/v1/runtime/vms/<vm_id> \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+  -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
-Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/lantern/docs/runtime/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
+Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/docs/runtime/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
 
 ## 5. Terminate
 
@@ -103,15 +103,15 @@ A clean-exiting workload is torn down automatically. To drain and stop one early
 
 ```bash
 curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vm_id>?grace=30s" \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+  -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
 The instance drains for the grace period, the manager tears down the pod, and the scheduler marks its state terminated.
 
 ## What's next
 
-- [Isolation classes](/lantern/docs/runtime/isolation/): pick the right boundary for the workload.
-- [Durable execution](/lantern/docs/runtime/durable-execution/): what happens when a node dies mid-run.
-- [Identity and secrets](/lantern/docs/runtime/identity/): vend a real secret into the workload (demo 02).
+- [Isolation classes](/docs/runtime/isolation/): pick the right boundary for the workload.
+- [Durable execution](/docs/runtime/durable-execution/): what happens when a node dies mid-run.
+- [Identity and secrets](/docs/runtime/identity/): vend a real secret into the workload (demo 02).
 - `examples/data-analyst`: upload a CSV, run pandas in the sandbox, egress denied by default (docker tier in CI, Firecracker nightly).
-- [Observability](/lantern/docs/runtime/observability/): wire an OTel collector and read the trace.
+- [Observability](/docs/runtime/observability/): wire an OTel collector and read the trace.

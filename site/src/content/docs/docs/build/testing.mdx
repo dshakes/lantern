@@ -17,13 +17,13 @@ The tests get a small, fixed set of named test agents, each with a hard daily co
 make dev-infra   # Postgres + Redis + MinIO (once)
 make run-api     # control-plane on :8080 (terminal 1)
 
-export LANTERN_E2E_API_URL=http://localhost:8080
+export PAL_E2E_API_URL=http://localhost:8080
 make test-e2e    # terminal 2
 ```
 
 The target runs `make e2e-lint`, then the `e2e/runtime` and `e2e/quickstart` suites (Go, build tag `e2e`, standalone modules, so plain `go test ./...` never runs them). `make test-e2e-llm` is an alias. It targets the single-tier topology (stub scheduler, no KVM needed). Quickstart needs an LLM provider configured for the dev tenant.
 
-On a two-tier stack (`LANTERN_SCHEDULER_GRPC_ADDR` plus a Docker-backend runtime-manager) set `LANTERN_E2E_IMAGE_DIGEST` to a locally pullable image; with the placeholder default, schedule returns 500.
+On a two-tier stack (`PAL_SCHEDULER_GRPC_ADDR` plus a Docker-backend runtime-manager) set `PAL_E2E_IMAGE_DIGEST` to a locally pullable image; with the placeholder default, schedule returns 500.
 
 ## Suites
 
@@ -49,11 +49,11 @@ The quickstart suite posts 3 runs per invocation against one slot, and the cap i
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_E2E_API_URL` | `http://localhost:8080` | Target API. Canonical; always set it explicitly. |
-| `LANTERN_API_URL` | unset | Alias, used only when the canonical var is unset |
-| `LANTERN_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
-| `LANTERN_E2E_PASSWORD` | `lantern` | Login password |
-| `LANTERN_E2E_IMAGE_DIGEST` | placeholder digest | Image to schedule in the runtime suite; needed on two-tier stacks |
+| `PAL_E2E_API_URL` | `http://localhost:8080` | Target API. Canonical; always set it explicitly. |
+| `PAL_API_URL` | unset | Alias, used only when the canonical var is unset |
+| `PAL_E2E_EMAIL` | `admin@lantern.dev` | Login email (seeded dev user) |
+| `PAL_E2E_PASSWORD` | `lantern` | Login password |
+| `PAL_E2E_IMAGE_DIGEST` | placeholder digest | Image to schedule in the runtime suite; needed on two-tier stacks |
 | `E2E_ALLOW_SKIP` | unset | `1` turns a down stack into a skip |
 
 The runtime suite prints the resolved target URL at the start of a run.
@@ -78,7 +78,7 @@ Tests delete their agents via `t.Cleanup`, and the runtime suite terminates its 
 Manual recovery after an interrupted run. It runs `go run ./cmd/sweep` in `e2e/internal/e2ekit`, logs in with the same URL and credentials variables, lists `GET /v1/agents`, and issues `DELETE /v1/agents/{name}` for every agent whose name starts with `e2e-`. Nothing else is deleted; failures are printed, never fatal. Use it when the kit refuses to create an agent because 8 `e2e-*` agents already exist.
 
 ```bash
-LANTERN_E2E_API_URL=http://localhost:8080 make e2e-clean
+PAL_E2E_API_URL=http://localhost:8080 make e2e-clean
 ```
 
 ## Browser tier (Playwright)
@@ -91,7 +91,7 @@ npm ci && npx playwright install chromium
 npm run test:e2e
 ```
 
-It boots its own stack on spare ports (web 3411, API 8411, llm-replay 9412): a throwaway Postgres database, a private Redis db index, the control-plane (with `LANTERN_CORS_ORIGINS` set to the dashboard origin), llm-replay and `next dev`. It never touches :8080, :3001 or the shared `lantern` database, and tears everything down afterwards. Needs Go, `psql`, and Postgres and Redis reachable (the `make dev-infra` defaults work; override with `E2E_PG_ADMIN_URL`, `E2E_REDIS_*`). Details and kiosk-spec hooks: `apps/web/e2e/README.md`.
+It boots its own stack on spare ports (web 3411, API 8411, llm-replay 9412): a throwaway Postgres database, a private Redis db index, the control-plane (with `PAL_CORS_ORIGINS` set to the dashboard origin), llm-replay and `next dev`. It never touches :8080, :3001 or the shared `lantern` database, and tears everything down afterwards. Needs Go, `psql`, and Postgres and Redis reachable (the `make dev-infra` defaults work; override with `E2E_PG_ADMIN_URL`, `E2E_REDIS_*`). Details and kiosk-spec hooks: `apps/web/e2e/README.md`.
 
 ## CI
 
@@ -103,7 +103,7 @@ Never point the suites at a stack with real tenant data: they delete every agent
 
 ## Fixture LLM tier
 
-**What.** `llm-replay` is a small stdlib server that speaks the OpenAI chat-completions and Anthropic messages wire formats (JSON and SSE streaming, text and tool calls). Setting `LANTERN_LLM_BASEURL_OPENAI` and/or `LANTERN_LLM_BASEURL_ANTHROPIC` sends every control-plane provider call there instead of the real API.
+**What.** `llm-replay` is a small stdlib server that speaks the OpenAI chat-completions and Anthropic messages wire formats (JSON and SSE streaming, text and tool calls). Setting `PAL_LLM_BASEURL_OPENAI` and/or `PAL_LLM_BASEURL_ANTHROPIC` sends every control-plane provider call there instead of the real API.
 
 **Why.** CI and kiosk mode need the same answer every time and must not need a provider key or spend money. Token usage is still reported, so budgets and cost metering run for real.
 
@@ -124,8 +124,8 @@ A `tool` rule fires only when the request declares tools. When the next request 
 cd services/control-plane
 go run ./cmd/llm-replay -rules rules.json      # 127.0.0.1:9192
 
-LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 \
-LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192 \
+PAL_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 \
+PAL_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192 \
 OPENAI_API_KEY=dummy make run-api
 
 curl -s localhost:8080/v1/completions -H "Authorization: Bearer $TOKEN" \
@@ -135,7 +135,7 @@ curl -s 127.0.0.1:9192/__requests                         # what the control-pla
 
 ### Limits
 
-- Dev and test only. The control-plane refuses to start with either variable set when `LANTERN_ENV` is prod, production or staging, and ignores them at request time.
+- Dev and test only. The control-plane refuses to start with either variable set when `PAL_ENV` is prod, production or staging, and ignores them at request time.
 - A provider key must still exist (database or `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`); any dummy value works.
 - Only `/v1/chat/completions` and `/v1/messages` are served. Other provider endpoints (embeddings, speech, transcription) return 404.
 - No model quality: it echoes and follows rules. It cannot validate prompts.
@@ -165,7 +165,7 @@ scripts/e2e-examples.sh -run TestVoice          # extra args go to go test
 **Limits.**
 
 - Connector and LLM replies are recorded fixtures; this proves the wiring and the security gates, not model quality or vendor API drift. Real-account runs are in each example's README.
-- The gateway creates runs over gRPC, which the control-plane's recovery sweep drives; the script sets `LANTERN_RECOVERY_INTERVAL=2s` so a reply takes seconds, not up to 30.
+- The gateway creates runs over gRPC, which the control-plane's recovery sweep drives; the script sets `PAL_RECOVERY_INTERVAL=2s` so a reply takes seconds, not up to 30.
 - Needs `go`, `cargo`, `psql`/`createdb` and `python3` on the PATH. Runs in CI as the `examples` job.
 
 ## Not covered

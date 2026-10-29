@@ -19,7 +19,7 @@ Upload documents to an agent. Each one is split into chunks, embedded and stored
 
 ## How retrieval works
 
-Chunks are embedded with the tenant's OpenAI key (`text-embedding-3-small`, 1536 dimensions) and matched by cosine distance; hits below `LANTERN_KB_MIN_SCORE` (default 0.2) are dropped. With no OpenAI key the chunks are stored without a vector and search falls back to Postgres full-text. The excerpts are fenced in the system prompt and labelled as reference data, not instructions. Agents with no documents pay nothing: no embedding call is made.
+Chunks are embedded with the tenant's OpenAI key (`text-embedding-3-small`, 1536 dimensions) and matched by cosine distance; hits below `PAL_KB_MIN_SCORE` (default 0.2) are dropped. With no OpenAI key the chunks are stored without a vector and search falls back to Postgres full-text. The excerpts are fenced in the system prompt and labelled as reference data, not instructions. Agents with no documents pay nothing: no embedding call is made.
 
 The session event `message_completed` includes `sources: [{id, title}]` for the documents used; the web widget shows them under the reply.
 

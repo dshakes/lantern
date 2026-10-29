@@ -77,11 +77,11 @@ spec:
       rate_bps: 1048576   # 1 MiB/s
 ```
 
-Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/lantern/docs/runtime/identity/).
+Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/docs/runtime/identity/).
 
 ## Firecracker backend and broker mode
 
-Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `LANTERN_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/lantern/docs/runtime/egress/).
+Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `PAL_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/docs/runtime/egress/).
 
 ## Kubernetes backend hardening
 
