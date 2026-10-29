@@ -12,7 +12,7 @@ import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
   Store, BarChart3, Server, Download, Menu, X, Smartphone, Sun, Moon, Network, Home,
-  Webhook, UserPlus, Laptop, FlaskConical, Search as SearchIcon, Github, Pencil,
+  Webhook, UserPlus, Laptop, FlaskConical, Play, Layers, ListChecks, Wrench, Search as SearchIcon, Github, Pencil,
 } from "lucide-react";
 
 // The Lantern mark: a flame held inside glass (docs/brand).
@@ -53,50 +53,76 @@ interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: {
 interface NavSection { label: string; items: NavItem[] }
 
 const sections: NavSection[] = [
-  { label: "Overview", items: [
-    { href: "/", label: "Getting Started", icon: BookOpen, subs: [
-      { href: "/#shape", label: "The shape of the system" }, { href: "/#features", label: "What the runtime gives you" }, { href: "/#new", label: "New since 0.2.0" }, { href: "/#reference", label: "Reference" },
+  { label: "Get started", items: [
+    { href: "/demo", label: "Try the demo", icon: Play, subs: [
+      { href: "/demo#try-it", label: "Try it" }, { href: "/demo#isolation", label: "Isolation" }, { href: "/demo#reference", label: "Reference" },
+    ]},
+    { href: "/quickstart", label: "Quickstart", icon: Rocket, subs: [
+      { href: "/quickstart#prerequisites", label: "Before you start" }, { href: "/quickstart#dashboard", label: "In the dashboard" }, { href: "/quickstart#cli", label: "In the terminal" }, { href: "/quickstart#api", label: "The REST calls" }, { href: "/quickstart#next", label: "What's next" },
     ]},
     { href: "/installation", label: "Installation", icon: Download, subs: [
       { href: "/installation#prerequisites", label: "Prerequisites" }, { href: "/installation#clone", label: "Clone" }, { href: "/installation#one-command", label: "One-command stack" }, { href: "/installation#credentials", label: "Dev credentials" }, { href: "/installation#ports", label: "Service ports" },
     ]},
-    { href: "/quickstart", label: "Get started", icon: Rocket, subs: [
-      { href: "/quickstart#prerequisites", label: "Before you start" }, { href: "/quickstart#dashboard", label: "In the dashboard" }, { href: "/quickstart#cli", label: "In the terminal" }, { href: "/quickstart#api", label: "The REST calls" }, { href: "/quickstart#next", label: "What's next" },
+    { href: "/", label: "Get started", icon: BookOpen, subs: [
+      { href: "/#shape", label: "The shape of the system" }, { href: "/#features", label: "What the runtime gives you" }, { href: "/#new", label: "New since 0.2.0" }, { href: "/#reference", label: "Reference" },
     ]},
+  ]},
+  { label: "Concepts", items: [
     { href: "/architecture", label: "Architecture explorer", icon: Network, subs: [
       { href: "/architecture#map", label: "System map" }, { href: "/architecture#sequences", label: "Sequences" }, { href: "/architecture#lifecycle", label: "Sandbox states" },
     ]},
     { href: "/stack", label: "The Stack", icon: Server, subs: [
       { href: "/stack#rule", label: "The rule" }, { href: "/stack#languages", label: "Languages" }, { href: "/stack#glossary", label: "What these things are" }, { href: "/stack#data", label: "Data stores" }, { href: "/stack#e2e", label: "End to end" }, { href: "/stack#invariants", label: "Invariants" }, { href: "/stack#tradeoffs", label: "What it costs" },
     ]},
-  ]},
-  { label: "Build", items: [
     { href: "/agents", label: "Agents", icon: Bot, subs: [
       { href: "/agents#create", label: "Creating agents" }, { href: "/agents#instructions", label: "Instructions & prompts" }, { href: "/agents#testing", label: "Testing" }, { href: "/agents#chat", label: "Conversations" }, { href: "/agents#visual", label: "Visual editor" }, { href: "/agents#tool-nodes", label: "Workflow tool nodes" },
     ]},
-    { href: "/connectors", label: "Connectors", icon: Plug, subs: [
-      { href: "/connectors#available", label: "Available connectors" }, { href: "/connectors#new-actions", label: "Newer actions" }, { href: "/connectors#recorded-test-mode", label: "Recorded test mode" }, { href: "/connectors#slack", label: "Setting up a connector" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
+    { href: "/runtime/durable-execution", label: "Durable Execution", icon: Clock, subs: [
+      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#completedstep", label: "CompletedStep replay" }, { href: "/runtime/durable-execution#retry", label: "Per-step retry" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery sweep" }, { href: "/runtime/durable-execution#microvm-resume", label: "MicroVM resume" },
     ]},
-    { href: "/knowledge", label: "Knowledge & handoff", icon: Plug, subs: [
-      { href: "/knowledge#documents", label: "Documents" }, { href: "/knowledge#retrieval", label: "Retrieval" }, { href: "/knowledge#handoff", label: "Human handoff" },
+    { href: "/runtime/sessions-and-memory", label: "Sessions & Memory", icon: Brain, subs: [
+      { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
     ]},
-    { href: "/examples", label: "Examples", icon: Webhook, subs: [
+    { href: "/runtime/streaming", label: "Token Streaming", icon: BarChart3, subs: [
+      { href: "/runtime/streaming#events", label: "The three events" }, { href: "/runtime/streaming#sdk", label: "SDK streamMessage()" }, { href: "/runtime/streaming#sse", label: "SSE transport" }, { href: "/runtime/streaming#provider", label: "Provider streaming" },
+    ]},
+    { href: "/models", label: "Models", icon: Brain, subs: [
+      { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#resolution-rules", label: "Resolution rules" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" }, { href: "/models#router", label: "Model-router service" },
+    ]},
+    { href: "/budgets", label: "Budgets", icon: BarChart3, subs: [
+      { href: "/budgets#policy", label: "Setting a budget" }, { href: "/budgets#matrix", label: "What is enforced where" }, { href: "/budgets#responses", label: "Blocked responses" }, { href: "/budgets#fail-closed", label: "Fail-closed" }, { href: "/budgets#forecast", label: "Cost forecast" }, { href: "/budgets#not-enforced", label: "Not enforced yet" },
+    ]},
+  ]},
+  { label: "Guides & examples", items: [
+    { href: "/examples", label: "Examples", icon: Layers, subs: [
       { href: "/examples#support-desk", label: "Support desk" }, { href: "/examples#pr-triage-webhook", label: "PR triage" }, { href: "/examples#incident-responder", label: "Incident responder" },
     ]},
     { href: "/triggers", label: "Webhook triggers", icon: Webhook, subs: [
       { href: "/triggers#create", label: "Create a trigger" }, { href: "/triggers#providers", label: "Provider setup" }, { href: "/triggers#responses", label: "Responses" }, { href: "/triggers#idempotency", label: "Duplicate deliveries" }, { href: "/triggers#security", label: "Security notes" },
     ]},
+    { href: "/scheduling", label: "Scheduling", icon: Clock, subs: [
+      { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#api", label: "Schedule API" }, { href: "/scheduling#timezone", label: "Timezone" },
+    ]},
+    { href: "/connectors", label: "Connectors", icon: Plug, subs: [
+      { href: "/connectors#available", label: "Available connectors" }, { href: "/connectors#new-actions", label: "Newer actions" }, { href: "/connectors#recorded-test-mode", label: "Recorded test mode" }, { href: "/connectors#slack", label: "Setting up a connector" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
+    ]},
+    { href: "/knowledge", label: "Knowledge & handoff", icon: BookOpen, subs: [
+      { href: "/knowledge#documents", label: "Documents" }, { href: "/knowledge#retrieval", label: "Retrieval" }, { href: "/knowledge#handoff", label: "Human handoff" },
+    ]},
     { href: "/surfaces", label: "Surfaces", icon: MessageSquare, subs: [
       { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
     ]},
-    { href: "/personal", label: "Personal harness", icon: Smartphone, subs: [
-      { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
+    { href: "/human-in-the-loop", label: "Human-in-the-loop", icon: Shield, subs: [
+      { href: "/human-in-the-loop#approval", label: "Approval workflow" }, { href: "/human-in-the-loop#confidence-gate", label: "Confidence gate" },
     ]},
-    { href: "/models", label: "Models", icon: Brain, subs: [
-      { href: "/models#providers", label: "Providers" }, { href: "/models#capabilities", label: "Capability names" }, { href: "/models#resolution-rules", label: "Resolution rules" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#failover", label: "Failover" }, { href: "/models#keys", label: "API keys" }, { href: "/models#router", label: "Model-router service" },
+    { href: "/evaluations", label: "Evaluations", icon: BarChart3, subs: [
+      { href: "/evaluations#eval-suites", label: "Eval suites" }, { href: "/evaluations#eval-runs", label: "CI gate" }, { href: "/evaluations#baselines", label: "Baselines" }, { href: "/evaluations#experiments", label: "A/B experiments" }, { href: "/evaluations#feedback", label: "Feedback" }, { href: "/evaluations#rehearsals", label: "Rehearsals" },
     ]},
-    { href: "/scheduling", label: "Scheduling", icon: Clock, subs: [
-      { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#api", label: "Schedule API" }, { href: "/scheduling#timezone", label: "Timezone" },
+    { href: "/marketplace", label: "Marketplace", icon: Store, subs: [
+      { href: "/marketplace#what", label: "What is the Marketplace" }, { href: "/marketplace#a2a", label: "A2A Agent Cards" }, { href: "/marketplace#publishing", label: "Publishing agents" }, { href: "/marketplace#discovering", label: "Discovering & forking" }, { href: "/marketplace#interop", label: "Cross-platform interop" },
+    ]},
+    { href: "/testing", label: "End-to-end tests", icon: FlaskConical, subs: [
+      { href: "/testing#run", label: "Run it" }, { href: "/testing#spend-policy", label: "Spend policy" }, { href: "/testing#env", label: "Environment variables" }, { href: "/testing#clean", label: "make e2e-clean" },
     ]},
   ]},
   { label: "Runtime", items: [
@@ -109,15 +135,6 @@ const sections: NavSection[] = [
     { href: "/runtime/isolation", label: "Isolation Classes", icon: Shield, subs: [
       { href: "/runtime/isolation#decision", label: "Decision tree" }, { href: "/runtime/isolation#classes", label: "The classes" }, { href: "/runtime/isolation#fail-closed", label: "Fail-closed gate" },
     ]},
-    { href: "/runtime/durable-execution", label: "Durable Execution", icon: Clock, subs: [
-      { href: "/runtime/durable-execution#journal", label: "Journal" }, { href: "/runtime/durable-execution#completedstep", label: "CompletedStep replay" }, { href: "/runtime/durable-execution#retry", label: "Per-step retry" }, { href: "/runtime/durable-execution#idempotency", label: "Idempotency keys" }, { href: "/runtime/durable-execution#recovery", label: "Recovery sweep" }, { href: "/runtime/durable-execution#microvm-resume", label: "MicroVM resume" },
-    ]},
-    { href: "/runtime/streaming", label: "Token Streaming", icon: BarChart3, subs: [
-      { href: "/runtime/streaming#events", label: "The three events" }, { href: "/runtime/streaming#sdk", label: "SDK streamMessage()" }, { href: "/runtime/streaming#sse", label: "SSE transport" }, { href: "/runtime/streaming#provider", label: "Provider streaming" },
-    ]},
-    { href: "/runtime/sessions-and-memory", label: "Sessions & Memory", icon: Brain, subs: [
-      { href: "/runtime/sessions-and-memory#sessions", label: "Sessions" }, { href: "/runtime/sessions-and-memory#streaming", label: "Token streaming" }, { href: "/runtime/sessions-and-memory#memory", label: "Memory distillates" }, { href: "/runtime/sessions-and-memory#env-vars", label: "Env vars" },
-    ]},
     { href: "/runtime/sandbox-lifecycle", label: "Sandbox Lifecycle", icon: BarChart3, subs: [
       { href: "/runtime/sandbox-lifecycle#states", label: "States" }, { href: "/runtime/sandbox-lifecycle#idle", label: "Idle suspend" }, { href: "/runtime/sandbox-lifecycle#snapshots", label: "Snapshots" }, { href: "/runtime/sandbox-lifecycle#rest", label: "Pause / resume / fork" }, { href: "/runtime/sandbox-lifecycle#streaming-exec", label: "Streaming exec" }, { href: "/runtime/sandbox-lifecycle#sdk", label: "SDKs" },
     ]},
@@ -127,54 +144,49 @@ const sections: NavSection[] = [
     { href: "/runtime/egress", label: "Egress & Credentials", icon: Network, subs: [
       { href: "/runtime/egress#flow", label: "The path out" }, { href: "/runtime/egress#allowlist", label: "Allowlist" }, { href: "/runtime/egress#credentials", label: "Credential injection" },
     ]},
-    { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
-      { href: "/runtime/observability#span-attrs", label: "Span attributes" }, { href: "/runtime/observability#otel-metrics", label: "lantern.run.* metrics" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "VM metrics" },
-    ]},
     { href: "/runtime/identity", label: "Identity & Secrets", icon: Code, subs: [
       { href: "/runtime/identity#identity", label: "Per-instance identity" }, { href: "/runtime/identity#vending", label: "Secret vending" }, { href: "/runtime/identity#ref-form", label: "Ref form" },
-    ]},
-    { href: "/runtime/receipts", label: "Verifiable Receipts", icon: FileCode, subs: [
-      { href: "/runtime/receipts#what", label: "What it attests" }, { href: "/runtime/receipts#issue", label: "Issuing" }, { href: "/runtime/receipts#verify", label: "Verifying offline" },
-    ]},
-  ]},
-  { label: "Platform", items: [
-    { href: "/security", label: "Security", icon: Shield, subs: [
-      { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
-    ]},
-    { href: "/demo", label: "Demo mode", icon: UserPlus, subs: [
-      { href: "/demo#try-it", label: "Try it" }, { href: "/demo#isolation", label: "Isolation" }, { href: "/demo#reference", label: "Reference" },
-    ]},
-    { href: "/accounts", label: "Accounts & sign-up", icon: UserPlus, subs: [
-      { href: "/accounts#modes", label: "Sign-up modes" }, { href: "/accounts#email-verification", label: "Email verification" }, { href: "/accounts#password-reset", label: "Password reset" }, { href: "/accounts#invite-codes", label: "Invite codes" }, { href: "/accounts#rate-limits", label: "Rate limits" }, { href: "/accounts#export", label: "Data export" }, { href: "/accounts#delete", label: "Workspace deletion" }, { href: "/accounts#mailer", label: "Mailer" },
-    ]},
-    { href: "/deployment", label: "Deployment", icon: Cloud, subs: [
-      { href: "/deployment#architecture", label: "CP/DP split" }, { href: "/deployment#helm", label: "Helm charts" }, { href: "/deployment#terraform", label: "Terraform" }, { href: "/deployment#docker", label: "Docker Compose" },
-    ]},
-    { href: "/marketplace", label: "Marketplace", icon: Store, subs: [
-      { href: "/marketplace#what", label: "What is the Marketplace" }, { href: "/marketplace#a2a", label: "A2A Agent Cards" }, { href: "/marketplace#publishing", label: "Publishing agents" }, { href: "/marketplace#discovering", label: "Discovering & forking" }, { href: "/marketplace#interop", label: "Cross-platform interop" },
-    ]},
-    { href: "/evaluations", label: "Evaluations", icon: BarChart3, subs: [
-      { href: "/evaluations#eval-suites", label: "Eval suites" }, { href: "/evaluations#eval-runs", label: "CI gate" }, { href: "/evaluations#baselines", label: "Baselines" }, { href: "/evaluations#experiments", label: "A/B experiments" }, { href: "/evaluations#feedback", label: "Feedback" }, { href: "/evaluations#rehearsals", label: "Rehearsals" },
     ]},
   ]},
   { label: "Reference", items: [
     { href: "/api", label: "API Reference", icon: Code, subs: [
       { href: "/api#auth", label: "Authentication" }, { href: "/api#accounts", label: "Accounts" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" }, { href: "/api#schedules", label: "Schedules" }, { href: "/api#triggers", label: "Triggers" }, { href: "/api#errors", label: "Errors" },
     ]},
-    { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
-      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#agent-runtime", label: "Agent runtime" },
-    ]},
     { href: "/cli", label: "CLI Reference", icon: Code, subs: [
       { href: "/cli#onboard", label: "onboard" }, { href: "/cli#doctor", label: "doctor" }, { href: "/cli#dev", label: "dev" }, { href: "/cli#agents", label: "agents" }, { href: "/cli#runs", label: "runs" }, { href: "/cli#vm", label: "vm" }, { href: "/cli#deploy", label: "deploy" }, { href: "/cli#auth", label: "login / whoami" },
     ]},
-    { href: "/budgets", label: "Budgets", icon: BarChart3, subs: [
-      { href: "/budgets#policy", label: "Setting a budget" }, { href: "/budgets#matrix", label: "What is enforced where" }, { href: "/budgets#responses", label: "Blocked responses" }, { href: "/budgets#fail-closed", label: "Fail-closed" }, { href: "/budgets#forecast", label: "Cost forecast" }, { href: "/budgets#not-enforced", label: "Not enforced yet" },
+    { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
+      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#agent-runtime", label: "Agent runtime" },
     ]},
-    { href: "/testing", label: "End-to-end tests", icon: FlaskConical, subs: [
-      { href: "/testing#run", label: "Run it" }, { href: "/testing#spend-policy", label: "Spend policy" }, { href: "/testing#env", label: "Environment variables" }, { href: "/testing#clean", label: "make e2e-clean" },
+    { href: "/env-vars", label: "Environment variables", icon: ListChecks, subs: [
+      { href: "/env-vars#prod-checklist", label: "Production checklist" }, { href: "/env-vars#cp-core", label: "Control plane" }, { href: "/env-vars#runtime-scheduler", label: "Runtime scheduler" }, { href: "/env-vars#manager", label: "Runtime manager" }, { href: "/env-vars#harness", label: "Harness" }, { href: "/env-vars#dashboard", label: "Dashboard" },
     ]},
-    { href: "/human-in-the-loop", label: "Human-in-the-loop", icon: Shield, subs: [
-      { href: "/human-in-the-loop#approval", label: "Approval workflow" }, { href: "/human-in-the-loop#confidence-gate", label: "Confidence gate" },
+  ]},
+  { label: "Operate & deploy", items: [
+    { href: "/deployment", label: "Deployment", icon: Cloud, subs: [
+      { href: "/deployment#architecture", label: "CP/DP split" }, { href: "/deployment#helm", label: "Helm charts" }, { href: "/deployment#terraform", label: "Terraform" }, { href: "/deployment#docker", label: "Docker Compose" },
+    ]},
+    { href: "/runtime/observability", label: "Observability", icon: BarChart3, subs: [
+      { href: "/runtime/observability#span-attrs", label: "Span attributes" }, { href: "/runtime/observability#otel-metrics", label: "lantern.run.* metrics" }, { href: "/runtime/observability#enable", label: "Enabling OTel" }, { href: "/runtime/observability#health", label: "Health sweep" }, { href: "/runtime/observability#metrics", label: "VM metrics" },
+    ]},
+    { href: "/accounts", label: "Accounts & sign-up", icon: UserPlus, subs: [
+      { href: "/accounts#modes", label: "Sign-up modes" }, { href: "/accounts#email-verification", label: "Email verification" }, { href: "/accounts#password-reset", label: "Password reset" }, { href: "/accounts#invite-codes", label: "Invite codes" }, { href: "/accounts#rate-limits", label: "Rate limits" }, { href: "/accounts#export", label: "Data export" }, { href: "/accounts#delete", label: "Workspace deletion" }, { href: "/accounts#mailer", label: "Mailer" },
+    ]},
+    { href: "/operations", label: "Operations", icon: Wrench, subs: [
+      { href: "/operations#install", label: "Install pointers" }, { href: "/operations#metrics", label: "Metrics" }, { href: "/operations#alerts", label: "Alert groups" }, { href: "/operations#backups", label: "Backups & restore drill" }, { href: "/operations#upgrade", label: "Upgrading the chart" }, { href: "/operations#demo", label: "Kiosk & demo" }, { href: "/operations#runbooks", label: "Runbooks" },
+    ]},
+  ]},
+  { label: "Security", items: [
+    { href: "/security", label: "Security", icon: Shield, subs: [
+      { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
+    ]},
+    { href: "/runtime/receipts", label: "Verifiable Receipts", icon: FileCode, subs: [
+      { href: "/runtime/receipts#what", label: "What it attests" }, { href: "/runtime/receipts#issue", label: "Issuing" }, { href: "/runtime/receipts#verify", label: "Verifying offline" },
+    ]},
+  ]},
+  { label: "Showcase", items: [
+    { href: "/personal", label: "Built on Lantern", icon: Smartphone, subs: [
+      { href: "/personal#architecture", label: "Architecture" }, { href: "/personal#pipeline", label: "Reply pipeline" }, { href: "/personal#features", label: "Platform features" }, { href: "/personal#safety", label: "Safety model" }, { href: "/personal#quality", label: "Quality loop" }, { href: "/personal#limits", label: "Limits" },
     ]},
   ]},
 ];

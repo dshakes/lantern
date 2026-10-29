@@ -35,6 +35,9 @@ func authzEnforce() bool {
 	return v == "1" || v == "true" || v == "on"
 }
 
+// AuthzEnforcing is the exported form of authzEnforce, for the startup log.
+func AuthzEnforcing() bool { return authzEnforce() }
+
 // devReceiptSecret is the single shared default used by both receipts.go and
 // marketplace_invoke.go when LANTERN_RECEIPT_SECRET is unset in dev. A single
 // constant prevents the two callers from drifting to different fallback strings

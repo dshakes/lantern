@@ -500,7 +500,10 @@ no double token validation / DB hit), so it is **not** a new auth surface.
 unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
 zero behavior change, safe to merge/run against the live bridges + dashboard.
 When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
-keep full access. Annotated today: the agents/runs/sessions/connectors/
+keep full access. **Prod/staging Helm values enable it** (`values-prod.yaml` /
+`values-staging.yaml` set `controlPlane.env.LANTERN_AUTHZ_ENFORCE: "1"`; base `values.yaml`
+stays off, rollout + rollback in `docs/runbooks/ga-staged-rollout.md`); the control-plane
+logs `authz: API-key scope enforcement {enforced}` at boot. Annotated today: the agents/runs/sessions/connectors/
 deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
 follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
 fine-grained authZ the SOC 2 ADR (0018) flags as a gap.

@@ -10,6 +10,7 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Prod enforces API-key scopes** — `values-prod.yaml` (and staging) set `LANTERN_AUTHZ_ENFORCE=1`; a first-class `controlPlane.env.LANTERN_AUTHZ_ENFORCE` chart value, a boot log line stating the mode, a `ControlPlane403RateElevated` alert, a chart render test (`infra/helm/lantern/tests/authz-enforce.sh`, run in CI), and the soak/rollback/re-scoping steps in `docs/runbooks/ga-staged-rollout.md`. JWT sessions and unscoped legacy keys are unaffected.
 - Docs site: Cmd/Ctrl-K search over a build-time index (no external service), per-page titles/descriptions/Open Graph tags,
   `sitemap.xml` + `robots.txt`, a top bar (landing link, search, GitHub, theme) and an "Edit this page on GitHub" link.
 - **CI: fixture-tier e2e lane** — `.github/workflows/sdlc-e2e.yml` (jobs `examples`, `browser`, `deploy-cli`) runs the webhook-example suites, Playwright and the `lantern deploy` e2e on every PR and master push with no provider key; skip = fail. Docs truth pass: `e2e/README.md` test tiers, `docs/GA-READINESS.md`, `docs/LAUNCH-CHECKLIST.md` re-verified against code.

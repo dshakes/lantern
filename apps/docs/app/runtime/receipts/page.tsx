@@ -105,6 +105,11 @@ export default function RuntimeReceiptsPage() {
         recovery — the same record underpins both crash-safety and provenance.
       </div>
 
+      <p>
+        You do not need a terminal to check one: the dashboard&apos;s public <code>/proof</code> page (no sign-in) accepts a
+        receipt and calls <code>POST /v1/runs/receipts/verify</code>, which needs no auth either.
+      </p>
+
       <h2 id="takeaway">Why it matters</h2>
       <ul>
         <li><strong>Provenance.</strong> Cryptographic proof of exactly which steps a run executed.</li>

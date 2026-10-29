@@ -10,7 +10,7 @@ export default function ExamplesPage() {
       <p>
         Runnable, end-to-end agents. Each lives under <code>examples/</code> in the repo with a README and an
         end-to-end test that runs it against recorded GitHub, Sentry, PagerDuty, Google Calendar and Slack servers, a fixture model, and (for chat) the real surface-gateway
-        (<code>make test-e2e-examples</code>), so you can try it with no SaaS account and no model key.
+        (<code>make test-e2e-examples</code>; the data analyst has its own target, below), so you can try it with no SaaS account and no model key.
       </p>
 
       <h2 id="support-desk">Support desk</h2>
@@ -120,6 +120,28 @@ curl -X POST $API/v1/voice/numbers -d @number.json    # your SID, auth token, nu
       <p>
         Budgets and voice numbers are not part of the deploy manifest, so those stay REST. The inbound reply is a fixed
         greeting; the realtime conversation needs the LiveKit media worker.
+      </p>
+
+      <h2 id="data-analyst">Data analyst in a sandbox</h2>
+      <p>
+        <strong>What:</strong> upload a CSV, run pandas in an isolated microVM, and get JSON plus a chart back; an agent then
+        explains the result. <strong>Why:</strong> the code that touches the data never runs in the control plane, and egress is
+        deny-by-default. Path: <code>examples/data-analyst/</code> (<code>Dockerfile</code>, <code>analyze.py</code>,{" "}
+        <code>agent.yaml</code>, <code>spec.json</code>, <code>sales.csv</code>, <code>replay-rules.json</code>). See{" "}
+        <Link href="/runtime/sandbox-lifecycle">Sandbox lifecycle</Link>.
+      </p>
+      <pre><code>{`BASE=http://localhost:8080
+VM=$(curl -s -XPOST $BASE/v1/runtime/schedule -H "Authorization: Bearer $T" \\
+  -d '{"imageDigest":"lantern/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
+curl -XPUT "$BASE/v1/runtime/vms/$VM/files/content?path=sales.csv" -H "Authorization: Bearer $T" --data-binary @sales.csv
+curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \\
+  -d '{"command":"python","argv":["/opt/analyze.py","/workspace/sales.csv"]}'`}</code></pre>
+      <p>
+        Try it in CI form: <code>make test-e2e-analyst</code> runs <code>TestDataAnalystSandbox</code> against a stack that has
+        the scheduler and runtime manager running (it is not part of <code>make test-e2e-examples</code>). The default
+        tier uses the manager&apos;s <code>docker</code> backend with no network and a fixture model; the files API is
+        Firecracker-only, so there the CSV goes in through exec. The Firecracker tier (needs <code>/dev/kvm</code>) adds the
+        files-API upload and an audited egress deny.
       </p>
 
       <h2 id="eval-gated-deploy">Eval-gated deploy</h2>

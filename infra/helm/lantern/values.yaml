@@ -96,6 +96,9 @@ workflowEngine:
   env:
     LANTERN_ENV: "production"
     LANTERN_RLS_ENFORCE: ""
+    # Per-endpoint API-key scope enforcement (default off; see
+    # docs/runbooks/ga-staged-rollout.md). 403 on a missing scope when "1".
+    LANTERN_AUTHZ_ENFORCE: ""
   resources:
     requests:
       cpu: 200m

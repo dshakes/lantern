@@ -80,6 +80,10 @@ controlPlane:
     # --- RLS ---
     LANTERN_RLS_ENFORCE: "1"
     # LANTERN_APP_DB_PASSWORD comes from the secret, not from values.
+    # --- API-key scope enforcement ---
+    # A key missing the endpoint's scope gets 403. JWT sessions and unscoped
+    # (legacy) keys are unaffected. Re-scope keys first: ga-staged-rollout.md.
+    LANTERN_AUTHZ_ENFORCE: "1"
   # REQUIRED for a prod-class LANTERN_ENV (production) — the control-plane refuses
   # to start without these (runStartupGuards / grpcTLSCreds). Besides the
   # `secrets:` values listed at the top, supply per environment:

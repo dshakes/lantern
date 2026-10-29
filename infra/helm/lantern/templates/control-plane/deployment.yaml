@@ -98,6 +98,8 @@ spec:
               value: {{ .Values.controlPlane.env.LANTERN_ENV | default "production" | quote }}
             - name: LANTERN_RLS_ENFORCE
               value: {{ .Values.controlPlane.env.LANTERN_RLS_ENFORCE | default "" | quote }}
+            - name: LANTERN_AUTHZ_ENFORCE
+              value: {{ .Values.controlPlane.env.LANTERN_AUTHZ_ENFORCE | default "" | quote }}
             - name: LANTERN_APP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
