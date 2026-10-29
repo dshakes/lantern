@@ -1,0 +1,95 @@
+---
+import Page from '../../layouts/Page.astro';
+import { u, GH } from '../../data/site';
+// Facts ported unchanged from the former Next.js landing app's compare page (README "How Lantern compares").
+// ACE leads on the sandbox; the platform half is out of its scope.
+type Row = { row: string; cells: [string, string, string, string] };
+const SANDBOX: Row[] = [
+  { row: 'Hardware-isolated microVM per sandbox', cells: ['yes: Firecracker / Kata (needs KVM)', 'yes', 'yes', 'partial: gVisor or VM runtime'] },
+  { row: 'Platform runs the agent loop for you', cells: ['yes', 'partial: your harness (“each team writes and trusts its own harness”)', 'no: you host the loop', 'no: you host the loop'] },
+  { row: 'Credentials never enter the sandbox', cells: ['partial: injected headers only; opt-in broker mode, Firecracker', 'yes: by default', 'partial: header injection (beta)', 'partial: experimental'] },
+  { row: 'Egress allowlist enforced outside the guest', cells: ['partial: broker mode, opt-in', 'yes: by default', 'partial: CIDR + domain on HTTP/TLS, at E2B’s firewall', 'partial: CIDR; domain allowlist in beta'] },
+  { row: 'No network interface in the sandbox by default', cells: ['partial: broker mode only; guest mode attaches a TAP NIC', 'yes: by default', 'not documented', 'not documented'] },
+  { row: 'Data-loss-prevention policy on egress', cells: ['no', 'yes: per Google', 'not documented', 'not documented'] },
+  { row: 'Idle auto-suspend, resume on demand', cells: ['yes: Firecracker only, opt-in per VM', 'yes', 'yes: opt-in', 'partial'] },
+  { row: 'Snapshot and fork', cells: ['yes: Firecracker only; shared-memory fork', 'yes', 'yes', 'partial'] },
+  { row: 'Fork fan-out per call', cells: ['up to 1,000 (default 100); validated with 3 forks on Lima', 'thousands, memory-deduplicated (per Google)', 'up to 20', 'no fork'] },
+  { row: 'Hardware root of trust / attestation', cells: ['partial: measurement recorded, not verified', 'yes: Titan', 'no', 'no'] },
+  { row: 'Proven at scale', cells: ['Lima nested-KVM + CI only', 'The infrastructure behind Gemini’s agents (per Google)', 'Production', 'Production'] },
+];
+const PLATFORM: Row[] = [
+  { row: 'Durable agent runs with crash-resume', cells: ['yes', 'out of scope', 'no', 'no'] },
+  { row: 'Budgets enforced before the model call', cells: ['partial: cost, tokens and runs per day, tenant daily cost, per-run cap mid-workflow, per-tool limits in workflows; per-run cap on single-call runs not enforced; a mid-workflow breach fails the step', 'out of scope', 'no', 'partial'] },
+  { row: 'Multi-provider model routing with failover', cells: ['yes', 'out of scope', 'no', 'no'] },
+  { row: 'Signed, offline-verifiable run receipts', cells: ['partial: only with a signing key configured', 'out of scope', 'no', 'no'] },
+  { row: 'Self-host in your VPC or on-prem', cells: ['yes: Apache-2.0', 'no: Google Cloud only', 'partial', 'no'] },
+  { row: 'Availability', cells: ['Open source today', 'Preview “in the coming months”', 'Generally available', 'Generally available'] },
+];
+const COLS = ['PAL Runtime', 'Google Agent Compute Engine', 'E2B', 'Modal'];
+const SHORT = ['PAL Runtime', 'Google ACE', 'E2B', 'Modal'];
+const cell = (c: string) => {
+  for (const [k, icon, sr] of [['yes', '✓', 'Yes'], ['no', '✕', 'No'], ['partial', '–', 'Partly']] as const) {
+    if (c === k) return { k, icon, text: '', sr };
+    if (c.startsWith(`${k}: `)) return { k, icon, text: c.slice(k.length + 2), sr: `${sr}: ` };
+  }
+  return { k: 'note', icon: '', text: c, sr: '' };
+};
+const TABLES = [
+  { id: 'sandbox', title: 'The sandbox', rows: SANDBOX, intro: 'This is ACE’s whole product, and on isolation it is ahead of PAL Runtime by default: its sandbox never holds a credential and all egress leaves through a proxy on the host, backed by Google’s hardware root of trust. PAL Runtime comes closest only in its opt-in broker mode on Firecracker: injected credentials stay on the host, but vended secrets still enter the guest, there is no hardware root of trust, and it is validated on nested KVM, not at Google’s scale.' },
+  { id: 'platform', title: 'The platform around it', rows: PLATFORM, intro: 'These are agent-runtime features. ACE is a compute layer, so “out of scope” means it isn’t trying to do them, not that it fails at them; on Google Cloud they come from other products.' },
+];
+const PICKS = [
+  ['Google ACE', 'if you want a managed sandbox on Google Cloud with the strongest isolation defaults.'],
+  ['E2B or Modal', 'if you want hosted sandboxes today.'],
+  ['PAL Runtime', 'if you need to run agents in your own cloud or on-prem, with the sandbox, durable execution, spend limits and audit trail in one stack you control.'],
+];
+---
+<Page path="compare/" title="How PAL Runtime compares: Google ACE, E2B, Modal" description="Managed sandboxes versus a self-hosted agent runtime. On sandbox isolation Google Agent Compute Engine leads by default; PAL Runtime adds durable runs, budgets, routing and receipts, in your own cloud.">
+  <section class="hero" aria-labelledby="hero-h" style="padding-bottom:48px">
+    <div class="wrap">
+      <p class="eyebrow">Compare</p>
+      <h1 id="hero-h" class="display" style="font-size:clamp(2.25rem,5vw,3.75rem)">How PAL Runtime compares.</h1>
+      <p class="lede">Google Agent Compute Engine, E2B and Modal are managed sandboxes: compute you rent to run agent code. PAL Runtime is an open-source agent runtime you host yourself, and its sandbox is one part of it. So the comparison has two halves.</p>
+    </div>
+  </section>
+  {TABLES.map((t) => (
+    <section class="section rule" style="padding-top:56px;padding-bottom:56px" aria-labelledby={`cmp-${t.id}`}>
+      <div class="wrap">
+        <h2 id={`cmp-${t.id}`} class="h2" style="font-size:clamp(1.5rem,3vw,2rem)">{t.title}</h2>
+        <p class="body2" style="margin:12px 0 28px">{t.intro}</p>
+        <table class="cmp">
+          <caption class="sr-only">{t.title}: PAL Runtime, Google Agent Compute Engine, E2B and Modal</caption>
+          <thead><tr><th scope="col"><span class="sr-only">Capability</span></th>{COLS.map((c, i) => <th scope="col" class={i === 0 ? 'us' : undefined}>{c}</th>)}</tr></thead>
+          <tbody>
+            {t.rows.map((r) => (
+              <tr>
+                <th scope="row">{r.row}</th>
+                {r.cells.map((c, i) => { const x = cell(c); return (
+                  <td class={i === 0 ? 'us' : undefined} data-label={SHORT[i]}>
+                    <span class={`cell ${x.k}`}>{x.icon && <i aria-hidden="true">{x.icon}</i>}<span><span class="sr-only">{x.sr}</span>{x.text}</span></span>
+                  </td>
+                ); })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  ))}
+  <section class="section rule" aria-labelledby="pick-h">
+    <div class="wrap">
+      <h2 id="pick-h" class="h2" style="font-size:clamp(1.5rem,3vw,2rem)">When to pick which</h2>
+      <ul class="grid-3" style="margin-top:24px">
+        {PICKS.map(([who, when]) => <li class="card"><p><b style="color:var(--p-text)">Pick {who}</b> {when}</p></li>)}
+      </ul>
+      <p class="small" style="margin-top:32px;max-width:80ch">
+        Competitor columns reflect each vendor’s public docs and announcements as of 2026-10-28; the Google column follows Google’s
+        <a class="link" href="https://cloud.google.com/blog/topics/ai-infrastructure/agent-compute-engine-deep-dive">Agent Compute Engine deep dive</a> (Oct 22, 2026).
+        E2B: <a class="link" href="https://docs.e2b.dev/sandbox/internet-access">egress and secrets</a>, <a class="link" href="https://docs.e2b.dev/sandbox/auto-resume">auto-resume</a>, <a class="link" href="https://docs.e2b.dev/sandbox/fork">fork</a>.
+        Modal: <a class="link" href="https://modal.com/docs/guide/sandbox-networking">sandbox networking</a>, <a class="link" href="https://modal.com/docs/reference/modal.Sandbox">Sandbox reference</a>.
+        A cross means not offered or not announced; “not documented” means the docs we read don’t say. If a cell is out of date, <a class="link" href={`${GH}/issues`}>open an issue</a>.
+      </p>
+      <a class="arrow-link" style="margin-top:16px" href={u('runtime/')}>Back to PAL Runtime</a>
+    </div>
+  </section>
+</Page>

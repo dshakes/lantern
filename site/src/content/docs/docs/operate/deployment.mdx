@@ -1,0 +1,145 @@
+---
+title: Deployment
+description: Control plane and data plane topologies, the Helm chart, Terraform, namespace isolation and database migrations.
+sidebar:
+  order: 1
+---
+
+import Diagram from '../../../../components/Diagram.astro';
+
+import { Aside } from '@astrojs/starlight/components';
+
+PAL splits into a **control plane** (scheduling, routing, dashboard) and a **data plane** (microVMs, execution, secrets). The data plane runs in your cloud: agent data never leaves your VPC.
+
+The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/lantern/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
+
+## Architecture: the control plane / data plane split
+
+The full system: channels, gateways, control plane, then your data plane. The control plane never runs user code.
+
+What crosses the boundary: specs, identity and trace context go down; heartbeats, step events and audit come back. Token-authenticated (mTLS hardening planned). Prompts and data never leave your VPC.
+
+<Diagram name="your-cloud" />
+
+## Deployment options
+
+### Fully managed (not offered yet)
+
+Both planes hosted for you. This is the intended offering, not a shipped one: there is no managed cloud endpoint today, so you deploy the control plane yourself.
+
+### Hybrid (recommended for production)
+
+Control plane in one place (your own platform account, or hosted for you once that exists); data plane in each workload's cloud. Agent data stays in your VPC.
+
+1. Deploy the data plane Helm chart into your cluster (see below).
+2. Register via `POST /v1/data-planes` or **Settings > Data Planes**. This mints a one-time 32-byte bootstrap token. Store it immediately.
+3. The data plane dials **out** to `:50051` (gRPC), sends the bootstrap token via the `Register` RPC, and receives a short-lived session JWT (1 h TTL, auto-rotated via `RefreshToken`).
+4. The data plane opens a persistent `RunStream` bidi RPC. The control plane pushes run assignments; the agent reports status and completion back. Only run metadata crosses the boundary.
+
+#### Tunnel RPCs
+
+Defined in `packages/proto/lantern/v1/dataplane.proto`, served on the control plane's `:50051` listener.
+
+| RPC | Direction | Purpose |
+| --- | --- | --- |
+| `Register` | agent to CP | Exchange bootstrap token for session JWT |
+| `Heartbeat` | agent to CP | Liveness (every 30 s); learns drain orders |
+| `ReportMetrics` | agent to CP | CPU / memory / active-run pressure (every 60 s) |
+| `RefreshToken` | agent to CP | Rotate session JWT before 1 h expiry |
+| `RunStream` (bidi) | agent and CP | CP pushes assignments; agent reports accepted / completed |
+
+<Aside type="note" title="Per-tenant cap">
+Up to `LANTERN_DP_MAX_STREAMS_PER_TENANT` concurrent `RunStream` connections (default 10). Excess connections return gRPC `RESOURCE_EXHAUSTED`.
+</Aside>
+
+### Fully self-hosted
+
+Both planes in your infrastructure. Full control, full responsibility.
+
+<Aside type="caution" title="Operational overhead">
+You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity before choosing this path.
+</Aside>
+
+## Helm
+
+The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `LANTERN_ENV=production`, so the production startup guards are on.
+
+```bash
+helm install lantern ./infra/helm/lantern \
+  --namespace lantern --create-namespace \
+  --values infra/helm/lantern/values-prod.yaml
+```
+
+Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. There is no separate data-plane chart yet; for a data plane in another cloud, use the Terraform path below.
+
+### Production settings
+
+- **Autoscaling and disruption.** `<component>.autoscaling.enabled` adds a CPU-based HPA (needs metrics-server) for the control plane, gateway, model router, workflow engine and dashboard; `values-prod.yaml` turns it on. Components with more than one replica get a PodDisruptionBudget.
+- **NetworkPolicy.** `networkPolicy.enabled=true` denies all traffic in the release, then allows only the service-to-service flows the platform needs, DNS, and scrapes of `/metrics` from `networkPolicy.metricsFrom`. Only the control plane, model router, workflow engine, runtime scheduler, runtime manager, surface gateway and backup job may leave the cluster; use `networkPolicy.extraEgress` for managed Postgres or Redis on private IPs. Your CNI must enforce policy (Calico, Cilium).
+- **Secrets you must supply.** `secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, `schedulerNodeToken`, `appDbPassword`, and with managed stores `postgresPassword` and `minioPassword` (the S3 secret key). The control plane also refuses to start in production without its gRPC TLS cert and the runtime-manager mTLS client cert; the chart cannot create these, so mount them with `controlPlane.extraVolumes` and `extraEnv`.
+- **Backups.** `backup.enabled=true` adds a CronJob that writes a gzipped `pg_dump` to `s3://<backup.s3Bucket>/postgres/` and prunes dumps older than `backup.retentionDays`. Prove a dump restores with `scripts/db-restore-drill.sh <dump.sql.gz>`; see `docs/runbooks/db-restore.md`. This is a floor; managed Postgres with point-in-time recovery is the recommended production path.
+
+<Aside type="note" title="Limits">
+The scheduler's readiness probe uses `/healthz` by default because `/readyz` stays unready until a runtime-manager node registers.
+</Aside>
+
+### In-cluster dependencies (dev) versus managed (prod)
+
+PAL needs Postgres with the `pgvector` extension, an S3-compatible object store and Redis. The chart can run them for you, which is what you want on kind or a laptop, but production should use managed services.
+
+**Postgres**
+
+- Dev / kind / evaluation (default): `postgresql.enabled=true`: one `pgvector/pgvector` StatefulSet with a PVC. Password is `secrets.postgresPassword`.
+- Production (`values-prod.yaml`): `postgresql.enabled=false` and `externalDatabase.host` (plus `port`, `sslmode`). User and database names still come from `postgresql.auth`. Provision `pgvector` and the `lantern_app` role yourself.
+
+**Object store**
+
+- Dev / kind / evaluation (default): `minio.enabled=true`: one SeaweedFS StatefulSet with a PVC, one identity built from `minio.auth.rootUser` and `secrets.minioPassword`. Buckets in `minio.defaultBuckets` are created by a post-install Job.
+- Production: `minio.enabled=false` and `externalS3.endpoint`, `accessKeyId`, `bucket` and `region` (must match the bucket's region); the secret key is `secrets.minioPassword`.
+
+**Redis**
+
+- Dev: Bitnami subchart (`redis.enabled`).
+- Production: same subchart for now.
+
+With the in-cluster stores off, `helm template` fails unless `externalDatabase.host` and `externalS3.endpoint` are set, so a production install cannot silently fall back to a single-pod database.
+
+<Aside type="caution" title="Dev stores are not production storage">
+They are single replicas with no replication, point-in-time recovery or lifecycle rules. Image tags are pinned in `values.yaml` (`postgresql.image`, `minio.image`). Earlier versions of the chart used Bitnami subcharts for Postgres and MinIO; those crash-looped on the pgvector image and their MinIO images are no longer published. The new Postgres and object-store StatefulSets keep the old names but use different selectors, which Kubernetes will not patch in place: to move an existing release, take a dump (`docs/runbooks/db-restore.md`), uninstall, install, and restore.
+</Aside>
+
+## Terraform
+
+`lantern infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
+
+```bash
+lantern infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
+cd terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+## Namespace isolation
+
+Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This provides network isolation, per-tenant resource quotas, and separate service accounts and secrets.
+
+## Monitoring
+
+Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `LANTERN_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/lantern/docs/runtime/observability/) for details.
+
+<Aside type="caution">
+The [Operations](/lantern/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`LANTERN_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
+</Aside>
+
+## Database migrations
+
+The control plane manages its Postgres schema via **golang-migrate**. Migrations are embedded SQL shipped inside the binary.
+
+- **Fresh databases.** Migration `0001` creates the full schema on first boot.
+- **Existing databases.** `0001` is fully `IF NOT EXISTS`; running it records version 1 in `schema_migrations` with no DDL changes.
+- **New changes.** Sequential pairs (`0002_*.up.sql` / `0002_*.down.sql`). Down migrations are required after the baseline.
+
+<Aside type="note">
+Only the control plane runs migrations. Other services read and write tables but never apply schema changes.
+</Aside>

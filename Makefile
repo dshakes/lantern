@@ -117,11 +117,9 @@ regression: ## Run the full alpha-readiness regression test suite
 regression-quiet: ## Same but only print failures (good for cron)
 	@bash scripts/regression.sh --quiet
 
-landing-dev: ## Start the landing page in dev mode
-	cd apps/landing && npm run dev
+site-dev: ## Start the website (Astro + Starlight) in dev mode
+	cd site && npm run dev
 
-docs-dev: ## Start the docs site in dev mode
-	cd apps/docs && npm run dev
 
 deploy-local: ## Make the running LaunchAgents match origin/master and PROVE it (FORCE=1 restarts all)
 	@bash scripts/launchd/deploy-local.sh
@@ -159,8 +157,7 @@ build-rust: ## Build Rust services
 
 build-ts: ## Build TypeScript packages
 	cd packages/sdk-ts && npm run build
-	cd apps/landing && npm run build
-	cd apps/docs && npm run build
+	cd site && npm run build
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
@@ -169,8 +166,7 @@ docker-build: ## Build all Docker images
 	docker build -t lantern-model-router services/model-router
 	docker build -t lantern-workflow-engine services/workflow-engine
 	docker build -t lantern-web apps/web
-	docker build -t lantern-landing apps/landing
-
+	
 # ---------- Proto ----------
 
 proto: ## Regenerate code from proto definitions
@@ -289,7 +285,6 @@ fmt-rust: ## Format every Rust crate in place
 
 lint-ts: ## Lint TypeScript code
 	cd packages/sdk-ts && npm run lint
-	cd apps/landing && npm run typecheck
 	cd services/whatsapp-bridge && npm run typecheck
 	cd services/imessage-bridge && npm run typecheck
 

@@ -1,0 +1,404 @@
+---
+title: API reference
+description: REST endpoints served by the PAL control plane, with request and response shapes.
+sidebar:
+  order: 1
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The control plane serves REST on `:8080`. Every `/v1/` endpoint takes a Bearer token: a dashboard JWT or an API key.
+
+The dashboard, CLI and SDKs all call this API. Use this page to call it with `curl`. The [SDKs](/lantern/docs/reference/sdk/) wrap the same endpoints in typed methods. This page covers the core resources; the full route list is in `services/control-plane/cmd/server/main.go`.
+
+## Authentication
+
+Pass your API key in the `Authorization` header on every request:
+
+```text
+Authorization: Bearer hlx_live_your_api_key_here
+```
+
+Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Scope enforcement is off by default; set `LANTERN_AUTHZ_ENFORCE=1` and a key missing the required scope gets `403`.
+
+<Aside type="note" title="Self-hosted base URL">
+By default the control plane binds to `http://localhost:8080`. There is no managed cloud endpoint: you deploy the control plane yourself.
+</Aside>
+
+## Accounts
+
+Sign-up, login, email verification, password reset, data export and workspace deletion (`/auth/*` and `/v1/tenants/{id}`) are documented on [Accounts](/lantern/docs/build/accounts/).
+
+## Agents
+
+### List agents
+
+```text
+GET /v1/agents
+
+Response: 200 OK — bare array
+[
+  {
+    "name": "research-agent",
+    "currentVersionId": "v1",
+    "labels": {},
+    "createdAt": "2026-04-10T12:00:00Z"
+  }
+]
+```
+
+### Get agent
+
+```text
+GET /v1/agents/{name}
+
+Response: 200 OK
+{
+  "name": "research-agent",
+  "currentVersionId": "v1",
+  "manifest": {
+    "systemPrompt": "You are a research assistant...",
+    "model": "auto"
+  },
+  "labels": {},
+  "createdAt": "2026-04-10T12:00:00Z"
+}
+```
+
+### Create agent
+
+```text
+POST /v1/agents
+Content-Type: application/json
+
+{
+  "name": "my-agent",
+  "manifest": {
+    "systemPrompt": "You are a helpful assistant...",
+    "model": "auto"
+  }
+}
+
+Response: 201 Created
+{ "name": "my-agent" }
+```
+
+### Delete agent
+
+```text
+DELETE /v1/agents/{name}
+
+Response: 204 No Content
+
+PATCH  /v1/agents/{name}   — update
+```
+
+## Runs
+
+### Create a run
+
+```text
+POST /v1/runs
+Content-Type: application/json
+
+{
+  "agentName": "research-agent",
+  "input": { "topic": "quantum computing" }
+}
+
+Response: 201 Created
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "agentName": "research-agent",
+  "status": "queued",
+  "input": { "topic": "quantum computing" },
+  "createdAt": "2026-04-12T10:00:00Z"
+}
+```
+
+### Get run
+
+```text
+GET /v1/runs/{id}
+
+Response: 200 OK
+{
+  "id": "550e8400-...",
+  "agentName": "research-agent",
+  "status": "succeeded",
+  "input": { "topic": "quantum computing" },
+  "output": { "summary": "..." },
+  "tokensIn": 820,
+  "tokensOut": 2100,
+  "costUsd": 0.0042,
+  "createdAt": "2026-04-12T10:00:00Z",
+  "updatedAt": "2026-04-12T10:00:08Z"
+}
+```
+
+Run `status` values: `queued`, `running`, `succeeded`, `failed`, `waiting`, `cancelled`.
+
+### List runs
+
+```text
+GET /v1/runs?limit=20&agentName=research-agent
+
+Response: 200 OK — bare array
+[
+  { "id": "...", "agentName": "...", "status": "succeeded", ... }
+]
+```
+
+### Stream run events (SSE)
+
+```text
+GET /v1/runs/{id}/events
+Accept: text/event-stream
+
+Response: Server-Sent Events
+The event name is the journal kind; data is JSON.
+
+event: step_started
+data: {"seq":1,"kind":"step_started","stepId":"plan","runId":"550e...","at":"2026-04-12T10:00:01Z","payload":{}}
+
+event: step_completed
+data: {"seq":2,"kind":"step_completed","stepId":"plan","runId":"550e...","at":"2026-04-12T10:00:03Z","payload":{"output":"..."}}
+
+event: step_started
+data: {"seq":3,"kind":"step_started","stepId":"search-0","runId":"550e...","at":"2026-04-12T10:00:03Z","payload":{}}
+
+event: step_completed
+data: {"seq":4,"kind":"step_completed","stepId":"search-0","runId":"550e...","at":"2026-04-12T10:00:06Z","payload":{"output":"..."}}
+
+: heartbeat
+```
+
+Possible event kinds on a run stream:
+
+- `step_started`: a step began executing.
+- `step_completed`: a step finished with output.
+- `step_failed`: a step errored; payload has `error`.
+- `step_retrying`: transient failure, will retry.
+- `step_waiting`: waiting for human approval.
+- `confidence_evaluated`: confidence gate scored a step.
+- `anomaly_detected`: runtime anomaly reported by the harness.
+
+<Aside type="note">
+There are no `run_completed` or `token` events. The stream ends when the run reaches a terminal status (`succeeded`, `failed`, or `cancelled`). The final run state is on `GET /v1/runs/{id}`.
+</Aside>
+
+### Other run endpoints
+
+```text
+POST   /v1/runs/{id}/cancel     — cancel a run
+DELETE /v1/runs/{id}            — delete a run
+POST   /v1/runs/{id}/receipt    — issue a signed receipt
+POST   /v1/runs/{id}/feedback   — score 1-5, optional comment
+```
+
+### Forecast cost before running
+
+```text
+POST /v1/runs/forecast
+Content-Type: application/json
+
+{ "agentName": "research-agent", "input": { "topic": "..." } }
+
+Response: 200 OK
+{
+  "estimatedTokensIn": 800,
+  "estimatedTokensOut": 2000,
+  "estimatedCostUsd": 0.004,
+  "confidence": 0.82,
+  "wouldExceedBudget": false
+}
+```
+
+## Sessions
+
+Sessions are interactive multi-turn conversations. Send messages and stream the reply as it generates.
+
+### Create session
+
+```text
+POST /v1/sessions
+Content-Type: application/json
+
+{ "agentName": "my-agent" }
+
+Response: 201 Created
+{ "id": "sess-uuid", "agentName": "my-agent", "status": "active", "createdAt": "..." }
+```
+
+### Send a message
+
+```text
+POST /v1/sessions/{id}/messages
+Content-Type: application/json
+
+{ "content": "What is the capital of France?" }
+
+Response: 200 OK
+{ "turnId": "turn-uuid", "text": "Paris.", "tokensIn": 12, "tokensOut": 4, "costUsd": 0.00001 }
+```
+
+### Stream session events
+
+```text
+GET /v1/sessions/{id}/events
+Accept: text/event-stream
+
+event: message_delta
+data: {"sessionId":"...","turnId":"...","seq":1,"delta":"Par"}
+
+event: message_delta
+data: {"sessionId":"...","turnId":"...","seq":2,"delta":"is."}
+
+event: message_completed
+data: {"turnId":"...","text":"Paris.","usage":{"tokensIn":12,"tokensOut":4,"costUsd":0.00001}}
+
+A failed turn emits message_error.
+```
+
+### Other session endpoints
+
+```text
+GET    /v1/sessions         — list (bare array)
+GET    /v1/sessions/{id}    — get
+POST   /v1/sessions/{id}/stop  — stop a running session
+DELETE /v1/sessions/{id}   — delete session
+```
+
+## Connectors
+
+### Install a connector
+
+```text
+POST /v1/connectors/install
+Content-Type: application/json
+
+{
+  "connectorId": "gmail",
+  "config": { "userEmail": "you@example.com" }
+}
+
+Response: 201 Created
+{ "connectorId": "gmail", "status": "installed" }
+```
+
+### List connectors
+
+```text
+GET /v1/connectors
+
+Response: 200 OK — bare array
+[
+  { "connectorId": "gmail", "status": "installed", "installedAt": "..." }
+]
+```
+
+### Execute a connector action
+
+```text
+POST /v1/connectors/{connectorId}/execute?action=send_email
+Content-Type: application/json
+
+{ "to": "friend@example.com", "subject": "Hello", "body": "..." }
+
+Response: 200 OK
+{ "result": { "messageId": "..." } }
+```
+
+### Other connector endpoints
+
+```text
+POST   /v1/connectors/{id}/test    — test connection
+DELETE /v1/connectors/{id}         — uninstall
+```
+
+## Schedules
+
+Schedules trigger agent runs on a cron expression. They are a separate resource from agents: one agent can have multiple schedules.
+
+### Create schedule
+
+```text
+POST /v1/schedules
+Content-Type: application/json
+
+{
+  "agentName": "research-agent",
+  "cronExpr": "0 9 * * 1-5",
+  "timezone": "America/New_York",
+  "config": { "input": { "mode": "daily-digest" } },
+  "enabled": true
+}
+
+Response: 201 Created
+{ "id": "sched-uuid", "agentName": "research-agent", "cronExpr": "0 9 * * 1-5", ... }
+```
+
+### Other schedule endpoints
+
+```text
+GET    /v1/schedules             — list (bare array)
+PUT    /v1/schedules/{id}        — update
+DELETE /v1/schedules/{id}        — delete
+```
+
+<Aside type="note" title="Timezone">
+`cronExpr` fires in the schedule's `timezone` (IANA, for example `America/New_York`). Omit for UTC. The deployment-wide default is `LANTERN_DEFAULT_TIMEZONE`; per-schedule timezone overrides it.
+</Aside>
+
+## Triggers
+
+Inbound webhook triggers start a run of one agent when GitHub, Sentry, PagerDuty or a signed generic sender posts to a public URL. Setup, signatures and status codes are on [Webhook triggers](/lantern/docs/build/triggers/).
+
+```text
+POST   /v1/agents/{name}/triggers   — create {provider, secret?, inputTemplate?}; 201, secret shown once
+GET    /v1/agents/{name}/triggers   — list (bare array, no secrets)
+GET    /v1/triggers/{id}            — get
+PATCH  /v1/triggers/{id}            — {enabled?, secret?, inputTemplate?}
+DELETE /v1/triggers/{id}            — 204
+POST   /v1/hooks/{id}               — public receiver, authenticated by HMAC signature, not a token
+```
+
+## LLM providers
+
+```text
+POST /v1/settings/llm-providers
+Content-Type: application/json
+
+{ "provider": "anthropic", "apiKey": "sk-ant-..." }
+
+Response: 200 OK
+{ "provider": "anthropic", "configured": true }
+
+GET  /v1/settings/llm-providers           — list configured providers (bare array)
+POST /v1/settings/llm-providers/{provider}/test  — test the key
+```
+
+## Errors
+
+Errors use a flat JSON body:
+
+```json
+// Most errors
+{ "error": "agent 'my-agent' not found" }
+
+// Validation errors (may include field detail)
+{ "error": "missing required field: agentName" }
+```
+
+Common HTTP status codes:
+
+- `400`: bad request or validation failure.
+- `401`: missing or invalid API key.
+- `403`: insufficient scope or cross-tenant access.
+- `404`: resource not found.
+- `402`: budget exceeded (hard-fail policy).
+- `500`: internal error.
+
+<Aside type="note">
+There are no rate-limit tiers or `X-RateLimit` headers. Spend and run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see [Budgets](/lantern/docs/build/budgets/).
+</Aside>

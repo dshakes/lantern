@@ -1,0 +1,117 @@
+---
+title: Headless agent quickstart
+description: Write your first agent.yaml, pick an isolation class, run it, watch it, and terminate it, in about 15 minutes.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Write your first `agent.yaml`, pick an isolation class, run it, watch its logs, traces and cost, then terminate it. The four worked demos in `examples/headless-agents/` are the reference; this page builds the smallest one from scratch.
+
+"Headless" means no conversation: the agent is a background worker, not a chatbot. You package your code as a container image, describe it in a short `agent.yaml` (what to run, how much CPU and memory, how strong a sandbox, which sites it may reach) and hand it to PAL Runtime. It finds a machine, builds the sandbox, runs it, streams the logs and cleans up.
+
+<Aside>
+The CLI and packages are still named `lantern` while the rename lands.
+</Aside>
+
+## Prerequisites
+
+Have the runtime services running. From the repo root, in separate terminals:
+
+```bash
+make dev-infra            # Postgres + Redis + MinIO
+make run-runtime-manager  # runtime-manager on :50054
+make run-scheduler        # scheduler on :50055 / :8085
+make run-api-runtime      # control-plane wired to the scheduler, :8080
+```
+
+Docker on the host is enough for the `trusted` and `standard` classes. You also need an API token exported as `LANTERN_API_TOKEN` for the REST calls below.
+
+## 1. Write the spec
+
+An `agent.yaml` declares the image, the isolation class, limits, and any egress or secrets. This is the minimal one: a first-party script that only writes to stdout, so it picks `trusted` and asks for no network.
+
+```yaml
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+metadata:
+  name: hello
+  labels:
+    owner: lantern-team
+spec:
+  image_digest: lantern/demos/hello@sha256:0000...0001
+  isolation: trusted        # first-party, no package loading
+  limits:
+    vcpu: "100m"            # 0.1 vCPU
+    memory: "64Mi"
+    timeout: 30s
+    scratch_size: "16Mi"
+  network: none             # stdout only, no egress
+  secrets: []
+  egress_rules: []
+  idempotent: true
+```
+
+`image_digest` is pinned by digest, not a tag, so the runtime runs exactly the bytes you signed. Choosing the isolation class is the decision that matters most; the [isolation classes guide](/lantern/docs/runtime/isolation/) is the decision tree.
+
+## 2. Pick the isolation class
+
+Rule of thumb:
+
+- First-party signed code: `trusted`.
+- Your own code, the default: `standard`.
+- Loads internet packages or drives a browser: `untrusted`.
+- Adversarial input: `hostile`.
+
+Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beautifulsoup4` from PyPI. The full tree is in [Isolation classes](/lantern/docs/runtime/isolation/).
+
+## 3. Run it
+
+The CLI schedules the spec:
+
+```bash
+lantern run examples/headless-agents/01-hello/agent.yaml \
+  --input '{"name": "Ada"}'
+```
+
+The CLI posts the parsed spec to `POST /v1/runtime/schedule`. Add `--follow` to stream logs after scheduling.
+
+The response carries a `vm_id`. If you are over your per-tenant quota the call returns HTTP 402 instead of scheduling.
+
+## 4. Watch logs, traces and cost
+
+Stream the harness log lines over SSE:
+
+```bash
+curl -N http://localhost:8080/v1/runtime/vms/<vm_id>/logs \
+  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+```
+
+Inspect the instance and its recent audit events:
+
+```bash
+curl http://localhost:8080/v1/runtime/vms/<vm_id> \
+  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+```
+
+Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/lantern/docs/runtime/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
+
+## 5. Terminate
+
+A clean-exiting workload is torn down automatically. To drain and stop one early:
+
+```bash
+curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vm_id>?grace=30s" \
+  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+```
+
+The instance drains for the grace period, the manager tears down the pod, and the scheduler marks its state terminated.
+
+## What's next
+
+- [Isolation classes](/lantern/docs/runtime/isolation/): pick the right boundary for the workload.
+- [Durable execution](/lantern/docs/runtime/durable-execution/): what happens when a node dies mid-run.
+- [Identity and secrets](/lantern/docs/runtime/identity/): vend a real secret into the workload (demo 02).
+- `examples/data-analyst`: upload a CSV, run pandas in the sandbox, egress denied by default (docker tier in CI, Firecracker nightly).
+- [Observability](/lantern/docs/runtime/observability/): wire an OTel collector and read the trace.

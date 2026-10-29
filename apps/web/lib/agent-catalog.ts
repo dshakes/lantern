@@ -1,4 +1,4 @@
-// Agent catalog for the personal suite — verbatim data from apps/docs personal page.
+// Agent catalog for the personal suite — verbatim data from the former docs app's personal page (now site/).
 // Used by the agent detail page to render the loop diagram + metadata for known agents.
 // For user-created agents not in this map, the detail page renders nothing extra.
 
