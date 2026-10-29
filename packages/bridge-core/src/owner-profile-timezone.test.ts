@@ -73,15 +73,15 @@ test("store.timezone() exposes the parsed zone", () => {
 test("store mirrors profile timezone into LANTERN_OWNER_TIMEZONE when env unset", () => {
   // NOTE: OWNER_TZ_ENV_EXPLICIT is captured at module import; this process
   // imported with the env unset, so the mirror path is active here.
-  const before = process.env.LANTERN_OWNER_TIMEZONE;
-  delete process.env.LANTERN_OWNER_TIMEZONE;
+  const before = process.env.PAL_OWNER_TIMEZONE;
+  delete process.env.PAL_OWNER_TIMEZONE;
   try {
     const path = writeProfile("# Owner profile\n## My world\n- Chantilly, VA /EST\n");
     const store = new OwnerProfileStore(logger, path);
     store.get(); // triggers parse + mirror
-    assert.equal(process.env.LANTERN_OWNER_TIMEZONE, "America/New_York");
+    assert.equal(process.env.PAL_OWNER_TIMEZONE, "America/New_York");
   } finally {
-    if (before === undefined) delete process.env.LANTERN_OWNER_TIMEZONE;
-    else process.env.LANTERN_OWNER_TIMEZONE = before;
+    if (before === undefined) delete process.env.PAL_OWNER_TIMEZONE;
+    else process.env.PAL_OWNER_TIMEZONE = before;
   }
 });

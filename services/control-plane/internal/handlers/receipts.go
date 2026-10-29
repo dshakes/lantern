@@ -129,7 +129,7 @@ func loadEd25519Key(log *zap.Logger) ed25519State {
 		log = zap.NewNop()
 	}
 	ed25519Once.Do(func() {
-		raw := os.Getenv("LANTERN_RECEIPT_ED25519_SEED")
+		raw := os.Getenv("PAL_RECEIPT_ED25519_SEED")
 		if raw == "" {
 			log.Info("receipts: Ed25519 key not configured — using HMAC-SHA256 fallback",
 				zap.String("env", "LANTERN_RECEIPT_ED25519_SEED"))
@@ -628,7 +628,7 @@ func signPayload(p receiptPayload) string {
 // verification works without configuration. In prod the secret must be set
 // explicitly; main.go enforces this at startup before any traffic is served.
 func getReceiptSecret() string {
-	if v := os.Getenv("LANTERN_RECEIPT_SECRET"); v != "" {
+	if v := os.Getenv("PAL_RECEIPT_SECRET"); v != "" {
 		return v
 	}
 	return devReceiptSecret

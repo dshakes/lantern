@@ -38,6 +38,7 @@ import type {
   RuntimeVm,
 } from "./types.js";
 import { isNetworkError, withRetry } from "./retry.js";
+import { palEnv } from "./env.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas for session streaming events (untrusted SSE data)
@@ -82,8 +83,8 @@ export class LanternClient {
   private readonly apiKey: string;
 
   constructor(config: LanternClientConfig = {}) {
-    this.baseUrl = config.baseUrl ?? config.baseURL ?? process.env.LANTERN_API_URL ?? "https://api.lantern.run";
-    this.apiKey = config.apiKey ?? process.env.LANTERN_API_KEY ?? "";
+    this.baseUrl = config.baseUrl ?? config.baseURL ?? palEnv("API_URL") ?? "https://api.lantern.run";
+    this.apiKey = config.apiKey ?? palEnv("API_KEY") ?? "";
   }
 
   private headers(): Record<string, string> {

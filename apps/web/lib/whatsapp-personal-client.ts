@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 const API_BASE =
   (typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080")
-    : (process.env.LANTERN_API_URL ?? "http://localhost:8080"));
+    : ((process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ?? "http://localhost:8080"));
 
 function authHeaders(): HeadersInit {
   const token = api.token ?? api.restoreToken();

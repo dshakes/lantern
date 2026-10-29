@@ -1,3 +1,5 @@
+# Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
+# LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
 # Kiosk / demo overlay (ADR 0029). Use via `lantern demo` or `make demo`:
 #   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml up
 #
@@ -55,16 +57,16 @@ services:
       - "${KIOSK_API_PORT:-8080}:8080"
     environment:
       JWT_SECRET: *kiosk-jwt
-      LANTERN_KIOSK: "1"
-      LANTERN_RLS_ENFORCE: "1"
-      LANTERN_AUTHZ_ENFORCE: "1"
-      LANTERN_APP_DB_PASSWORD: kiosk-app-role-local-only
-      LANTERN_SIGNUP_MODE: closed
-      LANTERN_MAILER: log
-      LANTERN_CORS_ORIGINS: http://localhost:${KIOSK_WEB_PORT:-3001}
-      LANTERN_KIOSK_IP_PER_HOUR: "60" # a booth is one machine; raise/lower per venue
-      LANTERN_LLM_BASEURL_OPENAI: http://llm-replay:9090
-      LANTERN_LLM_BASEURL_ANTHROPIC: http://llm-replay:9090
+      PAL_KIOSK: "1"
+      PAL_RLS_ENFORCE: "1"
+      PAL_AUTHZ_ENFORCE: "1"
+      PAL_APP_DB_PASSWORD: kiosk-app-role-local-only
+      PAL_SIGNUP_MODE: closed
+      PAL_MAILER: log
+      PAL_CORS_ORIGINS: http://localhost:${KIOSK_WEB_PORT:-3001}
+      PAL_KIOSK_IP_PER_HOUR: "60" # a booth is one machine; raise/lower per venue
+      PAL_LLM_BASEURL_OPENAI: http://llm-replay:9090
+      PAL_LLM_BASEURL_ANTHROPIC: http://llm-replay:9090
       OPENAI_API_KEY: kiosk-replay-placeholder
       ANTHROPIC_API_KEY: kiosk-replay-placeholder
     # No MinIO: the demo stores no files, and MinIO's Docker Hub images are no

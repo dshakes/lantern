@@ -23,7 +23,7 @@ test("defaults to AUTO-detect + Telugu prompt when no env + no nativity", () => 
   // Out of the box we must NOT force `language=te` (Whisper 400s on it).
   // Auto-detect (iso="") + a Telugu-script prompt biases the decoder
   // without risking an unsupported_language rejection.
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "", "must auto-detect, not force an unsupported ISO");
   assert.equal(h.lang, "telugu");
@@ -31,39 +31,39 @@ test("defaults to AUTO-detect + Telugu prompt when no env + no nativity", () => 
 });
 
 test("LANTERN_VOICE_LANG ISO code wins", () => {
-  process.env.LANTERN_VOICE_LANG = "hi";
+  process.env.PAL_VOICE_LANG = "hi";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "hi");
   assert.equal(h.lang, "hindi");
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
 });
 
 test("LANTERN_VOICE_LANG language name wins (case-insensitive)", () => {
-  process.env.LANTERN_VOICE_LANG = "Tamil";
+  process.env.PAL_VOICE_LANG = "Tamil";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "ta");
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
 });
 
 test('LANTERN_VOICE_LANG="auto" disables biasing', () => {
-  process.env.LANTERN_VOICE_LANG = "auto";
+  process.env.PAL_VOICE_LANG = "auto";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "");
   assert.equal(h.prompt, "");
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
 });
 
 test("empty env falls through to the default (auto-detect + Telugu prompt)", () => {
-  process.env.LANTERN_VOICE_LANG = "";
+  process.env.PAL_VOICE_LANG = "";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "");
   assert.equal(h.lang, "telugu");
   assert.ok(h.prompt.length > 0);
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
 });
 
 test("owner nativity drives the prompt (auto-detect iso) when env is unset", () => {
-  delete process.env.LANTERN_VOICE_LANG;
+  delete process.env.PAL_VOICE_LANG;
   const h = voiceTranscriptionLangHint({ nativity: "Mumbai — Marathi & Hindi" });
   // First known language name in the nativity line wins for the prompt/lang;
   // iso stays auto-detect (no forced, possibly-unsupported, language).

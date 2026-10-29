@@ -60,7 +60,7 @@ func introspectRequest(token, rawKey string) *http.Request {
 }
 
 func TestIntrospectKey_ValidTokenValidKey(t *testing.T) {
-	t.Setenv("LANTERN_GRPC_SERVICE_TOKEN", "s3cret")
+	t.Setenv("PAL_GRPC_SERVICE_TOKEN", "s3cret")
 	h := newAuthTestHandler(t)
 	rawKey := seedAPIKey(t, h, []string{"runs:read", "runs:write"})
 
@@ -86,7 +86,7 @@ func TestIntrospectKey_ValidTokenValidKey(t *testing.T) {
 }
 
 func TestIntrospectKey_BadServiceToken(t *testing.T) {
-	t.Setenv("LANTERN_GRPC_SERVICE_TOKEN", "s3cret")
+	t.Setenv("PAL_GRPC_SERVICE_TOKEN", "s3cret")
 	h := newAuthTestHandler(t)
 	rawKey := seedAPIKey(t, h, []string{})
 
@@ -99,8 +99,8 @@ func TestIntrospectKey_BadServiceToken(t *testing.T) {
 }
 
 func TestIntrospectKey_UnsetTokenInProdFailsClosed(t *testing.T) {
-	t.Setenv("LANTERN_GRPC_SERVICE_TOKEN", "")
-	t.Setenv("LANTERN_ENV", "production")
+	t.Setenv("PAL_GRPC_SERVICE_TOKEN", "")
+	t.Setenv("PAL_ENV", "production")
 	h := newAuthTestHandler(t)
 
 	rr := httptest.NewRecorder()
@@ -112,7 +112,7 @@ func TestIntrospectKey_UnsetTokenInProdFailsClosed(t *testing.T) {
 }
 
 func TestIntrospectKey_ValidTokenUnknownKey(t *testing.T) {
-	t.Setenv("LANTERN_GRPC_SERVICE_TOKEN", "s3cret")
+	t.Setenv("PAL_GRPC_SERVICE_TOKEN", "s3cret")
 	h := newAuthTestHandler(t)
 
 	rr := httptest.NewRecorder()

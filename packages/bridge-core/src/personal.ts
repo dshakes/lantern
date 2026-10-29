@@ -75,8 +75,8 @@ export class PersonalClient {
     this.logger = logger.child({ component: "personal" });
     this.tenantId =
       tenantId ||
-      process.env.LANTERN_TENANT_ID ||
-      process.env.LANTERN_DEFAULT_TENANT_ID ||
+      process.env.PAL_TENANT_ID ||
+      process.env.PAL_DEFAULT_TENANT_ID ||
       "00000000-0000-0000-0000-000000000001";
   }
 
@@ -462,13 +462,13 @@ export class PersonalClient {
     const channelLabel = opts.channel === "imessage" ? "iMessage" : "WhatsApp";
     const dashboardUrl =
       opts.dashboardUrl ||
-      process.env.LANTERN_DASHBOARD_URL ||
+      process.env.PAL_DASHBOARD_URL ||
       "http://localhost:3001";
     const draftsUrl = `${dashboardUrl.replace(/\/$/, "")}/personal/drafts`;
 
     // (1) Email — only if LANTERN_OWNER_EMAIL is set. Body has the
     // inbound + draft + a tap-target link to the dashboard.
-    const ownerEmail = process.env.LANTERN_OWNER_EMAIL;
+    const ownerEmail = process.env.PAL_OWNER_EMAIL;
     if (ownerEmail) {
       const subject = `Lantern VIP draft: ${senderLabel}`;
       const body = [
@@ -511,8 +511,8 @@ export class PersonalClient {
     // silently skip — email + dashboard are the primary channels.
     const otherChannel = opts.channel === "whatsapp" ? "imessage" : "whatsapp";
     const otherBridgeUrl = otherChannel === "whatsapp"
-      ? (process.env.LANTERN_BRIDGE_URL || "http://localhost:3100")
-      : (process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200");
+      ? (process.env.PAL_BRIDGE_URL || "http://localhost:3100")
+      : (process.env.PAL_IMESSAGE_BRIDGE_URL || "http://localhost:3200");
     const tenantId = this.tenantId;
     const crossText = [
       `📨 VIP draft from ${senderLabel} (on ${channelLabel})`,

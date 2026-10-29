@@ -32,7 +32,7 @@ var (
 )
 
 func webSearchModel() string {
-	if m := os.Getenv("LANTERN_WEBSEARCH_MODEL"); m != "" {
+	if m := os.Getenv("PAL_WEBSEARCH_MODEL"); m != "" {
 		return m
 	}
 	// Cheapest CURRENT model documented to support the web_search_20260209
@@ -43,7 +43,7 @@ func webSearchModel() string {
 }
 
 func webSearchOpenAIModel() string {
-	if m := os.Getenv("LANTERN_WEBSEARCH_OPENAI_MODEL"); m != "" {
+	if m := os.Getenv("PAL_WEBSEARCH_OPENAI_MODEL"); m != "" {
 		return m
 	}
 	// Cheapest OpenAI model that supports web_search_options.

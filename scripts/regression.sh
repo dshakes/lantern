@@ -20,12 +20,12 @@
 
 set -u
 
-API_URL="${LANTERN_API_URL:-http://localhost:8080}"
-WA_URL="${LANTERN_BRIDGE_URL:-http://localhost:3100}"
-IM_URL="${LANTERN_IMESSAGE_BRIDGE_URL:-http://localhost:3200}"
-TENANT="${LANTERN_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-000000000001}"
-EMAIL="${LANTERN_BRIDGE_EMAIL:-admin@lantern.dev}"
-PASSWORD="${LANTERN_BRIDGE_PASSWORD:-lantern}"
+API_URL="${PAL_API_URL:-${LANTERN_API_URL:-http://localhost:8080}}"
+WA_URL="${PAL_BRIDGE_URL:-${LANTERN_BRIDGE_URL:-http://localhost:3100}}"
+IM_URL="${PAL_IMESSAGE_BRIDGE_URL:-${LANTERN_IMESSAGE_BRIDGE_URL:-http://localhost:3200}}"
+TENANT="${PAL_DEFAULT_TENANT_ID:-${LANTERN_DEFAULT_TENANT_ID:-00000000-0000-0000-0000-000000000001}}"
+EMAIL="${PAL_BRIDGE_EMAIL:-${LANTERN_BRIDGE_EMAIL:-admin@lantern.dev}}"
+PASSWORD="${PAL_BRIDGE_PASSWORD:-${LANTERN_BRIDGE_PASSWORD:-lantern}}"
 
 QUIET=0
 SKIP_EMAIL=0
@@ -146,7 +146,7 @@ fi
 # ---- 8. email mirror ---------------------------------------------------
 log "[8/8] email mirror (skip with --skip-email)"
 if [[ $SKIP_EMAIL -eq 0 && -n "$TOKEN" ]]; then
-  OWNER_EMAIL="${LANTERN_OWNER_EMAIL:-}"
+  OWNER_EMAIL="${PAL_OWNER_EMAIL:-${LANTERN_OWNER_EMAIL:-}}"
   if [[ -z "$OWNER_EMAIL" ]]; then
     log "  (skipped — LANTERN_OWNER_EMAIL not set)"
   else

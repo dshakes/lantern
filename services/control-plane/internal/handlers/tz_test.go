@@ -7,7 +7,7 @@ import (
 
 func TestUsageDate(t *testing.T) {
 	t.Run("UTC default — midnight UTC returns UTC date", func(t *testing.T) {
-		t.Setenv("LANTERN_DEFAULT_TIMEZONE", "")
+		t.Setenv("PAL_DEFAULT_TIMEZONE", "")
 		// 2024-06-10 23:00 UTC
 		ts := time.Date(2024, time.June, 10, 23, 0, 0, 0, time.UTC)
 		got := usageDate(ts)
@@ -18,7 +18,7 @@ func TestUsageDate(t *testing.T) {
 
 	t.Run("deployment timezone shifts bucket boundary", func(t *testing.T) {
 		// Set deployment tz to America/Los_Angeles (UTC−7 in PDT).
-		t.Setenv("LANTERN_DEFAULT_TIMEZONE", "America/Los_Angeles")
+		t.Setenv("PAL_DEFAULT_TIMEZONE", "America/Los_Angeles")
 		// 2024-06-10 23:00 UTC = 2024-06-10 16:00 PDT → still June 10.
 		ts := time.Date(2024, time.June, 10, 23, 0, 0, 0, time.UTC)
 		got := usageDate(ts)

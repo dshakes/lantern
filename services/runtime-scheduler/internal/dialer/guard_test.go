@@ -13,7 +13,7 @@ import (
 // ---------- IsProd ----------
 
 func TestIsProd_UnsetIsNotProd(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	if IsProd() {
 		t.Error("expected IsProd()=false when LANTERN_ENV is unset")
 	}
@@ -23,7 +23,7 @@ func TestIsProd_ProdValues(t *testing.T) {
 	cases := []string{"prod", "PROD", "production", "Production", "PRODUCTION", "staging", "STAGING"}
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", v)
+			t.Setenv("PAL_ENV", v)
 			if !IsProd() {
 				t.Errorf("expected IsProd()=true for LANTERN_ENV=%q", v)
 			}
@@ -35,7 +35,7 @@ func TestIsProd_DevValues(t *testing.T) {
 	cases := []string{"dev", "development", "test", "local", ""}
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
-			t.Setenv("LANTERN_ENV", v)
+			t.Setenv("PAL_ENV", v)
 			if IsProd() {
 				t.Errorf("expected IsProd()=false for LANTERN_ENV=%q", v)
 			}
@@ -104,9 +104,9 @@ func TestCheckManagerDialer_DevSet_OK(t *testing.T) {
 // TestCheckManagerDialer_ViaEnv_ProdFatal wires the guard through the real env
 // vars, matching the call site in cmd/scheduler/main.go.
 func TestCheckManagerDialer_ViaEnv_ProdFatal(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "prod")
-	t.Setenv("LANTERN_DEFAULT_MANAGER_ADDR", "")
-	t.Setenv("LANTERN_DIALER", "")
+	t.Setenv("PAL_ENV", "prod")
+	t.Setenv("PAL_DEFAULT_MANAGER_ADDR", "")
+	t.Setenv("PAL_DIALER", "")
 
 	fatal, msg := CheckManagerDialer(IsProd(), "", "")
 	if !fatal {
@@ -115,9 +115,9 @@ func TestCheckManagerDialer_ViaEnv_ProdFatal(t *testing.T) {
 }
 
 func TestCheckManagerDialer_ViaEnv_DevSafe(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "")
-	t.Setenv("LANTERN_DEFAULT_MANAGER_ADDR", "")
-	t.Setenv("LANTERN_DIALER", "")
+	t.Setenv("PAL_ENV", "")
+	t.Setenv("PAL_DEFAULT_MANAGER_ADDR", "")
+	t.Setenv("PAL_DIALER", "")
 
 	fatal, _ := CheckManagerDialer(IsProd(), "", "")
 	if fatal {
@@ -126,9 +126,9 @@ func TestCheckManagerDialer_ViaEnv_DevSafe(t *testing.T) {
 }
 
 func TestCheckManagerDialer_ViaEnv_ProdStubFatal(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "production")
-	t.Setenv("LANTERN_DEFAULT_MANAGER_ADDR", "manager:50054")
-	t.Setenv("LANTERN_DIALER", "stub")
+	t.Setenv("PAL_ENV", "production")
+	t.Setenv("PAL_DEFAULT_MANAGER_ADDR", "manager:50054")
+	t.Setenv("PAL_DIALER", "stub")
 
 	fatal, msg := CheckManagerDialer(IsProd(), "manager:50054", "stub")
 	if !fatal {

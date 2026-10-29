@@ -107,7 +107,7 @@ const smsInboundPerMinute = 20
 // llm is used for completion calls; pool for direct connector lookups.
 func NewSMSHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHandler) *SMSHandler {
 	ttl := 12 * time.Hour
-	if v := strings.TrimSpace(os.Getenv("LANTERN_OWNER_VERIFY_TTL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PAL_OWNER_VERIFY_TTL")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			ttl = d
 		}
@@ -116,9 +116,9 @@ func NewSMSHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHandler)
 		logger:        logger.Named("sms"),
 		pool:          pool,
 		llm:           llm,
-		defaultTenant: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
-		twilioAuthOff: strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off",
-		ownerPIN:      strings.TrimSpace(os.Getenv("LANTERN_OWNER_VERIFY_PIN")),
+		defaultTenant: getEnvOr("PAL_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		twilioAuthOff: strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off",
+		ownerPIN:      strings.TrimSpace(os.Getenv("PAL_OWNER_VERIFY_PIN")),
 		verifyTTL:     ttl,
 	}
 	if h.ownerPIN == "" {
@@ -218,7 +218,7 @@ func (h *SMSHandler) SMSWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Owner-only gate.
-	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	ownerPhone := strings.TrimSpace(os.Getenv("PAL_OWNER_PHONE"))
 	if normalizePhone(from) != normalizePhone(ownerPhone) {
 		h.logger.Warn("SMS from non-owner — silent drop",
 			zap.String("from", maskPhone(from)))
@@ -317,7 +317,7 @@ func (h *SMSHandler) VoiceWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from := r.Form.Get("From")
-	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	ownerPhone := strings.TrimSpace(os.Getenv("PAL_OWNER_PHONE"))
 	if normalizePhone(from) != normalizePhone(ownerPhone) {
 		// Non-owner calls get a polite "wrong number" + hang up.
 		writeTwiML(w, `<Say voice="Polly.Joanna">Sorry, you've reached a private line. Goodbye.</Say><Hangup/>`)
@@ -371,7 +371,7 @@ func (h *SMSHandler) VoiceTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from := r.Form.Get("From")
-	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	ownerPhone := strings.TrimSpace(os.Getenv("PAL_OWNER_PHONE"))
 	if normalizePhone(from) != normalizePhone(ownerPhone) {
 		writeTwiML(w, "<Hangup/>")
 		return
@@ -442,7 +442,7 @@ func (h *SMSHandler) VoiceTurn(w http.ResponseWriter, r *http.Request) {
 // askOwnerAgent runs the LLM with the owner-agent persona. Uses the
 // LLM proxy's internal completions method — no HTTP, no JWT.
 func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string, error) {
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
+	ownerName := getEnvOr("PAL_OWNER_NAME", "Ada")
 	system := strings.Join([]string{
 		"You are " + ownerName + "'s private agent, reached via his Twilio number.",
 		"This is HIS personal command channel — treat every message as coming from him.",
@@ -655,7 +655,7 @@ func (h *SMSHandler) deriveOwnPublicURL(r *http.Request) string {
 // request. Prefers LANTERN_PUBLIC_BASE_URL, then X-Forwarded-* headers,
 // then the raw Host. Shared across Twilio webhook handlers.
 func derivePublicURL(r *http.Request) string {
-	if override := strings.TrimSpace(os.Getenv("LANTERN_PUBLIC_BASE_URL")); override != "" {
+	if override := strings.TrimSpace(os.Getenv("PAL_PUBLIC_BASE_URL")); override != "" {
 		return strings.TrimRight(override, "/")
 	}
 	scheme := "https"

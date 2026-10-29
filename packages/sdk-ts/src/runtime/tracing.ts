@@ -7,6 +7,8 @@
  * spans created here flow through it. In dev mode, spans are no-ops.
  */
 
+import { palEnv } from "../env.js";
+
 /** Minimal span interface compatible with OTel's Span contract. */
 export interface Span {
   /** Set a string attribute on the span. */
@@ -87,7 +89,7 @@ let _tracer: Tracer | undefined;
  */
 export function getTracer(): Tracer {
   if (!_tracer) {
-    if (process.env.LANTERN_RUNTIME === "true") {
+    if (palEnv("RUNTIME") === "true") {
       _tracer = new OtelTracer("@lantern/sdk");
     } else {
       _tracer = new NoopTracer();
