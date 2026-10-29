@@ -161,10 +161,10 @@ build-ts: ## Build TypeScript packages
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
-	docker build -t lantern-control-plane services/control-plane
+	docker build -t lantern-control-plane -f services/control-plane/Dockerfile .
 	docker build -t lantern-gateway services/gateway
 	docker build -t lantern-model-router services/model-router
-	docker build -t lantern-workflow-engine services/workflow-engine
+	docker build -t lantern-workflow-engine -f services/workflow-engine/Dockerfile .
 	docker build -t lantern-web apps/web
 	
 # ---------- Proto ----------
