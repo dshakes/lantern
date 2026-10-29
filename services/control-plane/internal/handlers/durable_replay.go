@@ -81,7 +81,10 @@ func workerID() string {
 // lease is held by another worker; (false, nil, err) on DB error.
 //
 // The UPSERT only steals when the existing lock is expired — it never
-// overwrites a live lock from a different worker_id.  This means two goroutines
+// overwrites a live lock from a different worker_id — or when it was taken
+// under an older fencing epoch (ADR 0046): after a region failover the old
+// region's leases are void immediately instead of after their TTL. Unarmed
+// fence → pal_current_fence_epoch() is NULL → that clause is never true.  This means two goroutines
 // in the same process with the same workerID() CANNOT mutually block each other
 // via this function; cross-process blocking is the target.  Recovery avoids the
 // self-deadlock by deleting the recovery lock BEFORE calling executeRunInlineSync
@@ -102,6 +105,7 @@ func acquireRunLease(ctx context.Context, pool *pgxpool.Pool, runID string, log 
 		      acquired_at = now(),
 		      expires_at  = now() + $3::interval
 		WHERE run_locks.expires_at < now()
+
 	`, runID, wid, ttl.String())
 	if err != nil {
 		return false, nil, fmt.Errorf("acquireRunLease(%s): %w", runID, err)
