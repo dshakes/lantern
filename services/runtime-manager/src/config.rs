@@ -153,8 +153,18 @@ impl Config {
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
 
-        let measurement_gate = crate::measurement::MeasurementGate::from_env();
-        let reference_measurements = crate::measurement::reference_measurements_from_env();
+        // ADR 0031: refuse to start on an unknown gate value, a malformed
+        // reference, or (prod) `enforce` with no references.
+        let measurement_gate =
+            crate::measurement::MeasurementGate::from_env().map_err(ConfigError::Measurement)?;
+        let reference_measurements = crate::measurement::reference_measurements_from_env()
+            .map_err(ConfigError::Measurement)?;
+        crate::measurement::check_startup(
+            measurement_gate,
+            &reference_measurements,
+            crate::tls::is_prod_env(),
+        )
+        .map_err(ConfigError::Measurement)?;
         let harness_path = std::env::var("FC_HARNESS_PATH")
             .ok()
             .filter(|s| !s.trim().is_empty());
@@ -191,6 +201,8 @@ pub enum ConfigError {
     InvalidAddr(String),
     #[error("invalid RUNTIME_BACKEND: {0} (expected docker, k8s, firecracker, kata, or wasm)")]
     InvalidBackend(String),
+    #[error("software measurement config (ADR 0031): {0}")]
+    Measurement(String),
 }
 
 #[cfg(test)]

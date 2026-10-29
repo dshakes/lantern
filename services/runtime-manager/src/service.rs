@@ -864,7 +864,13 @@ impl RuntimeManagerGrpc {
 
         let persisted = self
             .snapshot_store
-            .put_files(agent_version_id, &owner.tenant_id, vm_id, &files)
+            .put_files(
+                agent_version_id,
+                &owner.tenant_id,
+                vm_id,
+                owner.software_measurement.as_deref(),
+                &files,
+            )
             .await;
         // The store now owns its own copy; the transient one (rootfs-sized, on
         // tmpfs for bare VMs) is dropped either way.
@@ -986,6 +992,10 @@ impl RuntimeManagerGrpc {
             // restoring request's DLP policy (pause/resume, idle auto-resume
             // and fork all come through here with the full spec).
             dlp_policy: req.dlp_policy.clone(),
+            // ADR 0031: the restored VM inherits the source's spawn
+            // measurement, recorded with the snapshot by THIS manager.
+            inherited_measurement: Some(meta.software_measurement.clone())
+                .filter(|m| !m.is_empty()),
         };
         backend
             .restore(&restore.snapshot_uri, &restore)
@@ -1023,6 +1033,21 @@ impl RuntimeManagerGrpc {
             ));
         }
         dlp_gate(req.dlp_policy.as_ref(), self.backend.as_ref(), &req.run_id)?;
+
+        // ADR 0031: the inherited measurement comes only from this manager's
+        // snapshot store, never from the caller. Non-store URIs inherit none
+        // (refused under an enforcing gate with references).
+        req.inherited_measurement = match req.snapshot_uri.strip_prefix("store://") {
+            Some(id) => self
+                .snapshot_store
+                .find(id)
+                .await
+                .ok()
+                .flatten()
+                .map(|m| m.software_measurement)
+                .filter(|m| !m.is_empty()),
+            None => None,
+        };
 
         let handle = self
             .backend
@@ -5047,7 +5072,7 @@ mod tests {
                 .unwrap()
         } else {
             store
-                .put_files("av-1", tenant, "vm-src", &[("mem", art.as_path())])
+                .put_files("av-1", tenant, "vm-src", None, &[("mem", art.as_path())])
                 .await
                 .unwrap()
         };
@@ -5257,6 +5282,131 @@ mod tests {
             !fc_dir.join("rootfs").exists(),
             "transient disk capture must be removed once the store has it"
         );
+    }
+
+    /// A Firecracker-shaped stub that reports a spawn measurement and records
+    /// the measurement a restore was asked to inherit (ADR 0031).
+    struct MeasuredStub {
+        dir: std::path::PathBuf,
+        inherited: std::sync::Mutex<Option<Option<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for MeasuredStub {
+        async fn schedule(
+            &self,
+            _req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            Ok(crate::backend::Handle {
+                id: "h-src".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            for (name, body) in [("snapshot", "vmstate"), ("mem", "mem")] {
+                tokio::fs::write(self.dir.join(name), body).await?;
+            }
+            Ok(crate::backend::SnapshotInfo {
+                snapshot_uri: format!("fc://{}", self.dir.join("snapshot").display()),
+                size_bytes: 0,
+            })
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            *self.inherited.lock().unwrap() = Some(req.inherited_measurement.clone());
+            Ok(crate::backend::Handle {
+                id: "h-fork".to_string(),
+                node_name: "n".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        fn name(&self) -> &'static str {
+            "firecracker"
+        }
+        fn satisfies_isolation(&self, _class: proto::IsolationClass) -> bool {
+            true
+        }
+        fn software_measurement(&self, handle_id: &str) -> Option<String> {
+            match handle_id {
+                "h-src" => Some("a".repeat(64)),
+                // The restored incarnation reports what it inherited.
+                _ => self.inherited.lock().unwrap().clone().flatten(),
+            }
+        }
+    }
+
+    /// B2/S4 (ADR 0031): a snapshot records its source's spawn measurement,
+    /// and a restore/fork of it is handed that value to inherit — so the
+    /// forked VM reports the spawn-derived measurement (and an enforce gate
+    /// with spawn-derived references admits it) instead of re-measuring.
+    #[tokio::test]
+    async fn snapshot_records_measurement_and_restore_inherits_it() {
+        use pb::runtime_manager_server::RuntimeManager;
+        let tmp = tempfile::tempdir().unwrap();
+        let fc_dir = tmp.path().join("fc");
+        tokio::fs::create_dir_all(&fc_dir).await.unwrap();
+        let store = crate::snapshot_store::SnapshotStore::new(tmp.path().join("store"));
+        let backend = Arc::new(MeasuredStub {
+            dir: fc_dir,
+            inherited: std::sync::Mutex::new(None),
+        });
+        let svc = RuntimeManagerGrpc::new(
+            Arc::clone(&backend) as Arc<dyn RuntimeBackend>,
+            crate::pool::PoolConfig::default(),
+            Arc::new(HashMapSecretResolver::new(HashMap::new())),
+        )
+        .with_snapshot_store(store.clone());
+
+        let src = svc
+            .spawn(Request::new(make_spawn_request("t-m", HashMap::new())))
+            .await
+            .unwrap()
+            .into_inner()
+            .handle
+            .unwrap();
+        assert_eq!(src.software_measurement, "a".repeat(64));
+
+        let snap = RuntimeManager::snapshot(
+            &svc,
+            Request::new(pb::SnapshotRequest {
+                vm_id: src.vm_id,
+                id_hint: String::new(),
+                keep_running: true,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let meta = store.find(&snap.snapshot_id).await.unwrap().unwrap();
+        assert_eq!(meta.software_measurement, "a".repeat(64));
+
+        let fork = svc
+            .spawn(Request::new(restore_spawn("t-m", &snap.snapshot_id)))
+            .await
+            .expect("restore of own snapshot")
+            .into_inner();
+        assert_eq!(
+            *backend.inherited.lock().unwrap(),
+            Some(Some("a".repeat(64))),
+            "restore must be handed the source's measurement"
+        );
+        assert_eq!(fork.handle.unwrap().software_measurement, "a".repeat(64));
     }
 
     /// Snapshot requires a registered vm (the owner record); no fallback to a

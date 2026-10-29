@@ -1,58 +1,45 @@
 //! Host-asserted software measurement (ADR 0031).
 //!
-//! At spawn/restore the manager computes a SHA-256 over the five canonical
-//! inputs it directly controls: kernel image, rootfs image, harness binary
-//! (when separately installed), kernel boot arguments, and the spawn contract
-//! without secret material. The result is a single 64-character lowercase hex
-//! string — the "software measurement" — that uniquely identifies what the
-//! host *claims* it booted.
+//! At spawn the manager computes a SHA-256 over the five canonical inputs it
+//! directly controls: kernel image, rootfs image, harness binary (when
+//! separately installed), kernel boot arguments, and the spawn contract — each
+//! minus secrets and minus per-VM identity. The result is a single
+//! 64-character lowercase hex string — the "software measurement" — that is
+//! identical for every VM booted from the same images and spec, so a reference
+//! set can match it. A restore / resume / fork does NOT re-measure: it
+//! INHERITS the source's spawn measurement from the snapshot metadata (see
+//! [`check_inherited`]).
 //!
 //! # HOST-ASSERTED, not hardware-attested
 //!
 //! This measurement is computed and recorded by the manager host. It proves
-//! what the host recorded it launched; it does **not** prove what actually ran
-//! inside the VM. Hardware attestation (AMD SEV-SNP / Intel TDX) is a
-//! separate concern covered by ADR 0023. Both can coexist: the host-asserted
-//! measurement is available on every Firecracker node; hardware attestation
-//! requires CC hardware and Kata-CC.
+//! what the host *recorded* it launched; it does **not** prove what actually
+//! ran inside the VM. Files are hashed by path and Firecracker opens them
+//! later (TOCTOU): a host that can rewrite the images in between defeats it —
+//! but such a host can forge the value anyway. Hardware attestation (AMD
+//! SEV-SNP / Intel TDX) is ADR 0023.
 //!
 //! # Canonical input order (ADR 0031 §Measurement algorithm)
 //!
 //! 1. **kernel image** — SHA-256 of file bytes at `FC_KERNEL_PATH`
 //! 2. **rootfs image** — SHA-256 of file bytes at `FC_ROOTFS_PATH`
 //! 3. **harness binary** — SHA-256 of file bytes at `FC_HARNESS_PATH`
-//!    (optional; 32 zero bytes when the harness is baked into the rootfs and
-//!    no separate path is configured)
-//! 4. **boot arguments** — SHA-256 of the kernel cmdline UTF-8 bytes
-//! 5. **spawn contract** — SHA-256 of the spawn.json canonical JSON with
-//!    secret-bearing fields zeroed out (see below)
+//!    (32 zero bytes when unset — harness baked into the rootfs)
+//! 4. **boot arguments** — SHA-256 of the kernel cmdline minus per-VM tokens,
+//!    secret refs and the legacy `lantern.env.*` copy ([`canonical_boot_args`])
+//! 5. **spawn contract** — SHA-256 of `spawn.json` canonical JSON minus
+//!    secrets and per-VM identity ([`contract_bytes_sans_secrets`])
 //!
 //! **Final value:** SHA-256 of the 160-byte concatenation of the five
-//! 32-byte component hashes, in the order above.
+//! 32-byte component hashes, in the order above. Image hashes are streamed
+//! and cached per `(dev, ino, size, mtime, ctime)`.
 //!
-//! # "Minus secrets" for the spawn contract
+//! # Gate
 //!
-//! Secrets are excluded so the measurement is reproducible without access to
-//! runtime credential values and so invariant #10 (no secrets in logs/traces)
-//! is satisfied. Fields cleared before hashing:
-//! - `declared_secrets` (vault refs)
-//! - `exec_token` (bearer credential)
-//! - `egress_rules[*].inject` (credential-injection specs)
-//!
-//! # Enforce gate
-//!
-//! Controlled by `LANTERN_MEASUREMENT_GATE` (`off` | `warn` | `enforce`):
-//!
-//! - `off` — measurement is computed and recorded but never compared.
-//! - `warn` (default) — measurement is compared to reference values
-//!   (`LANTERN_REFERENCE_MEASUREMENTS`); a mismatch is warn-logged and the
-//!   VM is allowed to start.
-//! - `enforce` — a mismatch causes the manager to refuse to start the VM.
-//!
-//! Reference values are configured as `LANTERN_REFERENCE_MEASUREMENTS`, a
-//! comma-separated list of lowercase hex SHA-256 strings. An empty list means
-//! no reference set is configured; `warn` mode produces no warning when there
-//! are no reference values to compare against (no comparison can be made).
+//! `LANTERN_MEASUREMENT_GATE` = `off` | `warn` (default) | `enforce`, against
+//! `LANTERN_REFERENCE_MEASUREMENTS` (comma-separated 64-hex). Unknown gate
+//! values and malformed references refuse startup; so does `enforce` with no
+//! references in prod.
 
 use sha2::{Digest, Sha256};
 
@@ -86,32 +73,72 @@ pub enum MeasurementGate {
 }
 
 impl MeasurementGate {
-    /// Read the gate mode from `LANTERN_MEASUREMENT_GATE`.
-    pub fn from_env() -> Self {
-        match std::env::var("LANTERN_MEASUREMENT_GATE")
-            .as_deref()
+    /// Parse a `LANTERN_MEASUREMENT_GATE` value. Unset/blank = `Warn`; an
+    /// unrecognised value is an error (the manager refuses to start) — a typo
+    /// of `enforce` must never silently downgrade to `warn`.
+    pub fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw
+            .map(str::trim)
             .unwrap_or("")
-            .to_lowercase()
+            .to_ascii_lowercase()
             .as_str()
         {
-            "enforce" => MeasurementGate::Enforce,
-            "off" | "0" | "false" | "disabled" => MeasurementGate::Off,
-            _ => MeasurementGate::Warn, // includes "warn", "", or anything unrecognised
+            "enforce" => Ok(MeasurementGate::Enforce),
+            "" | "warn" => Ok(MeasurementGate::Warn),
+            "off" | "0" | "false" | "disabled" => Ok(MeasurementGate::Off),
+            other => Err(format!(
+                "invalid LANTERN_MEASUREMENT_GATE {other:?} (expected off, warn or enforce)"
+            )),
         }
+    }
+
+    /// Read the gate mode from `LANTERN_MEASUREMENT_GATE`.
+    pub fn from_env() -> Result<Self, String> {
+        Self::parse(std::env::var("LANTERN_MEASUREMENT_GATE").ok().as_deref())
     }
 }
 
 /// Load the reference measurement set from `LANTERN_REFERENCE_MEASUREMENTS`
-/// (comma-separated lowercase hex strings). Returns an empty `Vec` when the
-/// env var is absent or blank.
-pub fn reference_measurements_from_env() -> Vec<String> {
-    std::env::var("LANTERN_REFERENCE_MEASUREMENTS")
-        .unwrap_or_default()
-        .split(',')
+/// (comma-separated hex strings, trimmed + lowercased). Every entry must be a
+/// 64-char hex SHA-256 — a malformed one is an error, not a silently
+/// unmatchable reference.
+pub fn reference_measurements_from_env() -> Result<Vec<String>, String> {
+    parse_references(&std::env::var("LANTERN_REFERENCE_MEASUREMENTS").unwrap_or_default())
+}
+
+fn parse_references(raw: &str) -> Result<Vec<String>, String> {
+    raw.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_lowercase())
+        .map(|s| {
+            let s = s.to_ascii_lowercase();
+            if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                Ok(s)
+            } else {
+                Err(format!(
+                    "invalid LANTERN_REFERENCE_MEASUREMENTS entry (want 64 hex chars, got {} chars)",
+                    s.len()
+                ))
+            }
+        })
         .collect()
+}
+
+/// Startup guard: in prod (`LANTERN_ENV` prod/production/staging) an
+/// `enforce` gate with NO references would pass every VM — protection in
+/// name only. Refuse to start rather than run that way.
+pub fn check_startup(
+    gate: MeasurementGate,
+    references: &[String],
+    prod: bool,
+) -> Result<(), String> {
+    if prod && gate == MeasurementGate::Enforce && references.is_empty() {
+        return Err("LANTERN_MEASUREMENT_GATE=enforce in production with no \
+             LANTERN_REFERENCE_MEASUREMENTS: the gate would admit every VM; \
+             configure references (or use gate=warn)"
+            .to_string());
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -232,14 +259,94 @@ pub fn check(
     }
 }
 
+/// Gate a restore / resume / fork, which INHERITS its source VM's spawn
+/// measurement (carried in the snapshot's metadata) instead of re-measuring.
+///
+/// A restored guest resumes from vmstate + mem + the captured disk, none of
+/// which the spawn inputs describe, so re-measuring the base images under a
+/// restore-shaped contract would produce a value no reference can match (and
+/// fail every resume closed under `enforce`). The inherited value is the
+/// measurement of the boot this guest's lineage started from; it is re-checked
+/// against the CURRENT references, so retiring an image's reference also
+/// refuses restores of its snapshots. A snapshot that carries no measurement
+/// (legacy, or its source was unmeasured) is refused under an enforcing gate
+/// with references — an unmeasured lineage must not slip past it.
+pub fn check_inherited(
+    inherited: Option<&str>,
+    references: &[String],
+    gate: MeasurementGate,
+    vm_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let Some(m) = inherited.filter(|m| !m.is_empty()) else {
+        if gate == MeasurementGate::Enforce && !references.is_empty() {
+            tracing::error!(
+                target: "lantern_audit",
+                vm_id,
+                "SECURITY: refusing to restore VM — snapshot carries no software \
+                 measurement (gate=enforce)"
+            );
+            anyhow::bail!(
+                "SECURITY: refusing to restore VM — its snapshot carries no software \
+                 measurement to inherit (legacy or unmeasured source; gate=enforce)"
+            );
+        }
+        return Ok(None);
+    };
+    check(m, references, gate, vm_id)?;
+    tracing::info!(
+        target: "lantern_audit",
+        vm_id,
+        "software measurement inherited from snapshot source (restore/fork)"
+    );
+    Ok(Some(m.to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/// Streaming SHA-256 of a file (never read whole: the rootfs is GiB-sized and
+/// spawns run concurrently), cached by `(dev, ino, size, mtime, ctime)` so an
+/// unchanged image is hashed once per manager process, not once per spawn.
+// ponytail: cache is cleared past 64 entries; keyed on metadata, so it shares
+// the documented TOCTOU limitation (ADR 0031) — a same-size rewrite within one
+// ctime tick would be missed. Upgrade path: hash the staged per-VM copy.
 fn hash_file(path: &str) -> anyhow::Result<[u8; 32]> {
-    let bytes =
-        std::fs::read(path).map_err(|e| anyhow::anyhow!("measurement: read {path}: {e}"))?;
-    Ok(hash_bytes(&bytes))
+    use std::collections::HashMap;
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::{Mutex, OnceLock};
+    type Key = (u64, u64, u64, i64, i64, i64, i64);
+    static CACHE: OnceLock<Mutex<HashMap<Key, [u8; 32]>>> = OnceLock::new();
+
+    let err = |e: std::io::Error| anyhow::anyhow!("measurement: read {path}: {e}");
+    let file = std::fs::File::open(path).map_err(err)?;
+    let md = file.metadata().map_err(err)?;
+    let key: Key = (
+        md.dev(),
+        md.ino(),
+        md.size(),
+        md.mtime(),
+        md.mtime_nsec(),
+        md.ctime(),
+        md.ctime_nsec(),
+    );
+    let cache = CACHE.get_or_init(Mutex::default);
+    if let Some(h) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        return Ok(*h);
+    }
+    let mut h = Sha256::new();
+    std::io::copy(
+        &mut std::io::BufReader::with_capacity(1 << 20, file),
+        &mut h,
+    )
+    .map_err(err)?;
+    let digest: [u8; 32] = h.finalize().into();
+    let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
+    if c.len() >= 64 {
+        c.clear();
+    }
+    c.insert(key, digest);
+    Ok(digest)
 }
 
 fn hash_bytes(data: &[u8]) -> [u8; 32] {
@@ -248,10 +355,14 @@ fn hash_bytes(data: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Kernel cmdline with per-incarnation tokens removed (VM/run identity, per-VM
-/// cert paths, `ip=`, the host-side manager address) and declared-secret refs
-/// removed (same "minus secrets" rule as the contract). What remains is the
-/// stable boot configuration plus the workload env.
+/// Kernel cmdline reduced to its stable boot configuration. Removed:
+/// per-incarnation tokens (VM/run identity, per-VM cert paths, `ip=`),
+/// declared-secret refs (minus-secrets), and EVERY `lantern.env.*` token. The
+/// env tokens are a lossy legacy copy of `spawn.json`'s env (the harness
+/// ignores them when `spawn.json` is present), emitted in `HashMap` order —
+/// keeping them made identical specs measure differently, and they carry
+/// per-VM identity and caller credentials (`LANTERN_AGENT_INSTANCE_*`). The
+/// authoritative env is measured, sanitized, in the contract.
 fn canonical_boot_args(args: &str) -> String {
     const PER_VM: &[&str] = &[
         "ip=",
@@ -259,7 +370,7 @@ fn canonical_boot_args(args: &str) -> String {
         "lantern.run_id=",
         "lantern.tls_cert=",
         "lantern.tls_key=",
-        "lantern.env.LANTERN_MANAGER_ADDR=",
+        "lantern.env.",
         "lantern.secret.",
     ];
     args.split_whitespace()
@@ -268,13 +379,42 @@ fn canonical_boot_args(args: &str) -> String {
         .join(" ")
 }
 
-/// Serialize `contract` to canonical JSON with secret-bearing fields zeroed.
+/// Env key names whose VALUES are credentials: the value is blanked before
+/// hashing (the key's presence is still measured). A published measurement
+/// must never be a hash over a live secret (ADR 0031 "minus secrets").
+fn is_secret_env_name(key: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "API_KEY",
+        "APIKEY",
+        "PRIVATE_KEY",
+        "CREDENTIAL",
+    ];
+    let k = key.to_ascii_uppercase();
+    MARKERS.iter().any(|m| k.contains(m))
+}
+
+/// Serialize `contract` to canonical JSON with secret-bearing fields zeroed
+/// and per-incarnation identity removed. `env` is a `BTreeMap`, so the JSON is
+/// key-ordered and deterministic.
 fn contract_bytes_sans_secrets(contract: &SpawnContract) -> anyhow::Result<Vec<u8>> {
     let mut s = contract.clone();
     s.declared_secrets = Vec::new();
     s.exec_token = String::new();
     for rule in &mut s.egress_rules {
         rule.inject = Vec::new();
+    }
+    // Caller-set per-incarnation keys (agent instance id + its bearer token,
+    // trace parent, crash-resume marker) differ for every VM — dropped.
+    s.env
+        .retain(|k, _| !crate::service::CALLER_LANTERN_KEYS.contains(&k.as_str()));
+    for (k, v) in &mut s.env {
+        if is_secret_env_name(k) {
+            v.clear();
+        }
     }
     // Per-incarnation identity: unique for every VM, so hashing it would make
     // every measurement unique and a reference set unmatchable.
@@ -505,11 +645,153 @@ mod tests {
                  lantern.manager_ca=/c/manager-ca.crt lantern.env.LANTERN_MANAGER_ADDR=172.16.0.5:50054 \
                  lantern.secret.K=lantern.secret/y lantern.env.FOO=1";
         assert_eq!(canonical_boot_args(a), canonical_boot_args(b));
-        // A real configuration change still changes it.
+        // A real boot-configuration change still changes it.
         assert_ne!(
             canonical_boot_args(a),
-            canonical_boot_args(&a.replace("FOO=1", "FOO=2"))
+            canonical_boot_args(&a.replace("console=ttyS0", "console=ttyS1"))
         );
+    }
+
+    /// B1(a): `lantern.env.*` tokens are emitted in HashMap order — the same
+    /// env in a different order must canonicalise identically (they are
+    /// dropped; the env is measured, ordered, in the contract).
+    #[test]
+    fn boot_args_env_order_does_not_matter() {
+        let a = "console=ttyS0 lantern.env.A=1 lantern.env.B=2 lantern.env.C=3";
+        let b = "console=ttyS0 lantern.env.C=3 lantern.env.A=1 lantern.env.B=2";
+        assert_eq!(canonical_boot_args(a), canonical_boot_args(b));
+        assert!(!canonical_boot_args(a).contains("lantern.env."));
+    }
+
+    /// B1(b): per-VM caller identity (instance id + bearer token, trace
+    /// parent) never reaches the measured bytes, and a credential-named env
+    /// value never influences or appears in them.
+    #[test]
+    fn contract_measures_no_identity_or_secret_values() {
+        let mk = |inst: &str, tok: &str, key: &str, vm: &str| {
+            let mut c = empty_contract();
+            c.vm_id = vm.into();
+            c.exec_token = format!("exec-{tok}");
+            for (k, v) in [
+                ("LANTERN_AGENT_INSTANCE_ID", inst),
+                ("LANTERN_AGENT_INSTANCE_TOKEN", tok),
+                ("LANTERN_TRACE_PARENT", inst),
+                ("OPENAI_API_KEY", key),
+                ("DB_PASSWORD", key),
+                ("MODE", "fast"),
+            ] {
+                c.env.insert(k.into(), v.into());
+            }
+            c
+        };
+        let a = contract_bytes_sans_secrets(&mk("inst-a", "tok-AAAA", "sk-AAAA", "vm-a")).unwrap();
+        let b = contract_bytes_sans_secrets(&mk("inst-b", "tok-BBBB", "sk-BBBB", "vm-b")).unwrap();
+        assert_eq!(
+            a, b,
+            "identity/secret values must not influence the measurement"
+        );
+        let text = String::from_utf8(a).unwrap();
+        for leaked in ["tok-AAAA", "sk-AAAA", "inst-a", "exec-"] {
+            assert!(
+                !text.contains(leaked),
+                "{leaked} leaked into measured bytes"
+            );
+        }
+        // Non-secret env still counts.
+        let mut c = mk("i", "t", "k", "v");
+        c.env.insert("MODE".into(), "slow".into());
+        assert_ne!(
+            contract_bytes_sans_secrets(&c).unwrap(),
+            contract_bytes_sans_secrets(&mk("i", "t", "k", "v")).unwrap()
+        );
+    }
+
+    /// S1: streaming hash equals the plain SHA-256 of the bytes, and a
+    /// rewritten file is re-hashed (cache keyed on metadata, not path).
+    #[test]
+    fn hash_file_streams_and_invalidates_on_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("img");
+        std::fs::write(&p, vec![7u8; (1 << 20) + 3]).unwrap();
+        let ps = p.to_str().unwrap();
+        assert_eq!(
+            hash_file(ps).unwrap(),
+            hash_bytes(&vec![7u8; (1 << 20) + 3])
+        );
+        assert_eq!(hash_file(ps).unwrap(), hash_file(ps).unwrap());
+        std::fs::write(&p, b"different").unwrap();
+        assert_eq!(hash_file(ps).unwrap(), hash_bytes(b"different"));
+    }
+
+    /// S2: gate values are trimmed; anything unrecognised is an error, never a
+    /// silent downgrade of `enforce` to `warn`.
+    #[test]
+    fn gate_parse_trims_and_rejects_unknown() {
+        assert_eq!(
+            MeasurementGate::parse(Some(" Enforce \n")),
+            Ok(MeasurementGate::Enforce)
+        );
+        assert_eq!(MeasurementGate::parse(None), Ok(MeasurementGate::Warn));
+        assert_eq!(
+            MeasurementGate::parse(Some("  ")),
+            Ok(MeasurementGate::Warn)
+        );
+        assert_eq!(
+            MeasurementGate::parse(Some("off")),
+            Ok(MeasurementGate::Off)
+        );
+        assert!(MeasurementGate::parse(Some("enforced")).is_err());
+        assert!(MeasurementGate::parse(Some("block")).is_err());
+    }
+
+    #[test]
+    fn references_must_be_sha256_hex() {
+        let good = "A".repeat(64);
+        assert_eq!(
+            parse_references(&format!(" {good} , ")).unwrap(),
+            vec!["a".repeat(64)]
+        );
+        assert!(parse_references("abc").is_err());
+        assert!(parse_references(&"z".repeat(64)).is_err());
+        assert!(parse_references("").unwrap().is_empty());
+    }
+
+    /// S2: prod + enforce + no references refuses to start.
+    #[test]
+    fn startup_refuses_enforce_without_references_in_prod() {
+        let refs = vec!["a".repeat(64)];
+        assert!(check_startup(MeasurementGate::Enforce, &[], true).is_err());
+        assert!(check_startup(MeasurementGate::Enforce, &refs, true).is_ok());
+        assert!(check_startup(MeasurementGate::Enforce, &[], false).is_ok());
+        assert!(check_startup(MeasurementGate::Warn, &[], true).is_ok());
+    }
+
+    /// B2: a restore/resume/fork inherits the spawn measurement; under
+    /// `enforce` with the spawn-derived reference it boots, while an
+    /// unmeasured (legacy) snapshot or a retired reference is refused.
+    #[test]
+    fn restore_inherits_spawn_measurement_under_enforce() {
+        let spawn_m = compute_from_hashes(
+            &"1".repeat(64),
+            &"2".repeat(64),
+            &"0".repeat(64),
+            &"3".repeat(64),
+            &"4".repeat(64),
+        );
+        let refs = vec![spawn_m.clone()];
+        let e = MeasurementGate::Enforce;
+        assert_eq!(
+            check_inherited(Some(&spawn_m), &refs, e, "fork-1").unwrap(),
+            Some(spawn_m.clone())
+        );
+        assert!(check_inherited(None, &refs, e, "vm").is_err());
+        assert!(check_inherited(Some(""), &refs, e, "vm").is_err());
+        assert!(check_inherited(Some(&"f".repeat(64)), &refs, e, "vm").is_err());
+        assert_eq!(
+            check_inherited(None, &refs, MeasurementGate::Warn, "vm").unwrap(),
+            None
+        );
+        assert_eq!(check_inherited(None, &[], e, "vm").unwrap(), None);
     }
 
     /// The gate never puts the measurement value in its error (invariant #10

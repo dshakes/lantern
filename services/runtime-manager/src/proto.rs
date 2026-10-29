@@ -342,6 +342,11 @@ pub struct RestoreRequest {
     /// from the restoring caller's spec; `None` = no inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dlp_policy: Option<crate::dlp::DlpPolicy>,
+    /// ADR 0031: the snapshot source's spawn measurement, set by the manager
+    /// from the snapshot store's metadata (never from a caller). The restored
+    /// VM inherits it rather than re-measuring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherited_measurement: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -3255,12 +3255,6 @@ impl FirecrackerBackend {
             );
         }
 
-        let harness_path = std::env::var("FC_HARNESS_PATH")
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let measurement_gate = crate::measurement::MeasurementGate::from_env();
-        let reference_measurements = crate::measurement::reference_measurements_from_env();
-
         FirecrackerBackend {
             kernel_image_path,
             rootfs_path,
@@ -3275,10 +3269,26 @@ impl FirecrackerBackend {
             egress_mode: EgressMode::from_env(),
             broker_deps: None,
             broker_vms: Arc::default(),
-            harness_path,
-            measurement_gate,
-            reference_measurements,
+            // Set from the validated `Config` via `with_measurement` (ADR 0031).
+            harness_path: None,
+            measurement_gate: crate::measurement::MeasurementGate::Warn,
+            reference_measurements: Vec::new(),
         }
+    }
+
+    /// Install the software-measurement settings validated by `Config`
+    /// (ADR 0031): gate, reference set, and optional harness binary path.
+    #[must_use]
+    pub fn with_measurement(
+        mut self,
+        gate: crate::measurement::MeasurementGate,
+        references: Vec<String>,
+        harness_path: Option<String>,
+    ) -> Self {
+        self.measurement_gate = gate;
+        self.reference_measurements = references;
+        self.harness_path = harness_path;
+        self
     }
 
     /// Wire the host-side egress broker's dependencies (ADR 0026). Required
@@ -3824,23 +3834,16 @@ impl FirecrackerBackend {
             shared_mem,
             "Firecracker: restoring snapshot as a new identity (LINUX-ONLY)"
         );
-        // Compute host-asserted software measurement before provisioning
-        // identity (ADR 0031). Same gate semantics as schedule().
-        let measurement = {
-            let inp = MeasurementInput {
-                kernel_path: cfg.kernel_image_path.clone(),
-                rootfs_path: cfg.rootfs_path.clone(),
-                harness_path: self.harness_path.clone(),
-                boot_args: cfg.boot_args.clone(),
-                contract: cfg.spawn_contract.clone(),
-                gate: self.measurement_gate,
-                reference_measurements: self.reference_measurements.clone(),
-                vm_id: vm_id.clone(),
-            };
-            tokio::task::spawn_blocking(move || compute_and_check_measurement(inp))
-                .await
-                .context("measurement task join (restore)")??
-        };
+        // ADR 0031: a restore/resume/fork INHERITS its source's spawn
+        // measurement (snapshot metadata) — the guest resumes from vmstate +
+        // mem + captured disk, which the spawn inputs do not describe — and
+        // re-checks it against the current references.
+        let measurement = crate::measurement::check_inherited(
+            req.inherited_measurement.as_deref(),
+            &self.reference_measurements,
+            self.measurement_gate,
+            &vm_id,
+        )?;
         // Record the fork staging reference BEFORE provisioning identity so
         // that if provisioning or restore fails, `cancel()` can release it.
         // (The vm_id is not in any registry yet, but the refcount is harmless
@@ -4634,6 +4637,40 @@ mod tests {
             compute_and_check_measurement(inp(MeasurementGate::Enforce, vec![])),
             Ok(None)
         ));
+    }
+
+    /// B1 (ADR 0031): two VMs from one spec — multi-key HashMap env (iterated
+    /// in random order), different vm ids and different per-VM agent instance
+    /// id/token — measure identically end to end (real VmConfig boot args +
+    /// spawn contract through `compute`). A changed spec still differs.
+    #[test]
+    fn identical_specs_measure_identically_across_vms() {
+        let dir = tempfile::tempdir().unwrap();
+        let kernel = dir.path().join("vmlinux");
+        let rootfs = dir.path().join("rootfs.ext4");
+        std::fs::write(&kernel, b"kernel").unwrap();
+        std::fs::write(&rootfs, b"rootfs").unwrap();
+        let (k, r) = (kernel.to_str().unwrap(), rootfs.to_str().unwrap());
+        let measure = |inst: &str, tok: &str, mode: &str| {
+            let mut req = minimal_schedule_req();
+            req.vm_id = Uuid::new_v4().to_string();
+            req.command = vec!["python".into(), "agent.py".into()];
+            for i in 0..12 {
+                req.env.insert(format!("K{i}"), format!("v{i}"));
+            }
+            req.env.insert("MODE".into(), mode.into());
+            req.env
+                .insert("LANTERN_AGENT_INSTANCE_ID".into(), inst.into());
+            req.env
+                .insert("LANTERN_AGENT_INSTANCE_TOKEN".into(), tok.into());
+            let cfg = VmConfig::from_schedule_in_mode(&req, k, r, EgressMode::Guest).unwrap();
+            crate::measurement::compute(k, r, None, &cfg.boot_args, &cfg.spawn_contract).unwrap()
+        };
+        let a = measure("inst-a", "tok-a", "fast");
+        for _ in 0..20 {
+            assert_eq!(a, measure("inst-b", "tok-b", "fast"));
+        }
+        assert_ne!(a, measure("inst-a", "tok-a", "slow"));
     }
 
     fn minimal_schedule_req() -> ScheduleRequest {
@@ -5555,6 +5592,7 @@ mod tests {
             vm_id: String::new(),
             egress_rules: vec![],
             dlp_policy: None,
+            inherited_measurement: None,
         };
         let err = backend.restore("fc:///snap", &req).await.unwrap_err();
         assert!(err.to_string().contains("not available"));
@@ -6758,6 +6796,7 @@ mod tests {
             vm_id: String::new(),
             egress_rules: vec![],
             dlp_policy: None,
+            inherited_measurement: None,
         };
         let err = backend.restore(&uri, &req).await.unwrap_err().to_string();
 
@@ -6876,6 +6915,7 @@ mod tests {
                 ..Default::default()
             }],
             dlp_policy: None,
+            inherited_measurement: None,
         };
         let view = restore_schedule_view(&req, WIRE);
         let cfg = VmConfig::from_schedule_with_id(&view, "/k", "/r", WIRE);
