@@ -1,12 +1,12 @@
-"""Hello World agent — minimal example of the Lantern Python SDK.
+"""Hello World agent — minimal example of the PAL Python SDK.
 
 Run locally::
 
-    python -m lantern.runtime.runner --agent hello-world --input '{"name": "World"}'
+    python -m pal.runtime.runner --agent hello-world --input '{"name": "World"}'
 """
 
-from lantern import agent, step
-from lantern.types import AgentContext
+from pal import agent, step
+from pal.types import AgentContext
 
 
 @agent("hello-world", model="auto", description="A friendly greeter")

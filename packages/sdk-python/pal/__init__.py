@@ -1,8 +1,8 @@
-"""Lantern Python SDK — build production AI agents with durable execution.
+"""PAL Python SDK — build production AI agents with durable execution.
 
 Quick start::
 
-    from lantern import agent, step
+    from pal import agent, step
 
     @agent("hello-world", model="auto")
     async def hello(input: dict, ctx):
@@ -13,19 +13,25 @@ Quick start::
         return {"greeting": greeting}
 """
 
-from lantern.agent import LanternAgent, agent, get_agent, list_agents
-from lantern.client import LanternClient
-from lantern.errors import (
+from pal.agent import LanternAgent, PalAgent, agent, get_agent, list_agents
+from pal.client import LanternClient, PalClient
+from pal.errors import (
     LanternApiError,
     LanternError,
     LanternLlmError,
     LanternStepError,
     LanternTimeoutError,
     LanternValidationError,
+    PalApiError,
+    PalError,
+    PalLlmError,
+    PalStepError,
+    PalTimeoutError,
+    PalValidationError,
 )
-from lantern.step import step, step_map, step_race, step_signal, step_sleep
-from lantern.tools import tool
-from lantern.types import (
+from pal.step import step, step_map, step_race, step_signal, step_sleep
+from pal.tools import tool
+from pal.types import (
     AgentConfig,
     AgentContext,
     AgentInfo,
@@ -79,9 +85,18 @@ from lantern.types import (
 __version__ = "0.1.0"
 
 __all__ = [
+    # Deprecated aliases (ADR 0032)
+    "LanternAgent",
+    "LanternClient",
+    "LanternError",
+    "LanternApiError",
+    "LanternStepError",
+    "LanternLlmError",
+    "LanternTimeoutError",
+    "LanternValidationError",
     # Agent definition
     "agent",
-    "LanternAgent",
+    "PalAgent",
     "get_agent",
     "list_agents",
     # Step primitives
@@ -91,16 +106,16 @@ __all__ = [
     "step_sleep",
     "step_signal",
     # Client
-    "LanternClient",
+    "PalClient",
     # Tools
     "tool",
     # Errors
-    "LanternError",
-    "LanternApiError",
-    "LanternStepError",
-    "LanternLlmError",
-    "LanternTimeoutError",
-    "LanternValidationError",
+    "PalError",
+    "PalApiError",
+    "PalStepError",
+    "PalLlmError",
+    "PalTimeoutError",
+    "PalValidationError",
     # Types — enums
     "Capability",
     "OptimizeTarget",

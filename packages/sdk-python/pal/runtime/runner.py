@@ -1,14 +1,14 @@
 """Agent runner — entry point executed inside the Firecracker sandbox.
 
-The Lantern runtime invokes this as::
+The PAL runtime invokes this as::
 
-    lantern-runner --agent my-agent --input '{"key": "value"}'
+    pal-runner --agent my-agent --input '{"key": "value"}'
 
 Or via the ``LANTERN_AGENT_NAME`` / ``LANTERN_INPUT`` environment variables.
 
 In dev mode you can also run directly::
 
-    python -m lantern.runtime.runner --agent my-agent --input '{"name": "World"}'
+    python -m pal.runtime.runner --agent my-agent --input '{"name": "World"}'
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from lantern import _env
-from lantern.agent import get_agent, list_agents
-from lantern.runtime.context import build_dev_context, build_production_context
-from lantern.runtime.runtime import RuntimeMode, detect_mode
-from lantern.runtime.step_runtime import StepJournal, create_journal_step_runner, get_journal_path
-from lantern.step import set_step_runtime
+from pal import _env
+from pal.agent import get_agent, list_agents
+from pal.runtime.context import build_dev_context, build_production_context
+from pal.runtime.runtime import RuntimeMode, detect_mode
+from pal.runtime.step_runtime import StepJournal, create_journal_step_runner, get_journal_path
+from pal.step import set_step_runtime
 
 
 def _discover_agents(search_dir: str | None = None) -> None:
-    """Import Python modules that might register agents via @agent or LanternAgent.
+    """Import Python modules that might register agents via @agent or PalAgent.
 
     Searches the current directory (or ``search_dir``) for ``*.py`` files
     and imports them so that decorators execute.
@@ -108,10 +108,10 @@ async def run_agent(
 
 
 def main() -> None:
-    """CLI entry point (``lantern-runner``)."""
+    """CLI entry point (``pal-runner``)."""
     parser = argparse.ArgumentParser(
-        description="Run a Lantern agent",
-        prog="lantern-runner",
+        description="Run a PAL agent",
+        prog="pal-runner",
     )
     parser.add_argument(
         "--agent",

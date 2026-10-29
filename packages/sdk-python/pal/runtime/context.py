@@ -6,8 +6,8 @@ import logging
 import sys
 from typing import Any, Awaitable, Callable
 
-from lantern import _env
-from lantern.types import (
+from pal import _env
+from pal.types import (
     AgentContext,
     AskOptions,
     CostTracker,
@@ -23,7 +23,7 @@ class DevLogger(Logger):
     """Logger implementation for local dev mode (writes to stderr)."""
 
     def __init__(self, agent_name: str) -> None:
-        self._logger = logging.getLogger(f"lantern.{agent_name}")
+        self._logger = logging.getLogger(f"pal.{agent_name}")
         if not self._logger.handlers:
             handler = logging.StreamHandler(sys.stderr)
             handler.setFormatter(logging.Formatter(
@@ -98,14 +98,14 @@ def build_production_context(
     agent_name: str,
     agent_version: str,
 ) -> AgentContext:
-    """Build an AgentContext for the Lantern production runtime.
+    """Build an AgentContext for the PAL production runtime.
 
     Reads environment variables set by the sandbox to configure
     gRPC-backed clients.
     """
-    from lantern.runtime.llm_client import GrpcLlmClient
-    from lantern.runtime.memory_client import GrpcMemoryClient
-    from lantern.runtime.tool_client import GrpcToolClient
+    from pal.runtime.llm_client import GrpcLlmClient
+    from pal.runtime.memory_client import GrpcMemoryClient
+    from pal.runtime.tool_client import GrpcToolClient
 
     run_id = _env.get("RUN_ID", "")
     tenant_id = _env.get("TENANT_ID", "")

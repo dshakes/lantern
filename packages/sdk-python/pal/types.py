@@ -1,4 +1,4 @@
-"""Type definitions for the Lantern Python SDK.
+"""Type definitions for the PAL Python SDK.
 
 All public data models use Pydantic v2. Enums use StrEnum (Python 3.11+).
 """
@@ -718,15 +718,15 @@ class AgentContext:
 
 
 async def _default_ask(opts: AskOptions) -> str:
-    raise NotImplementedError("ask() is only available in the Lantern runtime")
+    raise NotImplementedError("ask() is only available in the PAL runtime")
 
 
 async def _default_notify(opts: NotifyOptions) -> None:
-    raise NotImplementedError("notify() is only available in the Lantern runtime")
+    raise NotImplementedError("notify() is only available in the PAL runtime")
 
 
 async def _default_subagent(agent: str, input: Any) -> Any:
-    raise NotImplementedError("subagent() is only available in the Lantern runtime")
+    raise NotImplementedError("subagent() is only available in the PAL runtime")
 
 
 # --- Runtime (microVM) pause / resume / fork / exec-stream ---------------

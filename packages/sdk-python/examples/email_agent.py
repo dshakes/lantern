@@ -6,15 +6,15 @@ an LLM, and optionally sends them after human approval.
 Run locally::
 
     export LANTERN_API_KEY="your-key"
-    python -m lantern.runtime.runner --agent email-triage --input '{"mode": "triage"}'
+    python -m pal.runtime.runner --agent email-triage --input '{"mode": "triage"}'
 
 Or use in a session (interactive multi-turn)::
 
-    from lantern import LanternClient
+    from pal import PalClient
     import asyncio
 
     async def main():
-        async with LanternClient() as client:
+        async with PalClient() as client:
             session = await client.sessions.create(agent="email-triage")
             reply = await client.sessions.send_message(
                 session.id, content="Summarize my unread emails"
@@ -24,8 +24,8 @@ Or use in a session (interactive multi-turn)::
     asyncio.run(main())
 """
 
-from lantern import agent, step, step_map, step_sleep
-from lantern.types import (
+from pal import agent, step, step_map, step_sleep
+from pal.types import (
     AgentContext,
     GuardrailConfig,
     MemoryConfig,

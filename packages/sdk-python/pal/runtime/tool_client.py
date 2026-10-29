@@ -1,6 +1,6 @@
 """Production tool client that executes built-in tools via gRPC.
 
-In the Lantern runtime, tool calls are dispatched to the tool service
+In the PAL runtime, tool calls are dispatched to the tool service
 which runs them in the appropriate isolation context (e.g. web search
 hits the search service, python exec runs in the sandbox, etc.).
 """
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from lantern.errors import LanternError
-from lantern.types import ToolClient as ToolClientBase
+from pal.errors import PalError
+from pal.types import ToolClient as ToolClientBase
 
 
 class GrpcToolClient(ToolClientBase):
@@ -34,7 +34,7 @@ class GrpcToolClient(ToolClientBase):
                 import grpc.aio  # type: ignore[import-untyped]
                 self._channel = grpc.aio.insecure_channel(self._endpoint)
             except ImportError:
-                raise LanternError("grpcio is required for production tool calls")
+                raise PalError("grpcio is required for production tool calls")
         return self._channel
 
     async def _call_tool(self, tool_name: str, action: str, params: dict[str, Any]) -> Any:
@@ -53,13 +53,15 @@ class GrpcToolClient(ToolClientBase):
             json_format.ParseDict(request, request_struct)
 
             stub = channel.unary_unary(
-                "/lantern.tools.v1.ToolService/Execute",
+                "/pal.tools.v1.ToolService/Execute",
                 request_serializer=request_struct.SerializeToString,
                 response_deserializer=struct_pb2.Struct.FromString,
             )
 
             metadata = [
+                ("x-pal-tenant-id", self._tenant_id),
                 ("x-lantern-tenant-id", self._tenant_id),
+                ("x-pal-run-id", self._run_id),
                 ("x-lantern-run-id", self._run_id),
             ]
 
@@ -68,7 +70,7 @@ class GrpcToolClient(ToolClientBase):
 
         except Exception as exc:
             if "grpc" in type(exc).__module__:
-                raise LanternError(f"Tool gRPC error ({tool_name}/{action}): {exc}") from exc
+                raise PalError(f"Tool gRPC error ({tool_name}/{action}): {exc}") from exc
             raise
 
     async def close(self) -> None:

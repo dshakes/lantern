@@ -2,9 +2,9 @@
 
 Two layers:
 
-1. ``LanternRuntimeClient`` HTTP contract — always runs (httpx MockTransport,
+1. ``PalRuntimeClient`` HTTP contract — always runs (httpx MockTransport,
    no deepagents needed).
-2. ``LanternSandbox`` protocol conformance — skipped unless ``deepagents`` is
+2. ``PalSandbox`` protocol conformance — skipped unless ``deepagents`` is
    installed (optional extra). Drives BaseSandbox's *derived* filesystem ops
    (write/read/ls/glob) through our three primitives, with exec routed to a
    local subprocess standing in for the microVM's exec channel.
@@ -18,16 +18,16 @@ import subprocess
 import httpx
 import pytest
 
-from lantern.errors import LanternApiError
-from lantern.integrations.runtime_client import LanternRuntimeClient
+from pal.errors import PalApiError
+from pal.integrations.runtime_client import PalRuntimeClient
 
 # ----------------------------------------------------------------------
 # Layer 1: HTTP contract
 # ----------------------------------------------------------------------
 
 
-def _client(handler) -> LanternRuntimeClient:
-    return LanternRuntimeClient("https://api.test", "key-123", transport=httpx.MockTransport(handler))
+def _client(handler) -> PalRuntimeClient:
+    return PalRuntimeClient("https://api.test", "key-123", transport=httpx.MockTransport(handler))
 
 
 def test_schedule_and_exec_contract():
@@ -41,7 +41,7 @@ def test_schedule_and_exec_contract():
             assert body["isolation"] == "firecracker"
             return httpx.Response(200, json={"vmId": "vm-1", "node": "n1", "az": "a", "stub": True})
         if request.url.path == "/v1/runtime/vms/vm-1/exec":
-            # Lantern's exec is execve-style (command = executable, argv = args),
+            # PAL's exec is execve-style (command = executable, argv = args),
             # so a bare shell line must be wrapped in /bin/sh -c.
             assert json.loads(request.content) == {"command": "/bin/sh", "argv": ["-c", "echo hi"]}
             return httpx.Response(200, json={"stdout": "hi\n", "stderr": "", "exitCode": 0})
@@ -113,7 +113,7 @@ def test_api_error_surfaces_status():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(402, text="quota exceeded")
 
-    with pytest.raises(LanternApiError):
+    with pytest.raises(PalApiError):
         _client(handler).schedule("sha256:abc")
 
 
@@ -123,7 +123,7 @@ def test_api_error_surfaces_status():
 
 
 class _LocalExecClient:
-    """Stands in for LanternRuntimeClient: exec runs in a local shell."""
+    """Stands in for PalRuntimeClient: exec runs in a local shell."""
 
     def exec(self, vm_id: str, command: str) -> tuple[str, str, int]:
         p = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -139,9 +139,9 @@ class _LocalExecClient:
 @pytest.fixture
 def sandbox(tmp_path):
     pytest.importorskip("deepagents")
-    from lantern.integrations.deepagents_sandbox import LanternSandbox
+    from pal.integrations.deepagents_sandbox import PalSandbox
 
-    sb = LanternSandbox(_LocalExecClient(), "vm-local")
+    sb = PalSandbox(_LocalExecClient(), "vm-local")
     sb._root = str(tmp_path)  # test-only: absolute paths under tmp_path
     return sb
 
@@ -171,15 +171,15 @@ def test_download_missing_and_directory(sandbox):
 def test_derived_write_read_ls(sandbox):
     """BaseSandbox-derived ops work end-to-end through our primitives."""
     path = f"{sandbox._root}/notes.txt"
-    w = sandbox.write(path, "hello lantern\n")
+    w = sandbox.write(path, "hello pal\n")
     assert w.error is None
     r = sandbox.read(path)
     assert r.error is None
-    assert "hello lantern" in r.file_data["content"]
+    assert "hello pal" in r.file_data["content"]
     listing = sandbox.ls(sandbox._root)
     assert listing.error is None
     assert any(f["path"].endswith("notes.txt") for f in listing.entries)
 
 
 def test_id_is_namespaced(sandbox):
-    assert sandbox.id == "lantern:vm-local"
+    assert sandbox.id == "pal:vm-local"

@@ -1,4 +1,4 @@
-"""HTTP client for the Lantern API (mirrors the TypeScript SDK client)."""
+"""HTTP client for the PAL API (mirrors the TypeScript SDK client)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from typing import Any
 
 import httpx
 
-from lantern import _env
-from lantern.errors import LanternApiError
-from lantern.types import (
+from pal import _env
+from pal.errors import PalApiError
+from pal.types import (
     AgentInfo,
     ConnectorInfo,
     ConnectorResult,
@@ -40,12 +40,12 @@ def _retry_backoff_s(attempt: int) -> float:
     return random.uniform(0, ceiling)
 
 
-class LanternClient:
-    """Async HTTP client for the Lantern platform API.
+class PalClient:
+    """Async HTTP client for the PAL platform API.
 
     Usage::
 
-        client = LanternClient()  # reads LANTERN_API_URL / LANTERN_API_KEY
+        client = PalClient()  # reads LANTERN_API_URL / LANTERN_API_KEY
         agent = await client.agents.create(name="my-agent")
         run = await client.runs.create(agent="my-agent", input={"q": "hi"})
 
@@ -101,7 +101,7 @@ class LanternClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> LanternClient:
+    async def __aenter__(self) -> PalClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -116,7 +116,8 @@ class LanternClient:
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
         if self._route_strategy and self._route_strategy != "auto":
-            h["X-Lantern-Route-Strategy"] = self._route_strategy
+            # legacy header name sent too while servers migrate (ADR 0032)
+            h["X-Pal-Route-Strategy"] = h["X-Lantern-Route-Strategy"] = self._route_strategy
         return h
 
     async def _request(
@@ -153,7 +154,7 @@ class LanternClient:
                 await asyncio.sleep(_retry_backoff_s(attempt))
                 continue
 
-            raise LanternApiError(resp.status_code, resp.text)
+            raise PalApiError(resp.status_code, resp.text)
 
     @staticmethod
     def _items(data: Any, key: str) -> list[Any]:
@@ -190,7 +191,7 @@ class LanternClient:
         async with client.stream(method, path, **kwargs) as resp:
             if not resp.is_success:
                 body_text = await resp.aread()
-                raise LanternApiError(resp.status_code, body_text.decode("utf-8", errors="replace"))
+                raise PalApiError(resp.status_code, body_text.decode("utf-8", errors="replace"))
 
             buffer = ""
             async for chunk in resp.aiter_text():
@@ -216,7 +217,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Agents:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def create(
@@ -255,7 +256,7 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            agents = [AgentInfo.model_validate(a) for a in LanternClient._items(data, "agents")]
+            agents = [AgentInfo.model_validate(a) for a in PalClient._items(data, "agents")]
             token = data.get("nextPageToken") if isinstance(data, dict) else None
             return AgentListResponse(agents=agents, next_page_token=token)
 
@@ -267,7 +268,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Runs:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def create(
@@ -318,7 +319,7 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            runs = [Run.model_validate(r) for r in LanternClient._items(data, "runs")]
+            runs = [Run.model_validate(r) for r in PalClient._items(data, "runs")]
             token = data.get("nextPageToken") if isinstance(data, dict) else None
             return RunListResponse(runs=runs, next_page_token=token)
 
@@ -378,7 +379,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Sessions:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def create(
@@ -424,7 +425,7 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            sessions = [Session.model_validate(s) for s in LanternClient._items(data, "sessions")]
+            sessions = [Session.model_validate(s) for s in PalClient._items(data, "sessions")]
             token = data.get("nextPageToken") if isinstance(data, dict) else None
             return SessionListResponse(sessions=sessions, next_page_token=token)
 
@@ -478,7 +479,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Connectors:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def list(
@@ -496,7 +497,7 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            items = [ConnectorInfo.model_validate(c) for c in LanternClient._items(data, "connectors")]
+            items = [ConnectorInfo.model_validate(c) for c in PalClient._items(data, "connectors")]
             token = data.get("nextPageToken") if isinstance(data, dict) else None
             return ConnectorListResponse(connectors=items, next_page_token=token)
 
@@ -520,7 +521,7 @@ class LanternClient:
 
                 result = await client.connectors.execute(
                     "slack", "send_message",
-                    params={"channel": "#general", "text": "Hello from Lantern!"},
+                    params={"channel": "#general", "text": "Hello from PAL!"},
                 )
             """
             data = await self._c._request(
@@ -541,7 +542,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Budgets:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def upsert(
@@ -592,7 +593,7 @@ class LanternClient:
         """Inbound webhook triggers. A provider POSTs signed deliveries to
         ``base_url + trigger["hookPath"]``; each verified delivery starts a run."""
 
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def create(
@@ -604,7 +605,7 @@ class LanternClient:
             input_template: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
             """Create a trigger (POST /v1/agents/{name}/triggers). ``secret`` is in
-            the response only when Lantern generated it — store it then."""
+            the response only when PAL generated it — store it then."""
             body: dict[str, Any] = {"provider": provider}
             if secret is not None:
                 body["secret"] = secret
@@ -653,7 +654,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Evals:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def upsert_suite(
@@ -772,7 +773,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Experiments:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def create(
@@ -854,7 +855,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Marketplace:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def list(
@@ -923,7 +924,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _MCP:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def list_servers(
@@ -978,7 +979,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Receipts:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def issue(self, run_id: str) -> dict[str, Any]:
@@ -1002,7 +1003,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Feedback:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def submit(
@@ -1051,7 +1052,7 @@ class LanternClient:
     # ------------------------------------------------------------------
 
     class _Runtime:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def schedule(self, spec: dict[str, Any]) -> dict[str, Any]:
@@ -1090,7 +1091,7 @@ class LanternClient:
         ) -> AsyncIterator[ExecStreamEvent]:
             """Streaming exec over SSE: stdout/stderr chunks, then one ``exit`` event.
 
-            Raises LanternApiError on non-2xx and on an SSE ``error`` event.
+            Raises PalApiError on non-2xx and on an SSE ``error`` event.
             """
             client = await self._c._get_client()
             headers = {**self._c._headers(), "Accept": "text/event-stream"}
@@ -1098,7 +1099,7 @@ class LanternClient:
             async with client.stream("POST", f"/v1/runtime/vms/{vm_id}/exec", headers=headers, content=body) as resp:
                 if not resp.is_success:
                     raw = await resp.aread()
-                    raise LanternApiError(resp.status_code, raw.decode("utf-8", errors="replace"))
+                    raise PalApiError(resp.status_code, raw.decode("utf-8", errors="replace"))
 
                 event, data = "message", ""
                 buffer = ""
@@ -1134,7 +1135,7 @@ class LanternClient:
             if event == "exit":
                 return ExecStreamEvent(type="exit", exit_code=int(payload.get("exitCode", 0)))
             if event == "error":
-                raise LanternApiError(500, str(payload.get("error") or payload.get("message") or "exec stream error"))
+                raise PalApiError(500, str(payload.get("error") or payload.get("message") or "exec stream error"))
             return None
 
         async def pause(self, vm_id: str) -> VmPauseResult:
@@ -1166,8 +1167,10 @@ class LanternClient:
                 f"/v1/runtime/vms/{vm_id}/files/content", params={"path": path}, headers=self._c._headers()
             )
             if not resp.is_success:
-                raise LanternApiError(resp.status_code, resp.text)
-            return {"content": resp.text, "truncated": resp.headers.get("x-lantern-truncated") == "true"}
+                raise PalApiError(resp.status_code, resp.text)
+            # x-lantern-truncated: legacy fallback
+            truncated = resp.headers.get("x-pal-truncated") or resp.headers.get("x-lantern-truncated")
+            return {"content": resp.text, "truncated": truncated == "true"}
 
         async def write_file(self, vm_id: str, path: str, content: str) -> dict[str, Any]:
             """Create or overwrite a UTF-8 text file (≤ 1 MiB; 413 above). Returns ``{path, bytesWritten}``."""
@@ -1180,13 +1183,13 @@ class LanternClient:
                 content=content.encode("utf-8"),
             )
             if not resp.is_success:
-                raise LanternApiError(resp.status_code, resp.text)
+                raise PalApiError(resp.status_code, resp.text)
             return resp.json()
 
     # ------------------------------------------------------------------
 
     class _Rehearsals:
-        def __init__(self, client: LanternClient) -> None:
+        def __init__(self, client: PalClient) -> None:
             self._c = client
 
         async def pull(
@@ -1456,3 +1459,6 @@ class RehearseResponse:
         self.cases = cases
         self.count = count
         self.reason = reason
+
+
+LanternClient = PalClient  # deprecated alias, ADR 0032

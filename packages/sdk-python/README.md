@@ -1,6 +1,6 @@
-# lantern-sdk (Python)
+# pal-runtime (Python)
 
-The official Python SDK for [Lantern](https://github.com/dshakes/lantern) — the
+The official Python SDK for [PAL](https://github.com/dshakes/lantern) — the
 open-source runtime for production AI agents with VPC deployment, pre-run cost
 forecasts, policy budgets, and eval-in-CI.
 
@@ -11,14 +11,20 @@ HTTP surface.
 
 ## Install
 
-Registry packages are not published yet, and the `lantern-sdk` name on PyPI belongs to an
-unrelated project: do not `pip install lantern-sdk`. Install from the repo:
+Registry packages are not published yet. The distribution is named `pal-runtime`; do not
+`pip install lantern-sdk` (that PyPI name belongs to an unrelated project). Install from the repo:
 
 ```bash
 pip install "path/to/lantern/packages/sdk-python"          # add [deepagents] for the extra below
 # or in CI:
 pip install "git+https://github.com/dshakes/lantern.git#subdirectory=packages/sdk-python"
 ```
+
+The import package is `pal` (`from pal import PalClient`); the CLI entry point is `pal-runner`.
+
+**Deprecated:** the old `lantern` import package (and `lantern-runner`, `LanternClient`, `Lantern*Error`,
+`LanternSandbox`) remains as a thin shim that emits a `DeprecationWarning`. It resolves to the same
+objects/modules as `pal`, but new code should import from `pal` (ADR 0032).
 
 Dependencies pulled in automatically: `httpx>=0.27`, `pydantic>=2.0`, `grpcio>=1.62`,
 `protobuf>=5.0`, `opentelemetry-api>=1.20`.
@@ -27,7 +33,7 @@ Optional extras:
 
 | Extra        | Pulls in           | For                                                        |
 | ------------ | ------------------ | ---------------------------------------------------------- |
-| `deepagents` | `deepagents>=0.6`  | Run a LangChain deepagents agent on a Lantern microVM — see [deepagents integration](#deepagents-integration) |
+| `deepagents` | `deepagents>=0.6`  | Run a LangChain deepagents agent on a PAL microVM — see [deepagents integration](#deepagents-integration) |
 
 ---
 
@@ -36,10 +42,10 @@ Optional extras:
 ```python
 import asyncio
 import os
-from lantern import LanternClient
+from pal import PalClient
 
 async def main():
-    async with LanternClient(
+    async with PalClient(
         api_key=os.environ["LANTERN_API_KEY"],
         # base_url defaults to https://api.lantern.run
         # or set LANTERN_API_URL for a self-hosted instance
@@ -64,7 +70,7 @@ asyncio.run(main())
 ## Client constructor
 
 ```python
-LanternClient(
+PalClient(
     base_url: str | None = None,    # default: LANTERN_API_URL or https://api.lantern.run
     api_key: str | None = None,     # default: LANTERN_API_KEY
     *,
@@ -73,7 +79,7 @@ LanternClient(
 )
 ```
 
-Use as a context manager (`async with LanternClient(...) as client`) to ensure the
+Use as a context manager (`async with PalClient(...) as client`) to ensure the
 underlying httpx connection pool is closed. Call `await client.close()` manually if
 not using a context manager.
 
@@ -85,7 +91,7 @@ not using a context manager.
 |---|---|
 | `LANTERN_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
 | `LANTERN_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
-| `LANTERN_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Lantern-Route-Strategy`. Default `auto` |
+| `LANTERN_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Lantern-Route-Strategy`). Default `auto` |
 
 ---
 
@@ -167,7 +173,7 @@ resp: ConnectorListResponse = await client.connectors.list()
 result: ConnectorResult = await client.connectors.execute(
     "slack",
     "send_message",
-    params={"channel": "#general", "text": "Hello from Lantern!"},
+    params={"channel": "#general", "text": "Hello from PAL!"},
 )
 
 # List available actions for a connector
@@ -179,8 +185,8 @@ actions: list[dict] = await client.connectors.list_actions("slack")
 ## Building an agent (decorator style)
 
 ```python
-from lantern import agent, step, tool
-from lantern.types import AgentContext
+from pal import agent, step, tool
+from pal.types import AgentContext
 
 @agent("researcher", model="reasoning-large", description="Deep research agent")
 async def researcher(input: dict, ctx: AgentContext) -> dict:
@@ -207,7 +213,7 @@ async def researcher(input: dict, ctx: AgentContext) -> dict:
 | `await step_map(name, items, fn, *, concurrency, retry, timeout)` | Fan-out over a list; each item gets its own journal entry `name[i]` |
 | `await step_race(name, fns, *, retry, timeout)` | Run multiple callables concurrently; return the first result, cancel the rest |
 | `await step_sleep(name, duration)` | Durable sleep. Duration strings: `"30s"`, `"5m"`, `"2h"` |
-| `await step_signal(name, *, timeout)` | Wait for an external signal. Only functional in the Lantern production runtime |
+| `await step_signal(name, *, timeout)` | Wait for an external signal. Only functional in the PAL production runtime |
 
 In local / dev mode all step primitives execute the function directly (no
 journalling). The production runtime installs a journal-aware runner via
@@ -216,7 +222,7 @@ journalling). The production runtime installs a journal-aware runner via
 ### Built-in tools
 
 ```python
-from lantern.tools import tool   # singleton registry
+from pal.tools import tool   # singleton registry
 
 @agent("worker", tools=[tool.web, tool.python])
 async def worker(input: dict, ctx: AgentContext) -> dict:
@@ -230,10 +236,10 @@ all four.
 ### Class-based pattern
 
 ```python
-from lantern.agent import LanternAgent
-from lantern.types import AgentContext
+from pal.agent import PalAgent
+from pal.types import AgentContext
 
-class MyAgent(LanternAgent):
+class MyAgent(PalAgent):
     name = "my-agent"
     model = "auto"
 
@@ -245,28 +251,28 @@ class MyAgent(LanternAgent):
 
 ## Errors
 
-All errors inherit from `LanternError`.
+All errors inherit from `PalError`.
 
 | Exception | Raised when |
 |---|---|
-| `LanternApiError(status_code, body)` | HTTP response is non-2xx |
-| `LanternStepError(name, reason)` | Step execution fails |
-| `LanternLlmError` | LLM call fails (budget, provider, timeout) |
-| `LanternTimeoutError(name, duration)` | `step()` / `step_sleep()` timeout exceeded |
-| `LanternValidationError` | Invalid agent name or config |
+| `PalApiError(status_code, body)` | HTTP response is non-2xx |
+| `PalStepError(name, reason)` | Step execution fails |
+| `PalLlmError` | LLM call fails (budget, provider, timeout) |
+| `PalTimeoutError(name, duration)` | `step()` / `step_sleep()` timeout exceeded |
+| `PalValidationError` | Invalid agent name or config |
 
 ---
 
 ## Running an agent locally
 
 ```bash
-python -m lantern.runtime.runner --agent hello-world --input '{"name": "World"}'
+python -m pal.runtime.runner --agent hello-world --input '{"name": "World"}'
 ```
 
-The `lantern-runner` entry point (installed by `pip install`) does the same:
+The `pal-runner` entry point (installed by `pip install`) does the same:
 
 ```bash
-lantern-runner --agent hello-world --input '{"name": "World"}'
+pal-runner --agent hello-world --input '{"name": "World"}'
 ```
 
 ---
@@ -275,25 +281,25 @@ lantern-runner --agent hello-world --input '{"name": "World"}'
 
 `pip install "path/to/lantern/packages/sdk-python[deepagents]"` adds a
 [deepagents](https://github.com/langchain-ai/deepagents) sandbox backend that runs
-the agent's shell and filesystem inside a Lantern microVM instead of on the host.
+the agent's shell and filesystem inside a PAL microVM instead of on the host.
 Egress allowlist, secret vending, and per-tenant quota are enforced by the runtime,
 not by the prompt — untrusted agent code never touches a bare shell (invariant #5).
 
 ```python
 from deepagents import create_deep_agent
-from lantern.integrations.deepagents_sandbox import LanternSandbox
+from pal.integrations.deepagents_sandbox import PalSandbox
 
-with LanternSandbox.create(image_digest="sha256:...") as sandbox:
+with PalSandbox.create(image_digest="sha256:...") as sandbox:
     agent = create_deep_agent(backend=sandbox)
     agent.invoke({"messages": [{"role": "user", "content": "run the tests"}]})
 ```
 
-`LanternSandbox` implements deepagents' `SandboxBackendProtocol`. deepagents'
+`PalSandbox` implements deepagents' `SandboxBackendProtocol`. deepagents'
 `BaseSandbox` derives the full filesystem toolset (`ls`/`read`/`write`/`edit`/
 `glob`/`grep`) from three primitives, so the backend is just those three mapped
 onto the runtime REST surface:
 
-| Backend method                   | Lantern endpoint                          |
+| Backend method                   | PAL endpoint                          |
 | -------------------------------- | ----------------------------------------- |
 | `execute()`                      | `POST /v1/runtime/vms/{id}/exec`          |
 | `upload_files()`/`download_files()` | base64 over the same exec channel      |
@@ -301,10 +307,10 @@ onto the runtime REST surface:
 
 Constructors:
 
-- `LanternSandbox.create(image_digest=..., **spec)` — schedules a fresh microVM and
+- `PalSandbox.create(image_digest=..., **spec)` — schedules a fresh microVM and
   polls until it is `running`. Extra kwargs pass through to `/v1/runtime/schedule`
   (`limits`, `egressRules`, `secrets`, `labels`, ...). Terminates the VM on exit.
-- `LanternSandbox.connect(vm_id)` — attaches to an already-running VM; does **not**
+- `PalSandbox.connect(vm_id)` — attaches to an already-running VM; does **not**
   terminate it on close.
 
 Composes with deepagents' own `CompositeBackend` so state can outlive the VM —
@@ -320,7 +326,7 @@ exec target, so an image whose own entrypoint runs to completion (`python:3.11-s
 just starts a REPL and exits) would be reaped by the runtime before the agent could
 exec into it. Pass an explicit `command` to override.
 
-**Verified against a real VM.** The full path — `LanternSandbox` → control-plane
+**Verified against a real VM.** The full path — `PalSandbox` → control-plane
 → runtime-scheduler → runtime-manager → real container — is exercised end to end
 on the `docker` backend, covering `execute`, binary upload/download roundtrip, and
 the BaseSandbox-derived `write`/`read`/`ls`/`edit`/`grep` the agent actually calls.

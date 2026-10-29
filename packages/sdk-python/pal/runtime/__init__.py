@@ -1,4 +1,4 @@
-"""Lantern runtime internals.
+"""PAL runtime internals.
 
 This sub-package contains the production runtime components:
 
@@ -11,9 +11,9 @@ This sub-package contains the production runtime components:
 - ``runner`` — agent runner entry point
 """
 
-from lantern.runtime.context import build_dev_context, build_production_context
-from lantern.runtime.runner import main, run_agent
-from lantern.runtime.runtime import RuntimeMode, detect_mode
+from pal.runtime.context import build_dev_context, build_production_context
+from pal.runtime.runner import main, run_agent
+from pal.runtime.runtime import RuntimeMode, detect_mode
 
 __all__ = [
     "RuntimeMode",

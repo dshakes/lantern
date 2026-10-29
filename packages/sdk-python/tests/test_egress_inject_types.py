@@ -1,6 +1,6 @@
 """ADR 0026: egress credential-injection types serialize to the REST shape."""
 
-from lantern.types import CredentialInjection, EgressRule
+from pal.types import CredentialInjection, EgressRule
 
 
 def test_egress_rule_inject_serializes_camel_case() -> None:

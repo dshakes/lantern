@@ -1,17 +1,17 @@
-"""Lantern microVM sandbox backend for the `deepagents` agent harness.
+"""PAL microVM sandbox backend for the `deepagents` agent harness.
 
 Gives a deepagents agent an ``execute`` tool (plus the derived filesystem
-tools: ls/read/write/edit/glob/grep) backed by a Lantern Firecracker microVM
+tools: ls/read/write/edit/glob/grep) backed by a PAL Firecracker microVM
 instead of a local shell — egress allowlist, secret vending, and tenant quota
-all enforced by the Lantern runtime (invariant #5: untrusted code runs in a
+all enforced by the PAL runtime (invariant #5: untrusted code runs in a
 microVM).
 
 Usage::
 
     from deepagents import create_deep_agent
-    from lantern.integrations.deepagents_sandbox import LanternSandbox
+    from pal.integrations.deepagents_sandbox import PalSandbox
 
-    with LanternSandbox.create(image_digest="sha256:...") as sandbox:
+    with PalSandbox.create(image_digest="sha256:...") as sandbox:
         agent = create_deep_agent(backend=sandbox)
         agent.invoke({"messages": [{"role": "user", "content": "run the tests"}]})
 
@@ -38,9 +38,9 @@ from deepagents.backends.protocol import (
 )
 from deepagents.backends.sandbox import BaseSandbox
 
-from .runtime_client import LanternRuntimeClient
+from .runtime_client import PalRuntimeClient
 
-__all__ = ["LanternSandbox"]
+__all__ = ["PalSandbox"]
 
 
 def _classify(stderr: str) -> str:
@@ -54,15 +54,15 @@ def _classify(stderr: str) -> str:
     return FILE_NOT_FOUND
 
 
-class LanternSandbox(BaseSandbox):
-    """deepagents ``SandboxBackendProtocol`` over a Lantern microVM.
+class PalSandbox(BaseSandbox):
+    """deepagents ``SandboxBackendProtocol`` over a PAL microVM.
 
     All filesystem operations are derived by ``BaseSandbox`` from the three
     primitives below, each of which round-trips through
     ``POST /v1/runtime/vms/{id}/exec``.
     """
 
-    def __init__(self, client: LanternRuntimeClient, vm_id: str, *, owns_vm: bool = False) -> None:
+    def __init__(self, client: PalRuntimeClient, vm_id: str, *, owns_vm: bool = False) -> None:
         super().__init__()
         self._client = client
         self._vm_id = vm_id
@@ -82,7 +82,7 @@ class LanternSandbox(BaseSandbox):
         isolation: str = "firecracker",
         wait_timeout: float = 120.0,
         **spec: Any,
-    ) -> LanternSandbox:
+    ) -> PalSandbox:
         """Schedule a fresh microVM and return a sandbox bound to it.
 
         Extra ``spec`` kwargs pass through to ``/v1/runtime/schedule``
@@ -95,7 +95,7 @@ class LanternSandbox(BaseSandbox):
         explicit ``command`` to override.
         """
         spec.setdefault("command", ["sleep", "infinity"])
-        client = LanternRuntimeClient(base_url, api_key)
+        client = PalRuntimeClient(base_url, api_key)
         placed = client.schedule(image_digest, isolation=isolation, **spec)
         vm_id = placed["vmId"]
         if not placed.get("stub"):
@@ -103,9 +103,9 @@ class LanternSandbox(BaseSandbox):
         return cls(client, vm_id, owns_vm=True)
 
     @classmethod
-    def connect(cls, vm_id: str, *, base_url: str | None = None, api_key: str | None = None) -> LanternSandbox:
+    def connect(cls, vm_id: str, *, base_url: str | None = None, api_key: str | None = None) -> PalSandbox:
         """Attach to an already-running VM (does not terminate it on close)."""
-        return cls(LanternRuntimeClient(base_url, api_key), vm_id)
+        return cls(PalRuntimeClient(base_url, api_key), vm_id)
 
     def close(self) -> None:
         try:
@@ -114,7 +114,7 @@ class LanternSandbox(BaseSandbox):
         finally:
             self._client.close()
 
-    def __enter__(self) -> LanternSandbox:
+    def __enter__(self) -> PalSandbox:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -126,7 +126,7 @@ class LanternSandbox(BaseSandbox):
 
     @property
     def id(self) -> str:
-        return f"lantern:{self._vm_id}"
+        return f"pal:{self._vm_id}"
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         # timeout is enforced VM-side by the harness exec channel; the HTTP
@@ -167,3 +167,6 @@ class LanternSandbox(BaseSandbox):
             except Exception:
                 results.append(FileDownloadResponse(path=path, content=None, error=FILE_NOT_FOUND))
         return results
+
+
+LanternSandbox = PalSandbox  # deprecated alias, ADR 0032

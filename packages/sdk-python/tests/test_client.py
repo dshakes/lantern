@@ -1,4 +1,4 @@
-"""Tests for LanternClient — endpoint correctness and parity methods.
+"""Tests for PalClient — endpoint correctness and parity methods.
 
 Uses httpx's MockTransport so no real server is needed.
 """
@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from lantern.client import LanternClient
+from pal.client import PalClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,8 +31,8 @@ class _MockTransport(httpx.AsyncBaseTransport):
         return httpx.Response(self._status, content=content, headers={"content-type": "application/json"})
 
 
-def _client(transport: _MockTransport) -> LanternClient:
-    c = LanternClient(base_url="https://api.example.com", api_key="test-key")
+def _client(transport: _MockTransport) -> PalClient:
+    c = PalClient(base_url="https://api.example.com", api_key="test-key")
     # Inject a pre-built async client with our mock transport
     c._client = httpx.AsyncClient(
         base_url="https://api.example.com",

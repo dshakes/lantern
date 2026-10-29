@@ -5,13 +5,13 @@ pages, synthesizes findings, and stores them in archival memory.
 
 Run locally::
 
-    python -m lantern.runtime.runner --agent research-agent \\
+    python -m pal.runtime.runner --agent research-agent \\
         --input '{"topic": "quantum error correction", "depth": 3}'
 """
 
-from lantern import agent, step, step_map, step_sleep
-from lantern.tools import tool
-from lantern.types import AgentContext, RetryPolicy
+from pal import agent, step, step_map, step_sleep
+from pal.tools import tool
+from pal.types import AgentContext, RetryPolicy
 
 
 @agent(

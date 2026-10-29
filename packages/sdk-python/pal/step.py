@@ -1,12 +1,12 @@
 """Durable step primitives.
 
-In local / dev mode these execute functions directly.  In the Lantern
+In local / dev mode these execute functions directly.  In the PAL
 production runtime the step journal intercepts calls so that results
 are persisted and replayed on retries.
 
 Usage::
 
-    from lantern import step, step_map, step_race, step_sleep, step_signal
+    from pal import step, step_map, step_race, step_sleep, step_signal
 
     result = await step("fetch-data", lambda: fetch_data())
     results = await step_map("process", items, process_item, concurrency=4)
@@ -22,8 +22,8 @@ import re
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, TypeVar
 
-from lantern.errors import LanternStepError, LanternTimeoutError
-from lantern.types import RetryPolicy, StepOptions
+from pal.errors import PalStepError, PalTimeoutError
+from pal.types import RetryPolicy, StepOptions
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -63,7 +63,7 @@ async def _dev_step_runner(name: str, fn: Callable[[], Awaitable[Any]], opts: St
         try:
             return await asyncio.wait_for(fn(), timeout=timeout_ms / 1000.0)
         except asyncio.TimeoutError:
-            raise LanternTimeoutError(name, opts.timeout if opts and opts.timeout else "unknown") from None
+            raise PalTimeoutError(name, opts.timeout if opts and opts.timeout else "unknown") from None
     return await fn()
 
 
@@ -136,7 +136,7 @@ async def step_race(
     Remaining tasks are cancelled.
     """
     if not fns:
-        raise LanternStepError(name, "step_race requires at least one function")
+        raise PalStepError(name, "step_race requires at least one function")
 
     tasks = [
         asyncio.create_task(
@@ -175,12 +175,12 @@ async def step_sleep(name: str, duration: str) -> None:
 async def step_signal(name: str, *, timeout: str | None = None) -> Any:
     """Wait for an external signal.
 
-    Only functional in the Lantern production runtime where the workflow
+    Only functional in the PAL production runtime where the workflow
     engine delivers signals to paused runs.
     """
-    raise LanternStepError(
+    raise PalStepError(
         name,
-        "step_signal() is only available in the Lantern runtime. "
+        "step_signal() is only available in the PAL runtime. "
         "In local dev, use a mock or test fixture.",
     )
 
