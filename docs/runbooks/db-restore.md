@@ -3,7 +3,7 @@
 > **Audience:** operators running PAL in production.
 > **Goal:** never lose tenant data, and have a *tested* restore path before you need it.
 
-Lantern's primary datastore is Postgres (`runs`, `agents`, `journal_events`, receipts,
+PAL Runtime's primary datastore is Postgres (`runs`, `agents`, `journal_events`, receipts,
 connector credentials, …). Losing it is unrecoverable without a backup. This runbook
 covers the two supported topologies.
 
@@ -38,7 +38,7 @@ externalDatabase:
   sslmode: require
   existingSecret: lantern-db
   existingSecretPasswordKey: postgres-password
-  appUser: lantern_app           # for RLS enforcement (LANTERN_RLS_ENFORCE=1)
+  appUser: lantern_app           # for RLS enforcement (PAL_RLS_ENFORCE=1)
   appExistingSecretPasswordKey: lantern-app-password
 ```
 
@@ -143,6 +143,6 @@ It restores with `ON_ERROR_STOP` (a corrupt gzip fails the drill) and requires `
 database is fine; set `DRILL_REQUIRE_ROWS=1` to also fail on empty tables when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the
 server major version. A dump contains no roles: after a real restore recreate `lantern_app` and
 its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling
-`LANTERN_RLS_ENFORCE=1`. Take a dump on demand with
+`PAL_RLS_ENFORCE=1`. Take a dump on demand with
 `kubectl create job --from=cronjob/<release>-postgres-backup backup-manual-1`.
 A failing drill means the backups are not usable until it passes.

@@ -1,9 +1,9 @@
-# Lantern services as macOS LaunchAgents
+# PAL Runtime services as macOS LaunchAgents
 
 Prod-grade always-on setup so the bridges **and the backend services**
 (API, dashboard, gateway, model-router, workflow-engine, runtime-manager,
 runtime-scheduler) auto-start at login and auto-restart if they crash. Use
-this when you want Lantern running 24/7 on your Mac without typing
+this when you want PAL Runtime running 24/7 on your Mac without typing
 `make run-*` each time.
 
 ## Install
@@ -62,10 +62,10 @@ make check-launchd-env
 That fails if a plist is missing wiring its service cannot run without, or if
 a plist and the shared defaults disagree. Worth running after editing either.
 
-## Credential encryption (`LANTERN_CREDENTIAL_KEY`)
+## Credential encryption (`PAL_CREDENTIAL_KEY`)
 
 Connector OAuth tokens and LLM API keys are AES-256-GCM encrypted at rest in
-Postgres. The master key is `LANTERN_CREDENTIAL_KEY`: a **base64- or
+Postgres. The master key is `PAL_CREDENTIAL_KEY`: a **base64- or
 hex-encoded 32-byte** value you generate yourself — it is not issued by any
 provider.
 
@@ -79,7 +79,7 @@ sourced by the dashboard and both bridge wrappers, and none of them need the
 key. Least privilege — it exists only in the process that encrypts with it.
 
 When the variable is unset, storage silently falls back to plaintext. That is
-fine for a scratch database and wrong everywhere else; `LANTERN_ENV=prod`
+fine for a scratch database and wrong everywhere else; `PAL_ENV=prod`
 refuses to boot without it.
 
 ### Back the key up
@@ -97,8 +97,8 @@ write, which for an API key may be never. To do it now:
 
 ```bash
 cd services/control-plane
-LANTERN_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials -dry-run
-LANTERN_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials
+PAL_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials -dry-run
+PAL_CREDENTIAL_KEY=... DATABASE_URL=... go run ./cmd/reencrypt-credentials
 ```
 
 Each row is decrypted back and compared byte-for-byte before the transaction
@@ -227,4 +227,4 @@ ThrottleInterval=10s prevents tight loops. If you see repeat crashes
 in the err log, check that:
 - Postgres is running (`make dev-infra`)
 - Control-plane is running (`make run-api`)
-- `LANTERN_API_URL` in the plist matches your control-plane host
+- `PAL_API_URL` in the plist matches your control-plane host

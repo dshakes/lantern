@@ -1,4 +1,4 @@
-# The Spectrum — Lantern's Smart AI Gateway
+# The Spectrum — PAL Runtime's Smart AI Gateway
 
 > **What this is:** the multi-LLM router and intelligence layer that decides — for every model call — *which model* to use based on the cost / latency / accuracy budget the agent declared. We call it **the Spectrum** because it routes across the full spectrum of models from tiny edge models to frontier closed-source giants.
 >
