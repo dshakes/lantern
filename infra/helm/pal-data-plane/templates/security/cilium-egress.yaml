@@ -81,7 +81,7 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: {{ .Values.egress.proxy.namespace | default "lantern-system" | quote }}
-            app.kubernetes.io/name: pal-egress-proxy
+            app.kubernetes.io/name: lantern-egress-proxy
       toPorts:
         - ports:
             - port: {{ .Values.egress.proxy.port | default 3128 | quote }}

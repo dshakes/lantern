@@ -1,8 +1,18 @@
 {{/*
 Chart name, truncated to 63 chars (K8s label limit).
 */}}
+{{/*
+Chart name used in names and selector labels. Releases whose name contains "lantern" (created before the
+PAL rename, ADR 0032) keep the old chart name so their object names, selectors and PVCs do not change.
+*/}}
+{{- define "pal-dp.chartName" -}}
+{{- $n := default .Chart.Name .Values.nameOverride -}}
+{{- if contains "lantern" .Release.Name -}}{{- $n = regexReplaceAll "^pal" $n "lantern" -}}{{- end -}}
+{{- $n -}}
+{{- end }}
+
 {{- define "pal-dp.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- include "pal-dp.chartName" . | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
@@ -14,7 +24,7 @@ Truncated to 63 chars.
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- $name := include "pal-dp.chartName" . }}
 {{- if contains $name .Release.Name }}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- else }}

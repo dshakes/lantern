@@ -31,7 +31,7 @@ squid.conf with dstdomain/dst ACLs + an `http_access allow` for them, ending in
 
 NOTE: this Deployment runs in the data-plane's own (release) namespace, NOT in a
 tenant namespace — it is shared platform infra. Cilium's agent-egress policy
-references it by label app.kubernetes.io/name=pal-egress-proxy.
+references it by label app.kubernetes.io/name=lantern-egress-proxy.
 */ -}}
 {{- if .Values.egress.proxy.enabled }}
 {{- $port := .Values.egress.proxy.port | default 3128 }}
@@ -41,7 +41,7 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-egress-proxy-config
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    app.kubernetes.io/name: pal-egress-proxy
+    app.kubernetes.io/name: lantern-egress-proxy
 data:
   squid.conf: |-
 {{ .Values.egress.proxy.config | default (printf "http_port %d\n# DEFAULT = DENY ALL. Nothing is permitted outbound — not even RFC1918,\n# because pod/Service IPs live there (internal SSRF / lateral-movement risk).\n# Cloud metadata is denied too. The operator MUST override egress.proxy.config\n# with an explicit destination allowlist to permit any egress, e.g.:\n#   acl allowed_dst dstdomain .api.openai.com .githubusercontent.com\n#   http_access deny to_localhost\n#   http_access deny to_linklocal   # 169.254.0.0/16 incl. cloud metadata\n#   http_access allow allowed_dst\n# Keep the trailing deny-all below as the final rule.\nacl to_linklocal dst 169.254.0.0/16\nhttp_access deny to_linklocal\nhttp_access deny all\n" (int $port)) | indent 4 }}
@@ -52,19 +52,19 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-egress-proxy
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    app.kubernetes.io/name: pal-egress-proxy
+    app.kubernetes.io/name: lantern-egress-proxy
     app.kubernetes.io/component: egress-proxy
 spec:
   replicas: {{ .Values.egress.proxy.replicas | default 1 }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: pal-egress-proxy
+      app.kubernetes.io/name: lantern-egress-proxy
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
         {{- include "pal-dp.labels" . | nindent 8 }}
-        app.kubernetes.io/name: pal-egress-proxy
+        app.kubernetes.io/name: lantern-egress-proxy
         app.kubernetes.io/component: egress-proxy
     spec:
       securityContext:
@@ -102,12 +102,12 @@ metadata:
   name: {{ include "pal-dp.fullname" . }}-egress-proxy
   labels:
     {{- include "pal-dp.labels" . | nindent 4 }}
-    app.kubernetes.io/name: pal-egress-proxy
+    app.kubernetes.io/name: lantern-egress-proxy
     app.kubernetes.io/component: egress-proxy
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: pal-egress-proxy
+    app.kubernetes.io/name: lantern-egress-proxy
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: proxy

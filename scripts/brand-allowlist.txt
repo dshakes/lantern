@@ -88,3 +88,4 @@ scope:^scripts/regression\.sh ^[^#]*"label":"lantern" # API label sent to the ma
 🟢 Lantern|/lantern ping # bridge self-chat strings the owner sees (bridges own these)
 scope:^(scripts|\.github)/ postgres(ql)?://lantern:|/lantern\?sslmode|%lantern\b|/lantern\?|\(lantern/(lantern)?\)|`lantern` DB|"password":"lantern"|\$\{_PASSWORD:-lantern\}|\blantern\b(?=\$\{RST\}) # dev DB URL/user/password forms (owner's live dev DB name is allowlisted above)
 scope:^scripts/introspect/PROMPT\.md -Users-shakes-workspace-lantern # Claude Code memory dir derived from the checkout path
+lantern-egress-proxy # app label selector of the data-plane egress proxy: Deployment selectors are immutable, kept for in-place upgrades

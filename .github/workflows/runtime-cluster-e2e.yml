@@ -78,6 +78,7 @@ jobs:
         run: |
           infra/helm/pal/tests/authz-enforce.sh
           infra/helm/pal/tests/legacy-env-keys.sh
+          infra/helm/pal/tests/fullname-stability.sh
 
       - name: Create kind cluster (default CNI disabled)
         uses: helm/kind-action@99576bfa6ddf9a8e612d83b513da5a75875caced # v1.9.0
