@@ -76,7 +76,7 @@ const (
 	// dpLegacySessionIssuer is the pre-PAL issuer (ADR 0032). Session tokens
 	// minted before the rename stay valid until they expire.
 	dpLegacySessionIssuer = "lantern-cp"
-	dpSessionTTL    = time.Hour
+	dpSessionTTL          = time.Hour
 )
 
 // dpClaims is the JWT payload for a data-plane session token.
