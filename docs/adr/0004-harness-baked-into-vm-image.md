@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-18
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, harness, security, boot
 
 > **Note (2026-07):** the harness ships baked into the image as decided. The
@@ -14,7 +14,7 @@
 
 ## Context
 
-Every Lantern microVM runs an in-guest init process — the **harness**. It is PID 1 in the guest, supervises the worker, terminates the `Heartbeat` / `VendSecret` / `Report` streams to the manager (see `RuntimeHarness` in `runtime.proto`), and enforces the egress allowlist from inside the guest.
+Every PAL Runtime microVM runs an in-guest init process — the **harness**. It is PID 1 in the guest, supervises the worker, terminates the `Heartbeat` / `VendSecret` / `Report` streams to the manager (see `RuntimeHarness` in `runtime.proto`), and enforces the egress allowlist from inside the guest.
 
 There are two ways to deliver this binary into the guest:
 
@@ -27,7 +27,7 @@ Inject-at-boot is appealing for fast iteration: the manager can upgrade the harn
 
 The harness is **baked into the VM base image**. Specifically:
 
-- Lantern publishes a small number of base images (`lantern/runtime-base:python-3.11`, `:node-20`, `:go-1.23`, `:minimal`).
+- PAL Runtime publishes a small number of base images (`lantern/runtime-base:python-3.11`, `:node-20`, `:go-1.23`, `:minimal`).
 - Each base image ships with `/sbin/lantern-harness` (a statically-linked musl binary), a `/etc/lantern/harness.toml` defaults file, and a `init=/sbin/lantern-harness` kernel cmdline.
 - Agent images `FROM` a base image. The agent's bundle adds the worker binary and dependencies. The harness is unchanged.
 - The harness version is pinned per base-image version. A harness upgrade is a base-image rev.

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-14
-- **Deciders:** Lantern runtime team
+- **Deciders:** PAL Runtime runtime team
 - **Tags:** runtime, scheduling, architecture
 
 ## Context

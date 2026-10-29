@@ -133,11 +133,11 @@ Enforces:
 - Secrets vended by the harness over `/run/lantern/secrets.sock` via the control-plane relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)); never baked into the image
 - Resource limits from `agent.yaml.limits` translated to cgroups + Firecracker MMIO
 
-**Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, up to `LANTERN_MAX_FORK_COUNT` (default 100, ceiling 1000) via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
+**Sandbox lifecycle (microVM tier, Firecracker).** `Snapshot` + `Stop` implement **pause**; a `Spawn` with `restore_snapshot_id` implements **resume** (same `vm_id`) and **fork** (N new `vm_id`s from one snapshot, up to `PAL_MAX_FORK_COUNT` (default 100, ceiling 1000) via `POST /v1/runtime/vms/{id}/fork`). A restore is a new identity: fresh cert, exec token, and network address, which the in-guest harness adopts (`re-identify`); the registry pins the current incarnation's cert so a snapshot-frozen cert is refused. Snapshots are tenant-owned; restoring another tenant's returns `NOT_FOUND`.
 
 **Spawn contract.** The manager writes `spawn.json` (workload command, env, egress rules, `workload_uid`/`gid`) onto the read-only cert drive; the harness reads it at boot and drops the workload to that uid. The manager, not the caller, chooses the uid.
 
-**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](../assets/diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
+**Per-call authz.** Every `RuntimeManager` RPC requires `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`, constant-time compare; the manager refuses to start in prod without it). A per-VM cert (`OU=lantern-vm`) is refused on all `RuntimeManager` methods and may reach only its own `RuntimeHarness` channel. `ExecTool` is scoped by `tenant_id`. Details: [ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md); diagrams: [`runtime-two-tier.svg`](../assets/diagrams/runtime-two-tier.svg), [`sandbox-lifecycle.svg`](../assets/diagrams/sandbox-lifecycle.svg).
 
 See [`04-runtime-isolation.md`](04-runtime-isolation.md) for the deep dive.
 
@@ -176,7 +176,7 @@ Capabilities (not models):
 
 **Generation IDs** are injected on the first token (Vercel pattern) so dashboard reconnects can resume mid-stream.
 
-**Auth.** The gRPC port is a trust boundary: callers must present `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`, invariant #7).
+**Auth.** The gRPC port is a trust boundary: callers must present `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`, invariant #7).
 
 See [`06-model-router.md`](06-model-router.md).
 
@@ -246,7 +246,7 @@ Captures usage events: CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by mo
 Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue, per-tenant fair-share scheduling. Implements:
 
 - Cron schedules (`0 9 * * MON`)
-- Timezone-aware matching (`timezone` on the schedule, `LANTERN_DEFAULT_TIMEZONE`)
+- Timezone-aware matching (`timezone` on the schedule, `PAL_DEFAULT_TIMEZONE`)
 - Webhook triggers (registered via `control-plane`)
 - Delayed runs (`runIn: 5m`)
 
@@ -355,7 +355,7 @@ See [`14-visual-builder.md`](14-visual-builder.md).
 
 ## 13. `vault` — Personal Credential Vault (design; not a separate service)
 
-> *As built:* credentials are AES-256-GCM-encrypted at rest in the control-plane (`internal/secrets`, `LANTERN_CREDENTIAL_KEY`) and vended to workloads through the secret relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)). There is no `services/vault`.
+> *As built:* credentials are AES-256-GCM-encrypted at rest in the control-plane (`internal/secrets`, `PAL_CREDENTIAL_KEY`) and vended to workloads through the secret relay ([ADR 0008](../adr/0008-runtime-secret-relay.md)). There is no `services/vault`.
 
 | | |
 |---|---|

@@ -1,6 +1,6 @@
 # Runbook — enabling Row-Level Security enforcement
 
-> **Audience:** operators turning on `LANTERN_RLS_ENFORCE` for an environment.
+> **Audience:** operators turning on `PAL_RLS_ENFORCE` for an environment.
 > **Goal:** make tenant isolation actually enforced by Postgres, without taking
 > the environment down on the way.
 
@@ -9,7 +9,7 @@ is switched on**. Both the control-plane and the workflow engine ship with the
 scoping code merged and the flag off. This runbook is the cutover.
 
 **Read the ordering section before doing anything.** The failure mode is not
-gradual: with `LANTERN_RLS_ENFORCE=1` and no usable `lantern_app` credential,
+gradual: with `PAL_RLS_ENFORCE=1` and no usable `lantern_app` credential,
 both services **refuse to start**. That is deliberate — a service that believes
 it is enforcing isolation and is not is worse than one that is plainly down —
 but it means the wrong order takes the environment offline rather than degrading
@@ -62,7 +62,7 @@ time and never committed:
 helm upgrade --install lantern infra/helm/lantern \
   -f infra/helm/lantern/values.yaml \
   -f infra/helm/lantern/values-staging.yaml \
-  --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD"
+  --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
 ```
 
 ### 3. Verify grants — this is the step that bites
@@ -93,19 +93,19 @@ SELECT count(*) FROM pg_policies WHERE policyname = 'tenant_isolation';
 
 Expect 45 (as of this writing). A lower number means migrations are behind.
 
-### 5. Supply the secrets `LANTERN_ENV=staging` demands
+### 5. Supply the secrets `PAL_ENV=staging` demands
 
 This trips people, and it is not about RLS. `values-staging.yaml` sets
-`LANTERN_ENV: "staging"`, which is prod-like — and that **arms the
+`PAL_ENV: "staging"`, which is prod-like — and that **arms the
 control-plane's fail-closed startup guards**. It will refuse to boot without:
 
 | secret | Helm value |
 | --- | --- |
 | `JWT_SECRET` (and not the dev default) | `secrets.jwtSecret` |
-| `LANTERN_CREDENTIAL_KEY` | `secrets.credentialKey` |
-| `LANTERN_RECEIPT_SECRET` | `secrets.receiptSecret` |
-| `LANTERN_GRPC_SERVICE_TOKEN` | `secrets.grpcServiceToken` |
-| `LANTERN_APP_DB_PASSWORD` | `secrets.appDbPassword` |
+| `PAL_CREDENTIAL_KEY` | `secrets.credentialKey` |
+| `PAL_RECEIPT_SECRET` | `secrets.receiptSecret` |
+| `PAL_GRPC_SERVICE_TOKEN` | `secrets.grpcServiceToken` |
+| `PAL_APP_DB_PASSWORD` | `secrets.appDbPassword` |
 
 Missing any one of them is a `Fatal` at startup, not a warning — deliberate, but
 it means a deploy that supplies only the RLS password fails on something that
@@ -115,16 +115,16 @@ looks unrelated. Set them together:
 helm upgrade --install lantern infra/helm/lantern \
   -f infra/helm/lantern/values.yaml \
   -f infra/helm/lantern/values-staging.yaml \
-  --set secrets.appDbPassword="$LANTERN_APP_DB_PASSWORD" \
-  --set secrets.credentialKey="$LANTERN_CREDENTIAL_KEY" \
-  --set secrets.receiptSecret="$LANTERN_RECEIPT_SECRET" \
-  --set secrets.grpcServiceToken="$LANTERN_GRPC_SERVICE_TOKEN" \
+  --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD" \
+  --set secrets.credentialKey="$PAL_CREDENTIAL_KEY" \
+  --set secrets.receiptSecret="$PAL_RECEIPT_SECRET" \
+  --set secrets.grpcServiceToken="$PAL_GRPC_SERVICE_TOKEN" \
   --set secrets.jwtSecret="$JWT_SECRET"
 ```
 
 ### 6. Deploy with enforcement on
 
-`values-staging.yaml` sets `LANTERN_RLS_ENFORCE: "1"` for the control-plane and
+`values-staging.yaml` sets `PAL_RLS_ENFORCE: "1"` for the control-plane and
 the workflow engine. Both need the password too; they fail closed without it.
 
 ---
@@ -185,7 +185,7 @@ and 0 rows from other tenants.
 
 ## Rollback
 
-Unset `LANTERN_RLS_ENFORCE` (or set it to `0`) and redeploy. The services fall
+Unset `PAL_RLS_ENFORCE` (or set it to `0`) and redeploy. The services fall
 back to the single privileged pool: the `app.tenant_id` GUC is still set,
 policies simply stop applying, and behaviour returns to what it was. **No
 schema change, no data migration, nothing to undo** — the policies stay in
@@ -202,6 +202,6 @@ save repeating steps 1–4 on the next attempt.
   workflow engine does not enable it anywhere else; other services still connect
   as the owner role.
 - **The bridges and CLI** talk to the control-plane over HTTP and are unaffected.
-- **`LANTERN_RLS_ENFORCE=1` without the password is a startup failure, by
+- **`PAL_RLS_ENFORCE=1` without the password is a startup failure, by
   design.** If an environment must run degraded, leave the flag off — do not
   work around the fail-closed check.

@@ -240,7 +240,7 @@ never more than one merge behind master.*
   control-plane's pgvector index (11,088 rows, 100 % embedded — it already
   exists) cover everything above.
 - **Crispy Cones stays a separate agent.** Only the *fact* that the business
-  exists belongs in Lantern's self-model (done, #230).
+  exists belongs in PAL Runtime's self-model (done, #230).
 
 ## Consequences
 

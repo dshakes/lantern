@@ -16,7 +16,7 @@ the wave that ships it.
 - **Personal agents:** the bar moved from "answers well" to "owns the task":
   commitments tracked to closure, outcome measurement, proactive but gated.
 
-Lantern's wedge: the only stack that combines **customer-VPC data plane +
+PAL Runtime's wedge: the only stack that combines **customer-VPC data plane +
 microVM isolation + durable journal (crash-resume) + verifiable receipts**, and
 the personal harness is that stack dog-fooded on a real life.
 
@@ -26,10 +26,10 @@ the personal harness is that stack dog-fooded on a real life.
 
 | # | Finding | Severity | Fix |
 |---|---|---|---|
-| S1 | Helm never set `JWT_SECRET`; `LANTERN_ENV` defaulted to `""` → every prod guard off, dev JWT secret signs owner tokens | Critical | secretKeyRef wired, `LANTERN_ENV=production` default, `values-prod.yaml` |
+| S1 | Helm never set `JWT_SECRET`; `PAL_ENV` defaulted to `""` → every prod guard off, dev JWT secret signs owner tokens | Critical | secretKeyRef wired, `PAL_ENV=production` default, `values-prod.yaml` |
 | R1 | control-plane dropped `limits`/`egress_rules`/`secrets` when building AgentSpec → VMs booted with no egress allowlist | Critical | decode + round-trip test |
 | R2 | Firecracker guest never received cmd/egress/uid (cmdline mangled spaces) | Critical | `spawn.json` contract on the cert drive (ADR 0025) |
-| R3 | workload + tools ran as the harness uid → SO_PEERCRED, egress REDIRECT and cert-key isolation all defeated | Critical | privilege drop to `LANTERN_WORKLOAD_UID` |
+| R3 | workload + tools ran as the harness uid → SO_PEERCRED, egress REDIRECT and cert-key isolation all defeated | Critical | privilege drop to `PAL_WORKLOAD_UID` |
 | R4 | runtime-manager had no per-call authz; a guest's VM cert could Exec/Stop any VM | High | VM-cert vs service-token interceptor |
 | R5 | `ExecTool` not tenant-scoped | High | `tenant_id` on request, NotFound on mismatch |
 | S2 | model-router `:50053` unauthenticated while carrying tenant provider keys | High | service-token interceptor, fail-closed in prod |
