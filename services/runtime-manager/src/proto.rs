@@ -214,6 +214,11 @@ pub struct ScheduleRequest {
     /// Empty → the backend mints its own id (legacy / warm-pool path).
     #[serde(default)]
     pub vm_id: String,
+    /// Per-tenant DLP policy for the egress broker (ADR 0030). When `None`
+    /// no inspection is performed. Shipped from the control-plane via
+    /// `AgentSpec.dlp_policy` (proto field 19).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dlp_policy: Option<crate::dlp::DlpPolicy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -333,6 +338,10 @@ pub struct RestoreRequest {
     /// becomes the guest's contract).
     #[serde(default)]
     pub egress_rules: Vec<EgressRule>,
+    /// ADR 0030: per-tenant DLP policy for the egress broker. Propagated
+    /// from the restoring caller's spec; `None` = no inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dlp_policy: Option<crate::dlp::DlpPolicy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

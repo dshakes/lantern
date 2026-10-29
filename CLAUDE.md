@@ -500,7 +500,10 @@ no double token validation / DB hit), so it is **not** a new auth surface.
 unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
 zero behavior change, safe to merge/run against the live bridges + dashboard.
 When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
-keep full access. Annotated today: the agents/runs/sessions/connectors/
+keep full access. **Prod/staging Helm values enable it** (`values-prod.yaml` /
+`values-staging.yaml` set `controlPlane.env.LANTERN_AUTHZ_ENFORCE: "1"`; base `values.yaml`
+stays off, rollout + rollback in `docs/runbooks/ga-staged-rollout.md`); the control-plane
+logs `authz: API-key scope enforcement {enforced}` at boot. Annotated today: the agents/runs/sessions/connectors/
 deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
 follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
 fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
@@ -1238,6 +1241,20 @@ controls, all fail-safe:
   rules are exact hostnames; 128 conns/VM, 10 s handshake, 300 s idle; prod
   broker mode refuses to start without the relay. Live check:
   `infra/firecracker/broker-e2e.sh`.
+- **DLP on egress (ADR 0030).** The broker can scan request bodies and headers
+  for sensitive data before forwarding. Inspectable surfaces: TLS-terminated
+  injecting hosts (broker MitM path) and plain-HTTP allowlisted hosts. Opaque
+  CONNECT tunnels (non-injecting allowlisted rules) are NEVER inspected — only
+  host/port + byte-rate policy applies there. Policy is per-tenant, stored in
+  `dlp_policies` (RLS-enforced), managed via `GET/PUT /v1/egress/dlp-policy` +
+  `POST/DELETE /v1/egress/dlp-policy/rules`, and compiled into the broker at VM
+  spawn time via `AgentSpec.dlp_policy` (proto field 19). Detectors: `card_number`
+  (Luhn-validated), `secret_key` (AWS/GitHub/Slack/PEM prefixes), `email`,
+  `phone` (both threshold-based), `custom_regex`. Modes: `off | audit | block`.
+  Block mode fails closed on inspection error (I/O errors are never silently
+  swallowed). **Invariant #10:** audit events carry rule id, detector, host,
+  byte offset/count — NEVER the matched value. `max_inspect_bytes` (default 64 KiB)
+  caps per-request scanning. Broker is wired via `Broker::with_dlp(Arc<DlpEngine>)`.
 
 Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
 `LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
@@ -1265,7 +1282,7 @@ The measurement is **HOST-ASSERTED** — computed by the manager from the files 
 | `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
 | `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
 | `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state. **Auto-resume**: exec / ExecTool / file-API requests to a VM auto-suspended with `idleTimeoutSecs > 0` resume it transparently (409 for manually-paused VMs) |
-| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
+| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. The disk (rootfs) snapshot is staged via `FICLONE` ioctl (O(1) CoW on XFS/btrfs). **Default on non-reflink FS** (ext4, Lima, GitHub KVM): falls back to full byte copy with a once-per-process WARN + per-staging `disk_staging="full_copy"` metric (`bytes`, `elapsed_ms`) — pause/resume/fork keep working. Set `LANTERN_REQUIRE_REFLINK=1` on XFS/btrfs nodes to enforce FICLONE (fail with typed error instead of fallback). Manager logs `disk_staging=ficlone` per fork on success. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
 | `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
@@ -1276,6 +1293,19 @@ The measurement is **HOST-ASSERTED** — computed by the manager from the files 
 | `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
 | `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
 | `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
+
+### Egress DLP policy (ADR 0030)
+
+Per-tenant content-inspection rules applied by the egress broker to TLS-terminated and plain-HTTP egress on allowlisted hosts. Opaque CONNECT tunnels are never inspected. Compiled into the broker at VM spawn via `AgentSpec.dlp_policy`.
+
+| Method   | Path                                       | Description                                                                           |
+| -------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/egress/dlp-policy`                    | List tenant's DLP rules (`settings:read` or owner)                                   |
+| `PUT`    | `/v1/egress/dlp-policy`                    | Replace full ruleset atomically (`settings:write`)                                    |
+| `POST`   | `/v1/egress/dlp-policy/rules`              | Upsert one rule `{ruleId, detector, pattern?, mode, threshold?}` (`settings:write`)   |
+| `DELETE` | `/v1/egress/dlp-policy/rules/{ruleId}`     | Delete one rule (`settings:write`)                                                    |
+
+Detectors: `card_number` | `secret_key` | `email` | `phone` | `custom_regex`. Modes: `off` | `audit` | `block`. Audit events: `rule_id`, `detector`, `host`, `byte_offset`, `byte_count`, `decision` — **never the matched value** (invariant #10).
 
 **Idle-suspend auto-pause (Google ACE model).** Set `idleTimeoutSecs > 0` on the schedule spec (REST `idleTimeoutSecs`, proto `idle_timeout_secs`, CLI `--idle-timeout N`). The scheduler's idle sweeper (10 s tick) auto-snapshots-and-stops any RUNNING VM idle longer than the threshold (`VM.LastActivityAt` stamped by the harness heartbeat's `has_active_exec` / `last_activity_unix_ms` signals); state transitions `RUNNING → DRAINING+idle-pausing → PAUSED` via the same crash-safe CAS as operator Pause. The quota slot is released. Exec, ExecTool, and file-API requests to an idle-enabled VM first call `scheduler.Resume` (the sweeper does not update the control-plane shadow row, so the shadow can't tell); `FailedPrecondition` = already running. A VM paused via `POST /pause` (shadow `paused`) is never auto-resumed → 409. Known limitation: `GET /v1/runtime/vms` shows an auto-suspended VM as `running`. `auto_resume` audit event on each transparent resume.
 
@@ -1319,6 +1349,14 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 - `LANTERN_DIALER=stub` — force the stub dialer even when
   `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
   `LANTERN_DEFAULT_MANAGER_ADDR` above.
+- `LANTERN_REQUIRE_REFLINK=1` — **runtime-manager only.** Set on production
+  nodes whose snapshot directory is on XFS (`reflink=1`) or btrfs to enforce
+  `FICLONE` disk staging. Without this (the default), the manager falls back
+  to a full byte copy on non-reflink filesystems (ext4, tmpfs) with a WARN —
+  pause/resume/fork continue to work on any filesystem. With this set, any
+  `FICLONE` failure (`EOPNOTSUPP`/`EXDEV`) returns a typed error immediately
+  rather than silently falling back. Off in every shipped values file (node
+  filesystems vary); add it under `runtimeManager.env` once your nodes are XFS/btrfs.
 - `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on

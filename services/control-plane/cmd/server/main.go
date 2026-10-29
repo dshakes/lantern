@@ -844,6 +844,13 @@ func main() {
 	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)
 	httpMux.HandleFunc("GET /v1/runtime/audit", runtimeHandler.ListAudit)
 	httpMux.HandleFunc("GET /v1/runtime/metrics", runtimeHandler.LiveMetrics)
+
+	// Egress DLP policy CRUD — ADR 0030.
+	dlpPolicyHandler := handlers.NewDLPPolicyHandler(srv, authHandler)
+	httpMux.HandleFunc("GET /v1/egress/dlp-policy", dlpPolicyHandler.GetPolicy)
+	httpMux.HandleFunc("PUT /v1/egress/dlp-policy", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.PutPolicy))
+	httpMux.HandleFunc("POST /v1/egress/dlp-policy/rules", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.UpsertRule))
+	httpMux.HandleFunc("DELETE /v1/egress/dlp-policy/rules/{ruleId}", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.DeleteRule))
 	// Secret relay — service-to-service endpoint for the runtime-manager to
 	// resolve lantern.secret/... refs. Fail-closed when
 	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
@@ -1093,6 +1100,12 @@ func runStartupGuards(logger *zap.Logger) {
 	if rlsMsg != "" {
 		logger.Warn(rlsMsg)
 	}
+
+	// State the scope-enforcement mode at boot so an operator can see (and an
+	// alert can key on) whether a missing API-key scope is a 403 or only a debug log.
+	logger.Info("authz: API-key scope enforcement",
+		zap.Bool("enforced", handlers.AuthzEnforcing()),
+		zap.String("flag", "LANTERN_AUTHZ_ENFORCE"))
 
 	// gRPC service-token auth (trust boundary on :50051).
 	// Without a token, any caller reachable to :50051 can set an arbitrary

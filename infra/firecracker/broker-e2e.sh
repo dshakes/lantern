@@ -100,7 +100,8 @@ pass "manager up in broker egress mode"
 SPAWN=$(jq -n --arg t "${TENANT}" --arg host "${INJECT_HOST}" --arg uri "${SECRET_URI}" '{spec:{
   tenant_id:$t, image_digest:"sha256:0000000000000000000000000000000000000000000000000000000000000002",
   isolation:"ISOLATION_HOSTILE", limits:{vcpu:"1", memory:"256Mi", timeout:"120s"}, run_id:"broker-e2e",
-  egress_rules:[{pattern:$host, inject:[{header:"Authorization", secret_uri:$uri, value_prefix:"Basic "}]}]
+  egress_rules:[{pattern:$host, inject:[{header:"Authorization", secret_uri:$uri, value_prefix:"Basic "}]}],
+  dlp_policy:{rules:[{rule_id:"block-cards", detector:"card_number", mode:"block"}]}
 }}')
 RESP=$(g "${SPAWN}" Spawn 2>>"${LOG}") || fail "Spawn failed:\n$(tail -30 "${LOG}")"
 VM_ID=$(printf '%s' "${RESP}" | jq -r '.handle.vmId // empty')
@@ -118,7 +119,10 @@ ip link show "${TAP}" >/dev/null 2>&1 && fail "TAP ${TAP} exists — broker VM m
 pass "host has no TAP for the VM (${TAP} absent)"
 
 tool() { # tool <name> <args-json>
-  g "$(jq -n --arg id "${VM_ID}" --arg n "$1" --argjson a "$2" '{vm_id:$id, run_id:"broker-e2e", step_id:"s", tool_name:$n, args:$a, idempotency_key:("broker-e2e:"+$n+":"+($a|tostring))}')" ExecTool 2>>"${LOG}"
+  # Hash the args into the key, as real callers do: the manager logs the key,
+  # and the args can carry what the DLP check asserts never reaches the log.
+  local h; h=$(printf '%s%s' "$1" "$2" | sha256sum | cut -c1-16)
+  g "$(jq -n --arg id "${VM_ID}" --arg n "$1" --argjson a "$2" --arg h "$h" '{vm_id:$id, run_id:"broker-e2e", step_id:"s", tool_name:$n, args:$a, idempotency_key:("broker-e2e:"+$n+":"+$h)}')" ExecTool 2>>"${LOG}"
 }
 
 # (2)+(3) exec over host-initiated vsock (retry while the harness comes up).
@@ -183,5 +187,23 @@ pass "non-allowlisted host denied by the broker (deny audited)"
 # (6) secret never logged.
 grep -q "${SECRET_VALUE}" "${LOG}" && fail "credential value appears in manager log"
 pass "credential value absent from the manager log"
+
+# (7) DLP block (ADR 0030): the VM above was spawned with a card_number/block
+# rule. DLP can only read what the broker decrypts, i.e. injecting hosts, so
+# POST to the inject host: a Luhn-valid card number in the body must be refused
+# (403 dlp-block) and the same POST without it must not be, so the 403 is DLP's.
+TEST_PAN="4532015112830366"   # Luhn-valid Visa test number, not a real card.
+post() { tool http_fetch "$(jq -n --arg u "https://${INJECT_HOST}/post" --arg b "$1" '{url:$u, method:"POST", body:$b, headers:{"Content-Type":"text/plain"}}')"; }
+OUT=$(post "order total 42")
+printf '%s\n' "${OUT}" | jq -c . >&2
+[ "$(printf '%s' "${OUT}" | jq -r '.result.status')" = 200 ] || fail "DLP control: a clean POST did not get 200:\n${OUT}"
+pass "DLP control: clean POST to ${INJECT_HOST} is not blocked"
+OUT=$(post "card ${TEST_PAN} exp 12/30")
+printf '%s\n' "${OUT}" | jq -c . >&2
+printf '%s' "${OUT}" | jq -e '.result.status == 403 and .result.headers["x-lantern-reason"] == "dlp-block"' >/dev/null \
+  || fail "DLP: card number was NOT blocked (want 403 dlp-block):\n${OUT}\n$(tail -30 "${LOG}")"
+grep -q "${TEST_PAN}" "${LOG}" && fail "DLP: matched card number appeared in the manager log (invariant #10)"
+pass "DLP: card number blocked (403 dlp-block); value absent from manager log"
+
 grep 'egress broker audit' "${LOG}" | tail -6 >&2
 pass "ALL BROKER-MODE ASSERTIONS PASSED (vm ${VM_ID})"

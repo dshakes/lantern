@@ -980,6 +980,9 @@ impl RuntimeManagerGrpc {
             // and contract, never left running as the snapshot's source VM.
             vm_id: req.vm_id.clone(),
             egress_rules: req.egress_rules.clone(),
+            // DLP policy comes from the spawn spec; restore proto has no DLP
+            // field yet — `None` means no inspection on restored VMs for now.
+            dlp_policy: None,
         };
         backend
             .restore(&restore.snapshot_uri, &restore)
@@ -1488,6 +1491,22 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         confidential: spec.confidential,
         agent_version_id: spec.agent_version_id.clone(),
         restore_snapshot_id: spec.restore_snapshot_id.clone(),
+        // ADR 0030: per-tenant DLP policy shipped from the control-plane via
+        // AgentSpec.dlp_policy (proto field 19).
+        dlp_policy: spec.dlp_policy.as_ref().map(|p| crate::dlp::DlpPolicy {
+            rules: p
+                .rules
+                .iter()
+                .map(|r| crate::dlp::DlpRule {
+                    rule_id: r.rule_id.clone(),
+                    detector: r.detector.clone(),
+                    pattern: r.pattern.clone(),
+                    mode: crate::dlp::DlpMode::from_str(&r.mode),
+                    threshold: r.threshold as u32,
+                })
+                .collect(),
+            max_inspect_bytes: p.max_inspect_bytes as usize,
+        }),
         // Set by `spawn` from the scheduler-issued handle.
         vm_id: String::new(),
     })
@@ -4110,6 +4129,7 @@ mod tests {
                 env: HashMap::new(),
                 confidential: false,
                 idle_timeout_secs: 0,
+                dlp_policy: None,
             }),
         }
     }
@@ -4335,6 +4355,7 @@ mod tests {
                 env,
                 confidential: false,
                 idle_timeout_secs: 0,
+                dlp_policy: None,
             }),
         }
     }

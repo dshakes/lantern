@@ -464,3 +464,23 @@ func TestValidateEgressInject_RefAlsoInSecretsRejected(t *testing.T) {
 		t.Fatalf("distinct ref rejected: %v", err)
 	}
 }
+
+// A DLP policy that cannot be read must refuse the schedule, not spawn a VM
+// without DLP (ADR 0030): a tenant in block mode expects enforcement.
+func TestScheduleAgentSpec_DLPLoadErrorFailsClosed(t *testing.T) {
+	pool := openTestPool(t)
+	tenantID := uuid.NewString()
+	seedTestTenant(t, pool, tenantID)
+	sched := &recScheduler{vmID: "vm-should-not-exist"}
+	h := newTestRuntimeHandlerWithPool(t, pool, sched)
+	ctx, cancel := context.WithCancel(middleware.InjectTenantID(context.Background(), tenantID))
+	cancel() // the policy read fails
+
+	_, _, _, _, _, err := h.scheduleAgentSpec(ctx, tenantID, "", agentSpecDTO{ImageDigest: "sha256:abc"})
+	if err == nil || !strings.Contains(err.Error(), "DLP") {
+		t.Fatalf("err = %v, want the DLP policy load to refuse the schedule", err)
+	}
+	if len(sched.calls) != 0 {
+		t.Fatalf("scheduler was called %v; a VM must not spawn without its DLP policy", sched.calls)
+	}
+}
