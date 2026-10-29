@@ -98,7 +98,8 @@ pub fn apply_workload_identity(cmd: &mut Command, id: Option<WorkloadIdentity>) 
 }
 
 /// `LANTERN_*` keys a workload child may see: identity/locator values the
-/// workload SDK reads, none of them secret.
+/// workload SDK reads, none of them secret. Each is also accepted, and
+/// emitted, as `PAL_*` (ADR 0032).
 const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 14] = [
     // Crash re-drive marker: the agent skips steps already in the journal (09-agent-runtime.md).
     "LANTERN_RESUME",
@@ -130,16 +131,44 @@ const WORKLOAD_VISIBLE_LANTERN_KEYS: [&str; 14] = [
 /// ponytail: namespace rule, so a user env key that itself starts with
 /// `LANTERN_` is withheld too. Track declared keys explicitly if a spec ever
 /// needs one.
+///
+/// `PAL_*` is the same namespace under its new name (ADR 0032): withheld
+/// exactly like `LANTERN_*`, and `PAL_X` is visible iff `LANTERN_X` is.
 fn workload_may_see(key: &str) -> bool {
-    !key.starts_with("LANTERN_") || WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&key)
+    match key.strip_prefix("PAL_") {
+        Some(rest) => WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&format!("LANTERN_{rest}").as_str()),
+        None => !key.starts_with("LANTERN_") || WORKLOAD_VISIBLE_LANTERN_KEYS.contains(&key),
+    }
 }
 
-/// Filter an environment down to what a workload child may inherit.
+/// Filter an environment down to what a workload child may inherit. Each
+/// visible harness-namespace key is emitted under BOTH names, so old and new
+/// workload SDKs read the same value; `PAL_X` wins if the two differ.
 fn workload_env_from(
     vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    vars.filter(|(k, _)| k.to_str().is_some_and(workload_may_see))
-        .collect()
+    use std::collections::btree_map::{BTreeMap, Entry};
+    let mut out = Vec::new();
+    let mut ns: BTreeMap<String, std::ffi::OsString> = BTreeMap::new();
+    for (k, v) in vars {
+        let Some(key) = k.to_str().filter(|key| workload_may_see(key)) else {
+            continue;
+        };
+        if let Some(rest) = key.strip_prefix("PAL_") {
+            ns.insert(rest.to_owned(), v);
+        } else if let Some(rest) = key.strip_prefix("LANTERN_") {
+            if let Entry::Vacant(e) = ns.entry(rest.to_owned()) {
+                e.insert(v);
+            }
+        } else {
+            out.push((k, v));
+        }
+    }
+    for (rest, v) in ns {
+        out.push((format!("LANTERN_{rest}").into(), v.clone()));
+        out.push((format!("PAL_{rest}").into(), v));
+    }
+    out
 }
 
 /// Prepare `cmd` to run as the workload: an explicitly-built environment
@@ -384,6 +413,62 @@ mod tests {
             .collect();
         assert!(keys.contains(&"LANTERN_RESUME".to_string()));
         assert!(!keys.contains(&"LANTERN_EGRESS_FAIL_CLOSED".to_string()));
+    }
+
+    fn env_map(vars: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        workload_env_from(vars.iter().map(|(k, v)| ((*k).into(), (*v).into())))
+            .into_iter()
+            .map(|(k, v)| (k.into_string().unwrap(), v.into_string().unwrap()))
+            .collect()
+    }
+
+    /// ADR 0032: `PAL_*` is the harness's own namespace too. Its secrets
+    /// (exec token, agent-instance token, TLS paths, declared secret URIs)
+    /// must be withheld from the workload exactly like their `LANTERN_*` twins.
+    #[test]
+    fn workload_never_sees_pal_harness_config() {
+        let env = env_map(&[
+            ("PAL_HARNESS_EXEC_TOKEN", "secret"),
+            ("PAL_AGENT_INSTANCE_TOKEN", "secret"),
+            ("PAL_VM_TLS_KEY", "/k"),
+            ("PAL_DECLARED_SECRETS", "[]"),
+            ("PAL_EGRESS_FAIL_CLOSED", "0"),
+            ("PAL_", "x"),
+            ("LANTERN_HARNESS_EXEC_TOKEN", "secret"),
+            ("PATH", "/bin"),
+        ]);
+        assert_eq!(env.keys().collect::<Vec<_>>(), vec!["PATH"]);
+    }
+
+    /// The 14 visible keys are accepted under either name and reach the
+    /// workload under BOTH, PAL winning on a conflict.
+    #[test]
+    fn visible_keys_are_dual_emitted() {
+        let env = env_map(&[
+            ("LANTERN_RUN_ID", "r1"),
+            ("PAL_VM_ID", "vm1"),
+            ("LANTERN_TENANT_ID", "old"),
+            ("PAL_TENANT_ID", "new"),
+            ("PAL_WORKSPACE", "/w"),
+            ("LANTERN_WORKSPACE", "/legacy"),
+        ]);
+        for (k, v) in [
+            ("LANTERN_RUN_ID", "r1"),
+            ("PAL_RUN_ID", "r1"),
+            ("LANTERN_VM_ID", "vm1"),
+            ("PAL_VM_ID", "vm1"),
+            ("LANTERN_TENANT_ID", "new"),
+            ("PAL_TENANT_ID", "new"),
+            ("LANTERN_WORKSPACE", "/w"),
+            ("PAL_WORKSPACE", "/w"),
+        ] {
+            assert_eq!(env.get(k).map(String::as_str), Some(v), "{k}");
+        }
+        assert_eq!(env.len(), 8);
+        for key in WORKLOAD_VISIBLE_LANTERN_KEYS {
+            let pal = format!("PAL_{}", key.strip_prefix("LANTERN_").unwrap());
+            assert!(workload_may_see(key) && workload_may_see(&pal), "{key}");
+        }
     }
 
     #[test]

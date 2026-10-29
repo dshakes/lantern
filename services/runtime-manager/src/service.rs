@@ -582,6 +582,17 @@ pub const CALLER_LANTERN_KEYS: [&str; 4] = [
     "LANTERN_RESUME",
 ];
 
+/// Whether a caller may set this env key. `PAL_*` is the same manager-owned
+/// namespace as `LANTERN_*` (ADR 0032): a caller key passes under either
+/// name, every other key in either namespace is dropped — so `PAL_WORKLOAD_UID`
+/// or `PAL_TENANT_ID` can no more reach the harness than their `LANTERN_` twins.
+fn caller_env_key_allowed(key: &str) -> bool {
+    match key.strip_prefix("PAL_") {
+        Some(rest) => CALLER_LANTERN_KEYS.contains(&format!("LANTERN_{rest}").as_str()),
+        None => !key.starts_with("LANTERN_") || CALLER_LANTERN_KEYS.contains(&key),
+    }
+}
+
 /// Make a request's env safe to hand to the harness: drop caller-supplied
 /// `LANTERN_*` keys outside [`CALLER_LANTERN_KEYS`] (names logged, never
 /// values), THEN stamp the manager-owned values — its own `LANTERN_ENV` and
@@ -600,7 +611,7 @@ fn own_workload_env(
 ) {
     let mut dropped: Vec<String> = env
         .keys()
-        .filter(|k| k.starts_with("LANTERN_") && !CALLER_LANTERN_KEYS.contains(&k.as_str()))
+        .filter(|k| !caller_env_key_allowed(k))
         .cloned()
         .collect();
     for k in &dropped {
@@ -4190,6 +4201,29 @@ mod tests {
         let c = crate::backends::firecracker::SpawnContract::from_schedule(&req);
         assert_eq!(c.lantern_env, "prod");
         assert!(!c.env.contains_key("LANTERN_ENV"));
+
+        // ADR 0032: the PAL_ spelling of a manager-owned key is dropped too;
+        // caller keys pass under either name.
+        let mut env: HashMap<String, String> = [
+            ("PAL_ENV", "dev"),
+            ("PAL_EGRESS_FAIL_CLOSED", "0"),
+            ("PAL_WORKLOAD_UID", "0"),
+            ("PAL_TENANT_ID", "forged"),
+            ("PAL_AGENT_VERSION_ID", "forged"),
+            ("PAL_", "x"),
+            ("PAL_AGENT_INSTANCE_ID", "inst-1"),
+            ("PAL_RESUME", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        own_workload_env(&mut env, None, "t1", "");
+        let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            ["LANTERN_TENANT_ID", "PAL_AGENT_INSTANCE_ID", "PAL_RESUME"]
+        );
 
         // A dev manager (no LANTERN_ENV) never inherits the caller's value.
         let mut env: HashMap<String, String> =
