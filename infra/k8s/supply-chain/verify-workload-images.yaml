@@ -1,0 +1,74 @@
+# Workload image admission for tenant namespaces (ADR 0044).
+#
+# The runtime-manager refuses tag-addressed images before it ever creates a pod
+# (PAL_VERIFY_SIGNATURES, services/runtime-manager/src/image_policy.rs). This
+# Kyverno ClusterPolicy is the layer that actually checks the cosign signature,
+# at admission, on the exact digest the kubelet will pull — so it also covers
+# anything that creates pods in a tenant namespace without going through the
+# manager. Both rules fail CLOSED (failurePolicy: Fail, Enforce).
+#
+# Requires Kyverno >= 1.13 with the image-verification webhook.
+#
+# BEFORE APPLYING: set the attestor to the identity that signs YOUR agent
+# images. The default trusts this repo's build-images.yml on master (keyless,
+# GitHub OIDC) — i.e. only PAL platform images. A tenant agent image signed by
+# another workflow/key is refused until its identity is added here (add more
+# entries; `count: 1` = any one listed identity suffices).
+#
+# Tests: `kyverno test infra/k8s/supply-chain/test` (digest rule, offline). The
+# signature rule needs a registry + Rekor and is exercised end to end by
+# .github/workflows/build-images.yml (verify steps).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: pal-verify-workload-images
+  annotations:
+    policies.kyverno.io/title: PAL workload image signature verification
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/description: >-
+      Pods in tenant namespaces must reference images by digest and carry a
+      valid cosign signature from an allowed identity. Fails closed.
+spec:
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: require-image-digest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["lantern-t-*", "pal-t-*"]
+      validate:
+        failureAction: Enforce
+        message: >-
+          Tenant workload images must be digest-pinned (repo@sha256:...); tags
+          are mutable and are refused (ADR 0044).
+        pattern:
+          spec:
+            =(initContainers):
+              - image: "*@sha256:*"
+            =(ephemeralContainers):
+              - image: "*@sha256:*"
+            containers:
+              - image: "*@sha256:*"
+    - name: verify-image-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["lantern-t-*", "pal-t-*"]
+      verifyImages:
+        - imageReferences: ["*"]
+          failureAction: Enforce
+          mutateDigest: false
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    subject: "https://github.com/dshakes/lantern/.github/workflows/build-images.yml@refs/heads/master"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"

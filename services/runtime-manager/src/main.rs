@@ -11,6 +11,7 @@ mod config;
 mod dlp;
 mod egress_broker;
 mod handle_registry;
+mod image_policy;
 mod measurement;
 mod otel;
 mod pool;
@@ -64,6 +65,21 @@ async fn main() -> anyhow::Result<()> {
         agent_image = %config.agent_image,
         "starting lantern-runtime-manager"
     );
+
+    // ADR 0044: workload image admission (digest pinning + repo allowlist).
+    if config.image_policy.enforce {
+        tracing::info!(
+            allowed_repos = ?config.image_policy.allowed_repos,
+            "image policy: PAL_VERIFY_SIGNATURES on — workload images must be digest-pinned; \
+             signatures are verified by the cluster admission policy (infra/k8s/supply-chain)"
+        );
+    } else if crate::tls::is_prod_env() {
+        tracing::error!(
+            "SECURITY: PAL_VERIFY_SIGNATURES=off in a prod environment — workload images \
+             are NOT required to be digest-pinned (ADR 0044)"
+        );
+    }
+    image_policy::install(config.image_policy.clone(), config.agent_image.clone());
 
     // Secret resolver — build() selects the relay (ADR 0008) when both
     // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;

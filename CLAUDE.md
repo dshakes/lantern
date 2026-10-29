@@ -1410,6 +1410,16 @@ prod guard off. In prod the control-plane additionally: refuses to start with
 (`insecureFlagsDecision`); refuses unsigned Slack slash commands when
 `SLACK_SIGNING_SECRET` is unset (request-time 4xx, dev only warns).
 
+**Supply chain (ADR 0044).** CI signs every image keyless (cosign, GitHub OIDC)
+with SLSA provenance + an SPDX SBOM attestation and verifies them in-job
+(`build-images.yml`); releases ship signed `SHA256SUMS` + provenance for the CLI
+(`release.yml`). The runtime-manager admits only digest-pinned images on
+k8s/docker/kata (`PAL_VERIFY_SIGNATURES`, default ON in prod; optional
+`PAL_IMAGE_ALLOWED_REPOS`); cosign signatures are verified at admission by
+Kyverno (`infra/k8s/supply-chain/`, tested with `kyverno test`) — the control
+plane does NOT verify bundle signatures, and `agent_versions.digest` is not a
+content digest.
+
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go
 module that services depend on via `replace ../../gen/go` and that the Docker

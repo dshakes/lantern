@@ -83,6 +83,9 @@ pub struct Config {
     /// (`FC_HARNESS_PATH`). When unset the harness is assumed baked into the
     /// rootfs and its component hash is 32 zero bytes.
     pub harness_path: Option<String>,
+    /// Workload image admission (`PAL_VERIFY_SIGNATURES`,
+    /// `PAL_IMAGE_ALLOWED_REPOS`; ADR 0044).
+    pub image_policy: crate::image_policy::ImagePolicy,
 }
 
 impl Config {
@@ -169,6 +172,10 @@ impl Config {
             .ok()
             .filter(|s| !s.trim().is_empty());
 
+        // ADR 0044: refuse to start on an unparseable value.
+        let image_policy =
+            crate::image_policy::ImagePolicy::from_env().map_err(ConfigError::ImagePolicy)?;
+
         Ok(Config {
             listen_addr,
             runtime_backend,
@@ -191,6 +198,7 @@ impl Config {
             measurement_gate,
             reference_measurements,
             harness_path,
+            image_policy,
         })
     }
 }
@@ -203,6 +211,8 @@ pub enum ConfigError {
     InvalidBackend(String),
     #[error("software measurement config (ADR 0031): {0}")]
     Measurement(String),
+    #[error("image policy (ADR 0044): {0}")]
+    ImagePolicy(String),
 }
 
 #[cfg(test)]

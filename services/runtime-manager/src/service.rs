@@ -679,6 +679,18 @@ impl RuntimeManagerGrpc {
 
         dlp_gate(req.dlp_policy.as_ref(), backend.as_ref(), &req.run_id)?;
 
+        // ADR 0044: only digest-pinned (and, if configured, allowlisted) images
+        // reach a registry pull; cosign identity is verified at admission.
+        if let Err(reason) = crate::image_policy::admit(backend.name(), &req.image) {
+            tracing::error!(
+                run_id = %req.run_id,
+                backend = backend.name(),
+                reason = %reason,
+                "SECURITY: refusing to schedule — image policy"
+            );
+            return Err(Status::failed_precondition(reason));
+        }
+
         tracing::info!(
             run_id = %req.run_id,
             isolation_class = ?req.isolation_class,
