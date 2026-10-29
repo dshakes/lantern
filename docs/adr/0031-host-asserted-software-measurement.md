@@ -210,6 +210,18 @@ lock) in `dispatchSpawn` after the manager's Spawn response arrives, and the con
   ubiquitous, host-trusted; ADR 0023 is stronger, hardware-dependent,
   confidential-compute only.
 
+### Verification
+
+`make lima-measurement-e2e` (`infra/firecracker/measurement-e2e.sh`, jailed
+Firecracker) proves on real hardware: identical specs measure identically;
+`enforce` admits the reference spec and refuses a changed env value or
+command; snapshot → restore and fork inherit the measurement under `enforce`;
+the startup refusals; and that no manager log carries the measurement or an
+instance token. That last check also pins a fix: credential-named env keys
+(e.g. `LANTERN_AGENT_INSTANCE_TOKEN`) are no longer copied onto the kernel
+cmdline, which the guest kernel echoes to the console the manager logs; they
+reach the harness via `spawn.json` only.
+
 ---
 
 ## Env vars added

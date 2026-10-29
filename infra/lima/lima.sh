@@ -11,6 +11,7 @@
 #   image       build vmlinux + rootfs.ext4 (harness as PID 1), cached
 #   e2e         integration-test.sh, jailed, EXPECT_VENDSECRET=1, timing table
 #   broker-e2e  broker-e2e.sh (ADR 0026 broker egress mode)
+#   measurement-e2e  measurement-e2e.sh (ADR 0031 software measurement, jailed)
 #   down        stop the VM
 #   clean       drop the VM's build caches (cargo clean + the cached image)
 #
@@ -217,6 +218,23 @@ guest_broker_e2e() {
   [ "${rc}" -eq 0 ] || die "broker-e2e.sh failed (exit ${rc})"
 }
 
+guest_measurement_e2e() {
+  guest_image
+  build_manager
+  sudo mkdir -p /srv/jailer /var/lib/lantern/snapshots
+  local port="${LISTEN_PORT:-51055}" before rc=0
+  wait_port_free "${port}"
+  wait_port_free "$((port + 1))"
+  before="$(leak_snapshot)"
+  sudo FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
+    MANAGER_BIN="${MANAGER_BIN}" LISTEN_PORT="${port}" \
+    FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
+    FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
+    bash infra/firecracker/measurement-e2e.sh || rc=$?
+  leak_check "${before}"
+  [ "${rc}" -eq 0 ] || die "measurement-e2e.sh failed (exit ${rc})"
+}
+
 guest_clean() {
   guest_env
   if [ -d "${TARGET}" ]; then
@@ -236,6 +254,7 @@ if [ "${cmd}" = "_in" ]; then
     image)      guest_image ;;
     e2e)        guest_e2e ;;
     broker-e2e) guest_broker_e2e ;;
+    measurement-e2e) guest_measurement_e2e ;;
     clean)      guest_clean ;;
     *)          die "unknown guest command: ${2:-}" ;;
   esac
@@ -244,7 +263,7 @@ fi
 
 case "${cmd}" in
   up)                     host_up ;;
-  image|e2e|broker-e2e|clean) host_preflight; require_running; in_vm "${cmd}" ;;
+  image|e2e|broker-e2e|measurement-e2e|clean) host_preflight; require_running; in_vm "${cmd}" ;;
   down)                   command -v limactl >/dev/null || die "limactl not found"; limactl stop "${VM}" ;;
-  *) die "usage: $0 up|image|e2e|broker-e2e|down|clean" ;;
+  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|down|clean" ;;
 esac

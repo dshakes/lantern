@@ -382,7 +382,7 @@ fn canonical_boot_args(args: &str) -> String {
 /// Env key names whose VALUES are credentials: the value is blanked before
 /// hashing (the key's presence is still measured). A published measurement
 /// must never be a hash over a live secret (ADR 0031 "minus secrets").
-fn is_secret_env_name(key: &str) -> bool {
+pub(crate) fn is_secret_env_name(key: &str) -> bool {
     const MARKERS: &[&str] = &[
         "TOKEN",
         "SECRET",

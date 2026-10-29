@@ -837,10 +837,15 @@ pub fn build_boot_args(
     // Legacy channel (ADR 0025): `spawn.json` carries env byte-exact; this
     // lossy copy is kept for harness builds that predate the file. The
     // manager-owned LANTERN_WORKLOAD_UID is appended below, never caller-set.
+    // Credential-named keys (e.g. LANTERN_AGENT_INSTANCE_TOKEN) never go on
+    // the cmdline: the guest kernel echoes it to the serial console, which the
+    // manager logs (invariant #10). They reach the harness via `spawn.json`.
     let extra_env: String = req
         .env
         .iter()
-        .filter(|(k, _)| k.as_str() != ENV_WORKLOAD_UID)
+        .filter(|(k, _)| {
+            k.as_str() != ENV_WORKLOAD_UID && !crate::measurement::is_secret_env_name(k)
+        })
         .map(|(k, v)| {
             // Sanitise: strip spaces and quotes to avoid breaking the
             // command line.  Real production would use a structured config
@@ -4671,6 +4676,24 @@ mod tests {
             assert_eq!(a, measure("inst-b", "tok-b", "fast"));
         }
         assert_ne!(a, measure("inst-a", "tok-a", "slow"));
+    }
+
+    /// Invariant #10: a credential env value never lands on the kernel
+    /// cmdline (echoed to the console log); it still reaches spawn.json.
+    #[test]
+    fn boot_args_omit_credential_env_values() {
+        let mut req = minimal_schedule_req();
+        req.vm_id = Uuid::new_v4().to_string();
+        req.env
+            .insert("LANTERN_AGENT_INSTANCE_TOKEN".into(), "tok-SECRET".into());
+        req.env.insert("MODE".into(), "fast".into());
+        let cfg = VmConfig::from_schedule_in_mode(&req, "/k", "/r", EgressMode::Guest).unwrap();
+        assert!(!cfg.boot_args.contains("tok-SECRET"), "{}", cfg.boot_args);
+        assert!(cfg.boot_args.contains("lantern.env.MODE=fast"));
+        assert_eq!(
+            cfg.spawn_contract.env["LANTERN_AGENT_INSTANCE_TOKEN"],
+            "tok-SECRET"
+        );
     }
 
     fn minimal_schedule_req() -> ScheduleRequest {
