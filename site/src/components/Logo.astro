@@ -1,0 +1,16 @@
+---
+// The ONE place the PAL mark lives (placeholder until the final logo lands):
+// lowercase "pal" in Inter Tight, with an amber -> ember dot as the mark.
+// Swap this file + public/favicon.svg + public/og.png to change the brand mark.
+interface Props { size?: number; label?: boolean }
+const { size = 22, label = true } = Astro.props;
+const id = `pal-dot-${Math.random().toString(36).slice(2, 8)}`;
+---
+<span class="pal-logo" style={`--s:${size}px`} aria-label={label ? 'PAL' : undefined} role={label ? 'img' : undefined}>
+  <span class="word" aria-hidden="true">pal</span><svg class="dot" viewBox="0 0 10 10" aria-hidden="true"><defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5a524"/><stop offset="1" stop-color="#ff5b2e"/></linearGradient></defs><circle cx="5" cy="5" r="5" fill={`url(#${id})`}/></svg>
+</span>
+<style>
+  .pal-logo { display: inline-flex; align-items: baseline; gap: calc(var(--s) * 0.08); line-height: 1; color: var(--p-text, var(--sl-color-white)); }
+  .word { font-family: 'Inter Tight Variable', 'Inter Variable', system-ui, sans-serif; font-weight: 700; font-size: var(--s); letter-spacing: -0.045em; }
+  .dot { width: calc(var(--s) * 0.3); height: calc(var(--s) * 0.3); flex: none; }
+</style>
