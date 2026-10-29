@@ -415,11 +415,15 @@ fn header_name(line: &str) -> &str {
 /// connection — the client reconnects for the next one, so a keep-alive
 /// follow-up can never ride a connection without its header. Parse request
 /// framing (Content-Length / chunked) if per-request reconnects ever cost too much.
-fn rewrite_head(head: &Head, creds: &[(String, String)]) -> Vec<u8> {
+///
+/// `drop_expect`: the broker already answered `Expect: 100-continue` itself
+/// (DLP reads the body before dialling), so the upstream must not see it.
+fn rewrite_head(head: &Head, creds: &[(String, String)], drop_expect: bool) -> Vec<u8> {
     let replaced = |name: &str| {
         ["connection", "proxy-connection", "proxy-authorization"]
             .iter()
             .any(|h| name.eq_ignore_ascii_case(h))
+            || (drop_expect && name.eq_ignore_ascii_case("expect"))
             || creds.iter().any(|(n, _)| name.eq_ignore_ascii_case(n))
     };
     let mut out = Vec::with_capacity(head.line.len() + 64 * (head.headers.len() + 2));
@@ -880,7 +884,7 @@ impl Broker {
         .await
         .context("egress broker: upstream TLS handshake timed out")?
         .context("egress broker: upstream TLS handshake")?;
-        let out = rewrite_head(&head, &creds);
+        let out = rewrite_head(&head, &creds, self.dlp.is_some());
         drop(creds);
         up.write_all(&out).await?;
         drop(out);
@@ -983,7 +987,7 @@ impl Broker {
             }
         };
         self.audit_decision(&host, port, Ok(()), "plain");
-        let out = rewrite_head(&head, &creds);
+        let out = rewrite_head(&head, &creds, self.dlp.is_some());
         let injected = !creds.is_empty();
         drop(creds);
         upstream.write_all(&out).await?;
@@ -1174,12 +1178,31 @@ impl Broker {
         );
     }
 
+    /// Emit a `dlp` audit event for a request whose body could not be fully
+    /// inspected (no rule matched; nothing about the content is recorded).
+    fn audit_dlp_incomplete(&self, host: &str, method: &str, decision: &str) {
+        self.emit(
+            "dlp",
+            HashMap::from([
+                ("host".into(), host.into()),
+                ("method".into(), method.into()),
+                ("decision".into(), decision.into()),
+                ("reason".into(), "body-not-fully-inspected".into()),
+            ]),
+        );
+    }
+
     /// Scan headers + up to `max_inspect_bytes` of body for DLP violations.
     ///
     /// Returns:
-    /// - `Ok(Some(body_buf))` — clean or audit (body bytes buffered for forwarding)
-    /// - `Ok(None)` — blocked (403 already sent to `stream`)
-    /// - `Err(_)` — I/O error (request aborted; fails closed in block mode)
+    /// - `Ok(Some(raw))` — clean or audit; `raw` is the body bytes consumed
+    ///   from the guest, verbatim, to forward after the head
+    /// - `Ok(None)` — refused (403/400 already sent to `stream`)
+    /// - `Err(_)` — I/O error (request aborted; nothing forwarded)
+    ///
+    /// Fails closed in block mode: a body the broker could not inspect up to
+    /// the cap (the guest went quiet, closed early, or padded the chunk
+    /// framing past the raw budget) is refused, never forwarded uninspected.
     async fn dlp_scan<W>(
         &self,
         stream: &mut W,
@@ -1193,65 +1216,241 @@ impl Broker {
         let Some(dlp) = self.dlp.as_ref() else {
             return Ok(Some(Vec::new()));
         };
-        let body_buf = read_body_prefix(stream, head, dlp.max_inspect_bytes).await?;
+        let framing = match body_framing(head) {
+            Ok(f) => f,
+            Err(reason) => {
+                // RFC 9112 §6.3: ambiguous framing is a smuggling vector — the
+                // broker and the upstream could disagree on where the body ends.
+                self.audit_decision(host, 0, Err(reason), "dlp");
+                respond(stream, "400 Bad Request", reason).await;
+                return Ok(None);
+            }
+        };
+        // We read the body before dialling, so the guest's `Expect:
+        // 100-continue` is ours to answer (the header is dropped upstream).
+        if framing != Framing::None
+            && head
+                .header_values("expect")
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case("100-continue"))
+        {
+            stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").await?;
+            stream.flush().await?;
+        }
+        let body = match read_body_prefix(
+            stream,
+            framing,
+            dlp.max_inspect_bytes,
+            self.handshake_timeout,
+        )
+        .await?
+        {
+            Ok(b) => b,
+            Err(reason) => {
+                self.audit_decision(host, 0, Err(reason), "dlp");
+                respond(stream, "400 Bad Request", reason).await;
+                return Ok(None);
+            }
+        };
         let mut inspect = head_bytes(head);
-        inspect.extend_from_slice(&body_buf);
+        inspect.extend_from_slice(&body.scan);
         match dlp.scan(&inspect) {
             crate::dlp::DlpVerdict::Block(m) => {
                 self.audit_dlp(host, method, &m, "block");
                 respond(stream, "403 Forbidden", "dlp-block").await;
-                Ok(None)
+                return Ok(None);
             }
-            crate::dlp::DlpVerdict::Audit(m) => {
-                self.audit_dlp(host, method, &m, "audit");
-                Ok(Some(body_buf))
-            }
-            crate::dlp::DlpVerdict::Clean => Ok(Some(body_buf)),
+            crate::dlp::DlpVerdict::Audit(m) => self.audit_dlp(host, method, &m, "audit"),
+            crate::dlp::DlpVerdict::Clean => {}
         }
+        if !body.complete {
+            if dlp.has_block_rules() {
+                self.audit_dlp_incomplete(host, method, "block");
+                respond(stream, "403 Forbidden", "dlp-incomplete").await;
+                return Ok(None);
+            }
+            self.audit_dlp_incomplete(host, method, "audit");
+        }
+        Ok(Some(body.raw))
     }
+}
+
+/// How a request delimits its body (RFC 9112 §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Framing {
+    None,
+    Length(usize),
+    Chunked,
+}
+
+/// Request body framing, refusing every ambiguous form a smuggler relies on:
+/// both Content-Length and Transfer-Encoding, differing Content-Length values,
+/// or a Transfer-Encoding whose final coding is not `chunked`.
+fn body_framing(head: &Head) -> Result<Framing, &'static str> {
+    let te = head.header_values("transfer-encoding");
+    let cl: Vec<&str> = head
+        .header_values("content-length")
+        .into_iter()
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect();
+    if !te.is_empty() && !cl.is_empty() {
+        return Err("both Content-Length and Transfer-Encoding");
+    }
+    if !te.is_empty() {
+        let last = te
+            .iter()
+            .flat_map(|v| v.split(','))
+            .map(str::trim)
+            .next_back()
+            .unwrap_or("");
+        return if last.eq_ignore_ascii_case("chunked") {
+            Ok(Framing::Chunked)
+        } else {
+            Err("Transfer-Encoding not ending in chunked")
+        };
+    }
+    let Some(first) = cl.first() else {
+        return Ok(Framing::None);
+    };
+    if cl.iter().any(|v| v != first) {
+        return Err("conflicting Content-Length values");
+    }
+    // Digits only: `+5` / `-1` parse in Rust but are invalid HTTP.
+    if first.is_empty() || !first.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("bad Content-Length");
+    }
+    first
+        .parse()
+        .map(Framing::Length)
+        .map_err(|_| "bad Content-Length")
+}
+
+/// What the DLP body read consumed from the guest.
+#[derive(Debug, Default)]
+struct BodyPrefix {
+    /// Bytes read from the guest, verbatim (framing included) — forwarded
+    /// upstream ahead of the spliced remainder.
+    raw: Vec<u8>,
+    /// The de-chunked body prefix the detectors see (≤ cap).
+    scan: Vec<u8>,
+    /// True when `scan` covers the whole body or the first `cap` bytes of it.
+    complete: bool,
 }
 
 /// Read the start of the request body for DLP, following the request's own
 /// framing. Never read to EOF: the client keeps the connection open waiting
-/// for our response, so an EOF read stalls every request until the idle timeout.
-/// Content-Length → exactly min(len, cap) bytes. No length and not chunked → no
-/// body (RFC 7230 §3.3.3). Chunked → bytes as they arrive, up to `cap`, stopping
-/// at the terminal chunk or when the client goes quiet.
+/// for our response. Content-Length → exactly min(len, cap) bytes. No body
+/// framing → no body (RFC 9112 §6.3). Chunked → de-chunked, so chunk sizes
+/// cannot split a value the detectors look for, up to the terminal chunk or
+/// `cap` decoded bytes.
+///
+/// The whole read shares one `timeout`; a guest that goes quiet (or closes)
+/// first yields `complete == false`, which block mode refuses. The outer
+/// `Err` is an I/O error; the inner one malformed chunk framing (→ 400).
 async fn read_body_prefix<R: AsyncRead + Unpin>(
     r: &mut R,
-    head: &Head,
+    framing: Framing,
     cap: usize,
-) -> Result<Vec<u8>> {
-    let lens = head.header_values("content-length");
-    if let Some(v) = lens.first() {
-        let n: usize = v
-            .parse()
-            .map_err(|_| anyhow::anyhow!("bad Content-Length"))?;
-        let mut buf = vec![0; n.min(cap)];
-        r.read_exact(&mut buf).await?;
-        return Ok(buf);
-    }
-    let chunked = head
-        .header_values("transfer-encoding")
-        .iter()
-        .any(|v| v.to_ascii_lowercase().contains("chunked"));
-    if !chunked {
-        return Ok(Vec::new());
-    }
-    // ponytail: chunked framing is not parsed; we scan raw chunk bytes (sizes are
-    // hex noise to the detectors) and stop on the terminal chunk or 1s of quiet.
-    // Parse chunk framing if a detector ever needs exact body bytes.
-    let mut buf = Vec::new();
+    timeout: Duration,
+) -> Result<Result<BodyPrefix, &'static str>> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Chunk framing (sizes, extensions) costs raw bytes beyond the decoded
+    // cap; past this budget the body counts as not fully inspected.
+    let raw_budget = match framing {
+        Framing::None => {
+            return Ok(Ok(BodyPrefix {
+                complete: true,
+                ..Default::default()
+            }));
+        }
+        Framing::Length(n) => n.min(cap),
+        Framing::Chunked => 2 * cap + 16 * 1024,
+    };
+    let mut out = BodyPrefix::default();
     let mut tmp = [0u8; 8192];
-    while buf.len() < cap && !buf.ends_with(b"0\r\n\r\n") {
-        let want = tmp.len().min(cap - buf.len());
-        match tokio::time::timeout(Duration::from_secs(1), r.read(&mut tmp[..want])).await {
-            Ok(Ok(0)) | Err(_) => break,
-            Ok(Ok(k)) => buf.extend_from_slice(&tmp[..k]),
+    loop {
+        match framing {
+            Framing::Length(_) if out.raw.len() == raw_budget => {
+                out.scan = out.raw.clone();
+                out.complete = true;
+                return Ok(Ok(out));
+            }
+            Framing::Chunked => match dechunk(&out.raw, cap) {
+                Err(reason) => return Ok(Err(reason)),
+                Ok(Some(decoded)) => {
+                    out.scan = decoded;
+                    out.complete = true;
+                    return Ok(Ok(out));
+                }
+                Ok(None) if out.raw.len() >= raw_budget => break,
+                Ok(None) => {}
+            },
+            _ => {}
+        }
+        let want = tmp.len().min(raw_budget - out.raw.len());
+        match tokio::time::timeout_at(deadline, r.read(&mut tmp[..want])).await {
+            Err(_) | Ok(Ok(0)) => break, // quiet or closed before the body was read
+            Ok(Ok(k)) => out.raw.extend_from_slice(&tmp[..k]),
             Ok(Err(e)) => return Err(e.into()),
         }
     }
-    Ok(buf)
+    // Incomplete: scan what arrived (a match still blocks/audits).
+    out.scan = match framing {
+        Framing::Chunked => dechunk_partial(&out.raw, cap),
+        _ => out.raw.clone(),
+    };
+    Ok(Ok(out))
+}
+
+/// Decode a chunked body prefix from `raw`. `Ok(Some(body))` once the
+/// terminal chunk is seen or `cap` body bytes are decoded; `Ok(None)` when
+/// more raw bytes are needed; `Err` on malformed framing. Trailers after the
+/// terminal chunk are not needed for inspection and are forwarded spliced.
+fn dechunk(raw: &[u8], cap: usize) -> Result<Option<Vec<u8>>, &'static str> {
+    let (body, done) = dechunk_inner(raw, cap)?;
+    Ok(done.then_some(body))
+}
+
+/// Best-effort decode of whatever arrived (for scanning an incomplete body).
+fn dechunk_partial(raw: &[u8], cap: usize) -> Vec<u8> {
+    dechunk_inner(raw, cap).map(|(b, _)| b).unwrap_or_default()
+}
+
+fn dechunk_inner(raw: &[u8], cap: usize) -> Result<(Vec<u8>, bool), &'static str> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    loop {
+        let Some(nl) = raw[i..].windows(2).position(|w| w == b"\r\n") else {
+            return Ok((out, false));
+        };
+        let line = &raw[i..i + nl];
+        let size_hex = line.split(|&b| b == b';').next().unwrap_or(b"");
+        let size_hex = std::str::from_utf8(size_hex)
+            .map_err(|_| "bad chunk size")?
+            .trim_matches([' ', '\t']);
+        if size_hex.is_empty() || !size_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("bad chunk size");
+        }
+        let size = usize::from_str_radix(size_hex, 16).map_err(|_| "bad chunk size")?;
+        i += nl + 2;
+        if size == 0 {
+            return Ok((out, true));
+        }
+        let avail = raw.len() - i;
+        let take = size.min(avail).min(cap - out.len());
+        out.extend_from_slice(&raw[i..i + take]);
+        if out.len() >= cap {
+            return Ok((out, true));
+        }
+        if avail < size + 2 {
+            return Ok((out, false));
+        }
+        if &raw[i + size..i + size + 2] != b"\r\n" {
+            return Err("bad chunk framing");
+        }
+        i += size + 2;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1666,6 +1865,48 @@ mod e2e {
         assert!(!logs.text().contains(SECRET), "secret leaked into logs");
     }
 
+    /// #13: DLP on the TLS-terminated (injecting) path — a card in the
+    /// decrypted body is refused before anything is dialled; a chunked body
+    /// with the card split across chunks is refused too.
+    #[tokio::test]
+    async fn dlp_blocks_on_the_terminate_path() {
+        let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (mut b, mut audit) = broker(
+            vec![inject_rule("api.openai.com")],
+            vec![443],
+            rustls::RootCertStore::empty(),
+            Some(up.local_addr().unwrap()),
+        );
+        b.dlp = Some(super::tests::dlp_engine_block_card());
+        let trust = mitm_ca(&b);
+        for inner in [
+            "POST /v1 HTTP/1.1\r\nHost: api.openai.com\r\nContent-Length: 21\r\n\r\ncard 4532015112830366",
+            "POST /v1 HTTP/1.1\r\nHost: api.openai.com\r\nTransfer-Encoding: chunked\r\n\r\n\
+             8\r\ncard 453\r\n6\r\n201511\r\n7\r\n2830366\r\n0\r\n\r\n",
+        ] {
+            let out = tunnel_request(&b, "api.openai.com", trust.clone(), inner).await;
+            assert!(
+                out.starts_with("HTTP/1.1 403") && out.contains("dlp-block"),
+                "{inner:?} -> {out}"
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), up.accept())
+                .await
+                .is_err(),
+            "upstream dialled for a DLP-blocked request"
+        );
+        let mut blocks = 0;
+        while let Ok(ev) = audit.try_recv() {
+            if ev.action == "dlp" {
+                assert_eq!(ev.attrs["decision"], "block");
+                blocks += 1;
+            }
+            assert!(!format!("{ev:?}").contains("4532015112830366"));
+        }
+        assert_eq!(blocks, 2);
+    }
+
     #[tokio::test]
     async fn host_without_injection_is_tunnelled_not_terminated() {
         let (up, up_ca, upstream) = tls_upstream("api.github.com").await;
@@ -1707,6 +1948,12 @@ pub(crate) mod tests {
         }
     }
 
+    const T: Duration = Duration::from_millis(300);
+
+    async fn body(r: &mut tokio::io::DuplexStream, f: Framing, cap: usize) -> BodyPrefix {
+        read_body_prefix(r, f, cap, T).await.unwrap().unwrap()
+    }
+
     // Regression: the client keeps the connection open awaiting our response,
     // so the DLP body read must stop at the declared length, never wait for EOF.
     #[tokio::test]
@@ -1717,27 +1964,98 @@ pub(crate) mod tests {
             .await
             .unwrap(); // stays open
         let got = tokio::time::timeout(
-            Duration::from_millis(500),
-            read_body_prefix(&mut server, &head(&["Content-Length: 21"]), 65536),
+            Duration::from_millis(200),
+            body(&mut server, Framing::Length(21), 65536),
         )
         .await
-        .expect("stalled waiting for EOF")
-        .unwrap();
-        assert_eq!(got, b"card 4532015112830366");
+        .expect("stalled waiting for EOF");
+        assert_eq!(got.raw, b"card 4532015112830366");
+        assert!(got.complete);
         // No length, not chunked (a GET): no body, no read.
-        let got = tokio::time::timeout(
-            Duration::from_millis(500),
-            read_body_prefix(&mut server, &head(&["Host: x"]), 65536),
-        )
-        .await
-        .expect("GET stalled")
-        .unwrap();
-        assert!(got.is_empty());
+        let got = body(&mut server, Framing::None, 65536).await;
+        assert!(got.raw.is_empty() && got.complete);
         // Cap respected.
-        let got = read_body_prefix(&mut server, &head(&["Content-Length: 100"]), 3)
-            .await
-            .unwrap();
-        assert_eq!(got, b" ta");
+        let got = body(&mut server, Framing::Length(100), 3).await;
+        assert_eq!(got.raw, b" ta");
+        assert!(got.complete);
+    }
+
+    /// #3: ambiguous framing is refused (request smuggling).
+    #[test]
+    fn body_framing_refuses_ambiguity() {
+        assert_eq!(body_framing(&head(&["Host: x"])), Ok(Framing::None));
+        assert_eq!(
+            body_framing(&head(&["Content-Length: 5", "content-length: 5"])),
+            Ok(Framing::Length(5))
+        );
+        assert_eq!(
+            body_framing(&head(&["Transfer-Encoding: gzip, chunked"])),
+            Ok(Framing::Chunked)
+        );
+        for bad in [
+            &["Content-Length: 5", "Transfer-Encoding: chunked"][..],
+            &["Transfer-Encoding: chunked", "Content-Length: 0"],
+            &["Content-Length: 5", "Content-Length: 6"],
+            &["Content-Length: 5, 6"],
+            &["Content-Length: +5"],
+            &["Content-Length: "],
+            &["Transfer-Encoding: chunked, gzip"],
+            &["Transfer-Encoding: identity"],
+        ] {
+            assert!(body_framing(&head(bad)).is_err(), "{bad:?} accepted");
+        }
+    }
+
+    /// #4b: chunk framing cannot split a value the detectors look for.
+    #[test]
+    fn dechunk_reassembles_split_values() {
+        let raw = b"4\r\n4532\r\n6;ext=1\r\n015112\r\n6\r\n830366\r\n0\r\n\r\n";
+        assert_eq!(dechunk(raw, 1024), Ok(Some(b"4532015112830366".to_vec())));
+        assert_eq!(dechunk(b"4\r\n45", 1024), Ok(None));
+        assert_eq!(dechunk(b"4\r\n4532\r\n", 1024), Ok(None));
+        // Cap reached mid-chunk counts as done.
+        assert_eq!(dechunk(b"10\r\n0123456789", 4), Ok(Some(b"0123".to_vec())));
+        for bad in [&b"zz\r\n"[..], b"\r\n", b"4\r\n4532XX", b"-1\r\n"] {
+            assert!(
+                dechunk(bad, 1024).is_err(),
+                "{:?}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+    }
+
+    /// #4a: a chunked body that goes quiet before its terminal chunk is NOT
+    /// complete (block mode refuses it); the whole read is bounded by the
+    /// timeout, not 1 s of quiet followed by an uninspected splice.
+    #[tokio::test]
+    async fn chunked_body_quiet_before_terminal_chunk_is_incomplete() {
+        let (mut client, mut server) = tokio::io::duplex(1 << 16);
+        client.write_all(b"4\r\nabcd\r\n").await.unwrap(); // then silence
+        let got = body(&mut server, Framing::Chunked, 65536).await;
+        assert!(!got.complete);
+        assert_eq!(got.scan, b"abcd");
+        assert_eq!(got.raw, b"4\r\nabcd\r\n");
+
+        let (mut client, mut server) = tokio::io::duplex(1 << 16);
+        client.write_all(b"4\r\nabcd\r\n0\r\n\r\n").await.unwrap();
+        let got = body(&mut server, Framing::Chunked, 65536).await;
+        assert!(got.complete);
+        assert_eq!(got.scan, b"abcd");
+
+        // A Content-Length body cut short by silence is incomplete too.
+        let (mut client, mut server) = tokio::io::duplex(1 << 16);
+        client.write_all(b"abc").await.unwrap();
+        let got = body(&mut server, Framing::Length(10), 65536).await;
+        assert!(!got.complete);
+        assert_eq!(got.raw, b"abc");
+
+        // Framing padding past the raw budget: incomplete, not unbounded.
+        let (mut client, mut server) = tokio::io::duplex(1 << 20);
+        let pad = format!("1;{}\r\nx\r\n", "e".repeat(1000)).repeat(100);
+        client.write_all(pad.as_bytes()).await.unwrap();
+        let got = body(&mut server, Framing::Chunked, 64).await;
+        assert!(!got.complete);
+        assert!(got.raw.len() <= 2 * 64 + 16 * 1024);
     }
 
     pub(crate) const SECRET: &str = "sk-live-TOPSECRET-0123456789";
@@ -1925,6 +2243,7 @@ pub(crate) mod tests {
         let out = String::from_utf8(rewrite_head(
             &head,
             &[("Authorization".into(), "Bearer real".into())],
+            false,
         ))
         .unwrap();
         assert!(!out.contains("PLACEHOLDER"));
@@ -2432,7 +2751,7 @@ pub(crate) mod tests {
 
     // ---- DLP tests (ADR 0030) ---------------------------------------------------
 
-    fn dlp_engine_block_card() -> Arc<crate::dlp::DlpEngine> {
+    pub(crate) fn dlp_engine_block_card() -> Arc<crate::dlp::DlpEngine> {
         let policy = crate::dlp::DlpPolicy {
             rules: vec![crate::dlp::DlpRule {
                 rule_id: "card-block".into(),
@@ -2582,5 +2901,136 @@ pub(crate) mod tests {
                 .any(|e| e.action == "dlp"),
             "DLP audit emitted for opaque CONNECT"
         );
+    }
+
+    fn plain_dlp_broker(
+        addr: SocketAddr,
+        engine: Arc<crate::dlp::DlpEngine>,
+    ) -> (Broker, mpsc::Receiver<pb::AuditEvent>) {
+        let (mut b, rx) = broker(
+            vec![rule("api.x.com")],
+            vec![80],
+            rustls::RootCertStore::empty(),
+            Some(addr),
+        );
+        b.dlp = Some(engine);
+        (b, rx)
+    }
+
+    /// #3 + #4 + #13 on the plain path: smuggling-shaped framing is a 400, a
+    /// card split across chunks is blocked, and a chunked body that ends
+    /// before its terminal chunk is refused in block mode — never spliced
+    /// uninspected. Nothing reaches the upstream.
+    #[tokio::test]
+    async fn dlp_plain_path_framing_and_chunked_fail_closed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (b, mut rx) = plain_dlp_broker(listener.local_addr().unwrap(), dlp_engine_block_card());
+        let pre = "POST http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n";
+        for (req, want) in [
+            (
+                format!("{pre}Content-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"),
+                "HTTP/1.1 400",
+            ),
+            (
+                format!("{pre}Content-Length: 4\r\nContent-Length: 40\r\n\r\nabcd"),
+                "HTTP/1.1 400",
+            ),
+            (
+                format!("{pre}Transfer-Encoding: chunked\r\n\r\nzz\r\n"),
+                "HTTP/1.1 400",
+            ),
+            (
+                format!(
+                    "{pre}Transfer-Encoding: chunked\r\n\r\n\
+                     8\r\ncard 453\r\n6\r\n201511\r\n7\r\n2830366\r\n0\r\n\r\n"
+                ),
+                "HTTP/1.1 403",
+            ),
+            (
+                // Clean so far, then the guest stops before the terminal chunk.
+                format!("{pre}Transfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n"),
+                "HTTP/1.1 403",
+            ),
+        ] {
+            let out = roundtrip(&b, &req).await;
+            assert!(out.starts_with(want), "{req:?} -> {out}");
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err(),
+            "upstream contacted for a refused request"
+        );
+        let evs: Vec<_> = (0..rx.len()).filter_map(|_| rx.try_recv().ok()).collect();
+        assert!(evs.iter().any(|e| e.action == "dlp"
+            && e.attrs.get("reason").map(String::as_str) == Some("body-not-fully-inspected")
+            && e.attrs["decision"] == "block"));
+    }
+
+    /// #4a in audit mode: an incomplete body is forwarded (nothing to
+    /// enforce) but recorded as not fully inspected.
+    #[tokio::test]
+    async fn dlp_audit_mode_forwards_incomplete_body_and_records_it() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut got = Vec::new();
+            let _ = s.read_to_end(&mut got).await;
+            got
+        });
+        let (b, mut rx) = plain_dlp_broker(addr, dlp_engine_audit_card());
+        roundtrip(
+            &b,
+            "POST http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\
+             Transfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n",
+        )
+        .await;
+        let got = String::from_utf8(upstream.await.unwrap()).unwrap();
+        assert!(got.ends_with("\r\n\r\n4\r\nabcd\r\n"), "{got}");
+        let evs: Vec<_> = (0..rx.len()).filter_map(|_| rx.try_recv().ok()).collect();
+        assert!(
+            evs.iter()
+                .any(|e| e.action == "dlp" && e.attrs["decision"] == "audit")
+        );
+    }
+
+    /// #10: with DLP the broker reads the body before dialling, so it answers
+    /// `Expect: 100-continue` itself and the upstream never sees the header.
+    #[tokio::test]
+    async fn dlp_answers_expect_continue_and_strips_it_upstream() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            let mut r = BufReader::new(s);
+            let head = read_head(&mut r).await.unwrap().unwrap();
+            let mut body = Vec::new();
+            let _ = r.read_to_end(&mut body).await;
+            (head, body)
+        });
+        let (b, _rx) = plain_dlp_broker(addr, dlp_engine_block_card());
+        let (mut guest, host) = tokio::io::duplex(64 * 1024);
+        let client = async move {
+            guest
+                .write_all(
+                    b"POST http://api.x.com/ HTTP/1.1\r\nHost: api.x.com\r\n\
+                      Expect: 100-continue\r\nContent-Length: 5\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            // A real client waits for the 100 before sending the body.
+            let mut interim = [0u8; 25];
+            guest.read_exact(&mut interim).await.unwrap();
+            assert_eq!(&interim, b"HTTP/1.1 100 Continue\r\n\r\n");
+            guest.write_all(b"hello").await.unwrap();
+            guest.shutdown().await.unwrap();
+            let _ = guest.read_to_end(&mut Vec::new()).await;
+        };
+        let (_, ()) = tokio::join!(b.serve_conn(host), client);
+        let (head, body) = upstream.await.unwrap();
+        assert!(head.header_values("expect").is_empty(), "{head:?}");
+        assert_eq!(head.header_values("content-length"), vec!["5"]);
+        assert_eq!(body, b"hello");
     }
 }
