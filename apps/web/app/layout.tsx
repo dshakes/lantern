@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init-script";
-import { Bricolage_Grotesque, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Inter, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-// Brand type (docs/brand): Bricolage Grotesque display, IBM Plex Sans text,
-// IBM Plex Mono code. Exposed as CSS vars consumed by @theme in globals.css.
-const bricolage = Bricolage_Grotesque({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-bricolage", display: "swap" });
-const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-plex-sans", display: "swap" });
-const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex-mono", display: "swap" });
+// Brand type (docs/brand): Inter Tight display, Inter text, JetBrains Mono code.
+// Exposed as CSS vars consumed by @theme in globals.css.
+const interTight = Inter_Tight({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-inter-tight", display: "swap" });
+const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-inter", display: "swap" });
+const jetbrains = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
   title: "PAL Dashboard",
@@ -26,7 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${bricolage.variable} ${plexSans.variable} ${plexMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`dark ${interTight.variable} ${inter.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <head>
         {/* No-flash theme init: set data-theme before paint. Dark is default (light via the toggle). */}
         <script

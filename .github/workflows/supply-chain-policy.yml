@@ -1,0 +1,30 @@
+# supply-chain-policy — offline tests for the tenant workload image admission
+# policy (infra/k8s/supply-chain, ADR 0044). The signature rule needs a registry
+# and Rekor; it is exercised end to end by build-images.yml's verify step.
+name: supply-chain-policy
+
+on:
+  pull_request:
+    paths:
+      - "infra/k8s/supply-chain/**"
+      - ".github/workflows/supply-chain-policy.yml"
+  push:
+    branches: [master]
+    paths:
+      - "infra/k8s/supply-chain/**"
+
+permissions:
+  contents: read
+
+jobs:
+  kyverno-test:
+    name: kyverno policy tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install kyverno CLI
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: v1.19.2
+      - name: kyverno test
+        run: kyverno test infra/k8s/supply-chain/test

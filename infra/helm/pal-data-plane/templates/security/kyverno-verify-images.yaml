@@ -6,8 +6,8 @@ pod is admitted. Fails CLOSED: an unsigned/unverifiable image is BLOCKED.
 Two modes, selected by imageVerification.mode:
   - keyless (DEFAULT): Sigstore keyless — the signature chains to a Fulcio cert
     whose OIDC identity is the GitHub Actions workflow that signed it (subject
-    regexp = the repo's sign-images.yml workflow, issuer = GitHub's OIDC). This
-    is what .github/workflows/sign-images.yml produces. No long-lived keys.
+    = the repo's build-images.yml workflow on master, issuer = GitHub's OIDC). That
+    workflow signs every image it pushes (by digest). No long-lived keys.
   - key: a static cosign public key pinned in imageVerification.publicKey.
 
 REQUIRES: Kyverno installed (kind: ClusterPolicy, apiVersion kyverno.io/v1) AND
@@ -55,7 +55,7 @@ spec:
               entries:
                 {{- if eq (.Values.imageVerification.mode | default "keyless") "keyless" }}
                 # Keyless: trust the GitHub Actions OIDC identity that signed
-                # the image. subject == the sign-images.yml workflow identity,
+                # the image. subject == the build-images.yml workflow identity (master),
                 # issuer == GitHub's OIDC token issuer.
                 - keyless:
                     subject: {{ .Values.imageVerification.keyless.subject | quote }}
