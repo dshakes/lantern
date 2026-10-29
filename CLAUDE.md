@@ -500,7 +500,10 @@ no double token validation / DB hit), so it is **not** a new auth surface.
 unset/0 (default), a missing scope is LOGGED at debug and the request PROCEEDS —
 zero behavior change, safe to merge/run against the live bridges + dashboard.
 When `1`, a key missing the required scope gets `403`. JWT owner/admin sessions
-keep full access. Annotated today: the agents/runs/sessions/connectors/
+keep full access. **Prod/staging Helm values enable it** (`values-prod.yaml` /
+`values-staging.yaml` set `controlPlane.env.LANTERN_AUTHZ_ENFORCE: "1"`; base `values.yaml`
+stays off, rollout + rollback in `docs/runbooks/ga-staged-rollout.md`); the control-plane
+logs `authz: API-key scope enforcement {enforced}` at boot. Annotated today: the agents/runs/sessions/connectors/
 deployments/schedules/budgets/settings/templates mutating endpoints; reads are a
 follow-up. Extends invariant #7 (the RLS/token trust boundary) toward the
 fine-grained authZ the SOC 2 ADR (0018) flags as a gap.
@@ -1269,7 +1272,7 @@ loopback + `169.254.169.254` direct). Broker mode (from `spawn.json`):
 | `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events; includes `snapshotId`/`parentVmId`; state may be `paused`              |
 | `POST`   | `/v1/runtime/vms/{id}/pause`     | Snapshot + stop → `{vmId, snapshotId, state:"paused"}`. Frees the quota slot                            |
 | `POST`   | `/v1/runtime/vms/{id}/resume`    | Restore from the pause snapshot → `{vmId, snapshotId, state:"running"}`, same vm id. 402 quota, 409 wrong state. **Auto-resume**: exec / ExecTool / file-API requests to a VM auto-suspended with `idleTimeoutSecs > 0` resume it transparently (409 for manually-paused VMs) |
-| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
+| `POST`   | `/v1/runtime/vms/{id}/fork`      | Body `{count}` (1..`LANTERN_MAX_FORK_COUNT`, default 100, ceiling 1000) → `{sourceVmId, snapshotId, forks:[{vmId,state,error?}]}`. Each fork gets its own vm_id, cert and agent identity. Fork spawns are issued with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16). The mem snapshot is hard-linked (MAP_PRIVATE CoW) into each jail so pages are shared via the host page cache until written — O(1) disk I/O per fork. The disk (rootfs) snapshot is staged via `FICLONE` ioctl (O(1) CoW on XFS/btrfs). **Default on non-reflink FS** (ext4, Lima, GitHub KVM): falls back to full byte copy with a once-per-process WARN + per-staging `disk_staging="full_copy"` metric (`bytes`, `elapsed_ms`) — pause/resume/fork keep working. Set `LANTERN_REQUIRE_REFLINK=1` on XFS/btrfs nodes to enforce FICLONE (fail with typed error instead of fallback). Manager logs `disk_staging=ficlone` per fork on success. Forking a RUNNING VM needs Firecracker ≥1.12 + jailer |
 | `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
 | `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
 | `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging). **execve-style**: `command` is the executable, `argv` its args — no implicit shell (shell lines go as `/bin/sh` + `["-c", …]`, matching `lantern vm exec <id> -- <cmd> [args]` and the in-VM harness). Dispatches control-plane → runtime-manager DIRECTLY over the `RuntimeManager.Exec` bidi stream (the scheduler places workloads; the manager owns the exec channel), capped at 1 MiB/stream in control-plane memory since output comes from an untrusted workload. Send `Accept: text/event-stream` to stream instead: events `stdout`\|`stderr`\|`exit`\|`error` (invariant #4). Live regression test: `internal/handlers/runtime_exec_e2e_test.go` (opt-in `LANTERN_RUNTIME_E2E=1`) |
@@ -1336,6 +1339,14 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 - `LANTERN_DIALER=stub` — force the stub dialer even when
   `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
   `LANTERN_DEFAULT_MANAGER_ADDR` above.
+- `LANTERN_REQUIRE_REFLINK=1` — **runtime-manager only.** Set on production
+  nodes whose snapshot directory is on XFS (`reflink=1`) or btrfs to enforce
+  `FICLONE` disk staging. Without this (the default), the manager falls back
+  to a full byte copy on non-reflink filesystems (ext4, tmpfs) with a WARN —
+  pause/resume/fork continue to work on any filesystem. With this set, any
+  `FICLONE` failure (`EOPNOTSUPP`/`EXDEV`) returns a typed error immediately
+  rather than silently falling back. Off in every shipped values file (node
+  filesystems vary); add it under `runtimeManager.env` once your nodes are XFS/btrfs.
 - `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on

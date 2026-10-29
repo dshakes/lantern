@@ -2407,19 +2407,38 @@ pub struct JailedSnapshotStaging {
     /// so forking 100 VMs from one snapshot costs one read-only mmap per VM
     /// rather than 100 × the guest RAM in byte copies.
     pub links: Vec<(String, String)>,
+    /// `(host_source, host-visible destination under the chroot)` files staged
+    /// by `FICLONE` ioctl (copy-on-write reflink, O(1) disk I/O).  Used for
+    /// the snapshot's captured disk: each fork/restore gets its own inode but
+    /// shares physical extents with the source until a write triggers
+    /// block-level CoW — forking 100 VMs from one snapshot costs ≈0 extra disk
+    /// bytes and ≈0 I/O instead of 100 × the disk image size.
+    ///
+    /// Destinations ARE returned by `owned_paths()` (new inodes, safe to chown)
+    /// and are chowned to the jail uid/gid.
+    ///
+    /// Requires the snapshot directory and the jail chroot to be on the same
+    /// XFS (with `reflink=1`) or btrfs filesystem.  On ext4/tmpfs or cross-device
+    /// paths `FICLONE` returns `EOPNOTSUPP`/`EXDEV` and the stage fails closed
+    /// with a typed error — unless `LANTERN_ALLOW_FULL_COPY_FORK=1` is set, which
+    /// falls back to a full byte copy (O(n) per fork, degrades fan-out).
+    pub reflinks: Vec<(String, String)>,
 }
 
 impl JailedSnapshotStaging {
     /// Every path that must be chowned to the jail uid/gid after staging:
-    /// all created directories plus every **copied** artifact.
+    /// all created directories plus every **copied** or **reflinked** artifact.
     ///
     /// Hard-linked files are intentionally excluded — see `links` field doc.
+    /// Reflinked files ARE included: they are new inodes and can be chowned
+    /// independently without affecting other jails.
     #[must_use]
     pub fn owned_paths(&self) -> Vec<&str> {
         self.dirs
             .iter()
             .map(String::as_str)
             .chain(self.copies.iter().map(|(_, dest)| dest.as_str()))
+            .chain(self.reflinks.iter().map(|(_, dest)| dest.as_str()))
             .collect()
     }
 }
@@ -2461,6 +2480,7 @@ pub fn plan_jailed_snapshot_staging(
             ),
         ],
         links: vec![],
+        reflinks: vec![],
     }
 }
 
@@ -2503,6 +2523,7 @@ pub fn plan_jailed_fork_staging(
             host_mem_path.to_string(),
             format!("{root}{JAILED_SNAPSHOT_MEM}"),
         )],
+        reflinks: vec![],
     }
 }
 
@@ -2531,13 +2552,181 @@ pub fn make_mem_readonly(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Clone `src` into `dest` using the `FICLONE` ioctl (copy-on-write reflink,
+/// O(1) disk I/O).  `src` and `dest` must be on the same XFS (with
+/// `reflink=1`) or btrfs filesystem for the fast path.
+///
+/// **Default behaviour on reflink-incapable FS** (`EOPNOTSUPP` / `EXDEV`):
+/// falls back to a full byte copy and emits:
+/// - a loud once-per-process-lifetime `WARN` (so operators see it in logs
+///   without every-fork spam), and
+/// - a per-staging structured `WARN` with `disk_staging="full_copy"`, `bytes`,
+///   `elapsed_ms` fields for dashboards / cost alerting.
+///
+/// **Strict mode** (`LANTERN_REQUIRE_REFLINK=1`): the fallback is suppressed.
+/// Instead the function removes the empty dest artifact and returns a typed
+/// error naming the filesystem requirement.  Set this on production nodes whose
+/// snapshot directory is on XFS/btrfs to guarantee CoW fork scale.
+///
+/// All other ioctl errors (EIO, EBADF, …) are returned as-is regardless of
+/// strict mode — they indicate an unexpected kernel error, not a missing FS
+/// feature.
+///
+/// On non-Linux (macOS dev host) the function always falls back to a full copy
+/// silently; `FICLONE` is a Linux-specific ioctl.
+///
+/// Spawns a blocking task because the ioctl is synchronous.
+pub async fn reflink_file_cow(src: &str, dest: &str) -> Result<()> {
+    let require_reflink = std::env::var("LANTERN_REQUIRE_REFLINK").as_deref() == Ok("1");
+    let src = src.to_owned();
+    let dest = dest.to_owned();
+    tokio::task::spawn_blocking(move || reflink_file_cow_sync(&src, &dest, require_reflink))
+        .await
+        .context("spawn_blocking for FICLONE disk staging")??;
+    Ok(())
+}
+
+/// Synchronous core of [`reflink_file_cow`].  `require_reflink` mirrors
+/// `LANTERN_REQUIRE_REFLINK=1`; accepting it as a parameter lets unit tests
+/// exercise both code paths without mutating process-global env vars.
+///
+/// See [`reflink_file_cow`] for the full contract.
+pub(crate) fn reflink_file_cow_sync(src: &str, dest: &str, require_reflink: bool) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // FICLONE = _IOW(0x94, 9, int) = 0x40049409 on all Linux arches.
+        // `ioctl(dest_fd, FICLONE, src_fd)` clones the entire source file into
+        // the (empty) destination via shared on-disk extents.  The destination
+        // must be a newly-created empty file; writes to either file later trigger
+        // block-level CoW independently.
+        const FICLONE: libc::c_ulong = 0x4004_9409;
+
+        let src_file = std::fs::File::open(src)
+            .with_context(|| format!("reflink: open source disk '{src}'"))?;
+        // Read size before the ioctl for the audit log; ignore errors (best-effort).
+        let src_bytes = src_file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        // Create (or truncate) the destination so it is empty before FICLONE.
+        let dest_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dest)
+            .with_context(|| format!("reflink: create dest disk '{dest}'"))?;
+
+        use std::os::unix::io::AsRawFd;
+        let ret = unsafe {
+            libc::ioctl(
+                dest_file.as_raw_fd(),
+                FICLONE,
+                src_file.as_raw_fd() as libc::c_int,
+            )
+        };
+
+        if ret == 0 {
+            tracing::info!(
+                src,
+                dest,
+                disk_staging = "ficlone",
+                bytes = src_bytes,
+                "disk staged via FICLONE (CoW reflink, O(1) disk I/O)"
+            );
+            return Ok(());
+        }
+
+        let err = std::io::Error::last_os_error();
+        let errno = err.raw_os_error().unwrap_or(0);
+
+        // EOPNOTSUPP (95): the filesystem does not support reflinks.
+        // EXDEV (18): source and destination are on different filesystems.
+        // Both indicate "this filesystem cannot do CoW reflinks".
+        if errno == libc::EOPNOTSUPP || errno == libc::EXDEV {
+            // Drop dest before potentially overwriting or removing it.
+            drop(dest_file);
+
+            if require_reflink {
+                // Strict mode: remove the empty dest artifact and refuse.
+                let _ = std::fs::remove_file(dest);
+                bail!(
+                    "disk staging: FICLONE failed on '{src}' -> '{dest}' \
+                     (errno {errno} = {err}). \
+                     LANTERN_REQUIRE_REFLINK=1 is set: the snapshot directory and \
+                     jail chroot must be on the SAME XFS filesystem (with reflink=1 \
+                     mount option) or btrfs. ext4 and tmpfs do not support reflinks. \
+                     Unset LANTERN_REQUIRE_REFLINK to fall back to a full byte copy \
+                     (O(n) disk I/O, degrades fork fan-out)."
+                );
+            }
+
+            // Default: fall back to a full byte copy so pause/resume/fork
+            // continue to work on any filesystem (ext4, tmpfs, Lima VM disk, …).
+            // Emit a once-per-process WARN so operators notice without log spam,
+            // plus a per-staging structured record for dashboards and cost alerting.
+            emit_full_copy_warn_once(errno);
+            let t0 = std::time::Instant::now();
+            std::fs::copy(src, dest)
+                .with_context(|| format!("full-copy disk staging fallback: {src} -> {dest}"))?;
+            let elapsed_ms = t0.elapsed().as_millis() as u64;
+            tracing::warn!(
+                src,
+                dest,
+                disk_staging = "full_copy",
+                bytes = src_bytes,
+                elapsed_ms,
+                "disk staged via full byte copy (FICLONE unavailable — EOPNOTSUPP/EXDEV). \
+                 Set LANTERN_REQUIRE_REFLINK=1 on XFS/btrfs nodes to enforce CoW staging \
+                 and catch filesystem misconfigurations early."
+            );
+            return Ok(());
+        }
+
+        // Any other ioctl error (e.g. EBADF, EIO) — remove the dest and propagate.
+        drop(dest_file);
+        let _ = std::fs::remove_file(dest);
+        Err(err).with_context(|| format!("FICLONE '{src}' -> '{dest}'"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Non-Linux (macOS dev/CI): FICLONE is unavailable. Always fall back to a
+        // full copy silently — the production codepath is Linux-only.
+        let _ = require_reflink; // consumed on Linux; unused on non-Linux
+        tracing::debug!(
+            src,
+            dest,
+            "non-Linux: staging disk via full copy (FICLONE unavailable on this platform)"
+        );
+        std::fs::copy(src, dest)
+            .with_context(|| format!("copy disk '{src}' -> '{dest}' (non-Linux fallback)"))?;
+        Ok(())
+    }
+}
+
+/// Emit the "FICLONE not available, falling back to full copy" warning exactly
+/// once per process lifetime to avoid per-fork log spam on hosts whose snapshot
+/// directory is on ext4 or tmpfs.  The per-staging audit record (`full_copy`
+/// structured warn) still fires every time for dashboards.
+fn emit_full_copy_warn_once(errno: i32) {
+    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    WARNED.get_or_init(|| {
+        tracing::warn!(
+            errno,
+            "FICLONE ioctl not supported on this host's snapshot filesystem \
+             (EOPNOTSUPP/EXDEV). All fork/restore disk staging on this node will use \
+             full byte copy (O(n) disk I/O per fork). For CoW fork scale, mount the \
+             snapshot directory on XFS (mkfs.xfs -m reflink=1) or btrfs and set \
+             LANTERN_REQUIRE_REFLINK=1 to enforce it. This message appears once."
+        );
+    });
+}
+
 /// Execute a [`JailedSnapshotStaging`] plan: create the directories, copy (or
-/// hard-link) the artifacts, chown directories and copied files to the jail
-/// uid/gid.
+/// hard-link or reflink) the artifacts, chown directories and non-linked files
+/// to the jail uid/gid.
 ///
 /// **Copies** (`plan.copies`): full byte copy, chowned afterwards.  Used for
-/// vmstate, certs, and rootfs — artifacts that Firecracker writes back to or
-/// that need private ownership.
+/// vmstate, certs — artifacts that Firecracker writes back to or that need
+/// private ownership.
 ///
 /// **Links** (`plan.links`): hard-link from source inode into the jail, then
 /// fall back to a full copy on `EXDEV` (cross-device / cross-filesystem).
@@ -2587,6 +2776,14 @@ async fn stage_jailed_snapshot(plan: &JailedSnapshotStaging, jailer: &JailerConf
                     .with_context(|| format!("hard_link fork mem {src} into jail at {dest}"));
             }
         }
+    }
+    // Reflink the disk image via FICLONE (O(1) CoW — shared extents until a
+    // write triggers block-level copy-on-write).  Fails closed on non-reflink
+    // filesystems unless LANTERN_ALLOW_FULL_COPY_FORK=1 is set.
+    for (src, dest) in &plan.reflinks {
+        reflink_file_cow(src, dest)
+            .await
+            .with_context(|| format!("stage disk {src} into jail at {dest}"))?;
     }
     #[cfg(unix)]
     for path in plan.owned_paths() {
@@ -3618,7 +3815,10 @@ impl FirecrackerBackend {
     ///
     /// `disk`: host path of the rootfs to resume on — the snapshot's captured
     /// disk (or the base rootfs for a legacy snapshot). Every restore/fork gets
-    /// its OWN writable copy of it; the snapshot's copy is never written.
+    /// its OWN writable copy; the snapshot's captured disk is never written.
+    /// The disk is staged via `FICLONE` (O(1) CoW reflink) in the jailed path —
+    /// forking N VMs costs ≈0 extra disk bytes and ≈0 I/O instead of N × disk_size.
+    /// Fails closed on non-reflink FS unless `LANTERN_ALLOW_FULL_COPY_FORK=1`.
     async fn restore_after_tap(
         &self,
         cfg: &VmConfig,
@@ -3632,7 +3832,7 @@ impl FirecrackerBackend {
         // `certs_path`  — the in-jail or host path the PATCH /drives/certs body carries.
         // `per_vm_rootfs` — Some(path) for unjailed restores (each VM needs its
         //                    own writable ext4 copy); None for jailed restores
-        //                    (the jail's staging already copied the rootfs in).
+        //                    (the jail's staging already reflinked the rootfs in).
         let (socket_path, certs_path, per_vm_rootfs) = match &self.jailer {
             Some(jailer) => {
                 let chroot_root = jailer.chroot_root(binary, &cfg.vm_id);
@@ -3650,14 +3850,17 @@ impl FirecrackerBackend {
                 };
                 // The snapshot names its drives by in-jail basename; staging
                 // THIS VM's cert image there means the load already resolves
-                // the new identity (the PATCH below makes it explicit). The
-                // disk lands under the base rootfs's basename, which is what
-                // the snapshot's device state points at.
+                // the new identity (the PATCH below makes it explicit).
                 plan.copies.push((
                     cfg.certs_image_path.clone(),
                     format!("{chroot_root}{}", jail_artifact_path(&cfg.certs_image_path)),
                 ));
-                plan.copies.push((
+                // The disk lands under the base rootfs's basename (what the
+                // snapshot's device state points at).  Use FICLONE (O(1) CoW
+                // reflink) so forking N VMs costs ≈0 extra disk bytes instead
+                // of N × disk_size.  Fails closed when the FS does not support
+                // reflinks unless LANTERN_ALLOW_FULL_COPY_FORK=1.
+                plan.reflinks.push((
                     disk.to_string(),
                     format!("{chroot_root}{}", jail_artifact_path(&cfg.rootfs_path)),
                 ));
@@ -6013,16 +6216,24 @@ mod tests {
                 "link dest {dest} must NOT be in owned_paths (would mutate shared inode)"
             );
         }
+        // reflinks (disk) are in owned_paths — they get new inodes and are
+        // chowned to the jail uid/gid like copies.
+        for (_, dest) in &plan.reflinks {
+            assert!(
+                owned.contains(dest.as_str()),
+                "reflink dest {dest} must be in owned_paths"
+            );
+        }
         assert_eq!(
             owned.len(),
-            plan.dirs.len() + plan.copies.len(),
-            "owned_paths is exactly dirs + copies, not links"
+            plan.dirs.len() + plan.copies.len() + plan.reflinks.len(),
+            "owned_paths is exactly dirs + copies + reflinks, not links"
         );
     }
 
     /// The backward-compat invariant: `plan_jailed_snapshot_staging` still
-    /// returns an empty `links` field so existing tests and code that only
-    /// access `.copies` are not affected.
+    /// returns empty `links` and empty `reflinks` fields so existing code that
+    /// only accesses `.copies` is not affected.
     #[test]
     fn snapshot_staging_has_empty_links_for_backward_compat() {
         let plan =
@@ -6031,6 +6242,106 @@ mod tests {
             plan.links.is_empty(),
             "plan_jailed_snapshot_staging must have no links — backward compat"
         );
+        assert!(
+            plan.reflinks.is_empty(),
+            "plan_jailed_snapshot_staging must have no reflinks — disk is not staged here"
+        );
+    }
+
+    /// `plan_jailed_fork_staging` does not pre-populate `reflinks`; the disk is
+    /// pushed into `plan.reflinks` later in `restore_after_tap` where the actual
+    /// snapshot path is known.
+    #[test]
+    fn fork_staging_plan_has_empty_reflinks_before_disk_added() {
+        let plan = plan_jailed_fork_staging(
+            "/srv/jailer/firecracker/vm-fork/root",
+            "vm-fork",
+            "/store/snapshot",
+            "/store/mem",
+        );
+        assert!(
+            plan.reflinks.is_empty(),
+            "plan_jailed_fork_staging must return empty reflinks; disk is added in restore_after_tap"
+        );
+    }
+
+    /// Default mode (`require_reflink = false`): `reflink_file_cow_sync` must
+    /// always succeed and produce an exact byte-for-byte copy of the source,
+    /// regardless of whether the underlying filesystem supports FICLONE or must
+    /// fall back to a full byte copy.  This covers the normal operation on ext4,
+    /// tmpfs (typical CI), and XFS/btrfs alike.
+    #[test]
+    fn reflink_file_cow_sync_default_falls_back_and_produces_correct_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("disk.img");
+        let dest = dir.path().join("disk-fork.img");
+        let content = b"fake disk image content for reflink unit test \x00\x01\x02\xff";
+        std::fs::write(&src, content).unwrap();
+
+        // require_reflink = false is the default path: FICLONE if available,
+        // full-copy fallback otherwise — must never fail.
+        let result = reflink_file_cow_sync(src.to_str().unwrap(), dest.to_str().unwrap(), false);
+        assert!(
+            result.is_ok(),
+            "default mode must always succeed (FICLONE or full-copy): {result:?}"
+        );
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            content,
+            "destination must contain an exact copy of source"
+        );
+    }
+
+    /// Strict mode (`require_reflink = true`, `LANTERN_REQUIRE_REFLINK=1`):
+    /// on a filesystem that does not support FICLONE (EOPNOTSUPP — typical for
+    /// Linux tmpfs/ext4 in CI), the function must return a typed error that
+    /// mentions the filesystem requirement and must not leave a stale empty
+    /// destination file.
+    ///
+    /// On non-Linux platforms `require_reflink` is unused (always full copy) —
+    /// the test is `#[cfg(target_os = "linux")]`.
+    /// On XFS/btrfs with reflinks enabled, FICLONE succeeds and the test
+    /// verifies content instead of an error.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reflink_file_cow_sync_strict_mode_refuses_non_reflink_fs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("disk.img");
+        let dest = dir.path().join("disk-fork.img");
+        std::fs::write(&src, b"x").unwrap();
+
+        // require_reflink = true → fail closed when FICLONE is unsupported.
+        let result = reflink_file_cow_sync(src.to_str().unwrap(), dest.to_str().unwrap(), true);
+
+        match result {
+            Ok(()) => {
+                // FICLONE succeeded — we are on XFS/btrfs with reflinks enabled.
+                // Verify the copy is correct and let the test pass.
+                assert_eq!(
+                    std::fs::read(&dest).unwrap(),
+                    b"x",
+                    "FICLONE success: destination must contain source content"
+                );
+            }
+            Err(e) => {
+                // EOPNOTSUPP/EXDEV: strict mode — error message must name the
+                // LANTERN_REQUIRE_REFLINK setting and the FS requirement.
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("FICLONE") || msg.contains("XFS") || msg.contains("reflink"),
+                    "error must mention reflink/XFS requirement, got: {msg}"
+                );
+                assert!(
+                    msg.contains("LANTERN_REQUIRE_REFLINK"),
+                    "error must name LANTERN_REQUIRE_REFLINK, got: {msg}"
+                );
+                // Stale empty dest must be cleaned up.
+                assert!(
+                    !dest.exists(),
+                    "stale empty dest file must be removed after strict FICLONE failure"
+                );
+            }
+        }
     }
 
     /// `make_mem_readonly` is a no-op (returns Ok) on non-Unix platforms

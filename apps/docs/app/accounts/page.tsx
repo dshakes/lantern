@@ -429,8 +429,9 @@ echo "$EXP.$(printf '%s|%s' "$EMAIL" "$EXP" | openssl dgst -sha256 -hmac "$LANTE
       <p>
         Bearer owner JWT. See <a href="#export">Data export</a> and{" "}
         <a href="#delete">Workspace deletion</a>. Both routes also pass the{" "}
-        <code>admin</code> scope annotation, which only blocks when{" "}
-        <code>LANTERN_AUTHZ_ENFORCE=1</code>; either way API keys are not
+        <code>admin</code> scope annotation, which blocks when{" "}
+        <code>LANTERN_AUTHZ_ENFORCE=1</code> (on in production: a key without the
+        scope gets <code>403</code>); either way API keys are not
         owners, so they get <code>403</code>.
       </p>
 

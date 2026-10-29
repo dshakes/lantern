@@ -243,6 +243,36 @@ LANTERN_RESUME=1`}</code></pre>
         <code>{"{code: microvm_resume_exhausted, attempts}"}</code>.
       </p>
 
+      <h2 id="operate">Inspecting and recovering a run</h2>
+      <p>
+        The run waterfall at <code>/runs/&lt;run_id&gt;</code> in the dashboard renders the journal. The same events are
+        available over REST and, in dev, straight from Postgres:
+      </p>
+      <pre><code>{`curl -N $API/v1/runs/<run_id>/events -H "Authorization: Bearer $TOKEN"   # SSE: journal events as they land
+
+psql $DATABASE_URL -c "SELECT seq, kind, step_id FROM journal_events WHERE run_id = '<run_id>' ORDER BY seq"`}</code></pre>
+      <p>
+        A run is stuck when it is <code>running</code> but its lease in <code>run_locks</code> has expired. There is no manual
+        resume endpoint for crashed runs: the recovery sweep re-drives it once the lease lapses (poll interval 30 s;
+        a lease won by an earlier recovery lasts up to 10 minutes, <code>recoveryLockTTL</code>). If a run stays stuck
+        past that, look in the control-plane logs for a panic or a database error, since those block the sweep.
+      </p>
+      <h3 id="exactly-once">What exactly-once covers</h3>
+      <p>
+        The journal gives exactly-once <strong>completion</strong>: the <code>run_completed</code> event and the move to{" "}
+        <code>succeeded</code> happen once. External side effects are deduplicated by the idempotency key in{" "}
+        <code>side_effect_receipts</code>, so they are at-most-once <em>if the receiver honors the key</em>. A third-party API that does not, hit by
+        a crash between the call and the receipt write, can fire twice. Guard such calls with a step that checks a
+        precondition first.
+      </p>
+      <p>
+        <code>loop</code> and <code>subagent</code> nodes are durable too: a crash mid-loop replays from the last completed
+        iteration, and a re-driven parent finds the child&apos;s completed step in its journal instead of spawning it again. An{" "}
+        <code>approval</code> wait survives a restart because the interpreter re-reads the <code>takeover_requests</code> row.
+        A child that stops on an approval fails the parent step with <code>ErrChildRunPaused</code>; nested approvals
+        are not supported yet.
+      </p>
+
       <h2 id="takeaway">Why it matters</h2>
       <ul>
         <li><strong>No double-spend.</strong> LLM steps are replayed from the journal, never re-billed at the provider.</li>

@@ -1101,6 +1101,12 @@ func runStartupGuards(logger *zap.Logger) {
 		logger.Warn(rlsMsg)
 	}
 
+	// State the scope-enforcement mode at boot so an operator can see (and an
+	// alert can key on) whether a missing API-key scope is a 403 or only a debug log.
+	logger.Info("authz: API-key scope enforcement",
+		zap.Bool("enforced", handlers.AuthzEnforcing()),
+		zap.String("flag", "LANTERN_AUTHZ_ENFORCE"))
+
 	// gRPC service-token auth (trust boundary on :50051).
 	// Without a token, any caller reachable to :50051 can set an arbitrary
 	// tenant_id and read/write that tenant's data. Production must require it.
