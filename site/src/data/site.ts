@@ -4,4 +4,4 @@ export const u = (p = '') => BASE + p.replace(/^\//, '');
 export const GH = 'https://github.com/dshakes/pal';
 export const BLOB = `${GH}/blob/master`;
 export const SITE = 'https://dshakes.github.io/pal/';
-export const DEMO = 'git clone https://github.com/dshakes/pal.git && cd lantern && make demo';
+export const DEMO = 'git clone https://github.com/dshakes/pal.git && cd pal && make demo';

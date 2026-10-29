@@ -76,7 +76,7 @@ The layer pal runs on, open source, for your own agents. Durable runs, microVM s
 Docker only, no API key. `make demo` starts the control plane, the console and a recorded-answer model server (it also needs `openssl`). Each visitor gets a private workspace, deleted after 30 minutes; nothing calls a model provider.
 
 ```bash
-git clone https://github.com/dshakes/pal.git && cd lantern
+git clone https://github.com/dshakes/pal.git && cd pal
 make demo         # prints "demo: http://localhost:3001/kiosk"
 make demo-down    # stop and delete all demo data
 ```

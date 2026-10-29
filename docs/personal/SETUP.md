@@ -28,7 +28,7 @@ assistant on WhatsApp + iMessage, with auto-start at every Mac boot.
 
 ```bash
 git clone https://github.com/dshakes/pal
-cd lantern
+cd pal
 make dev-infra        # starts Postgres + Redis + MinIO via docker-compose
 make run-api          # starts control-plane on :8080
 make dashboard-dev    # starts dashboard on :3001 (in a separate terminal)
