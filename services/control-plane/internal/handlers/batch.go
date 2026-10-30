@@ -465,6 +465,10 @@ func (h *BatchHandler) writeBatchByID(w http.ResponseWriter, ctx context.Context
 
 // dispatchBatch fans out child runs, honours optional concurrency limit,
 // and marks the batch terminal when all children are done.
+// Cancellation is checked twice per item: once before acquiring the
+// semaphore (early fast path) and once inside the goroutine after
+// acquiring it (closes the race where CancelBatch fires while an item
+// is blocked waiting for a concurrency slot).
 func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchReq) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
