@@ -31,7 +31,7 @@ export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$SCRIPT_DIR/cutover_helper.py"
 CONTRACT="${PAL_CUTOVER_CONTRACT:-$SCRIPT_DIR/pal-cutover.contract}"
-# shellcheck source=./pal-cutover.contract
+# shellcheck source-path=SCRIPTDIR source=pal-cutover.contract
 . "$CONTRACT"
 
 SANDBOX="${PAL_CUTOVER_SANDBOX:-0}"
@@ -404,8 +404,12 @@ step_backup() {
   ( cd "$LA_DIR" && ls -d "$OLD_LABEL_PREFIX".* "$NEW_LABEL_PREFIX".* 2>/dev/null ) > "$BK/plists.list"
   tar -C "$LA_DIR" -czf "$BK/plists.tgz" -T "$BK/plists.list" || { bad "tar plists"; return 1; }
   paths=""; for p in $REPO_STATE_PATHS; do [[ -e "$REPO_DIR/$p" ]] && paths="$paths $p"; done
-  # shellcheck disable=SC2086  # word-split on purpose: relative path list
-  tar -C "$REPO_DIR" -czf "$BK/repo-state.tgz" $paths || { bad "tar repo state"; return 1; }
+  if [[ -n "$paths" ]]; then
+    # shellcheck disable=SC2086  # word-split on purpose: relative path list
+    tar -C "$REPO_DIR" -czf "$BK/repo-state.tgz" $paths || { bad "tar repo state"; return 1; }
+  else
+    tar -czf "$BK/repo-state.tgz" -T /dev/null || { bad "tar repo state (empty)"; return 1; }
+  fi
   docker exec "$DB_CONTAINER" pg_dump -U "$DB_OLD_USER" -Fc "$DB_OLD_NAME" > "$BK/db.dump" || { bad "pg_dump"; return 1; }
   db_plain_sha "$DB_OLD_USER" "$DB_OLD_NAME" > "$BK/db.plain.sha256"
   DB_SHA_CACHE="$DB_OLD_NAME $(cat "$BK/db.plain.sha256")"
@@ -720,13 +724,12 @@ cmd_plan() {
   DRY=1
   guard_mode
   preflight
-  local pf=$FAILED
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/pal-cutover-plan.XXXXXX")"; chmod 700 "$WORK"
   [[ -n "$REL_SHA" ]] && render
   step_stop; step_backup; step_state_move; step_env; step_db; step_plists; step_git; step_build plan; start_side "$NEW_LABEL_PREFIX"; health new
   rm -rf "$WORK"
-  hdr "plan summary: $pf preflight failure(s), $WARNED warning(s)"
-  [[ "$pf" == 0 ]] || { log "apply would REFUSE until the failures above are fixed"; return 1; }
+  hdr "plan summary: $FAILED failure(s), $WARNED warning(s)"
+  [[ "$FAILED" == 0 ]] || { log "apply would REFUSE until the failures above are fixed"; return 1; }
 }
 
 cmd_backup() {
@@ -852,12 +855,15 @@ rollback_db() {
     pg1 "$admin" postgres "ALTER ROLE $DB_NEW_APP_ROLE RENAME TO $DB_OLD_APP_ROLE" >/dev/null 2>&1 && ok "role $DB_NEW_APP_ROLE → $DB_OLD_APP_ROLE" || bad "rename app role back"
   fi
   # exact password verifiers as captured (SCRAM/MD5 strings are accepted verbatim by ALTER ROLE)
+  local nroles=0 rfail=0
   while IFS=$'\t' read -r r p; do
     [[ -n "$r" ]] || continue
-    if [[ -n "$p" ]]; then printf 'ALTER ROLE %s PASSWORD %s;\n' "$r" "$(sql_lit "$p")" | pg "$admin" postgres >/dev/null
-    else pg1 "$admin" postgres "ALTER ROLE $r PASSWORD NULL" >/dev/null; fi
-  done < /dev/null
-  ok "role password verifiers restored"
+    if [[ -n "$p" ]]; then printf 'ALTER ROLE %s PASSWORD %s;\n' "$r" "$(sql_lit "$p")" | pg "$admin" postgres >/dev/null || rfail=1
+    else pg1 "$admin" postgres "ALTER ROLE $r PASSWORD NULL" >/dev/null || rfail=1; fi
+    nroles=$((nroles + 1))
+  done < "$bkd/roles.tsv"
+  if [[ "$rfail" == 0 && "$nroles" -gt 0 ]]; then ok "restored $nroles role password verifier(s) from roles.tsv"
+  else bad "could not restore role password verifiers from $bkd/roles.tsv (restored $nroles, failure=$rfail)"; fi
   if db_exists "$admin" "$DB_NEW_NAME" && [[ "$DB_OLD_NAME" != "$DB_NEW_NAME" ]]; then
     pg1 "$admin" postgres "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$DB_NEW_NAME'" >/dev/null
     if [[ "$mode" == rename ]]; then

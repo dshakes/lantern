@@ -16,6 +16,8 @@ the PAL names in one supervised pass, and can put it back exactly as it was.
 
 The tool is `scripts/cutover/pal-cutover.sh`. It takes every name from
 `scripts/cutover/pal-cutover.contract`, which mirrors the zero-lantern contract.
+(Edit the unpacked copy in `~/pal-cutover-tool`, or override any value from the
+environment, e.g. `DB_NEW_NAME=lantern $T plan`.)
 **If the contract keeps a name, set the old and new values to the same thing in
 the contract file.** Each step whose names don't change does nothing. For
 example, if the DB stays `lantern`, set `DB_NEW_NAME=lantern`, and likewise for
@@ -45,11 +47,14 @@ example, if the DB stays `lantern`, set `DB_NEW_NAME=lantern`, and likewise for
 ## Exact commands
 
 ```bash
-cd ~/workspace/lantern
-git fetch origin && git checkout origin/master -- scripts/cutover   # get the tool without moving the checkout
-scripts/cutover/pal-cutover.sh plan          # read-only. Must end with "0 preflight failure(s)"
-scripts/cutover/pal-cutover.sh apply         # the cutover
-scripts/cutover/pal-cutover.sh verify        # re-run the post-checks whenever you like
+cd ~/workspace/lantern && git fetch origin
+# Unpack the tool OUTSIDE the checkout: checking it out into the checkout would
+# itself be a tracked change, and preflight refuses a dirty tree.
+mkdir -p ~/pal-cutover-tool && git archive origin/master scripts/cutover | tar -x -C ~/pal-cutover-tool
+T=~/pal-cutover-tool/scripts/cutover/pal-cutover.sh   # REPO_DIR in the contract is absolute, so it can run from anywhere
+$T plan          # read-only. Must end with "plan summary: 0 failure(s)"
+$T apply         # the cutover
+$T verify        # re-run the post-checks whenever you like
 ```
 
 `plan` changes nothing and does not fetch. It prints every action `apply` would
@@ -205,9 +210,9 @@ reconnect is not verified. Pick a quiet hour, and afterwards ask the bot
 ## Rollback
 
 ```bash
-scripts/cutover/pal-cutover.sh rollback                      # newest ~/pal-cutover-backup-*
-scripts/cutover/pal-cutover.sh rollback ~/pal-cutover-backup-<ts>
-scripts/cutover/pal-cutover.sh verify --old
+$T rollback                      # newest ~/pal-cutover-backup-*
+$T rollback ~/pal-cutover-backup-<ts>
+$T verify --old
 ```
 
 Rollback does the following:

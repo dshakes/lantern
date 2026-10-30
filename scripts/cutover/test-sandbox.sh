@@ -198,6 +198,8 @@ say "1. plan (dry run)"
 sed 's/^/    /' "$SB/plan.out" | grep -E 'FAIL|WARN|would|summary|template-wins|carried' | head -60
 check "plan exits 0" test "$rc" = 0
 snap "$SB/S0p"; check "plan changed nothing" same_snap "$SB/S0" "$SB/S0p"
+DB_NEW_NAME=cutover_test_mismatch "$CUT" plan > "$SB/plan-bad.out" 2>&1; rc=$?
+check "plan fails when a rendered DATABASE_URL disagrees with the contract (render-time failure)" test "$rc" != 0
 check "plan never prints a secret value" bash -c "! grep -qE 'fake-google-secret|fake-wa-token|fake-signal-token|oldpw-test|newpw-test|apppw|kkkkkkkk' '$SB/plan.out'"
 
 # ------------------------------------------------------------------ 2. backup
