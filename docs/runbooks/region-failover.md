@@ -12,7 +12,7 @@ inserts a `region_fence` row is unaffected.
 | `PAL_REGION` | control-plane, workflow-engine (Helm `region.name`) | region identity, stamped on runs/leases/journal + OTel `cloud.region` |
 | `PAL_FENCE_EPOCH` | control-plane, workflow-engine (Helm `region.fenceEpoch`) | must equal `region_fence.epoch` once armed |
 | `PAL_READ_ONLY=1` | control-plane (Helm `region.readOnly`) | standby: HTTP 503 + `Retry-After: 30`, gRPC `UNAVAILABLE`, no migrations/background loops, `DataPlaneService` NOT_SERVING |
-| `PAL_CONTROL_PLANE_ENDPOINTS` | data-plane agent (Helm `controlPlane.endpoints`, Terraform `lantern_control_plane_endpoints`) | ordered regions, primary first |
+| `PAL_CONTROL_PLANE_ENDPOINTS` | data-plane agent (Helm `controlPlane.endpoints`, Terraform `pal_control_plane_endpoints`) | ordered regions, primary first |
 | `PAL_CONTROL_PLANE_FAILBACK_INTERVAL` | data-plane agent | failback probe interval (default `60s`) |
 | `bundles_replica_region` | Terraform (aws) | S3 CRR of the bundles/snapshots bucket |
 

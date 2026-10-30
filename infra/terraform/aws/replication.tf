@@ -24,7 +24,7 @@ resource "aws_kms_key" "bundles_replica" {
   count    = local.replicate_bundles ? 1 : 0
   provider = aws.replica
 
-  description         = "${local.cluster_name} lantern bundles replica (${var.bundles_replica_region})"
+  description         = "${local.cluster_name} pal bundles replica (${var.bundles_replica_region})"
   enable_key_rotation = true
 }
 
@@ -32,10 +32,10 @@ resource "aws_s3_bucket" "bundles_replica" {
   count    = local.replicate_bundles ? 1 : 0
   provider = aws.replica
 
-  bucket = "${local.cluster_name}-lantern-bundles-${local.account_id}-${var.bundles_replica_region}"
+  bucket = "${local.cluster_name}-pal-bundles-${local.account_id}-${var.bundles_replica_region}"
 
   tags = {
-    Name = "${local.cluster_name}-lantern-bundles-replica"
+    Name = "${local.cluster_name}-pal-bundles-replica"
   }
 }
 
@@ -76,7 +76,7 @@ resource "aws_s3_bucket_public_access_block" "bundles_replica" {
 
 resource "aws_iam_role" "bundles_replication" {
   count = local.replicate_bundles ? 1 : 0
-  name  = "${local.cluster_name}-lantern-bundles-crr"
+  name  = "${local.cluster_name}-pal-bundles-crr"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -90,7 +90,7 @@ resource "aws_iam_role" "bundles_replication" {
 
 resource "aws_iam_role_policy" "bundles_replication" {
   count = local.replicate_bundles ? 1 : 0
-  name  = "${local.cluster_name}-lantern-bundles-crr"
+  name  = "${local.cluster_name}-pal-bundles-crr"
   role  = aws_iam_role.bundles_replication[0].id
 
   policy = jsonencode({

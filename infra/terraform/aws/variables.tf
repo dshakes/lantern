@@ -123,8 +123,8 @@ variable "tags" {
 # Multi-region (ADR 0046) — both default to off (single-region, unchanged)
 # ---------------------------------------------------------------------------
 
-variable "lantern_control_plane_endpoints" {
-  description = "Ordered control-plane endpoints, one per region, primary first. The data-plane agent connects to the first whose gRPC health check reports SERVING and fails back when a higher-priority one recovers. Empty = lantern_control_plane_endpoint only."
+variable "pal_control_plane_endpoints" {
+  description = "Ordered control-plane endpoints, one per region, primary first. The data-plane agent connects to the first whose gRPC health check reports SERVING and fails back when a higher-priority one recovers. Empty = pal_control_plane_endpoint only."
   type        = list(string)
   default     = []
 }
