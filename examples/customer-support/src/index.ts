@@ -1,4 +1,4 @@
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal-runtime/sdk";
 import { z } from "zod";
 
 // --- Types ---
@@ -171,7 +171,7 @@ export default agent<SupportInput, SupportOutput>({
     });
 
     // Step 3: Handle approval gates for sensitive actions
-    // This is a key Lantern differentiator: the agent DURABLY SUSPENDS waiting for
+    // This is a key PAL differentiator: the agent DURABLY SUSPENDS waiting for
     // human approval. The process can restart, the VM can be recycled — when the
     // approver clicks "approve" in Slack/dashboard, the agent resumes exactly here.
     let requiresApproval = false;

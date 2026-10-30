@@ -30,7 +30,7 @@ test("defaults to AUTO-detect + Telugu prompt when no env + no nativity", () => 
   assert.ok(h.prompt.length > 0, "should carry a script-priming prompt");
 });
 
-test("LANTERN_VOICE_LANG ISO code wins", () => {
+test("PAL_VOICE_LANG ISO code wins", () => {
   process.env.PAL_VOICE_LANG = "hi";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "hi");
@@ -38,14 +38,14 @@ test("LANTERN_VOICE_LANG ISO code wins", () => {
   delete process.env.PAL_VOICE_LANG;
 });
 
-test("LANTERN_VOICE_LANG language name wins (case-insensitive)", () => {
+test("PAL_VOICE_LANG language name wins (case-insensitive)", () => {
   process.env.PAL_VOICE_LANG = "Tamil";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "ta");
   delete process.env.PAL_VOICE_LANG;
 });
 
-test('LANTERN_VOICE_LANG="auto" disables biasing', () => {
+test('PAL_VOICE_LANG="auto" disables biasing', () => {
   process.env.PAL_VOICE_LANG = "auto";
   const h = voiceTranscriptionLangHint({});
   assert.equal(h.iso, "");

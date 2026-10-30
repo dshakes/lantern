@@ -4,7 +4,7 @@
 //
 // Security model:
 //   1. ONLY fires for owner-sent messages (bridges gate on isFromMe).
-//   2. Paths restricted to LANTERN_PERSONAL_DOCS_ROOTS (default:
+//   2. Paths restricted to PAL_PERSONAL_DOCS_ROOTS (default:
 //      ~/Documents, ~/Desktop, ~/Library/Mobile Documents/com~apple~CloudDocs).
 //   3. Path-traversal blocked — every read normalizes + checks the
 //      resolved path is within an allowed root.
@@ -18,6 +18,7 @@
 // Reading supports PDF / DOCX / TXT / MD / JSON / HTML out of the
 // box; other types return a "binary — won't preview" placeholder.
 
+import { palStateDir } from "./state-dir.js";
 import { spawn } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from "fs";
 import { resolve, dirname, basename, extname, join, sep } from "path";
@@ -61,7 +62,7 @@ export interface DocReadResult {
 export interface PersonalDocsConfig {
   // Absolute paths the agent is allowed to search/read in.
   // Defaults to ~/Documents, ~/Desktop, and iCloud Drive root.
-  // Override via LANTERN_PERSONAL_DOCS_ROOTS=path1:path2:path3
+  // Override via PAL_PERSONAL_DOCS_ROOTS=path1:path2:path3
   roots: string[];
   // Per-search cap (we cap aggressively; LLM context is precious).
   maxResults: number;
@@ -750,9 +751,9 @@ export class PersonalDocs {
   // the tenant's configured OpenAI key + gpt-4o-mini vision.
   // OCR cache directory. Keyed by sha1(path + size + mtime) so a
   // file that hasn't changed since last OCR returns instantly. First
-  // query: ~5-10s. Cached: <50ms. Lives at ~/.lantern/ocr-cache.
+  // query: ~5-10s. Cached: <50ms. Lives at ~/.pal/ocr-cache.
   private get ocrCacheDir(): string {
-    return join(homedir(), ".lantern", "ocr-cache");
+    return join(palStateDir(), "ocr-cache");
   }
   private ocrCacheKey(filePath: string): string | null {
     try {
@@ -790,7 +791,7 @@ export class PersonalDocs {
       return cached;
     }
     const ext = extname(filePath).toLowerCase();
-    const tmpDir = `/tmp/lantern-ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tmpDir = `/tmp/pal-ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let needsCleanup = false;
     try {
       let pngs: string[] = [];

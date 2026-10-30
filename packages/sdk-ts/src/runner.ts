@@ -8,7 +8,7 @@
  *   node runner.js --bundle /path/to/agent-bundle
  *
  * Usage (dev mode):
- *   npx lantern-run ./my-agent.ts
+ *   npx pal-run ./my-agent.ts
  *
  * The runner:
  * 1. Parses CLI arguments to locate the agent bundle.
@@ -22,12 +22,12 @@
  */
 
 import type { AgentConfig } from "./types.js";
-import { LanternRuntime } from "./runtime/runtime.js";
+import { PalRuntime } from "./runtime/runtime.js";
 import type { Runtime } from "./runtime/runtime.js";
 import { buildContext } from "./runtime/context.js";
 import { resetStepCounter } from "./runtime/step-runtime.js";
 import { setStepRuntime } from "./step.js";
-import { LanternError } from "./runtime/errors.js";
+import { PalError } from "./runtime/errors.js";
 import { traced } from "./runtime/tracing.js";
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ function parseArgs(argv: string[]): RunnerArgs {
   }
 
   if (!bundlePath) {
-    throw new LanternError(
+    throw new PalError(
       "RUNNER_ARGS",
       "No agent bundle path provided. Usage: node runner.js --bundle <path>",
     );
@@ -90,14 +90,14 @@ function parseArgs(argv: string[]): RunnerArgs {
  *
  * @param bundlePath - Path to the agent bundle entry file.
  * @returns The agent configuration.
- * @throws {LanternError} If the bundle cannot be loaded or has no valid export.
+ * @throws {PalError} If the bundle cannot be loaded or has no valid export.
  */
 async function loadAgentBundle(bundlePath: string): Promise<AgentConfig> {
   let mod: Record<string, unknown>;
   try {
     mod = await import(bundlePath);
   } catch (err) {
-    throw new LanternError(
+    throw new PalError(
       "BUNDLE_LOAD",
       `Failed to load agent bundle from "${bundlePath}": ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -107,7 +107,7 @@ async function loadAgentBundle(bundlePath: string): Promise<AgentConfig> {
   const config = (mod.default as AgentConfig | undefined) ?? (mod.agent as AgentConfig | undefined);
 
   if (!config || typeof config.run !== "function") {
-    throw new LanternError(
+    throw new PalError(
       "BUNDLE_LOAD",
       `Agent bundle at "${bundlePath}" does not export a valid AgentConfig. ` +
         "Expected a default export or named 'agent' export with a 'run' function.",
@@ -145,7 +145,7 @@ export async function executeAgent<TInput = unknown, TOutput = unknown>(
   try {
     input = JSON.parse(inputJson) as TInput;
   } catch {
-    throw new LanternError("INPUT_PARSE", `Failed to parse agent input as JSON: ${inputJson.slice(0, 500)}`);
+    throw new PalError("INPUT_PARSE", `Failed to parse agent input as JSON: ${inputJson.slice(0, 500)}`);
   }
 
   // Reset step counter for clean replay.
@@ -200,7 +200,7 @@ export async function main(): Promise<void> {
     const agentConfig = await loadAgentBundle(args.bundlePath);
 
     // Initialize the runtime.
-    runtime = await LanternRuntime.initialize({
+    runtime = await PalRuntime.initialize({
       agentName: agentConfig.name,
       agentVersion: agentConfig.version ?? "0.0.0",
     });
@@ -230,7 +230,7 @@ export async function main(): Promise<void> {
     process.exit(0);
   } catch (err) {
     // Report the error.
-    const errorCode = err instanceof LanternError ? err.code : "AGENT_ERROR";
+    const errorCode = err instanceof PalError ? err.code : "AGENT_ERROR";
     const errorMessage = err instanceof Error ? err.message : String(err);
 
     if (runtime?.isProduction && runtime.sidecar) {
@@ -242,16 +242,16 @@ export async function main(): Promise<void> {
         });
       } catch {
         // If we can't report the error, log it and exit with infra error code.
-        console.error("[lantern:runner] Failed to report error to sidecar:", errorMessage);
+        console.error("[pal:runner] Failed to report error to sidecar:", errorMessage);
       }
     } else {
-      console.error("[lantern:runner] Agent execution failed:", errorMessage);
+      console.error("[pal:runner] Agent execution failed:", errorMessage);
     }
 
     runtime?.close();
 
     // Exit code 1 for agent errors, 2 for infra errors.
-    const exitCode = err instanceof LanternError && err.code === "BUNDLE_LOAD" ? 2 : 1;
+    const exitCode = err instanceof PalError && err.code === "BUNDLE_LOAD" ? 2 : 1;
     process.exit(exitCode);
   }
 }

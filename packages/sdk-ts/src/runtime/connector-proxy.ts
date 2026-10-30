@@ -21,7 +21,7 @@
 import type { ConnectorClient, ConnectorAction } from "../types.js";
 import type { Runtime } from "./runtime.js";
 import type { RequestMeta } from "./grpc-client.js";
-import { LanternConnectorError } from "./errors.js";
+import { PalConnectorError } from "./errors.js";
 import { traced } from "./tracing.js";
 
 /**
@@ -62,7 +62,7 @@ export function createConnectorProxy(runtime: Runtime): ConnectorClient {
  * @param actionId - The action name (e.g. "getPullRequest").
  * @param input - The action input payload.
  * @returns The action's output payload.
- * @throws {LanternConnectorError} If the invocation fails.
+ * @throws {PalConnectorError} If the invocation fails.
  */
 async function invokeConnectorAction(
   runtime: Runtime,
@@ -72,7 +72,7 @@ async function invokeConnectorAction(
 ): Promise<Record<string, unknown>> {
   const sidecar = runtime.sidecar;
   if (!sidecar) {
-    throw new LanternConnectorError(
+    throw new PalConnectorError(
       connectorId,
       actionId,
       "Connector proxy requires a production runtime with sidecar",
@@ -94,8 +94,8 @@ async function invokeConnectorAction(
         });
         return JSON.parse(response.outputJson) as Record<string, unknown>;
       } catch (err) {
-        if (err instanceof LanternConnectorError) throw err;
-        throw new LanternConnectorError(
+        if (err instanceof PalConnectorError) throw err;
+        throw new PalConnectorError(
           connectorId,
           actionId,
           err instanceof Error ? err.message : String(err),

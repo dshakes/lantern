@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveGender, recordGender, detectGenderStatement } from "./gender.ts";
 
-function tmp(): string { return join(mkdtempSync(join(tmpdir(), "lantern-g-")), "g.jsonl"); }
+function tmp(): string { return join(mkdtempSync(join(tmpdir(), "pal-g-")), "g.jsonl"); }
 
 test("record + resolve (first-name keyed, last wins)", () => {
   const path = tmp();

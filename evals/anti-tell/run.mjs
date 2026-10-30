@@ -11,10 +11,10 @@
 //   node evals/anti-tell/run.mjs [--threshold 0.3] [--seeds path]
 //
 // Env:
-//   LANTERN_API_URL  control-plane base (default http://localhost:8080)
-//   LANTERN_TENANT   tenant id (default dev)
-//   LANTERN_AGENT    agent name for generation (default whatsapp-assistant)
-//   LANTERN_OWNER_NAME / LANTERN_OWNER_PROFILE — same as the bridges
+//   PAL_API_URL  control-plane base (default http://localhost:8080)
+//   PAL_TENANT   tenant id (default dev)
+//   PAL_AGENT    agent name for generation (default whatsapp-assistant)
+//   PAL_OWNER_NAME / PAL_OWNER_PROFILE — same as the bridges
 //
 // Exit codes:
 //   0  all seeds at or below threshold

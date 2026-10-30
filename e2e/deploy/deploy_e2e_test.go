@@ -1,6 +1,6 @@
 //go:build e2e
 
-// Package deploy_e2e drives the real `lantern deploy` binary against a live
+// Package deploy_e2e drives the real `pal deploy` binary against a live
 // control plane (LANTERN_E2E_API_URL). No LLM is involved: deploy only
 // upserts the agent and POSTs /v1/agents/{name}/deploy, so there is no spend.
 //
@@ -29,7 +29,7 @@ func TestDeployEndToEnd(t *testing.T) {
 
 	resp, err := c.Get(base + "/healthz")
 	if err != nil || resp.StatusCode != 200 {
-		msg := "LANTERN stack not reachable at " + base
+		msg := "PAL stack not reachable at " + base
 		if e2ekit.EnvOr("E2E_ALLOW_SKIP", "") == "1" {
 			t.Skip(msg)
 		}
@@ -64,8 +64,8 @@ func TestDeployEndToEnd(t *testing.T) {
 	t.Cleanup(func() { api("DELETE", "/v1/agents/"+agentName) })
 	api("DELETE", "/v1/agents/"+agentName)
 
-	bin := filepath.Join(t.TempDir(), "lantern")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/lantern")
+	bin := filepath.Join(t.TempDir(), "pal")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/pal")
 	build.Dir = "../../packages/cli"
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build cli: %v\n%s", err, out)

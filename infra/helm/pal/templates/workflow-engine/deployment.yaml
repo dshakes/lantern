@@ -118,6 +118,7 @@ spec:
             # Internal gRPC mTLS (ADR 0043).
             {{- include "pal.mtls.env" (dict "root" . "name" "workflow-engine" "peers" (list "control-plane")) | nindent 12 }}
             {{- include "pal.mtls.managerClientEnv" . | nindent 12 }}
+            {{- include "pal.regionEnv" . | nindent 12 }}
           {{- if .Values.mtls.enabled }}
           volumeMounts:
             {{- include "pal.mtls.volumeMounts" (dict "root" . "manager" true) | nindent 12 }}

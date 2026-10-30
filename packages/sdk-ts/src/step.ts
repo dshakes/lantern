@@ -1,5 +1,5 @@
 import type { StepOptions } from "./types.js";
-import { LanternRuntime } from "./runtime/runtime.js";
+import { PalRuntime } from "./runtime/runtime.js";
 import type { Runtime } from "./runtime/runtime.js";
 import { createProductionStepProxy } from "./runtime/step-runtime.js";
 import type { StepAPI } from "./runtime/step-runtime.js";
@@ -89,7 +89,7 @@ function createDevStepProxy(): DevStepAPI {
     _opts?: { timeout?: string },
   ): Promise<T> => {
     throw new Error(
-      "step.signal() is only available in the Lantern runtime. " +
+      "step.signal() is only available in the PAL runtime. " +
         "In local dev, use a mock or test fixture.",
     );
   };
@@ -146,7 +146,7 @@ function createStepProxy(): StepAPI {
     return createProductionStepProxy(_productionRuntime);
   }
 
-  if (LanternRuntime.isProduction()) {
+  if (PalRuntime.isProduction()) {
     // Production mode but runtime not yet injected.
     // Return a proxy that defers to the production runtime once available.
     return createDeferredStepProxy();

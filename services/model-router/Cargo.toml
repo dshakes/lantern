@@ -33,6 +33,7 @@ pin-project-lite = "0.2"
 sha2 = "0.10"
 hex = "0.4"
 subtle = "2"
+prometheus = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 # Test-time PKI for the mTLS handshake tests (never in production code).

@@ -68,7 +68,15 @@ func main() {
 	defer cancel()
 
 	// --- Postgres ---
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pgCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal("failed to parse DATABASE_URL", zap.Error(err))
+	}
+	// Multi-region identity + fencing epoch (ADR 0046); no-op when unset.
+	if err := db.ApplyRegionSession(pgCfg.ConnConfig); err != nil {
+		logger.Fatal("invalid region configuration", zap.Error(err))
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
 		logger.Fatal("failed to create pgx pool", zap.Error(err))
 	}
@@ -199,6 +207,9 @@ func main() {
 			}
 			appCfg.ConnConfig.User = "lantern_app"
 			appCfg.ConnConfig.Password = appPwd
+			if err := db.ApplyRegionSession(appCfg.ConnConfig); err != nil {
+				logger.Fatal("invalid region configuration", zap.Error(err))
+			}
 			appPool, poolErr := pgxpool.NewWithConfig(ctx, appCfg)
 			if poolErr != nil {
 				logger.Fatal("failed to create the lantern_app pool", zap.Error(poolErr))

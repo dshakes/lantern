@@ -182,7 +182,7 @@ func scaffoldProject(name string, info *templates.Info) error {
 	}
 
 	printSuccess(fmt.Sprintf("Scaffolded agent %q (template: %s) in ./%s/", name, info.Name, dir))
-	fmt.Fprintf(os.Stderr, "\n  cd %s\n  npm install\n  lantern deploy\n\n", dir)
+	fmt.Fprintf(os.Stderr, "\n  cd %s\n  npm install\n  pal deploy\n\n", dir)
 
 	return nil
 }

@@ -1,11 +1,11 @@
-"""deepagents agent running on a Lantern microVM sandbox.
+"""deepagents agent running on a PAL microVM sandbox.
 
 Requires: pip install "./packages/sdk-python[deepagents]"  (from a repo checkout)
 Env: LANTERN_API_URL, LANTERN_API_KEY
 
 Demonstrates:
-- the Lantern sandbox backend (execute + derived filesystem tools in a
-  Firecracker microVM, egress/quota enforced by the Lantern runtime)
+- the PAL sandbox backend (execute + derived filesystem tools in a
+  Firecracker microVM, egress/quota enforced by the PAL runtime)
 - a composite backend: `/memories/` outlives the VM (LangGraph store),
   everything else lives inside the sandbox
 - rubric-gated self-evaluation before the agent answers
@@ -17,11 +17,11 @@ from deepagents.backends.store import StoreBackend
 from deepagents.middleware.rubric import RubricMiddleware
 from langgraph.store.memory import InMemoryStore
 
-from lantern.integrations.deepagents_sandbox import LanternSandbox
+from pal.integrations.deepagents_sandbox import PalSandbox
 
 
 def main() -> None:
-    with LanternSandbox.create(
+    with PalSandbox.create(
         image_digest="sha256:REPLACE_WITH_AGENT_IMAGE",
         limits={"cpu": 1, "memory_mb": 1024},
         egressRules=[{"pattern": "pypi.org", "http_methods": ["GET"]}],

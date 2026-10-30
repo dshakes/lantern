@@ -2,6 +2,7 @@ mod auth;
 mod cache;
 mod config;
 mod error;
+mod metrics;
 #[cfg(test)]
 mod mtls;
 mod otel;
@@ -103,6 +104,8 @@ async fn main() -> anyhow::Result<()> {
             "LANTERN_GRPC_SERVICE_TOKEN is unset: model-router accepts unauthenticated callers (dev only)"
         );
     }
+
+    metrics::serve_from_env().await;
 
     // Service-mesh mTLS (ADR 0043). This port carries tenant provider keys, so
     // prod refuses plaintext unless PAL_GRPC_INSECURE=1. Both mTLS AND the

@@ -1,4 +1,4 @@
-// Barrel re-exports for @lantern/bridge-core.
+// Barrel re-exports for @pal/bridge-core.
 // Both bridges import from this single source.
 
 export * from "./build-info.js";

@@ -1,10 +1,10 @@
 {
-  "name": "@lantern/example-customer-support",
+  "name": "@pal-runtime/example-customer-support",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@lantern/sdk": "workspace:*",
+    "@pal-runtime/sdk": "workspace:*",
     "zod": "^3.24.0"
   }
 }

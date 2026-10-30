@@ -1,4 +1,4 @@
-.PHONY: dev-certs demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: dev-certs demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint slo-rules ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -326,6 +326,9 @@ lima-broker-e2e: ## Broker egress mode (ADR 0026) e2e inside the VM
 lima-measurement-e2e: ## Software measurement (ADR 0031) e2e inside the VM: reproducible, enforce, resume/fork
 	@bash infra/lima/lima.sh measurement-e2e
 
+lima-runtime: ## Long-running jailed Firecracker runtime-manager in the VM on :52054 for `dev` (foreground)
+	@bash infra/lima/lima.sh runtime
+
 lima-down: ## Stop the firecracker-dev VM
 	@bash infra/lima/lima.sh down
 
@@ -333,6 +336,9 @@ lima-clean: ## Drop the VM's cached cargo target + microVM image
 	@bash infra/lima/lima.sh clean
 
 # ---------- CI ----------
+
+slo-rules: ## Render + promtool check/test the SLO PrometheusRule (needs helm, promtool, PyYAML)
+	infra/monitoring/prometheus/check-slo-rules.sh
 
 ci-local: lint test audit ## Run the same checks as CI, locally
 	@echo "All CI checks passed."

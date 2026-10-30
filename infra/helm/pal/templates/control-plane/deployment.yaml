@@ -149,6 +149,7 @@ spec:
             # model-router (service CA) and runtime-manager (manager CA).
             {{- include "pal.mtls.env" (dict "root" . "name" "control-plane" "peers" (list "gateway" "surface-gateway")) | nindent 12 }}
             {{- include "pal.mtls.managerClientEnv" . | nindent 12 }}
+            {{- include "pal.regionEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

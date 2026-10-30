@@ -13,7 +13,7 @@ import {
 } from "./disclosure.ts";
 
 function tmp(): string {
-  return join(mkdtempSync(join(tmpdir(), "lantern-disc-")), "d.jsonl");
+  return join(mkdtempSync(join(tmpdir(), "pal-disc-")), "d.jsonl");
 }
 
 // ---- store round-trip -----------------------------------------------------

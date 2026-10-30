@@ -88,7 +88,7 @@ export async function readWatchHistory(opts: ReadHistoryOpts = {}): Promise<Watc
     let tmpDir = "";
     let db: any;
     try {
-      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lantern-hist-"));
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pal-hist-"));
       const tmpDb = path.join(tmpDir, "h.db");
       fs.copyFileSync(dbPath, tmpDb);
       for (const ext of ["-wal", "-shm"]) {

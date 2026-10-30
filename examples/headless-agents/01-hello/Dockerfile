@@ -1,6 +1,6 @@
 # Demo 01: hello — minimal Python workload.
 #
-# Lantern base image format (defined by the harness contract):
+# PAL base image format (defined by the harness contract):
 #   * `/usr/local/bin/lantern-harness` is PID 1 (statically linked Rust binary
 #     baked in by the base image — see services/harness/).
 #   * The workload entrypoint is referenced by env `LANTERN_WORKLOAD_CMD`.
@@ -17,7 +17,7 @@ FROM python:3.12-alpine
 WORKDIR /app
 COPY workload.py /app/workload.py
 
-# In a real Lantern image, the next line would be:
+# In a real PAL image, the next line would be:
 #   COPY --from=lantern/harness:latest /usr/local/bin/lantern-harness /usr/local/bin/
 #   ENTRYPOINT ["/usr/local/bin/lantern-harness"]
 # Until the harness is published, use python directly:

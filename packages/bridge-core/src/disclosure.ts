@@ -6,12 +6,12 @@
 // per-contact "keep my whereabouts private from Ravi" flag. This is that flag.
 //
 // Same shape as identity.ts: owner-only, local, append-only JSONL
-// (~/.lantern/disclosure-denies.jsonl, mode 0600), last-write-wins. The deny
+// (~/.pal/disclosure-denies.jsonl, mode 0600), last-write-wins. The deny
 // is keyed by canonical handle so it holds across channels (a deny set on
 // iMessage applies on WhatsApp for the same person). Pure + best-effort; never
 // throws into a reply path.
 
-import { homedir } from "node:os";
+import { palStateDir } from "./state-dir.js";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { canonicalHandle } from "./canonical-handle.js";
@@ -23,7 +23,7 @@ export interface DisclosureRecord {
   ts: number;
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "disclosure-denies.jsonl");
+const defaultPath = (): string => join(palStateDir(), "disclosure-denies.jsonl");
 
 export interface DiscOpts {
   path?: string;
@@ -33,7 +33,7 @@ export interface DiscOpts {
 /** True when the owner has told the bot to keep his whereabouts private from
  *  this handle. Last write wins, so a later re-allow flips it back. */
 export function resolveDisclosureDeny(handle: string, opts: DiscOpts = {}): boolean {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   if (!handle || !existsSync(path)) return false;
   const key = canonicalHandle(handle);
   let deny = false;
@@ -56,7 +56,7 @@ export function resolveDisclosureDeny(handle: string, opts: DiscOpts = {}): bool
 
 /** Persist a disclosure deny / re-allow for a handle. Best-effort. */
 export function recordDisclosureDeny(handle: string, deny: boolean, opts: DiscOpts = {}): boolean {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const h = (handle || "").trim();
   if (!h) return false;
   try {

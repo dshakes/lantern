@@ -1,15 +1,15 @@
 package cli
 
-// `lantern run` + `lantern vm` — drive the headless agent execution layer.
+// `pal run` + `pal vm` — drive the headless agent execution layer.
 //
-//   lantern run    <agent.yaml> --input '<json>' [--follow]
-//   lantern vm     list [--state running] [--limit 50]
-//   lantern vm     get  <vm-id>
-//   lantern vm     logs <vm-id> [--follow]
-//   lantern vm     stop <vm-id> [--grace 30s]
-//   lantern vm     exec <vm-id> -- <command...>
-//   lantern vm     cluster
-//   lantern vm     quota [get | set --max-concurrent N --max-cost X]
+//   pal run    <agent.yaml> --input '<json>' [--follow]
+//   pal vm     list [--state running] [--limit 50]
+//   pal vm     get  <vm-id>
+//   pal vm     logs <vm-id> [--follow]
+//   pal vm     stop <vm-id> [--grace 30s]
+//   pal vm     exec <vm-id> -- <command...>
+//   pal vm     cluster
+//   pal vm     quota [get | set --max-concurrent N --max-cost X]
 //
 // All endpoints hit the control-plane REST surface at /v1/runtime/*
 // (defined in services/control-plane/internal/handlers/runtime.go).
@@ -30,6 +30,7 @@ import (
 	"time"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/packages/cli/internal"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
@@ -37,7 +38,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// --- `lantern run` ---------------------------------------------------------
+// --- `pal run` ---------------------------------------------------------
 
 func newRunCommand() *cobra.Command {
 	var (
@@ -54,8 +55,8 @@ loaded from the YAML file at the given path and POSTed to /v1/runtime/schedule.
 The spawned VM's logs can be streamed in real-time with --follow.
 
 Examples:
-  lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"Ada"}'
-  lantern run my-agent.yaml --follow`,
+  pal run examples/headless-agents/01-hello/agent.yaml --input '{"name":"Ada"}'
+  pal run my-agent.yaml --follow`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			specPath, err := filepath.Abs(args[0])
@@ -126,7 +127,7 @@ Examples:
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"\n  ✗ NOT SCHEDULED — %s\n\n"+
 						"    vm_id=%s is synthetic. Nothing is running.\n"+
-						"    Start the control-plane with LANTERN_SCHEDULER_GRPC_ADDR set, e.g.:\n"+
+						"    Start the control-plane with PAL_SCHEDULER_GRPC_ADDR set, e.g.:\n"+
 						"      make run-api-runtime\n\n", warning, vmID)
 				return fmt.Errorf("scheduler not wired: no workload was spawned")
 			}
@@ -135,7 +136,7 @@ Examples:
 			if follow {
 				return streamLogs(cmd.OutOrStdout(), vmID)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "follow with: lantern vm logs %s --follow\n", vmID)
+			fmt.Fprintf(cmd.OutOrStdout(), "follow with: pal vm logs %s --follow\n", vmID)
 			return nil
 		},
 	}
@@ -145,7 +146,7 @@ Examples:
 	return cmd
 }
 
-// --- `lantern vm ...` ------------------------------------------------------
+// --- `pal vm ...` ------------------------------------------------------
 
 func newVmCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -168,7 +169,7 @@ func newVmCommand() *cobra.Command {
 	return cmd
 }
 
-// newVmValidateCommand — `lantern vm validate`
+// newVmValidateCommand — `pal vm validate`
 //
 // Shells scripts/validate-cluster.sh to run the gVisor/Kata cluster validation
 // harness. Requires kubectl and a KUBECONFIG pointing at a real cluster; exits
@@ -194,10 +195,10 @@ operator can validate incrementally as they provision sandbox node pools.
 Requires: kubectl in PATH, KUBECONFIG pointing at the target cluster.
 
 Examples:
-  lantern vm validate --kubeconfig ~/.kube/gke-sandbox.yaml
-  KUBECONFIG=~/.kube/gke-sandbox.yaml lantern vm validate
-  lantern vm validate --kubeconfig ./k.yaml --context gke_project_us-central1_cluster
-  lantern vm validate --report /tmp/validation-$(date +%Y%m%d).md
+  pal vm validate --kubeconfig ~/.kube/gke-sandbox.yaml
+  KUBECONFIG=~/.kube/gke-sandbox.yaml pal vm validate
+  pal vm validate --kubeconfig ./k.yaml --context gke_project_us-central1_cluster
+  pal vm validate --report /tmp/validation-$(date +%Y%m%d).md
 
 Setup (GKE Agent Sandbox + Kata):
   infra/k8s/gke-agent-sandbox-setup.sh
@@ -231,7 +232,7 @@ See also: docs/runbooks/cluster-validation.md`,
 			c.Stderr = cmd.ErrOrStderr()
 			c.Dir = repoRoot
 
-			// Pass the caller's environment so KUBECONFIG, LANTERN_*, etc. are visible.
+			// Pass the caller's environment so KUBECONFIG, PAL_*/LANTERN_*, etc. are visible.
 			c.Env = os.Environ()
 
 			if err := c.Run(); err != nil {
@@ -364,7 +365,7 @@ func newVmStopCommand() *cobra.Command {
 	return cmd
 }
 
-// --- `lantern vm ls|cat|put` (files under the VM's /workspace) ---------------
+// --- `pal vm ls|cat|put` (files under the VM's /workspace) ---------------
 
 func vmFilesPath(vmID, sub, path string) string {
 	return "/v1/runtime/vms/" + url.PathEscape(vmID) + "/files" + sub + "?path=" + url.QueryEscape(path)
@@ -454,7 +455,7 @@ func newVmPutCommand() *cobra.Command {
 	}
 }
 
-// --- `lantern vm pause|resume|fork` (sandbox lifecycle) ----------------------
+// --- `pal vm pause|resume|fork` (sandbox lifecycle) ----------------------
 
 func newVmPauseCommand() *cobra.Command {
 	return &cobra.Command{
@@ -495,7 +496,7 @@ func newVmForkCommand() *cobra.Command {
 		Short: "Spawn N copies of a running or paused VM from a snapshot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// The upper bound is the server's (LANTERN_MAX_FORK_COUNT, default
+			// The upper bound is the server's (PAL_MAX_FORK_COUNT, default
 			// 100); it answers 400 with the cap when count is over it.
 			if count < 1 {
 				return fmt.Errorf("--count must be at least 1, got %d", count)
@@ -528,7 +529,7 @@ func newVmForkCommand() *cobra.Command {
 	return cmd
 }
 
-// --- `lantern vm exec` -------------------------------------------------------
+// --- `pal vm exec` -------------------------------------------------------
 //
 // Exec speaks the RuntimeManager.Exec gRPC bidi stream directly (the
 // control-plane REST surface has no streaming exec channel). The first
@@ -542,7 +543,7 @@ func newVmForkCommand() *cobra.Command {
 const defaultManagerAddr = "localhost:50054"
 
 // resolveManagerAddr picks the runtime-manager gRPC address: explicit flag,
-// then $LANTERN_MANAGER_ADDR, then the local default.
+// then $PAL_MANAGER_ADDR, then the local default.
 func resolveManagerAddr(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
@@ -606,8 +607,8 @@ merged (terminal semantics). -i/--interactive implies --tty. Without a tty
 the exec is one-shot: no stdin, stdout/stderr kept separate.
 
 Examples:
-  lantern vm exec vm-1234 -- ls -la /tmp
-  lantern vm exec -it vm-1234 -- /bin/sh`,
+  pal vm exec vm-1234 -- ls -la /tmp
+  pal vm exec -it vm-1234 -- /bin/sh`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVmExec(cmd, args[0], args[1], args[2:],
@@ -617,7 +618,7 @@ Examples:
 	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "allocate a PTY in the guest and wire it to this terminal")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "keep stdin open (implies --tty)")
 	cmd.Flags().StringVar(&managerAddr, "manager-addr", "",
-		"runtime-manager gRPC address (default $LANTERN_MANAGER_ADDR or "+defaultManagerAddr+")")
+		"runtime-manager gRPC address (default $PAL_MANAGER_ADDR or "+defaultManagerAddr+")")
 	return cmd
 }
 
@@ -785,11 +786,13 @@ func newVmQuotaCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceTokenCreds sends x-lantern-service-token on every manager RPC.
+// serviceTokenCreds sends the service token on every manager RPC, under the
+// PAL header and the legacy x-lantern-service-token one: managers that predate
+// the rename (ADR 0032) only read the legacy header.
 type serviceTokenCreds string
 
 func (t serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{"x-lantern-service-token": string(t)}, nil
+	return map[string]string{"x-pal-service-token": string(t), "x-lantern-service-token": string(t)}, nil
 }
 
 func (serviceTokenCreds) RequireTransportSecurity() bool { return false }
@@ -860,10 +863,10 @@ func apiRawTyped(method, path string, body []byte, contentType string) ([]byte, 
 
 // validateRuntimeSpec catches the two agent.yaml shapes being confused.
 //
-// `lantern init` scaffolds a CONTROL-PLANE agent (deployed with
-// `lantern deploy`): name/model/instructions, `isolation.class` nested. The
+// `pal init` scaffolds a CONTROL-PLANE agent (deployed with
+// `pal deploy`): name/model/instructions, `isolation.class` nested. The
 // microVM runtime wants an AgentSpec: `image_digest` plus a flat `isolation`.
-// Feeding the first to `lantern run` used to produce a bare
+// Feeding the first to `pal run` used to produce a bare
 // "400: invalid body" from the server with no clue that the file was simply
 // the wrong kind. Diagnose it here, where the file is in hand.
 //
@@ -894,12 +897,12 @@ func validateRuntimeSpec(spec, raw map[string]any, path string) error {
 		}
 		return fmt.Errorf(
 			"%s looks like a control-plane agent manifest, not a microVM AgentSpec\n\n"+
-				"  `lantern run` schedules a container image in the microVM runtime and needs:\n"+
+				"  `pal run` schedules a container image in the microVM runtime and needs:\n"+
 				"      spec:\n"+
 				"        image_digest: your-registry/%s:latest\n"+
 				"        isolation: trusted\n\n"+
 				"  To deploy this agent to the control plane instead, use:\n"+
-				"      lantern deploy\n\n"+
+				"      pal deploy\n\n"+
 				"  See examples/headless-agents/01-hello/agent.yaml for a runnable AgentSpec",
 			path, name)
 	}
@@ -910,18 +913,22 @@ func validateRuntimeSpec(spec, raw map[string]any, path string) error {
 
 // authHint turns a bare 401/403 into something actionable.
 //
-// A stored credential takes precedence over LANTERN_API_TOKEN, so a stale
-// ~/.lantern/credentials.json silently shadows a perfectly good env token and
+// A stored credential takes precedence over PAL_API_TOKEN, so a stale
+// credentials.json (see internal.CredentialsPath) silently shadows a perfectly good env token and
 // every call fails with an unexplained "unauthorized". Naming which credential
 // was actually sent is the difference between a 30-second fix and an hour.
 func authHint() string {
+	credFile := "credentials.json"
+	if p, err := internal.CredentialsPath(); err == nil {
+		credFile = p
+	}
 	stored := ""
 	if c := restClient(); c != nil {
 		switch {
 		case c.Token != "":
-			stored = "session token from ~/.lantern/credentials.json"
+			stored = "session token from " + credFile
 		case c.APIKey != "":
-			stored = "API key from ~/.lantern/credentials.json"
+			stored = "API key from " + credFile
 		}
 	}
 	envSet := os.Getenv("PAL_API_TOKEN") != ""
@@ -929,15 +936,15 @@ func authHint() string {
 	switch {
 	case stored != "" && envSet:
 		return "\n\nhint: sent the " + stored + ", which takes precedence over the " +
-			"LANTERN_API_TOKEN you also set. If the stored one is stale, run `lantern login` " +
-			"(or delete ~/.lantern/credentials.json to fall back to the env var)."
+			"PAL_API_TOKEN you also set. If the stored one is stale, run `pal login` " +
+			"(or delete " + credFile + " to fall back to the env var)."
 	case stored != "":
-		return "\n\nhint: sent the " + stored + " — it may be expired. Run `lantern login`."
+		return "\n\nhint: sent the " + stored + " — it may be expired. Run `pal login`."
 	case envSet:
-		return "\n\nhint: sent LANTERN_API_TOKEN — it may be expired or for a different " +
-			"control-plane. Check LANTERN_API_URL, or run `lantern login`."
+		return "\n\nhint: sent PAL_API_TOKEN — it may be expired or for a different " +
+			"control-plane. Check PAL_API_URL, or run `pal login`."
 	default:
-		return "\n\nhint: no credentials found. Run `lantern login`, or set LANTERN_API_TOKEN."
+		return "\n\nhint: no credentials found. Run `pal login`, or set PAL_API_TOKEN."
 	}
 }
 

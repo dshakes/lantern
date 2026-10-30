@@ -13,10 +13,13 @@ spec:
     metadata:
       labels:
         {{- include "pal.componentLabels" (dict "root" . "component" "runtime-manager") | nindent 8 }}
-      {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "runtime-manager") }}
       annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9466"
+        prometheus.io/path: /metrics
+        {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "runtime-manager") }}
         {{- . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "pal.serviceAccountName" . }}
       containers:
@@ -29,7 +32,13 @@ spec:
             - name: grpc
               containerPort: 50054
               protocol: TCP
+            - name: metrics
+              containerPort: 9466
+              protocol: TCP
           env:
+            # SLI metrics listener (ADR 0041); scraped via pod annotations.
+            - name: PAL_METRICS_ADDR
+              value: "0.0.0.0:9466"
             - name: LOG_LEVEL
               valueFrom:
                 configMapKeyRef:

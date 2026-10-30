@@ -1,12 +1,12 @@
 import type { Logger } from "pino";
 
-import { authedFetch, authEnabled } from "@lantern/bridge-core/auth";
+import { authedFetch, authEnabled } from "@pal/bridge-core/auth";
 
 /**
  * Attention verdict returned by {@link AttentionClassifier.classify}.
  *
  * `null` is returned in two different-looking-but-equivalent cases:
- *  - the classifier is disabled (no LANTERN_API_TOKEN set), or
+ *  - the classifier is disabled (no PAL_API_TOKEN set), or
  *  - the upstream call failed / the model returned unparseable JSON.
  * Callers treat either case as "don't notify" — the classifier is a
  * best-effort signal, never a safety-critical one.
@@ -31,7 +31,7 @@ const DEDUP_MAX_ENTRIES = 10_000;
 const DEFAULT_DEDUP_MIN = 30;
 
 /**
- * AttentionClassifier asks the Lantern control plane (via /v1/completions,
+ * AttentionClassifier asks the PAL Runtime control plane (via /v1/completions,
  * which routes through the tenant's configured LLM providers) whether an
  * incoming DM or group message deserves the owner's personal attention.
  *
