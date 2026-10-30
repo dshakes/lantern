@@ -1,10 +1,10 @@
 {
-  "name": "@lantern/example-deploy-guardian",
+  "name": "@pal-runtime/example-deploy-guardian",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@lantern/sdk": "workspace:*",
+    "@pal-runtime/sdk": "workspace:*",
     "zod": "^3.24.0"
   }
 }

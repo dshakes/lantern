@@ -4,16 +4,16 @@
 // summary" pattern.
 //
 // Sample output:
-//   📊 lantern morning report — Wed May 21
+//   📊 pal morning report — Wed May 21
 //   • 14 auto-replies sent overnight
 //   • 2 contacts paused (Mom resumes in 38m, work in 1h)
 //   • 1 VIP draft waiting (from Boss)
 //   • 0 escalations
 //   • next event: 10am standup in 45 min
 //
-// Schedule: env-configurable hour (LANTERN_DIGEST_HOUR, default 8)
-// in the user's timezone (LANTERN_OWNER_TIMEZONE). Set
-// LANTERN_DIGEST_HOUR=-1 to disable.
+// Schedule: env-configurable hour (PAL_DIGEST_HOUR, default 8)
+// in the user's timezone (PAL_OWNER_TIMEZONE). Set
+// PAL_DIGEST_HOUR=-1 to disable.
 //
 // Where the data comes from:
 //   - Sent / paused / monitored counts: bridge's own in-memory state
@@ -193,7 +193,7 @@ async function fetchNextEvent(): Promise<string | null> {
 export async function buildDigest(data: DigestData): Promise<string> {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  const lines: string[] = [`📊 *lantern morning report* — ${dateStr.toLowerCase()}`];
+  const lines: string[] = [`📊 *pal morning report* — ${dateStr.toLowerCase()}`];
 
   if (data.repliesSent > 0) {
     lines.push(`• ${data.repliesSent} auto-${data.repliesSent === 1 ? "reply" : "replies"} sent on ${data.channelLabel.toLowerCase()}`);
@@ -302,7 +302,7 @@ export function scheduleDigest(opts: {
   const schedule = () => {
     const delay = msUntilNextDigest(new Date(), opts.cfg);
     if (delay < 0) {
-      log.info("daily digest disabled (LANTERN_DIGEST_HOUR=-1)");
+      log.info("daily digest disabled (PAL_DIGEST_HOUR=-1)");
       return;
     }
     log.info({ delayMs: delay, hour: opts.cfg.hour }, "next digest scheduled");

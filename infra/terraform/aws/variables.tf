@@ -41,9 +41,9 @@ variable "existing_cluster_name" {
 }
 
 variable "kubernetes_version" {
-  description = "Kubernetes version for the EKS cluster."
+  description = "Pin a Kubernetes version (e.g. \"1.33\"). null = the provider/cloud's current default, which avoids pinning a version the cloud has already retired. Kubernetes version for the EKS cluster."
   type        = string
-  default     = "1.29"
+  default     = null
 }
 
 variable "vpc_cidr" {
@@ -88,7 +88,7 @@ variable "agent_token" {
 }
 
 variable "pal_version" {
-  description = "Version of the PAL Runtime data plane Helm chart to deploy (default 0.1.0)."
+  description = "Data plane image tag (global.image.tag; default 0.1.0). The chart itself is the in-repo infra/helm/pal-data-plane."
   type        = string
   default     = null
 }
@@ -116,5 +116,26 @@ variable "tags" {
   default = {
     "managed-by" = "pal-terraform"
     "component"  = "data-plane"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Multi-region (ADR 0046) — both default to off (single-region, unchanged)
+# ---------------------------------------------------------------------------
+
+variable "pal_control_plane_endpoints" {
+  description = "Ordered control-plane endpoints, one per region, primary first. The data-plane agent connects to the first whose gRPC health check reports SERVING and fails back when a higher-priority one recovers. Empty = pal_control_plane_endpoint only."
+  type        = list(string)
+  default     = []
+}
+
+variable "bundles_replica_region" {
+  description = "AWS region to cross-region-replicate the bundles/snapshots bucket to (e.g. us-west-2). Empty = no replication."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.bundles_replica_region == "" || can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", var.bundles_replica_region))
+    error_message = "bundles_replica_region must be an AWS region name such as us-west-2, or empty."
   }
 }

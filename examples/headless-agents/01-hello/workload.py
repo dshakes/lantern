@@ -1,4 +1,4 @@
-"""Smallest possible Lantern agent — echoes input + timestamp.
+"""Smallest possible PAL agent — echoes input + timestamp.
 
 Reads JSON from stdin, writes one line to stdout, exits 0. The harness
 binary (PID 1 in the VM) tails this process's stdout and forwards each
@@ -12,7 +12,7 @@ import time
 
 
 def main() -> int:
-    # Standard Lantern envelope: tenant + run identifiers come from env,
+    # Standard PAL envelope: tenant + run identifiers come from env,
     # set by the harness based on the AgentSpec the scheduler bound.
     run_id = os.environ.get("PAL_RUN_ID") or os.environ.get("LANTERN_RUN_ID", "unknown")
     vm_id = os.environ.get("PAL_VM_ID") or os.environ.get("LANTERN_VM_ID", "unknown")

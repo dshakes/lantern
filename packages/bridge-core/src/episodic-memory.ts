@@ -17,7 +17,7 @@
 //    - 2026-05-15: gave Sarah's number for house refi
 //    - 2026-05-12: said I'd intro them to my agent"
 //
-// Storage: ~/.lantern/episodes.jsonl (append-only, cap 1MB, per-jid
+// Storage: ~/.pal/episodes.jsonl (append-only, cap 1MB, per-jid
 // retrieval via in-memory cache). No DB migration needed; matches
 // the storage pattern of dislike-memory.ts.
 //
@@ -26,9 +26,9 @@
 // fallback for richer extractions — called only when the rule
 // misses and the exchange is substantive (> 20 words combined).
 
+import { palStateDir } from "./state-dir.js";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
 import { trimJsonlBytes } from "./jsonl-trim.js";
@@ -65,7 +65,7 @@ export interface Episode {
   ts: number; // epoch ms when recorded
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "episodes.jsonl");
+const defaultPath = (): string => join(palStateDir(), "episodes.jsonl");
 const MAX_FILE_BYTES = 1024 * 1024;
 
 export class EpisodicMemory {
@@ -77,7 +77,7 @@ export class EpisodicMemory {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.PAL_EPISODES_FILE || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_EPISODES_FILE || defaultPath();
     this.logger = opts.logger?.child({ component: "episodic-memory" });
     try { mkdirSync(dirname(this.path), { recursive: true }); } catch {}
   }

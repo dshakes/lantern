@@ -328,3 +328,19 @@ func TestScheduleVM_SendsEgressInject(t *testing.T) {
 		t.Fatalf("spec fields lost: %v", got)
 	}
 }
+
+// ReadFile honours X-Pal-Truncated and, from a pre-rename control plane, the
+// legacy X-Lantern-Truncated (ADR 0032).
+func TestReadFile_TruncatedHeaderNames(t *testing.T) {
+	for header, want := range map[string]bool{"X-Pal-Truncated": true, "X-Lantern-Truncated": true, "X-Other": false} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(header, "true")
+			w.Write([]byte("x"))
+		}))
+		f, err := New(WithBaseURL(srv.URL)).ReadFile(context.Background(), "vm-1", "a")
+		srv.Close()
+		if err != nil || f.Truncated != want {
+			t.Errorf("%s: ReadFile = %+v, %v; want Truncated=%v", header, f, err, want)
+		}
+	}
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Send a signed fixture alert to a Lantern webhook trigger.
+# Send a signed fixture alert to a PAL webhook trigger.
 #   ./send-fixture.sh sentry|pagerduty <hook-url> <trigger-secret> [delivery-id]
 # Same bytes and headers the provider sends; the same delivery id is deduplicated.
 set -euo pipefail

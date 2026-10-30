@@ -144,6 +144,16 @@ dashboard:
     type: ClusterIP
     port: 3000
 
+# -- Multi-region (ADR 0046) --
+# All empty = single-region (the default): nothing is injected and nothing
+# changes. A two-region install layers values-region-primary.yaml or
+# values-region-standby.yaml on top of values-prod.yaml in each region; see
+# docs/runbooks/region-failover.md for promotion.
+region:
+  name: ""            # PAL_REGION, e.g. us-east-1 — stamped on runs/leases/journal + OTel cloud.region
+  fenceEpoch: ""      # PAL_FENCE_EPOCH — must equal pal_region_fence.epoch once the fence is armed
+  readOnly: false     # PAL_READ_ONLY — standby: mutations 503, no migrations/background writers
+
 # -- In-cluster dependencies (dev / kind / evaluation) vs managed (production) --
 #
 # postgresql + minio are small first-party templates, enabled by default so
@@ -320,3 +330,146 @@ serviceAccount:
   create: true
   name: "pal"
   annotations: {}
+
+# -- Monitoring: SLOs, error-budget burn alerts, dashboard (ADR 0041) --
+#
+# Needs the prometheus-operator CRDs (monitoring.coreos.com/v1 PrometheusRule)
+# when alerts.enabled=true; the chart does not install them. On by default only
+# in values-prod.yaml. Scrape contract: the pods carry prometheus.io/* annotations
+# (control-plane :9464, scheduler :8085, model-router :9465, runtime-manager
+# :9466); each SLO's `job` must match the `job` label your Prometheus assigns.
+monitoring:
+  alerts:
+    enabled: false
+    # Labels the operator's ruleSelector needs, e.g. {release: kube-prometheus-stack}.
+    ruleLabels: {}
+    runbookBaseUrl: https://github.com/dshakes/pal/blob/master/docs/runbooks
+  dashboards:
+    enabled: false
+    # Grafana sidecar discovery label.
+    label: grafana_dashboard
+  # SLO catalogue. SLI = bad/total over a window. In `bad`/`total`, __W__ becomes
+  # the window and __J__ becomes job="<job>". minEventsPerHour suppresses
+  # burn alerts on too little traffic to be meaningful; expectTraffic adds a
+  # "signal absent" ticket when the SLI disappears.
+  slos:
+    control-plane-api-availability:
+      service: control-plane
+      job: (pal|lantern)-control-plane
+      objective: 0.999
+      minEventsPerHour: 0
+      expectTraffic: true
+      runbook: slo-control-plane-api.md
+      description: "Control-plane API requests that do not fail with a 5xx (probes and SSE/log streams excluded)."
+      bad: |-
+        sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api",http_response_status_code=~"5.."}[__W__]))
+      total: |-
+        sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
+    control-plane-api-latency:
+      service: control-plane
+      job: (pal|lantern)-control-plane
+      objective: 0.99
+      minEventsPerHour: 0
+      expectTraffic: true
+      runbook: slo-control-plane-api.md
+      description: "Control-plane API requests answered in under 1s (the le=\"1\" histogram bucket)."
+      bad: |-
+        sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__])) - sum(rate(http_server_request_duration_seconds_bucket{__J__,pal_traffic="api",le="1"}[__W__]))
+      total: |-
+        sum(rate(http_server_request_duration_seconds_count{__J__,pal_traffic="api"}[__W__]))
+    run-success:
+      service: control-plane
+      job: (pal|lantern)-control-plane
+      objective: 0.98
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-run-success.md
+      description: "Inline-executor runs that finish succeeded rather than failed. Includes agent-logic failures: it is a product-health SLI, not purely a platform one."
+      bad: |-
+        sum(rate(lantern_run_total{__J__,lantern_status="failed"}[__W__]))
+      total: |-
+        sum(rate(lantern_run_total{__J__}[__W__]))
+    scheduling-availability:
+      service: runtime-scheduler
+      job: (pal|lantern)-runtime-scheduler
+      objective: 0.995
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-scheduling.md
+      description: "Schedule RPCs that place a VM rather than error. Quota rejections and standby replies are not failures."
+      bad: |-
+        sum(rate(lantern_scheduler_schedule_total{__J__,result="error"}[__W__]))
+      total: |-
+        sum(rate(lantern_scheduler_schedule_total{__J__,result=~"ok|error"}[__W__]))
+    scheduling-latency:
+      service: runtime-scheduler
+      job: (pal|lantern)-runtime-scheduler
+      objective: 0.99
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-scheduling.md
+      description: "Successful Schedule RPCs answered in under 1s (placement decision; spawn dispatch is async)."
+      bad: |-
+        sum(rate(lantern_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__])) - sum(rate(lantern_scheduler_schedule_duration_seconds_bucket{__J__,result="ok",le="1"}[__W__]))
+      total: |-
+        sum(rate(lantern_scheduler_schedule_duration_seconds_count{__J__,result="ok"}[__W__]))
+    model-router-errors:
+      service: model-router
+      job: (pal|lantern)-model-router
+      objective: 0.995
+      minEventsPerHour: 20
+      expectTraffic: false
+      runbook: slo-model-router-errors.md
+      description: "ModelService RPCs that succeed. Caller errors (invalid argument, auth) are excluded; provider exhaustion, timeouts and unavailability count as failures."
+      bad: |-
+        sum(rate(lantern_model_router_requests_total{__J__,outcome="error"}[__W__]))
+      total: |-
+        sum(rate(lantern_model_router_requests_total{__J__,outcome=~"ok|error"}[__W__]))
+    microvm-spawn-availability:
+      service: runtime-manager
+      job: (pal|lantern)-runtime-manager
+      objective: 0.995
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-microvm-spawn.md
+      description: "RuntimeManager.Spawn calls (cold boot and snapshot restore) that boot a VM rather than error."
+      bad: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,outcome="error"}[__W__]))
+      total: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__}[__W__]))
+    microvm-cold-boot-latency:
+      service: runtime-manager
+      job: (pal|lantern)-runtime-manager
+      objective: 0.95
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-microvm-spawn.md
+      description: "Successful cold boots completed in under 5s."
+      bad: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__])) - sum(rate(lantern_manager_spawn_duration_seconds_bucket{__J__,kind="cold",outcome="ok",le="5"}[__W__]))
+      total: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="cold",outcome="ok"}[__W__]))
+    microvm-restore-latency:
+      service: runtime-manager
+      job: (pal|lantern)-runtime-manager
+      objective: 0.99
+      minEventsPerHour: 10
+      expectTraffic: false
+      runbook: slo-microvm-spawn.md
+      description: "Successful snapshot restores completed in under 2s."
+      bad: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__])) - sum(rate(lantern_manager_spawn_duration_seconds_bucket{__J__,kind="restore",outcome="ok",le="2"}[__W__]))
+      total: |-
+        sum(rate(lantern_manager_spawn_duration_seconds_count{__J__,kind="restore",outcome="ok"}[__W__]))
+    egress-broker-errors:
+      service: runtime-manager
+      job: (pal|lantern)-runtime-manager
+      objective: 0.995
+      minEventsPerHour: 50
+      expectTraffic: false
+      runbook: slo-egress-broker.md
+      description: "Egress broker decisions that are not a platform fault. Policy denies are correct behaviour and count as good; DNS, upstream-connect and credential-resolution failures count as bad."
+      bad: |-
+        sum(rate(lantern_egress_broker_decisions_total{__J__,outcome="error"}[__W__]))
+      total: |-
+        sum(rate(lantern_egress_broker_decisions_total{__J__}[__W__]))

@@ -1,0 +1,19 @@
+# values-region-primary.yaml -- ACTIVE region of a two-region install (ADR 0046).
+#
+# Layer on top of values-prod.yaml in the active region:
+#   helm upgrade --install pal infra/helm/pal \
+#     -f infra/helm/pal/values.yaml \
+#     -f infra/helm/pal/values-prod.yaml \
+#     -f infra/helm/pal/values-region-primary.yaml \
+#     --set region.name=us-east-1 --set region.fenceEpoch=1 \
+#     --set externalDatabase.host=<this region's PRIMARY endpoint> \
+#     --set externalS3.endpoint=https://s3.us-east-1.amazonaws.com --set externalS3.region=us-east-1
+#
+# The fence epoch must equal pal_region_fence.epoch once the fence is armed
+# (docs/runbooks/region-failover.md "Arming"). Redis is per region (the
+# in-cluster subchart) — it holds caches, rate limits and SSE pub/sub only,
+# all of which rebuild after failover; nothing durable lives there.
+region:
+  name: ""          # REQUIRED, e.g. us-east-1
+  fenceEpoch: ""    # REQUIRED once armed, e.g. "1"
+  readOnly: false

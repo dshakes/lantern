@@ -6,7 +6,6 @@ package tunnel
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -20,9 +19,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -33,7 +29,17 @@ var tracer = otel.Tracer("lantern.data-plane-agent.tunnel")
 
 // Config holds the tunnel configuration.
 type Config struct {
-	ControlPlaneEndpoint  string
+	ControlPlaneEndpoint string
+	// ControlPlaneEndpoints is an ordered, priority-first list of control-plane
+	// endpoints for multi-region failover (ADR 0046). When it has more than one
+	// entry the tunnel connects to the first one whose gRPC health check reports
+	// lantern.v1.DataPlaneService SERVING, and fails back to a higher-priority
+	// endpoint once it is healthy again. Empty → ControlPlaneEndpoint only, with
+	// no health probing (the single-region behaviour).
+	ControlPlaneEndpoints []string
+	// FailbackInterval is how often a tunnel connected to a lower-priority
+	// endpoint probes the higher-priority ones. Zero → 60s.
+	FailbackInterval      time.Duration
 	TenantID              string
 	AgentToken            string
 	AgentVersion          string
@@ -49,6 +55,7 @@ type Config struct {
 // Status represents the current state of the tunnel.
 type Status struct {
 	Connected     bool
+	Endpoint      string // control-plane endpoint of the current session
 	PlaneID       string
 	TenantID      string
 	Uptime        time.Duration
@@ -123,8 +130,9 @@ type Tunnel struct {
 	reporter   Reporter
 	logger     *zap.Logger
 
-	conn    *grpc.ClientConn
-	session sessionState
+	conn     *grpc.ClientConn
+	session  sessionState
+	endpoint atomic.Value // string: endpoint of the current session
 
 	connected atomic.Bool
 	startTime time.Time
@@ -153,7 +161,11 @@ func New(cfg Config, dispatcher Dispatcher, reporter Reporter, logger *zap.Logge
 		shutdownCh: make(chan struct{}),
 		startTime:  time.Now(),
 	}
+	if cfg.FailbackInterval == 0 {
+		t.cfg.FailbackInterval = 60 * time.Second
+	}
 	t.lastHeartbeat.Store(time.Time{})
+	t.endpoint.Store("")
 	return t
 }
 
@@ -173,6 +185,7 @@ func (t *Tunnel) Status() Status {
 	lastHB, _ := t.lastHeartbeat.Load().(time.Time)
 	return Status{
 		Connected:     t.connected.Load(),
+		Endpoint:      t.endpoint.Load().(string),
 		PlaneID:       planeID,
 		TenantID:      t.cfg.TenantID,
 		Uptime:        time.Since(t.startTime),
@@ -199,6 +212,12 @@ func (t *Tunnel) Run(ctx context.Context) error {
 		if err == nil {
 			// Clean shutdown.
 			return nil
+		}
+		if errors.Is(err, errFailback) {
+			// A higher-priority control plane is healthy again: reconnect now.
+			t.connected.Store(false)
+			delay = t.cfg.ReconnectInitialDelay
+			continue
 		}
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -248,44 +267,42 @@ func (t *Tunnel) connectAndServe(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "tunnel.connectAndServe")
 	defer span.End()
 
-	// --- Dial the control plane ---
-	var dialOpts []grpc.DialOption
-
-	if t.cfg.TLSInsecureSkipVerify {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS13,
-		}
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	// --- Pick the endpoint (multi-region: first healthy in priority order) ---
+	idx, err := t.selectEndpoint(ctx)
+	if err != nil {
+		return err
 	}
+	endpoint := t.endpoints()[idx]
 
-	dialOpts = append(dialOpts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
-		Time:                30 * time.Second,
-		Timeout:             10 * time.Second,
-		PermitWithoutStream: true,
-	}))
-
+	// --- Dial the control plane ---
 	t.logger.Info("connecting to control plane",
-		zap.String("endpoint", t.cfg.ControlPlaneEndpoint),
+		zap.String("endpoint", endpoint),
+		zap.Int("priority", idx),
 		zap.String("tenant_id", t.cfg.TenantID),
 	)
 
-	conn, err := grpc.NewClient(t.cfg.ControlPlaneEndpoint, dialOpts...)
+	conn, err := grpc.NewClient(endpoint, t.dialOpts()...)
 	if err != nil {
 		return fmt.Errorf("dial control plane: %w", err)
 	}
 	t.conn = conn
+	defer conn.Close() //nolint:errcheck // a superseded session's connection must not leak
+
+	// The session ends early, with cause errFailback, if a higher-priority
+	// endpoint becomes healthy while we're on a fallback.
+	ctx, cancelSession := context.WithCancelCause(ctx)
+	defer cancelSession(nil)
+	go t.watchFailback(ctx, idx, cancelSession)
 
 	dpClient := lanternv1.NewDataPlaneServiceClient(conn)
 
 	// --- Register ---
 	planeID, sessionToken, tokenExpiry, err := t.register(ctx, dpClient)
 	if err != nil {
-		conn.Close()
 		return fmt.Errorf("register: %w", err)
 	}
 	t.session.set(planeID, sessionToken, tokenExpiry)
+	t.endpoint.Store(endpoint)
 	t.connected.Store(true)
 
 	span.SetAttributes(
@@ -311,7 +328,11 @@ func (t *Tunnel) connectAndServe(ctx context.Context) error {
 	}
 
 	// --- Run the heartbeat + run-stream loop ---
-	return t.messageLoop(ctx, dpClient)
+	err = t.messageLoop(ctx, dpClient)
+	if errors.Is(context.Cause(ctx), errFailback) {
+		return errFailback
+	}
+	return err
 }
 
 // register calls DataPlaneService.Register and returns (planeID, sessionToken, expiry).

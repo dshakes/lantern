@@ -298,7 +298,7 @@ export function inferStyle(messages: string[]): StyleProfile {
 /**
  * Builds the persona instruction injected at the *start* of each LLM
  * turn. The owner name is interpolated so the agent thinks of itself as
- * the owner texting back, not as "Lantern Assistant".
+ * the owner texting back, not as "pal Assistant".
  *
  * Style hints from the recent thread are concatenated as plain-English
  * cues. We deliberately don't ask the LLM to copy the contact's voice
@@ -390,7 +390,7 @@ export interface PersonaOptions {
   // Proactive recall block (from recall.ts → assembleRelevantRecall).
   // The single most-relevant memory — an episode, a cross-thread topic,
   // an open commitment — selected by token-overlap with the current
-  // inbound. Present only when LANTERN_PROACTIVE_RECALL=1 AND at least
+  // inbound. Present only when PAL_PROACTIVE_RECALL=1 AND at least
   // one item clears the relevance threshold. When absent (the default),
   // the reply prompt is byte-identical to today — zero behavior change.
   // The block header tells the LLM to weave it in ONLY when it fits
@@ -456,7 +456,7 @@ export interface PersonaOptions {
   // never a replacement. Empty when the owner has no usable history yet.
   ownerVoiceBlock?: string;
   // LLM-REASONED owner voice profile (voice-profile.ts, Phase 2). When
-  // LANTERN_VOICE_REASONING=1 the bridge computes this from the owner's own
+  // PAL_VOICE_REASONING=1 the bridge computes this from the owner's own
   // sent messages, derives EXPLICIT guidance ("terse, jumps to point, 🙏
   // for thanks only, code-switches Telugu for warmth"), and passes the
   // formatted instruction string here. Injected in the VOICE ANCHOR section
@@ -508,7 +508,7 @@ export interface PersonaOptions {
   // "Right now it is …" anchor so the model stops proposing times that have
   // already passed (a real bug: it re-proposed "after 6pm today" at 8:19pm
   // because nothing told it the current time). The bridge passes
-  // `new Date()` + LANTERN_OWNER_TIMEZONE on every reply. Omitted → no
+  // `new Date()` + PAL_OWNER_TIMEZONE on every reply. Omitted → no
   // anchor, keeping agentPersonaPrompt pure for tests that don't exercise
   // time.
   now?: Date;
@@ -1012,7 +1012,7 @@ export function agentPersonaPrompt(
   }
 
   // Proactive recall — the single most-relevant memory for this inbound.
-  // Present only when LANTERN_PROACTIVE_RECALL=1 and a relevant item was found;
+  // Present only when PAL_PROACTIVE_RECALL=1 and a relevant item was found;
   // null/absent → prompt is identical to today (additive, never changes default).
   // The block header already tells the LLM to weave it in ONLY when it fits,
   // so no extra wrapper instruction is needed here.
@@ -2594,7 +2594,7 @@ export function naturalize(
  * clearing the lists would not have stopped group replies at all.
  *
  * Checked before every group reply path in both bridges. Set
- * LANTERN_GROUP_REPLIES=1 (or true/on) to re-enable; the per-group monitoring
+ * PAL_GROUP_REPLIES=1 (or true/on) to re-enable; the per-group monitoring
  * lists are left intact so turning it back on restores the previous behaviour.
  */
 export function groupRepliesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

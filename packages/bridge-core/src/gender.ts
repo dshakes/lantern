@@ -5,10 +5,10 @@
 // model's prior, so gender must be a stored FACT the owner can set — exactly
 // like the identity name overlay. Keyed by lowercased name (business contacts
 // are referred to by name, not a stable handle). Owner-only, local, append-only
-// JSONL (~/.lantern/gender-overrides.jsonl, 0600), last-write-wins. Pure +
+// JSONL (~/.pal/gender-overrides.jsonl, 0600), last-write-wins. Pure +
 // best-effort; never throws.
 
-import { homedir } from "node:os";
+import { palStateDir } from "./state-dir.js";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 
@@ -21,7 +21,7 @@ export interface GenderRecord {
   ts: number;
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "gender-overrides.jsonl");
+const defaultPath = (): string => join(palStateDir(), "gender-overrides.jsonl");
 
 export interface GenderOpts {
   path?: string;
@@ -32,7 +32,7 @@ const norm = (n: string): string => (n || "").trim().toLowerCase().split(/\s+/)[
 
 /** Owner-set gender for a name (matches on first name), or null. Last wins. */
 export function resolveGender(name: string, opts: GenderOpts = {}): Gender | null {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const key = norm(name);
   if (!key || !existsSync(path)) return null;
   let g: Gender | null = null;
@@ -55,7 +55,7 @@ export function resolveGender(name: string, opts: GenderOpts = {}): Gender | nul
 
 /** Persist an owner gender correction. Best-effort. */
 export function recordGender(name: string, gender: Gender, opts: GenderOpts = {}): boolean {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const n = norm(name);
   if (!n || (gender !== "m" && gender !== "f")) return false;
   try {

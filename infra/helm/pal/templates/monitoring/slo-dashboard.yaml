@@ -1,0 +1,12 @@
+{{- if .Values.monitoring.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "pal.fullname" . }}-slo-dashboard
+  labels:
+    {{- include "pal.labels" . | nindent 4 }}
+    {{ .Values.monitoring.dashboards.label }}: "1"
+data:
+  pal-slo.json: |-
+{{ .Files.Get "dashboards/pal-slo.json" | indent 4 }}
+{{- end }}

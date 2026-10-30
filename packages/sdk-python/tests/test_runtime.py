@@ -9,8 +9,8 @@ from typing import Any
 import httpx
 import pytest
 
-from lantern.client import LanternClient
-from lantern.errors import LanternApiError
+from pal.client import PalClient
+from pal.errors import PalApiError
 
 
 class _Bytes(httpx.AsyncByteStream):
@@ -37,8 +37,8 @@ class _T(httpx.AsyncBaseTransport):
         return httpx.Response(self.status, content=content, headers={"content-type": "application/json"})
 
 
-def _client(t: _T) -> LanternClient:
-    c = LanternClient(base_url="https://api.example.com", api_key="k")
+def _client(t: _T) -> PalClient:
+    c = PalClient(base_url="https://api.example.com", api_key="k")
     c._client = httpx.AsyncClient(base_url="https://api.example.com", transport=t, headers=c._headers())
     return c
 
@@ -53,7 +53,7 @@ async def test_pause_and_resume():
 @pytest.mark.parametrize("status", [402, 409])
 async def test_resume_errors(status: int):
     t = _T(status=status, body={"error": "x"})
-    with pytest.raises(LanternApiError) as ei:
+    with pytest.raises(PalApiError) as ei:
         await _client(t).runtime.resume("vm1")
     assert ei.value.status == status
     assert len(t.requests) == 1
@@ -84,10 +84,10 @@ async def test_exec_stream_split_chunks_and_utf8():
 
 async def test_exec_stream_error_event_and_http_error():
     t = _T(sse=b'event: error\ndata: {"error":"vm gone"}\n\n')
-    with pytest.raises(LanternApiError):
+    with pytest.raises(PalApiError):
         [e async for e in _client(t).runtime.exec_stream("vm1", "ls")]
     t2 = _T(status=409, sse=b"conflict")
-    with pytest.raises(LanternApiError) as ei:
+    with pytest.raises(PalApiError) as ei:
         [e async for e in _client(t2).runtime.exec_stream("vm1", "ls")]
     assert ei.value.status == 409
 
@@ -111,15 +111,22 @@ class _Raw(httpx.AsyncBaseTransport):
 
 
 async def test_read_file_raw_text_and_truncation():
-    t = _Raw(200, "héllo".encode(), {"content-type": "text/plain; charset=utf-8", "X-Lantern-Truncated": "true"})
+    t = _Raw(200, "héllo".encode(), {"content-type": "text/plain; charset=utf-8", "X-Pal-Truncated": "true"})
     r = await _client(t).runtime.read_file("vm1", "dir/a.txt")  # type: ignore[arg-type]
     assert t.requests[-1].url.path == "/v1/runtime/vms/vm1/files/content"
     assert t.requests[-1].url.params["path"] == "dir/a.txt"
     assert r == {"content": "héllo", "truncated": True}
 
 
+async def test_read_file_truncation_legacy_header_fallback():
+    t = _Raw(200, b"x", {"X-Lantern-Truncated": "true"})
+    assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is True  # type: ignore[arg-type]
+    t = _Raw(200, b"x", {})
+    assert (await _client(t).runtime.read_file("vm1", "a"))["truncated"] is False  # type: ignore[arg-type]
+
+
 async def test_read_file_404_raises():
-    with pytest.raises(LanternApiError) as ei:
+    with pytest.raises(PalApiError) as ei:
         await _client(_Raw(404, b"nope")).runtime.read_file("vm1", "x")  # type: ignore[arg-type]
     assert ei.value.status == 404
 
@@ -134,6 +141,6 @@ async def test_write_file_puts_raw_body():
 
 
 async def test_write_file_413_raises():
-    with pytest.raises(LanternApiError) as ei:
+    with pytest.raises(PalApiError) as ei:
         await _client(_T(status=413, body={"error": "file exceeds 1 MiB"})).runtime.write_file("vm1", "a", "x")
     assert ei.value.status == 413

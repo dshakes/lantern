@@ -1,24 +1,24 @@
 /**
- * Typed error classes for the Lantern SDK runtime.
+ * Typed error classes for the PAL SDK runtime.
  *
  * Every runtime operation throws one of these instead of a bare Error,
  * giving callers a reliable `instanceof` check and structured metadata.
  */
 
-/** Base class for all Lantern SDK errors. */
-export class LanternError extends Error {
+/** Base class for all PAL SDK errors. */
+export class PalError extends Error {
   /** Machine-readable error code. */
   public code: string;
 
   constructor(code: string, message: string) {
     super(message);
-    this.name = "LanternError";
+    this.name = "PalError";
     this.code = code;
   }
 }
 
 /** Raised when a gRPC call to the runtime sidecar fails. */
-export class LanternGrpcError extends LanternError {
+export class PalGrpcError extends PalError {
   /** gRPC status code (0=OK, 1=CANCELLED, etc.). */
   public readonly grpcStatus: number;
   /** Optional upstream details returned by the sidecar. */
@@ -26,14 +26,14 @@ export class LanternGrpcError extends LanternError {
 
   constructor(grpcStatus: number, message: string, details?: string) {
     super("GRPC_ERROR", `gRPC error (status=${grpcStatus}): ${message}`);
-    this.name = "LanternGrpcError";
+    this.name = "PalGrpcError";
     this.grpcStatus = grpcStatus;
     this.details = details;
   }
 }
 
 /** Raised when a workflow step fails (execution error or timeout). */
-export class LanternStepError extends LanternError {
+export class PalStepError extends PalError {
   /** Fully-qualified step name (e.g. "summarize.chunk-3"). */
   public readonly stepName: string;
   /** Which attempt failed (1-based). */
@@ -48,7 +48,7 @@ export class LanternStepError extends LanternError {
     message: string,
   ) {
     super("STEP_FAILED", `Step "${stepName}" attempt ${attempt} failed: ${message}`);
-    this.name = "LanternStepError";
+    this.name = "PalStepError";
     this.stepName = stepName;
     this.attempt = attempt;
     this.retryable = retryable;
@@ -56,7 +56,7 @@ export class LanternStepError extends LanternError {
 }
 
 /** Raised when an LLM call fails (model error, quota, content filter, etc.). */
-export class LanternLlmError extends LanternError {
+export class PalLlmError extends PalError {
   /** Provider-specific error code when available. */
   public readonly providerCode: string | undefined;
   /** Whether a retry with the same request might succeed. */
@@ -64,14 +64,14 @@ export class LanternLlmError extends LanternError {
 
   constructor(message: string, providerCode?: string, retryable = false) {
     super("LLM_ERROR", message);
-    this.name = "LanternLlmError";
+    this.name = "PalLlmError";
     this.providerCode = providerCode;
     this.retryable = retryable;
   }
 }
 
 /** Raised when an LLM JSON response fails to parse or validate against the provided Zod schema. */
-export class LanternLlmJsonError extends LanternLlmError {
+export class PalLlmJsonError extends PalLlmError {
   /** The raw text that failed validation. */
   public readonly rawOutput: string;
   /** Zod validation issues as a human-readable string. */
@@ -83,38 +83,38 @@ export class LanternLlmJsonError extends LanternLlmError {
       undefined,
       true,
     );
-    this.name = "LanternLlmJsonError";
+    this.name = "PalLlmJsonError";
     this.rawOutput = rawOutput;
     this.validationErrors = validationErrors;
   }
 }
 
 /** Raised when a tool invocation fails. */
-export class LanternToolError extends LanternError {
+export class PalToolError extends PalError {
   /** Tool identifier (e.g. "lantern.web", "lantern.python"). */
   public readonly toolName: string;
 
   constructor(toolName: string, message: string) {
     super("TOOL_ERROR", `Tool "${toolName}" failed: ${message}`);
-    this.name = "LanternToolError";
+    this.name = "PalToolError";
     this.toolName = toolName;
   }
 }
 
 /** Raised when a memory operation fails. */
-export class LanternMemoryError extends LanternError {
+export class PalMemoryError extends PalError {
   /** Memory tier that failed (core, recall, archival). */
   public readonly tier: string;
 
   constructor(tier: string, message: string) {
     super("MEMORY_ERROR", `Memory tier "${tier}" error: ${message}`);
-    this.name = "LanternMemoryError";
+    this.name = "PalMemoryError";
     this.tier = tier;
   }
 }
 
 /** Raised when a connector invocation fails. */
-export class LanternConnectorError extends LanternError {
+export class PalConnectorError extends PalError {
   /** Connector identifier (e.g. "github", "slack"). */
   public readonly connectorId: string;
   /** Action name that failed (e.g. "getPullRequest"). */
@@ -125,29 +125,29 @@ export class LanternConnectorError extends LanternError {
       "CONNECTOR_ERROR",
       `Connector "${connectorId}.${actionId}" failed: ${message}`,
     );
-    this.name = "LanternConnectorError";
+    this.name = "PalConnectorError";
     this.connectorId = connectorId;
     this.actionId = actionId;
   }
 }
 
 /** Raised when a step times out. */
-export class LanternTimeoutError extends LanternStepError {
+export class PalTimeoutError extends PalStepError {
   /** The configured timeout string (e.g. "30s"). */
   public readonly timeout: string;
 
   constructor(stepName: string, attempt: number, timeout: string) {
     super(stepName, attempt, true, `Step timed out after ${timeout}`);
-    this.name = "LanternTimeoutError";
+    this.name = "PalTimeoutError";
     this.code = "STEP_TIMEOUT";
     this.timeout = timeout;
   }
 }
 
 /** Raised when the run's abort signal fires (user cancellation, cost limit, etc.). */
-export class LanternCancelledError extends LanternError {
+export class PalCancelledError extends PalError {
   constructor(reason?: string) {
     super("CANCELLED", reason ?? "Run was cancelled");
-    this.name = "LanternCancelledError";
+    this.name = "PalCancelledError";
   }
 }

@@ -1,0 +1,147 @@
+# promtool unit tests for the rendered SLO rules (run via check-slo-rules.sh).
+rule_files:
+  - slo-rules.yml
+evaluation_interval: 1m
+
+tests:
+  # 2% of control-plane API requests 5xx for >1h: 2% > 14.4 x 0.1% -> page.
+  - name: availability_page_fast
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="500"}'
+        values: '0+120x120'
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="200"}'
+        values: '0+5880x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: control-plane-api-availability
+              service: control-plane
+              burn_rate: "14.4"
+              window: 1h/5m
+            exp_annotations:
+              summary: "control-plane-api-availability: burning error budget at 14.4x (1h/5m)"
+              description: "Control-plane API requests that do not fail with a 5xx (probes and SSE/log streams excluded). The error ratio is above 14.4x the 0.001 budget on both the 1h and 5m windows (SLO target 0.999 over 28d). Current 1h ratio: 2%."
+              runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"
+
+  # Healthy: 0.05% errors is half the budget rate -> nothing fires.
+  - name: availability_healthy_is_quiet
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="500"}'
+        values: '0+3x300'
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="200"}'
+        values: '0+5997x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts: []
+
+  # A burst that ended: the 1h window is still hot but the 5m window is clean,
+  # so the page must NOT fire (the multi-window reset property).
+  - name: short_window_suppresses_stale_burn
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="500"}'
+        values: '0+600x30 18000x40'
+      - series: 'http_server_request_duration_seconds_count{job="pal-control-plane",pal_traffic="api",http_response_status_code="200"}'
+        values: '0+5400x30 162000+6000x40'
+    # The 1d/2h ticket tier legitimately still fires (the burst spent budget);
+    # only the PAGE tiers must be quiet.
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="SLOErrorBudgetBurn",severity="critical",alertstate="firing"}'
+        eval_time: 69m
+        exp_samples: []
+
+  # One failed Schedule in a quiet hour (5 events) is 20% but below the
+  # minEventsPerHour guard, so no page.
+  - name: low_traffic_guard
+    interval: 1m
+    input_series:
+      - series: 'lantern_scheduler_schedule_total{job="pal-runtime-scheduler",result="error"}'
+        values: '0x10 1x120'
+      - series: 'lantern_scheduler_schedule_total{job="pal-runtime-scheduler",result="ok"}'
+        values: '0+0.0833x130'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts: []
+
+  # 20% of successful placements slower than 1s vs a 1% budget -> 20x burn.
+  - name: scheduling_latency_burn
+    interval: 1m
+    input_series:
+      - series: 'lantern_scheduler_schedule_duration_seconds_count{job="pal-runtime-scheduler",result="ok"}'
+        values: '0+100x120'
+      - series: 'lantern_scheduler_schedule_duration_seconds_bucket{job="pal-runtime-scheduler",result="ok",le="1"}'
+        values: '0+80x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: scheduling-latency
+              service: runtime-scheduler
+              burn_rate: "14.4"
+              window: 1h/5m
+            exp_annotations:
+              summary: "scheduling-latency: burning error budget at 14.4x (1h/5m)"
+              description: "Successful Schedule RPCs answered in under 1s (placement decision; spawn dispatch is async). The error ratio is above 14.4x the 0.01 budget on both the 1h and 5m windows (SLO target 0.99 over 28d). Current 1h ratio: 20%."
+              runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-scheduling.md"
+
+  # Egress broker platform errors (not policy denies) burn the egress SLO.
+  # Denies alone must not.
+  - name: egress_denies_do_not_burn_but_errors_do
+    interval: 1m
+    input_series:
+      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
+        values: '0+50x120'
+      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="deny"}'
+        values: '0+30x120'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: EgressBrokerDenySpike
+        exp_alerts: []   # 37% deny < 50%
+  - name: egress_errors_burn
+    interval: 1m
+    input_series:
+      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="allow"}'
+        values: '0+90x120'
+      - series: 'lantern_egress_broker_decisions_total{job="pal-runtime-manager",outcome="error"}'
+        values: '0+10x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLOErrorBudgetBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: egress-broker-errors, service: runtime-manager, burn_rate: "14.4", window: 1h/5m}
+            exp_annotations: &egress_fast
+              summary: "egress-broker-errors: burning error budget at 14.4x (1h/5m)"
+              description: "Egress broker decisions that are not a platform fault. Policy denies are correct behaviour and count as good; DNS, upstream-connect and credential-resolution failures count as bad. The error ratio is above 14.4x the 0.005 budget on both the 1h and 5m windows (SLO target 0.995 over 28d). Current 1h ratio: 10%."
+              runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-egress-broker.md"
+
+  # No control-plane series at all: the absent-signal ticket fires for the two
+  # SLOs that expect continuous traffic.
+  - name: signal_absent
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: SLOSignalAbsent
+        exp_alerts:
+          - exp_labels: {severity: warning, slo: control-plane-api-availability, service: control-plane}
+            exp_annotations:
+              summary: "control-plane-api-availability: SLI has no data for 30m"
+              description: "The SLI for control-plane-api-availability produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|lantern)-control-plane); a silent SLO is worse than a red one."
+              runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"
+          - exp_labels: {severity: warning, slo: control-plane-api-latency, service: control-plane}
+            exp_annotations:
+              summary: "control-plane-api-latency: SLI has no data for 30m"
+              description: "The SLI for control-plane-api-latency produced no series for 30m, so the burn alerts above cannot fire. Check the scrape target and the `job` label ((pal|lantern)-control-plane); a silent SLO is worse than a red one."
+              runbook_url: "https://github.com/dshakes/pal/blob/master/docs/runbooks/slo-control-plane-api.md"

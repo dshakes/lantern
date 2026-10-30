@@ -1,6 +1,6 @@
 package cli
 
-// doctor_test.go — unit tests for `lantern doctor`.
+// doctor_test.go — unit tests for `pal doctor`.
 //
 // All checks use httptest.Server mocks — no live stack required.
 // Tests cover:

@@ -20,8 +20,8 @@ import pino from "pino";
 // process.env at runtime (those are captured at module import). Mock the auth
 // module so the enabled()/disabled gating is actually exercisable.
 const mockAuth = vi.hoisted(() => ({ enabled: true }));
-vi.mock("@lantern/bridge-core/auth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@lantern/bridge-core/auth")>();
+vi.mock("@pal/bridge-core/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pal/bridge-core/auth")>();
   return {
     ...actual,
     authEnabled: () => mockAuth.enabled,
@@ -283,7 +283,7 @@ describe("AttentionClassifier dedup", () => {
     expect(c.shouldNotify("0@s.whatsapp.net")).toBe(true);
   });
 
-  it("LANTERN_ATTENTION_DEDUP_MIN=0 (falsy) falls back to default 30 min", () => {
+  it("PAL_ATTENTION_DEDUP_MIN=0 (falsy) falls back to default 30 min", () => {
     // The expression is: Math.max(1, Number(env) || DEFAULT_DEDUP_MIN) * 60_000
     // When env="0", Number("0")=0 which is falsy → 0 || 30 = 30.
     // So setting to "0" acts as "use the default", not "clamp to 1 minute".

@@ -267,7 +267,7 @@ export function detectOfferInReply(text: string, primaryDate?: DetectedDate, raw
       return {
         kind: "save-note",
         noteTitle: `${docType} number`,
-        noteBody: `${docType}: ${idToSave}\n\n(saved by Lantern on ${new Date().toLocaleString()})`,
+        noteBody: `${docType}: ${idToSave}\n\n(saved by pal on ${new Date().toLocaleString()})`,
         issuedAt: Date.now(),
       };
     }

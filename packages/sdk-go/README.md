@@ -1,4 +1,4 @@
-# lantern-go
+# PAL Runtime Go SDK
 
 The official Go SDK for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents with VPC deployment, pre-run cost forecasts, policy budgets, and eval-in-CI.
 

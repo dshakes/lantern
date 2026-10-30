@@ -19,7 +19,7 @@ allow=(
   ':!packages/palenv'                            # Go compat helper
   ':!packages/pal-env-rs'                        # Rust compat helper
   ':!packages/bridge-core/src/env-compat.ts'     # TS compat helper
-  ':!packages/sdk-python/lantern/_env.py'        # Python compat helper
+  ':!packages/sdk-python/pal/_env.py'        # Python compat helper
   ':!services/harness/src/bootenv.rs'            # boot-env hydration: reads guard its own LANTERN_ set_var writes (writers flip in step 4)
   ':!apps/web/components/view-code.tsx'          # user-facing code samples shown in the UI (rename PR 7)
   ':!scripts/env-read-check.sh'

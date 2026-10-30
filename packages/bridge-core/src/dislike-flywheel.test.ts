@@ -21,7 +21,7 @@ function fakeMemory(badReplies: string[]): { all: () => Promise<DislikeEntry[]> 
 }
 
 async function tmpProfile(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "lantern-flywheel-"));
+  const dir = await mkdtemp(join(tmpdir(), "pal-flywheel-"));
   return join(dir, "owner-profile.md");
 }
 

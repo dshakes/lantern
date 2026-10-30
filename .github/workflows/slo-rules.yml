@@ -1,0 +1,32 @@
+name: slo-rules
+
+# ADR 0041: render the chart's SLO PrometheusRule and run promtool check + unit tests.
+on:
+  pull_request:
+    paths:
+      - "infra/helm/pal/templates/monitoring/**"
+      - "infra/helm/pal/values*.yaml"
+      - "infra/monitoring/prometheus/**"
+      - ".github/workflows/slo-rules.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  promtool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          v=2.55.1
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${v}/prometheus-${v}.linux-amd64.tar.gz" -o /tmp/prom.tgz
+          tar -xzf /tmp/prom.tgz -C /tmp
+          echo "PROMTOOL=/tmp/prometheus-${v}.linux-amd64/promtool" >> "$GITHUB_ENV"
+      - name: Build chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build infra/helm/pal
+      - name: promtool check + test
+        run: infra/monitoring/prometheus/check-slo-rules.sh

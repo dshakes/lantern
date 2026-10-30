@@ -37,44 +37,47 @@ impl ModelService for ModelServiceImpl {
         &self,
         request: tonic::Request<CompleteRequest>,
     ) -> Result<tonic::Response<CompleteResponse>, tonic::Status> {
-        let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
-        tracing::Span::current().record("run_id", req.run_id.as_str());
-        tracing::Span::current().record("step_id", req.step_id.as_str());
+        crate::metrics::timed("complete", async {
+            let req = request.into_inner();
+            tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
+            tracing::Span::current().record("run_id", req.run_id.as_str());
+            tracing::Span::current().record("step_id", req.step_id.as_str());
 
-        // Check cache first.
-        if let Some(ref cache) = self.cache
-            && let Some(cached) = cache.get(&req).await
-        {
-            info!("returning cached response");
-            return Ok(tonic::Response::new(cached));
-        }
+            // Check cache first.
+            if let Some(ref cache) = self.cache
+                && let Some(cached) = cache.get(&req).await
+            {
+                info!("returning cached response");
+                return Ok(tonic::Response::new(cached));
+            }
 
-        let resp = self
-            .router
-            .complete(&req)
-            .await
-            .map_err(tonic::Status::from)?;
+            let resp = self
+                .router
+                .complete(&req)
+                .await
+                .map_err(tonic::Status::from)?;
 
-        // Record routing outcome on the span so it appears in traces.
-        let span = tracing::Span::current();
-        span.record("model_used", resp.model_used.as_str());
-        span.record("tokens_in", resp.tokens_in);
-        span.record("tokens_out", resp.tokens_out);
-        span.record("cost_usd", resp.cost_usd);
-        span.record("escalated", resp.escalated);
+            // Record routing outcome on the span so it appears in traces.
+            let span = tracing::Span::current();
+            span.record("model_used", resp.model_used.as_str());
+            span.record("tokens_in", resp.tokens_in);
+            span.record("tokens_out", resp.tokens_out);
+            span.record("cost_usd", resp.cost_usd);
+            span.record("escalated", resp.escalated);
 
-        // Store in cache (fire-and-forget).
-        if let Some(ref cache) = self.cache {
-            let cache = cache.clone();
-            let req_clone = req.clone();
-            let resp_clone = resp.clone();
-            tokio::spawn(async move {
-                cache.set(&req_clone, &resp_clone).await;
-            });
-        }
+            // Store in cache (fire-and-forget).
+            if let Some(ref cache) = self.cache {
+                let cache = cache.clone();
+                let req_clone = req.clone();
+                let resp_clone = resp.clone();
+                tokio::spawn(async move {
+                    cache.set(&req_clone, &resp_clone).await;
+                });
+            }
 
-        Ok(tonic::Response::new(resp))
+            Ok(tonic::Response::new(resp))
+        })
+        .await
     }
 
     #[instrument(skip(self, request), fields(tenant_id, run_id, step_id, model_used,))]
@@ -82,40 +85,43 @@ impl ModelService for ModelServiceImpl {
         &self,
         request: tonic::Request<CompleteRequest>,
     ) -> Result<tonic::Response<Self::CompleteStreamStream>, tonic::Status> {
-        let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
-        tracing::Span::current().record("run_id", req.run_id.as_str());
-        tracing::Span::current().record("step_id", req.step_id.as_str());
+        crate::metrics::timed("complete_stream", async {
+            let req = request.into_inner();
+            tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
+            tracing::Span::current().record("run_id", req.run_id.as_str());
+            tracing::Span::current().record("step_id", req.step_id.as_str());
 
-        let (model_used, _tier, mut provider_stream) = self
-            .router
-            .complete_stream(&req)
-            .await
-            .map_err(tonic::Status::from)?;
+            let (model_used, _tier, mut provider_stream) = self
+                .router
+                .complete_stream(&req)
+                .await
+                .map_err(tonic::Status::from)?;
 
-        tracing::Span::current().record("model_used", model_used.as_str());
+            tracing::Span::current().record("model_used", model_used.as_str());
 
-        // Bridge the provider stream into a tokio mpsc channel so we get a
-        // ReceiverStream that satisfies the tonic streaming response type.
-        let (tx, rx) = tokio::sync::mpsc::channel(64);
+            // Bridge the provider stream into a tokio mpsc channel so we get a
+            // ReceiverStream that satisfies the tonic streaming response type.
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
 
-        tokio::spawn(async move {
-            while let Some(result) = provider_stream.next().await {
-                let msg = match result {
-                    Ok(chunk) => Ok(chunk),
-                    Err(e) => {
-                        warn!(error = %e, "stream chunk error from provider");
-                        Err(tonic::Status::from(e))
+            tokio::spawn(async move {
+                while let Some(result) = provider_stream.next().await {
+                    let msg = match result {
+                        Ok(chunk) => Ok(chunk),
+                        Err(e) => {
+                            warn!(error = %e, "stream chunk error from provider");
+                            Err(tonic::Status::from(e))
+                        }
+                    };
+                    if tx.send(msg).await.is_err() {
+                        // Client disconnected.
+                        break;
                     }
-                };
-                if tx.send(msg).await.is_err() {
-                    // Client disconnected.
-                    break;
                 }
-            }
-        });
+            });
 
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+            Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        })
+        .await
     }
 
     #[instrument(skip(self, request), fields(tenant_id))]
@@ -123,11 +129,14 @@ impl ModelService for ModelServiceImpl {
         &self,
         request: tonic::Request<EmbedRequest>,
     ) -> Result<tonic::Response<EmbedResponse>, tonic::Status> {
-        let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
+        crate::metrics::timed("embed", async {
+            let req = request.into_inner();
+            tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
 
-        let resp = self.router.embed(&req).await.map_err(tonic::Status::from)?;
-        Ok(tonic::Response::new(resp))
+            let resp = self.router.embed(&req).await.map_err(tonic::Status::from)?;
+            Ok(tonic::Response::new(resp))
+        })
+        .await
     }
 
     async fn tokenize(

@@ -1,10 +1,10 @@
-// doc-ingest.ts — Mac-file ingestion for the Lantern life-domain trackers.
+// doc-ingest.ts — Mac-file ingestion for the pal life-domain trackers.
 //
 // Scans the owner's local documents (medical reports, insurance cards,
 // vehicle/registration, etc.) and files them into the domain-records store,
 // alongside the existing Gmail ingestion.
 //
-// ADDITIVE, OWNER-ONLY. Ships dark behind LANTERN_DOC_INGEST=on.
+// ADDITIVE, OWNER-ONLY. Ships dark behind PAL_DOC_INGEST=on.
 // Every file path goes through PersonalDocs.isAllowedPath before read.
 // NEVER logs doc content, OCR text, extracted fields, or PII — only counts
 // + domains + basenames at debug level.
@@ -237,7 +237,7 @@ export function saveDocIngestState(state: DocIngestState, stateFile: string): vo
 
 // ── File enumeration ──────────────────────────────────────────────────────────
 
-/** Read allowed roots from LANTERN_PERSONAL_DOCS_ROOTS — same source as PersonalDocs. */
+/** Read allowed roots from PAL_PERSONAL_DOCS_ROOTS — same source as PersonalDocs. */
 export function getAllowedRoots(): string[] {
   const home = homedir();
   const envRoots = (process.env.PAL_PERSONAL_DOCS_ROOTS || "")

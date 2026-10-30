@@ -1,6 +1,6 @@
 package cli
 
-// `lantern dev` brings up the entire PAL stack with a single command.
+// `pal dev` brings up the entire PAL stack with a single command.
 //
 //   - Infra (Postgres, Redis, MinIO) runs in docker-compose so the user
 //     doesn't need a local Postgres install.
@@ -170,7 +170,10 @@ func runDev(opts devOpts) error {
 		return nil
 	}
 
-	// ---- 2) Control-plane (host go run).
+	// ---- 2) Sandbox: wire the API to a real runtime, or say plainly it is a stub.
+	sandboxEnv := wireSandbox(ctx, &wg, repoRoot, detectSandbox(defaultSandboxProbe()))
+
+	// ---- 2b) Control-plane (host go run).
 	apiCmd := makeProc(ctx, repoRoot, tagAPI, "go", "run", "./cmd/server")
 	apiCmd.Dir = filepath.Join(repoRoot, "services", "control-plane")
 	apiCmd.Env = append(os.Environ(),
@@ -179,6 +182,7 @@ func runDev(opts devOpts) error {
 		"S3_ENDPOINT=http://localhost:9000",
 		"LOG_LEVEL=info",
 	)
+	apiCmd.Env = append(apiCmd.Env, sandboxEnv...)
 	if err := startProc(&wg, apiCmd, tagAPI); err != nil {
 		return err
 	}
@@ -344,7 +348,7 @@ func pipeLines(r io.Reader, t procTag) {
 func startInfra(ctx context.Context, composeFile string) error {
 	// Bring up the three infra services in detached mode — we'll pipe
 	// their logs in via `docker compose logs -f` only on demand
-	// (`lantern dev logs`). Detached so they don't block the foreground.
+	// (`pal dev logs`). Detached so they don't block the foreground.
 	args := []string{
 		"compose", "-f", composeFile,
 		"up", "-d",

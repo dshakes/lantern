@@ -5,7 +5,7 @@
 //
 // Why we don't try to ALSO send voice/images outbound here:
 //   - Voice cloning (ElevenLabs) is expensive and requires per-user
-//     voice training. Left as a future flag (LANTERN_VOICE_CLONE_ID).
+//     voice training. Left as a future flag (PAL_VOICE_CLONE_ID).
 //   - Image generation (DALL-E / SD) is a different product.
 // Inbound understanding is the high-leverage win; outbound is mostly
 // novelty.
@@ -17,11 +17,11 @@
 
 import type { Logger } from "pino";
 import { downloadMediaMessage, type WAMessage } from "baileys";
-import { authedFetch } from "@lantern/bridge-core/auth";
+import { authedFetch } from "@pal/bridge-core/auth";
 import {
   voiceTranscriptionLangHint,
   looksGarbledTranscript,
-} from "@lantern/bridge-core/language";
+} from "@pal/bridge-core/language";
 
 export interface MediaAnnotation {
   // Synthesized text that the reply pipeline treats as the inbound
@@ -115,7 +115,7 @@ export class MediaHandler {
     //
     // LANGUAGE BIAS: Whisper auto-detect mis-decodes low-resource South-Asian
     // speech (Telangana Telugu → garbled Kannada script). We pass an explicit
-    // ISO `language` + script-priming `prompt` sourced from LANTERN_VOICE_LANG
+    // ISO `language` + script-priming `prompt` sourced from PAL_VOICE_LANG
     // / owner nativity (default "te") so it decodes into the right script.
     const langHint = voiceTranscriptionLangHint({ nativity: this.nativity() });
     try {

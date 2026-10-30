@@ -1,6 +1,6 @@
 // Proactive recall — surface the most relevant memory for the current inbound.
 //
-// Gated behind LANTERN_PROACTIVE_RECALL=1 (default OFF). When on, the reply
+// Gated behind PAL_PROACTIVE_RECALL=1 (default OFF). When on, the reply
 // prompt gets a compact "relevant context" block built from already-loaded
 // episodes and cross-thread topic messages. When nothing clears the relevance
 // threshold the function returns null — zero change to the reply.
@@ -66,7 +66,7 @@ interface Candidate {
  * Returns a compact prompt block when at least one item clears the relevance
  * threshold; null otherwise (the common case — no change to the reply).
  *
- * Pure — call only when LANTERN_PROACTIVE_RECALL is enabled.
+ * Pure — call only when PAL_PROACTIVE_RECALL is enabled.
  */
 export function assembleRelevantRecall(
   inbound: string,

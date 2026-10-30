@@ -6,7 +6,7 @@
 // deferred — this is the Mac slice only.
 //
 // ─── PRIVACY POSTURE (HARD RULES, not defaults) ──────────────────────────────
-//   1. OFF by default. The bridge only wires this in when LANTERN_MAC_USAGE=on.
+//   1. OFF by default. The bridge only wires this in when PAL_MAC_USAGE=on.
 //      When off, nothing reads knowledgeC.db and nothing is stored.
 //   2. OWNER-ONLY. The summary is injected ONLY into the owner's self-chat
 //      assistant context (and/or the owner's daily digest). It is NEVER added
@@ -14,7 +14,7 @@
 //      the owner uses.
 //   3. SUMMARIES, NOT RAW LOGS. This module aggregates rows into per-app
 //      totals + one sentence. The bridge persists only a small rolling cache
-//      (~/.lantern/mac-usage.json, mode 0600) — never a raw per-event log.
+//      (~/.pal/mac-usage.json, mode 0600) — never a raw per-event log.
 //   4. FAILS CLOSED. The reader (mac-usage-reader.ts) no-ops on any failure
 //      (no Full Disk Access, missing DB, schema drift) — the bridge never
 //      crashes and simply has no usage signal that tick.

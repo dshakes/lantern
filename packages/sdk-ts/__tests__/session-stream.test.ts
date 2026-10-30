@@ -3,7 +3,7 @@
 // stream on GET /v1/sessions/{id}/events so we never hit a real server.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LanternClient, MessageStreamError } from "../src/client.js";
+import { PalClient, MessageStreamError } from "../src/client.js";
 import type { SessionStreamEvent } from "../src/types.js";
 
 const realFetch = globalThis.fetch;
@@ -52,10 +52,10 @@ function mockStreamFetch(sseChunks: string[]) {
 }
 
 describe("sessions.streamMessage", () => {
-  let client: LanternClient;
+  let client: PalClient;
 
   beforeEach(() => {
-    client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
   });
 
   afterEach(() => {

@@ -1,5 +1,5 @@
 // Package e2ekit is the ONLY way an e2e suite creates, runs, and deletes
-// Lantern agents under the §0 spend policy (ga-program-plan.md §0).
+// PAL agents under the §0 spend policy (ga-program-plan.md §0).
 //
 // Enforcement summary (all in code, not just documented):
 //   - Agent name must be in [AllowedNames] (the 8 reserved e2e-* names).
@@ -131,7 +131,7 @@ func Connect(t *testing.T) *Kit {
 	}
 
 	if err := probeStack(k.base); err != nil {
-		msg := fmt.Sprintf("LANTERN stack not reachable at %s (%v) — start it with `make dev-infra` + `make run-api`", k.base, err)
+		msg := fmt.Sprintf("PAL stack not reachable at %s (%v) — start it with `make dev-infra` + `make run-api`", k.base, err)
 		if EnvOr("E2E_ALLOW_SKIP", "") == "1" {
 			t.Skip(msg + " (set E2E_ALLOW_SKIP=1 overrides this to a skip)")
 		}

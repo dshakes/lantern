@@ -1,4 +1,4 @@
-// commitments-edge.ts — Concierge bridge edge: capture tasks into Lantern
+// commitments-edge.ts — Concierge bridge edge: capture tasks into pal
 // commitments, render 1-click nudges to the owner, execute owner replies.
 //
 // Design rules (mirrors life-events-emit.ts):
@@ -6,7 +6,7 @@
 //     CommitmentsClient wraps the API via an injected fetch function.
 //   * HIGH-PRECISION capture: false captures spam the owner — prefer misses.
 //   * OWNER-ONLY: never surfaces a commitment to a contact; caller must gate.
-//   * DEFAULT OFF: whole edge is gated by LANTERN_CONCIERGE=on in session.ts.
+//   * DEFAULT OFF: whole edge is gated by PAL_CONCIERGE=on in session.ts.
 
 import { readFileSync, writeFileSync } from "node:fs";
 

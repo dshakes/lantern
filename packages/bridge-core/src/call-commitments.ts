@@ -6,13 +6,13 @@
 // 👎-retract window — owner can react to the commitment notification
 // in self-chat to retract before the recipient acts on it.
 //
-// File: ~/.lantern/call-commitments.jsonl  (chmod 600)
+// File: ~/.pal/call-commitments.jsonl  (chmod 600)
 // Cap: 1 MB tail-trim on read so it can't OOM.
 
+import { palStateDir } from "./state-dir.js";
 import { appendFile, readFile, chmod } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import type { Logger } from "pino";
 
 export interface CallCommitment {
@@ -33,7 +33,7 @@ export interface CallCommitment {
   ts: number;
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "call-commitments.jsonl");
+const defaultPath = (): string => join(palStateDir(), "call-commitments.jsonl");
 const MAX_FILE_BYTES = 1024 * 1024;
 const RETRACT_WINDOW_MS = 60 * 60_000; // 1 hour
 
@@ -45,7 +45,7 @@ export class CallCommitments {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.PAL_CALL_COMMITMENTS_FILE || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_CALL_COMMITMENTS_FILE || defaultPath();
     this.logger = opts.logger?.child({ component: "call-commitments" });
     try { mkdirSync(dirname(this.path), { recursive: true }); } catch {}
   }

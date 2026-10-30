@@ -44,7 +44,7 @@ curl -s -X POST http://localhost:8080/v1/runs \
 ### lantern CLI equivalent
 
 ```bash
-cd packages/cli && go run ./cmd/lantern runs create \
+cd packages/cli && go run ./cmd/pal runs create \
   --agent daily-standup-digest \
   --input "$(cat run.json | jq .input)" \
   --stream
