@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
@@ -659,10 +660,43 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		Input     map[string]any `json:"input"`
 		// SessionId is optional; when provided the run is grouped under that session.
 		SessionId string `json:"sessionId,omitempty"`
+		// CallbackUrl is optional; when set, a signed POST is delivered to this URL
+		// when the run reaches a terminal status (ADR 0033).
+		CallbackUrl string `json:"callbackUrl,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
+	}
+
+	// Validate callbackUrl early: reject SSRF-risky URLs before creating the run.
+	if body.CallbackUrl != "" {
+		if err := checkSSRF(body.CallbackUrl); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	// Per-run idempotency (ADR 0033): if the caller sets an Idempotency-Key header,
+	// return the existing run instead of creating a new one on replay.
+	// This is the mechanism batch dispatch uses for per-item dedup so that a
+	// crash-replay of dispatchBatch never creates duplicate runs.
+	idemKey := r.Header.Get("Idempotency-Key")
+	if idemKey != "" {
+		if tenantID, ok := middleware.TenantIDFromContext(ctx); ok {
+			var existingRunID string
+			// rls-exempt: keyed by (tenant_id, idempotency_key) — no tenant GUC needed
+			// here because we filter by the explicit tenant_id from the auth context.
+			lookupErr := h.srv.Pool.QueryRow(ctx,
+				`SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2`,
+				tenantID, idemKey,
+			).Scan(&existingRunID)
+			if lookupErr == nil && existingRunID != "" {
+				// Idempotent: return the previously-created run.
+				writeJSON(w, http.StatusCreated, map[string]any{"id": existingRunID})
+				return
+			}
+		}
 	}
 
 	// Budget pre-check: enforce hard-fail limits before dispatching the run
@@ -732,6 +766,59 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 			h.logger().Error("CreateRun failed", zap.Error(err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+	}
+
+	// Persist callback_url and idempotency_key on the run row when supplied (ADR 0033).
+	// rls-exempt: inline executor — runs write keyed by the just-created authorized run id.
+	if body.CallbackUrl != "" {
+		if _, cbErr := h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET callback_url = $2 WHERE id = $1`, run.GetId(), body.CallbackUrl,
+		); cbErr != nil {
+			h.logger().Warn("CreateRun: failed to persist callback_url",
+				zap.String("run_id", run.GetId()), zap.Error(cbErr))
+		}
+	}
+	// Store the idempotency key so future replays with the same key return
+	// this run instead of creating a duplicate. Uses the unique index on
+	// (tenant_id, idempotency_key) as the race-safe dedup gate:
+	//   - If two concurrent requests with the same key both passed the SELECT
+	//     check above (check-then-act window), the first to UPDATE wins the
+	//     unique constraint; the second's UPDATE triggers a 23505 violation.
+	//   - On violation: cancel the ghost run (avoid billing it), look up the
+	//     winner, and return the winner's ID to the caller.
+	// rls-exempt: keyed by the just-created authorized run id.
+	if idemKey != "" {
+		tenantIDForIdem, _ := middleware.TenantIDFromContext(ctx)
+		_, ikErr := h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET idempotency_key = $2 WHERE id = $1`, run.GetId(), idemKey,
+		)
+		if ikErr != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(ikErr, &pgErr) && pgErr.Code == "23505" {
+				// Race: another concurrent request already claimed this key.
+				// Cancel our ghost run to avoid billing it and return the winner.
+				// rls-exempt: keyed by the just-created run id (our ghost).
+				if _, cancelErr := h.srv.Pool.Exec(ctx,
+					`UPDATE runs SET status = 'cancelled', finished_at = now() WHERE id = $1`,
+					run.GetId(),
+				); cancelErr != nil {
+					h.logger().Warn("CreateRun: failed to cancel ghost run after idem race",
+						zap.String("run_id", run.GetId()), zap.Error(cancelErr))
+				}
+				// Look up the winner (the run that holds this key).
+				// rls-exempt: keyed by (tenant_id, idempotency_key).
+				var winnerID string
+				if lookupErr := h.srv.Pool.QueryRow(ctx,
+					`SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2`,
+					tenantIDForIdem, idemKey,
+				).Scan(&winnerID); lookupErr == nil && winnerID != "" {
+					writeJSON(w, http.StatusCreated, map[string]any{"id": winnerID})
+					return
+				}
+			}
+			h.logger().Warn("CreateRun: failed to persist idempotency_key",
+				zap.String("run_id", run.GetId()), zap.Error(ikErr))
 		}
 	}
 
@@ -1156,6 +1243,8 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	result, resolvedTemplateID, err := h.executeRunInlineSync(ctx, runID, tenantID, agentName, input)
 	if err != nil {
 		// Error already written to runs.error by executeRunInlineSync.
+		// Fire the completion callback (if any) for the failure case.
+		h.fireCallbackForRun(ctx, h.srv.Pool, runID, h.logger())
 		return
 	}
 
@@ -1231,6 +1320,10 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 			)
 		}()
 	}
+
+	// Async completion callback (ADR 0033): fire after all other side-effects
+	// so the callback sees the final run state.
+	h.fireCallbackForRun(ctx, h.srv.Pool, runID, h.logger())
 }
 
 // executeRunInlineSync is the synchronous core of run execution. It updates the
