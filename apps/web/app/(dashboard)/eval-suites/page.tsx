@@ -252,7 +252,7 @@ export default function EvalSuitesPage() {
               <p className="mt-2 text-xs text-zinc-500">
                 Execute{" "}
                 <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-zinc-300">
-                  lantern test --suite=name
+                  pal test --suite=name
                 </code>{" "}
                 in CI to record one.
               </p>

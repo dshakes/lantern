@@ -136,32 +136,54 @@ make dashboard-dev    # Next.js dashboard at localhost:3001
 make site-dev         # Website (site/, Astro + Starlight) — landing + docs
 ```
 
-### Dashboard sidebar (4 primary + Workspace section)
+### Dashboard IA: two home spaces (pal / Runtime)
 
-The dashboard sidebar (`apps/web/components/sidebar.tsx`) groups nav into a
-short primary set (the daily-driver) and a collapsible Workspace section
-(everything else). Bookmarks + deep links to old top-level routes keep
-working — they live under Workspace now.
+The dashboard serves two audiences behind one **mode switch** at the top of the
+sidebar (`components/mode-switch.tsx`). ONE source of truth for navigation:
+`apps/web/lib/workspace-nav.ts` (`NAV`, `modeForPath`, `chooseLanding`, unit-tested
+— the test also asserts every nav href has a page). Sidebar, mobile bottom nav,
+⌘K and keyboard shortcuts all read it; add a destination there, not in a component.
 
-**Primary (always visible):**
+- **pal** (consumer) — home **Today** (`/brief`): a ranked "what needs you" list
+  (held replies with one-click Approve / Edit / Discard, suggested life-events,
+  open commitments, threads waiting on you from the bridges' attention snapshot).
+  Ranking = deterministic base order + ONE control-plane LLM pass that may only
+  reorder/annotate (`lib/brief.ts`, same contract as the bridges' Attention Engine).
+  Nav: Today · Holds · Automations · People & memory · Activity · Documents · Voice · Channels · Assistant.
+- **Runtime** (builder) — home **Overview** (`/overview`): runs/success/spend/
+  sandboxes KPIs, runs-by-hour, recent failures with inline **Why?**, Ask bar.
+  Nav: Overview · Agents · Runs · Sandboxes · Deployments · Evals · Experiments ·
+  Analytics · Budgets · Connectors · Channels · Marketplace (+ recent agents).
+  Runtime mode adds `.theme-runtime` on the shell, re-pointing the accent scale
+  indigo→cyan (no per-component edits).
+- **Shared**: Settings keeps the last mode. `/` routes via `chooseLanding`:
+  remembered mode → its home; otherwise agents → Overview, started Runtime
+  onboarding → `/onboarding`, brand-new → `/welcome` (pick pal or Runtime;
+  pal path = `/pal/onboarding` when `NEXT_PUBLIC_PAL_ONBOARDING=1`, else `/personal/setup`).
 
-1. **Inbox** (`/inbox`) — cross-agent activity feed. Recent runs, runs
-   needing review, live runs in flight. New in W6.
-2. **Agents** (`/agents`)
-3. **Analytics** (`/evaluations`)
-4. **Settings** (`/settings`)
+**Settings nav** is the `SETTINGS_NAV` array in `apps/web/lib/settings-nav.ts`
+(rendered by `settings/layout.tsx`). To add a page: create
+`app/(dashboard)/settings/<slug>/page.tsx` and append one entry. Tabs of the main
+settings page are `?tab=<id>` URLs.
 
-**Workspace (collapsed by default, auto-opens on hit):**
-Runs · Channels (`/surfaces`) · Integrations (`/connectors`) · Deployments ·
-Budgets · Experiments · Eval Suites · Marketplace
+**AI-native surfaces** (all LLM calls go through the control-plane — `/v1/completions`
+with `model:"auto"` or `/v1/assist/explain`; the browser never calls a provider):
+- **⌘K / Ask PAL** (`components/command-palette.tsx` + pure `lib/assistant.ts`):
+  natural language → one validated action: navigate · answer · explain_run ·
+  create_agent (via generate-spec) · vm_action (pause/resume/terminate). Routes are
+  allowlisted and ids must come from the context the model was given. Mutations
+  ALWAYS stop at a confirm card; any inline bar calls `openAsk()` (`lib/ask-events.ts`).
+- **Inline "Explain"** (`components/explain-inline.tsx`) on run detail, Overview
+  failures and eval failure clusters.
+- **AI-suggested next steps** (`components/suggested-steps.tsx`): model picks over
+  a deterministic, live fallback; hrefs allowlisted; cached per session.
 
-**Additional dashboard surfaces:**
+Keyboard: `⌘K` Ask PAL · `g t` Today · `g h` Holds · `g o` Overview · `g a` Agents ·
+`g r` Runs · `g v` Sandboxes · `g s` Settings · `?` cheat sheet.
 
-- `/embed` — webchat install center (W10)
-- `/proof` — public receipt verifier (W8) — _no auth required_
-- `/onboarding` — agentic first-agent flow, a conversation plus a progress rail (see "Agentic onboarding")
-
-Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
+Sign-in (`app/login`) shows only what `GET /auth/providers` says is configured
+(OAuth buttons, sign-up open/invite/closed). The cookie write is awaited before
+any gated navigation (login, sign-up, OAuth callback, logout) — see the auth-loop fix.
 
 ### Dashboard UX primitives
 
@@ -270,6 +292,7 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `POST` | `/auth/login`            | Email+password login |
 | `GET`  | `/auth/me`               | Current user info    |
 | `GET`  | `/auth/oauth/google/...` | Google OAuth flow    |
+| `GET`  | `/auth/providers`        | Public: which sign-in methods are configured `{oauth:{google,github}, signup, passwordReset, emailVerification}` (booleans/enum only) |
 | `POST` | `/auth/verify`, `/auth/verify/resend` | Email verification (token / re-send) |
 | `POST` | `/auth/forgot`, `/auth/reset` | Password reset (never reveals whether the account exists) |
 | `GET`  | `/v1/tenants/{id}/export` | Owner-only data export (GDPR access) |
@@ -330,6 +353,12 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 | `PUT`    | `/v1/onboarding`          | Replace it (`settings:write`; unknown fields dropped)               |
 | `DELETE` | `/v1/onboarding`          | Start over                                                          |
 | `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
+
+### Assist (dashboard "explain this")
+
+| Method | Path                 | Description |
+| ------ | -------------------- | ----------- |
+| `POST` | `/v1/assist/explain` | `{kind:"run", runId}` or `{kind:"eval_case", case, expected?, actual?, error?}` → `{explanation}`. For runs the SERVER loads the run + last journal events (tenant-scoped, cross-tenant → 404), so the model only sees real state. `runs:execute` (spends tenant money). Errors use the `no_provider`/`llm_failed` codes. `internal/handlers/assist.go` |
 
 ### Runs
 

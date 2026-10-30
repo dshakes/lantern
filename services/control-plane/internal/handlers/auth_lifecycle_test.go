@@ -160,9 +160,9 @@ func TestCheckSignupConfig(t *testing.T) {
 		{name: "invite with secret dev", mode: "invite", invite: "x", wantFatal: false},
 		{name: "prod default closed", prod: true, wantFatal: false},
 		{name: "prod open no captcha", prod: true, mode: "open", mailDriver: "http", wantFatal: true, wantMsg: "TURNSTILE"},
-		{name: "prod open log mailer", prod: true, mode: "open", turnstile: "t", wantFatal: true, wantMsg: "LANTERN_MAILER=log"},
+		{name: "prod open log mailer", prod: true, mode: "open", turnstile: "t", wantFatal: true, wantMsg: "PAL_MAILER=log"},
 		{name: "prod open ok", prod: true, mode: "open", turnstile: "t", mailDriver: "smtp", wantFatal: false},
-		{name: "prod invite log mailer", prod: true, mode: "invite", invite: "x", wantFatal: true, wantMsg: "LANTERN_MAILER=log"},
+		{name: "prod invite log mailer", prod: true, mode: "invite", invite: "x", wantFatal: true, wantMsg: "PAL_MAILER=log"},
 		{name: "prod invite ok no captcha", prod: true, mode: "invite", invite: "x", mailDriver: "http", wantFatal: false},
 		{name: "broken mailer config", mailDriver: "smtp", wantFatal: true, wantMsg: "LANTERN_SMTP_ADDR"},
 	}
