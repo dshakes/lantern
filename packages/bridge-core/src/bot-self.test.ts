@@ -129,6 +129,31 @@ test("bot-self: case insensitivity", () => {
   assert.equal(isBotSelfMessage("📊 *Lantern Morning Report*"), true);
 });
 
+test("bot-self: every pal-branded string the bridges emit is registered, and the lantern-era ones still are (ADR 0032)", () => {
+  // One entry per string renamed Lantern→pal in the bridges. A miss here is
+  // the self-chat echo loop: the bot reads its own status line back as a query.
+  const renamed: Array<[string, string]> = [
+    ["🟢 *pal iMessage*\n• bot: on", "🟢 *Lantern iMessage*\n• bot: on"],
+    ["🟢 *pal WhatsApp*\n• bot: on", "🟢 *Lantern WhatsApp*\n• bot: on"],
+    ["🟢 *pal is connected*\n\nReply `/pal status`", "🟢 *Lantern is connected*"],
+    ["📊 *pal morning report* — fri, may 29", "📊 *lantern morning report* — fri, may 29"],
+    ["🔴 *pal WhatsApp offline 12m*", "🔴 *Lantern WhatsApp offline 12m*"],
+    ["🔴 *pal alert: WhatsApp bridge error*", "🔴 *Lantern alert: WhatsApp bridge error*"],
+    ["⚠️ *pal alert: WhatsApp conflict*", "⚠️ *Lantern alert: WhatsApp conflict*"],
+    ["🚪 *pal alert: WhatsApp unlinked*", "🚪 *Lantern alert: WhatsApp unlinked*"],
+    ["🤖 *pal commands*\n\nCommand center", "🤖 *Lantern commands*"],
+    ["🤖 *pal* · 🟢 active\nuptime 3h", "🤖 *Lantern* · 🟢 active"],
+  ];
+  for (const [now, legacy] of renamed) {
+    assert.equal(isBotSelfMessage(now), true, `new form not registered: ${JSON.stringify(now)}`);
+    assert.equal(isBotSelfMessage(legacy), true, `legacy form dropped: ${JSON.stringify(legacy)}`);
+  }
+  // "pal" is an everyday word: an owner text that merely starts with it routes.
+  for (const t of ["pal, pause for 2h", "pal status", "/pal status", "🟢 on my way pal"]) {
+    assert.equal(isBotSelfMessage(t), false, `false positive on user text: ${JSON.stringify(t)}`);
+  }
+});
+
 test("bot-self: owner heads-up PAGES are recognized (self-chat flood fix)", () => {
   // The exact strings that looped in the field — bot read its own page back
   // as an owner query and replied to itself, flooding the self-chat.

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 // Must precede the session.js import: enables the opt-in pause-expiry warning
-// (LANTERN_PAUSE_WARN) that the grace-period ticker tests assert.
+// (PAL_PAUSE_WARN) that the grace-period ticker tests assert.
 import "./helpers/enable-pause-warn.js";
 import { WhatsAppSession, contactReplyWantsCalendar } from "../src/session.js";
 
@@ -24,7 +24,7 @@ let tmpRoot: string;
 let prevCwd: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "lantern-bridge-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "pal-bridge-"));
   prevCwd = process.cwd();
   process.chdir(tmpRoot);
 });

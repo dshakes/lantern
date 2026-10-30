@@ -109,6 +109,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "pal.fullname" . }}-secrets
                   key: minio-password
+            {{- include "pal.regionEnv" . | nindent 12 }}
           livenessProbe:
             grpc:
               port: 50052

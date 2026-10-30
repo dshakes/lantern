@@ -19,7 +19,7 @@
 //     - [Sarika, 2026-05-12]: mentioned Sarah at the wedding
 //
 // This is *not* a heavyweight knowledge graph. It's:
-//   - One JSONL file of tagged messages: ~/.lantern/topic-index.jsonl
+//   - One JSONL file of tagged messages: ~/.pal/topic-index.jsonl
 //   - A cheap topic extractor (proper nouns + a small allowlist of
 //     event verbs)
 //   - A retrieval that buckets by topic + sorts by recency
@@ -30,9 +30,9 @@
 // quoting another contact to this person — even if directly asked (a
 // hostile contact just asks).
 
+import { palStateDir } from "./state-dir.js";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
 import { trimJsonlBytes } from "./jsonl-trim.js";
@@ -56,7 +56,7 @@ export interface TaggedMessage {
   topics: string[];
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "topic-index.jsonl");
+const defaultPath = (): string => join(palStateDir(), "topic-index.jsonl");
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const RETRIEVAL_WINDOW_MS = 7 * 24 * 60 * 60_000; // 7 days
 
@@ -69,7 +69,7 @@ export class SocialGraph {
   private static readonly CACHE_TTL_MS = 60_000;
 
   constructor(opts: { path?: string; logger?: Logger } = {}) {
-    this.path = opts.path || process.env.PAL_TOPIC_INDEX || DEFAULT_PATH;
+    this.path = opts.path || process.env.PAL_TOPIC_INDEX || defaultPath();
     this.logger = opts.logger?.child({ component: "social-graph" });
     try { mkdirSync(dirname(this.path), { recursive: true }); } catch {}
   }

@@ -1,7 +1,7 @@
 package cli
 
-// `lantern demo` — boots the kiosk/demo stack (ADR 0029): the normal compose
-// stack plus infra/docker/docker-compose.kiosk.yml, which turns on LANTERN_KIOSK,
+// `pal demo` — boots the kiosk/demo stack (ADR 0029): the normal compose
+// stack plus infra/docker/docker-compose.kiosk.yml, which turns on PAL_KIOSK,
 // RLS + authz enforcement, closed sign-up, and points LLM calls at the replay
 // fixture server. Each visitor gets an ephemeral, auto-deleted workspace.
 
@@ -55,12 +55,12 @@ Every visitor gets a private workspace with sample agents that is deleted after
 30 minutes. LLM answers are recorded replays served by a local fixture server;
 no provider key is read, stored, or required.
 
-  lantern demo           # start (first run builds images)
-  lantern demo --down    # stop and delete all demo data`,
+  pal demo           # start (first run builds images)
+  pal demo --down    # stop and delete all demo data`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := findRepoRoot()
 			if err != nil {
-				return fmt.Errorf("run `lantern demo` from inside a PAL checkout: %w", err)
+				return fmt.Errorf("run `pal demo` from inside a PAL checkout: %w", err)
 			}
 			if _, err := exec.LookPath("docker"); err != nil {
 				return fmt.Errorf("docker is required: %w", err)

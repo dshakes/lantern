@@ -67,7 +67,7 @@ The CLI creates the run over gRPC (it does not set `systemPrompt`, so create
 the agent with the curl above first):
 
 ```bash
-cd packages/cli && go run ./cmd/lantern runs create \
+cd packages/cli && go run ./cmd/pal runs create \
   --agent pr-triage \
   --input '{"title":"Allow password reset tokens to be reused within 24h","diff_summary":"auth/reset.go: removed the single-use check on reset tokens; tokens now valid until expiry. Added a 24h TTL. No new tests."}' \
   --stream

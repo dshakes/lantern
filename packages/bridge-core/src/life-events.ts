@@ -801,7 +801,7 @@ export interface AutoActDecision {
 
 export interface AutoActOpts {
   // Global kill switch. When false, NO auto — every safe-auto kind falls back
-  // to 'suggest'. The bridge reads LANTERN_LIFE_EVENT_AUTOACT (default 'on')
+  // to 'suggest'. The bridge reads PAL_LIFE_EVENT_AUTOACT (default 'on')
   // and passes the boolean here. Default true (owner asked for on-by-default).
   enabled?: boolean;
 }

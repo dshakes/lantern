@@ -23,6 +23,7 @@ make lima-broker-e2e   # broker egress mode (ADR 0026): no NIC, vsock-only, cred
 | `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness (musl, all tools incl. `write_file`) as PID 1. Cached at `~/.cache/pal-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
 | `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed (`FIRECRACKER_JAILER_*`, `EXPECT_VENDSECRET=1`). Timing table saved to `~/.cache/pal-lima/timing/lifecycle-timing.md`. |
 | `make lima-broker-e2e` | Same build, then `infra/firecracker/broker-e2e.sh` (needs outbound HTTPS to httpbin.org). |
+| `make lima-runtime` | Same build, then runs a long-lived jailed Firecracker runtime-manager (foreground, Ctrl-C stops it) on `:52054` in the VM; Lima forwards it to the Mac's `localhost:52054`, and it self-registers with the host scheduler at `host.lima.internal:8085`. `dev` detects it and wires the API to it (ADR 0045). Dev-only: plaintext gRPC, no service token. |
 | `make lima-down` | `limactl stop firecracker-dev`. |
 | `make lima-clean` | `cargo clean --target-dir ~/.cache/pal-lima/target` and removes the cached image files. |
 

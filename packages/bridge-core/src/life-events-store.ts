@@ -4,19 +4,19 @@
 // companion that persists the per-kind accept/ignore preference to disk so the
 // owner model survives restarts. Kept tiny + documented.
 //
-// File: ~/.lantern/life-events-prefs.json (mode 0600 — it's owner behavioral
+// File: ~/.pal/life-events-prefs.json (mode 0600 — it's owner behavioral
 // data, not PII, but we keep it owner-only for consistency with the rest of
-// ~/.lantern). Both bridges share the SAME file so the owner model is unified
+// ~/.pal). Both bridges share the SAME file so the owner model is unified
 // across iMessage + WhatsApp (the same kind preference applies on both channels).
 
+import { palStateDir } from "./state-dir.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { LifeEventKind, LifeEventPrefs } from "./life-events.js";
 import { recordAccept, recordIgnore, recordAutoAccept, recordAutoUndo } from "./life-events.js";
 
 export function lifeEventsPrefsPath(): string {
-  return process.env.PAL_LIFE_EVENTS_PREFS || join(homedir(), ".lantern", "life-events-prefs.json");
+  return process.env.PAL_LIFE_EVENTS_PREFS || join(palStateDir(), "life-events-prefs.json");
 }
 
 export function loadLifeEventPrefs(path = lifeEventsPrefsPath()): LifeEventPrefs {
@@ -79,14 +79,14 @@ export function persistAutoUndo(kind: LifeEventKind, path = lifeEventsPrefsPath(
 // auto-acted on, so repeated carrier updates for the SAME package — or a
 // bridge restart — never double-book a calendar event / double-log a delivery.
 //
-// File: ~/.lantern/life-events-acted.json (mode 0600). Stored as an ordered
+// File: ~/.pal/life-events-acted.json (mode 0600). Stored as an ordered
 // array (most-recent last) capped to ACTED_CAP entries; the oldest roll off.
 // Both bridges share the same file (unified across iMessage + WhatsApp).
 
 const ACTED_CAP = 500;
 
 export function lifeEventsActedPath(): string {
-  return process.env.PAL_LIFE_EVENTS_ACTED || join(homedir(), ".lantern", "life-events-acted.json");
+  return process.env.PAL_LIFE_EVENTS_ACTED || join(palStateDir(), "life-events-acted.json");
 }
 
 function loadActed(path: string): string[] {
@@ -140,12 +140,12 @@ export function unmarkActed(key: string, path = lifeEventsActedPath()): void {
 // ── AUTO-ACT PAUSE FLAG ─────────────────────────────────────────────────────
 //
 // The owner's "pause automation" / "resume automation" command persists here so
-// the choice survives restarts (the env var LANTERN_LIFE_EVENT_AUTOACT is the
-// DEFAULT; this flag is the runtime override). File: ~/.lantern/
+// the choice survives restarts (the env var PAL_LIFE_EVENT_AUTOACT is the
+// DEFAULT; this flag is the runtime override). File: ~/.pal/
 // life-events-autoact.json (mode 0600). { paused: boolean }.
 
 export function lifeEventsAutoActPath(): string {
-  return process.env.PAL_LIFE_EVENTS_AUTOACT_STATE || join(homedir(), ".lantern", "life-events-autoact.json");
+  return process.env.PAL_LIFE_EVENTS_AUTOACT_STATE || join(palStateDir(), "life-events-autoact.json");
 }
 
 // True when the owner has explicitly PAUSED automation. Default false

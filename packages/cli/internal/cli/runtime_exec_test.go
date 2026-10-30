@@ -1,6 +1,6 @@
 package cli
 
-// Unit tests for `lantern vm exec` — everything testable WITHOUT a live
+// Unit tests for `pal vm exec` — everything testable WITHOUT a live
 // guest or an interactive terminal: flag parsing, first-frame construction,
 // manager-address resolution, and the raw-mode guard (which must no-op when
 // stdin is not a terminal, e.g. in CI). The live bidirectional PTY pump

@@ -450,7 +450,7 @@ export interface ConnectorResult {
 // ---------------------------------------------------------------------------
 
 /** Inbound webhook trigger (ADR 0028). `secret` is returned only by create,
- *  and only when Lantern generated it. */
+ *  and only when PAL generated it. */
 export type TriggerProvider = "generic" | "github" | "sentry" | "pagerduty";
 
 export interface Trigger {

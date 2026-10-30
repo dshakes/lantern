@@ -17,7 +17,7 @@
 //      often common bad-shapes appear in 👎'd replies and emits a lesson
 //      once a shape clears a frequency + support threshold. Covers the
 //      bread-and-butter patterns (punctuation, length, openers, emoji).
-//   B) OPTIONAL LLM clustering (flag-guarded by LANTERN_DISLIKE_LLM_CLUSTER
+//   B) OPTIONAL LLM clustering (flag-guarded by PAL_DISLIKE_LLM_CLUSTER
 //      + an injected llmCall) for fuzzier patterns the heuristics miss.
 //
 // PRIVACY: raw dislike entries hold inbound text + bot replies (PII) and
@@ -138,7 +138,7 @@ export async function consolidateDislikes(
 
   // LLM clustering pass — catches the fuzzy recurring patterns the regexes
   // miss (the novel-preference learner). Runs when a caller is wired AND it is
-  // not explicitly disabled (LANTERN_DISLIKE_LLM_CLUSTER=0). Fail-safe: any
+  // not explicitly disabled (PAL_DISLIKE_LLM_CLUSTER=0). Fail-safe: any
   // error below falls through to the deterministic lessons. A novel lesson is
   // inserted when its (self-declared) support ≥ minSupport; on an ID collision
   // with a deterministic lesson the higher-support one wins. The input is the

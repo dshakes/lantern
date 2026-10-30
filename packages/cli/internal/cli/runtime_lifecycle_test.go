@@ -1,6 +1,6 @@
 package cli
 
-// runtime_lifecycle_test.go — `lantern vm pause|resume|fork` against a mock
+// runtime_lifecycle_test.go — `pal vm pause|resume|fork` against a mock
 // control-plane mirroring the real REST shapes.
 
 import (
@@ -53,7 +53,7 @@ func TestVmLifecycleCommands(t *testing.T) {
 		{"fork default count", []string{"fork", "vm-1"}, "", []string{"snap-2", "vm-a"}, `{"count":1}`},
 		{"fork partial failure exits non-zero", []string{"fork", "vm-1", "--count", "2"}, "1 of 2 forks failed", []string{"vm-b", "boot failed"}, `{"count":2}`},
 		{"fork count below 1 rejected locally", []string{"fork", "vm-1", "--count", "0"}, "at least 1", nil, ""},
-		// Above 10 is the server's call (LANTERN_MAX_FORK_COUNT, default 100):
+		// Above 10 is the server's call (PAL_MAX_FORK_COUNT, default 100):
 		// the CLI must send it, not refuse it.
 		{"fork count above 10 reaches the API", []string{"fork", "vm-1", "--count", "11"}, "", nil, `{"count":11}`},
 	}
@@ -86,7 +86,7 @@ func TestVmLifecycleCommands(t *testing.T) {
 
 func TestServiceTokenCreds(t *testing.T) {
 	md, _ := serviceTokenCreds("s3cret").GetRequestMetadata(context.Background())
-	if md["x-lantern-service-token"] != "s3cret" {
+	if md["x-pal-service-token"] != "s3cret" || md["x-lantern-service-token"] != "s3cret" { // legacy header for pre-rename managers
 		t.Fatalf("metadata = %v", md)
 	}
 }

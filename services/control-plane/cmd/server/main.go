@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -32,6 +33,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/handlers"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/region"
 	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -53,13 +55,25 @@ func main() {
 	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
 	runStartupGuards(logger)
 
+	// --- Region identity / standby mode (ADR 0046; all unset = single-region) ---
+	regionCfg, err := region.Load()
+	if err != nil {
+		logger.Fatal("invalid region configuration", zap.Error(err))
+	}
+	if regionCfg != (region.Config{}) {
+		logger.Info("multi-region config",
+			zap.String("region", regionCfg.Region),
+			zap.Int64("fence_epoch", regionCfg.FenceEpoch),
+			zap.Bool("read_only", regionCfg.ReadOnly))
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
 	// --- OpenTelemetry ---
 	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / LANTERN_OTEL_ENABLED=1 are unset,
 	// so the default path is unchanged (no collector required, no spans exported).
-	otelShutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane")
+	otelShutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane", regionCfg.ResourceAttrs()...)
 	if err != nil {
 		logger.Warn("tracing init failed; continuing without traces", zap.Error(err))
 		otelShutdown = func(context.Context) error { return nil }
@@ -83,6 +97,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to parse DATABASE_URL", zap.Error(err))
 	}
+	regionCfg.ApplyPgSession(pgCfg.ConnConfig)
 	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
 		logger.Fatal("failed to create pgx pool", zap.Error(err))
@@ -105,14 +120,20 @@ func main() {
 	} else {
 		logger.Info("prod mode: skipping dev seed — provision an admin account manually")
 	}
-	if err := db.Migrate(ctx, pool, seedDev); err != nil {
-		logger.Fatal("failed to run migrations", zap.Error(err))
+	// A read-only standby points at a streaming replica: it cannot (and must
+	// not) migrate. The promoted primary already carries the schema.
+	if regionCfg.ReadOnly {
+		logger.Info("read-only standby: skipping migrations")
+	} else {
+		if err := db.Migrate(ctx, pool, seedDev); err != nil {
+			logger.Fatal("failed to run migrations", zap.Error(err))
+		}
+		logger.Info("migrations complete")
 	}
-	logger.Info("migrations complete")
 
 	// Seed the Concierge loop agent for the dev tenant (idempotent, no-op in prod
 	// because the dev tenant row doesn't exist there).
-	if seedDev {
+	if seedDev && !regionCfg.ReadOnly {
 		handlers.SeedLoopAgents(ctx, pool, logger)
 	}
 
@@ -158,6 +179,7 @@ func main() {
 				logger.Fatal("failed to build lantern_app pool config", zap.Error(cfgErr))
 			}
 			applyPgxPoolTuning(appCfg)
+			regionCfg.ApplyPgSession(appCfg.ConnConfig)
 			p, err := pgxpool.NewWithConfig(ctx, appCfg)
 			if err != nil {
 				logger.Fatal("failed to create lantern_app pool", zap.Error(err))
@@ -228,11 +250,13 @@ func main() {
 	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
+			regionCfg.UnaryReadOnly(),
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
 			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
+			regionCfg.StreamReadOnly(),
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
@@ -258,7 +282,13 @@ func main() {
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
 	healthSvc.SetServingStatus("lantern.v1.AgentService", healthpb.HealthCheckResponse_SERVING)
 	healthSvc.SetServingStatus("lantern.v1.RunService", healthpb.HealthCheckResponse_SERVING)
-	healthSvc.SetServingStatus("lantern.v1.DataPlaneService", healthpb.HealthCheckResponse_SERVING)
+	// A standby refuses Register/Heartbeat, so it must not advertise the tunnel
+	// service: data-plane agents health-check this and move to the next region.
+	if regionCfg.ReadOnly {
+		healthSvc.SetServingStatus("lantern.v1.DataPlaneService", healthpb.HealthCheckResponse_NOT_SERVING)
+	} else {
+		healthSvc.SetServingStatus("lantern.v1.DataPlaneService", healthpb.HealthCheckResponse_SERVING)
+	}
 
 	// Reflection for grpcurl / grpcui.
 	reflection.Register(grpcServer)
@@ -874,18 +904,6 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runtime/report", runtimeReportHandler.Report)
 	// Wire the prometheus metrics store so LiveMetrics can surface per-VM counters.
 	runtimeHandler.SetMetricsStore(runtimeReportHandler)
-	// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
-	// (default 14) once per hour. Stops cleanly when ctx is cancelled.
-	go runtimeReportHandler.RunLogRetentionJanitor(ctx)
-
-	// side_effect_receipts retention: delete rows older than
-	// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
-	go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
-
-	// High-growth table retention: journal_events (90d), runtime_audit_events
-	// (365d), agent_usage_daily (400d). Env-configurable; see retention_janitor.go.
-	go handlers.RunRetentionJanitor(ctx, pool, logger)
-
 	// Wrap the whole mux in otelhttp so EVERY HTTP request gets a server span
 	// (invariant #9). The span name is a low-cardinality route template
 	// ("GET /v1/runs/{id}") rather than the raw path, so traces group by route.
@@ -896,9 +914,12 @@ func main() {
 	// Safe when telemetry is disabled: with the no-op global TracerProvider,
 	// otelhttp creates non-recording spans and adds negligible overhead.
 	tracedHTTP := otelhttp.NewHandler(
-		handlers.CORSMiddleware(httpMux),
+		handlers.CORSMiddleware(regionCfg.ReadOnlyHTTP(httpMux)),
 		"lantern.control-plane.http",
 		otelhttp.WithSpanNameFormatter(httpSpanName),
+		otelhttp.WithMetricAttributesFn(func(r *http.Request) []attribute.KeyValue {
+			return []attribute.KeyValue{attribute.String("pal.traffic", trafficClass(r))}
+		}),
 	)
 	httpServer := &http.Server{
 		Addr:              envOrDefault("HTTP_ADDR", ":8080"),
@@ -915,32 +936,6 @@ func main() {
 		close(httpErrCh)
 	}()
 
-	// --- Cron scheduler ---
-	// The scheduler fires due schedules by creating runs via the same inline
-	// executor path used by POST /v1/runs.
-	sched := scheduler.New(pool, logger, func(runID, tenantID, agentName string, input map[string]any) {
-		restHandler.ExecuteScheduledRun(tenantID, agentName, input)
-	})
-	go sched.Start(ctx)
-	defer sched.Stop()
-
-	// Periodic crash-recovery watchdog: re-drives orphaned runs every
-	// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
-	// fires 2s after the HTTP server starts so /readyz serves first.
-	handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
-
-	// Batch crash-recovery: finalizes batches stuck in 'running' after a
-	// process restart. Fires 15s after startup (after the run-level sweep has
-	// a chance to complete orphaned child runs), then every 30s.
-	handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
-
-	// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
-	// Probes configured peer services via TCP dial; alerts the owner on
-	// up↔down transitions via sendSelfNote. Set to "0"/"off" to disable.
-	// Sweeper was created alongside the other handler declarations above so
-	// its HTTP endpoint could be registered in the mux block.
-	handlers.RunHealthSweepLoop(ctx, healthSweeper, 0)
-
 	// Per-tenant spawn rate limiter (Phase-3 resiliency): throttles a burst of
 	// run-creations / runtime-schedules per tenant, returning HTTP 429 before any
 	// work side-effect. Redis-backed when available (distributed); falls back to
@@ -951,18 +946,63 @@ func main() {
 	restHandler.SetSpawnLimiter(spawnLimiter)
 	runtimeHandler.SetSpawnLimiter(spawnLimiter)
 
-	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
-	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
+	// Background writers (janitors, cron, crash recovery, ingestion). A
+	// read-only standby runs none of them: its database is a replica, and the
+	// recovery sweep in particular must only ever run in the active region.
+	if regionCfg.ReadOnly {
+		logger.Info("read-only standby: background writers disabled")
+	} else {
+		// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
+		// (default 14) once per hour. Stops cleanly when ctx is cancelled.
+		go runtimeReportHandler.RunLogRetentionJanitor(ctx)
 
-	// Session-scoped microVM idle sweep: terminates VMs whose last_used_at
-	// is older than LANTERN_SESSION_VM_IDLE_TTL (default 30m).
-	go handlers.RunSessionVMIdleSweep(ctx, runtimeHandler, logger)
+		// side_effect_receipts retention: delete rows older than
+		// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
+		go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
 
-	// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
-	go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
+		// High-growth table retention: journal_events (90d), runtime_audit_events
+		// (365d), agent_usage_daily (400d). Env-configurable; see retention_janitor.go.
+		go handlers.RunRetentionJanitor(ctx, pool, logger)
 
-	// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
-	go jarvisHandler.RunBriefScheduler(ctx)
+		// --- Cron scheduler ---
+		// The scheduler fires due schedules by creating runs via the same inline
+		// executor path used by POST /v1/runs.
+		sched := scheduler.New(pool, logger, func(runID, tenantID, agentName string, input map[string]any) {
+			restHandler.ExecuteScheduledRun(tenantID, agentName, input)
+		})
+		go sched.Start(ctx)
+		defer sched.Stop()
+
+		// Periodic crash-recovery watchdog: re-drives orphaned runs every
+		// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
+		// fires 2s after the HTTP server starts so /readyz serves first.
+		handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
+
+		// Batch crash-recovery: finalizes batches stuck in 'running' after a
+		// process restart. Fires 15s after startup (after the run-level sweep has
+		// a chance to complete orphaned child runs), then every 30s.
+		handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
+
+		// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
+		// Probes configured peer services via TCP dial; alerts the owner on
+		// up↔down transitions via sendSelfNote. Set to "0"/"off" to disable.
+		// Sweeper was created alongside the other handler declarations above so
+		// its HTTP endpoint could be registered in the mux block.
+		handlers.RunHealthSweepLoop(ctx, healthSweeper, 0)
+
+		// Gmail + Calendar → unified timeline ingestion (Phase 2c).
+		go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
+
+		// Session-scoped microVM idle sweep: terminates VMs whose last_used_at
+		// is older than LANTERN_SESSION_VM_IDLE_TTL (default 30m).
+		go handlers.RunSessionVMIdleSweep(ctx, runtimeHandler, logger)
+
+		// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
+		go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
+
+		// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
+		go jarvisHandler.RunBriefScheduler(ctx)
+	}
 
 	// --- Wait for shutdown ---
 	select {
@@ -1302,6 +1342,21 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 // not in the name, so cardinality stays bounded while traces remain filterable.
 func httpSpanName(_ string, r *http.Request) string {
 	return r.Method + " " + templatePath(r.URL.Path)
+}
+
+// trafficClass buckets a request for the availability/latency SLOs (ADR 0041):
+// "probe" (health/metrics scrapes) and "stream" (SSE / log tails, whose duration
+// is the connection lifetime, not latency) are excluded from the API SLIs.
+func trafficClass(r *http.Request) string {
+	p := r.URL.Path
+	switch {
+	case p == "/healthz" || p == "/readyz" || p == "/metrics":
+		return "probe"
+	case strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
+		strings.HasSuffix(p, "/events"), strings.HasSuffix(p, "/logs"):
+		return "stream"
+	}
+	return "api"
 }
 
 // templatePath replaces id-like path segments with "{id}".

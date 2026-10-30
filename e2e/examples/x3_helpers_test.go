@@ -82,7 +82,7 @@ func countReplay(reqs []replayRequest, method, path string) int {
 	return n
 }
 
-// agentFromManifest reads examples/<dir>/agent.yaml (the file `lantern deploy`
+// agentFromManifest reads examples/<dir>/agent.yaml (the file `pal deploy`
 // reads) and creates the e2e agent from it the way deploy does: the manifest's
 // description + system_prompt, then its workflow via PUT /v1/agents/{name}/workflow.
 func agentFromManifest(t *testing.T, k *e2ekit.Kit, name, dir string) *e2ekit.Agent {
