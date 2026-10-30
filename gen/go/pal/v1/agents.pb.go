@@ -891,8 +891,7 @@ var File_pal_v1_agents_proto protoreflect.FileDescriptor
 
 const file_pal_v1_agents_proto_rawDesc = "" +
 	"\n" +
-	"\x17pal/v1/agents.proto\x12\n" +
-	"pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xa1\x03\n" +
+	"\x13pal/v1/agents.proto\x12\x06pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x9d\x03\n" +
 	"\x05Agent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x12\n" +
@@ -904,8 +903,8 @@ const file_pal_v1_agents_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
 	"\varchived_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"archivedAt\x125\n" +
-	"\x06labels\x18\t \x03(\v2\x1d.pal.v1.Agent.LabelsEntryR\x06labels\x1a9\n" +
+	"archivedAt\x121\n" +
+	"\x06labels\x18\t \x03(\v2\x19.pal.v1.Agent.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd5\x02\n" +
@@ -921,36 +920,36 @@ const file_pal_v1_agents_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
 	"\vpromoted_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"promotedAt\"\xc9\x01\n" +
+	"promotedAt\"\xc5\x01\n" +
 	"\x12CreateAgentRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x02 \x01(\tR\vdescription\x12B\n" +
-	"\x06labels\x18\x03 \x03(\v2*.pal.v1.CreateAgentRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12>\n" +
+	"\x06labels\x18\x03 \x03(\v2&.pal.v1.CreateAgentRequest.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"%\n" +
 	"\x0fGetAgentRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\xe2\x01\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\xde\x01\n" +
 	"\x11ListAgentsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x02 \x01(\tR\tpageToken\x12Q\n" +
-	"\flabel_filter\x18\x03 \x03(\v2..pal.v1.ListAgentsRequest.LabelFilterEntryR\vlabelFilter\x1a>\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\x12M\n" +
+	"\flabel_filter\x18\x03 \x03(\v2*.pal.v1.ListAgentsRequest.LabelFilterEntryR\vlabelFilter\x1a>\n" +
 	"\x10LabelFilterEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x01\n" +
-	"\x12ListAgentsResponse\x12)\n" +
-	"\x06agents\x18\x01 \x03(\v2\x11.pal.v1.AgentR\x06agents\x12&\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x01\n" +
+	"\x12ListAgentsResponse\x12%\n" +
+	"\x06agents\x18\x01 \x03(\v2\r.pal.v1.AgentR\x06agents\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x1f\n" +
 	"\vtotal_count\x18\x03 \x01(\x05R\n" +
 	"totalCount\"(\n" +
 	"\x12DeleteAgentRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x15\n" +
-	"\x13DeleteAgentResponse\"\xc9\x01\n" +
+	"\x13DeleteAgentResponse\"\xc5\x01\n" +
 	"\x12UpdateAgentRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x02 \x01(\tR\vdescription\x12B\n" +
-	"\x06labels\x18\x03 \x03(\v2*.pal.v1.UpdateAgentRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12>\n" +
+	"\x06labels\x18\x03 \x03(\v2&.pal.v1.UpdateAgentRequest.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x01\n" +
@@ -970,25 +969,25 @@ const file_pal_v1_agents_proto_rawDesc = "" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x03 \x01(\tR\tpageToken\"y\n" +
-	"\x19ListAgentVersionsResponse\x124\n" +
-	"\bversions\x18\x01 \x03(\v2\x18.pal.v1.AgentVersionR\bversions\x12&\n" +
+	"page_token\x18\x03 \x01(\tR\tpageToken\"u\n" +
+	"\x19ListAgentVersionsResponse\x120\n" +
+	"\bversions\x18\x01 \x03(\v2\x14.pal.v1.AgentVersionR\bversions\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"U\n" +
 	"\x1aPromoteAgentVersionRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion2\xc7\x05\n" +
-	"\fAgentService\x12@\n" +
-	"\vCreateAgent\x12\x1e.pal.v1.CreateAgentRequest\x1a\x11.pal.v1.Agent\x12:\n" +
-	"\bGetAgent\x12\x1b.pal.v1.GetAgentRequest\x1a\x11.pal.v1.Agent\x12K\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion2\xff\x04\n" +
+	"\fAgentService\x128\n" +
+	"\vCreateAgent\x12\x1a.pal.v1.CreateAgentRequest\x1a\r.pal.v1.Agent\x122\n" +
+	"\bGetAgent\x12\x17.pal.v1.GetAgentRequest\x1a\r.pal.v1.Agent\x12C\n" +
 	"\n" +
-	"ListAgents\x12\x1d.pal.v1.ListAgentsRequest\x1a\x1e.pal.v1.ListAgentsResponse\x12N\n" +
-	"\vDeleteAgent\x12\x1e.pal.v1.DeleteAgentRequest\x1a\x1f.pal.v1.DeleteAgentResponse\x12@\n" +
-	"\vUpdateAgent\x12\x1e.pal.v1.UpdateAgentRequest\x1a\x11.pal.v1.Agent\x12U\n" +
-	"\x12CreateAgentVersion\x12%.pal.v1.CreateAgentVersionRequest\x1a\x18.pal.v1.AgentVersion\x12O\n" +
-	"\x0fGetAgentVersion\x12\".pal.v1.GetAgentVersionRequest\x1a\x18.pal.v1.AgentVersion\x12`\n" +
-	"\x11ListAgentVersions\x12$.pal.v1.ListAgentVersionsRequest\x1a%.pal.v1.ListAgentVersionsResponse\x12P\n" +
-	"\x13PromoteAgentVersion\x12&.pal.v1.PromoteAgentVersionRequest\x1a\x11.pal.v1.AgentB8Z6github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
+	"ListAgents\x12\x19.pal.v1.ListAgentsRequest\x1a\x1a.pal.v1.ListAgentsResponse\x12F\n" +
+	"\vDeleteAgent\x12\x1a.pal.v1.DeleteAgentRequest\x1a\x1b.pal.v1.DeleteAgentResponse\x128\n" +
+	"\vUpdateAgent\x12\x1a.pal.v1.UpdateAgentRequest\x1a\r.pal.v1.Agent\x12M\n" +
+	"\x12CreateAgentVersion\x12!.pal.v1.CreateAgentVersionRequest\x1a\x14.pal.v1.AgentVersion\x12G\n" +
+	"\x0fGetAgentVersion\x12\x1e.pal.v1.GetAgentVersionRequest\x1a\x14.pal.v1.AgentVersion\x12X\n" +
+	"\x11ListAgentVersions\x12 .pal.v1.ListAgentVersionsRequest\x1a!.pal.v1.ListAgentVersionsResponse\x12H\n" +
+	"\x13PromoteAgentVersion\x12\".pal.v1.PromoteAgentVersionRequest\x1a\r.pal.v1.AgentB,Z*github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
 
 var (
 	file_pal_v1_agents_proto_rawDescOnce sync.Once

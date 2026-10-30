@@ -1,0 +1,16 @@
+# Brand allowlist (ADR 0032). One entry per line: `<perl regex> # <reason>`.
+# Plain entries are stripped from content lines and file paths; `scope:<path-regex> <regex>`
+# does the same only in matching files; `path:<regex>` excludes a whole file.
+#
+# The rename is complete: NOTHING belongs here unless it is impossible to write
+# without the old name. Every entry must say why it cannot be removed.
+
+# The gate has to name what it looks for.
+path:^scripts/brand-(check\.sh|allowlist\.txt)$ # the brand gate and this allowlist search for the old name
+
+# The codemod that performed the rename has to name its source. Delete the
+# directory once no in-flight PR needs it re-run; the gate keeps the tree clean.
+path:^scripts/zero-lantern/ # the rename codemod (ADR 0032) rewrites the old name, so it must spell it
+
+# Migrations are append-only: renaming a persisted object means naming it.
+path:^services/control-plane/internal/db/migrations/\d{4}_pal_brand_rename\.(up|down)\.sql$ # renames the RLS role, namespaces and persisted values that pre-rename databases still carry

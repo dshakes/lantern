@@ -1441,19 +1441,18 @@ var File_pal_v1_models_proto protoreflect.FileDescriptor
 
 const file_pal_v1_models_proto_rawDesc = "" +
 	"\n" +
-	"\x17pal/v1/models.proto\x12\n" +
-	"pal.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc8\x05\n" +
+	"\x13pal/v1/models.proto\x12\x06pal.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xb4\x05\n" +
 	"\x0fCompleteRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\astep_id\x18\x02 \x01(\tR\x06stepId\x12\x1b\n" +
-	"\ttenant_id\x18\x03 \x01(\tR\btenantId\x126\n" +
+	"\ttenant_id\x18\x03 \x01(\tR\btenantId\x122\n" +
 	"\n" +
 	"capability\x18\n" +
-	" \x01(\x0e2\x16.pal.v1.CapabilityR\n" +
-	"capability\x126\n" +
-	"\boptimize\x18\v \x01(\x0e2\x1a.pal.v1.OptimizeTargetR\boptimize\x12/\n" +
-	"\bmessages\x18\x14 \x03(\v2\x13.pal.v1.MessageR\bmessages\x12&\n" +
-	"\x05tools\x18\x15 \x03(\v2\x10.pal.v1.ToolR\x05tools\x12@\n" +
+	" \x01(\x0e2\x12.pal.v1.CapabilityR\n" +
+	"capability\x122\n" +
+	"\boptimize\x18\v \x01(\x0e2\x16.pal.v1.OptimizeTargetR\boptimize\x12+\n" +
+	"\bmessages\x18\x14 \x03(\v2\x0f.pal.v1.MessageR\bmessages\x12\"\n" +
+	"\x05tools\x18\x15 \x03(\v2\f.pal.v1.ToolR\x05tools\x12@\n" +
 	"\x0fresponse_format\x18\x16 \x01(\v2\x17.google.protobuf.StructR\x0eresponseFormat\x12\x1d\n" +
 	"\n" +
 	"max_tokens\x18\x1e \x01(\x05R\tmaxTokens\x12 \n" +
@@ -1461,24 +1460,24 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"\x05top_p\x18  \x01(\x01R\x04topP\x12\x12\n" +
 	"\x04stop\x18! \x03(\tR\x04stop\x12\x19\n" +
 	"\bno_cache\x18( \x01(\bR\anoCache\x12'\n" +
-	"\x0fidempotency_key\x18) \x01(\tR\x0eidempotencyKey\x12g\n" +
-	"\x14provider_credentials\x18* \x03(\v24.pal.v1.CompleteRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
+	"\x0fidempotency_key\x18) \x01(\tR\x0eidempotencyKey\x12c\n" +
+	"\x14provider_credentials\x18* \x03(\v20.pal.v1.CompleteRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
 	"\x18ProviderCredentialsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd8\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd0\x01\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\x12:\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x126\n" +
 	"\n" +
-	"tool_calls\x18\x04 \x03(\v2\x1b.pal.v1.ToolCallMessageR\ttoolCalls\x12 \n" +
+	"tool_calls\x18\x04 \x03(\v2\x17.pal.v1.ToolCallMessageR\ttoolCalls\x12 \n" +
 	"\ftool_call_id\x18\x05 \x01(\tR\n" +
-	"toolCallId\x12-\n" +
-	"\x05parts\x18\x06 \x03(\v2\x17.pal.v1.ContentPartR\x05parts\"\x86\x01\n" +
+	"toolCallId\x12)\n" +
+	"\x05parts\x18\x06 \x03(\v2\x13.pal.v1.ContentPartR\x05parts\"~\n" +
 	"\vContentPart\x12\x14\n" +
-	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x12-\n" +
-	"\x05image\x18\x02 \x01(\v2\x15.pal.v1.ImagePartH\x00R\x05image\x12*\n" +
-	"\x04file\x18\x03 \x01(\v2\x14.pal.v1.FilePartH\x00R\x04fileB\x06\n" +
+	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x12)\n" +
+	"\x05image\x18\x02 \x01(\v2\x11.pal.v1.ImagePartH\x00R\x05image\x12&\n" +
+	"\x04file\x18\x03 \x01(\v2\x10.pal.v1.FilePartH\x00R\x04fileB\x06\n" +
 	"\x04part\"P\n" +
 	"\tImagePart\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x12\n" +
@@ -1500,14 +1499,14 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x127\n" +
 	"\n" +
 	"parameters\x18\x03 \x01(\v2\x17.google.protobuf.StructR\n" +
-	"parameters\"\xb7\x02\n" +
+	"parameters\"\xb3\x02\n" +
 	"\x10CompleteResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"model_used\x18\x02 \x01(\tR\tmodelUsed\x12\x12\n" +
-	"\x04tier\x18\x03 \x01(\x05R\x04tier\x12-\n" +
+	"\x04tier\x18\x03 \x01(\x05R\x04tier\x12)\n" +
 	"\amessage\x18\n" +
-	" \x01(\v2\x13.pal.v1.MessageR\amessage\x12\x1b\n" +
+	" \x01(\v2\x0f.pal.v1.MessageR\amessage\x12\x1b\n" +
 	"\ttokens_in\x18\x14 \x01(\x03R\btokensIn\x12\x1d\n" +
 	"\n" +
 	"tokens_out\x18\x15 \x01(\x03R\ttokensOut\x12\x19\n" +
@@ -1516,7 +1515,7 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"cache_kind\x18\x17 \x01(\tR\tcacheKind\x12\x1c\n" +
 	"\tescalated\x18\x18 \x01(\bR\tescalated\x12\x1d\n" +
 	"\n" +
-	"latency_ms\x18\x19 \x01(\x01R\tlatencyMs\"\x9f\x02\n" +
+	"latency_ms\x18\x19 \x01(\x01R\tlatencyMs\"\x93\x02\n" +
 	"\rCompleteChunk\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -1524,10 +1523,10 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"\x04tier\x18\x03 \x01(\x05R\x04tier\x12\x1f\n" +
 	"\n" +
 	"text_delta\x18\n" +
-	" \x01(\tH\x00R\ttextDelta\x12E\n" +
-	"\x0ftool_call_delta\x18\v \x01(\v2\x1b.pal.v1.ToolCallMessageH\x00R\rtoolCallDelta\x12.\n" +
-	"\x05usage\x18\f \x01(\v2\x16.pal.v1.ChunkUsageH\x00R\x05usage\x12+\n" +
-	"\x04done\x18\r \x01(\v2\x15.pal.v1.ChunkDoneH\x00R\x04doneB\x06\n" +
+	" \x01(\tH\x00R\ttextDelta\x12A\n" +
+	"\x0ftool_call_delta\x18\v \x01(\v2\x17.pal.v1.ToolCallMessageH\x00R\rtoolCallDelta\x12*\n" +
+	"\x05usage\x18\f \x01(\v2\x12.pal.v1.ChunkUsageH\x00R\x05usage\x12'\n" +
+	"\x04done\x18\r \x01(\v2\x11.pal.v1.ChunkDoneH\x00R\x04doneB\x06\n" +
 	"\x04data\"\x82\x01\n" +
 	"\n" +
 	"ChunkUsage\x12\x1b\n" +
@@ -1539,20 +1538,20 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"cache_kind\x18\x04 \x01(\tR\tcacheKind\"N\n" +
 	"\tChunkDone\x12#\n" +
 	"\rfinish_reason\x18\x01 \x01(\tR\ffinishReason\x12\x1c\n" +
-	"\tescalated\x18\x02 \x01(\bR\tescalated\"\xa7\x02\n" +
+	"\tescalated\x18\x02 \x01(\bR\tescalated\"\x9f\x02\n" +
 	"\fEmbedRequest\x12\x1b\n" +
-	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x126\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x122\n" +
 	"\n" +
-	"capability\x18\x02 \x01(\x0e2\x16.pal.v1.CapabilityR\n" +
+	"capability\x18\x02 \x01(\x0e2\x12.pal.v1.CapabilityR\n" +
 	"capability\x12\x14\n" +
-	"\x05texts\x18\x03 \x03(\tR\x05texts\x12d\n" +
-	"\x14provider_credentials\x18\x04 \x03(\v21.pal.v1.EmbedRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
+	"\x05texts\x18\x03 \x03(\tR\x05texts\x12`\n" +
+	"\x14provider_credentials\x18\x04 \x03(\v2-.pal.v1.EmbedRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
 	"\x18ProviderCredentialsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa3\x01\n" +
-	"\rEmbedResponse\x125\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x01\n" +
+	"\rEmbedResponse\x121\n" +
 	"\n" +
-	"embeddings\x18\x01 \x03(\v2\x15.pal.v1.EmbeddingR\n" +
+	"embeddings\x18\x01 \x03(\v2\x11.pal.v1.EmbeddingR\n" +
 	"embeddings\x12\x1d\n" +
 	"\n" +
 	"model_used\x18\x02 \x01(\tR\tmodelUsed\x12!\n" +
@@ -1596,12 +1595,12 @@ const file_pal_v1_models_proto_rawDesc = "" +
 	"\x0eOPTIMIZE_CHEAP\x10\x01\x12\x11\n" +
 	"\rOPTIMIZE_FAST\x10\x02\x12\x11\n" +
 	"\rOPTIMIZE_BEST\x10\x03\x12\x15\n" +
-	"\x11OPTIMIZE_BALANCED\x10\x042\xa6\x02\n" +
-	"\fModelService\x12E\n" +
-	"\bComplete\x12\x1b.pal.v1.CompleteRequest\x1a\x1c.pal.v1.CompleteResponse\x12J\n" +
-	"\x0eCompleteStream\x12\x1b.pal.v1.CompleteRequest\x1a\x19.pal.v1.CompleteChunk0\x01\x12<\n" +
-	"\x05Embed\x12\x18.pal.v1.EmbedRequest\x1a\x19.pal.v1.EmbedResponse\x12E\n" +
-	"\bTokenize\x12\x1b.pal.v1.TokenizeRequest\x1a\x1c.pal.v1.TokenizeResponseB8Z6github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
+	"\x11OPTIMIZE_BALANCED\x10\x042\x86\x02\n" +
+	"\fModelService\x12=\n" +
+	"\bComplete\x12\x17.pal.v1.CompleteRequest\x1a\x18.pal.v1.CompleteResponse\x12B\n" +
+	"\x0eCompleteStream\x12\x17.pal.v1.CompleteRequest\x1a\x15.pal.v1.CompleteChunk0\x01\x124\n" +
+	"\x05Embed\x12\x14.pal.v1.EmbedRequest\x1a\x15.pal.v1.EmbedResponse\x12=\n" +
+	"\bTokenize\x12\x17.pal.v1.TokenizeRequest\x1a\x18.pal.v1.TokenizeResponseB,Z*github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
 
 var (
 	file_pal_v1_models_proto_rawDescOnce sync.Once

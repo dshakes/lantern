@@ -190,29 +190,28 @@ var File_pal_v1_engine_proto protoreflect.FileDescriptor
 
 const file_pal_v1_engine_proto_rawDesc = "" +
 	"\n" +
-	"\x17pal/v1/engine.proto\x12\n" +
-	"pal.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x15pal/v1/runs.proto\"\xc9\x02\n" +
+	"\x13pal/v1/engine.proto\x12\x06pal.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x11pal/v1/runs.proto\"\xc5\x02\n" +
 	"\x11ExecuteRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12(\n" +
 	"\x10agent_version_id\x18\x02 \x01(\tR\x0eagentVersionId\x12\x1d\n" +
 	"\n" +
 	"bundle_uri\x18\x03 \x01(\tR\tbundleUri\x123\n" +
 	"\bmanifest\x18\x04 \x01(\v2\x17.google.protobuf.StructR\bmanifest\x12-\n" +
-	"\x05input\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05input\x128\n" +
-	"\x03env\x18\x06 \x03(\v2&.pal.v1.ExecuteRunRequest.EnvEntryR\x03env\x1a6\n" +
+	"\x05input\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05input\x124\n" +
+	"\x03env\x18\x06 \x03(\v2\".pal.v1.ExecuteRunRequest.EnvEntryR\x03env\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\")\n" +
 	"\x10ResumeRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\x13\n" +
-	"\x11CancelRunResponse2\x80\x03\n" +
-	"\x15WorkflowEngineService\x12F\n" +
+	"\x11CancelRunResponse2\xd8\x02\n" +
+	"\x15WorkflowEngineService\x12>\n" +
 	"\n" +
-	"ExecuteRun\x12\x1d.pal.v1.ExecuteRunRequest\x1a\x17.pal.v1.StreamEvent0\x01\x12D\n" +
-	"\tResumeRun\x12\x1c.pal.v1.ResumeRunRequest\x1a\x17.pal.v1.StreamEvent0\x01\x12H\n" +
-	"\tSignalRun\x12\x1c.pal.v1.SignalRunRequest\x1a\x1d.pal.v1.SignalRunResponse\x12H\n" +
-	"\tCancelRun\x12\x1c.pal.v1.CancelRunRequest\x1a\x1d.pal.v1.CancelRunResponse\x12E\n" +
-	"\bQueryRun\x12\x1b.pal.v1.QueryRunRequest\x1a\x1c.pal.v1.QueryRunResponseB8Z6github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
+	"ExecuteRun\x12\x19.pal.v1.ExecuteRunRequest\x1a\x13.pal.v1.StreamEvent0\x01\x12<\n" +
+	"\tResumeRun\x12\x18.pal.v1.ResumeRunRequest\x1a\x13.pal.v1.StreamEvent0\x01\x12@\n" +
+	"\tSignalRun\x12\x18.pal.v1.SignalRunRequest\x1a\x19.pal.v1.SignalRunResponse\x12@\n" +
+	"\tCancelRun\x12\x18.pal.v1.CancelRunRequest\x1a\x19.pal.v1.CancelRunResponse\x12=\n" +
+	"\bQueryRun\x12\x17.pal.v1.QueryRunRequest\x1a\x18.pal.v1.QueryRunResponseB,Z*github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
 
 var (
 	file_pal_v1_engine_proto_rawDescOnce sync.Once

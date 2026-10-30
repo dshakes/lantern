@@ -998,7 +998,9 @@ type VmHandle struct {
 	AvailabilityZone string                 `protobuf:"bytes,3,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"`
 	CreatedAt        *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// Host-asserted software measurement (ADR 0031): SHA-256 hex over the five
-	// canonical inputs the manager booted from. Empty when not available.
+	// canonical inputs the manager booted from (kernel, rootfs, harness, boot
+	// args, spawn contract sans secrets). Empty when not computed or not
+	// available (non-Firecracker backends).
 	SoftwareMeasurement string `protobuf:"bytes,5,opt,name=software_measurement,json=softwareMeasurement,proto3" json:"software_measurement,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
@@ -3762,8 +3764,7 @@ var File_pal_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"\x18pal/v1/runtime.proto\x12\n" +
-	"pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x84\x02\n" +
+	"\x14pal/v1/runtime.proto\x12\x06pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x84\x02\n" +
 	"\x0eResourceLimits\x12\x12\n" +
 	"\x04vcpu\x18\x01 \x01(\tR\x04vcpu\x12\x16\n" +
 	"\x06memory\x18\x02 \x01(\tR\x06memory\x12\x10\n" +
@@ -3774,13 +3775,13 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"max_tokens\x18\x06 \x01(\x03R\tmaxTokens\x12 \n" +
 	"\fmax_cost_usd\x18\a \x01(\x01R\n" +
 	"maxCostUsd\x12!\n" +
-	"\fscratch_size\x18\b \x01(\tR\vscratchSize\"\x9d\x01\n" +
+	"\fscratch_size\x18\b \x01(\tR\vscratchSize\"\x99\x01\n" +
 	"\n" +
 	"EgressRule\x12\x18\n" +
 	"\apattern\x18\x01 \x01(\tR\apattern\x12!\n" +
 	"\fhttp_methods\x18\x02 \x03(\tR\vhttpMethods\x12\x19\n" +
-	"\brate_bps\x18\x03 \x01(\x03R\arateBps\x127\n" +
-	"\x06inject\x18\x04 \x03(\v2\x1f.pal.v1.CredentialInjectionR\x06inject\"o\n" +
+	"\brate_bps\x18\x03 \x01(\x03R\arateBps\x123\n" +
+	"\x06inject\x18\x04 \x03(\v2\x1b.pal.v1.CredentialInjectionR\x06inject\"o\n" +
 	"\x13CredentialInjection\x12\x16\n" +
 	"\x06header\x18\x01 \x01(\tR\x06header\x12\x1d\n" +
 	"\n" +
@@ -3789,24 +3790,24 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\tSecretRef\x12\x19\n" +
 	"\benv_name\x18\x01 \x01(\tR\aenvName\x12\x1d\n" +
 	"\n" +
-	"secret_uri\x18\x02 \x01(\tR\tsecretUri\"b\n" +
-	"\tDlpPolicy\x12)\n" +
-	"\x05rules\x18\x01 \x03(\v2\x13.pal.v1.DlpRuleR\x05rules\x12*\n" +
+	"secret_uri\x18\x02 \x01(\tR\tsecretUri\"^\n" +
+	"\tDlpPolicy\x12%\n" +
+	"\x05rules\x18\x01 \x03(\v2\x0f.pal.v1.DlpRuleR\x05rules\x12*\n" +
 	"\x11max_inspect_bytes\x18\x02 \x01(\x03R\x0fmaxInspectBytes\"\x8a\x01\n" +
 	"\aDlpRule\x12\x17\n" +
 	"\arule_id\x18\x01 \x01(\tR\x06ruleId\x12\x1a\n" +
 	"\bdetector\x18\x02 \x01(\tR\bdetector\x12\x18\n" +
 	"\apattern\x18\x03 \x01(\tR\apattern\x12\x12\n" +
 	"\x04mode\x18\x04 \x01(\tR\x04mode\x12\x1c\n" +
-	"\tthreshold\x18\x05 \x01(\x05R\tthreshold\"\xac\a\n" +
+	"\tthreshold\x18\x05 \x01(\x05R\tthreshold\"\x8c\a\n" +
 	"\tAgentSpec\x12!\n" +
-	"\fimage_digest\x18\x01 \x01(\tR\vimageDigest\x128\n" +
-	"\tisolation\x18\x02 \x01(\x0e2\x1a.pal.v1.IsolationClassR\tisolation\x122\n" +
-	"\x06limits\x18\x03 \x01(\v2\x1a.pal.v1.ResourceLimitsR\x06limits\x123\n" +
-	"\anetwork\x18\x04 \x01(\x0e2\x19.pal.v1.NetworkPolicyR\anetwork\x129\n" +
-	"\fegress_rules\x18\x05 \x03(\v2\x16.pal.v1.EgressRuleR\vegressRules\x12/\n" +
-	"\asecrets\x18\x06 \x03(\v2\x15.pal.v1.SecretRefR\asecrets\x129\n" +
-	"\x06labels\x18\a \x03(\v2!.pal.v1.AgentSpec.LabelsEntryR\x06labels\x12+\n" +
+	"\fimage_digest\x18\x01 \x01(\tR\vimageDigest\x124\n" +
+	"\tisolation\x18\x02 \x01(\x0e2\x16.pal.v1.IsolationClassR\tisolation\x12.\n" +
+	"\x06limits\x18\x03 \x01(\v2\x16.pal.v1.ResourceLimitsR\x06limits\x12/\n" +
+	"\anetwork\x18\x04 \x01(\x0e2\x15.pal.v1.NetworkPolicyR\anetwork\x125\n" +
+	"\fegress_rules\x18\x05 \x03(\v2\x12.pal.v1.EgressRuleR\vegressRules\x12+\n" +
+	"\asecrets\x18\x06 \x03(\v2\x11.pal.v1.SecretRefR\asecrets\x125\n" +
+	"\x06labels\x18\a \x03(\v2\x1d.pal.v1.AgentSpec.LabelsEntryR\x06labels\x12+\n" +
 	"\x11preferred_regions\x18\b \x03(\tR\x10preferredRegions\x12\x1e\n" +
 	"\n" +
 	"idempotent\x18\t \x01(\bR\n" +
@@ -3817,12 +3818,12 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x10agent_version_id\x18\f \x01(\tR\x0eagentVersionId\x12\x15\n" +
 	"\x06run_id\x18\r \x01(\tR\x05runId\x12\x18\n" +
 	"\acommand\x18\x0e \x03(\tR\acommand\x12\x12\n" +
-	"\x04args\x18\x0f \x03(\tR\x04args\x120\n" +
-	"\x03env\x18\x10 \x03(\v2\x1e.pal.v1.AgentSpec.EnvEntryR\x03env\x12\"\n" +
+	"\x04args\x18\x0f \x03(\tR\x04args\x12,\n" +
+	"\x03env\x18\x10 \x03(\v2\x1a.pal.v1.AgentSpec.EnvEntryR\x03env\x12\"\n" +
 	"\fconfidential\x18\x11 \x01(\bR\fconfidential\x12*\n" +
-	"\x11idle_timeout_secs\x18\x12 \x01(\x05R\x0fidleTimeoutSecs\x124\n" +
+	"\x11idle_timeout_secs\x18\x12 \x01(\x05R\x0fidleTimeoutSecs\x120\n" +
 	"\n" +
-	"dlp_policy\x18\x13 \x01(\v2\x15.pal.v1.DlpPolicyR\tdlpPolicy\x1a9\n" +
+	"dlp_policy\x18\x13 \x01(\v2\x11.pal.v1.DlpPolicyR\tdlpPolicy\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a6\n" +
@@ -3833,20 +3834,21 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x16\n" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12'\n" +
-	"\x0fspread_topology\x18\x04 \x01(\tR\x0espreadTopology\"\x9b\x01\n" +
+	"\x0fspread_topology\x18\x04 \x01(\tR\x0espreadTopology\"\xce\x01\n" +
 	"\bVmHandle\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x12\n" +
 	"\x04node\x18\x02 \x01(\tR\x04node\x12+\n" +
 	"\x11availability_zone\x18\x03 \x01(\tR\x10availabilityZone\x129\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xdd\x01\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x121\n" +
+	"\x14software_measurement\x18\x05 \x01(\tR\x13softwareMeasurement\"\xd5\x01\n" +
 	"\vStatusEvent\x12\x13\n" +
-	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12)\n" +
-	"\x05state\x18\x02 \x01(\x0e2\x13.pal.v1.VmStateR\x05state\x12*\n" +
+	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12%\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x0f.pal.v1.VmStateR\x05state\x12*\n" +
 	"\x02at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x19\n" +
-	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12/\n" +
-	"\x05usage\x18\x06 \x01(\v2\x19.pal.v1.ResourceUsageR\x05usage\"\xfb\x01\n" +
+	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12+\n" +
+	"\x05usage\x18\x06 \x01(\v2\x15.pal.v1.ResourceUsageR\x05usage\"\xfb\x01\n" +
 	"\rResourceUsage\x12 \n" +
 	"\fvcpu_ms_used\x18\x01 \x01(\x03R\n" +
 	"vcpuMsUsed\x12!\n" +
@@ -3855,37 +3857,37 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x11network_bytes_out\x18\x04 \x01(\x03R\x0fnetworkBytesOut\x12\x1d\n" +
 	"\n" +
 	"disk_bytes\x18\x05 \x01(\x03R\tdiskBytes\x120\n" +
-	"\x14cost_usd_accumulated\x18\x06 \x01(\x01R\x12costUsdAccumulated\"\xf4\x01\n" +
+	"\x14cost_usd_accumulated\x18\x06 \x01(\x01R\x12costUsdAccumulated\"\xf0\x01\n" +
 	"\x0eRuntimeLogLine\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x16\n" +
 	"\x06stream\x18\x03 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x04 \x01(\tR\x04text\x12;\n" +
-	"\x05attrs\x18\x05 \x03(\v2%.pal.v1.RuntimeLogLine.AttrsEntryR\x05attrs\x1a8\n" +
+	"\x04text\x18\x04 \x01(\tR\x04text\x127\n" +
+	"\x05attrs\x18\x05 \x03(\v2!.pal.v1.RuntimeLogLine.AttrsEntryR\x05attrs\x1a8\n" +
 	"\n" +
 	"AttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfe\x01\n" +
-	"\x0fScheduleRequest\x12)\n" +
-	"\x04spec\x18\x01 \x01(\v2\x15.pal.v1.AgentSpecR\x04spec\x12-\n" +
-	"\x04hint\x18\x02 \x01(\v2\x19.pal.v1.PlacementHintR\x04hint\x12E\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf6\x01\n" +
+	"\x0fScheduleRequest\x12%\n" +
+	"\x04spec\x18\x01 \x01(\v2\x11.pal.v1.AgentSpecR\x04spec\x12)\n" +
+	"\x04hint\x18\x02 \x01(\v2\x15.pal.v1.PlacementHintR\x04hint\x12E\n" +
 	"\x11cold_start_budget\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x0fcoldStartBudget\x12!\n" +
 	"\freserve_only\x18\x04 \x01(\bR\vreserveOnly\x12'\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey\"A\n" +
 	"\rEventsRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x1b\n" +
-	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"~\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"z\n" +
 	"\vListRequest\x12\x1b\n" +
-	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12+\n" +
-	"\x06states\x18\x02 \x03(\x0e2\x13.pal.v1.VmStateR\x06states\x12%\n" +
-	"\x0elabel_selector\x18\x03 \x01(\tR\rlabelSelector\"\x9f\x03\n" +
-	"\fListResponse\x123\n" +
-	"\x05items\x18\x01 \x03(\v2\x1d.pal.v1.ListResponse.ItemR\x05items\x1a\xd9\x02\n" +
-	"\x04Item\x12,\n" +
-	"\x06handle\x18\x01 \x01(\v2\x14.pal.v1.VmHandleR\x06handle\x12)\n" +
-	"\x04spec\x18\x02 \x01(\v2\x15.pal.v1.AgentSpecR\x04spec\x12)\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x13.pal.v1.VmStateR\x05state\x12/\n" +
-	"\x05usage\x18\x04 \x01(\v2\x19.pal.v1.ResourceUsageR\x05usage\x12A\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12'\n" +
+	"\x06states\x18\x02 \x03(\x0e2\x0f.pal.v1.VmStateR\x06states\x12%\n" +
+	"\x0elabel_selector\x18\x03 \x01(\tR\rlabelSelector\"\x8b\x03\n" +
+	"\fListResponse\x12/\n" +
+	"\x05items\x18\x01 \x03(\v2\x19.pal.v1.ListResponse.ItemR\x05items\x1a\xc9\x02\n" +
+	"\x04Item\x12(\n" +
+	"\x06handle\x18\x01 \x01(\v2\x10.pal.v1.VmHandleR\x06handle\x12%\n" +
+	"\x04spec\x18\x02 \x01(\v2\x11.pal.v1.AgentSpecR\x04spec\x12%\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x0f.pal.v1.VmStateR\x05state\x12+\n" +
+	"\x05usage\x18\x04 \x01(\v2\x15.pal.v1.ResourceUsageR\x05usage\x12A\n" +
 	"\x0elast_heartbeat\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\rlastHeartbeat\x12\x16\n" +
 	"\x06reason\x18\x06 \x01(\tR\x06reason\x12\x1f\n" +
 	"\vsnapshot_id\x18\a \x01(\tR\n" +
@@ -3893,41 +3895,41 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\fparent_vm_id\x18\b \x01(\tR\n" +
 	"parentVmId\"#\n" +
 	"\fPauseRequest\x12\x13\n" +
-	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\"p\n" +
+	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\"l\n" +
 	"\rPauseResponse\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
-	"snapshotId\x12)\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x13.pal.v1.VmStateR\x05state\"$\n" +
+	"snapshotId\x12%\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x0f.pal.v1.VmStateR\x05state\"$\n" +
 	"\rResumeRequest\x12\x13\n" +
-	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\"\x85\x01\n" +
+	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\"\x81\x01\n" +
 	"\x0eResumeResponse\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
-	"snapshotId\x12)\n" +
-	"\x05state\x18\x03 \x01(\x0e2\x13.pal.v1.VmStateR\x05state\x12\x12\n" +
-	"\x04node\x18\x04 \x01(\tR\x04node\"r\n" +
+	"snapshotId\x12%\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x0f.pal.v1.VmStateR\x05state\x12\x12\n" +
+	"\x04node\x18\x04 \x01(\tR\x04node\"n\n" +
 	"\vForkRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x14\n" +
-	"\x05count\x18\x02 \x01(\x05R\x05count\x128\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\x124\n" +
 	"\n" +
-	"identities\x18\x03 \x03(\v2\x18.pal.v1.ForkIdentityR\n" +
+	"identities\x18\x03 \x03(\v2\x14.pal.v1.ForkIdentityR\n" +
 	"identities\"l\n" +
 	"\fForkIdentity\x12*\n" +
 	"\x11agent_instance_id\x18\x01 \x01(\tR\x0fagentInstanceId\x120\n" +
-	"\x14agent_instance_token\x18\x02 \x01(\tR\x12agentInstanceToken\"\xa1\x01\n" +
+	"\x14agent_instance_token\x18\x02 \x01(\tR\x12agentInstanceToken\"\x9d\x01\n" +
 	"\tForkChild\x12\x13\n" +
-	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12)\n" +
-	"\x05state\x18\x02 \x01(\x0e2\x13.pal.v1.VmStateR\x05state\x12\x14\n" +
+	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12%\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x0f.pal.v1.VmStateR\x05state\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12\x12\n" +
 	"\x04node\x18\x04 \x01(\tR\x04node\x12*\n" +
-	"\x11agent_instance_id\x18\x05 \x01(\tR\x0fagentInstanceId\"~\n" +
+	"\x11agent_instance_id\x18\x05 \x01(\tR\x0fagentInstanceId\"z\n" +
 	"\fForkResponse\x12 \n" +
 	"\fsource_vm_id\x18\x01 \x01(\tR\n" +
 	"sourceVmId\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
-	"snapshotId\x12+\n" +
-	"\x05forks\x18\x03 \x03(\v2\x15.pal.v1.ForkChildR\x05forks\"p\n" +
+	"snapshotId\x12'\n" +
+	"\x05forks\x18\x03 \x03(\v2\x11.pal.v1.ForkChildR\x05forks\"p\n" +
 	"\x10TerminateRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12/\n" +
 	"\x05grace\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12\x16\n" +
@@ -3944,11 +3946,11 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"snapshotId\x12\x14\n" +
 	"\x05bytes\x18\x02 \x01(\x03R\x05bytes\x12\x16\n" +
 	"\x06sha256\x18\x03 \x01(\tR\x06sha256\"\x10\n" +
-	"\x0eClusterRequest\"\xc5\x04\n" +
-	"\x0fClusterResponse\x126\n" +
-	"\x05nodes\x18\x01 \x03(\v2 .pal.v1.ClusterResponse.NodeR\x05nodes\x12*\n" +
+	"\x0eClusterRequest\"\xbd\x04\n" +
+	"\x0fClusterResponse\x122\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x1c.pal.v1.ClusterResponse.NodeR\x05nodes\x12*\n" +
 	"\x11total_vms_running\x18\x02 \x01(\x03R\x0ftotalVmsRunning\x12*\n" +
-	"\x11total_vms_pending\x18\x03 \x01(\x03R\x0ftotalVmsPending\x1a\xa1\x03\n" +
+	"\x11total_vms_pending\x18\x03 \x01(\x03R\x0ftotalVmsPending\x1a\x9d\x03\n" +
 	"\x04Node\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x16\n" +
@@ -3957,16 +3959,16 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x11free_memory_bytes\x18\x05 \x01(\x03R\x0ffreeMemoryBytes\x12\x1f\n" +
 	"\vrunning_vms\x18\x06 \x01(\x03R\n" +
 	"runningVms\x12\x1a\n" +
-	"\bdraining\x18\a \x01(\bR\bdraining\x12g\n" +
-	"\x13warm_pool_inventory\x18\b \x03(\v27.pal.v1.ClusterResponse.Node.WarmPoolInventoryEntryR\x11warmPoolInventory\x1aD\n" +
+	"\bdraining\x18\a \x01(\bR\bdraining\x12c\n" +
+	"\x13warm_pool_inventory\x18\b \x03(\v23.pal.v1.ClusterResponse.Node.WarmPoolInventoryEntryR\x11warmPoolInventory\x1aD\n" +
 	"\x16WarmPoolInventoryEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"g\n" +
-	"\fSpawnRequest\x12)\n" +
-	"\x04spec\x18\x01 \x01(\v2\x15.pal.v1.AgentSpecR\x04spec\x12,\n" +
-	"\x06handle\x18\x02 \x01(\v2\x14.pal.v1.VmHandleR\x06handle\"\xa2\x01\n" +
-	"\rSpawnResponse\x12,\n" +
-	"\x06handle\x18\x01 \x01(\v2\x14.pal.v1.VmHandleR\x06handle\x12>\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"_\n" +
+	"\fSpawnRequest\x12%\n" +
+	"\x04spec\x18\x01 \x01(\v2\x11.pal.v1.AgentSpecR\x04spec\x12(\n" +
+	"\x06handle\x18\x02 \x01(\v2\x10.pal.v1.VmHandleR\x06handle\"\x9e\x01\n" +
+	"\rSpawnResponse\x12(\n" +
+	"\x06handle\x18\x01 \x01(\v2\x10.pal.v1.VmHandleR\x06handle\x12>\n" +
 	"\rboot_duration\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\fbootDuration\x12#\n" +
 	"\rfrom_snapshot\x18\x03 \x01(\bR\ffromSnapshot\"k\n" +
 	"\vStopRequest\x12\x13\n" +
@@ -4004,26 +4006,26 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x04args\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x04args\x123\n" +
 	"\atimeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12'\n" +
 	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x12\x1b\n" +
-	"\ttenant_id\x18\b \x01(\tR\btenantId\"\x89\x01\n" +
-	"\x10ExecToolResponse\x12.\n" +
-	"\x06status\x18\x01 \x01(\x0e2\x16.pal.v1.ToolStatusR\x06status\x12/\n" +
+	"\ttenant_id\x18\b \x01(\tR\btenantId\"\x85\x01\n" +
+	"\x10ExecToolResponse\x12*\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x12.pal.v1.ToolStatusR\x06status\x12/\n" +
 	"\x06result\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06result\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"Z\n" +
 	"\fStatsRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x125\n" +
-	"\binterval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\binterval\"\xa3\x02\n" +
+	"\binterval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\binterval\"\x9f\x02\n" +
 	"\x10HeartbeatRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12*\n" +
-	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12/\n" +
-	"\x05usage\x18\x03 \x01(\v2\x19.pal.v1.ResourceUsageR\x05usage\x12\x1d\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12+\n" +
+	"\x05usage\x18\x03 \x01(\v2\x15.pal.v1.ResourceUsageR\x05usage\x12\x1d\n" +
 	"\n" +
 	"worker_pid\x18\x04 \x01(\x05R\tworkerPid\x12#\n" +
 	"\rrestart_count\x18\x05 \x01(\x05R\frestartCount\x12&\n" +
 	"\x0fhas_active_exec\x18\x06 \x01(\bR\rhasActiveExec\x121\n" +
-	"\x15last_activity_unix_ms\x18\a \x01(\x03R\x12lastActivityUnixMs\"\xc8\x01\n" +
-	"\fHeartbeatAck\x12A\n" +
-	"\x10egress_overrides\x18\x01 \x03(\v2\x16.pal.v1.EgressRuleR\x0fegressOverrides\x12C\n" +
-	"\x0flimits_override\x18\x02 \x01(\v2\x1a.pal.v1.ResourceLimitsR\x0elimitsOverride\x12\x14\n" +
+	"\x15last_activity_unix_ms\x18\a \x01(\x03R\x12lastActivityUnixMs\"\xc0\x01\n" +
+	"\fHeartbeatAck\x12=\n" +
+	"\x10egress_overrides\x18\x01 \x03(\v2\x12.pal.v1.EgressRuleR\x0fegressOverrides\x12?\n" +
+	"\x0flimits_override\x18\x02 \x01(\v2\x16.pal.v1.ResourceLimitsR\x0elimitsOverride\x12\x14\n" +
 	"\x05drain\x18\x03 \x01(\bR\x05drain\x12\x1a\n" +
 	"\bsnapshot\x18\x04 \x01(\bR\bsnapshot\"t\n" +
 	"\x11VendSecretRequest\x12\x13\n" +
@@ -4034,23 +4036,23 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x12VendSecretResponse\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\tR\x05value\x129\n" +
 	"\n" +
-	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\xcb\x01\n" +
-	"\rHarnessReport\x12.\n" +
-	"\x03log\x18\x01 \x01(\v2\x1a.pal.v1.RuntimeLogLineH\x00R\x03log\x12!\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\xc3\x01\n" +
+	"\rHarnessReport\x12*\n" +
+	"\x03log\x18\x01 \x01(\v2\x16.pal.v1.RuntimeLogLineH\x00R\x03log\x12!\n" +
 	"\votlp_traces\x18\x02 \x01(\fH\x00R\n" +
 	"otlpTraces\x12/\n" +
-	"\x12prometheus_metrics\x18\x03 \x01(\fH\x00R\x11prometheusMetrics\x12.\n" +
-	"\x05audit\x18\x04 \x01(\v2\x16.pal.v1.AuditEventH\x00R\x05auditB\x06\n" +
+	"\x12prometheus_metrics\x18\x03 \x01(\fH\x00R\x11prometheusMetrics\x12*\n" +
+	"\x05audit\x18\x04 \x01(\v2\x12.pal.v1.AuditEventH\x00R\x05auditB\x06\n" +
 	"\x04body\"\x1c\n" +
 	"\n" +
 	"HarnessAck\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xd8\x01\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xd4\x01\n" +
 	"\n" +
 	"AuditEvent\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12*\n" +
-	"\x02at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x127\n" +
-	"\x05attrs\x18\x04 \x03(\v2!.pal.v1.AuditEvent.AttrsEntryR\x05attrs\x1a8\n" +
+	"\x02at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x123\n" +
+	"\x05attrs\x18\x04 \x03(\v2\x1d.pal.v1.AuditEvent.AttrsEntryR\x05attrs\x1a8\n" +
 	"\n" +
 	"AttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
@@ -4083,31 +4085,31 @@ const file_pal_v1_runtime_proto_rawDesc = "" +
 	"\x17TOOL_STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eTOOL_STATUS_OK\x10\x01\x12\x15\n" +
 	"\x11TOOL_STATUS_ERROR\x10\x02\x12\x1b\n" +
-	"\x17TOOL_STATUS_UNAVAILABLE\x10\x032\xdb\x04\n" +
-	"\x10RuntimeScheduler\x12=\n" +
-	"\bSchedule\x12\x1b.pal.v1.ScheduleRequest\x1a\x14.pal.v1.VmHandle\x12>\n" +
-	"\x06Events\x12\x19.pal.v1.EventsRequest\x1a\x17.pal.v1.StatusEvent0\x01\x129\n" +
-	"\x04List\x12\x17.pal.v1.ListRequest\x1a\x18.pal.v1.ListResponse\x12H\n" +
-	"\tTerminate\x12\x1c.pal.v1.TerminateRequest\x1a\x1d.pal.v1.TerminateResponse\x12E\n" +
-	"\bSnapshot\x12\x1b.pal.v1.SnapshotRequest\x1a\x1c.pal.v1.SnapshotResponse\x12B\n" +
-	"\aCluster\x12\x1a.pal.v1.ClusterRequest\x1a\x1b.pal.v1.ClusterResponse\x12<\n" +
-	"\x05Pause\x12\x18.pal.v1.PauseRequest\x1a\x19.pal.v1.PauseResponse\x12?\n" +
-	"\x06Resume\x12\x19.pal.v1.ResumeRequest\x1a\x1a.pal.v1.ResumeResponse\x129\n" +
-	"\x04Fork\x12\x17.pal.v1.ForkRequest\x1a\x18.pal.v1.ForkResponse2\xd5\x03\n" +
-	"\x0eRuntimeManager\x12<\n" +
-	"\x05Spawn\x12\x18.pal.v1.SpawnRequest\x1a\x19.pal.v1.SpawnResponse\x129\n" +
-	"\x04Stop\x12\x17.pal.v1.StopRequest\x1a\x18.pal.v1.StopResponse\x12=\n" +
-	"\x04Logs\x12\x17.pal.v1.LogsRequest\x1a\x1a.pal.v1.RuntimeLogLine0\x01\x12=\n" +
-	"\x04Exec\x12\x17.pal.v1.ExecRequest\x1a\x18.pal.v1.ExecResponse(\x010\x01\x12E\n" +
-	"\bExecTool\x12\x1b.pal.v1.ExecToolRequest\x1a\x1c.pal.v1.ExecToolResponse\x12>\n" +
-	"\x05Stats\x12\x18.pal.v1.StatsRequest\x1a\x19.pal.v1.ResourceUsage0\x01\x12E\n" +
-	"\bSnapshot\x12\x1b.pal.v1.SnapshotRequest\x1a\x1c.pal.v1.SnapshotResponse2\xa4\x02\n" +
-	"\x0eRuntimeHarness\x12G\n" +
-	"\tHeartbeat\x12\x1c.pal.v1.HeartbeatRequest\x1a\x18.pal.v1.HeartbeatAck(\x010\x01\x12K\n" +
+	"\x17TOOL_STATUS_UNAVAILABLE\x10\x032\x93\x04\n" +
+	"\x10RuntimeScheduler\x125\n" +
+	"\bSchedule\x12\x17.pal.v1.ScheduleRequest\x1a\x10.pal.v1.VmHandle\x126\n" +
+	"\x06Events\x12\x15.pal.v1.EventsRequest\x1a\x13.pal.v1.StatusEvent0\x01\x121\n" +
+	"\x04List\x12\x13.pal.v1.ListRequest\x1a\x14.pal.v1.ListResponse\x12@\n" +
+	"\tTerminate\x12\x18.pal.v1.TerminateRequest\x1a\x19.pal.v1.TerminateResponse\x12=\n" +
+	"\bSnapshot\x12\x17.pal.v1.SnapshotRequest\x1a\x18.pal.v1.SnapshotResponse\x12:\n" +
+	"\aCluster\x12\x16.pal.v1.ClusterRequest\x1a\x17.pal.v1.ClusterResponse\x124\n" +
+	"\x05Pause\x12\x14.pal.v1.PauseRequest\x1a\x15.pal.v1.PauseResponse\x127\n" +
+	"\x06Resume\x12\x15.pal.v1.ResumeRequest\x1a\x16.pal.v1.ResumeResponse\x121\n" +
+	"\x04Fork\x12\x13.pal.v1.ForkRequest\x1a\x14.pal.v1.ForkResponse2\x9d\x03\n" +
+	"\x0eRuntimeManager\x124\n" +
+	"\x05Spawn\x12\x14.pal.v1.SpawnRequest\x1a\x15.pal.v1.SpawnResponse\x121\n" +
+	"\x04Stop\x12\x13.pal.v1.StopRequest\x1a\x14.pal.v1.StopResponse\x125\n" +
+	"\x04Logs\x12\x13.pal.v1.LogsRequest\x1a\x16.pal.v1.RuntimeLogLine0\x01\x125\n" +
+	"\x04Exec\x12\x13.pal.v1.ExecRequest\x1a\x14.pal.v1.ExecResponse(\x010\x01\x12=\n" +
+	"\bExecTool\x12\x17.pal.v1.ExecToolRequest\x1a\x18.pal.v1.ExecToolResponse\x126\n" +
+	"\x05Stats\x12\x14.pal.v1.StatsRequest\x1a\x15.pal.v1.ResourceUsage0\x01\x12=\n" +
+	"\bSnapshot\x12\x17.pal.v1.SnapshotRequest\x1a\x18.pal.v1.SnapshotResponse2\x84\x02\n" +
+	"\x0eRuntimeHarness\x12?\n" +
+	"\tHeartbeat\x12\x18.pal.v1.HeartbeatRequest\x1a\x14.pal.v1.HeartbeatAck(\x010\x01\x12C\n" +
 	"\n" +
-	"VendSecret\x12\x1d.pal.v1.VendSecretRequest\x1a\x1e.pal.v1.VendSecretResponse\x12=\n" +
-	"\x06Report\x12\x19.pal.v1.HarnessReport\x1a\x16.pal.v1.HarnessAck(\x01\x12=\n" +
-	"\x04Exec\x12\x17.pal.v1.ExecRequest\x1a\x18.pal.v1.ExecResponse(\x010\x01BOZMgithub.com/dshakes/pal/services/control-plane/gen/go/pal/v1;palv1b\x06proto3"
+	"VendSecret\x12\x19.pal.v1.VendSecretRequest\x1a\x1a.pal.v1.VendSecretResponse\x125\n" +
+	"\x06Report\x12\x15.pal.v1.HarnessReport\x1a\x12.pal.v1.HarnessAck(\x01\x125\n" +
+	"\x04Exec\x12\x13.pal.v1.ExecRequest\x1a\x14.pal.v1.ExecResponse(\x010\x01BCZAgithub.com/dshakes/pal/services/control-plane/gen/go/pal/v1;palv1b\x06proto3"
 
 var (
 	file_pal_v1_runtime_proto_rawDescOnce sync.Once

@@ -2066,20 +2066,19 @@ var File_pal_v1_runs_proto protoreflect.FileDescriptor
 
 const file_pal_v1_runs_proto_rawDesc = "" +
 	"\n" +
-	"\x15pal/v1/runs.proto\x12\n" +
-	"pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xe7\x06\n" +
+	"\x11pal/v1/runs.proto\x12\x06pal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xd7\x06\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x19\n" +
 	"\bagent_id\x18\x03 \x01(\tR\aagentId\x12(\n" +
-	"\x10agent_version_id\x18\x04 \x01(\tR\x0eagentVersionId\x12-\n" +
-	"\x06status\x18\x05 \x01(\x0e2\x15.pal.v1.RunStatusR\x06status\x12:\n" +
-	"\ftrigger_kind\x18\x06 \x01(\x0e2\x17.pal.v1.TriggerKindR\vtriggerKind\x12:\n" +
+	"\x10agent_version_id\x18\x04 \x01(\tR\x0eagentVersionId\x12)\n" +
+	"\x06status\x18\x05 \x01(\x0e2\x11.pal.v1.RunStatusR\x06status\x126\n" +
+	"\ftrigger_kind\x18\x06 \x01(\x0e2\x13.pal.v1.TriggerKindR\vtriggerKind\x12:\n" +
 	"\ftrigger_meta\x18\a \x01(\v2\x17.google.protobuf.StructR\vtriggerMeta\x12-\n" +
 	"\x05input\x18\b \x01(\v2\x17.google.protobuf.StructR\x05input\x12/\n" +
-	"\x06output\x18\t \x01(\v2\x17.google.protobuf.StructR\x06output\x12*\n" +
+	"\x06output\x18\t \x01(\v2\x17.google.protobuf.StructR\x06output\x12&\n" +
 	"\x05error\x18\n" +
-	" \x01(\v2\x14.pal.v1.RunErrorR\x05error\x12\x19\n" +
+	" \x01(\v2\x10.pal.v1.RunErrorR\x05error\x12\x19\n" +
 	"\bcost_usd\x18\v \x01(\x01R\acostUsd\x12\x1b\n" +
 	"\ttokens_in\x18\f \x01(\x03R\btokensIn\x12\x1d\n" +
 	"\n" +
@@ -2090,8 +2089,8 @@ const file_pal_v1_runs_proto_rawDesc = "" +
 	"finishedAt\x129\n" +
 	"\n" +
 	"created_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\"\n" +
-	"\rparent_run_id\x18\x11 \x01(\tR\vparentRunId\x123\n" +
-	"\x06labels\x18\x12 \x03(\v2\x1b.pal.v1.Run.LabelsEntryR\x06labels\x12\x1d\n" +
+	"\rparent_run_id\x18\x11 \x01(\tR\vparentRunId\x12/\n" +
+	"\x06labels\x18\x12 \x03(\v2\x17.pal.v1.Run.LabelsEntryR\x06labels\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x13 \x01(\tR\tsessionId\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
@@ -2101,27 +2100,27 @@ const file_pal_v1_runs_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
 	"\astep_id\x18\x03 \x01(\tR\x06stepId\x121\n" +
-	"\adetails\x18\x04 \x01(\v2\x17.google.protobuf.StructR\adetails\"\xad\x06\n" +
+	"\adetails\x18\x04 \x01(\v2\x17.google.protobuf.StructR\adetails\"\xfd\x05\n" +
 	"\vStreamEvent\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\astep_id\x18\x02 \x01(\tR\x06stepId\x12\x10\n" +
 	"\x03seq\x18\x03 \x01(\x04R\x03seq\x12*\n" +
-	"\x02ts\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x02ts\x123\n" +
+	"\x02ts\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x02ts\x12/\n" +
 	"\tllm_delta\x18\n" +
-	" \x01(\v2\x14.pal.v1.LlmDeltaH\x00R\bllmDelta\x12<\n" +
-	"\fllm_complete\x18\v \x01(\v2\x17.pal.v1.LlmCompleteH\x00R\vllmComplete\x128\n" +
-	"\ttool_call\x18\f \x01(\v2\x19.pal.v1.ToolCallEventH\x00R\btoolCall\x12>\n" +
-	"\vtool_result\x18\r \x01(\v2\x1b.pal.v1.ToolResultEventH\x00R\n" +
-	"toolResult\x12<\n" +
-	"\fstep_started\x18\x0e \x01(\v2\x17.pal.v1.StepStartedH\x00R\vstepStarted\x12B\n" +
-	"\x0estep_completed\x18\x0f \x01(\v2\x19.pal.v1.StepCompletedH\x00R\rstepCompleted\x129\n" +
-	"\vstep_failed\x18\x10 \x01(\v2\x16.pal.v1.StepFailedH\x00R\n" +
-	"stepFailed\x12'\n" +
-	"\x03log\x18\x11 \x01(\v2\x13.pal.v1.LogLineH\x00R\x03log\x127\n" +
-	"\bquestion\x18\x12 \x01(\v2\x19.pal.v1.QuestionEventH\x00R\bquestion\x127\n" +
-	"\bapproval\x18\x13 \x01(\v2\x19.pal.v1.ApprovalEventH\x00R\bapproval\x125\n" +
-	"\theartbeat\x18\x14 \x01(\v2\x15.pal.v1.HeartbeatH\x00R\theartbeat\x12)\n" +
-	"\x03end\x18\x15 \x01(\v2\x15.pal.v1.StreamEndH\x00R\x03endB\t\n" +
+	" \x01(\v2\x10.pal.v1.LlmDeltaH\x00R\bllmDelta\x128\n" +
+	"\fllm_complete\x18\v \x01(\v2\x13.pal.v1.LlmCompleteH\x00R\vllmComplete\x124\n" +
+	"\ttool_call\x18\f \x01(\v2\x15.pal.v1.ToolCallEventH\x00R\btoolCall\x12:\n" +
+	"\vtool_result\x18\r \x01(\v2\x17.pal.v1.ToolResultEventH\x00R\n" +
+	"toolResult\x128\n" +
+	"\fstep_started\x18\x0e \x01(\v2\x13.pal.v1.StepStartedH\x00R\vstepStarted\x12>\n" +
+	"\x0estep_completed\x18\x0f \x01(\v2\x15.pal.v1.StepCompletedH\x00R\rstepCompleted\x125\n" +
+	"\vstep_failed\x18\x10 \x01(\v2\x12.pal.v1.StepFailedH\x00R\n" +
+	"stepFailed\x12#\n" +
+	"\x03log\x18\x11 \x01(\v2\x0f.pal.v1.LogLineH\x00R\x03log\x123\n" +
+	"\bquestion\x18\x12 \x01(\v2\x15.pal.v1.QuestionEventH\x00R\bquestion\x123\n" +
+	"\bapproval\x18\x13 \x01(\v2\x15.pal.v1.ApprovalEventH\x00R\bapproval\x121\n" +
+	"\theartbeat\x18\x14 \x01(\v2\x11.pal.v1.HeartbeatH\x00R\theartbeat\x12%\n" +
+	"\x03end\x18\x15 \x01(\v2\x11.pal.v1.StreamEndH\x00R\x03endB\t\n" +
 	"\apayload\"v\n" +
 	"\bLlmDelta\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1d\n" +
@@ -2180,15 +2179,15 @@ const file_pal_v1_runs_proto_rawDesc = "" +
 	"expires_at\x18\x03 \x01(\tR\texpiresAt\"\v\n" +
 	"\tHeartbeat\"#\n" +
 	"\tStreamEnd\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xb5\x03\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xad\x03\n" +
 	"\x10CreateRunRequest\x12\x1d\n" +
 	"\n" +
 	"agent_name\x18\x01 \x01(\tR\tagentName\x12-\n" +
-	"\x05input\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05input\x12:\n" +
-	"\ftrigger_kind\x18\x03 \x01(\x0e2\x17.pal.v1.TriggerKindR\vtriggerKind\x12:\n" +
+	"\x05input\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05input\x126\n" +
+	"\ftrigger_kind\x18\x03 \x01(\x0e2\x13.pal.v1.TriggerKindR\vtriggerKind\x12:\n" +
 	"\ftrigger_meta\x18\x04 \x01(\v2\x17.google.protobuf.StructR\vtriggerMeta\x12\x16\n" +
-	"\x06stream\x18\x05 \x01(\bR\x06stream\x12@\n" +
-	"\x06labels\x18\x06 \x03(\v2(.pal.v1.CreateRunRequest.LabelsEntryR\x06labels\x12'\n" +
+	"\x06stream\x18\x05 \x01(\bR\x06stream\x12<\n" +
+	"\x06labels\x18\x06 \x03(\v2$.pal.v1.CreateRunRequest.LabelsEntryR\x06labels\x12'\n" +
 	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\b \x01(\tR\tsessionId\x1a9\n" +
@@ -2196,18 +2195,18 @@ const file_pal_v1_runs_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1f\n" +
 	"\rGetRunRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\xc7\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xc3\x01\n" +
 	"\x0fListRunsRequest\x12\x1d\n" +
 	"\n" +
-	"agent_name\x18\x01 \x01(\tR\tagentName\x12:\n" +
-	"\rstatus_filter\x18\x02 \x01(\x0e2\x15.pal.v1.RunStatusR\fstatusFilter\x12\x1b\n" +
+	"agent_name\x18\x01 \x01(\tR\tagentName\x126\n" +
+	"\rstatus_filter\x18\x02 \x01(\x0e2\x11.pal.v1.RunStatusR\fstatusFilter\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\"\x80\x01\n" +
-	"\x10ListRunsResponse\x12#\n" +
-	"\x04runs\x18\x01 \x03(\v2\x0f.pal.v1.RunR\x04runs\x12&\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"|\n" +
+	"\x10ListRunsResponse\x12\x1f\n" +
+	"\x04runs\x18\x01 \x03(\v2\v.pal.v1.RunR\x04runs\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x1f\n" +
 	"\vtotal_count\x18\x03 \x01(\x05R\n" +
 	"totalCount\":\n" +
@@ -2251,17 +2250,17 @@ const file_pal_v1_runs_proto_rawDesc = "" +
 	"\x14TRIGGER_KIND_SURFACE\x10\x04\x12\x14\n" +
 	"\x10TRIGGER_KIND_A2A\x10\x05\x12\x1a\n" +
 	"\x16TRIGGER_KIND_CONNECTOR\x10\x06\x12\x17\n" +
-	"\x13TRIGGER_KIND_MANUAL\x10\a2\xa0\x04\n" +
+	"\x13TRIGGER_KIND_MANUAL\x10\a2\xe0\x03\n" +
 	"\n" +
-	"RunService\x12:\n" +
-	"\tCreateRun\x12\x1c.pal.v1.CreateRunRequest\x1a\x0f.pal.v1.Run\x124\n" +
-	"\x06GetRun\x12\x19.pal.v1.GetRunRequest\x1a\x0f.pal.v1.Run\x12E\n" +
-	"\bListRuns\x12\x1b.pal.v1.ListRunsRequest\x1a\x1c.pal.v1.ListRunsResponse\x12:\n" +
-	"\tCancelRun\x12\x1c.pal.v1.CancelRunRequest\x1a\x0f.pal.v1.Run\x12:\n" +
-	"\tReplayRun\x12\x1c.pal.v1.ReplayRunRequest\x1a\x0f.pal.v1.Run\x12P\n" +
-	"\x0fStreamRunEvents\x12\".pal.v1.StreamRunEventsRequest\x1a\x17.pal.v1.StreamEvent0\x01\x12H\n" +
-	"\tSignalRun\x12\x1c.pal.v1.SignalRunRequest\x1a\x1d.pal.v1.SignalRunResponse\x12E\n" +
-	"\bQueryRun\x12\x1b.pal.v1.QueryRunRequest\x1a\x1c.pal.v1.QueryRunResponseB8Z6github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
+	"RunService\x122\n" +
+	"\tCreateRun\x12\x18.pal.v1.CreateRunRequest\x1a\v.pal.v1.Run\x12,\n" +
+	"\x06GetRun\x12\x15.pal.v1.GetRunRequest\x1a\v.pal.v1.Run\x12=\n" +
+	"\bListRuns\x12\x17.pal.v1.ListRunsRequest\x1a\x18.pal.v1.ListRunsResponse\x122\n" +
+	"\tCancelRun\x12\x18.pal.v1.CancelRunRequest\x1a\v.pal.v1.Run\x122\n" +
+	"\tReplayRun\x12\x18.pal.v1.ReplayRunRequest\x1a\v.pal.v1.Run\x12H\n" +
+	"\x0fStreamRunEvents\x12\x1e.pal.v1.StreamRunEventsRequest\x1a\x13.pal.v1.StreamEvent0\x01\x12@\n" +
+	"\tSignalRun\x12\x18.pal.v1.SignalRunRequest\x1a\x19.pal.v1.SignalRunResponse\x12=\n" +
+	"\bQueryRun\x12\x17.pal.v1.QueryRunRequest\x1a\x18.pal.v1.QueryRunResponseB,Z*github.com/dshakes/pal/gen/go/pal/v1;palv1b\x06proto3"
 
 var (
 	file_pal_v1_runs_proto_rawDescOnce sync.Once
