@@ -45,3 +45,8 @@ CREATE POLICY tenant_isolation_batches ON batches
 
 ALTER TABLE runs ADD CONSTRAINT runs_batch_id_fk
     FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE SET NULL;
+
+-- Grant the non-superuser app role access so RLS-enforced queries work.
+-- Without this, BatchHandler queries over srv.TenantPool() fail with
+-- "permission denied for table batches" under PAL_RLS_ENFORCE=1.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE batches TO lantern_app;

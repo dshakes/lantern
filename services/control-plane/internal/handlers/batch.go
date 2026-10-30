@@ -428,6 +428,30 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 	for i, item := range body.Items {
 		item := item
 		_ = i
+		// Stop dispatching new runs if the batch was cancelled while in-flight.
+		select {
+		case <-ctx.Done():
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				h.incrementBatchCounter(ctx, tenantID, batchID, "cancelled_count", 0, log)
+			}()
+			continue
+		default:
+		}
+		var batchCancelled bool
+		// rls-exempt: keyed by the authorised batch id.
+		_ = h.srv.Pool.QueryRow(ctx, `SELECT status = 'cancelled' FROM batches WHERE id = $1`, batchID).Scan(&batchCancelled)
+		if batchCancelled {
+			// Decrement pending for this item without ever running it.
+			if _, e := h.srv.Pool.Exec(ctx,
+				`UPDATE batches SET pending_count = GREATEST(0, pending_count - 1),
+				 cancelled_count = cancelled_count + 1 WHERE id = $1`, batchID,
+			); e != nil {
+				log.Warn("dispatchBatch: pending→cancelled failed on cancel", zap.Error(e))
+			}
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{} // acquire slot
 		go func() {
@@ -438,8 +462,15 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 				// Wait for this run to reach terminal state, then update batch counters.
 				h.waitAndRecord(ctx, batchID, tenantID, runID, log)
 			} else {
-				// Run creation failed: count as failed immediately.
-				h.incrementBatchCounter(ctx, tenantID, batchID, "failed_count", 0, log)
+				// Run creation failed: decrement pending and count as failed.
+				// (spawnBatchRun never incremented running_count on failure, so we
+				// only fix pending_count here, not running_count.)
+				if _, e := h.srv.Pool.Exec(ctx,
+					`UPDATE batches SET pending_count = GREATEST(0, pending_count - 1),
+					 failed_count = failed_count + 1 WHERE id = $1`, batchID,
+				); e != nil {
+					log.Warn("dispatchBatch: pending→failed counter update failed", zap.Error(e))
+				}
 			}
 		}()
 	}
@@ -549,18 +580,28 @@ func (h *BatchHandler) incrementBatchCounter(ctx context.Context, tenantID, batc
 }
 
 // finalizeBatch marks the batch terminal when all child runs are done.
+// It does not overwrite an already-cancelled status (CancelBatch may have raced
+// us to it).
 func (h *BatchHandler) finalizeBatch(ctx context.Context, tenantID, batchID, callbackURL string, log *zap.Logger) {
 	var totalCount, succeededCount, failedCount, cancelledCount int
+	var existingStatus string
 	var costUSD float64
 	// rls-exempt: batch keyed by id.
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT total_count, succeeded_count, failed_count, cancelled_count, cost_usd
+		SELECT status, total_count, succeeded_count, failed_count, cancelled_count, cost_usd
 		FROM batches WHERE id = $1`, batchID,
-	).Scan(&totalCount, &succeededCount, &failedCount, &cancelledCount, &costUSD)
+	).Scan(&existingStatus, &totalCount, &succeededCount, &failedCount, &cancelledCount, &costUSD)
 	if err != nil {
 		log.Error("finalizeBatch: read failed", zap.Error(err))
 		return
 	}
+	// If the batch was cancelled externally (CancelBatch), respect that.
+	if isRunTerminal(existingStatus) {
+		log.Info("finalizeBatch: batch already terminal (no-op)",
+			zap.String("batch_id", batchID), zap.String("status", existingStatus))
+		return
+	}
+
 	terminalCount := succeededCount + failedCount + cancelledCount
 	if terminalCount < totalCount {
 		log.Warn("finalizeBatch: not all runs are terminal",
@@ -568,15 +609,16 @@ func (h *BatchHandler) finalizeBatch(ctx context.Context, tenantID, batchID, cal
 	}
 
 	batchStatus := "succeeded"
-	if cancelledCount > 0 && failedCount == 0 {
-		batchStatus = "cancelled"
-	} else if failedCount > 0 {
+	if failedCount > 0 {
 		batchStatus = "failed"
+	} else if cancelledCount > 0 {
+		batchStatus = "cancelled"
 	}
 
-	// rls-exempt: batch keyed by id.
+	// rls-exempt: batch keyed by id; only transition from non-terminal.
 	if _, err := h.srv.Pool.Exec(ctx,
-		`UPDATE batches SET status = $2, finished_at = now() WHERE id = $1`,
+		`UPDATE batches SET status = $2, finished_at = now()
+		 WHERE id = $1 AND status NOT IN ('succeeded','failed','cancelled')`,
 		batchID, batchStatus,
 	); err != nil {
 		log.Error("finalizeBatch: mark terminal failed", zap.Error(err))
@@ -587,10 +629,7 @@ func (h *BatchHandler) finalizeBatch(ctx context.Context, tenantID, batchID, cal
 		zap.Int("succeeded", succeededCount), zap.Int("failed", failedCount))
 
 	// Batch-level callback (ADR 0033).
-	if callbackURL == "" {
-		return
-	}
-	// Read callback_url from DB in case it wasn't passed through (e.g. after restart).
+	// Read callback_url from DB if not passed (survives a restart between spawn and finalize).
 	if callbackURL == "" {
 		_ = h.srv.Pool.QueryRow(ctx, `SELECT COALESCE(callback_url, '') FROM batches WHERE id = $1`, batchID).Scan(&callbackURL)
 	}
@@ -598,7 +637,7 @@ func (h *BatchHandler) finalizeBatch(ctx context.Context, tenantID, batchID, cal
 		return
 	}
 	payload := callbackPayload{
-		RunID:   batchID, // reuse RunID field to carry the batch ID for the receiver
+		RunID:   batchID, // carries the batch ID for the receiver
 		Status:  batchStatus,
 		CostUSD: costUSD,
 	}

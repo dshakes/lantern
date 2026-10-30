@@ -6,7 +6,8 @@ package handlers
 // signed POST to that URL after the run reaches a terminal status
 // (succeeded / failed / cancelled). The delivery is idempotent via
 // claimSideEffect, SSRF-protected (private/loopback/link-local/metadata IPs
-// blocked, HTTPS-only in prod), and retried with capped exponential backoff.
+// blocked at dial time — DNS rebinding safe, HTTPS-only in prod), and retried
+// with capped exponential backoff.
 
 import (
 	"bytes"
@@ -31,9 +32,6 @@ import (
 )
 
 // callbackMaxAttempts is the number of delivery tries before giving up.
-// ponytail: 4 tries with exponential backoff tops out at ~1 min of retry,
-// enough for transient receiver hiccups; a full retry framework is overkill
-// for fire-and-forget callback delivery.
 const callbackMaxAttempts = 4
 
 // callbackBaseDelay is the initial backoff interval (doubled each attempt).
@@ -48,36 +46,30 @@ const callbackMaxBody = 4096
 // errSSRF is returned when the resolved URL is blocked for SSRF reasons.
 var errSSRF = errors.New("callback URL blocked: target is a private/loopback/metadata address")
 
-// cbHTTPClient is the shared transport used for callback delivery. The default
-// transport does NOT skip TLS verification. Replaced in tests.
-var cbHTTPClient = &http.Client{
-	Timeout: callbackHTTPTimeout,
-}
-
-// callbackSigningSecret returns the per-tenant signing secret.
+// callbackSigningSecret returns the per-tenant HMAC signing key.
 // It is HMAC-SHA256(PAL_CALLBACK_SIGNING_SECRET, tenantID) so each tenant
-// has a distinct secret without storing one per tenant.
-// Falls back to a dev constant when the env var is unset (never in prod —
-// IsProd() checks that the env var is present at startup).
-func callbackSigningSecret(tenantID string) []byte {
+// gets a distinct key without storing per-tenant secrets.
+// Returns an error when PAL_CALLBACK_SIGNING_SECRET is unset; callers skip
+// delivery in that case (startup guard ensures prod always has the secret set).
+func callbackSigningSecret(tenantID string) ([]byte, error) {
 	root := palenv.Get("CALLBACK_SIGNING_SECRET")
 	if root == "" {
+		if isProd() {
+			// runStartupGuards() should have caught this; be defensive.
+			return nil, fmt.Errorf("PAL_CALLBACK_SIGNING_SECRET is not configured — callback signing disabled")
+		}
+		// Dev: use a well-known insecure default so local testing works.
 		root = "dev-callback-secret-do-not-use-in-production"
 	}
 	mac := hmac.New(sha256.New, []byte(root))
 	mac.Write([]byte(tenantID))
-	return mac.Sum(nil)
+	return mac.Sum(nil), nil
 }
 
-// checkSSRF validates that the parsed URL is safe to deliver to.
-// Blocks:
-//   - non-http/https schemes
-//   - http in production (HTTPS only)
-//   - loopback, link-local, private ranges (RFC 1918 / RFC 4193 / 169.254.0.0/16)
-//   - the AWS/GCP metadata endpoint (169.254.169.254)
-//
-// DNS resolution is performed so a DNS rebinding attack cannot sneak a private
-// IP past the scheme check.
+// checkSSRF validates that the URL is structurally valid and the scheme is
+// acceptable. It does NOT perform DNS resolution — the actual IP check happens
+// in the dial-time hook inside newCallbackHTTPClient, which pins the resolved
+// address to prevent DNS rebinding (TOCTOU).
 func checkSSRF(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -90,31 +82,8 @@ func checkSSRF(rawURL string) error {
 	if isProd() && scheme == "http" {
 		return fmt.Errorf("callback URL must use https in production")
 	}
-	host := u.Hostname()
-	if host == "" {
+	if u.Hostname() == "" {
 		return fmt.Errorf("callback URL has no host")
-	}
-
-	// Resolve the host to its IP addresses and check each one.
-	addrs, err := net.LookupHost(host)
-	if err != nil {
-		// In dev/test, accept unresolvable hosts (mock servers, docker aliases).
-		// In prod, reject: an unresolvable host is not a safe delivery target.
-		if isProd() {
-			return fmt.Errorf("callback URL host %q does not resolve: %w", host, err)
-		}
-		// dev: also check the literal if it looks like an IP.
-		addrs = []string{host}
-	}
-
-	for _, addr := range addrs {
-		ip := net.ParseIP(addr)
-		if ip == nil {
-			continue
-		}
-		if isBlockedIP(ip) {
-			return errSSRF
-		}
 	}
 	return nil
 }
@@ -122,25 +91,96 @@ func checkSSRF(rawURL string) error {
 // isBlockedIP returns true for IPs that must never receive callbacks.
 func isBlockedIP(ip net.IP) bool {
 	blocked := []string{
-		"127.0.0.0/8",    // loopback
+		"0.0.0.0/8",      // unspecified / broadcast source
+		"127.0.0.0/8",    // IPv4 loopback
 		"::1/128",        // IPv6 loopback
 		"10.0.0.0/8",     // RFC 1918
 		"172.16.0.0/12",  // RFC 1918
 		"192.168.0.0/16", // RFC 1918
-		"169.254.0.0/16", // link-local / metadata
+		"169.254.0.0/16", // link-local / cloud metadata (169.254.169.254 lives here)
 		"fc00::/7",       // IPv6 unique-local
 		"fe80::/10",      // IPv6 link-local
 	}
 	for _, cidr := range blocked {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
-			continue // unreachable: these are all valid CIDRs
+			continue // unreachable: all are valid CIDRs
 		}
 		if network.Contains(ip) {
 			return true
 		}
 	}
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
+// newCallbackHTTPClient builds a per-delivery http.Client that:
+//  1. Resolves the host at dial time and rejects private/loopback IPs (DNS-rebinding safe).
+//  2. Pins the first safe resolved IP so subsequent dials re-use it without re-checking.
+//  3. Blocks HTTP redirects (a redirect could point to an internal host).
+func newCallbackHTTPClient(rawURL string) (*http.Client, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid callback URL: %w", err)
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+
+	// Resolve once, check, pin the first safe address.
+	addrs, lookupErr := net.DefaultResolver.LookupHost(context.Background(), host)
+	if lookupErr != nil {
+		if isProd() {
+			return nil, fmt.Errorf("callback URL host %q does not resolve: %w", host, lookupErr)
+		}
+		// In dev/test allow unresolvable hosts (mock servers, docker aliases);
+		// treat the raw hostname as the address so the dial attempt still fails
+		// fast and the test stays hermetic.
+		addrs = []string{host}
+	}
+
+	// Check every resolved IP against the blocklist.
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			// Hostname passed through; skip IP check (dev-only fallback above).
+			continue
+		}
+		if isBlockedIP(ip) {
+			return nil, fmt.Errorf("%w (resolved %s → %s)", errSSRF, host, ip)
+		}
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("callback URL host %q resolved to no addresses", host)
+	}
+
+	// Pin the first safe address so the actual dial does NOT re-invoke DNS.
+	pinnedAddr := net.JoinHostPort(addrs[0], port)
+
+	transport := &http.Transport{
+		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(dialCtx, network, pinnedAddr)
+		},
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: callbackHTTPTimeout,
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   callbackHTTPTimeout,
+		// Block redirects: a 3xx could point to an internal host that passed
+		// the IP check above (e.g., redirect to http://169.254.169.254/).
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("callback: HTTP redirects are not allowed (SSRF)")
+		},
+	}, nil
 }
 
 // callbackPayload is the JSON body delivered to the callbackUrl.
@@ -155,17 +195,28 @@ type callbackPayload struct {
 	BatchID   string  `json:"batchId,omitempty"`
 }
 
-// deliverCallback fires one HTTP POST to callbackURL with the run result,
-// signed with HMAC-SHA256 under the per-tenant secret.
-// Header: X-Lantern-Signature: v1=<hex>  (same scheme as the generic trigger format)
-// Callers are responsible for SSRF validation before calling this function.
-func deliverCallback(ctx context.Context, payload callbackPayload, tenantID, callbackURL string) error {
+// deliverCallbackVia sends one signed POST using the provided http.Client.
+// It is the inner function that handles signing, serialisation, and response
+// classification. Callers are responsible for supplying an SSRF-safe client.
+//
+// Returns a wrapped "retryable" error for transient failures (5xx, network),
+// nil for final results (2xx, 4xx), and a non-retryable error for signing or
+// marshal failures.
+//
+// This is the function unit tests call directly (with a plain client pointed at
+// httptest.Server). deliverCallback wraps it with SSRF validation.
+func deliverCallbackVia(ctx context.Context, client *http.Client, payload callbackPayload, tenantID, callbackURL string) error {
+	secret, err := callbackSigningSecret(tenantID)
+	if err != nil {
+		// Secret not configured — skip rather than delivering unsigned.
+		return fmt.Errorf("callbacks: signing secret unavailable: %w", err)
+	}
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("callbacks: marshal payload: %w", err)
 	}
 
-	secret := callbackSigningSecret(tenantID)
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
 	sig := hex.EncodeToString(mac.Sum(nil))
@@ -178,12 +229,16 @@ func deliverCallback(ctx context.Context, payload callbackPayload, tenantID, cal
 	req.Header.Set("X-Lantern-Signature", "v1="+sig)
 	req.Header.Set("X-Lantern-Run-ID", payload.RunID)
 
-	resp, err := cbHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
+		// Network errors (dial, TLS, read timeout) are transient.
+		var netErr net.Error
+		if errors.As(err, &netErr) || isNetworkError(err) {
+			return fmt.Errorf("callbacks: http do (retryable): %w", err)
+		}
 		return fmt.Errorf("callbacks: http do: %w", err)
 	}
 	defer resp.Body.Close()
-	// Drain up to callbackMaxBody so the connection can be reused.
 	buf := make([]byte, callbackMaxBody)
 	_, _ = resp.Body.Read(buf)
 
@@ -192,6 +247,32 @@ func deliverCallback(ctx context.Context, payload callbackPayload, tenantID, cal
 	}
 	// 2xx and 4xx are treated as final (caller's problem; don't retry 4xx).
 	return nil
+}
+
+// deliverCallback is the production entry point: builds an SSRF-safe client
+// (DNS resolved + pinned at creation, redirects blocked) then delegates to
+// deliverCallbackVia. The two-function split lets unit tests exercise the
+// signing/body/status-code logic via deliverCallbackVia directly (with a
+// plain httptest.Server client) without defeating the SSRF guarantee.
+func deliverCallback(ctx context.Context, payload callbackPayload, tenantID, callbackURL string) error {
+	client, err := newCallbackHTTPClient(callbackURL)
+	if err != nil {
+		return fmt.Errorf("callbacks: ssrf check: %w", err)
+	}
+	return deliverCallbackVia(ctx, client, payload, tenantID, callbackURL)
+}
+
+// isNetworkError returns true for url.Error wrapping a net.OpError or ECONNREFUSED,
+// i.e., transient dial/read errors that benefit from a retry.
+func isNetworkError(err error) bool {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		var opErr *net.OpError
+		if errors.As(urlErr.Err, &opErr) {
+			return true
+		}
+	}
+	return false
 }
 
 // fireCallbackForRun reads the terminal run state from the DB and dispatches
@@ -213,8 +294,8 @@ func (h *RESTHandler) fireCallbackForRun(ctx context.Context, pool *pgxpool.Pool
 	)
 	err := pool.QueryRow(ctx, `
 		SELECT tenant_id, callback_url, status,
-		       COALESCE(output, 'null')::text,
-		       COALESCE(error, 'null')::text,
+		       output::text,
+		       error::text,
 		       COALESCE(cost_usd, 0),
 		       COALESCE(tokens_in, 0),
 		       COALESCE(tokens_out, 0),
@@ -225,23 +306,23 @@ func (h *RESTHandler) fireCallbackForRun(ctx context.Context, pool *pgxpool.Pool
 		return
 	}
 
-	// Extract the result string from {"result": "..."} for a clean payload.
+	// Extract the result string from {"result": "..."} — omit field if NULL.
 	var outputStr string
-	var outputMap map[string]any
-	if json.Unmarshal(outputRaw, &outputMap) == nil {
-		if r, ok := outputMap["result"].(string); ok {
-			outputStr = r
-		} else {
-			outputStr = string(outputRaw)
+	if len(outputRaw) > 0 {
+		var outputMap map[string]any
+		if json.Unmarshal(outputRaw, &outputMap) == nil {
+			if r, ok := outputMap["result"].(string); ok {
+				outputStr = r
+			}
 		}
 	}
 	var errStr string
-	var errMap map[string]any
-	if json.Unmarshal(errorRaw, &errMap) == nil {
-		if m, ok := errMap["message"].(string); ok {
-			errStr = m
-		} else if len(errorRaw) > 0 && string(errorRaw) != "null" {
-			errStr = string(errorRaw)
+	if len(errorRaw) > 0 {
+		var errMap map[string]any
+		if json.Unmarshal(errorRaw, &errMap) == nil {
+			if m, ok := errMap["message"].(string); ok {
+				errStr = m
+			}
 		}
 	}
 	batchIDStr := ""
@@ -268,9 +349,8 @@ func (h *RESTHandler) fireCallbackForRun(ctx context.Context, pool *pgxpool.Pool
 	}()
 }
 
-// deliverCallbackWithRetry is called from executeRunInline after a run reaches
-// terminal state. It claims the side effect (idempotency) and then retries
-// delivery with capped exponential backoff before giving up.
+// deliverCallbackWithRetry claims the side effect (idempotency) and retries
+// delivery with capped exponential backoff.
 func (h *RESTHandler) deliverCallbackWithRetry(
 	ctx context.Context,
 	pool *pgxpool.Pool,
@@ -281,8 +361,10 @@ func (h *RESTHandler) deliverCallbackWithRetry(
 	if callbackURL == "" {
 		return
 	}
+	// Structural + scheme check (fast, no DNS). The per-delivery client checks
+	// the resolved IP at dial time for DNS-rebinding safety.
 	if err := checkSSRF(callbackURL); err != nil {
-		log.Warn("callback URL blocked (SSRF)", zap.String("run_id", runID), zap.Error(err))
+		log.Warn("callback URL blocked (SSRF pre-check)", zap.String("run_id", runID), zap.Error(err))
 		return
 	}
 
@@ -317,11 +399,12 @@ func (h *RESTHandler) deliverCallbackWithRetry(
 				zap.Int("attempt", attempt+1),
 				zap.Error(err),
 			)
-			// Non-retryable errors (SSRF, 4xx, marshal) — give up immediately.
-			if !strings.Contains(err.Error(), "retryable") {
-				return
+			// Only retry transient failures (network errors, 5xx). Anything else
+			// (SSRF, signing, marshal) is non-retryable.
+			if strings.Contains(err.Error(), "retryable") {
+				continue
 			}
-			continue
+			return
 		}
 		log.Info("callback delivered", zap.String("run_id", runID), zap.String("url", callbackURL))
 		return

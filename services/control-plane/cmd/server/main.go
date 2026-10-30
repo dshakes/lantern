@@ -1149,6 +1149,16 @@ func runStartupGuards(logger *zap.Logger) {
 	if _, err := handlers.ManagerTransportCreds(prod); err != nil {
 		logger.Fatal("runtime-manager client TLS", zap.Error(err))
 	}
+
+	// C-CB — Callback signing secret (ADR 0033).
+	// Without a secret the server uses a well-known dev default, which allows
+	// trivial callback signature forgery.  Prod must have a strong random value.
+	if prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Fatal("PAL_CALLBACK_SIGNING_SECRET is unset — callback HMAC signatures would use the well-known dev secret; set a strong random value in production (callbacks with callbackUrl are disabled until this is set)")
+	}
+	if !prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Warn("PAL_CALLBACK_SIGNING_SECRET is unset — using insecure dev default for callback signing; set PAL_CALLBACK_SIGNING_SECRET in production")
+	}
 }
 
 // grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
