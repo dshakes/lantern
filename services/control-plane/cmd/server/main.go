@@ -621,6 +621,7 @@ func main() {
 	// Agentic onboarding: resumable state (tenants.settings->onboarding) + the
 	// onboarding agent's run explanation.
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
