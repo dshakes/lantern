@@ -270,7 +270,7 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 	// Server-side groundedness assert (additive — only overrides when
 	// assert["grounded"]==true in the suite case definition). Deterministic:
 	// fails the case when the actual output contains an unbacked completed-
-	// action claim. HasUnbackedClaims always runs regardless of LANTERN_CLAIM_VERIFY
+	// action claim. HasUnbackedClaims always runs regardless of PAL_CLAIM_VERIFY
 	// because the test case author has explicitly opted in at the suite level.
 	//
 	// ponytail: deterministic only; no tool-backing context available here

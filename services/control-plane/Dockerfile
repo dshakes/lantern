@@ -4,6 +4,7 @@ WORKDIR /app
 # Copy the gen/go module that we depend on via replace directive.
 COPY gen/go/ /app/gen/go/
 COPY packages/palenv/ /app/packages/palenv/
+COPY packages/grpctls/ /app/packages/grpctls/
 
 # Copy the control-plane service source.
 COPY services/control-plane/ /app/services/control-plane/

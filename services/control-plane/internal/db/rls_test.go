@@ -589,7 +589,7 @@ func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant
 // GetAgent / ListAgents / DeleteAgent and handlers/runs.go CreateRun /
 // CancelRun / GetRun / ListRuns after the TenantPool() cutover, because those
 // handlers call setRLSTenantID (set_config) inside a transaction on TenantPool
-// (which becomes lantern_app when LANTERN_RLS_ENFORCE=1).
+// (which becomes lantern_app when PAL_RLS_ENFORCE=1).
 // ---------------------------------------------------------------------------
 
 // TestRLSEnforcement_CutoverPaths_Agents is the same-tenant-still-works proof
@@ -794,7 +794,7 @@ func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
 //	    pattern) returns ZERO ROWS even for the same tenant — proving the GUC
 //	    is required and was the root cause.
 //
-// The test uses SET LOCAL ROLE lantern_app to simulate LANTERN_RLS_ENFORCE=1
+// The test uses SET LOCAL ROLE lantern_app to simulate PAL_RLS_ENFORCE=1
 // (the TenantPool connecting as the non-superuser role) without needing a
 // separate DSN.
 // ---------------------------------------------------------------------------
@@ -827,7 +827,7 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 			"DELETE FROM agents WHERE name = $1 AND tenant_id = $2::uuid", agentName, tenantA)
 	})
 
-	// appRolePool simulates TenantPool() under LANTERN_RLS_ENFORCE=1 by using
+	// appRolePool simulates TenantPool() under PAL_RLS_ENFORCE=1 by using
 	// SET LOCAL ROLE inside each WithTenantConn transaction. In production the
 	// pool itself connects as lantern_app; here we use superPool + SET LOCAL ROLE
 	// to achieve the same effect without needing a separate DSN in CI.
@@ -915,4 +915,45 @@ func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
 			t.Errorf("expected 0 rows without GUC (proves the fix is necessary), got %d — RLS policy may not be active on this DB", count)
 		}
 	})
+}
+
+// TestGrantAudit_Migration0031 proves that migration 0031_grant_brief_items
+// correctly grants SELECT/INSERT/UPDATE/DELETE on brief_items to the
+// lantern_app non-superuser role (ADR 0042, GRANT audit).
+//
+// Without migration 0031, lantern_app silently gets permission-denied on
+// brief_items queries — a runtime error that only surfaces under RLS
+// enforcement, not in dev.
+func TestGrantAudit_Migration0031(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Verify lantern_app has all four DML privileges on brief_items via the
+	// information_schema.role_table_grants catalog — this is what migration 0031
+	// explicitly GRANTs; a missing grant makes RLS enforcement fail at runtime.
+	requiredPrivs := []string{"SELECT", "INSERT", "UPDATE", "DELETE"}
+	for _, priv := range requiredPrivs {
+		priv := priv
+		t.Run(priv, func(t *testing.T) {
+			var granted bool
+			err := superPool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.role_table_grants
+					WHERE grantee    = 'lantern_app'
+					  AND table_name = 'brief_items'
+					  AND privilege_type = $1
+				)
+			`, priv).Scan(&granted)
+			if err != nil {
+				t.Fatalf("privilege lookup for %s on brief_items: %v", priv, err)
+			}
+			if !granted {
+				t.Errorf("lantern_app lacks %s on brief_items — migration 0031_grant_brief_items may not have run", priv)
+			}
+		})
+	}
 }

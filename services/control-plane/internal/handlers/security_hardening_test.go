@@ -314,7 +314,7 @@ func TestAuthRateLimited_NilRedis_FailOpen(t *testing.T) {
 // ========== L1 — API key scope enforcement ==========
 
 func TestHasScope_JWTUserAlwaysAllowed(t *testing.T) {
-	claims := &LanternClaims{Role: "owner", Scopes: nil}
+	claims := &PalClaims{Role: "owner", Scopes: nil}
 	for _, scope := range []Scope{ScopeRead, ScopeWrite, ScopeAdmin} {
 		if !HasScope(claims, scope) {
 			t.Errorf("JWT user should always pass scope check for %q", scope)
@@ -324,7 +324,7 @@ func TestHasScope_JWTUserAlwaysAllowed(t *testing.T) {
 
 func TestHasScope_EmptyScopesAllowAll(t *testing.T) {
 	// Legacy API key with no scopes — backward-compatible, all allowed.
-	claims := &LanternClaims{Role: "service", Scopes: []string{}}
+	claims := &PalClaims{Role: "service", Scopes: []string{}}
 	for _, scope := range []Scope{ScopeRead, ScopeWrite, ScopeAdmin} {
 		if !HasScope(claims, scope) {
 			t.Errorf("empty scopes (legacy key) should allow %q", scope)
@@ -333,7 +333,7 @@ func TestHasScope_EmptyScopesAllowAll(t *testing.T) {
 }
 
 func TestHasScope_NilScopesAllowAll(t *testing.T) {
-	claims := &LanternClaims{Role: "service", Scopes: nil}
+	claims := &PalClaims{Role: "service", Scopes: nil}
 	for _, scope := range []Scope{ScopeRead, ScopeWrite, ScopeAdmin} {
 		if !HasScope(claims, scope) {
 			t.Errorf("nil scopes should allow %q", scope)
@@ -342,7 +342,7 @@ func TestHasScope_NilScopesAllowAll(t *testing.T) {
 }
 
 func TestHasScope_ReadOnlyKey(t *testing.T) {
-	claims := &LanternClaims{Role: "service", Scopes: []string{ScopeRead}}
+	claims := &PalClaims{Role: "service", Scopes: []string{ScopeRead}}
 	if !HasScope(claims, ScopeRead) {
 		t.Error("read-only key must pass read check")
 	}
@@ -355,7 +355,7 @@ func TestHasScope_ReadOnlyKey(t *testing.T) {
 }
 
 func TestHasScope_WriteKeyImpliesRead(t *testing.T) {
-	claims := &LanternClaims{Role: "service", Scopes: []string{ScopeWrite}}
+	claims := &PalClaims{Role: "service", Scopes: []string{ScopeWrite}}
 	if !HasScope(claims, ScopeRead) {
 		t.Error("write scope must imply read")
 	}
@@ -368,7 +368,7 @@ func TestHasScope_WriteKeyImpliesRead(t *testing.T) {
 }
 
 func TestHasScope_AdminImpliesAll(t *testing.T) {
-	claims := &LanternClaims{Role: "service", Scopes: []string{ScopeAdmin}}
+	claims := &PalClaims{Role: "service", Scopes: []string{ScopeAdmin}}
 	for _, scope := range []Scope{ScopeRead, ScopeWrite, ScopeAdmin} {
 		if !HasScope(claims, scope) {
 			t.Errorf("admin key must imply %q", scope)

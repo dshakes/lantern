@@ -323,7 +323,7 @@ func TestClip_RuneSafe(t *testing.T) {
 	}
 }
 
-// ---- route scopes under LANTERN_AUTHZ_ENFORCE=1 (DB-backed API keys) ----------
+// ---- route scopes under PAL_AUTHZ_ENFORCE=1 (DB-backed API keys) ----------
 
 func TestOnboardingRoutes_ScopeEnforcement(t *testing.T) {
 	pool := openTestPool(t)

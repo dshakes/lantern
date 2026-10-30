@@ -1,6 +1,6 @@
 package handlers
 
-// GET /v1/usage — accurate spend + run-health for the Lantern dashboard.
+// GET /v1/usage — accurate spend + run-health for the PAL dashboard.
 //
 // Two sources by design:
 //   - cost + tokens  → agent_usage_daily (authoritative; includes bridge /

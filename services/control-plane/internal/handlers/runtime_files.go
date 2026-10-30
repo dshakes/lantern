@@ -82,7 +82,7 @@ func (h *RuntimeHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ReadFile handles GET /v1/runtime/vms/{id}/files/content?path= → raw text.
-// A file over 1 MiB is cut at the cap and flagged with X-Lantern-Truncated.
+// A file over 1 MiB is cut at the cap and flagged with X-Pal-Truncated (and the legacy X-Lantern-Truncated).
 func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	ctx, claims, node, vmID, ok := h.fileTarget(w, r, ScopeRuntimeRead, path)
@@ -96,7 +96,8 @@ func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	content, _ := res["content"].(string)
 	if res["truncated"] == true {
 		content = strings.TrimSuffix(content, harnessTruncatedMarker)
-		w.Header().Set("X-Lantern-Truncated", "true")
+		w.Header().Set("X-Pal-Truncated", "true")
+		w.Header().Set("X-Lantern-Truncated", "true") // legacy name for older SDKs (ADR 0032)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -150,7 +151,7 @@ func fileWriteIdemKey(vmID, path string, body []byte) string {
 // fileTarget authenticates, enforces scope, requires a path, and confirms the
 // VM belongs to the caller's tenant, returning its node placement. Writes the
 // error response and returns ok=false on any failure.
-func (h *RuntimeHandler) fileTarget(w http.ResponseWriter, r *http.Request, scope, path string) (ctx context.Context, claims *LanternClaims, node, vmID string, ok bool) {
+func (h *RuntimeHandler) fileTarget(w http.ResponseWriter, r *http.Request, scope, path string) (ctx context.Context, claims *PalClaims, node, vmID string, ok bool) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})

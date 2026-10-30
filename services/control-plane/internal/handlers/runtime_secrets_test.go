@@ -1208,3 +1208,31 @@ func TestResolveSecrets_VMBinding_DenialIncrementsRateLimiter(t *testing.T) {
 		t.Errorf("expected 429 after %d binding failures, got %d", secretAuthFailMax+1, lastCode)
 	}
 }
+
+// ADR 0032: the runtime token is accepted under the PAL header and the legacy
+// header; a wrong PAL header is not rescued by a right legacy one.
+func TestAuthenticateRuntimeToken_PALAndLegacyHeaders(t *testing.T) {
+	t.Setenv(envRuntimeSecretToken, "rt-secret")
+	cases := []struct {
+		name string
+		hdr  map[string]string
+		ok   bool
+	}{
+		{"pal", map[string]string{runtimeTokenHeader: "rt-secret"}, true},
+		{"legacy", map[string]string{legacyRuntimeTokenHeader: "rt-secret"}, true},
+		{"both", map[string]string{runtimeTokenHeader: "rt-secret", legacyRuntimeTokenHeader: "rt-secret"}, true},
+		{"legacy wrong", map[string]string{legacyRuntimeTokenHeader: "nope"}, false},
+		{"pal wrong legacy right", map[string]string{runtimeTokenHeader: "nope", legacyRuntimeTokenHeader: "rt-secret"}, false},
+		{"none", map[string]string{}, false},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/v1/runtime/secrets/resolve", nil)
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		ok, _ := authenticateRuntimeToken(req)
+		if ok != tc.ok {
+			t.Errorf("%s: ok=%v, want %v", tc.name, ok, tc.ok)
+		}
+	}
+}

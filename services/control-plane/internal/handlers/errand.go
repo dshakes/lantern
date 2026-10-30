@@ -23,9 +23,9 @@ package handlers
 //
 //  5. Owner-only gate on confirm-and-call: claims.Role must be "owner" or "admin".
 //
-//  6. Feature gate: LANTERN_ERRAND must be "1"/"true"/"on"; otherwise 404.
+//  6. Feature gate: PAL_ERRAND must be "1"/"true"/"on"; otherwise 404.
 //
-// Conversational call flow (when LANTERN_ERRAND_PUBLIC_URL / LANTERN_CONTROL_PLANE_URL
+// Conversational call flow (when PAL_ERRAND_PUBLIC_URL / PAL_CONTROL_PLANE_URL
 // is set AND an LLM is configured):
 //
 //   ConfirmAndCall → buildErrandConversationalTwiML → Twilio calls back at
@@ -156,7 +156,7 @@ func buildErrandTurnEndTwiML(sayLine string) string {
 }
 
 // errandPublicBaseURL returns the base URL to use in turn-action callback URLs.
-// Priority: LANTERN_ERRAND_PUBLIC_URL → LANTERN_CONTROL_PLANE_URL → derivePublicURL.
+// Priority: PAL_ERRAND_PUBLIC_URL → PAL_CONTROL_PLANE_URL → derivePublicURL.
 // Trailing slash is removed. May return "" when none can be resolved.
 func errandPublicBaseURL(r *http.Request) string {
 	for _, v := range []string{
@@ -192,7 +192,7 @@ const errandMaxTurns = 6
 
 // ---------- feature gate ----------
 
-// errandEnabled reports whether the LANTERN_ERRAND feature flag is on.
+// errandEnabled reports whether the PAL_ERRAND feature flag is on.
 func errandEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ERRAND")))
 	return v == "1" || v == "true" || v == "on"
@@ -247,7 +247,7 @@ func validE164(n string) bool { return e164Re.MatchString(n) }
 // ---------- handler ----------
 
 // ErrandHandler provides the REST surface for errand-runner v1.
-// All endpoints are gated by LANTERN_ERRAND; confirm-and-call is owner-only.
+// All endpoints are gated by PAL_ERRAND; confirm-and-call is owner-only.
 type ErrandHandler struct {
 	srv        *server.Server
 	auth       *AuthHandler
@@ -277,14 +277,14 @@ func NewErrandHandler(srv *server.Server, auth *AuthHandler, llmProxy *LlmProxyH
 func (h *ErrandHandler) logger() *zap.Logger { return h.srv.Logger.Named("errand") }
 
 // errandFromNumber resolves the outbound caller-ID to use.  Reads
-// LANTERN_TWILIO_NUMBER first (same convention as voice.go / jarvis.go).
+// PAL_TWILIO_NUMBER first (same convention as voice.go / jarvis.go).
 // Returns "" when unset; the production Twilio connector will fail cleanly.
 func errandFromNumber() string {
 	return strings.TrimSpace(os.Getenv("PAL_TWILIO_NUMBER"))
 }
 
 // ownerNameForTenant returns the owner name for compliance preambles.
-// Reads LANTERN_OWNER_NAME (same convention as the bridge layer).
+// Reads PAL_OWNER_NAME (same convention as the bridge layer).
 func ownerNameForTenant() string {
 	if n := strings.TrimSpace(os.Getenv("PAL_OWNER_NAME")); n != "" {
 		return n
@@ -519,7 +519,7 @@ func (h *ErrandHandler) ConfirmAndCall(w http.ResponseWriter, r *http.Request) {
 //
 // Twilio webhook — NOT JWT-authenticated. Authenticated by X-Twilio-Signature
 // using the tenant's Twilio authToken (fail-closed; dev bypass:
-// LANTERN_TWILIO_WEBHOOK_AUTH=off). The errand id is an unguessable UUID.
+// PAL_TWILIO_WEBHOOK_AUTH=off). The errand id is an unguessable UUID.
 //
 // On each call-back this handler:
 //  1. Loads the errand (rls-exempt, privileged pool — id resolves tenant).
@@ -586,7 +586,7 @@ func (h *ErrandHandler) ErrandTurn(w http.ResponseWriter, r *http.Request) {
 	cfg := loadDecryptedConfig(ctx, h.srv.Pool, tenantID, "twilio")
 	token, _ := cfg["authToken"].(string)
 
-	// Verify Twilio signature. Dev bypass: LANTERN_TWILIO_WEBHOOK_AUTH=off.
+	// Verify Twilio signature. Dev bypass: PAL_TWILIO_WEBHOOK_AUTH=off.
 	// Mirrors voice.go's verification pattern exactly.
 	skipVerify := strings.ToLower(os.Getenv("PAL_TWILIO_WEBHOOK_AUTH")) == "off"
 	if !skipVerify {

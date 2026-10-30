@@ -283,7 +283,7 @@ func newFakeRuntimeClient(t *testing.T, fake *fakeRuntimeServer) (lanternv1.Runt
 // structured args, run/step identity, and idempotency key; and an OK response's
 // structured result is mapped into the step output.
 func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
-	result, err := structpb.NewStruct(map[string]any{"matches": float64(3), "top": "lantern"})
+	result, err := structpb.NewStruct(map[string]any{"matches": float64(3), "top": "pal"})
 	if err != nil {
 		t.Fatalf("build result struct: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
 	data := json.RawMessage(`{
 		"tool_name": "web_search",
 		"vm_id": "vm-abc",
-		"arguments": {"query": "lantern runtime", "limit": 3}
+		"arguments": {"query": "pal runtime", "limit": 3}
 	}`)
 
 	out, err := se.executeToolCall(context.Background(), state, "step-7", idempotencyKey, data)
@@ -332,8 +332,8 @@ func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
 		t.Errorf("idempotency_key = %q, want %q", req.GetIdempotencyKey(), idempotencyKey)
 	}
 	gotArgs := req.GetArgs().AsMap()
-	if gotArgs["query"] != "lantern runtime" {
-		t.Errorf("args[query] = %v, want 'lantern runtime'", gotArgs["query"])
+	if gotArgs["query"] != "pal runtime" {
+		t.Errorf("args[query] = %v, want 'pal runtime'", gotArgs["query"])
 	}
 	if gotArgs["limit"] != float64(3) {
 		t.Errorf("args[limit] = %v, want 3", gotArgs["limit"])
@@ -350,8 +350,8 @@ func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
 	if mapped.ToolName != "web_search" {
 		t.Errorf("tool_name = %q", mapped.ToolName)
 	}
-	if mapped.Result["top"] != "lantern" {
-		t.Errorf("result[top] = %v, want lantern", mapped.Result["top"])
+	if mapped.Result["top"] != "pal" {
+		t.Errorf("result[top] = %v, want pal", mapped.Result["top"])
 	}
 	if mapped.Result["matches"] != float64(3) {
 		t.Errorf("result[matches] = %v, want 3", mapped.Result["matches"])

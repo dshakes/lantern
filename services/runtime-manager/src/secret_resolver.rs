@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// gRPC metadata (i.e. the part after `"Bearer "`). When `Some`, the relay
 /// implementation forwards it to the control-plane as
 /// `Authorization: Bearer <token>` alongside the shared
-/// `X-Lantern-Runtime-Token`. Non-relay implementations ignore it silently.
+/// `X-Pal-Runtime-Token`. Non-relay implementations ignore it silently.
 /// `None` means no token was presented — the existing shared-token path
 /// applies (backward-compatible).
 #[async_trait]
@@ -248,7 +248,7 @@ struct RelayResolveResponse {
 pub struct RelaySecretResolver {
     /// Base URL of the control-plane, e.g. `https://control-plane.internal:8443`.
     control_plane_url: String,
-    /// `X-Lantern-Runtime-Token` header value.  Never logged.
+    /// `X-Pal-Runtime-Token` header value.  Never logged.
     token: String,
     /// Tenant ID this manager node is responsible for.
     tenant_id: String,
@@ -405,7 +405,7 @@ impl SecretResolver for RelaySecretResolver {
     ///
     /// `agent_bearer` — when `Some`, forwarded to the control-plane as
     /// `Authorization: Bearer <token>` in addition to the shared
-    /// `X-Lantern-Runtime-Token`.  The control-plane relay verifies it as an
+    /// `X-Pal-Runtime-Token`.  The control-plane relay verifies it as an
     /// agent-instance JWT and attributes the resolved secret to that instance
     /// in its audit log.  `None` → shared-token-only path (unchanged).
     /// The value is NEVER logged.
@@ -465,6 +465,9 @@ impl SecretResolver for RelaySecretResolver {
             let mut rb = self
                 .client
                 .post(self.resolve_url())
+                // PAL name plus the pre-PAL name for a control plane that
+                // has not upgraded yet (ADR 0032).
+                .header("X-Pal-Runtime-Token", &self.token)
                 .header("X-Lantern-Runtime-Token", &self.token)
                 .header("Content-Type", "application/json");
             if let Some(tok) = agent_bearer {
@@ -829,8 +832,8 @@ mod tests {
         );
         // The shared service token must still be present too.
         assert!(
-            lower.contains("x-lantern-runtime-token: svc-token"),
-            "request must still carry x-lantern-runtime-token, got:\n{request_str}"
+            lower.contains("x-pal-runtime-token: svc-token"),
+            "request must still carry x-pal-runtime-token, got:\n{request_str}"
         );
     }
 

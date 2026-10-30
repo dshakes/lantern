@@ -4,16 +4,16 @@ package handlers
 //
 // G1: Complexity-aware model routing. "auto" turns are classified into
 //     trivial/balanced/hard tiers and routed to a cheaper or frontier model
-//     accordingly. Gate: LANTERN_COMPLEXITY_ROUTING=1.
+//     accordingly. Gate: PAL_COMPLEXITY_ROUTING=1.
 //
 // G3: Claim verifier. After the tool loop, any "I sent/emailed/booked/…"
 //     assertion not backed by an actual tool invocation is softened to honest
-//     intent. Gate: LANTERN_CLAIM_VERIFY=1.
+//     intent. Gate: PAL_CLAIM_VERIFY=1.
 //
 // G4: Lightweight multi-step planner. When a turn looks multi-step, a short
 //     planning instruction is prepended to the system context so the model
 //     outlines steps before gambling through tool calls. Gate:
-//     LANTERN_MULTI_STEP_PLANNER=1.
+//     PAL_MULTI_STEP_PLANNER=1.
 //
 // Every gate defaults OFF so existing behaviour is the safe fallback. Flags
 // are read on each call (no startup cache) so ops can toggle without a restart.
@@ -44,7 +44,7 @@ const (
 // classifyTurnComplexity scores the turn and returns a routing tier.
 //
 // Signals (in roughly descending importance):
-//  1. Explicit hint from the caller via X-Lantern-Turn-Hint header / hint arg.
+//  1. Explicit hint from the caller via X-Pal-Turn-Hint (or legacy X-Lantern-Turn-Hint) header / hint arg.
 //  2. Hard content: scheduling + reasoning keyword density.
 //  3. Total token estimate (byte length / 4 as a proxy).
 //  4. Whether tools are in play (multi-step turns).

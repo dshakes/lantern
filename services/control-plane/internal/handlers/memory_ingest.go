@@ -9,7 +9,7 @@ package handlers
 // same cross-channel timeline the bridges already populate.
 //
 // Everything is best-effort: if a connector isn't installed or a pull
-// fails, we log and move on. Gated by LANTERN_MEMORY_INGEST (default on).
+// fails, we log and move on. Gated by PAL_MEMORY_INGEST (default on).
 
 import (
 	"context"
@@ -61,7 +61,7 @@ func (m *MemoryIngestor) Enabled() bool {
 // so it doesn't compete with startup.
 func (m *MemoryIngestor) Run(ctx context.Context) {
 	if !m.Enabled() {
-		m.logger.Info("memory ingestion disabled (LANTERN_MEMORY_INGEST=off)")
+		m.logger.Info("memory ingestion disabled (PAL_MEMORY_INGEST=off)")
 		return
 	}
 	m.logger.Info("memory ingestion started", zap.Duration("interval", m.interval))
