@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -176,11 +177,15 @@ func TestDeliverCallback_SSRFBlock(t *testing.T) {
 	}
 }
 
-// TestNewCallbackHTTPClient_RedirectsBlocked tests that the client rejects
-// HTTP redirects (which could redirect to internal hosts).
+// TestNewCallbackHTTPClient_RedirectsBlocked drives a real delivery through
+// the production client (pinnedCallbackClient, as built by
+// newCallbackHTTPClient) at a receiver that 302s elsewhere, and asserts the
+// redirect target is never contacted and the delivery reports an error.
 func TestNewCallbackHTTPClient_RedirectsBlocked(t *testing.T) {
-	// Set up a redirect server that serves 302 to a second server.
+	t.Setenv("PAL_CALLBACK_SIGNING_SECRET", "test-secret")
+	var targetHits atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
@@ -190,16 +195,13 @@ func TestNewCallbackHTTPClient_RedirectsBlocked(t *testing.T) {
 	}))
 	defer redirector.Close()
 
-	// Use a plain client for the redirector (127.0.0.1) — we're testing redirect
-	// blocking within deliverCallbackVia using a redirect-blocking client.
-	noRedirectClient := &http.Client{
-		Timeout: callbackHTTPTimeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := pinnedCallbackClient(redirector.Listener.Addr().String())
+	err := deliverCallbackVia(context.Background(), client,
+		callbackPayload{RunID: "run-redirect", Status: "succeeded"}, "tenant-x", redirector.URL+"/cb")
+	if err == nil || !strings.Contains(err.Error(), "redirects are not allowed") {
+		t.Fatalf("delivery through a redirect must fail with the SSRF redirect error, got %v", err)
 	}
-	// The redirector returns 302 — with ErrUseLastResponse it's treated as a 3xx
-	// which is neither 2xx nor 5xx, so deliverCallbackVia returns nil (final).
-	// The key property we verify: a redirect-blocking client is correctly built.
-	_ = noRedirectClient
+	if n := targetHits.Load(); n != 0 {
+		t.Fatalf("redirect target was contacted %d time(s); redirects must never be followed", n)
+	}
 }

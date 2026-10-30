@@ -35,7 +35,10 @@ When present:
    background goroutine via `inFlightRuns` (drained on shutdown).
 4. Delivery (`deliverCallbackWithRetry`): idempotent via `claimSideEffect`
    (key `run_id:callback:1`), up to 4 attempts with capped exponential backoff
-   (2 s → 4 s → 8 s), 5xx from the receiver is the only retryable error class.
+   (2 s → 4 s → 8 s); 5xx responses and network errors are retried, 2xx/4xx are final.
+   Semantics are **at-most-once**: the receipt is claimed before the first
+   attempt, so a crash during the retry window loses the callback (see
+   Alternatives; poll the run/batch to reconcile).
 5. The POST body is `{runId, status, output, error, costUsd, tokensIn, tokensOut}`.
 6. The signature is `X-Lantern-Signature: v1=<hmac-sha256>` over the body,
    matching the generic inbound-webhook format so callers can verify with the
@@ -107,9 +110,13 @@ batch → 200, no-op).
   global env var keeps it simpler and operator-auditable.
 - **Redis Streams or a dedicated notifier service for delivery** — rejected for
   now; the inline executor goroutine + `inFlightRuns` WaitGroup on shutdown
-  satisfies the durability requirement without a new service. The recovery loop
-  already re-drives runs, which means a crashed delivery is retried on next
-  startup.
+  covers graceful shutdown without a new service. It is NOT crash-durable:
+  delivery claims its `claimSideEffect` receipt before the first attempt
+  (at-most-once, invariant #8 — a receiver is never double-notified), so a
+  process crash mid-retry drops that callback and recovery does not re-send
+  it. Receivers that need certainty reconcile via `GET /v1/runs/{id}` /
+  `GET /v1/batches/{id}`. A durable outbox (persisted pending deliveries
+  swept by the recovery loop) is the follow-up if at-least-once is required.
 - **Per-item callback in batch** — not implemented. Batch receivers should use
   `GET /v1/batches/{id}/results` for per-item output; the batch-level callback
   signals completion.

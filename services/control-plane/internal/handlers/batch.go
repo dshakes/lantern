@@ -421,6 +421,30 @@ func (h *BatchHandler) CancelBatch(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("CancelBatch: cancel runs: %w", e)
 		}
 		n = tag.RowsAffected()
+		// A live dispatcher keeps the counters itself (pending→cancelled for
+		// undispatched items, cancelled_count as each child run lands). A dead
+		// one (stale heartbeat) never will, and recovery skips non-running
+		// batches, so settle the counters from ground truth here: every item
+		// without a terminal child run counts as cancelled.
+		if _, e := tx.Exec(ctx, `
+			UPDATE batches b SET
+			    pending_count   = 0,
+			    running_count   = 0,
+			    succeeded_count = r.succeeded,
+			    failed_count    = r.failed,
+			    cancelled_count = GREATEST(0, b.total_count - r.succeeded - r.failed),
+			    cost_usd        = r.cost
+			FROM (
+			    SELECT COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+			           COUNT(*) FILTER (WHERE status = 'failed')    AS failed,
+			           COALESCE(SUM(cost_usd), 0)                   AS cost
+			    FROM runs WHERE tenant_id = $2 AND batch_id = $1
+			) r
+			WHERE b.id = $1 AND b.tenant_id = $2
+			  AND b.heartbeat_at < now() - $3::interval`,
+			id, tenantID, batchRecoveryMinAge.String()); e != nil {
+			return fmt.Errorf("CancelBatch: settle dead-batch counters: %w", e)
+		}
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

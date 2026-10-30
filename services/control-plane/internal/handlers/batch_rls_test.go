@@ -314,3 +314,41 @@ func TestBatchRecovery_HeartbeatGatesFinalization(t *testing.T) {
 		t.Fatalf("dead batch (stale heartbeat) was not recovered")
 	}
 }
+
+// TestCancelBatch_DeadDispatcherSettlesCounters: cancelling a batch whose
+// dispatcher died (stale heartbeat) must settle the counters — nobody else
+// will — while a live batch's counters are left to its dispatcher.
+func TestCancelBatch_DeadDispatcherSettlesCounters(t *testing.T) {
+	e := newEnforcedServer(t)
+	h := newEnforcedBatchHandlers(t, e)
+	ctx := context.Background()
+	tenant := seedEnforcedTenant(t, e, "batch-cancel-dead-"+uuid.NewString()[:8])
+
+	counts := func(id string) (pending, cancelled int) {
+		if err := e.superPool.QueryRow(ctx,
+			`SELECT pending_count, cancelled_count FROM batches WHERE id = $1`, id).Scan(&pending, &cancelled); err != nil {
+			t.Fatalf("read counters: %v", err)
+		}
+		return
+	}
+
+	dead := seedBatchDirect(t, e, tenant, "agent-dead", 3)
+	if _, err := e.superPool.Exec(ctx,
+		`UPDATE batches SET heartbeat_at = now() - interval '1 hour' WHERE id = $1`, dead); err != nil {
+		t.Fatal(err)
+	}
+	if rr := cancelBatch(t, h, tenant, dead); rr.Code != http.StatusOK {
+		t.Fatalf("cancel dead batch: %d %s", rr.Code, rr.Body.String())
+	}
+	if p, c := counts(dead); p != 0 || c != 3 {
+		t.Fatalf("dead batch counters not settled: pending=%d cancelled=%d (want 0, 3)", p, c)
+	}
+
+	live := seedBatchDirect(t, e, tenant, "agent-live", 3) // heartbeat_at defaults to now()
+	if rr := cancelBatch(t, h, tenant, live); rr.Code != http.StatusOK {
+		t.Fatalf("cancel live batch: %d %s", rr.Code, rr.Body.String())
+	}
+	if p, c := counts(live); p != 3 || c != 0 {
+		t.Fatalf("live batch counters were overwritten: pending=%d cancelled=%d (dispatcher owns them)", p, c)
+	}
+}

@@ -169,8 +169,13 @@ func newCallbackHTTPClient(rawURL string) (*http.Client, error) {
 	}
 
 	// Pin the first safe address so the actual dial does NOT re-invoke DNS.
-	pinnedAddr := net.JoinHostPort(addrs[0], port)
+	return pinnedCallbackClient(net.JoinHostPort(addrs[0], port)), nil
+}
 
+// pinnedCallbackClient dials only pinnedAddr (never re-resolving DNS) and
+// refuses every redirect: a 3xx could point at an internal host that never
+// passed the IP check (e.g. http://169.254.169.254/).
+func pinnedCallbackClient(pinnedAddr string) *http.Client {
 	transport := &http.Transport{
 		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
 			d := net.Dialer{Timeout: 5 * time.Second}
@@ -179,16 +184,13 @@ func newCallbackHTTPClient(rawURL string) (*http.Client, error) {
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: callbackHTTPTimeout,
 	}
-
 	return &http.Client{
 		Transport: transport,
 		Timeout:   callbackHTTPTimeout,
-		// Block redirects: a 3xx could point to an internal host that passed
-		// the IP check above (e.g., redirect to http://169.254.169.254/).
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return fmt.Errorf("callback: HTTP redirects are not allowed (SSRF)")
 		},
-	}, nil
+	}
 }
 
 // callbackPayload is the JSON body delivered to the callbackUrl.
