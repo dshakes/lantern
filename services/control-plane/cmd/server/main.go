@@ -460,7 +460,12 @@ func main() {
 	httpMux.HandleFunc("GET /v1/runs", authHandler.WithScope(handlers.ScopeRunsRead, restHandler.ListRuns))
 	httpMux.HandleFunc("POST /v1/runs", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CreateRun))
 	httpMux.HandleFunc("GET /v1/runs/{id}", authHandler.WithScope(handlers.ScopeRunsRead, restHandler.GetRun))
-	httpMux.HandleFunc("GET /v1/runs/{id}/events", authHandler.WithScope(handlers.ScopeRunsRead, restHandler.GetRunEvents))
+	// SSE: in-handler auth accepts both Authorization header and ?token= query
+	// param for browser EventSource clients (which cannot set custom headers).
+	// WithScope cannot be used here — it calls validateRequest (header-only),
+	// which rejects EventSource connections before the handler can apply the
+	// query-param fallback. The handler enforces auth + tenant scoping itself.
+	httpMux.HandleFunc("GET /v1/runs/{id}/events", restHandler.GetRunEvents)
 	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CancelRun))
 	httpMux.HandleFunc("DELETE /v1/runs/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.DeleteRun))
 
@@ -612,7 +617,8 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.CreateSession))
 	httpMux.HandleFunc("GET /v1/sessions", authHandler.WithScope(handlers.ScopeRunsRead, sessionHandler.ListSessions))
 	httpMux.HandleFunc("POST /v1/sessions/{id}/messages", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.SendMessage))
-	httpMux.HandleFunc("GET /v1/sessions/{id}/events", authHandler.WithScope(handlers.ScopeRunsRead, sessionHandler.GetEvents))
+	// SSE: in-handler auth (see run_events note above for the reason).
+	httpMux.HandleFunc("GET /v1/sessions/{id}/events", sessionHandler.GetEvents)
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.StopSession))
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.DeleteSession))
 	httpMux.HandleFunc("GET /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsRead, sessionHandler.GetSession))

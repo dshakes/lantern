@@ -89,6 +89,13 @@ var getExempt = map[string]string{
 	"GET /v1/runtime/audit":                 "in-handler runtime:read",
 	"GET /v1/runtime/metrics":               "in-handler runtime:read",
 
+	// SSE endpoints: browser EventSource cannot set custom headers so these
+	// handlers accept both Authorization header AND ?token= query param.
+	// WithScope calls validateRequest (header-only) and would reject all
+	// EventSource connections. Auth + tenant scoping is enforced in-handler.
+	"GET /v1/runs/{id}/events":     "in-handler SSE auth: supports ?token= for browser EventSource",
+	"GET /v1/sessions/{id}/events": "in-handler SSE auth: supports ?token= for browser EventSource",
+
 	// Capability-URL download: auth is the signed token in the path.
 	"GET /dl/{token}": "capability token in URL (not JWT/API key scope)",
 }
