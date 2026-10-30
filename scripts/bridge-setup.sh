@@ -196,7 +196,7 @@ setup_env_file() {
       pass ".env.local" "created from .env.example"
     else
       # Create a minimal stub
-      printf '# Lantern env — created by bridge-setup.sh\n' > "$env_file"
+      printf '# PAL Runtime env — created by bridge-setup.sh\n' > "$env_file"
       warn ".env.local" "created minimal stub (.env.example not found)"
     fi
   fi
@@ -244,8 +244,8 @@ check_node() {
 
 check_repo_root() {
   if ! find_repo_root; then
-    fail "Lantern repo root" "Makefile + .env.example not found walking up from script location" \
-      "Run this script from inside the cloned lantern repo."
+    fail "PAL Runtime repo root" "Makefile + .env.example not found walking up from script location" \
+      "Run this script from inside the cloned repo."
     printf "\n"
     exit 1
   fi
@@ -435,7 +435,7 @@ print_next_steps() {
 # ---- Main -------------------------------------------------------------------
 
 main() {
-  printf "${BLD}Lantern bridge setup wizard${RST} ${DIM}— personal-assistant onboarding${RST}\n"
+  printf "${BLD}PAL Runtime bridge setup wizard${RST} ${DIM}— personal-assistant onboarding${RST}\n"
 
   # Determine env file path (testable via LANTERN_ENV_FILE override)
   section "Repo detection"

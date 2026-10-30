@@ -69,7 +69,7 @@ resource "aws_subnet" "private" {
 
   tags = {
     Name                                        = "${var.cluster_name}-private-${local.azs[count.index]}"
-    "kubernetes.io/role/internal-elb"            = "1"
+    "kubernetes.io/role/internal-elb"           = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
@@ -84,7 +84,7 @@ resource "aws_subnet" "public" {
 
   tags = {
     Name                                        = "${var.cluster_name}-public-${local.azs[count.index]}"
-    "kubernetes.io/role/elb"                     = "1"
+    "kubernetes.io/role/elb"                    = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
@@ -244,7 +244,7 @@ resource "aws_iam_role" "data_plane" {
       }
       Condition = {
         StringEquals = {
-          "${replace(local.create_cluster ? aws_eks_cluster.this[0].identity[0].oidc[0].issuer : "https://oidc.eks.${var.region}.amazonaws.com/id/EXISTING", "https://", "")}:sub" = "system:serviceaccount:lantern:lantern-data-plane"
+          "${replace(local.create_cluster ? aws_eks_cluster.this[0].identity[0].oidc[0].issuer : "https://oidc.eks.${var.region}.amazonaws.com/id/EXISTING", "https://", "")}:sub" = "system:serviceaccount:lantern:pal-data-plane"
         }
       }
     }]

@@ -102,7 +102,7 @@ jobs:
       - name: Playwright
         working-directory: apps/web
         env:
-          E2E_RUN_DIR: ${{ runner.temp }}/lantern-e2e-run   # report, traces, service logs
+          E2E_RUN_DIR: ${{ runner.temp }}/pal-e2e-run   # report, traces, service logs
         run: |
           set -o pipefail
           npm run test:e2e 2>&1 | tee "$RUNNER_TEMP/pw.log"
@@ -112,7 +112,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-${{ github.run_id }}
-          path: ${{ runner.temp }}/lantern-e2e-run
+          path: ${{ runner.temp }}/pal-e2e-run
           if-no-files-found: warn
           retention-days: 7
 

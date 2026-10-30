@@ -1,0 +1,35 @@
+---
+// System-context diagram (actors -> boundary -> tunnel -> boundary -> actors),
+// HTML so it reflows on phones. Every box links to its docs. Data: src/data/diagrams.ts.
+import type { SysBlock } from '../data/diagrams';
+import { u } from '../data/site';
+interface Props { blocks: SysBlock[]; label: string }
+const { blocks, label } = Astro.props;
+const href = (h?: string) => (h ? u(`docs/${h}${h.endsWith('/') ? '' : '/'}`) : undefined);
+---
+<figure class="sys not-content" aria-label={label}>
+  {blocks.map((b) =>
+    b.kind === 'actors' ? (
+      <div class:list={['sys-actors', { single: b.items.length === 1 }]}>
+        {b.items.map((a) => (
+          <a class={`sys-actor t-${a.tone ?? 'rt'}`} href={href(a.href)}>
+            <span class="sys-dot" aria-hidden="true" />
+            <span><span class="sys-actor-name">{a.name}</span><span class="sys-actor-sub">{a.sub}</span></span>
+          </a>
+        ))}
+      </div>
+    ) : b.kind === 'conn' ? (
+      <div class="sys-conn"><span>{b.label}</span></div>
+    ) : b.kind === 'tunnel' ? (
+      <div class="sys-tunnel"><span>{b.label}</span></div>
+    ) : (
+      <div class={`sys-boundary sys-${b.plane}`}>
+        <div class="sys-tag">{b.tag}</div>
+        <div class="sys-grid">
+          {b.items.map((c) => <a class="sys-comp" href={href(c.href)}><b>{c.name}</b><span>{c.sub}</span></a>)}
+        </div>
+        {b.note && <p class="sys-note">{b.note}</p>}
+      </div>
+    ),
+  )}
+</figure>

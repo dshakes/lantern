@@ -1,6 +1,10 @@
 ---
 title: Agent runtime
 description: How PAL Runtime executes agents. Two isolation tiers, one journal, crash recovery, streaming and signed receipts.
+glance:
+  what: "Every run executes in one of two tiers, shared (the inline executor) or microVM, declared in the agent version's manifest.isolation."
+  why: "Choosing the tier is the main trust decision: code you wrote goes shared, untrusted code goes in a microVM."
+  how: "Read Two tiers, one journal, then set manifest.isolation as shown under How routing works."
 sidebar:
   order: 1
 ---
@@ -19,7 +23,7 @@ Every step of every run is written to the journal before it executes, in one pla
 | --- | --- | --- |
 | Declared as | `"shared"` (default, or absent) | `"microvm"` |
 | Executor | Goroutine inside control-plane (`executeRunInlineSync`) | Scheduler, then manager, then Firecracker / Kata / K8s Job |
-| Isolation | Same OS process. First-party code only | Firecracker or Kata microVM, or a gVisor / K8s Job pod (see [Isolation classes](/lantern/docs/runtime/isolation/)) |
+| Isolation | Same OS process. First-party code only | Firecracker or Kata microVM, or a gVisor / K8s Job pod (see [Isolation classes](/docs/runtime/isolation/)) |
 | Egress | Not sandboxed (first-party code) | Per-VM allowlist, deny by default. Default mode: in-guest proxy plus iptables REDIRECT (required in prod). Opt-in broker mode (Firecracker only): no NIC, host-side allowlist over vsock |
 | Crash resume | Recovery sweep (default 30 s) plus completed-step journal replay | Recovery sweep re-schedules the VM; gives up after 3 attempts |
 | Secret delivery | Resolved inline at step time, never logged | Default: short-TTL values vended to the workload over a peer-authenticated socket. Broker mode: credentials injected on the host, never enter the VM |
@@ -38,7 +42,7 @@ If the microVM tier is unavailable (scheduler unreachable, quota exceeded, manag
 
 ## Shared tier
 
-The shared tier is a goroutine inside the control-plane. Most runs execute here: loop agents, bridge replies, dashboard runs, cron-triggered runs and sessions. It drives either the plain-LLM tool-use loop (for agents with no `workflow` JSONB) or the workflow interpreter (for agents with a graph saved in the visual editor). Crash-resume is handled by the recovery sweep. See [Durable execution](/lantern/docs/runtime/durable-execution/).
+The shared tier is a goroutine inside the control-plane. Most runs execute here: loop agents, bridge replies, dashboard runs, cron-triggered runs and sessions. It drives either the plain-LLM tool-use loop (for agents with no `workflow` JSONB) or the workflow interpreter (for agents with a graph saved in the visual editor). Crash-resume is handled by the recovery sweep. See [Durable execution](/docs/runtime/durable-execution/).
 
 Entry points: `POST /v1/runs`, `POST /v1/sessions/{id}/messages`, the cron scheduler, the loop agent tick, and bridge-triggered runs.
 
@@ -59,7 +63,7 @@ The in-guest tool runner gives the harness a typed tool registry: `shell_exec`, 
 
 ## Service-health sweep
 
-A background loop TCP-probes peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it declares the peer DOWN and sends a message to the operator's notification channel, once on transition, so there are no alert storms. Read the current snapshot:
+A background loop TCP-probes peer services every 60 s (`PAL_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it declares the peer DOWN and sends a message to the operator's notification channel, once on transition, so there are no alert storms. Read the current snapshot:
 
 ```
 GET /v1/system/health   # JWT-authed
@@ -85,16 +89,16 @@ Four things an operator cares about: work is never lost (checkpointing), crashed
 
 | Capability | Mechanism | Knobs / views |
 | --- | --- | --- |
-| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots persisted to S3 (ADR 0007) | [Durable execution](/lantern/docs/runtime/durable-execution/) |
-| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `LANTERN_RESUME=1`, at most 3 attempts. Scheduler is HA via leader election | `LANTERN_RECOVERY_INTERVAL` (default 30 s) |
-| Throttling | Budget gate blocks over-budget runs with 402. Per-tenant concurrent-VM hard cap (gRPC `ResourceExhausted`). Spawn-storm guard returns 429. Per-step timeout | `LANTERN_SPAWN_RATE_PER_MIN` (default 120), `LANTERN_SPAWN_BURST`, [Budgets](/lantern/docs/build/budgets/) |
+| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots persisted to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
+| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `PAL_RESUME=1`, at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
+| Throttling | Budget gate blocks over-budget runs with 402. Per-tenant concurrent-VM hard cap (gRPC `ResourceExhausted`). Spawn-storm guard returns 429. Per-step timeout | `PAL_SPAWN_RATE_PER_MIN` (default 120), `PAL_SPAWN_BURST`, [Budgets](/docs/build/budgets/) |
 | Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `lantern vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
-| Telemetry | Five `lantern.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/lantern/docs/runtime/observability/) |
-| Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/lantern/docs/runtime/receipts/), [Observability](/lantern/docs/runtime/observability/) |
+| Telemetry | Five `lantern.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/runtime/observability/) |
+| Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/docs/runtime/receipts/), [Observability](/docs/runtime/observability/) |
 
 ## System architecture
 
-For the technical view of how the control-plane, scheduler, runtime-manager and in-VM harness collaborate across both tiers on the same `journal_events` substrate, see [Architecture](/lantern/docs/runtime/architecture/).
+For the technical view of how the control-plane, scheduler, runtime-manager and in-VM harness collaborate across both tiers on the same `journal_events` substrate, see [Architecture](/docs/runtime/architecture/).
 
 ## What makes it different
 
@@ -104,14 +108,14 @@ For the technical view of how the control-plane, scheduler, runtime-manager and 
 
 ## In this section
 
-- [Headless agent quickstart](/lantern/docs/runtime/quickstart/): write your first `agent.yaml` and run it end-to-end in about 15 minutes.
-- [Isolation classes](/lantern/docs/runtime/isolation/): the decision tree from trusted to hostile, and the fail-closed gate.
-- [Durable execution](/lantern/docs/runtime/durable-execution/): crash-resume with journal, replay, per-step retry and idempotency keys.
-- [Token streaming](/lantern/docs/runtime/streaming/): the `message_delta` / `message_completed` / `message_error` contract and the SDK async iterator.
-- [Sessions and memory](/lantern/docs/runtime/sessions-and-memory/): interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
-- [Sandbox lifecycle](/lantern/docs/runtime/sandbox-lifecycle/): pause / resume / fork a microVM and streaming exec, with TS, Python and CLI examples.
-- [Observability](/lantern/docs/runtime/observability/): OTel span attributes, the five `lantern.run.*` metrics, the service-health sweep.
-- [Identity and secrets](/lantern/docs/runtime/identity/): per-instance Ed25519 keys and short-TTL secret vending (microVM tier).
-- [Verifiable receipts](/lantern/docs/runtime/receipts/): signed, offline-verifiable proof of what ran.
+- [Headless agent quickstart](/docs/runtime/quickstart/): write your first `agent.yaml` and run it end-to-end in about 15 minutes.
+- [Isolation classes](/docs/runtime/isolation/): the decision tree from trusted to hostile, and the fail-closed gate.
+- [Durable execution](/docs/runtime/durable-execution/): crash-resume with journal, replay, per-step retry and idempotency keys.
+- [Token streaming](/docs/runtime/streaming/): the `message_delta` / `message_completed` / `message_error` contract and the SDK async iterator.
+- [Sessions and memory](/docs/runtime/sessions-and-memory/): interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
+- [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/): pause / resume / fork a microVM and streaming exec, with TS, Python and CLI examples.
+- [Observability](/docs/runtime/observability/): OTel span attributes, the five `lantern.run.*` metrics, the service-health sweep.
+- [Identity and secrets](/docs/runtime/identity/): per-instance Ed25519 keys and short-TTL secret vending (microVM tier).
+- [Verifiable receipts](/docs/runtime/receipts/): signed, offline-verifiable proof of what ran.
 
-Interactive agents use sessions, not runs. For multi-turn conversations see [Agents](/lantern/docs/build/agents/); for the full REST surface see the [API reference](/lantern/docs/reference/api/). Sessions execute on the shared tier.
+Interactive agents use sessions, not runs. For multi-turn conversations see [Agents](/docs/build/agents/); for the full REST surface see the [API reference](/docs/reference/api/). Sessions execute on the shared tier.
