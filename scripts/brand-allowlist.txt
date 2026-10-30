@@ -121,3 +121,5 @@ scope:^packages/cli/internal/cli/dev\.go "LANTERN_API_URL= # child env written u
 scope:^packages/sdk-go/ ^package lantern$|Package lantern|\blantern\.[A-Z]\w*|`lantern\.X` # Go package clause, renamed with the module path
 scope:^Formula/ "lantern"|`lantern`|bin/"lantern" # Homebrew legacy symlink
 scope:^examples/ \blantern/(demos|examples|deploy-guardian|base|harness|web-scraper-harness)\b # image refs / GitHub status context persisted in users' branch protection
+path:^scripts/cutover/ # the Lantern→PAL machine cutover/rollback tool has to name every old label, path, env key and DB name it moves
+path:^docs/runbooks/pal-cutover\.md$ # the cutover runbook names the old names it migrates from
