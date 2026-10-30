@@ -19,6 +19,9 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9465"
         prometheus.io/path: /metrics
+        {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "model-router") }}
+        {{- . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "pal.serviceAccountName" . }}
       containers:
@@ -93,19 +96,42 @@ spec:
                 secretKeyRef:
                   name: {{ include "pal.fullname" . }}-secrets
                   key: anthropic-api-key
+            # Internal gRPC mTLS (ADR 0043): this port carries tenant provider
+            # keys; only the control-plane and workflow-engine may call it.
+            {{- include "pal.mtls.env" (dict "root" . "name" "model-router" "peers" (list "control-plane" "workflow-engine")) | nindent 12 }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            {{- include "pal.mtls.volumeMounts" (dict "root" . "manager" false) | nindent 12 }}
+          {{- end }}
           livenessProbe:
+            {{- if .Values.mtls.enabled }}
+            # kubelet gRPC probes cannot present a client cert; mTLS ports
+            # would fail them, so probe the socket instead.
+            tcpSocket:
+              port: 50053
+            {{- else }}
             grpc:
               port: 50053
+            {{- end }}
             initialDelaySeconds: 10
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
+            {{- if .Values.mtls.enabled }}
+            tcpSocket:
+              port: 50053
+            {{- else }}
             grpc:
               port: 50053
+            {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           resources:
             {{- toYaml .Values.modelRouter.resources | nindent 12 }}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        {{- include "pal.mtls.volumes" (dict "root" . "name" "model-router" "manager" false) | nindent 8 }}
+      {{- end }}

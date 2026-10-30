@@ -4,13 +4,17 @@ set -euo pipefail
 cd "${ZL_ROOT:?run via scripts/zero-lantern/run.sh}"
 
 # Files the codemod never rewrites: the codemod itself, the brand gate (it has
-# to name what it looks for), and the one DB migration that renames persisted
-# objects still carrying the old name. Paths are git pathspec excludes.
+# to name what it looks for), the one DB migration that renames persisted
+# objects still carrying the old name, and the live-machine cutover tool and
+# its runbook (owned separately; they migrate FROM the old names). Paths are
+# git pathspec excludes.
 ZL_EXCLUDES=(
   ':!:scripts/zero-lantern/**'
   ':!:scripts/brand-check.sh'
   ':!:scripts/brand-allowlist.txt'
   ':!:services/control-plane/internal/db/migrations/*_pal_brand_rename.*.sql'
+  ':!:scripts/cutover/**'
+  ':!:docs/runbooks/pal-cutover.md'
 )
 
 # Tracked regular text files (not symlinks, not binaries) whose content matches

@@ -2,14 +2,16 @@
 title: CLI reference
 description: "The PAL command-line tool: local stack, agents, runs, evals, sandbox VMs, webhook triggers and data-plane install."
 glance:
-  what: "One static Go binary, `pal`, that manages agents, runs, evals and VMs."
+  what: "One static Go binary, pal, that runs the local stack and manages agents, runs, evals and sandbox VMs."
   why: "It covers the whole workflow from a terminal, from a first demo to gating CI on evals."
   how: "Run pal demo to look around, or pal dev to boot the stack and pal onboard to build an agent."
 sidebar:
   order: 3
 ---
 
-One static Go binary, installed as `pal`. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+import { Aside } from '@astrojs/starlight/components';
+
+One static Go binary, `pal`. Until the rename release ships, its source lives at `packages/cli/cmd/pal`; the install line below builds it under the name `pal`, so every command on this site works as written (`pal` is the legacy name and still works as an alias). It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
 
 Just looking? `pal demo` needs Docker and no API key. To build your own, `pal dev` boots the stack and `pal onboard` walks you through your first agent.
 
@@ -17,7 +19,7 @@ Just looking? `pal demo` needs Docker and no API key. To build your own, `pal de
 
 ```bash
 # Build from the repo
-cd packages/cli && go install ./cmd/pal
+cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal
 pal --version
 ```
 
@@ -64,7 +66,7 @@ pal dev logs postgres  # tail one service
 
 ## init
 
-Scaffold a new agent directory with `agent.yaml` and starter code. Templates: `basic` (default), `research`, `tool-use`, `connector`, `personal`, `scheduled`, `approval`.
+Scaffold a new agent directory with `agent.yaml`, `src/index.ts`, `package.json` and `tsconfig.json`. Without `--template` an interactive picker appears. Templates: `basic` (default), `research`, `tool-use`, `connector`, `personal`, `scheduled`, `approval`.
 
 ```bash
 pal init my-agent
@@ -139,7 +141,10 @@ pal vm put <vm-id> ./f.txt /workspace/f.txt   # write a file (1 MiB cap)
 pal vm quota get             # current quota + today's usage
 pal vm quota set --max-concurrent 10 --max-cost 50   # owner only
 pal vm cluster               # node load + warm-pool capacity (owner only)
+pal vm validate --kubeconfig ~/.kube/sandbox.yaml   # operator harness: gVisor/Kata isolation on a real cluster
 ```
+
+`exec` talks to the runtime manager directly; point it elsewhere with `--manager-addr` (default `$PAL_MANAGER_ADDR`). `vm validate` shells `scripts/validate-cluster.sh` (run it from inside the repo; needs `kubectl`), marks legs as skipped, not failed, when a RuntimeClass is absent, and takes `--context` and `--report` too.
 
 ## deploy
 
@@ -185,14 +190,14 @@ pal hooks delete <trigger-id>
 
 ## infra
 
-Generate and manage the data plane for AWS, GCP or Azure (EKS, GKE, AKS) via Terraform.
+Generate Terraform for the data plane on AWS, GCP or Azure (EKS, GKE, AKS). Only `install` does real work: it writes the Terraform files and prints the next steps (`terraform init && plan && apply`); it does not provision anything. It needs `--tenant-id` (or `PAL_TENANT_ID`).
 
 ```bash
-pal infra install --cloud aws [--region us-east-1] [--node-count 3] [--firecracker]
-pal infra status      # show connection status
-pal infra upgrade [--version latest]
-pal infra uninstall [--force]   # tear down the data plane
+pal infra install --cloud aws --tenant-id "$TENANT" [--region us-east-1] [--cluster-name NAME] \
+  [--existing-cluster NAME] [--instance-type TYPE] [--node-count 3] [--output-dir DIR] [--firecracker]
 ```
+
+<Aside type="caution">`pal infra status`, `upgrade` and `uninstall` are placeholders. Each prints a warning that it is not wired to the backend, then the manual `kubectl`, `helm` or `terraform destroy` commands to run instead. Use [Production deployment](/docs/operate/deployment/) for the real procedure.</Aside>
 
 ## login / whoami / logout
 

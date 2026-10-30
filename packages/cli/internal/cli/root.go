@@ -75,6 +75,7 @@ dashboard — not yet as CLI subcommands.`,
 	// Readiness check + first-run wizard.
 	root.AddCommand(newDoctorCommand())
 	root.AddCommand(newOnboardCommand())
+	root.AddCommand(newPalSetupCommand())
 
 	return root
 }

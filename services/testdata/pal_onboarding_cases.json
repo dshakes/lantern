@@ -1,0 +1,56 @@
+{
+  "_comment": "Parity cases for the pal onboarding state machine (ADR 0048). Exercised by the control-plane (internal/handlers/pal_onboarding_test.go), the dashboard (apps/web/app/pal/onboarding/pal-onboarding-logic.test.mts) and the CLI (packages/cli/internal/cli/pal_setup_test.go). Change all three sides together.",
+  "consentVersion": "2026-10",
+  "resume": [
+    { "name": "empty document", "state": {}, "want": "welcome" },
+    { "name": "stale step name cannot skip consent", "state": { "step": "done" }, "want": "welcome" },
+    { "name": "consent under an old version no longer counts", "state": { "consent": { "version": "2025-01", "acceptedAt": "2026-10-01T00:00:00Z" } }, "want": "welcome" },
+    { "name": "consented: channels are re-verified live", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" } }, "want": "channels" },
+    { "name": "profile derived but not approved stays before voice", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z", "voiceSampling": true }, "voice": { "profile": { "register": "casual", "sentenceLength": "terse", "languageMix": "English", "emojiUse": "rare", "warmth": "warm" } } }, "want": "channels" },
+    { "name": "voice approved", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z", "voiceSampling": true }, "voice": { "approved": true, "profile": { "register": "casual", "sentenceLength": "terse", "languageMix": "English", "emojiUse": "rare", "warmth": "warm" } } }, "want": "trust" },
+    { "name": "voice skipped", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true } }, "want": "trust" },
+    { "name": "prefs saved but holds not acknowledged", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true }, "trust": { "prefsSaved": true } }, "want": "trust" },
+    { "name": "trust done", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true }, "trust": { "prefsSaved": true, "holdsAcknowledged": true } }, "want": "profile" },
+    { "name": "all done", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true }, "trust": { "prefsSaved": true, "holdsAcknowledged": true }, "profile": { "done": true } }, "want": "done" },
+    { "name": "completedAt without the facts does not skip", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "completedAt": "2026-10-02T00:00:00Z" }, "want": "channels" }
+  ],
+  "canEnter": [
+    { "name": "welcome always", "step": "welcome", "state": {}, "channelsVerified": false, "want": true },
+    { "name": "channels needs consent", "step": "channels", "state": {}, "channelsVerified": true, "want": false },
+    { "name": "channels after consent", "step": "channels", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" } }, "channelsVerified": false, "want": true },
+    { "name": "voice needs a live channel", "step": "voice", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" } }, "channelsVerified": false, "want": false },
+    { "name": "voice with a live channel", "step": "voice", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" } }, "channelsVerified": true, "want": true },
+    { "name": "trust needs voice done", "step": "trust", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" } }, "channelsVerified": true, "want": false },
+    { "name": "profile needs trust done", "step": "profile", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true } }, "channelsVerified": true, "want": false },
+    { "name": "done needs profile done", "step": "done", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z" }, "voice": { "skipped": true }, "trust": { "prefsSaved": true, "holdsAcknowledged": true } }, "channelsVerified": true, "want": false }
+  ],
+  "voiceSamplingAllowed": [
+    { "name": "no consent", "state": {}, "want": false },
+    { "name": "consent without the voice opt-in", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z", "voiceSampling": false } }, "want": false },
+    { "name": "opt-in under an old consent version", "state": { "consent": { "version": "2025-01", "acceptedAt": "2026-10-01T00:00:00Z", "voiceSampling": true } }, "want": false },
+    { "name": "explicit opt-in", "state": { "consent": { "version": "2026-10", "acceptedAt": "2026-10-01T00:00:00Z", "voiceSampling": true } }, "want": true }
+  ],
+  "whatsapp": [
+    { "name": "bridge down", "input": { "reachable": false }, "want": "offline" },
+    { "name": "proxy 503", "input": { "reachable": true, "httpStatus": 503 }, "want": "offline" },
+    { "name": "bad token", "input": { "reachable": true, "httpStatus": 401 }, "want": "unauthorized" },
+    { "name": "no session", "input": { "reachable": true, "httpStatus": 200, "status": { "status": "disconnected", "paired": false } }, "want": "needs_pairing" },
+    { "name": "paired, reconnecting", "input": { "reachable": true, "httpStatus": 200, "status": { "status": "connecting", "paired": true } }, "want": "connecting" },
+    { "name": "connected", "input": { "reachable": true, "httpStatus": 200, "status": { "status": "connected", "paired": true } }, "want": "connected" },
+    { "name": "connected socket but not paired is not a channel", "input": { "reachable": true, "httpStatus": 200, "status": { "status": "connected", "paired": false } }, "want": "needs_pairing" }
+  ],
+  "imessage": [
+    { "name": "bridge down", "input": { "reachable": false }, "want": "offline" },
+    { "name": "bad token", "input": { "reachable": true, "httpStatus": 401 }, "want": "unauthorized" },
+    { "name": "not a Mac", "input": { "reachable": true, "httpStatus": 501 }, "want": "unsupported" },
+    { "name": "no session yet", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "idle" } }, "want": "not_started" },
+    { "name": "ready", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "ready" } }, "want": "ready" },
+    { "name": "Full Disk Access missing", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "permission_required", "reason": "Permission denied reading chat.db. Grant Full Disk Access to the process running the iMessage bridge: System Settings → Privacy & Security → Full Disk Access → add your terminal/launchd binary." } }, "want": "needs_full_disk_access" },
+    { "name": "Automation missing", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "permission_required", "reason": "Automation permission missing. System Settings → Privacy & Security → Automation → enable Messages for your terminal/launchd." } }, "want": "needs_automation" },
+    { "name": "iMessage not set up", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "permission_required", "reason": "chat.db not found at /Users/x/Library/Messages/chat.db. iMessage may not be set up on this macOS account." } }, "want": "not_set_up" },
+    { "name": "Messages unavailable", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "permission_required", "reason": "Messages.app not available or not logged into iMessage." } }, "want": "messages_unavailable" },
+    { "name": "Messages not running", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "messages_not_running", "reason": "Messages.app not running" } }, "want": "messages_unavailable" },
+    { "name": "unknown permission failure", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "permission_required", "reason": "osascript exited 1" } }, "want": "needs_permission" },
+    { "name": "starting", "input": { "reachable": true, "httpStatus": 200, "diagnostics": { "state": "starting" } }, "want": "starting" }
+  ]
+}

@@ -2,24 +2,28 @@
 title: Sandbox lifecycle
 description: Pause, resume and fork a microVM, idle suspend, snapshots, streaming exec and file access, with REST, TypeScript, Python and CLI examples.
 glance:
-  what: "MicroVM sandboxes can idle-suspend, pause, resume under the same vm_id and fork into copies, with streaming exec and file access."
-  why: "Pausing frees the concurrency slot, and forking lets you try several approaches from one warmed-up state."
-  how: "Call the pause, resume and fork endpoints under REST, or use the SDK and CLI tabs."
+  what: "A microVM can idle-suspend, pause, resume under the same vm_id or fork into copies, and it streams exec output and serves /workspace files."
+  why: "Paused VMs free their quota slot, and forks let you try N approaches from one warmed-up state."
+  how: "pal vm fork <id> --count 3, or POST /v1/runtime/vms/{id}/fork with {\"count\": 3}."
 sidebar:
   order: 5
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { VmLifecycle, SandboxLifecycleSequence } from '../../../../components/diagrams';
 
-MicroVM sandboxes are stateful. A running VM suspends itself when idle and wakes on the next request. You can also pause it (snapshot, quota slot freed), resume it under the same `vm_id`, or fork it into independent copies. Command output streams over SSE as it is produced.
+<VmLifecycle client:visible />
+<SandboxLifecycleSequence client:visible />
 
-Pause snapshots the VM's memory and disk and the machine stops holding a concurrency slot. Resume loads the snapshot into the same VM id. Fork loads the same snapshot into several new VMs at once, for trying N approaches from one warmed-up state.
+Pause snapshots the VM's memory and disk and frees its concurrency slot. Resume loads the snapshot back into the same `vm_id`. Fork loads it into several new VMs at once. A running VM also suspends itself when idle and wakes on the next request.
 
 ## Idle suspend
 
 Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0` or unset means never). When a sandbox sees no exec, tool call or file request for that long, it is snapshotted and its compute and quota slot released. The scheduler sweeps every 10 s on activity reported with the 30 s node heartbeat, so suspension can trail the timeout by up to about 40 s. The next exec or file request (REST, CLI or SDK) resumes it transparently: the caller sees a slower first response (about 4 s for the in-guest exec channel to re-establish), not an error. A VM paused by an operator (`POST /pause`) is never auto-resumed.
 
 The snapshot stays in storage while suspended. Lifecycle latency numbers (Lima nested-virt, Apple M4 Max, aarch64, indicative, not bare metal) are in `docs/benchmarks/runtime-latency.md`.
+
+## Forks
 
 Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `PAL_MAX_FORK_COUNT` (ceiling 1000).
 
@@ -49,14 +53,15 @@ An S3 upload failure is logged and does not fail the snapshot; the local copy is
 
 Each snapshot stores `mem` (up to the VM's RAM) plus a full copy of the disk, and every restore or fork copies the disk again. Disk capture happens while the VM is paused, so it adds to pause time (the copy reflinks on XFS/btrfs and byte-copies elsewhere). On the jailed path forks share the memory file via a hard link, so only the disk is copied per fork.
 
-Indicative numbers from `docs/benchmarks/runtime-latency.md`, measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). They are not bare-metal numbers.
+Indicative numbers from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-27), measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). Dev laptop, nested virtualization: preliminary, not production numbers. (Firecracker's own ~125 ms bare-metal cold boot is a published figure, not our measurement.)
 
 | Step | Indicative |
 | --- | --- |
 | Memory snapshot (128 MiB, 134 MB written; measured before disk capture) | 634 ms |
 | Restore (Spawn RPC) | 138 ms |
-| Fork spawn (hard-linked memory plus per-VM rootfs copy) | 131 to 160 ms |
+| Fork spawn (hard-linked memory plus per-VM rootfs copy) | 131 / 145 / 160 ms |
 | First exec after restore (p50 of 5 runs) | 2,857 ms |
+| Stop | about 200 ms |
 
 The snapshot row predates disk capture, so add the `rootfs` copy (reflinked on XFS/btrfs, a full copy elsewhere) to snapshot time. The benchmark doc estimates the per-VM rootfs copy at about 5 to 50 ms for a 20 to 100 MiB image.
 

@@ -101,3 +101,26 @@ func TestUnaryServiceAuthInterceptor_RejectsThenAllows(t *testing.T) {
 		t.Fatalf("expected handler to run and return ok, got %v called=%v", out, called)
 	}
 }
+
+// ADR 0032: the legacy header still authenticates; a wrong PAL token is not
+// rescued by a right legacy one (exactly one value is compared).
+func TestAuthenticateServiceToken_LegacyAndPALNames(t *testing.T) {
+	cases := []struct {
+		name string
+		md   map[string]string
+		ok   bool
+	}{
+		{"pal", map[string]string{ServiceTokenMetadataKey: "s3cret"}, true},
+		{"legacy", map[string]string{LegacyServiceTokenMetadataKey: "s3cret"}, true},
+		{"both", OutgoingServiceTokenMetadata("s3cret"), true},
+		{"legacy wrong", map[string]string{LegacyServiceTokenMetadataKey: "nope"}, false},
+		{"pal wrong legacy right", map[string]string{ServiceTokenMetadataKey: "nope", LegacyServiceTokenMetadataKey: "s3cret"}, false},
+	}
+	for _, tc := range cases {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))
+		err := authenticateServiceToken(ctx, zap.NewNop(), "s3cret", testAuthMethod)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}

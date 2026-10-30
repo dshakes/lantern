@@ -20,7 +20,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -48,6 +47,20 @@ func main() {
 	}
 	if !prod && cfg.GRPCServiceToken == "" {
 		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
+	// mTLS on :50052 (ADR 0043) is required ON TOP OF the token, not instead
+	// of it. Resolved before any I/O so a bad cert fails the boot fast.
+	tlsCreds, err := serviceServerCreds(prod)
+	if err != nil {
+		logger.Fatal("workflow-engine gRPC TLS", zap.Error(err))
+	}
+	switch {
+	case tlsCreds != nil:
+		logger.Info("workflow-engine gRPC server: mTLS enabled (client certificates required)")
+	case prod:
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — workflow-engine gRPC (:50052) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	default:
+		logger.Warn("workflow-engine gRPC server: TLS unset — serving plaintext (acceptable in dev; production requires PAL_GRPC_TLS_CA/_CERT/_KEY)")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -99,7 +112,13 @@ func main() {
 	// with a typed error rather than executing.
 	var modelClient palv1.ModelServiceClient
 	if cfg.ModelRouterAddr != "" {
-		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+		// Service-mesh mTLS (ADR 0043): the router carries tenant provider
+		// keys, so prod refuses plaintext unless PAL_GRPC_INSECURE=1.
+		mrCreds, err := serviceClientCreds(prod)
+		if err != nil {
+			logger.Fatal("model-router dial credentials", zap.Error(err))
+		}
+		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(mrCreds)}
 		if cfg.GRPCServiceToken != "" {
 			// The router rejects calls without x-pal-service-token.
 			mrOpts = append(mrOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
@@ -220,7 +239,7 @@ func main() {
 
 	// --- gRPC server ---
 	grpcServiceToken := cfg.GRPCServiceToken
-	grpcServer := grpc.NewServer(
+	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
@@ -231,7 +250,11 @@ func main() {
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
-	)
+	}
+	if tlsCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 
 	// Register services.
 	workflowSvc := handlers.NewWorkflowService(srv)
@@ -406,11 +429,11 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 
 		var attrs []attribute.KeyValue
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			attrs = append(attrs, attribute.String("pal.tenant_id", tid))
+			attrs = append(attrs, attribute.String("pal.tenant_id", tid), attribute.String("pal.tenant_id", tid))
 		}
 		if r, ok := req.(runIDer); ok {
 			if rid := r.GetRunId(); rid != "" {
-				attrs = append(attrs, attribute.String("pal.run_id", rid))
+				attrs = append(attrs, attribute.String("pal.run_id", rid), attribute.String("pal.run_id", rid))
 			}
 		}
 		if len(attrs) > 0 {
@@ -437,7 +460,7 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 		defer span.End()
 
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			span.SetAttributes(attribute.String("pal.tenant_id", tid))
+			span.SetAttributes(attribute.String("pal.tenant_id", tid), attribute.String("pal.tenant_id", tid))
 		}
 
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
@@ -459,7 +482,7 @@ func (w *wrappedStream) Context() context.Context {
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"x-pal-service-token": c.token}, nil
+	return middleware.OutgoingServiceTokenMetadata(c.token), nil
 }
 
 // RequireTransportSecurity is false: in-cluster hop, same as the other dials.

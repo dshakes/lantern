@@ -1,60 +1,12 @@
 ---
 title: PAL documentation
-description: Run agents in production on infrastructure you control - durable runs, hard budgets, capability-routed models, microVM isolation and signed receipts.
-glance:
-  what: "PAL is the self-hosted runtime for AI agents: the agent loop runs on your control plane, untrusted code in its own microVM."
-  why: "It gives you durable runs, hard budgets, capability-routed models and signed receipts on infrastructure you control."
-  how: "Go to Where to start and pick the group that matches what you want to do."
+description: "Docs for pal, the personal agent in iMessage and WhatsApp, and PAL Runtime: durable, budgeted, sandboxed agents in your cloud."
+tableOfContents: false
+pagefind: true
+editUrl: false
+prev: false
 ---
 
-import Diagram from '../../../components/Diagram.astro';
+import DocsPortal from '../../../components/DocsPortal.astro';
 
-import { LinkCard, CardGrid } from '@astrojs/starlight/components';
-
-PAL is the self-hosted runtime for AI agents. The agent loop runs on your control plane; untrusted code runs in its own microVM. Durable runs, hard budgets, capability-routed models and signed receipts come with it.
-
-The control plane owns the agent: workflow interpreter, journal, model router and budgets. When a durable `tool_call` step runs code, the workflow engine calls `ExecTool` on the runtime-manager on a data-plane host, which runs the code inside a microVM whose PID 1 is the harness. In broker mode (`PAL_EGRESS_MODE=broker`, opt-in, Firecracker only) the VM has no network device; its requests leave over vsock through a host broker that checks the allowlist and adds the credential.
-
-<Diagram name="your-cloud" />
-
-The data-plane agent dials out to the control plane, so your VPC opens no inbound ports. Untrusted code and its data run in your cluster; self-host the control plane too and prompts, keys and run data never leave your infrastructure.
-
-## Where to start
-
-<CardGrid>
-  <LinkCard title="Try the demo" description="make demo: Docker only, no API key. A private sample workspace at localhost:3001/kiosk with recorded answers." href="/docs/start/demo/" />
-  <LinkCard title="Run your own agent" description="With a provider key: make dev, then pal onboard." href="/docs/start/quickstart/" />
-  <LinkCard title="Run code in a sandbox" description="Write an agent.yaml, pick an isolation class, and pal run it in a microVM." href="/docs/runtime/quickstart/" />
-  <LinkCard title="Understand the security model" description="What the workload can reach, where credentials live, and which boundary checks what." href="/docs/runtime/egress/" />
-  <LinkCard title="Ship to your cloud" description="Control plane and data plane on your Kubernetes, with Helm and Terraform." href="/docs/operate/deployment/" />
-</CardGrid>
-
-## The six groups
-
-<CardGrid>
-  <LinkCard title="Start" description="Demo, quickstart, installation and runnable examples." href="/docs/start/demo/" />
-  <LinkCard title="PAL (personal agent)" description="Channels, knowledge base, human handoff and approvals." href="/docs/pal/" />
-  <LinkCard title="Runtime" description="Durable execution, isolation classes, token streaming, observability, signed receipts." href="/docs/runtime/" />
-  <LinkCard title="Build" description="Agents, connectors, models, triggers, scheduling, budgets, evaluations." href="/docs/build/agents/" />
-  <LinkCard title="Reference" description="REST API, SDKs (TypeScript, Python, Go), CLI, environment variables." href="/docs/reference/api/" />
-  <LinkCard title="Operate" description="Deployment with Helm or Terraform, and day-two operations." href="/docs/operate/deployment/" />
-</CardGrid>
-
-## What the runtime gives you
-
-- **Durable execution.** A crash mid-step resumes from the journal. Completed steps are skipped and idempotency keys stop double side effects. See [Durable execution](/docs/runtime/durable-execution/).
-- **Isolation classes.** runc, gVisor, Kata and Firecracker by declared class. Untrusted code is refused rather than downgraded when the hardened runtime is missing. See [Isolation](/docs/runtime/isolation/).
-- **Token streaming.** Session replies stream token by token over SSE, with no buffering between provider and client. Tool-using turns return one completed message. See [Streaming](/docs/runtime/streaming/).
-- **Observability.** Control-plane HTTP/gRPC and step spans carry `tenant_id`, `run_id` and `step_id`; the trace context propagates into the in-VM harness. See [Observability](/docs/runtime/observability/).
-- **Budgets.** Hard caps on cost, tokens and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and tool nodes respect per-tool limits. See [Budgets](/docs/build/budgets/).
-- **Evaluations.** Pin a baseline per branch and fail CI on regression with HTTP 422. Replay past failures before promoting a version. See [Evaluations](/docs/build/evaluations/).
-
-## Reference
-
-<CardGrid>
-  <LinkCard title="REST API" description="Every endpoint on the control plane." href="/docs/reference/api/" />
-  <LinkCard title="SDKs" description="TypeScript, Python and Go." href="/docs/reference/sdk/" />
-  <LinkCard title="CLI" description="onboard, doctor, demo, run, vm, hooks and more." href="/docs/reference/cli/" />
-</CardGrid>
-
-Architecture detail, with every sequence diagram, is in [Architecture](/docs/runtime/architecture/).
+<DocsPortal />

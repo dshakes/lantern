@@ -15,6 +15,13 @@ path:^scripts/zero-lantern/ # the rename codemod (ADR 0032) rewrites the old nam
 # Migrations are append-only: renaming a persisted object means naming it.
 path:^services/control-plane/internal/db/migrations/\d{4}_pal_brand_rename\.(up|down)\.sql$ # renames the RLS role, namespaces and persisted values that pre-rename databases still carry
 
+# The live-machine cutover tool migrates the owner's Mac FROM the old names (state
+# dir, launchd labels, env keys, DB user/role): it has to name them. Owned by
+# the cutover PR, not rewritten by the codemod; delete with the tool once the
+# cutover is done.
+path:^scripts/cutover/ # live-machine cutover tool: renames the old state dir, labels, env keys and DB names
+path:^docs/runbooks/pal-cutover\.md$ # the cutover runbook names what the cutover renames
+
 # The one kept legacy wire name: iPhone Shortcuts installed before the rename
 # send this header, and the owner re-points them by hand. Accepted for one
 # release on /v1/signals only (control plane + dashboard twin), then removed.

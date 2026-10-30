@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"crypto/subtle"
+	"net/http"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -15,6 +16,44 @@ import (
 // token that authenticates trusted internal callers (e.g. the gateway) to the
 // control-plane gRPC server.
 const ServiceTokenMetadataKey = "x-pal-service-token"
+
+// LegacyServiceTokenMetadataKey is the pre-PAL name of the same header (ADR
+// 0032). Servers accept both names; callers send both until every peer reads
+// the PAL name.
+const LegacyServiceTokenMetadataKey = "x-pal-service-token"
+
+// presentedServiceToken returns the first non-empty token under the PAL name,
+// then the legacy name. Exactly one value is ever compared, so accepting two
+// names does not give a caller a second guess per request.
+func presentedServiceToken(get func(string) string) string {
+	for _, k := range [...]string{ServiceTokenMetadataKey, LegacyServiceTokenMetadataKey} {
+		if v := get(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ServiceTokenFromHeader reads the service token from an HTTP request header
+// under either name.
+func ServiceTokenFromHeader(h http.Header) string { return presentedServiceToken(h.Get) }
+
+// ServiceTokenFromMetadata reads the service token from gRPC metadata under
+// either name.
+func ServiceTokenFromMetadata(md metadata.MD) string {
+	return presentedServiceToken(func(k string) string {
+		if v := md.Get(k); len(v) > 0 {
+			return v[0]
+		}
+		return ""
+	})
+}
+
+// OutgoingServiceTokenMetadata is the metadata a caller attaches: the token
+// under both names, so a peer that has not upgraded still authenticates it.
+func OutgoingServiceTokenMetadata(token string) map[string]string {
+	return map[string]string{ServiceTokenMetadataKey: token, LegacyServiceTokenMetadataKey: token}
+}
 
 // serviceTokenValid reports whether presented matches expected using a
 // constant-time comparison (avoids leaking token length/prefix via timing).
@@ -45,8 +84,8 @@ func authenticateServiceToken(ctx context.Context, logger *zap.Logger, expected,
 		return status.Error(codes.Unauthenticated, "missing service token")
 	}
 
-	vals := md.Get(ServiceTokenMetadataKey)
-	if len(vals) == 0 || !serviceTokenValid(expected, vals[0]) {
+	presented := ServiceTokenFromMetadata(md)
+	if presented == "" || !serviceTokenValid(expected, presented) {
 		logger.Warn("service-token check: invalid or missing token", zap.String("method", method))
 		return status.Error(codes.Unauthenticated, "invalid service token")
 	}

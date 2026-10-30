@@ -1,0 +1,45 @@
+#!/bin/bash
+# Sandbox stand-in for the four local HTTP services. Answers from the fake
+# launchd state: a port is "up" when the job that owns it is loaded under
+# either prefix, and authenticated bridge routes compare the bearer token with
+# the one that side's code would read (new side: ~/.pal/bridge.env PAL_*,
+# old side: ~/.lantern/bridge.env LANTERN_*). So a broken env-key rename or a
+# lost state dir makes health fail here exactly as it would live.
+# shellcheck disable=SC2015  # `[[ ]] && reply … || reply …`: reply always exits
+set -uo pipefail
+S="${STUB_STATE:?}"
+url=""; wcode=0; hdr=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -w) wcode=1; shift ;; -o|-m) shift ;; -K) cfg="$(cat)"; hdr="$(printf '%s' "$cfg" | sed -n 's/^header = "\(.*\)"$/\1/p')" ;;
+    http*) url="$1" ;;
+  esac; shift
+done
+echo "curl $url $( [[ -n "$hdr" ]] && echo '(with header)')" >> "$S/calls.log"
+port="$(echo "$url" | sed -E 's#^https?://[^:/]+:([0-9]+).*#\1#')"; path="/${url#*://*/}"
+case "$port" in 8080) svc=api;; 3001) svc=dashboard;; 3100) svc=whatsapp-bridge;; 3200) svc=imessage-bridge;; *) svc="";; esac
+side=""
+[[ -n "$svc" && -f "$S/jobs/${STUB_NEW_PREFIX}.$svc" ]] && side=new
+[[ -n "$svc" && -f "$S/jobs/${STUB_OLD_PREFIX}.$svc" ]] && side=old
+reply() { if [[ $wcode == 1 ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; exit 0; }
+[[ -z "$side" ]] && { [[ $wcode == 1 ]] && printf '000'; exit 7; }
+if [[ $side == new ]]; then envf="$HOME/.pal/bridge.env"; pre=PAL_; else envf="$HOME/.lantern/bridge.env"; pre=LANTERN_; fi
+want() { python3 -I "$STUB_HELPER" env-get "$envf" "$1" 2>/dev/null; }
+authed() { local t; t="$(want "$1")"; [[ -n "$t" && "$hdr" == "Authorization: Bearer $t" ]]; }
+case "$svc:$path" in
+  api:/healthz|dashboard:/*|*-bridge:/health) reply 200 '{"status":"ok"}' ;;
+  api:/v1/signals*)
+    t="$(python3 -I "$STUB_HELPER" plist-get "$HOME/Library/LaunchAgents/${STUB_NEW_PREFIX}.api.plist" env:PAL_SIGNAL_TOKEN 2>/dev/null)"
+    [[ $side == old ]] && t="$(python3 -I "$STUB_HELPER" plist-get "$HOME/Library/LaunchAgents/${STUB_OLD_PREFIX}.api.plist" env:LANTERN_SIGNAL_TOKEN 2>/dev/null)"
+    case "$hdr" in "x-pal-signal-token: $t"|"x-lantern-signal-token: $t") reply 200 '[]';; *) reply 401 '{}';; esac ;;
+  whatsapp-bridge:*/status)
+    authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
+    reply 200 '{"exists":true,"connected":true}' ;;
+  whatsapp-bridge:*/has-creds)
+    authed "${pre}BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
+    [[ -s "$STUB_WA_CREDS/$STUB_TENANT/creds.json" ]] && reply 200 '{"hasCreds":true}' || reply 200 '{"hasCreds":false}' ;;
+  imessage-bridge:*/diagnostics)
+    authed "${pre}IMESSAGE_BRIDGE_TOKEN" || reply 401 '{"error":"unauthorized"}'
+    reply 200 '{"state":"running","chatDb":{"open":true,"lastSeenRowid":4242}}' ;;
+  *) reply 404 '{}' ;;
+esac

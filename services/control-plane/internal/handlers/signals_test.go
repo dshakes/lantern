@@ -26,6 +26,8 @@ func newSignalHandlerForTest(t *testing.T) *SignalHandler {
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
+	t.Setenv("PAL_STATE_DIR", "") // an operator override must not redirect test writes
+	t.Setenv("PAL_STATE_DIR", "")
 	t.Setenv("HOME", tmp)
 	return tmp
 }
@@ -466,5 +468,34 @@ func TestSignalFileBounded(t *testing.T) {
 	}
 	if lines != signalFileKeepLine {
 		t.Fatalf("after trim lines = %d, want %d", lines, signalFileKeepLine)
+	}
+}
+
+// ADR 0032: x-pal-signal-token authenticates; the legacy header (the owner's
+// iPhone Shortcuts) still does; a wrong PAL header is not rescued by a right
+// legacy one.
+func TestSignalIngest_PALAndLegacyHeader(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("PAL_SIGNAL_TOKEN", "tok")
+	h := newSignalHandlerForTest(t)
+	body, _ := json.Marshal(map[string]any{"kind": "focus", "detail": "Work"})
+	for _, tc := range []struct {
+		name string
+		hdr  map[string]string
+		want int
+	}{
+		{"pal", map[string]string{"x-pal-signal-token": "tok"}, http.StatusOK},
+		{"legacy", map[string]string{"x-lantern-signal-token": "tok"}, http.StatusOK},
+		{"pal wrong legacy right", map[string]string{"x-pal-signal-token": "no", "x-lantern-signal-token": "tok"}, http.StatusUnauthorized},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/signals", bytes.NewReader(body))
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.IngestSignal(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: got %d, want %d (%s)", tc.name, rec.Code, tc.want, rec.Body.String())
+		}
 	}
 }

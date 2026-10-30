@@ -11,12 +11,18 @@
 # common cases automatically; the rest it logs with the exact one-liner.
 set -uo pipefail
 
-LOG="$HOME/Library/Logs/PAL/signal-watchdog.log"
-PLIST="$HOME/Library/LaunchAgents/dev.pal.api.plist"
+# Works on either side of the PAL cutover (ADR 0032).
+LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR="$HOME/Library/Logs/PAL"
+if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then
+  LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR="$HOME/Library/Logs/PAL"
+fi
+LOG="$LOG_DIR/signal-watchdog.log"
+PLIST="$HOME/Library/LaunchAgents/$LABEL_PREFIX.api.plist"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
-TOK=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PAL_SIGNAL_TOKEN" "$PLIST" 2>/dev/null)
+TOK=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:${ENV_PREFIX}_SIGNAL_TOKEN" "$PLIST" 2>/dev/null)
+[ -n "$TOK" ] || TOK=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PAL_SIGNAL_TOKEN" "$PLIST" 2>/dev/null)
 probe() { curl -s -m5 -o /dev/null -w "%{http_code}" "http://localhost:8080/v1/signals?limit=1" -H "x-pal-signal-token: $TOK" 2>/dev/null; }
 
 code=$(probe)
@@ -29,8 +35,8 @@ log "UNHEALTHY: GET /v1/signals → HTTP ${code:-down} | :8080 = ${holder:-none}
 if [ "$health" != "200" ]; then
   # API is down/crashed → restart the real one. ponytail: kickstart heals a crash;
   # it cannot steal a port a foreign process holds (handled below).
-  log "  → API not healthy; kickstarting dev.pal.api"
-  launchctl kickstart -k "gui/$(id -u)/dev.pal.api" >> "$LOG" 2>&1
+  log "  → API not healthy; kickstarting $LABEL_PREFIX.api"
+  launchctl kickstart -k "gui/$(id -u)/$LABEL_PREFIX.api" >> "$LOG" 2>&1
   sleep 8
   log "  after restart: GET /v1/signals → HTTP $(probe)"
   exit 0
@@ -39,4 +45,4 @@ fi
 # Healthz OK but the signal token is rejected → a DIFFERENT control-plane (one
 # without PAL_SIGNAL_TOKEN) is on the port. Do NOT auto-kill it — log the fix.
 log "  → :8080 is up but rejects the signal token: a control-plane WITHOUT PAL_SIGNAL_TOKEN holds the port."
-log "    Fix: kill the process above, then  launchctl kickstart -k gui/$(id -u)/dev.pal.api"
+log "    Fix: kill the process above, then  launchctl kickstart -k gui/$(id -u)/$LABEL_PREFIX.api"

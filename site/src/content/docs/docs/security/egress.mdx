@@ -1,0 +1,63 @@
+---
+title: Egress and credentials
+description: How sandboxes reach the network. Default in-guest proxy mode, opt-in broker mode, allowlists and host-side credential injection.
+glance:
+  what: "A sandbox reaches the network through an in-guest allowlist proxy by default, or through a host-side broker over vsock when PAL_EGRESS_MODE=broker."
+  why: "In broker mode the VM has no network device and the real credential is added on the host, so a compromised workload has nothing to steal."
+  how: "Declare egress rules (and an inject entry with a secret_uri) in the spawn spec, then set PAL_EGRESS_MODE=broker on the runtime-manager."
+sidebar:
+  order: 2
+---
+
+import Diagram from '../../../../components/Diagram.astro';
+import { Aside } from '@astrojs/starlight/components';
+import { EgressSequence, BrokerDemo } from '../../../../components/diagrams';
+
+<EgressSequence client:visible />
+<BrokerDemo client:visible />
+
+Default mode enforces the allowlist inside the guest through an iptables-redirected CONNECT proxy. **Broker mode** (`PAL_EGRESS_MODE=broker`, Firecracker only) removes the network device: every outbound request crosses a vsock to a broker in the runtime-manager, which checks the allowlist and adds the credential on the host.
+
+<Diagram name="sandbox-egress" />
+
+## The path out
+
+1. The workload sends an ordinary HTTP(S) request through `127.0.0.1:3128`. The harness injects `HTTP_PROXY`/`HTTPS_PROXY`, so most clients need no change.
+2. The harness (PID 1) forwards it over vsock, the VM's only channel to the host.
+3. The broker in the runtime-manager matches the destination against the sandbox's allowlist.
+4. If the rule has an `inject` entry (`header` plus `secret_uri`), the broker resolves the secret on the host and sets that header, replacing any placeholder the workload sent.
+5. The request goes upstream. A denied request is refused and written to the audit stream.
+
+## Allowlist
+
+Each spawn declares its egress rules (host pattern, HTTP methods, rate). Anything not listed is denied. The broker also refuses private and metadata IP ranges and allows only port 443 unless `PAL_EGRESS_ALLOWED_PORTS` says otherwise.
+
+In broker mode (`PAL_EGRESS_MODE=broker`) the VM has no network device, so a client that ignores proxy variables simply has no route. In the default mode iptables redirects all traffic to the in-guest proxy. Denials are security-critical audit events and are never dropped, even across a brief manager outage.
+
+## Credential injection
+
+Specs reference secrets by `secret_uri`, never by value. The broker resolves the ref on the host and sets the header on the outbound request, so the secret exists only on the host side of the vsock. A compromised workload cannot exfiltrate a key it never received.
+
+For HTTPS, the broker terminates TLS only for hosts whose rule injects a credential, using a per-VM ephemeral CA that is name-constrained to those hosts. Every other host is an opaque CONNECT tunnel with end-to-end TLS.
+
+## Data-loss prevention
+
+Broker mode can also scan outbound request headers and the first part of the body (64 KiB by default, 1 MiB ceiling) for cards (Luhn-checked), secret keys (AWS, GitHub, Slack, PEM), emails, phones and your own RE2 patterns (ADR 0030). Each rule runs in `off`, `audit` or `block` mode; a block returns 403 with `X-Pal-Reason: dlp-block`. Rules are per tenant: `GET`/`PUT /v1/egress/dlp-policy` and `POST /v1/egress/dlp-policy/rules`, fixed when a VM is scheduled.
+
+<Aside type="caution">
+DLP needs broker mode: a node without it refuses a spawn whose policy has a `block` rule. It is a guard rail and an audit trail, not containment. Opaque CONNECT tunnels are never inspected, only a body prefix is scanned, and encoded data is not detected.
+</Aside>
+
+## See it on a real VM
+
+The broker end-to-end check (`infra/firecracker/broker-e2e.sh`) runs three requests from inside a broker-mode Firecracker VM:
+
+| The agent… | What happens |
+| --- | --- |
+| looks for a network card | There is none. The VM's only channel out is vsock. |
+| calls an allowlisted API with the header `placeholder` | The host swaps in the real credential and the API answers `200`. The agent only ever saw "placeholder". |
+| sends the same call over plain HTTP | Refused by the host with `403`. A credential never leaves unencrypted. |
+
+[Watch the recording](repo:/blob/master/docs/media/egress-broker-kvm.gif) (KVM host, real Firecracker).
+
+Related: [Identity and secrets](/docs/security/identity/), [Isolation classes](/docs/runtime/isolation/), [Security](/docs/security/).

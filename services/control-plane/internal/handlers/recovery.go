@@ -323,8 +323,8 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 	ctx, span := tracer.Start(ctx, "runtime.recovery.microvm_resume")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("pal.run_id", run.runID),
-		attribute.String("pal.tenant_id", run.tenantID),
+		attribute.String("pal.run_id", run.runID), attribute.String("pal.run_id", run.runID),
+		attribute.String("pal.tenant_id", run.tenantID), attribute.String("pal.tenant_id", run.tenantID),
 	)
 
 	log := h.logger().Named("recovery.microvm")
@@ -353,7 +353,7 @@ func (h *RESTHandler) resumeMicroVMRun(ctx context.Context, run orphanedRun) err
 		SELECT COUNT(*) FROM runtime_vms WHERE run_id = $1::uuid
 	`, run.runID).Scan(&totalVMs)
 
-	span.SetAttributes(attribute.Int("pal.microvm_attempts", totalVMs))
+	span.SetAttributes(attribute.Int("pal.microvm_attempts", totalVMs), attribute.Int("pal.microvm_attempts", totalVMs))
 
 	// 3. Cap: if maxMicroVMResumeAttempts VMs have already been tried, fail the run.
 	if totalVMs >= maxMicroVMResumeAttempts {

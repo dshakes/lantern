@@ -2,18 +2,19 @@
 title: Isolation classes
 description: The decision tree from trusted to hostile workloads, and the fail-closed gate.
 glance:
-  what: "Every headless agent declares an isolation class in agent.yaml, which is the security boundary the workload runs behind."
-  why: "It sets how strong the walls around an agent are, from your own code to hostile workloads, and fails closed."
-  how: "Follow The decision tree, then set the class in your spec as shown under In a spec."
+  what: "Each headless agent declares one of six isolation classes in agent.yaml, mapped to a Kubernetes runtimeClassName from runc up to a Kata microVM."
+  why: "Stronger walls for untrusted code, and a refusal rather than a quiet downgrade when the cluster cannot provide them."
+  how: "Walk The decision tree, then set spec.isolation as shown under In a spec."
 sidebar:
   order: 4
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { IsolationClasses } from '../../../../components/diagrams';
 
-Every headless agent declares an isolation class in its `agent.yaml`. The class is the security boundary the workload runs behind. On Kubernetes it maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
+<IsolationClasses client:visible />
 
-An isolation class answers one question: how strong should the walls around this agent be? Code you wrote yourself gets normal walls. Code that pulls packages from the internet or was written by an LLM gets a sandbox that intercepts the operating system's syscalls. Hostile input gets a full virtual machine with its own kernel. You declare the level once in the agent's config. If the cluster can't provide walls that strong, PAL Runtime refuses to run the workload rather than quietly using weaker ones.
+An isolation class answers one question: how strong should the walls around this agent be? Your own code gets normal walls, internet packages or LLM-written code get a syscall-intercepting sandbox, and hostile input gets a full VM with its own kernel. On Kubernetes the class maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
 
 ## The decision tree
 
@@ -55,7 +56,8 @@ This is the load-bearing invariant: untrusted and hostile code never runs in a b
 
 - A node may satisfy `untrusted` only if it advertises the `gvisor` RuntimeClass.
 - A node may satisfy `hostile` only if it advertises `kata-qemu` / `kata-fc`.
-- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. It is never downgraded to `runc`.
+- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. `untrusted` and `hostile` are never downgraded to `runc`.
+- `standard`, `devcontainer` and `wasm` also refuse by default, but the manager can be told to degrade them to bare `runc` with `PAL_ALLOW_RUNC_STANDARD=1`. That flag never applies to `untrusted` or `hostile`.
 
 The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`pal.dev/runtimeclass`) that only matches nodes labelled as having the handler.
 
@@ -64,7 +66,7 @@ If your cluster has not provisioned the `gvisor` / `kata` RuntimeClasses, `untru
 </Aside>
 
 <Aside>
-gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those, or get a `runc`-on-trusted exception via the admin override.
+gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those.
 </Aside>
 
 ## In a spec
@@ -81,11 +83,11 @@ spec:
       rate_bps: 1048576   # 1 MiB/s
 ```
 
-Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/docs/runtime/identity/).
+Egress enforcement and secret vending for untrusted workloads are covered in [Identity and secrets](/docs/security/identity/).
 
 ## Firecracker backend and broker mode
 
-Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `PAL_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/docs/runtime/egress/).
+Where the runtime-manager uses the Firecracker backend, the workload runs in its own microVM. By default the VM has a NIC and the harness enforces the egress allowlist inside the guest. Set `PAL_EGRESS_MODE=broker` on the manager (opt-in, Firecracker only) and the VM gets no network device at all: egress leaves over vsock to a host-side broker that enforces the allowlist and injects credentials. Kata and Kubernetes backends do not support broker mode. See [Egress and credentials](/docs/security/egress/).
 
 ## Kubernetes backend hardening
 

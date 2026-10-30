@@ -24,7 +24,7 @@ package handlers
 //  4. Builds the app-pool DSN by reusing the EXACT production logic
 //     (cmd/server.buildAppPoolConfig): parse DATABASE_URL, swap user→pal_app
 //     and password, preserving every other DSN parameter. Replicated here as
-//     buildPalAppPool because that helper lives in package main.
+//     buildAppPoolConfig because that helper lives in package main.
 //  5. Returns a *server.Server with Pool=superPool and AppPool=appPool, so
 //     s.srv.WithTenant(...) routes through the RLS-subject role.
 //

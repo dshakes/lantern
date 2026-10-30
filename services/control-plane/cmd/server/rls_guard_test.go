@@ -1,14 +1,14 @@
 package main
 
 // TestRLSGuardDecision proves that rlsGuardDecision enforces the
-// prod-fail-closed contract without triggering os.Exit in tests.
+// prod-fail-closed contract (ADR 0042) without triggering os.Exit in tests.
 //
-// The table covers:
-//   (d) PAL_ENV=prod + RLS unset → fatal=true (the prod guard fires).
-//   Corollaries:
-//     - prod + enforce=1 but no password → fatal=true (incomplete config).
-//     - prod + enforce=1 + password set  → fatal=false (correctly configured).
-//     - dev (any RLS state)              → fatal=false (dev is advisory-only).
+// Secure-default semantics (ADR 0042):
+//   - prod + PAL_APP_DB_PASSWORD set → implicit RLS ON (fatal=false, no msg).
+//     The enforce value is irrelevant when the password is present.
+//   - prod + no pwd + no explicit PAL_RLS_ENFORCE=0 → FATAL.
+//   - prod + no pwd + PAL_RLS_ENFORCE=0 → WARN (acknowledged opt-out).
+//   - dev → advisory only, never fatal.
 
 import (
 	"strings"
@@ -25,14 +25,16 @@ func TestRLSGuardDecision(t *testing.T) {
 		wantMsgHas string // non-empty substring that must appear in message when set
 	}{
 		// --- prod cases (fail-closed) ---
+		// No password, no explicit opt-out → fatal.
 		{
 			name:       "prod_rls_unset",
 			isProd:     true,
 			rlsEnforce: "",
 			appPwd:     "",
 			wantFatal:  true,
-			wantMsgHas: "PAL_RLS_ENFORCE",
+			wantMsgHas: "PAL_APP_DB_PASSWORD",
 		},
+		// enforce=1 but no password is still fatal (incomplete config).
 		{
 			name:       "prod_enforce_but_no_pwd",
 			isProd:     true,
@@ -41,6 +43,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			wantFatal:  true,
 			wantMsgHas: "PAL_APP_DB_PASSWORD",
 		},
+		// Password set + explicit enforce=1: fully configured, no message.
 		{
 			name:       "prod_fully_configured",
 			isProd:     true,
@@ -49,12 +52,43 @@ func TestRLSGuardDecision(t *testing.T) {
 			wantFatal:  false,
 			wantMsgHas: "",
 		},
+		// Password set without explicit enforce: implicit secure default ON — not fatal.
+		// ADR 0042: in prod, PAL_APP_DB_PASSWORD alone activates the app pool.
 		{
-			name:       "prod_wrong_enforce_value",
+			name:       "prod_implicit_secure_default",
+			isProd:     true,
+			rlsEnforce: "",
+			appPwd:     "s3cr3t",
+			wantFatal:  false,
+			wantMsgHas: "",
+		},
+		// Password set with non-canonical enforce value: password wins → not fatal.
+		{
+			name:       "prod_pwd_set_enforce_any_value",
 			isProd:     true,
 			rlsEnforce: "true",
 			appPwd:     "s3cr3t",
-			wantFatal:  true, // must be exactly "1"
+			wantFatal:  false,
+			wantMsgHas: "",
+		},
+		// Explicit opt-out in prod (acknowledged, not fatal, but loud WARN).
+		{
+			name:       "prod_explicit_opt_out",
+			isProd:     true,
+			rlsEnforce: "0",
+			appPwd:     "",
+			wantFatal:  false,
+			wantMsgHas: "PAL_RLS_ENFORCE",
+		},
+		// Explicit opt-out wins even when the password IS set: rlsEnforceActive
+		// returns false when PAL_RLS_ENFORCE=0 regardless of appPwd, so the guard
+		// must emit the same WARN (not silently succeed) to match the activation logic.
+		{
+			name:       "prod_explicit_opt_out_with_pwd",
+			isProd:     true,
+			rlsEnforce: "0",
+			appPwd:     "s3cr3t",
+			wantFatal:  false,
 			wantMsgHas: "PAL_RLS_ENFORCE",
 		},
 
@@ -65,7 +99,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "",
 			appPwd:     "",
 			wantFatal:  false,
-			wantMsgHas: "PAL_RLS_ENFORCE", // warn present
+			wantMsgHas: "PAL_APP_DB_PASSWORD", // advisory warn about missing password
 		},
 		{
 			name:       "dev_enforce_but_no_pwd",
@@ -73,7 +107,7 @@ func TestRLSGuardDecision(t *testing.T) {
 			rlsEnforce: "1",
 			appPwd:     "",
 			wantFatal:  false,
-			wantMsgHas: "PAL_RLS_ENFORCE", // warn present
+			wantMsgHas: "PAL_APP_DB_PASSWORD", // advisory warn about missing password
 		},
 		{
 			name:       "dev_fully_configured",

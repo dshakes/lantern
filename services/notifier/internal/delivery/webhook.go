@@ -77,11 +77,11 @@ func (w *WebhookDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 	// The signing secret would come from the subscription config in production.
 	// Here we use the tenant_id as a derived key.
 	signature := computeHMAC(body, n.TenantID)
-	req.Header.Set("X-Pal-Signature", "sha256="+signature)
-	req.Header.Set("X-Pal-Delivery-ID", n.ID)
+	setPalHeader(req.Header, "Signature", "sha256="+signature)
+	setPalHeader(req.Header, "Delivery-ID", n.ID)
 
 	if n.IdempotencyKey != "" {
-		req.Header.Set("X-Pal-Idempotency-Key", n.IdempotencyKey)
+		setPalHeader(req.Header, "Idempotency-Key", n.IdempotencyKey)
 	}
 
 	resp, err := w.client.Do(req)
@@ -124,4 +124,11 @@ func computeHMAC(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// setPalHeader sets X-Pal-<name> and, for receivers that verify the pre-PAL
+// names, X-Pal-<name> with the same value (ADR 0032).
+func setPalHeader(h http.Header, name, v string) {
+	h.Set("X-Pal-"+name, v)
+	h.Set("X-Pal-"+name, v)
 }

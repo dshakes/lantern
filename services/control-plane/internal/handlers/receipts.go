@@ -338,7 +338,7 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// WellKnown handles GET /.well-known/pal-receipts.
+// WellKnown handles GET /.well-known/pal-receipts (and the legacy /.well-known/pal-receipts).
 //
 // Ed25519 mode: publishes algorithm + base64-encoded public key + SHA-256
 // fingerprint of the public key. External verifiers can fetch this endpoint

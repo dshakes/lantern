@@ -1,0 +1,95 @@
+---
+// Filterable environment-variable table. Data: ./env-vars.json, refreshed from
+// the env reads in code by scripts/gen-env-data.mjs. Rendered in full at build
+// time (searchable by Pagefind, readable without JS); the script only filters.
+import vars from './env-vars.json';
+import { GH, BASE_PATH } from '../../../repo.config.mjs';
+
+const groups = [...new Set(vars.map((v) => v.group))].sort();
+const inline = (s: string) =>
+  s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((\/docs\/[^)]+)\)/g, `<a href="${BASE_PATH}$2">$1</a>`);
+---
+<div class="env not-content">
+  <div class="env-bar">
+    <input type="search" placeholder={`Filter ${vars.length} variables: name, service or meaning`} aria-label="Filter variables" data-q />
+    <select aria-label="Group" data-g>
+      <option value="">All groups</option>
+      {groups.map((g) => <option value={g}>{g}</option>)}
+    </select>
+    <label><input type="checkbox" data-p /> Required in prod</label>
+    <span class="env-count" aria-live="polite" data-n>{vars.length} shown</span>
+  </div>
+  <div class="env-scroll">
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th><th>Read in</th></tr></thead>
+      <tbody>
+        {vars.map((v) => (
+          <tr data-group={v.group} data-prod={v.prod ? '1' : ''} data-text={`${v.name} ${v.group} ${v.services.join(' ')} ${v.description}`.toLowerCase()}>
+            <td><code>{v.name}</code>{v.prod && <span class="env-req">prod</span>}</td>
+            <td set:html={inline(v.default || '—')} />
+            <td set:html={inline(v.description || 'Not documented yet; see the source.')} />
+            <td>
+              {v.source
+                ? <a href={`${GH}/blob/master/${v.source.replace(/:(\d+)$/, '#L$1')}`}>{v.services.join(', ')}</a>
+                : <span class="env-dim">{v.group}</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('.env')) {
+    const q = root.querySelector<HTMLInputElement>('[data-q]')!;
+    const g = root.querySelector<HTMLSelectElement>('[data-g]')!;
+    const p = root.querySelector<HTMLInputElement>('[data-p]')!;
+    const n = root.querySelector<HTMLElement>('[data-n]')!;
+    const rows = [...root.querySelectorAll<HTMLTableRowElement>('tbody tr')];
+    const apply = () => {
+      const words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+      let shown = 0;
+      for (const r of rows) {
+        const ok = (!g.value || r.dataset.group === g.value) && (!p.checked || r.dataset.prod === '1')
+          && words.every((w) => r.dataset.text!.includes(w));
+        r.hidden = !ok;
+        if (ok) shown++;
+      }
+      n.textContent = `${shown} shown`;
+    };
+    q.addEventListener('input', apply);
+    g.addEventListener('change', apply);
+    p.addEventListener('change', apply);
+  }
+</script>
+
+<style>
+  .env { margin-block: 1.5rem; }
+  .env-bar { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin-bottom: 0.75rem; }
+  .env-bar input[type='search'] { flex: 1 1 16rem; min-width: 0; }
+  .env-bar input[type='search'], .env-bar select {
+    font: inherit; font-size: 0.9rem; padding: 0.5rem 0.75rem; border-radius: 10px;
+    border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-bg); color: var(--sl-color-white);
+  }
+  .env-bar select { max-width: 100%; }
+  .env-bar label { font-size: 0.85rem; display: inline-flex; gap: 0.35rem; align-items: center; color: var(--sl-color-gray-2); }
+  .env-count { font-size: 0.8rem; color: var(--sl-color-gray-3); margin-left: auto; }
+  .env-scroll { max-height: 70vh; overflow: auto; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.85rem; }
+  th:nth-child(1) { width: 30%; } th:nth-child(2) { width: 20%; } th:nth-child(3) { width: 36%; } th:nth-child(4) { width: 14%; }
+  td { overflow-wrap: anywhere; }
+  th { position: sticky; top: 0; background: var(--sl-color-bg-nav); text-align: left; font-weight: 600; z-index: 1; }
+  th, td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--sl-color-hairline); vertical-align: top; }
+  td :global(code), td code { font-size: 0.8rem; overflow-wrap: anywhere; }
+  .env-req { margin-left: 0.4rem; font-size: 0.68rem; font-weight: 600; padding: 0.05rem 0.4rem; border-radius: 999px;
+    background: color-mix(in srgb, var(--sl-color-accent) 18%, transparent); color: var(--sl-color-accent-high); }
+  .env-dim { color: var(--sl-color-gray-3); }
+  tr[hidden] { display: none !important; }
+  /* phones: the site-wide stacked-card table style (starlight.css) takes over */
+  @media (max-width: 40rem) {
+    .env-scroll { max-height: none; overflow: visible; border: 0; }
+    th, td { width: auto !important; }
+  }
+</style>

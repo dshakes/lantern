@@ -70,6 +70,12 @@ jobs:
           version: latest
           working-directory: services/scheduler
 
+      - name: golangci-lint (grpctls)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: packages/grpctls
+
       # ---- Rust -------------------------------------------------------------
       - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
@@ -117,6 +123,9 @@ jobs:
 
       - name: cargo clippy (harness)
         run: cd services/harness && cargo clippy --all-targets
+
+      - name: cargo clippy (pal-grpc-tls-rs)
+        run: cd packages/pal-grpc-tls-rs && cargo clippy --all-targets -- -D warnings
 
       # ---- TypeScript -------------------------------------------------------
       # ESLint 9 needs a flat eslint.config.js the packages don't have yet (own

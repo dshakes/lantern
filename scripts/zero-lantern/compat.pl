@@ -13,7 +13,10 @@ s/^replace github\.com\/dshakes\/[a-z]+\/packages\/palenv => [^\n]*\n//mg;
 s/^COPY packages\/palenv\/?[^\n]*\n//mg;
 s/^[ \t]*cd packages\/palenv && [^\n]*\n//mg;
 s/^[ \t]*- name: golangci-lint \(palenv\)\n(?:[ \t]+[^\n-][^\n]*\n)*\n?//mg;
+s/^require github\.com\/dshakes\/[a-z]+\/packages\/palenv v0\.0\.0[^\n]*\n//mg;
 s/palenv\.Get\("([A-Z0-9_]+)"\)/os.Getenv("PAL_$1")/g;
+s/palenv\.Get\(/os.Getenv("PAL_"+/g;
+s/ \((?:LANTERN|PAL)_ fallback\)//g;
 
 # Rust: pal_env::var -> std::env::var; the path dependency everywhere.
 s/\bpal_env::var\(/std::env::var(/g;
@@ -71,6 +74,8 @@ if ($path eq "Formula/pal.rb") {
   s/^[ \t]*bin\.install_symlink "pal" => "lantern"\n//m;
   s/^[ \t]*system bin\/"lantern", "--version"\n//m;
 }
+
+if ($path =~ m{(^|/)go\.mod$}) { s/\n{3,}/\n\n/g; s/\n+\z/\n/; }
 
 # CI / Makefile: the env-read gate is superseded by brand-check --enforce.
 s/^[ \t]*# ADR 0032: code reads PAL_\*; the compat layer serves LANTERN_\*\.\n[ \t]*- name: env-read-check[^\n]*\n[ \t]*run: bash scripts\/env-read-check\.sh\n/      # ADR 0032: no reference to the previous brand outside the allowlist.\n      - name: brand-check (strict)\n        run: bash scripts\/brand-check.sh --enforce\n/m;

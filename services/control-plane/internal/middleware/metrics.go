@@ -14,51 +14,82 @@ import (
 // MeterProvider defaults to a no-op implementation and all instruments it
 // creates are cheap no-ops that never allocate or panic.
 //
-// Attribute keys follow the pal.* convention used in EnrichSpan so spans
-// and metrics are filterable by the same dimensions.
+// Instrument and attribute names use the pal.* prefix, matching EnrichSpan.
+// Each measurement is also recorded under the pre-PAL pal.* names (ADR
+// 0032) for one release, so dashboards and alerts on pal_run_total etc.
+// keep working while they migrate.
 var (
 	metricsOnce  sync.Once
-	mStepDur     metric.Float64Histogram // pal.run.step.duration (ms)
-	mStepRetries metric.Int64Counter     // pal.run.step.retries
-	mReplaySkips metric.Int64Counter     // pal.run.replay.skips
-	mBudgetBlock metric.Int64Counter     // pal.run.budget.blocks
-	mBudgetErr   metric.Int64Counter     // pal.budget.check.errors
-	mRunTotal    metric.Int64Counter     // pal.run.total
-	mOnboard     metric.Int64Counter     // pal.onboarding.step.total
+	mStepDur     f64HistPair // pal.run.step.duration (ms)
+	mStepRetries i64Pair     // pal.run.step.retries
+	mReplaySkips i64Pair     // pal.run.replay.skips
+	mBudgetBlock i64Pair     // pal.run.budget.blocks
+	mBudgetErr   i64Pair     // pal.budget.check.errors
+	mRunTotal    i64Pair     // pal.run.total
+	mOnboard     i64Pair     // pal.onboarding.step.total
 )
+
+// i64Pair is a counter under its PAL name and its legacy name.
+type i64Pair struct{ pal, legacy metric.Int64Counter }
+
+func (p i64Pair) Add(ctx context.Context, n int64, kv ...string) {
+	p.pal.Add(ctx, n, metric.WithAttributes(attrs("pal.", kv)...))
+	p.legacy.Add(ctx, n, metric.WithAttributes(attrs("pal.", kv)...))
+}
+
+// f64HistPair is a histogram under its PAL name and its legacy name.
+type f64HistPair struct{ pal, legacy metric.Float64Histogram }
+
+func (p f64HistPair) Record(ctx context.Context, v float64, kv ...string) {
+	p.pal.Record(ctx, v, metric.WithAttributes(attrs("pal.", kv)...))
+	p.legacy.Record(ctx, v, metric.WithAttributes(attrs("pal.", kv)...))
+}
+
+// attrs turns key/value pairs into attributes whose keys carry prefix.
+func attrs(prefix string, kv []string) []attribute.KeyValue {
+	out := make([]attribute.KeyValue, 0, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		out = append(out, attribute.String(prefix+kv[i], kv[i+1]))
+	}
+	return out
+}
+
+func newI64Pair(m, legacy metric.Meter, name string, opts ...metric.Int64CounterOption) i64Pair {
+	// Per OTel spec, Meter methods return a no-op instrument on error, never nil.
+	// Errors are discarded; a misconfigured meter name is never a crash path.
+	p, _ := m.Int64Counter("pal."+name, opts...)
+	l, _ := legacy.Int64Counter("pal."+name, opts...)
+	return i64Pair{pal: p, legacy: l}
+}
 
 func ensureMetrics() {
 	metricsOnce.Do(func() {
-		m := otel.GetMeterProvider().Meter("pal.runtime")
-		// Per OTel spec, Meter methods return a no-op instrument on error, never nil.
-		// Errors are discarded; a misconfigured meter name is never a crash path.
-		mStepDur, _ = m.Float64Histogram("pal.run.step.duration",
+		mp := otel.GetMeterProvider()
+		m, legacy := mp.Meter("pal.runtime"), mp.Meter("pal.runtime")
+		opts := []metric.Float64HistogramOption{
 			metric.WithUnit("ms"),
 			metric.WithDescription("Workflow step wall-clock duration in milliseconds"),
-		)
-		mStepRetries, _ = m.Int64Counter("pal.run.step.retries",
-			metric.WithDescription("Number of workflow step retry attempts beyond the first"),
-		)
-		mReplaySkips, _ = m.Int64Counter("pal.run.replay.skips",
-			metric.WithDescription("CompletedStep cache hits during crash-resume replay"),
-		)
-		mBudgetBlock, _ = m.Int64Counter("pal.run.budget.blocks",
-			metric.WithDescription("Runs blocked by agent budget hard-fail (HTTP 402)"),
-		)
-		mBudgetErr, _ = m.Int64Counter("pal.budget.check.errors",
-			metric.WithDescription("Budget lookups that errored and failed closed"),
-		)
-		mRunTotal, _ = m.Int64Counter("pal.run.total",
-			metric.WithDescription("Total agent runs dispatched through the inline executor"),
-		)
-		mOnboard, _ = m.Int64Counter("pal.onboarding.step.total",
-			metric.WithDescription("Onboarding steps reached / completed"),
-		)
+		}
+		hp, _ := m.Float64Histogram("pal.run.step.duration", opts...)
+		hl, _ := legacy.Float64Histogram("pal.run.step.duration", opts...)
+		mStepDur = f64HistPair{pal: hp, legacy: hl}
+		mStepRetries = newI64Pair(m, legacy, "run.step.retries",
+			metric.WithDescription("Number of workflow step retry attempts beyond the first"))
+		mReplaySkips = newI64Pair(m, legacy, "run.replay.skips",
+			metric.WithDescription("CompletedStep cache hits during crash-resume replay"))
+		mBudgetBlock = newI64Pair(m, legacy, "run.budget.blocks",
+			metric.WithDescription("Runs blocked by agent budget hard-fail (HTTP 402)"))
+		mBudgetErr = newI64Pair(m, legacy, "budget.check.errors",
+			metric.WithDescription("Budget lookups that errored and failed closed"))
+		mRunTotal = newI64Pair(m, legacy, "run.total",
+			metric.WithDescription("Total agent runs dispatched through the inline executor"))
+		mOnboard = newI64Pair(m, legacy, "onboarding.step.total",
+			metric.WithDescription("Onboarding steps reached / completed"))
 	})
 }
 
 // RecordStepDuration records a single workflow step's execution time against
-// pal.run.step.duration with the standard pal.* attribute set.
+// pal.run.step.duration with the standard pal.* attribute set (and the legacy pal.* set).
 //
 //   - agentName:  agent that owns the run.
 //   - nodeType:   workflow node type (ai-step, tool, connector, …).
@@ -67,41 +98,41 @@ func ensureMetrics() {
 //   - ms:         wall-clock duration of the step (including all retry backoff).
 func RecordStepDuration(ctx context.Context, agentName, nodeType, tier, outcome string, ms float64) {
 	ensureMetrics()
-	mStepDur.Record(ctx, ms, metric.WithAttributes(
-		attribute.String("pal.agent_name", agentName),
-		attribute.String("pal.node_type", nodeType),
-		attribute.String("pal.tier", tier),
-		attribute.String("pal.outcome", outcome),
-	))
+	mStepDur.Record(ctx, ms,
+		"agent_name", agentName,
+		"node_type", nodeType,
+		"tier", tier,
+		"outcome", outcome,
+	)
 }
 
 // RecordStepRetries adds retryCount to the pal.run.step.retries counter.
 // Only call when retryCount > 0 (i.e. the step needed at least one extra attempt).
 func RecordStepRetries(ctx context.Context, agentName, nodeType, tier string, retryCount int64) {
 	ensureMetrics()
-	mStepRetries.Add(ctx, retryCount, metric.WithAttributes(
-		attribute.String("pal.agent_name", agentName),
-		attribute.String("pal.node_type", nodeType),
-		attribute.String("pal.tier", tier),
-	))
+	mStepRetries.Add(ctx, retryCount,
+		"agent_name", agentName,
+		"node_type", nodeType,
+		"tier", tier,
+	)
 }
 
 // RecordReplaySkip increments pal.run.replay.skips once per CompletedStep
 // cache hit (i.e. per step the crash-resume path skips re-executing).
 func RecordReplaySkip(ctx context.Context, agentName string) {
 	ensureMetrics()
-	mReplaySkips.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("pal.agent_name", agentName),
-	))
+	mReplaySkips.Add(ctx, 1,
+		"agent_name", agentName,
+	)
 }
 
 // RecordBudgetBlock increments pal.run.budget.blocks when a run is denied
 // by the agent's hard-fail budget policy (HTTP 402).
 func RecordBudgetBlock(ctx context.Context, agentName string) {
 	ensureMetrics()
-	mBudgetBlock.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("pal.agent_name", agentName),
-	))
+	mBudgetBlock.Add(ctx, 1,
+		"agent_name", agentName,
+	)
 }
 
 // RecordBudgetCheckError increments pal.budget.check.errors when a budget
@@ -109,10 +140,10 @@ func RecordBudgetBlock(ctx context.Context, agentName string) {
 // budget scope: "tenant", "agent", "run" or "tool".
 func RecordBudgetCheckError(ctx context.Context, check, agentName string) {
 	ensureMetrics()
-	mBudgetErr.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("pal.budget_check", check),
-		attribute.String("pal.agent_name", agentName),
-	))
+	mBudgetErr.Add(ctx, 1,
+		"budget_check", check,
+		"agent_name", agentName,
+	)
 }
 
 // RecordRunTotal increments pal.run.total once per completed run.
@@ -121,11 +152,11 @@ func RecordBudgetCheckError(ctx context.Context, check, agentName string) {
 //   - status: "succeeded" or "failed".
 func RecordRunTotal(ctx context.Context, agentName, tier, status string) {
 	ensureMetrics()
-	mRunTotal.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("pal.agent_name", agentName),
-		attribute.String("pal.tier", tier),
-		attribute.String("pal.status", status),
-	))
+	mRunTotal.Add(ctx, 1,
+		"agent_name", agentName,
+		"tier", tier,
+		"status", status,
+	)
 }
 
 // RecordOnboardingStep increments pal.onboarding.step.total. step is one of
@@ -133,8 +164,8 @@ func RecordRunTotal(ctx context.Context, agentName, tier, status string) {
 // and event is "reached" or "completed" — a bounded label set, no tenant ids.
 func RecordOnboardingStep(ctx context.Context, step, event string) {
 	ensureMetrics()
-	mOnboard.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("pal.onboarding_step", step),
-		attribute.String("pal.onboarding_event", event),
-	))
+	mOnboard.Add(ctx, 1,
+		"onboarding_step", step,
+		"onboarding_event", event,
+	)
 }

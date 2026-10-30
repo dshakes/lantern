@@ -222,7 +222,12 @@ func main() {
 		logger.Warn("SCHEDULER_NODE_TOKEN unset — node heartbeat token check disabled (dev mode)")
 	}
 
-	grpcServer := grpc.NewServer(
+	// --- mTLS on :50055 (ADR 0043) — required on top of the service token ---
+	tlsCreds, err := dialer.ServerTransportCreds(dialer.IsProd())
+	if err != nil {
+		logger.Fatal("runtime-scheduler gRPC TLS", zap.Error(err))
+	}
+	grpcOpts := []grpc.ServerOption{
 		// otelgrpc.NewServerHandler extracts the incoming W3C traceparent header
 		// and starts a server span, continuing the distributed trace from the
 		// control-plane. Safe when tracing is disabled: creates no-op spans.
@@ -237,7 +242,17 @@ func main() {
 			middleware.StreamServiceAuthInterceptor(logger, cfg.ServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 		),
-	)
+	}
+	switch {
+	case tlsCreds != nil:
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
+		logger.Info("runtime-scheduler gRPC server: mTLS enabled (client certificates required)")
+	case dialer.IsProd():
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — runtime-scheduler gRPC (:50055) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	default:
+		logger.Warn("runtime-scheduler gRPC server: TLS unset — serving plaintext (acceptable in dev; production requires PAL_GRPC_TLS_CA/_CERT/_KEY)")
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 	palv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
 
 	healthSvc := health.NewServer()

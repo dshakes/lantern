@@ -687,8 +687,8 @@ func (h *RuntimeReportHandler) handleStepEvent(ctx context.Context, req reportRe
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("pal.run_id", runID),
-		attribute.String("pal.vm_id", req.VmID),
+		attribute.String("pal.run_id", runID), attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID), attribute.String("pal.vm_id", req.VmID),
 	)
 
 	if runID == "" {
@@ -753,9 +753,9 @@ func (h *RuntimeReportHandler) handleVMExit(ctx context.Context, req reportReque
 		return ridErr
 	}
 	span.SetAttributes(
-		attribute.String("pal.run_id", runID),
-		attribute.String("pal.vm_id", req.VmID),
-		attribute.Int("pal.exit_code", req.VMExit.ExitCode),
+		attribute.String("pal.run_id", runID), attribute.String("pal.run_id", runID),
+		attribute.String("pal.vm_id", req.VmID), attribute.String("pal.vm_id", req.VmID),
+		attribute.Int("pal.exit_code", req.VMExit.ExitCode), attribute.Int("pal.exit_code", req.VMExit.ExitCode),
 	)
 
 	if runID == "" {

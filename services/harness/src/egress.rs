@@ -674,7 +674,7 @@ async fn handle_connect(
         Some(hp) => hp,
         None => {
             let _ = write_half
-                .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-port\r\n\r\n")
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-port\r\nX-Pal-Reason: missing-port\r\n\r\n")
                 .await;
             return Ok(());
         }
@@ -685,7 +685,9 @@ async fn handle_connect(
 
     match decision {
         Decision::Deny(reason) => {
-            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\n\r\n");
+            let body = format!(
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
+            );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
         }
@@ -699,7 +701,9 @@ async fn handle_connect(
     policy.audit(&host, port, &ip_decision).await;
     match ip_decision {
         Decision::Deny(reason) => {
-            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\n\r\n");
+            let body = format!(
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
+            );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
         }
@@ -764,7 +768,7 @@ async fn handle_plain_http(
         parse_host_port_with_default(h, 80)
     } else {
         let _ = write_half
-            .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-host\r\n\r\n")
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Pal-Reason: missing-host\r\nX-Pal-Reason: missing-host\r\n\r\n")
             .await;
         return Ok(());
     };
@@ -773,7 +777,9 @@ async fn handle_plain_http(
     policy.audit(&hostname, port, &decision).await;
     match decision {
         Decision::Deny(reason) => {
-            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\n\r\n");
+            let body = format!(
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
+            );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
         }
@@ -789,7 +795,7 @@ async fn handle_plain_http(
             "egress: plain HTTP request rejected — method not permitted by rule"
         );
         let _ = write_half
-            .write_all(b"HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: method-not-allowed\r\n\r\n")
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: method-not-allowed\r\nX-Pal-Reason: method-not-allowed\r\n\r\n")
             .await;
         return Ok(());
     }
@@ -801,7 +807,9 @@ async fn handle_plain_http(
     policy.audit(&hostname, port, &ip_decision).await;
     match ip_decision {
         Decision::Deny(reason) => {
-            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\n\r\n");
+            let body = format!(
+                "HTTP/1.1 403 Forbidden\r\nX-Pal-Reason: {reason}\r\nX-Pal-Reason: {reason}\r\n\r\n"
+            );
             let _ = write_half.write_all(body.as_bytes()).await;
             return Ok(());
         }

@@ -12,6 +12,8 @@
 #   e2e         integration-test.sh, jailed, EXPECT_VENDSECRET=1, timing table
 #   broker-e2e  broker-e2e.sh (ADR 0026 broker egress mode)
 #   measurement-e2e  measurement-e2e.sh (ADR 0031 software measurement, jailed)
+#   bench       scripts/bench/microvm-latency.sh (jailed); results copied to
+#               BENCH_OUT on the Mac (default ./bench-out)
 #   runtime     long-running Firecracker runtime-manager for `dev` (ADR 0045):
 #               listens on :52054 in the VM (Lima forwards it to the Mac's
 #               localhost:52054) and self-registers with the host scheduler
@@ -58,6 +60,8 @@ in_vm() {
   limactl shell --workdir "${REPO_ROOT}" "${VM}" -- env \
     LIMA_DISK_MAX_PCT="${DISK_MAX_PCT}" LIMA_PORT_WAIT_SECS="${PORT_WAIT_SECS}" \
     ${LISTEN_PORT:+LISTEN_PORT="${LISTEN_PORT}"} \
+    ${ITERATIONS:+ITERATIONS="${ITERATIONS}"} ${FORK_SIZES:+FORK_SIZES="${FORK_SIZES}"} \
+    ${FORK_ITERATIONS:+FORK_ITERATIONS="${FORK_ITERATIONS}"} ${FORK_CONCURRENCY:+FORK_CONCURRENCY="${FORK_CONCURRENCY}"} ${SKIP_BROKER:+SKIP_BROKER="${SKIP_BROKER}"} ${FORK_READY_MAX:+FORK_READY_MAX="${FORK_READY_MAX}"} ${ONLY_BROKER:+ONLY_BROKER="${ONLY_BROKER}"} \
     bash "${REPO_ROOT}/infra/lima/lima.sh" _in "$@"
 }
 
@@ -238,6 +242,37 @@ guest_measurement_e2e() {
   [ "${rc}" -eq 0 ] || die "measurement-e2e.sh failed (exit ${rc})"
 }
 
+guest_bench() {
+  guest_image
+  build_manager
+  sudo mkdir -p /srv/jailer /var/lib/pal/snapshots
+  local port="${LISTEN_PORT:-51060}" before rc=0
+  wait_port_free "${port}"
+  wait_port_free "$((port + 1))"
+  before="$(leak_snapshot)"
+  sudo rm -rf -- "${CACHE:?}/bench"
+  sudo FC_KERNEL_PATH="${IMG}/vmlinux" FC_ROOTFS_PATH="${IMG}/rootfs.ext4" \
+    MANAGER_BIN="${MANAGER_BIN}" BENCH_PORT="${port}" OUT_DIR="${CACHE}/bench" \
+    ${ITERATIONS:+ITERATIONS="${ITERATIONS}"} ${FORK_SIZES:+FORK_SIZES="${FORK_SIZES}"} \
+    ${FORK_ITERATIONS:+FORK_ITERATIONS="${FORK_ITERATIONS}"} ${FORK_CONCURRENCY:+FORK_CONCURRENCY="${FORK_CONCURRENCY}"} ${SKIP_BROKER:+SKIP_BROKER="${SKIP_BROKER}"} ${FORK_READY_MAX:+FORK_READY_MAX="${FORK_READY_MAX}"} ${ONLY_BROKER:+ONLY_BROKER="${ONLY_BROKER}"} \
+    FIRECRACKER_JAILER_PATH="$(command -v jailer)" FIRECRACKER_JAILER_UID=123 \
+    FIRECRACKER_JAILER_GID=100 FIRECRACKER_CHROOT_BASE=/srv/jailer \
+    bash scripts/bench/microvm-latency.sh || rc=$?
+  leak_check "${before}"
+  [ "${rc}" -eq 0 ] || die "microvm-latency.sh failed (exit ${rc})"
+}
+
+host_bench() {
+  local out="${BENCH_OUT:-${PWD}/bench-out}" f
+  in_vm bench
+  mkdir -p "${out}"
+  for f in samples.csv summary.json summary.md; do
+    # shellcheck disable=SC2016  # $HOME is the VM user's, expanded in the VM
+    limactl shell "${VM}" -- bash -c 'cat "${HOME}/.cache/pal-lima/bench/$0"' "${f}" >"${out}/${f}"
+  done
+  log "results copied to ${out}"
+}
+
 # Design-time runtime for `dev` (ADR 0045). Foreground; Ctrl-C stops it.
 # DEV ONLY: plaintext gRPC and no service token (the manager's dev defaults);
 # PAL_ENV is never set here. Jailed exactly like guest_e2e. :52054, not
@@ -282,6 +317,7 @@ if [ "${cmd}" = "_in" ]; then
     e2e)        guest_e2e ;;
     broker-e2e) guest_broker_e2e ;;
     measurement-e2e) guest_measurement_e2e ;;
+    bench)      guest_bench ;;
     runtime)    guest_runtime ;;
     clean)      guest_clean ;;
     *)          die "unknown guest command: ${2:-}" ;;
@@ -291,7 +327,8 @@ fi
 
 case "${cmd}" in
   up)                     host_up ;;
+  bench)                  host_preflight; require_running; host_bench ;;
   image|e2e|broker-e2e|measurement-e2e|runtime|clean) host_preflight; require_running; in_vm "${cmd}" ;;
   down)                   command -v limactl >/dev/null || die "limactl not found"; limactl stop "${VM}" ;;
-  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|runtime|down|clean" ;;
+  *) die "usage: $0 up|image|e2e|broker-e2e|measurement-e2e|bench|runtime|down|clean" ;;
 esac

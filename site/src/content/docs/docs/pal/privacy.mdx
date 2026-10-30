@@ -1,0 +1,45 @@
+---
+title: Privacy and control
+description: "Who pal acts for, what stays on your Mac, what is encrypted, and the switches that stop it."
+glance:
+  what: "pal acts only for you, keeps its state on your Mac, and has two off switches: mute and the kill switch."
+  why: "pal reads your messages, mail subjects and calendar. You should know exactly where that goes and how to stop it."
+  how: "Read the switches table first. Everything else on this page is on by default; the opt-ins are marked."
+---
+
+import { HoldsGates } from '../../../../components/diagrams';
+
+## Who it acts for
+
+Only you. Document search, Mac actions (Calendar, Notes, Mail) and every command run only in your own chat. A message from anyone else never reaches them. That works with one account messaging itself, or with a separate bot account you message.
+
+## Your switches
+
+| You want | Do this | What happens |
+| --- | --- | --- |
+| Stop it sending | `mute` | pal still drafts every reply, but sends each one to you instead of the contact. If handing it to you fails, the reply is dropped, never sent. |
+| Stop it entirely | `kill switch on` | All inbound is ignored until you release it. |
+| Approve risky replies first | `PAL_DRAFT_CONFIRM=on` (iMessage) / `PAL_DRAFT_HIGH_STAKES=on` (WhatsApp) | LOW-confidence replies wait for your `send`. Off by default. |
+| Quiet nights | `PAL_QUIET_START` / `PAL_QUIET_END` (default 1 and 6) | Messages queue and are answered in the morning. |
+
+Money and unverifiable claims are [always held](/docs/pal/human-in-the-loop/), whatever these switches say.
+
+<HoldsGates client:visible />
+
+## Where your data lives
+
+- **On your Mac.** pal's state lives in `~/.pal/` (`~/.pal/` on installs from before the rename), owner-only (mode 0600). The stores with the most personal detail (episodes, topics, dislikes, the sent log) are AES-256-GCM encrypted at rest, with a key created beside them.
+- **In your control plane.** The person graph and timeline that link iMessage and WhatsApp, behind row-level security.
+- **At your model provider.** The message text sent for each reply. Nothing else leaves the Mac.
+
+## What it can read
+
+| Source | Scope |
+| --- | --- |
+| Documents | Only inside `PAL_PERSONAL_DOCS_ROOTS` (default: Documents, Desktop, Downloads, iCloud Drive). OCR results are cached owner-only. |
+| Mail | Sender, subject and date from Apple Mail's local index, read-only. `PAL_MAIL_INDEX=0` turns it off. |
+| App usage | Off unless `PAL_MAC_USAGE=on`. Only a one-line daily summary is kept, and it is never used in a reply to a contact. |
+
+## No silent drops
+
+Every reply pal decides not to send logs which check stopped it and why. Mute and the kill switch are reported in a periodic `LIVENESS` line, so "the bot is quiet" always has a reason you can find.

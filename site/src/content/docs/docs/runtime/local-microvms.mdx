@@ -2,18 +2,19 @@
 title: Run real microVMs on your Mac
 description: Run Firecracker microVMs locally on Apple Silicon with a Lima guest and nested virtualization.
 glance:
-  what: "On an Apple Silicon Mac, a Lima Linux guest with nested virtualization provides /dev/kvm so Firecracker microVMs can run locally."
-  why: "macOS has no KVM, so this is how you try real microVMs on a laptop instead of a Linux host."
-  how: "Check Requirements, then follow Setup or the Manual steps."
+  what: "A Lima Linux guest with nested virtualization gives an Apple Silicon Mac (M3 or newer, macOS 15+) a /dev/kvm, so real Firecracker microVMs run locally."
+  why: "macOS has no KVM; without this you only get the stub scheduler, which spawns nothing."
+  how: "brew install lima, then make lima-up and make lima-e2e."
 sidebar:
   order: 8
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { DeployTopology } from '../../../../components/diagrams';
 
-On an Apple Silicon Mac you can run real Firecracker microVMs locally: a Lima Linux guest with nested virtualization provides `/dev/kvm`, and the runtime-manager runs inside it with `RUNTIME_BACKEND=firecracker`.
+<DeployTopology client:visible />
 
-macOS has no KVM, so Firecracker cannot run on it directly. Lima starts a small Linux machine that is allowed to host virtual machines of its own: a VM inside a VM. Firecracker runs in the inner layer exactly as it would on a Linux server.
+Lima starts a small Linux machine allowed to host VMs of its own, so Firecracker runs in the inner layer as it would on a Linux server. The runtime-manager runs inside the guest with `RUNTIME_BACKEND=firecracker`.
 
 ## Requirements
 
@@ -53,6 +54,8 @@ make lima-broker-e2e  # broker egress mode (ADR 0026): no NIC, vsock-only, crede
 | `make lima-image` | Builds `vmlinux` + `rootfs.ext4` with the current harness as PID 1. Cached at `~/.cache/pal-lima/image` in the VM; rebuilt only when the harness binary or `build-image.sh` changes. |
 | `make lima-e2e` | `lima-image`, then builds the runtime-manager and runs `infra/firecracker/integration-test.sh` jailed with `EXPECT_VENDSECRET=1`: boot, snapshot, stop, restore, fork x3. Timing table saved to `~/.cache/pal-lima/timing/lifecycle-timing.md` in the VM. |
 | `make lima-broker-e2e` | Same build, then `infra/firecracker/broker-e2e.sh`. Needs outbound HTTPS to `httpbin.org`. |
+| `make lima-measurement-e2e` | Software measurement (ADR 0031) end to end, jailed. |
+| `make lima-runtime` | Same build, then a long-lived jailed runtime-manager (foreground, Ctrl-C stops it) on `:52054` in the guest. Lima forwards it to the Mac's `localhost:52054` and it self-registers with the host scheduler, so `pal dev` can use it. Dev only: plaintext gRPC, no service token. |
 | `make lima-down` | Stops the VM. |
 | `make lima-clean` | Drops the VM's cached cargo target and microVM image. |
 
@@ -75,8 +78,8 @@ Inside the guest, with the official Firecracker CI artifacts (v1.15.1 kernel ser
 
 ```bash
 mkdir -p ~/fc-demo && cd ~/fc-demo
-curl -sO http://spec.ccfc.min.s3.amazonaws.com/firecracker-ci/v1.15/aarch64/vmlinux-5.10.245
-curl -sO http://spec.ccfc.min.s3.amazonaws.com/firecracker-ci/v1.15/aarch64/ubuntu-22.04.ext4
+curl -sO https://spec.ccfc.min.s3.amazonaws.com/firecracker-ci/v1.15/aarch64/vmlinux-5.10.245
+curl -sO https://spec.ccfc.min.s3.amazonaws.com/firecracker-ci/v1.15/aarch64/ubuntu-22.04.ext4
 cat > vm.json <<'EOF'
 {
   "boot-source": {"kernel_image_path": "vmlinux-5.10.245", "boot_args": "keep_bootcon console=ttyS0 reboot=k panic=1 pci=off"},
@@ -154,8 +157,8 @@ Build and run the runtime-manager inside the guest (it needs `/dev/kvm`) with `R
 | `PAL_DEFAULT_MANAGER_ADDR` | scheduler | `localhost:50054` |
 | `PAL_NODE_ADDR_<NODE>` | scheduler | `host:port`, only when the scheduler picks a named node whose address is not discoverable |
 
-<Aside type="caution">
-The repo does not spell out the forward end to end: `firecracker-dev.yaml` defines no explicit `portForwards` and `infra/lima/README.md` only says to use "the Lima port forward". Confirm that `localhost:50054` reaches the manager before debugging anything else.
+<Aside type="tip">
+The quickest wiring is `make lima-runtime`: it listens on the guest's `:52054`, which Lima forwards to the Mac, and registers itself with the scheduler. The manual route below needs you to confirm `localhost:50054` reaches the manager yourself.
 </Aside>
 
 Dev setups without a shared service token warn and allow unauthenticated gRPC; production requires `PAL_GRPC_SERVICE_TOKEN` on every hop. See [Isolation classes](/docs/runtime/isolation/) for the other backends.
@@ -185,4 +188,4 @@ Dev setups without a shared service token warn and allow unauthenticated gRPC; p
 - The repo mount is read-only, so build outputs land inside the guest.
 - Not a supported production topology.
 
-Related: [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/docs/runtime/egress/).
+Related: [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/docs/security/egress/).

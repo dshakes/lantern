@@ -702,3 +702,25 @@ func TestRLSTriggers_EnforcedAppPool(t *testing.T) {
 		t.Fatalf("tenant B sees %d of tenant A's deliveries", n)
 	}
 }
+
+// ADR 0032: a generic sender configured before the rename signs with the
+// X-Pal-* names; those still verify and carry the delivery id + event.
+func TestVerifyHookDelivery_GenericLegacyHeaderNames(t *testing.T) {
+	now := time.Now()
+	body := []byte(`{"ok":true}`)
+	pal := signedHookHeaders("generic", hookTestSecret, body, "dlv-1", now)
+	legacy := http.Header{}
+	for k, v := range pal {
+		legacy[strings.Replace(k, "X-Pal-", "X-Pal-", 1)] = v
+	}
+	if _, ok := legacy["X-Pal-Signature"]; !ok {
+		t.Fatalf("fixture did not produce legacy names: %v", legacy)
+	}
+	d, err := verifyHookDelivery("generic", hookTestSecret, legacy, body, now)
+	if err != nil {
+		t.Fatalf("legacy-signed delivery rejected: %v", err)
+	}
+	if d.ID != "dlv-1" || d.Event != "custom.event" {
+		t.Errorf("legacy delivery fields: %+v", d)
+	}
+}

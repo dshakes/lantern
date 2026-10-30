@@ -74,7 +74,7 @@ func (h *AuthHandler) authorizeIntrospect(w http.ResponseWriter, r *http.Request
 		})
 		return true
 	}
-	presented := r.Header.Get(middleware.ServiceTokenMetadataKey)
+	presented := middleware.ServiceTokenFromHeader(r.Header)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) != 1 {
 		h.logger().Warn("introspect-key: invalid service token")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid service token"})

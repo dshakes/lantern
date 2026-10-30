@@ -82,7 +82,7 @@ func (h *RuntimeHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // ReadFile handles GET /v1/runtime/vms/{id}/files/content?path= → raw text.
-// A file over 1 MiB is cut at the cap and flagged with X-Pal-Truncated.
+// A file over 1 MiB is cut at the cap and flagged with X-Pal-Truncated (and the legacy X-Pal-Truncated).
 func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	ctx, claims, node, vmID, ok := h.fileTarget(w, r, ScopeRuntimeRead, path)
@@ -97,6 +97,7 @@ func (h *RuntimeHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	if res["truncated"] == true {
 		content = strings.TrimSuffix(content, harnessTruncatedMarker)
 		w.Header().Set("X-Pal-Truncated", "true")
+		w.Header().Set("X-Pal-Truncated", "true") // legacy name for older SDKs (ADR 0032)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

@@ -25,7 +25,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
 )
@@ -113,17 +112,20 @@ func (h *LlmProxyHandler) modelRouterClient() (palv1.ModelServiceClient, bool) {
 	return cl, true
 }
 
-// dialModelRouter is the production factory: a plain insecure gRPC dial with the
-// OTel client handler, matching the scheduler/runtime dial convention. Insecure
-// is acceptable in-cluster (TLS terminates at the edge). NOTE: the per-tenant
-// credentials this carries are application-layer secrets — for cross-cluster
-// deployments this hop must run over mTLS or a service mesh (see ADR).
+// dialModelRouter is the production factory. The per-tenant provider keys this
+// hop carries are secrets (invariant #10), so it rides the service-mesh mTLS
+// identity (PAL_GRPC_TLS_*, ADR 0043) and the service token. In prod a missing
+// identity is a dial error, which the caller turns into the direct path.
 func dialModelRouter(addr string) (palv1.ModelServiceClient, func() error, error) {
+	creds, err := ServiceClientCreds(IsProd())
+	if err != nil {
+		return nil, nil, err
+	}
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	}
-	// The router requires x-pal-service-token (invariant #7); reuse the
+	// The router requires x-pal-service-token (or the legacy x-pal-service-token) (invariant #7); reuse the
 	// scheduler creds helper. Empty token → nothing attached (dev only).
 	if tok := os.Getenv("PAL_GRPC_SERVICE_TOKEN"); tok != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: tok}))

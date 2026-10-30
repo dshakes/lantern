@@ -1,0 +1,349 @@
+---
+title: SDKs
+description: "The TypeScript, Python and Go SDKs for the PAL management API, side by side, with client setup, runs, sessions, errors and the full namespace listing."
+glance:
+  what: "Three SDKs over the same REST API: TypeScript (the fullest), Python (async, at management parity with Go) and Go."
+  why: "Typed methods instead of hand-written HTTP: trigger agents from your app, wire runs into a backend, script bulk operations."
+  how: "Pick your language once in any tab below; every tabbed example on the site switches with it."
+sidebar:
+  order: 1
+  label: TypeScript, Python, Go
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/pal/packages/sdk-go` (package `pal`). For the raw endpoints see the [API reference](/docs/reference/api/).
+
+## Install
+
+<Aside type="caution" title="Not on a registry yet">
+None of the three is published. Install from a checkout. Do not `pip install pal-sdk` from PyPI: that name belongs to an unrelated project.
+</Aside>
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```bash
+# in your checkout
+( cd packages/sdk-ts && npm install && npm run build )
+# in your project: a file path, not the registry
+npm install /path/to/checkout/packages/sdk-ts
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```bash
+# Python 3.11+, from the root of your checkout
+pip install ./packages/sdk-python
+# optional: LangChain deepagents sandbox backend
+pip install "./packages/sdk-python[deepagents]"
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```bash
+go get github.com/dshakes/pal/packages/sdk-go
+```
+</TabItem>
+</Tabs>
+
+## Client setup
+
+All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `PAL_*` names still work). The built-in default URL (`https://api.pal.run`) is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+import { PalClient } from "@pal-runtime/sdk";
+
+const client = new PalClient({
+  apiKey: process.env.PAL_API_KEY,
+  baseUrl: process.env.PAL_API_URL ?? "http://localhost:8080",
+});
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+from pal import PalClient
+
+# Every request method is async (httpx.AsyncClient underneath).
+async with PalClient(
+    api_key="...",                    # or PAL_API_KEY
+    base_url="http://localhost:8080", # or PAL_API_URL
+) as client:
+    ...
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+import pal "github.com/dshakes/pal/packages/sdk-go"
+
+c := pal.New(
+    pal.WithBaseURL("http://localhost:8080"), // or PAL_API_URL
+    pal.WithAPIKey(os.Getenv("PAL_API_KEY")),
+)
+```
+</TabItem>
+</Tabs>
+
+## Create a run and read the result
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+import type { Run } from "@pal-runtime/sdk";
+
+const run = (await client.runs.create({
+  agent: "research-agent",
+  input: { topic: "quantum computing" },
+})) as Run;
+
+// Live events until the run ends
+for await (const event of client.runs.events(run.id)) {
+  console.log(event.kind, event.stepId, event.data);
+}
+
+const done = await client.runs.get(run.id);
+console.log(done.status, done.output);
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+run = await client.runs.create(agent="research-agent", input={"topic": "AI safety"})
+print(run.id, run.status)  # queued
+
+async for event in client.runs.events(run.id):
+    print(event)
+
+done = await client.runs.get(run.id)
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+r, err := c.CreateRun(ctx, pal.RunOptions{
+    AgentName: "research-agent",
+    Input:     map[string]string{"topic": "quantum computing"},
+})
+if err != nil {
+    log.Fatal(err)
+}
+done, _ := c.GetRun(ctx, r.ID) // poll: the Go SDK has no event stream yet
+fmt.Println(done.Status, string(done.Output), done.CostUsd)
+```
+</TabItem>
+</Tabs>
+
+<details>
+<summary>Event kinds you will see on the stream</summary>
+
+`step_started`, `step_completed`, `step_failed`, `tool_call`, `tool_result`, `llm_delta`, `log`, `approval`, `confidence_evaluated` and `end`. The stream closes when the run is `succeeded`, `failed` or `cancelled`. See [Token streaming](/docs/runtime/streaming/).
+
+</details>
+
+## Forecast cost before running
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+const f = await client.runs.forecast({ agentName: "triage", input: "invoice is wrong" });
+if (f.wouldExceedBudget) console.log("blocked:", f.blockReason);
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+f = await client.runs.forecast("triage", "invoice is wrong")
+print(f)
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+f, err := c.ForecastRun(ctx, "triage", "invoice is wrong")
+fmt.Printf("$%.4f, %.0f%% confident, block=%v\n",
+    f.EstimatedCostUsd, f.Confidence*100, f.WouldExceedBudget)
+```
+</TabItem>
+</Tabs>
+
+A hard-fail [budget](/docs/build/budgets/) then rejects the real run with HTTP `402`.
+
+## Interactive sessions
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+const session = await client.sessions.create({ agent: "my-agent" });
+
+for await (const chunk of client.sessions.streamMessage(session.id, {
+  content: "What is the capital of France?",
+})) {
+  if (chunk.type === "delta") process.stdout.write(chunk.delta);
+  if (chunk.type === "completed") console.log("\nusage:", chunk.usage);
+}
+
+await client.sessions.delete(session.id);
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+session = await client.sessions.create(agent="my-agent")
+await client.sessions.send_message(session.id, content="What is the capital of France?")
+async for event in client.sessions.stream_events(session.id):
+    print(event)  # the reply arrives here
+await client.sessions.delete(session.id)
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+s, _ := c.CreateSession(ctx, "my-agent", nil)
+_ = c.SendSessionMessage(ctx, s.ID, "What is the capital of France?")
+_ = c.DeleteSession(ctx, s.ID)
+```
+</TabItem>
+</Tabs>
+
+## Errors and retries
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+import { PalApiError } from "@pal-runtime/sdk";
+
+try {
+  await client.runs.create({ agent: "my-agent", input: {} });
+} catch (err) {
+  if (err instanceof PalApiError && err.status === 402) {
+    // a hard-fail budget blocked the run
+  }
+}
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+from pal import PalApiError
+
+try:
+    await client.runs.create(agent="my-agent", input={})
+except PalApiError as e:
+    if e.status == 402:
+        ...  # a hard-fail budget blocked the run
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+var apiErr *pal.APIError
+if errors.As(err, &apiErr) && apiErr.Status == http.StatusPaymentRequired {
+    // a hard-fail budget blocked the run
+}
+```
+</TabItem>
+</Tabs>
+
+The TypeScript and Go clients retry HTTP `429`, `503` and network errors with full-jitter backoff (TypeScript: 3 attempts, 500 ms base, 4 s cap; Go: `WithMaxRetries`). Other `4xx` and `5xx` are never retried.
+
+## Every namespace
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+client.agents        // create, get, list, delete
+client.runs          // create, get, list, cancel, events, signal, forecast
+client.sessions      // create, get, list, sendMessage, streamMessage, events, stop, delete, close
+client.connectors    // list, get, execute, test, uninstall
+client.budgets       // upsert, get, list, delete
+client.triggers      // create, list, get, update, delete
+client.evalSuites    // upsert, list, get, delete
+client.evalRuns      // record, list
+client.evalBaselines // set, get
+client.experiments   // create, list, get, recordOutcome, conclude
+client.marketplace   // list, get, publish, fork, star, unstar
+client.mcp           // listServers, getServer, attach, listAttachments, detach
+client.receipts      // issue, verify
+client.feedback      // submit, listForRun, summaryForAgent
+client.rehearsals    // pull
+client.runtime       // schedule, list, get, terminate, exec, execStream, pause, resume, fork, listFiles, readFile, writeFile
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+client.agents       # create, get, list, delete
+client.runs         # create, get, list, cancel, events, signal, forecast
+client.sessions     # create, get, list, send_message, stream_events, stop, delete, close
+client.connectors   # list, get, execute, list_actions
+client.budgets      # upsert, get, delete, list_all
+client.triggers     # create, list, get, update, delete
+client.evals        # upsert_suite, list_suites, get_suite, delete_suite, record_run, list_runs, set_baseline, get_baseline
+client.experiments  # create, list, get, record_outcome, conclude
+client.marketplace  # list, get, publish, fork, star, unstar
+client.mcp          # list_servers, get_server, attach, detach, list_attachments
+client.receipts     # issue, verify
+client.feedback     # submit, list_for_run, summary_for_agent
+client.rehearsals   # pull
+client.runtime      # schedule, list, get, terminate, exec, exec_stream, pause, resume, fork, list_files, read_file, write_file
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+// Agents      CreateAgent GetAgent ListAgents DeleteAgent
+// Runs        CreateRun GetRun ForecastRun
+// Sessions    CreateSession GetSession ListSessions SendSessionMessage StopSession DeleteSession
+// Connectors  InstallConnector ListConnectors GetConnector TestConnector UninstallConnector ExecuteConnectorAction
+// Budgets     UpsertBudget GetBudget DeleteBudget
+// Triggers    CreateTrigger ListTriggers GetTrigger UpdateTrigger DeleteTrigger
+// Evals       ListEvalSuites UpsertEvalSuite RecordEvalRun SetEvalBaseline
+// Experiments CreateExperiment RecordExperimentOutcome ConcludeExperiment
+// Marketplace ListMarketplace PublishAgent ForkAgent
+// MCP         ListMCPServers AttachMCPServer DetachMCPServer
+// Receipts    IssueReceipt VerifyReceipt
+// Feedback    SubmitRunFeedback GetAgentFeedbackSummary
+// Rehearsals  Rehearse
+// Sandboxes   ScheduleVM PauseVM ResumeVM ForkVM ListFiles ReadFile WriteFile
+```
+</TabItem>
+</Tabs>
+
+Sandbox VMs are covered in [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
+
+## Writing the agent itself
+
+The SDKs above manage agents from outside. Inside an agent bundle, the TypeScript SDK gives you `ctx`: durable steps, LLM calls, tools, memory and connectors. Every `step` is journaled, so a crashed run resumes instead of restarting.
+
+<Aside type="note" title="Python agent code">
+The Python runtime context (`ctx.llm`, `ctx.tools`, `ctx.mem` and the rest) is stubbed and raises `NotImplementedError`. Write agent logic in TypeScript for now; use Python for the management API.
+</Aside>
+
+```ts
+import { agent, step } from "@pal-runtime/sdk";
+
+export default agent<{ query: string }>({
+  name: "my-agent",
+  model: "auto",
+  async run({ input, ctx }) {
+    // Durable step: journaled, idempotent, resumable after a crash
+    const data = await step("fetch-data", () => ctx.tools.web.search(input.query));
+
+    // Addressed by capability; the model router picks the vendor model
+    const summary = await step("summarize", () =>
+      ctx.llm.complete({
+        messages: [{ role: "user", content: `Summarize: ${data}` }],
+        capability: "reasoning-small",
+      }),
+    );
+    return { summary };
+  },
+});
+```
+
+<details>
+<summary>Parallel fan-out and human approval</summary>
+
+```ts
+// Fan out: one journaled step per query
+const results = await step.map("search", queries, (q) => ctx.tools.web.search(q));
+
+// Blocks until a human grants or denies; denial or timeout throws
+await ctx.approval.request({
+  reason: "Send this email to 500 users?",
+  expiresAt: "2026-12-01T00:00:00Z",
+});
+```
+
+</details>
+
+Use capability names (`auto`, `reasoning-large`, `chat-small`, `vision-large`), never a vendor model. See [Models](/docs/build/models/).

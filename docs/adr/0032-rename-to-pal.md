@@ -43,7 +43,8 @@ prefixes, launchd labels, binaries, package names, the Go module path and the re
 5. **Brand gate.** `scripts/brand-check.sh --enforce` runs in the required `lint` CI job and fails
    on any occurrence of the old name outside `scripts/brand-allowlist.txt`. The allowlist holds
    only what cannot avoid the name, each with its reason: the gate itself, the codemod, the DB
-   rename migration, and one wire name kept for a single release — the signal-token header the
+   rename migration, the live-machine cutover tool and its runbook (they migrate the owner's Mac
+   from the old names), and one wire name kept for a single release — the signal-token header the
    owner's already-installed iPhone Shortcuts send to `/v1/signals`, until they are re-pointed
    at `x-pal-signal-token`.
 

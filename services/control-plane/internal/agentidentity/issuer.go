@@ -8,7 +8,7 @@
 //
 //	{
 //	  "sub": "ai-<uuid>",          // agent_instance_id
-//	  "iss": "pal-agent",
+//	  "iss": "pal-agent",          // legacy tokens carry "pal-agent"
 //	  "iat": <unix>,
 //	  "exp": <unix>,
 //	  "jti": "<uuid>",
@@ -59,6 +59,10 @@ const (
 
 	// tokenIssuer is the "iss" claim value burned into every agent token.
 	tokenIssuer = "pal-agent"
+
+	// legacyTokenIssuer is the pre-PAL issuer (ADR 0032). Tokens minted before
+	// the rename are still live for up to their TTL, so Verify accepts both.
+	legacyTokenIssuer = "pal-agent"
 
 	// envIdentitySecret is the environment variable for the HS256 signing key.
 	envIdentitySecret = "PAL_AGENT_IDENTITY_SECRET"
@@ -342,6 +346,9 @@ func (iss *Issuer) Verify(tokenStr string) (*Claims, error) {
 	}
 	if c.Typ != TokenTyp {
 		return nil, fmt.Errorf("agentidentity: wrong token type %q", c.Typ)
+	}
+	if c.Issuer != tokenIssuer && c.Issuer != legacyTokenIssuer {
+		return nil, fmt.Errorf("agentidentity: unexpected issuer %q", c.Issuer)
 	}
 	if c.AgentInstanceID == "" {
 		return nil, fmt.Errorf("agentidentity: missing agent_instance_id claim")

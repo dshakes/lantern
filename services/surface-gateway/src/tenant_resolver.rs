@@ -59,7 +59,7 @@ impl TenantResolver {
                     surface = %surface,
                     platform_id = %platform_id,
                     tenant_id = %id,
-                    "resolved platform id to pal tenant"
+                    "resolved platform id to PAL tenant"
                 );
                 Ok(id.clone())
             }

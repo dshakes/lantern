@@ -25,6 +25,10 @@
 #   make deploy-local            # rebuild/restart only what changed
 #   FORCE=1 make deploy-local    # restart everything regardless
 set -uo pipefail
+
+# Works on either side of the PAL cutover (ADR 0032): dev.pal.* once installed.
+LABEL_PREFIX=dev.pal
+if [ -e "$HOME/Library/LaunchAgents/dev.pal.api.plist" ]; then LABEL_PREFIX=dev.pal; fi
 # `ps -o lstart=` and `date -j -f "%a %b %d %T %Y"` both parse/format against
 # the locale — a non-English LC_TIME (or, on the 1st-9th of the month, extra
 # padding that only appears in some locales) breaks the parse. Pin to C so the
@@ -71,7 +75,7 @@ pid_of_agent() {  # label -> the launchd job's own pid ("" if not loaded/running
   # same service running from another checkout. `launchctl print` reports
   # the actual job pid launchd is supervising.
   local label="$1" pid
-  pid="$(launchctl print "gui/$UID_/dev.pal.$label" 2>/dev/null | awk '/^[[:space:]]*pid = [0-9]+/{print $NF; exit}')"
+  pid="$(launchctl print "gui/$UID_/$LABEL_PREFIX.$label" 2>/dev/null | awk '/^[[:space:]]*pid = [0-9]+/{print $NF; exit}')"
   [[ "$pid" =~ ^[0-9]+$ ]] && echo "$pid"
 }
 newest_source_epoch() {  # newest mtime among the given paths (files or dirs)
@@ -132,7 +136,7 @@ done
 # --- 5. restart + prove -------------------------------------------------------
 for label in "${RESTART[@]:-}"; do
   [[ -n "$label" ]] || continue
-  launchctl kickstart -k "gui/$UID_/dev.pal.$label" 2>/dev/null || fail "$label: launchctl kickstart failed (is dev.pal.$label installed?)"
+  launchctl kickstart -k "gui/$UID_/$LABEL_PREFIX.$label" 2>/dev/null || fail "$label: launchctl kickstart failed (is $LABEL_PREFIX.$label installed?)"
 done
 sleep 3
 for label in "${RESTART[@]:-}"; do

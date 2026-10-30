@@ -15,10 +15,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
 	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
 	"github.com/dshakes/pal/services/data-plane-agent/internal/tunnel"
 )
 
@@ -28,6 +30,12 @@ const tenantMetadataKey = "tenant_id"
 // serviceTokenMetadataKey mirrors control-plane middleware.ServiceTokenMetadataKey.
 // Kept local so the dispatcher does not take a build dep on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
+
+// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
+// sent under both names so a control plane that predates the PAL name (the
+// customer data plane and the control plane upgrade independently) still
+// authenticates the call.
+const legacyServiceTokenMetadataKey = "x-pal-service-token"
 
 var tracer = otel.Tracer("pal.data-plane-agent.dispatcher")
 
@@ -240,7 +248,7 @@ func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assign
 func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if d.serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken, legacyServiceTokenMetadataKey, d.serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
@@ -293,13 +301,17 @@ func (d *Dispatcher) getWorkflowEngineConn(ctx context.Context) (*grpc.ClientCon
 		zap.String("addr", d.workflowEngineAddr),
 	)
 
-	// Within the data plane cluster, services communicate over plaintext gRPC.
-	// mTLS between data plane components is handled by the service mesh or
-	// network policies, not by the application.
-	conn, err := grpc.NewClient(
-		d.workflowEngineAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	// Service-mesh mTLS (PAL_GRPC_TLS_*, ADR 0043): a prod workflow-engine
+	// requires a client cert. Plaintext only in dev or with PAL_GRPC_INSECURE=1.
+	tlsCfg, err := grpctls.ClientConfig(grpctls.FromEnv(grpctls.ServicePrefix), grpctls.IsProd(), grpctls.InsecureOverride())
+	if err != nil {
+		return nil, fmt.Errorf("workflow engine TLS: %w", err)
+	}
+	creds := insecure.NewCredentials()
+	if tlsCfg != nil {
+		creds = credentials.NewTLS(tlsCfg)
+	}
+	conn, err := grpc.NewClient(d.workflowEngineAddr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("dial workflow engine at %s: %w", d.workflowEngineAddr, err)
 	}

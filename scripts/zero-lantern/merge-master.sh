@@ -27,7 +27,7 @@ trap 'rm -rf "$tmp"' EXIT
 unresolved=()
 
 ours_wins='^(scripts/brand-(check\.sh|allowlist\.txt)|docs/adr/0032-[^/]*\.md|scripts/zero-lantern/.*)$'
-regen='^(gen/go/.*\.pb\.go|.*/Cargo\.lock)$'
+regen='^(gen/go/.*\.pb\.go|.*/Cargo\.lock|scripts/cutover/.*|docs/runbooks/pal-cutover\.md)$'
 
 while IFS= read -r p; do
   [[ -n "$p" ]] || continue

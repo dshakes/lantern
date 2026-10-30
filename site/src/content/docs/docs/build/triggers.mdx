@@ -2,16 +2,19 @@
 title: Webhook triggers
 description: Bind a signed public URL to an agent so GitHub, Sentry, PagerDuty or any HMAC sender can start runs.
 glance:
-  what: "A trigger binds the public URL POST /v1/hooks/{id} to an agent so signed webhooks from GitHub, Sentry or any HMAC sender start runs."
-  why: "The signature is the only credential, so senders never hold a PAL token, and a delivery sent twice starts one run."
-  how: "Follow Create a trigger and copy the secret, which is shown only once."
+  what: "A trigger binds the public URL POST /v1/hooks/{id} to one agent; every HMAC-verified delivery from GitHub, Sentry, PagerDuty or your own sender starts a run."
+  why: "Senders never hold a PAL token, and a delivery sent twice starts one run."
+  how: "Run pal hooks create my-agent --provider github and copy the secret, which is shown once."
 sidebar:
   order: 4
 ---
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { WebhookTriggers } from '../../../../components/diagrams';
 
-A trigger binds a public URL, `POST /v1/hooks/{id}`, to one agent. GitHub, Sentry, PagerDuty or any service that can sign a request with HMAC-SHA256 posts events there, and every verified delivery starts a run. The signature is the only credential: the sender never holds a PAL token. A delivery sent twice starts one run.
+<WebhookTriggers client:visible />
+
+The signature is the only credential. Any service that can sign a request with HMAC-SHA256 can post to `POST /v1/hooks/{id}`.
 
 ## How it works
 
@@ -60,7 +63,7 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 <TabItem label="TypeScript">
 
 ```ts
-import { PalClient } from "@pal/sdk";
+import { PalClient } from "@pal-runtime/sdk";
 const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });
@@ -160,6 +163,8 @@ PagerDuty shows its signing secret after you create the webhook subscription, so
 
 ### Generic HMAC
 
+These header names keep the `X-Pal-` prefix on the wire; they are not renamed.
+
 For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Pal-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Pal-Delivery` as a stable id per event and optionally `X-Pal-Event`.
 
 ```bash
@@ -236,22 +241,22 @@ pal hooks create my-agent --provider github \
   --template '{"pr":"{{payload.number}}","title":"{{payload.pull_request.title}}","note":"PR {{payload.number}} opened"}'
 ```
 
+## Other ways to start a run
+
+`POST /v1/runs`; a [schedule](/docs/build/scheduling/); a channel message ([Surfaces](/docs/pal/surfaces/)); an A2A call to `POST /v1/agents/{name}/a2a/invoke` ([Marketplace and A2A](/docs/build/marketplace/)).
+
 ## Budgets and spend
 
-A delivery creates a run through the same handler as `POST /v1/runs`, so the agent's [budget](/docs/build/budgets/) and the tenant spawn limit apply unchanged. With `hardFail` on and a cap reached, the delivery gets 402 and no run starts. A signed sender can therefore spend only the budget of the one agent its trigger is bound to.
-
-<Aside type="tip">
-Set a budget on any agent you expose this way.
-</Aside>
+A delivery goes through the same handler as `POST /v1/runs`, so the agent's [budget](/docs/build/budgets/) and the tenant spawn limit apply: a reached hard-fail cap returns 402 and starts no run. Set a budget on any agent you expose this way.
 
 ## Security notes
 
-- **Signature only.** The route takes no token. The one query before verification is the trigger lookup by id; the trigger's tenant is taken from that row, never from the request.
-- **Constant-time compare** of the MAC (`hmac.Equal`); every candidate signature is checked with no early exit.
-- **404 vs 401.** Unknown, disabled and bad-UUID ids all return the same 404 body before any signature check, so an outsider cannot tell which of those ids exist. 401 appears only for an existing, enabled trigger, including one whose agent was deleted: that trigger returns 404 only after a valid signature. The rate limit is spent only after the signature passes, so an unsigned flood cannot use up a real sender's allowance.
-- **Secret storage.** Stored encrypted with AES-256-GCM when `PAL_CREDENTIAL_KEY` is set (plaintext pass-through when unset, as for other credentials). Never returned by list or get, never logged, and left out of the owner [data export](/docs/build/accounts/).
-- **Tenant scoping.** Trigger CRUD runs under row-level security by tenant; get, update and delete of another tenant's trigger return 404. The run is created in the trigger's tenant.
-- **Replay.** Only `generic` signs a timestamp (five-minute window). The others rely on the duplicate check above.
+- **Signature only.** The route takes no token. The trigger's tenant comes from its row, never from the request.
+- **Constant-time compare** of every candidate signature (`hmac.Equal`), no early exit.
+- **No id oracle.** Unknown, disabled and non-UUID ids return the same 404 before any signature check; the rate limit is spent only after the signature passes, so an unsigned flood cannot starve a real sender.
+- **Secret storage.** AES-256-GCM when `PAL_CREDENTIAL_KEY` is set (plaintext otherwise). Never returned by list or get, never logged, left out of the owner [data export](/docs/build/accounts/).
+- **Tenant scoping.** Trigger CRUD runs under row-level security; another tenant's trigger returns 404.
+- **Replay.** Only `generic` signs a timestamp (five-minute window); the others rely on the duplicate check above.
 
 ## Not yet
 
@@ -260,4 +265,4 @@ Set a budget on any agent you expose this way.
 - Per-replica rate limit; no per-IP limit at this layer.
 - No event filter: every verified delivery, including a GitHub `ping`, starts a run.
 
-Related: [API reference](/docs/reference/api/), [Budgets](/docs/build/budgets/), [CLI](/docs/reference/cli/), [SDKs](/docs/reference/sdk/).
+Next: [scheduling](/docs/build/scheduling/).

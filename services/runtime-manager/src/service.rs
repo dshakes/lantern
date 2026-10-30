@@ -601,7 +601,7 @@ fn caller_env_key_allowed(key: &str) -> bool {
 /// uid, typed spawn.json fields) is added after it.
 fn own_workload_env(
     env: &mut std::collections::HashMap<String, String>,
-    manager_pal_env: Option<&str>,
+    manager_env: Option<&str>,
     tenant_id: &str,
     agent_version_id: &str,
 ) {
@@ -621,7 +621,7 @@ fn own_workload_env(
             "dropped caller-supplied PAL_* env keys: harness config is manager-owned"
         );
     }
-    if let Some(v) = manager_pal_env.filter(|v| !v.is_empty()) {
+    if let Some(v) = manager_env.filter(|v| !v.is_empty()) {
         env.insert("PAL_ENV".to_string(), v.to_string());
     }
     if !tenant_id.is_empty() {

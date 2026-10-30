@@ -82,8 +82,8 @@ func NewTriggerHandler(srv *server.Server, auth *AuthHandler, rest *RESTHandler)
 // RegisterRoutes wires the trigger routes onto mux.
 func (h *TriggerHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/agents/{name}/triggers", h.auth.WithScope(ScopeAgentsWrite, h.CreateTrigger))
-	mux.HandleFunc("GET /v1/agents/{name}/triggers", h.ListTriggers)
-	mux.HandleFunc("GET /v1/triggers/{id}", h.GetTrigger)
+	mux.HandleFunc("GET /v1/agents/{name}/triggers", h.auth.WithScope(ScopeAgentsRead, h.ListTriggers))
+	mux.HandleFunc("GET /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsRead, h.GetTrigger))
 	mux.HandleFunc("PATCH /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsWrite, h.UpdateTrigger))
 	mux.HandleFunc("DELETE /v1/triggers/{id}", h.auth.WithScope(ScopeAgentsWrite, h.DeleteTrigger))
 	// Public: authenticated by the per-trigger signature, not a token.
@@ -445,6 +445,15 @@ func hmacMatches(secret string, msg []byte, gotHex string) bool {
 	return hmac.Equal(m.Sum(nil), got)
 }
 
+// palOrLegacyHeader reads X-Pal-<name>, falling back to the pre-PAL
+// X-Pal-<name> when the PAL header is absent (ADR 0032).
+func palOrLegacyHeader(h http.Header, name string) string {
+	if v := h.Get("X-Pal-" + name); v != "" {
+		return v
+	}
+	return h.Get("X-Pal-" + name)
+}
+
 // verifyHookDelivery checks the request signature in the provider's format and
 // extracts the delivery id. Pure: unit-tested per provider.
 func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, now time.Time) (hookDelivery, error) {
@@ -452,9 +461,11 @@ func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, n
 	switch provider {
 	case "generic":
 		// X-Pal-Signature: t=<unix>,v1=<hex>[,v1=<hex>] over "<t>.<body>".
+		// Senders configured before the rename use the X-Pal-* names;
+		// both are read (ADR 0032), PAL first.
 		var ts string
 		var sigs []string
-		for _, kv := range strings.Split(hdr.Get("X-Pal-Signature"), ",") {
+		for _, kv := range strings.Split(palOrLegacyHeader(hdr, "Signature"), ",") {
 			k, v, _ := strings.Cut(strings.TrimSpace(kv), "=")
 			switch k {
 			case "t":
@@ -475,8 +486,8 @@ func verifyHookDelivery(provider, secret string, hdr http.Header, body []byte, n
 			return d, errHookSignature
 		}
 		d.ReplayKey = hookDigest(signed)
-		d.ID = hdr.Get("X-Pal-Delivery")
-		d.Event = hdr.Get("X-Pal-Event")
+		d.ID = palOrLegacyHeader(hdr, "Delivery")
+		d.Event = palOrLegacyHeader(hdr, "Event")
 	case "github":
 		sig, ok := strings.CutPrefix(hdr.Get("X-Hub-Signature-256"), "sha256=")
 		if !ok || !hmacMatches(secret, body, sig) {

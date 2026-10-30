@@ -29,6 +29,14 @@ if [ -f "$HOME/.pal/bridge.env" ]; then
   . "$HOME/.pal/bridge.env"
   set +a
 fi
+# The pal state dir (written by `pal setup --apply`) wins over the legacy one.
+PAL_ENV_FILE="${PAL_STATE_DIR:-$HOME/.pal}/bridge.env"
+if [ -f "$PAL_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$PAL_ENV_FILE"
+  set +a
+fi
 
 # Self-heal a missing/broken tsx runner (or an unlinked @pal/bridge-core) before boot.
 if [ ! -x node_modules/.bin/tsx ] || [ ! -f node_modules/tsx/dist/cli.mjs ] || [ ! -e node_modules/@pal/bridge-core ]; then

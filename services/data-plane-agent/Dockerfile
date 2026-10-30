@@ -1,6 +1,7 @@
 FROM golang:1.26.10-alpine AS builder
 # Build context is the repo root (replace ../../gen/go lives outside the service dir).
 COPY gen/go/ /app/gen/go/
+COPY packages/grpctls/ /app/packages/grpctls/
 COPY services/data-plane-agent/ /app/services/data-plane-agent/
 WORKDIR /app/services/data-plane-agent
 RUN go mod download

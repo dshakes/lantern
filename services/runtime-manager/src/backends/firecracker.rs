@@ -322,6 +322,21 @@ pub struct VsockDevice {
     pub uds_path: String,
 }
 
+/// PUT /entropy — virtio-rng device.
+///
+/// Without an entropy source the guest kernel's CRNG seeds only from scarce
+/// interrupt entropy (the Firecracker CI guest kernel has jitterentropy
+/// disabled), so the first blocking `getrandom()` — the harness's mTLS
+/// handshake — stalls ~5 s until `random: crng init done`. A virtio-rng device
+/// feeds the CRNG from the host at boot so `getrandom()` never blocks. The CI
+/// guest kernel ships the `virtio_rng` driver. An empty body (`{}`, no rate
+/// limiter) is the unthrottled default.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EntropyDevice {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<RateLimiter>,
+}
+
 /// PUT /actions — InstanceStart, FlushMetrics, SendCtrlAltDel
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstanceAction {
@@ -641,6 +656,15 @@ impl VmConfig {
     /// In-jail path Firecracker connects to for a guest-initiated vsock `port`.
     pub fn vsock_port_path(&self, port: u32) -> String {
         format!("{}_{port}", self.vsock_uds_path)
+    }
+
+    /// Produce the EntropyDevice body for PUT /entropy (virtio-rng).
+    ///
+    /// Unthrottled (no rate limiter): the device only needs to seed the guest
+    /// CRNG once at boot so the harness's first `getrandom()` (mTLS) does not
+    /// block waiting for interrupt entropy. See [`EntropyDevice`].
+    pub fn entropy_device(&self) -> EntropyDevice {
+        EntropyDevice { rate_limiter: None }
     }
 
     /// Produce the VsockDevice body for PUT /vsock.
@@ -3728,6 +3752,13 @@ impl FirecrackerBackend {
         // Step 7: Vsock.
         unix_socket_put(sock, "/vsock", &api_cfg.vsock_device()).await?;
 
+        // Step 7b: Entropy (virtio-rng). Seeds the guest CRNG from the host so
+        // the harness's first blocking getrandom() — the mTLS handshake — does
+        // not stall ~5 s waiting for `random: crng init done` (the CI guest
+        // kernel has no other entropy source: jitterentropy is disabled and
+        // interrupt entropy is scarce in a quiet microVM). See `EntropyDevice`.
+        unix_socket_put(sock, "/entropy", &api_cfg.entropy_device()).await?;
+
         // Step 8: InstanceStart.
         unix_socket_put(
             sock,
@@ -4793,6 +4824,35 @@ mod tests {
         };
         let json: serde_json::Value = serde_json::to_value(&b).unwrap();
         assert_eq!(json["initrd_path"], "/opt/initrd.img");
+    }
+
+    #[test]
+    fn entropy_device_serializes_as_empty_body() {
+        // The unthrottled virtio-rng device: an empty JSON object is the body
+        // Firecracker's `PUT /entropy` accepts. A `rate_limiter` key must NOT
+        // appear when None, or Firecracker rejects the malformed field.
+        let e = EntropyDevice::default();
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(
+            json, "{}",
+            "unthrottled entropy device must serialize to {{}}"
+        );
+    }
+
+    #[test]
+    fn vm_config_wires_an_entropy_device() {
+        // Regression guard for the cold-boot CRNG stall fix: every VM config
+        // must expose a virtio-rng device so the boot sequence can seed the
+        // guest CRNG (otherwise the harness's first getrandom() blocks ~5 s
+        // until `random: crng init done`). See `EntropyDevice`.
+        let cfg =
+            VmConfig::from_schedule(&minimal_schedule_req(), "/opt/vmlinux", "/opt/rootfs.ext4")
+                .unwrap();
+        let json: serde_json::Value = serde_json::to_value(cfg.entropy_device()).unwrap();
+        assert!(
+            json.get("rate_limiter").is_none(),
+            "entropy device is unthrottled (no rate_limiter key)"
+        );
     }
 
     #[test]

@@ -57,6 +57,11 @@ func TestMetricsEndpoint(t *testing.T) {
 		"pal_scheduler_nodes",
 		"pal_scheduler_is_leader",
 	}
+	// ADR 0032: the PAL names are canonical; the legacy names above are the
+	// one-release alias for dashboards that have not migrated.
+	for _, name := range wantMetrics {
+		wantMetrics = append(wantMetrics, strings.Replace(name, "pal_", "pal_", 1))
+	}
 	for _, name := range wantMetrics {
 		if !strings.Contains(text, name) {
 			t.Errorf("metric %q not found in /metrics output", name)

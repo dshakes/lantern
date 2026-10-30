@@ -77,3 +77,28 @@ func TestServiceAuth_HealthCheckExempt(t *testing.T) {
 		}
 	}
 }
+
+// TestServiceAuth_LegacyAndPALNames (ADR 0032): the legacy header still
+// authenticates; a wrong PAL token is not rescued by a right legacy one.
+func TestServiceAuth_LegacyAndPALNames(t *testing.T) {
+	interceptor := middleware.UnaryServiceAuthInterceptor(zap.NewNop(), "secret")
+	cases := []struct {
+		name string
+		md   map[string]string
+		ok   bool
+	}{
+		{"pal", map[string]string{middleware.ServiceTokenMetadataKey: "secret"}, true},
+		{"legacy", map[string]string{middleware.LegacyServiceTokenMetadataKey: "secret"}, true},
+		{"both", middleware.OutgoingServiceTokenMetadata("secret"), true},
+		{"legacy wrong", map[string]string{middleware.LegacyServiceTokenMetadataKey: "nope"}, false},
+		{"pal wrong legacy right", map[string]string{middleware.ServiceTokenMetadataKey: "nope", middleware.LegacyServiceTokenMetadataKey: "secret"}, false},
+	}
+	for _, tc := range cases {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))
+		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/pal.v1.WorkflowEngineService/ExecuteRun"},
+			func(ctx context.Context, req any) (any, error) { return nil, nil })
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}

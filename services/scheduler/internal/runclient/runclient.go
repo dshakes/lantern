@@ -17,11 +17,13 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	palv1 "github.com/dshakes/pal/gen/go/pal/v1"
+	"github.com/dshakes/pal/packages/grpctls"
 )
 
 // tenantMetadataKey is the gRPC metadata key the control-plane's tenant
@@ -32,6 +34,11 @@ const tenantMetadataKey = "tenant_id"
 // middleware.ServiceTokenMetadataKey constant. Kept as a local const so the
 // scheduler doesn't take a build dependency on the control-plane module.
 const serviceTokenMetadataKey = "x-pal-service-token"
+
+// legacyServiceTokenMetadataKey is the pre-PAL name (ADR 0032). The token is
+// sent under both names so a control-plane that predates the PAL name still
+// authenticates the call.
+const legacyServiceTokenMetadataKey = "x-pal-service-token"
 
 // Client holds a long-lived gRPC connection to the control-plane and creates
 // runs on its RunService. One Client is shared by the cron ticker and the
@@ -50,13 +57,19 @@ type Client struct {
 // on every CreateRun so the control-plane's optional service-token interceptor
 // accepts the call. When empty, nothing extra is attached (additive).
 //
-// Transport is insecure (cleartext): the scheduler<->control-plane link is an
-// in-cluster/private-network hop, matching how the runtime-scheduler dials the
-// runtime-manager.
+// Transport is service-mesh mTLS (PAL_GRPC_TLS_*, ADR 0043) — the
+// control-plane demands a client cert for RunService when it runs mTLS.
+// Plaintext only in dev or with PAL_GRPC_INSECURE=1.
 func New(addr, serviceToken string, logger *zap.Logger) (*Client, error) {
-	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	tlsCfg, err := grpctls.ClientConfig(grpctls.FromEnv(grpctls.ServicePrefix), grpctls.IsProd(), grpctls.InsecureOverride())
+	if err != nil {
+		return nil, fmt.Errorf("runclient: control-plane TLS: %w", err)
+	}
+	creds := insecure.NewCredentials()
+	if tlsCfg != nil {
+		creds = credentials.NewTLS(tlsCfg)
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, fmt.Errorf("runclient: dial control-plane %q: %w", addr, err)
 	}
@@ -117,7 +130,7 @@ func (c *Client) CreateRun(ctx context.Context, tenantID, agentName string, inpu
 func outgoingContext(ctx context.Context, tenantID, serviceToken string) context.Context {
 	pairs := []string{tenantMetadataKey, tenantID}
 	if serviceToken != "" {
-		pairs = append(pairs, serviceTokenMetadataKey, serviceToken)
+		pairs = append(pairs, serviceTokenMetadataKey, serviceToken, legacyServiceTokenMetadataKey, serviceToken)
 	}
 	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }

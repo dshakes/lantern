@@ -13,6 +13,10 @@ spec:
     metadata:
       labels:
         {{- include "pal.componentLabels" (dict "root" . "component" "surface-gateway") | nindent 8 }}
+      {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "surface-gateway") }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "pal.serviceAccountName" . }}
       containers:
@@ -48,6 +52,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "pal.fullname" . }}-config
                   key: REDIS_URL
+            {{- include "pal.mtls.env" (dict "root" . "name" "surface-gateway") | nindent 12 }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            {{- include "pal.mtls.volumeMounts" (dict "root" . "manager" false) | nindent 12 }}
+          {{- end }}
           {{- with .Values.surfaceGateway.existingSecret }}
           envFrom:
             - secretRef:
@@ -71,3 +80,7 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.surfaceGateway.resources | nindent 12 }}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        {{- include "pal.mtls.volumes" (dict "root" . "name" "surface-gateway" "manager" false) | nindent 8 }}
+      {{- end }}

@@ -1,4 +1,4 @@
-.PHONY: demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint slo-rules ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: dev-certs demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-bench lima-runtime lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint slo-rules ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -23,6 +23,9 @@ demo:
 
 demo-down:
 	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p pal-demo down -v
+
+dev-certs: ## Generate a local CA + per-service mTLS certs in .dev-certs/ (ADR 0043; dev only)
+	bash scripts/dev-certs.sh .dev-certs
 
 dev-infra: ## Start only infrastructure (Postgres, Redis; no MinIO)
 	docker compose -f infra/docker/docker-compose.yml up -d postgres redis
@@ -188,11 +191,13 @@ test-go: ## Run Go tests
 	cd services/workflow-engine && go test -race -count=1 ./...
 	cd services/scheduler && go test -race -count=1 ./...
 	cd services/runtime-scheduler && CGO_ENABLED=0 go test ./...
+	cd packages/grpctls && go test -race -count=1 ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
 	cd services/model-router && cargo test
 	cd services/runtime-manager && cargo test
+	cd packages/pal-grpc-tls-rs && cargo test
 
 test-ts: ## Run TypeScript tests
 	cd packages/sdk-ts && npx vitest run
@@ -267,6 +272,7 @@ lint-go: ## Lint Go code (same modules as CI sdlc-lint)
 	cd services/workflow-engine && golangci-lint run ./...
 	cd services/runtime-scheduler && golangci-lint run ./...
 	cd services/scheduler && golangci-lint run ./...
+	cd packages/grpctls && golangci-lint run ./...
 
 lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/gateway && cargo clippy -- -D warnings
@@ -274,6 +280,7 @@ lint-rust: lint-rust-fmt ## Lint Rust code
 	cd services/runtime-manager && cargo clippy -- -D warnings
 	cd services/surface-gateway && cargo clippy -- -D warnings
 	cd services/harness && cargo clippy -- -D warnings
+	cd packages/pal-grpc-tls-rs && cargo clippy --all-targets -- -D warnings
 
 lint-rust-fmt: ## Check rustfmt on every Rust crate (matches CI sdlc-lint)
 	@fail=0; for m in services/*/Cargo.toml packages/*/Cargo.toml; do \
@@ -314,6 +321,9 @@ lima-broker-e2e: ## Broker egress mode (ADR 0026) e2e inside the VM
 
 lima-measurement-e2e: ## Software measurement (ADR 0031) e2e inside the VM: reproducible, enforce, resume/fork
 	@bash infra/lima/lima.sh measurement-e2e
+
+lima-bench: ## Firecracker latency bench (cold boot, exec, pause, resume, fork, broker) inside the VM
+	@bash infra/lima/lima.sh bench
 
 lima-runtime: ## Long-running jailed Firecracker runtime-manager in the VM on :52054 for `dev` (foreground)
 	@bash infra/lima/lima.sh runtime

@@ -35,6 +35,12 @@ mock_provider "aws" {
   }
 }
 
+# replication.tf declares an aliased aws.replica provider; without its own mock
+# terraform test falls back to the real provider and fails looking for creds.
+mock_provider "aws" {
+  alias = "replica"
+}
+
 mock_provider "tls" {
   mock_data "tls_certificate" {
     defaults = { certificates = [{ sha1_fingerprint = "9e99a48a9960b14926bb7f3b02e22da2b0ab7280" }] }

@@ -88,7 +88,10 @@ func permanentCredentialFailure(err error) (reason string, permanent bool) {
 	switch {
 	// The exact failure observed: ciphertext present, decryption key absent.
 	// Only restoring the key or re-authorizing can fix this.
-	case strings.Contains(msg, "pal_credential_key is not set"):
+	// Matches the PAL and the pre-PAL key name (ADR 0032): the secrets package
+	// names whichever one it was written against.
+	case strings.Contains(msg, "pal_credential_key is not set"),
+		strings.Contains(msg, "pal_credential_key is not set"):
 		return "stored credential is encrypted, but the server has no PAL_CREDENTIAL_KEY to decrypt it. " +
 			"Set PAL_CREDENTIAL_KEY (so new tokens are encrypted at rest), then re-authorize this connector", true
 

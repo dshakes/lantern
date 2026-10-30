@@ -2,30 +2,28 @@
 title: Demo mode
 description: Run the whole stack in kiosk mode with private per-visitor workspaces, recorded answers and no API key.
 glance:
-  what: "pal demo starts the whole stack in kiosk mode with private per-visitor workspaces, sample agents and recorded answers."
-  why: "It needs only Docker, no LLM key and no sign-up, and each workspace is deleted after 30 minutes."
-  how: "Run make demo or pal demo as shown under Try it."
+  what: "Kiosk mode serves a guided tour where each visitor gets a private throwaway workspace with sample agents and recorded model answers."
+  why: "It needs only Docker, no LLM key and no sign-up, so you can show PAL to someone in two minutes."
+  how: "Run make demo from a checkout and open http://localhost:3001/kiosk."
 sidebar:
-  order: 1
+  order: 6
 ---
 
-`pal demo` starts the whole stack in kiosk mode: every visitor gets a private workspace with sample agents, a guided tour, and no sign-up. The workspace is deleted after 30 minutes. It needs Docker and nothing else: no LLM key.
-
-Kiosk mode answers from **recorded replays** served by a local fixture server, labels every answer "replay", and gives each visitor a throwaway tenant that the database itself isolates from every other visitor.
+Every visitor gets a private workspace with sample agents and a guided tour, deleted after 30 minutes. Answers come from **recorded replays** on a local fixture server and are labelled "replay"; each visitor is a throwaway tenant that the database itself isolates.
 
 ## Try it
 
 ```bash
 # From a PAL checkout. Needs Docker; make demo also needs openssl.
-make demo               # builds, starts; prints "demo: http://localhost:3001/kiosk"
+make demo               # starts and returns; open http://localhost:3001/kiosk once the dashboard is up
 make demo-down          # stop and delete all demo data
 
-# Same stack through the CLI (go install ./cmd/pal from packages/cli):
+# Same stack through the CLI (build it with ./cmd/pal from packages/cli):
 pal demo            # builds, waits until healthy, opens the browser (--no-open to skip)
 pal demo --down     # stop and delete all demo data
 ```
 
-The stack is a separate compose project named `pal-demo` and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images, so it takes a while. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both `pal demo` and `make demo` honour them). If something fails to start, use `docker compose -p pal-demo logs`.
+The stack is a separate compose project (`pal-demo` from `make demo`, `pal-demo` from `pal demo`; stop a demo with the command that started it) and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images and is slow. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both commands honour them). If something fails to start, use `docker compose -p <project> logs` with the project name above.
 
 Press **Start demo**. The tour has five steps over real pages: the inbox, running an agent (watch the step waterfall), a budget that returns HTTP 402, a signed-receipt check at `/proof`, and the sandbox view. After 120 seconds without input, or when the 30-minute timer ends, the session is closed and the workspace deleted.
 
@@ -56,4 +54,6 @@ Kiosk mode also requires `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and an expli
 - The per-address limit is in-memory and per process; behind a proxy all visitors share one address.
 - The sandbox step shows the view only; the overlay does not start the microVM runtime.
 
-See also [Accounts](/docs/build/accounts/) and [Security](/docs/runtime/security/).
+See also [Accounts](/docs/build/accounts/) and [Security](/docs/security/).
+
+Next: [install the full stack](/docs/start/installation/).

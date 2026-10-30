@@ -95,8 +95,16 @@ const (
 	// runtimeTokenHeader is the HTTP header name carrying the service token.
 	runtimeTokenHeader = "X-Pal-Runtime-Token"
 
-	// secretRefPrefix is the required prefix for every ref.
+	// legacyRuntimeTokenHeader is the pre-PAL name (ADR 0032), accepted so a
+	// runtime-manager that predates the rename still authenticates.
+	legacyRuntimeTokenHeader = "X-Pal-Runtime-Token"
+
+	// secretRefPrefix is the PAL prefix for a secret ref.
 	secretRefPrefix = "pal.secret/"
+
+	// legacySecretRefPrefix is the pre-PAL prefix (ADR 0032). Refs are user
+	// data at rest, so both forms are accepted forever.
+	legacySecretRefPrefix = "pal.secret/"
 
 	// secretBodyLimit caps the request body at 64 KiB to prevent DoS via
 	// unbounded body reads.
@@ -171,8 +179,8 @@ func tokenHash(s string) [32]byte {
 	return sha256.Sum256([]byte(s))
 }
 
-// authenticateRuntimeToken validates the X-Pal-Runtime-Token header
-// against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
+// authenticateRuntimeToken validates the X-Pal-Runtime-Token header (or the
+// legacy X-Pal-Runtime-Token) against PAL_RUNTIME_SECRET_TOKEN. Both values are SHA-256-hashed before
 // crypto/subtle.ConstantTimeCompare so the comparison is constant-time over
 // fixed-size inputs regardless of token length.
 //
@@ -184,7 +192,12 @@ func authenticateRuntimeToken(r *http.Request) (bool, error) {
 	if want == "" {
 		return false, errRelayDisabled
 	}
+	// PAL name first, legacy only when the PAL header is absent: exactly one
+	// value is compared, so two names never give a caller a second guess.
 	got := r.Header.Get(runtimeTokenHeader)
+	if got == "" {
+		got = r.Header.Get(legacyRuntimeTokenHeader)
+	}
 	wantH := tokenHash(want)
 	gotH := tokenHash(got)
 	if subtle.ConstantTimeCompare(wantH[:], gotH[:]) != 1 {
@@ -320,7 +333,19 @@ func (h *RuntimeSecretsHandler) recordAuthFailure(ip string) bool {
 
 // ---------- Ref parser ----------
 
-// parsedRef holds the decomposed form of a pal.secret/... string.
+// canonicalSecretRef maps a pal.secret/ ref to its pal.secret/ twin so two
+// spellings of one secret compare equal. Any check that compares refs (e.g.
+// "an injected ref must not also be vended") must compare canonical forms, or
+// the second spelling would slip past it.
+func canonicalSecretRef(ref string) string {
+	if tail, ok := strings.CutPrefix(ref, secretRefPrefix); ok {
+		return legacySecretRefPrefix + tail
+	}
+	return ref
+}
+
+// parsedRef holds the decomposed form of a pal.secret/... (or legacy
+// pal.secret/...) string.
 type parsedRef struct {
 	raw   string
 	scope string // "llm" | "connector" | ""
@@ -337,10 +362,10 @@ type parsedRef struct {
 // Returns a parsedRef with scope="" when the ref is malformed or unknown.
 func parseRef(ref string) parsedRef {
 	p := parsedRef{raw: ref}
-	if !strings.HasPrefix(ref, secretRefPrefix) {
+	tail, ok := strings.CutPrefix(canonicalSecretRef(ref), legacySecretRefPrefix) // e.g. "llm/anthropic"
+	if !ok {
 		return p
 	}
-	tail := strings.TrimPrefix(ref, secretRefPrefix) // e.g. "llm/anthropic"
 	parts := strings.SplitN(tail, "/", 3)
 	if len(parts) < 2 {
 		return p

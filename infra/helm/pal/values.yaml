@@ -273,6 +273,33 @@ surfaceGateway:
 
 # Default-deny NetworkPolicy for every pod in the release plus the allow rules
 # the platform needs. Needs a CNI that enforces policy (Calico/Cilium).
+# -- Internal gRPC mTLS (ADR 0043) --
+# Every internal hop (gateway/surface-gateway -> control-plane :50051,
+# control-plane -> runtime-scheduler :50055 and model-router :50053,
+# workflow-engine -> model-router and runtime-manager, callers -> manager :50054)
+# runs mutual TLS ON TOP OF the shared service token. Servers require a client
+# cert from the CA and pin the caller's SPIFFE ID
+# (spiffe://<trustDomain>/svc/<name>). Needs cert-manager (CRDs installed).
+# Off here so kind/CI/dev stay plaintext; values-prod.yaml turns it on. With it
+# off, a prod-like PAL_ENV refuses to serve gRPC unless PAL_GRPC_INSECURE=1.
+mtls:
+  enabled: false
+  trustDomain: pal.internal
+  # false = bring your own PKI: create Secrets <fullname>-<service>-mtls
+  # (ca.crt/tls.crt/tls.key), <fullname>-manager-client-mtls and
+  # <fullname>-manager-ca yourself; the chart only mounts them.
+  certManager:
+    enabled: true
+    duration: 2160h       # 90d leaves; Go services hot-reload a renewed leaf
+    renewBefore: 360h
+    caDuration: 87600h    # 10y CAs; rotating a CA is a planned rollout
+    caRenewBefore: 720h
+  # Annotate the Rust deployments (gateway, surface-gateway, model-router,
+  # runtime-manager) for stakater/Reloader so a renewed cert rolls the pods —
+  # tonic loads its cert once. Leave on only if Reloader is installed; otherwise
+  # restart those deployments within renewBefore of each renewal.
+  reloader: false
+
 networkPolicy:
   enabled: false
   # Peers allowed to reach the public entrypoints (gateway, dashboard,

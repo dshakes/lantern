@@ -12,8 +12,11 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { ArchitectureExplorer } from '../../../../components/diagrams';
 
-Every component below is a real process and every arrow a real call. For each one this page gives what it does, the port it listens on, and the trust boundary it enforces. The runtime manager and the harness are broken out into their own component sections.
+<ArchitectureExplorer client:visible />
+
+Every component below is a real process and every arrow a real call: what it does, its port, and the trust boundary it enforces.
 
 <Diagram name="your-cloud" />
 
@@ -62,7 +65,7 @@ Gateway invariant: without `PAL_TLS_CERT`/`PAL_TLS_KEY` it serves plaintext and 
 | Runtime scheduler | Go, `:50055` gRPC, `:8085` REST | Places sandboxes on nodes (warm pool, capacity, fair share) and owns their lifecycle: pause, resume, fork, and the idle-suspend sweeper. Service-token gate on `:50055`. Tenant quota is reserved atomically (all-or-nothing for forks). |
 | Runtime manager | Rust (tonic), `:50054` gRPC (mTLS), one per node | The only thing that touches microVMs: spawn, stop, snapshot/restore, exec, `ExecTool`. Serves `RuntimeHarness` for the guests on its node. Refuses any peer presenting a per-VM cert (`OU=pal-vm`) on `RuntimeManager` methods and requires the service token from everyone else. |
 | Host egress broker | Rust (inside runtime-manager), opt-in | Per-VM proxy on the host end of vsock port 3128. Applies the allowlist, dials upstream from the host, and injects credentials into requests to hosts whose rule says so. New trust boundary: host code parsing guest bytes. Heads capped at 64 KiB; error strings returned to the guest are static. |
-| Harness | Rust (musl, static), PID 1 in the VM, `:50056` exec (in guest) | Init process inside every microVM: supervises the workload, serves exec and tool calls, vends short-TTL secrets, and enforces egress. The last in-VM boundary. The secrets socket only answers the workload uid (kernel-attested via `SO_PEERCRED`); the workload runs as its own uid with `PAL_*` env withheld. |
+| Harness | Rust (musl, static), PID 1 in the VM, `:50056` exec (in guest) | Init process inside every microVM: supervises the workload, serves exec and tool calls, vends short-TTL secrets, and enforces egress. The last in-VM boundary. The secrets socket only answers the workload uid (kernel-attested via `SO_PEERCRED`); the workload runs as its own uid with `PAL_*` env (and its `PAL_*` alias) withheld. |
 | Untrusted code | Anything: Python, Node, shell | Code the agent wrote or downloaded. It sees `/workspace`, the proxy env, and nothing that identifies the control plane. Contained by the microVM wall and, in broker mode, has no network device at all. |
 
 Workflow engine invariants:
@@ -92,7 +95,7 @@ Harness invariant: security audits are logged locally before forwarding and surv
 
 | Store | Port | Role |
 | --- | --- | --- |
-| Postgres 16 + pgvector | `:5432` | System of record: tenants, agents, runs, the `journal_events` log, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy, enforced when `PAL_RLS_ENFORCE=1`. `journal_events` is append-only: `step_started`, then `step_completed` or `step_failed`, keyed `(run_id, seq)`. |
+| Postgres 16 + pgvector | `:5432` | System of record: tenants, agents, runs, the `journal_events` log, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy, enforced in production whenever `PAL_APP_DB_PASSWORD` is set (the control plane refuses to start without it unless `PAL_RLS_ENFORCE=0`). `journal_events` is append-only: `step_started`, then `step_completed` or `step_failed`, keyed `(run_id, seq)`. |
 | Redis | `:6379` | Caching, rate limiting and session event pub/sub for SSE. Internal only. |
 | S3 / MinIO | `:9000` | Agent bundles, attachments, and the optional second tier of microVM snapshots. Snapshot uploads are best-effort: the local copy on the node is authoritative. |
 
@@ -134,7 +137,7 @@ The harness is the in-VM side. It starts as PID 1 and is the last trust boundary
 | Part | Role and boundary |
 | --- | --- |
 | Init and boot env | Mounts `/run/pal`, sets rlimits, reads `spawn.json` (workload command, env, egress rules, workload uid/gid) from the read-only cert drive. Unknown `spawn.json` versions are rejected; in prod the harness refuses to start without a workload uid. |
-| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash up to N times, injects the proxy env. Every `PAL_*` key is withheld from the child except a short allowlist of non-secret identifiers. |
+| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash up to N times, injects the proxy env. Every `PAL_*` key (and its `PAL_*` alias) is withheld from the child except a short allowlist of non-secret identifiers. |
 | Signals and reaper | PID 1 duties: reaps orphaned zombies, drains on `SIGTERM`, prepares for snapshots on `SIGUSR1`. |
 | Heartbeat | Bidi stream to the manager every 5 s with resource usage, `has_active_exec` and `last_activity_unix_ms`; the scheduler's idle sweeper reads the last two. mTLS with this incarnation's per-VM cert. |
 | Activity tracker | Atomic count of running workload and exec children, plus the time the last one exited. Idle means no child alive: the basis for idle-suspend. |
@@ -232,7 +235,7 @@ The workflow engine never runs tools itself: it asks the runtime manager, which 
 `PAL_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
 </Aside>
 
-The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/runtime/egress/).
+The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/security/egress/).
 
 <Diagram name="sandbox-egress" />
 

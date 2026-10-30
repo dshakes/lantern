@@ -2,18 +2,16 @@
 title: Accounts and sign-up
 description: Gated sign-up, email verification, password reset, data export and workspace deletion.
 glance:
-  what: "Gated sign-up, email verification, password reset, data export and workspace deletion, all served by the control plane on :8080."
-  why: "Public sign-up lets anyone create tenants with their own budget and microVM quota, so production starts closed and you open it deliberately."
-  how: "Read the Sign-up modes section, then follow the Try it curl walkthrough to register, verify and log in."
+  what: "Sign-up modes (closed, invite, open), email verification, password reset, owner data export and workspace deletion, all on the control plane at :8080."
+  why: "Open sign-up lets anyone create tenants with their own budget and microVM quota, so production starts closed and you open it on purpose."
+  how: "Pick a PAL_SIGNUP_MODE, then run the Try it curls against make run-api to sign up and verify."
 sidebar:
   order: 10
 ---
 
 import { Steps } from '@astrojs/starlight/components';
 
-How people get into a PAL deployment and how they leave: gated sign-up, email verification, password reset, data export and workspace deletion. Every control here is on the control plane (`:8080`); the dashboard pages are thin clients over the endpoints below.
-
-Public sign-up on a self-hosted deployment means anyone can create tenants, each with its own budget and microVM quota. Production therefore starts **closed**: you open it on purpose, behind a captcha, rate limits and a verified email.
+The dashboard pages are thin clients over the endpoints below. Production starts **closed**; opening it means a captcha, rate limits and verified email.
 
 ## Sign-up modes
 
@@ -146,7 +144,7 @@ The API has no confirmation parameter; the safeguard is in the dashboard. **Sett
 
 ## Mailer
 
-Verification and reset mail go through one of three drivers, chosen by `PAL_MAILER` (default `log`). Mail is plain text and sent in the background with a 30 second limit; a failed send is logged, not returned to the caller.
+Verification and reset mail use the driver in `PAL_MAILER` (default `log`). Mail is plain text, sent in the background with a 30 s limit; a failed send is logged, not returned.
 
 | Driver | Behaviour |
 | --- | --- |
@@ -206,7 +204,7 @@ Same request, responses and limits as resend; sends a reset link instead.
 
 ### `GET /v1/tenants/{id}/export` and `DELETE /v1/tenants/{id}`
 
-Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation, which blocks when `PAL_AUTHZ_ENFORCE=1` (on in production: a key without the scope gets `403`); either way API keys are not owners, so they get `403`.
+Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation. Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. Either way API keys are not owners, so they get `403`.
 
 ## Free-tier caps
 
@@ -245,4 +243,4 @@ Where verification is required (production), `POST /v1/runs` from an unverified 
 - Invite codes cannot be listed or revoked; to cancel one, rotate `PAL_SIGNUP_INVITE_SECRET` (which invalidates all of them).
 - Rate limiting needs Redis; without it only the captcha and sign-up mode protect `/auth/*`.
 
-See also [Security](/docs/runtime/security/) and the [API reference](/docs/reference/api/).
+Next: [durable execution](/docs/runtime/durable-execution/).

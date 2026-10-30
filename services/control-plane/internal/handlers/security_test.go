@@ -161,6 +161,8 @@ func TestIsPublicCORSPath(t *testing.T) {
 		public bool
 	}{
 		{"/.well-known/pal-receipts", true},
+		{"/.well-known/pal-agent-identity", true},
+		{"/.well-known/pal-receipts", true},
 		{"/.well-known/agent.json", true},
 		{"/proof", true},
 		{"/v1/runs/receipts/verify", true},

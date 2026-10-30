@@ -7,7 +7,7 @@ export function SourceLinks({ src }: { src?: Src[] }) {
       {src.map((s) => (
         <a key={`${s.ref ?? ""}${s.p}:${s.l ?? ""}`} href={srcHref(s)} target="_blank" rel="noreferrer">
           {srcLabel(s)}
-          {s.ref === "broker" ? " (broker branch)" : ""}
+          {s.ref === "broker" ? " (broker mode)" : ""}
         </a>
       ))}
     </span>

@@ -2,18 +2,19 @@
 title: Verifiable receipts
 description: Signed, tamper-evident, offline-verifiable proof of what a run executed.
 glance:
-  what: "A signed receipt is tamper-evident, offline-verifiable proof of what a run executed, signed over the hash of the run's journal."
-  why: "Anyone, such as an auditor or customer, can check which agent ran and what it cost, and that nobody edited the record."
-  how: "Request one as described in Issuing a receipt, then check it with Verifying offline."
+  what: "A receipt is an Ed25519 signature over a run's metadata and the SHA-256 of its journal_events stream."
+  why: "An auditor or customer can check which agent ran, what it cost, and that nobody edited the record afterward."
+  how: "POST /v1/runs/{id}/receipt, then paste it into the public /proof page or POST /v1/runs/receipts/verify."
 sidebar:
-  order: 12
+  order: 4
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SignedReceipts } from '../../../../components/diagrams';
 
-When a headless agent finishes, you can ask the runtime for a **signed receipt**: tamper-evident, offline-verifiable proof of what actually ran. The receipt is signed over the run's journal hash, so any post-hoc edit to the run's event log invalidates the signature.
+<SignedReceipts client:visible />
 
-A receipt is proof, not a promise. When an agent claims it did the task, the receipt lets anyone (an auditor, a customer, a counterparty who doesn't trust you) check that claim: which agent ran, what it cost, and that nobody edited the record afterward. Verification needs no account and no running server; the signature either checks out or it doesn't.
+A receipt is proof, not a promise. Because it is signed over the run's journal hash, any later edit to the event log invalidates the signature. Verification needs no account: the signature checks out or it does not.
 
 ## What a receipt attests
 
@@ -34,6 +35,7 @@ The signature (**Ed25519** when `PAL_RECEIPT_ED25519_SEED` is set) covers the ca
 - `tenantId`: always present.
 - `tokensIn` / `tokensOut`: prompt and completion token counts.
 - `version`: schema version (currently `1`).
+- `softwareMeasurement`: the host-asserted launch measurement ([Identity and secrets](/docs/security/identity/#software-measurement-of-the-launched-vm)); omitted for runs that did not use a microVM or when measurement was not configured.
 - `confidentialCompute`: present only for confidential runs (`attested: false`: the launch measurement is recorded, not verified).
 
 The canonical JSON is produced by a three-step round-trip: marshal the struct, unmarshal into `map[string]any`, re-marshal (Go sorts map keys alphabetically on re-marshal). The result is compact JSON with keys in alphabetical order, reproducible offline with any JSON library that sorts keys.
@@ -66,10 +68,4 @@ A receipt is signed over the journal hash, so tampering with even one event afte
 
 You do not need a terminal to check one: the dashboard's public `/proof` page (no sign-in) accepts a receipt and calls `POST /v1/runs/receipts/verify`, which needs no auth either.
 
-## Why it matters
-
-- **Provenance.** Cryptographic proof of exactly which steps a run executed.
-- **Tamper-evidence.** Editing the journal after the fact invalidates the signature.
-- **Offline verification.** The key fingerprint at `/.well-known/pal-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
-
-Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/docs/reference/api/) for the full request/response shape.
+Full request and response shapes: [API reference](/docs/reference/api/).

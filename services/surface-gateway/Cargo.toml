@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Service-mesh mTLS to the control-plane (ADR 0043).
+pal_grpc_tls = { path = "../../packages/pal-grpc-tls-rs" }
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5" }

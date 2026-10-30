@@ -17,6 +17,9 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9466"
         prometheus.io/path: /metrics
+        {{- with include "pal.mtls.podAnnotations" (dict "root" . "name" "runtime-manager") }}
+        {{- . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "pal.serviceAccountName" . }}
       containers:
@@ -83,19 +86,54 @@ spec:
                 secretKeyRef:
                   name: {{ include "pal.fullname" . }}-secrets
                   key: minio-password
+            {{- if .Values.mtls.enabled }}
+            # Manager mTLS (its own CA, ADR 0025/0043): server identity, the CA
+            # its callers' and VMs' client certs must chain to, and the CA key
+            # it signs per-VM guest certs with.
+            - name: PAL_MANAGER_TLS_CA
+              value: /etc/pal/mtls/ca.crt
+            - name: PAL_MANAGER_TLS_CERT
+              value: /etc/pal/mtls/tls.crt
+            - name: PAL_MANAGER_TLS_KEY
+              value: /etc/pal/mtls/tls.key
+            - name: PAL_VM_SIGNING_CA_CERT
+              value: /etc/pal/manager-ca/tls.crt
+            - name: PAL_VM_SIGNING_CA_KEY
+              value: /etc/pal/manager-ca/tls.key
+            {{- end }}
           volumeMounts:
             - name: dev-kvm
               mountPath: /dev/kvm
+            {{- if .Values.mtls.enabled }}
+            - name: pal-mtls
+              mountPath: /etc/pal/mtls
+              readOnly: true
+            - name: pal-manager-ca
+              mountPath: /etc/pal/manager-ca
+              readOnly: true
+            {{- end }}
           livenessProbe:
+            {{- if .Values.mtls.enabled }}
+            # kubelet gRPC probes cannot present a client cert; mTLS ports
+            # would fail them, so probe the socket instead.
+            tcpSocket:
+              port: 50054
+            {{- else }}
             grpc:
               port: 50054
+            {{- end }}
             initialDelaySeconds: 10
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
+            {{- if .Values.mtls.enabled }}
+            tcpSocket:
+              port: 50054
+            {{- else }}
             grpc:
               port: 50054
+            {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -107,3 +145,11 @@ spec:
           hostPath:
             path: /dev/kvm
             type: CharDevice
+        {{- if .Values.mtls.enabled }}
+        - name: pal-mtls
+          secret:
+            secretName: {{ include "pal.fullname" . }}-runtime-manager-mtls
+        - name: pal-manager-ca
+          secret:
+            secretName: {{ include "pal.fullname" . }}-manager-ca
+        {{- end }}

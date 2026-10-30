@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"go.uber.org/zap"
@@ -108,5 +109,46 @@ func TestUnaryServiceAuthInterceptor_RejectsThenAllows(t *testing.T) {
 	}
 	if out != "ok" || !called {
 		t.Fatalf("expected handler to run and return ok, got %v called=%v", out, called)
+	}
+}
+
+// ADR 0032: the legacy header name still authenticates, and a wrong PAL token
+// is not rescued by a right legacy one (exactly one value is compared).
+func TestAuthenticateServiceToken_LegacyAndPALNames(t *testing.T) {
+	logger := zap.NewNop()
+	cases := []struct {
+		name string
+		md   map[string]string
+		ok   bool
+	}{
+		{"pal", map[string]string{ServiceTokenMetadataKey: "s3cret"}, true},
+		{"legacy", map[string]string{LegacyServiceTokenMetadataKey: "s3cret"}, true},
+		{"both", OutgoingServiceTokenMetadata("s3cret"), true},
+		{"legacy wrong", map[string]string{LegacyServiceTokenMetadataKey: "nope"}, false},
+		{"pal wrong legacy right", map[string]string{ServiceTokenMetadataKey: "nope", LegacyServiceTokenMetadataKey: "s3cret"}, false},
+		{"pal empty legacy right", map[string]string{ServiceTokenMetadataKey: "", LegacyServiceTokenMetadataKey: "s3cret"}, true},
+	}
+	for _, tc := range cases {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.New(tc.md))
+		err := authenticateServiceToken(ctx, logger, "s3cret", testMethod)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}
+
+// The HTTP twin (introspect-key, dl staging) reads the same two names.
+func TestServiceTokenFromHeader_PALThenLegacy(t *testing.T) {
+	h := http.Header{}
+	if got := ServiceTokenFromHeader(h); got != "" {
+		t.Fatalf("empty header: got %q", got)
+	}
+	h.Set(LegacyServiceTokenMetadataKey, "old")
+	if got := ServiceTokenFromHeader(h); got != "old" {
+		t.Fatalf("legacy only: got %q", got)
+	}
+	h.Set(ServiceTokenMetadataKey, "new")
+	if got := ServiceTokenFromHeader(h); got != "new" {
+		t.Fatalf("both: got %q, want the PAL value", got)
 	}
 }
