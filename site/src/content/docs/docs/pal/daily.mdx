@@ -1,0 +1,83 @@
+---
+title: Daily use
+description: "The Brief, nudges, the world model, skills and the recap: what pal does for you in your own chat."
+glance:
+  what: "Five things pal does in your own self-chat: rank what needs you, nudge you, keep its picture of your life current, run skills you teach it, and recap what you missed."
+  why: "Each one turns a pile of threads into one short message you can act on, usually with one word or one tap."
+  how: "Type `today` in your own chat for the Brief. Everything else here is either automatic or one short command."
+---
+
+import { BriefAttention, ProactiveNudges, WorldModel, SkillForge, Recap } from '../../../../components/diagrams';
+
+## The Brief
+
+Type `?`, `today` or `whats up` in your own chat. You get one numbered list: drafts waiting for approval, promises still open, and contacts you haven't answered. A model reorders and annotates the list (a close contact waiting three days can outrank a routine draft); it can't add or remove items, and if the call fails the fixed order stands.
+
+<BriefAttention client:visible />
+
+Act on an item by number or by reaction:
+
+| You send | It does |
+| --- | --- |
+| `2` or `2 draft` | Drafts a reply to that thread in your voice, ready to `send` or edit |
+| `2 review` | Shows the last message from them |
+| `2 skip` | Hides the thread for this session |
+| 👍 or ❤️ on the Brief | Confirms the top item: send the draft, close the promise, or draft the reply |
+| 👎 / ⏰ / ❓ | Skip / snooze / review the top item |
+
+On WhatsApp, finishing an item within 14 minutes strikes it through in the original Brief message.
+
+## Nudges
+
+pal messages you first when something is about to matter, at most once per item per day, and never in quiet hours.
+
+| Kind | When |
+| --- | --- |
+| Before a meeting | A calendar event starts within 15 minutes |
+| A date | An anniversary or birthday is within a day |
+| A reply you owe | A contact has waited more than 2 days |
+| A promise | Something you committed to has been open more than 4 hours |
+
+<ProactiveNudges client:visible />
+
+`PAL_PROACTIVE_NUDGES=0` turns them off.
+
+## The world model
+
+Every 6 hours pal rereads the last 7 days of mail subjects, the next 30 days of your calendar, your own notes to yourself and what contacts have told you, and updates what it knows about your life now. Your own notes win: "opening moved to the 18th" overrides an email.
+
+<WorldModel client:visible />
+
+Every derived fact must quote a mail subject or event title word for word and carry an expiry date, or it is dropped. Each change is sent to you as `🧭 updated what I know …`, so a wrong one is one reply from a fix. `PAL_WORLD_MODEL_HOURS` changes the cadence; `PAL_WORLD_MODEL=0` turns it off.
+
+## Skills
+
+Teach a recurring task in one message:
+
+```text
+new skill: every weekday at 8am, check the weather and tell me if I need an umbrella
+```
+
+pal drafts a skill (name, schedule, prompt) and shows it to you. Nothing runs until you reply `approve skill` within 10 minutes. `skills` lists them; `drop skill 2` removes one.
+
+<SkillForge client:visible />
+
+A skill is a prompt, not code: it can search the web and reply to you, and nothing else. No shell, no files. Skills run on the same tick as nudges, so the kill switch, mute and quiet hours apply.
+
+## What did I miss
+
+`what did I miss`, `catch me up` or `what happened while I was out`, optionally with `last 3 hours`, `today` or `overnight` (default: 6 hours). pal gathers the contacts waiting on you and what it did on your behalf, and writes a short recap with the important things first. If the model call fails you still get a ranked list.
+
+<Recap client:visible />
+
+## Also running in the background
+
+| What | Behavior | Off switch |
+| --- | --- | --- |
+| Commitment ledger | Promises you made stay open until pal sees evidence in your messages or mail that they are done. It then tells you `✅ closed: <title> — saw: "<quote>"`, quoting the evidence word for word. | `PAL_COMMITMENT_LEDGER=0` |
+| Event scout | Weekly, pal searches the web for events near you over the next 60 days and sends a short numbered list. `book 1,3` adds picks to Calendar with reminders; `scan events` runs it now. WhatsApp's scheduled scan is off unless `PAL_EVENT_SCOUT_WA=1`. | `PAL_EVENT_SCOUT=0` |
+| Live watches | When a contact mentions something still unfolding (a flight in the air, a game), pal re-checks it with web search and sends one follow-up text when it resolves. One per contact, at most 12 hours. | `PAL_LIVE_WATCH=0` |
+| Life events | Bills, deliveries, appointments, receipts and similar messages are classified and shown in the dashboard Automations feed, with a per-kind trust setting (`auto`, `ask`, `off`) and undo. | `PAL_LIFE_EVENT_AUTOACT` sets the default |
+| Mac actions | When you say yes to a follow-up pal offered, it adds the Calendar event, Note or Mail draft itself, without another model call. Owner chat only. | none; owner-only by design |
+
+All of these respect the kill switch, mute and quiet hours.

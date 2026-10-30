@@ -1,10 +1,10 @@
 ---
 title: Agents
-description: Create, configure, test, run and schedule agents on PAL Runtime.
+description: Create, configure, test and run agents, and how workflow tool nodes execute.
 glance:
-  what: "An agent takes input, works through journaled steps (LLM calls, tool calls, API requests) and returns output."
-  why: "Every step is journaled, so a crashed run resumes where it stopped instead of starting over."
-  how: "Start at Creating an agent: use AI-assisted creation, manual creation or a template in the dashboard."
+  what: "An agent is a name, a system prompt, a capability model and optional connectors or a workflow graph; a run is one execution of it."
+  why: "Each step is journaled, so a crashed run resumes where it stopped instead of re-spending tokens."
+  how: "Run pal init my-agent --template research, or Agents > New Agent in the dashboard."
 sidebar:
   order: 1
 ---
@@ -12,8 +12,10 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { RunSequence } from '../../../../components/diagrams';
 
-An agent takes input, works through steps (LLM calls, tool calls, API requests) and returns output. Every step is journaled, so a crashed run resumes where it stopped. This page covers creating, configuring, testing, running and scheduling agents.
+<RunSequence client:visible />
+
 
 ## Creating an agent
 
@@ -21,34 +23,31 @@ There are three ways to create an agent in the dashboard.
 
 ### 1. AI-assisted creation
 
-Describe what you want the agent to do in plain English. PAL Runtime drafts the configuration, system prompt and tool selection for you.
-
-Go to **Agents > New Agent** and select **AI-assisted**. Enter a description like:
+Go to **Agents > New Agent**, select **AI-assisted** and describe the job. PAL Runtime drafts the configuration and system prompt, and you edit before anything is created:
 
 ```text
 Monitor my GitHub repositories for new issues labeled "bug",
 triage them by severity, and post a summary to Slack every morning.
 ```
 
-You review and edit the draft before anything is created.
-
 ### 2. Manual creation
 
-For full control, use the manual creation form and configure each field yourself:
+Fill the form yourself:
 
 - **Name**: a unique identifier (lowercase, hyphens allowed)
 - **Description**: what this agent does (shown in the dashboard)
 - **System prompt**: the instructions the LLM follows
 - **Model**: the capability to use (for example `"auto"` or `"reasoning-large"`)
 - **Connectors**: which external services the agent can access
-- **Privacy level**: `standard` (encrypted at rest), `private` (end-to-end encrypted) or `audit` (full audit trail)
 
 ### 3. From a template
 
-Pick a template in the dashboard and edit it. The CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
+The dashboard offers its own ready-made agents (research, support, code review, email digest and more); the CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
+
+Over REST, `GET /v1/agents/templates` lists templates, `POST /v1/agents/from-template` creates an agent from one (`agents:write`), and `GET /v1/agents/{name}/setup` reports which connectors or channels the agent still needs.
 
 ```bash
-lantern init my-agent --template research
+pal init my-agent --template research
 ```
 
 ## Configuring an agent
@@ -74,46 +73,9 @@ say so rather than making things up.
 
 ### Model selection
 
-Agents ask for a **capability**, not a vendor model. The model router maps it to a concrete model at call time:
+Agents ask for a **capability** (`auto`, `reasoning-large`, `code-large`, `vision-small`, ...), not a vendor model. The router maps it to a concrete model at call time; the full table is in [Models](/docs/build/models/).
 
-- `"auto"`: PAL Runtime picks the best model for each step based on complexity and cost
-- `"reasoning-large"`: a large reasoning model
-- `"reasoning-small"`: a small, cheaper reasoning model
-- `"code-large"` / `"code-small"`: optimized for code generation
-- `"vision-large"` / `"vision-small"`: models that understand images
-
-#### The agent's `model` field
-
-Set `model` on the agent and every run, session turn and workflow `ai-step` without its own capability tries that model first. Pin a cheap model on a high-volume agent so it stays cheap; pin a stronger one where quality matters.
-
-```text
-POST /v1/agents
-{ "name": "triage", "model": "fast" }
-
-PATCH /v1/agents/triage
-{ "model": "reasoning-large" }      # "" or "auto" resets
-
-GET /v1/agents/triage               # → { ..., "model": "reasoning-large" }
-```
-
-| Allowed value | Examples |
-| --- | --- |
-| Default | `""`, `auto` (today's routing, unchanged) |
-| Cost/speed target | `fast`, `cheap`, `balanced`, `best` |
-| Capability | `reasoning-frontier`, `reasoning-large`, `reasoning-small`, `chat-large`, `chat-small`, `chat-edge`, `vision-large`, `vision-small`, `code-large`, `code-small` |
-| Vendor model id | `gpt-*`, `o1*`, `o3*`, `claude-*` (lowercase, 100 characters or fewer) |
-
-Anything else returns **400**, including embedding, rerank and speech capabilities (agents run text completions). The error never repeats the value you sent.
-
-**Failover.** The agent's model goes first; on a 429, 402 or 5xx the router moves on:
-
-- **Cheap model** (`fast`, `cheap`, `reasoning-small`, `chat-small`, Haiku, `*-mini`): tries the other provider's cheap tier, then fails. It never escalates to a Sonnet, gpt-4o or Opus class model, so a cheap agent can't run up a bigger bill during an outage.
-- **Any other model**: the default chain follows, across providers.
-- **Provider not keyed** for your tenant: the agent uses the default chain.
-
-The model that answered is shown on the run's `llm:main` step.
-
-See [Models](/docs/build/models/) for the full list of capabilities and how to configure providers.
+Set `model` on the agent (`POST /v1/agents` or `PATCH /v1/agents/{name}`) to pin a cheap model on a high-volume agent or a stronger one where quality matters. Allowed values, failover and validation: [Per-agent model](/docs/build/models/#per-agent-model).
 
 ## Testing an agent
 
@@ -126,7 +88,7 @@ Every agent has a **Chat** tab in the dashboard (next to Build, Runs, Schedule a
 From the CLI:
 
 ```bash
-lantern runs create --agent my-agent \
+pal runs create --agent my-agent \
   --input '{"topic": "quantum computing"}' \
   --stream
 ```
@@ -136,15 +98,13 @@ lantern runs create --agent my-agent \
 Agents can be triggered in several ways:
 
 - **Dashboard**: manual runs for testing
-- **CLI**: `lantern runs create --agent <name>`
+- **CLI**: `pal runs create --agent <name>`
 - **REST API**: `POST /v1/runs` (with `agentName` in the body)
-- **Schedule**: cron-based recurring runs
+- **Schedule**: cron-based recurring runs ([Scheduling](/docs/build/scheduling/))
 - **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/docs/build/triggers/).
 - **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/docs/pal/surfaces/).
 
-## Scheduling agents
-
-Run an agent on a cron expression. See [Scheduling](/docs/build/scheduling/).
+API keys need `agents:write` to create or update agents and `runs:execute` to start runs.
 
 ## Workflow tool nodes
 
@@ -184,14 +144,15 @@ Each agent run goes through these states:
 
 1. **Queued**: the run is waiting to be picked up
 2. **Running**: steps are actively executing
-3. **Succeeded**: all steps finished successfully
-4. **Failed**: a step failed after exhausting retries
-5. **Cancelled**: manually stopped by the user
+3. **Paused**: waiting on a human approval, takeover or signal
+4. **Succeeded**: all steps finished successfully
+5. **Failed**: a step failed after exhausting retries
+6. **Cancelled**: manually stopped by the user
 
-A run that crashes mid-step is picked up by the recovery sweep (every 30 s by default, `PAL_RECOVERY_INTERVAL`). Workflow steps that already completed are skipped, not re-run.
+A run that crashes mid-step is picked up by the recovery sweep (30 s by default, `PAL_RECOVERY_INTERVAL`); completed workflow steps are skipped, not re-run.
 
 <Diagram name="crash-resume" />
 
 <Aside>
-Each step is idempotent and journaled. Side effects (API calls, webhooks) carry an idempotency key derived from the run ID, step ID and attempt number to prevent duplicate actions.
+Side effects (API calls, webhooks) carry an idempotency key derived from run ID, step ID and attempt, so a replay does not repeat them.
 </Aside>
