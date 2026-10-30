@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
@@ -194,7 +195,25 @@ func (h *BatchHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 			VALUES ($1, $2, $3, $3, $4, $5, $6)
 			RETURNING id
 		`, tenantID, body.AgentName, len(body.Items), cbURL, body.Concurrency, idem).Scan(&batchID)
-		return e
+		if e != nil {
+			// Race: two concurrent CreateBatch requests with the same Idempotency-Key
+			// both passed the SELECT check (READ COMMITTED window) and both attempted
+			// the INSERT. The loser hits the unique index and gets a 23505 violation.
+			// Resolve it by reading the winner's ID and returning it idempotently.
+			var pgErr *pgconn.PgError
+			if errors.As(e, &pgErr) && pgErr.Code == "23505" && idem != nil {
+				e2 := tx.QueryRow(ctx,
+					`SELECT id FROM batches WHERE tenant_id = $1 AND idempotency_key = $2`,
+					tenantID, *idem,
+				).Scan(&batchID)
+				if e2 == nil {
+					alreadyExists = true
+					return nil // return the winner's row to CreateBatch
+				}
+			}
+			return e
+		}
+		return nil
 	})
 	if err != nil {
 		h.logger().Error("CreateBatch: insert failed", zap.String("tenant_id", tenantID), zap.Error(err))
@@ -838,7 +857,7 @@ func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, c
 		return
 	}
 	payload := callbackPayload{
-		RunID:   batchID,
+		BatchID: batchID, // batch-level callback uses batchId, not runId
 		Status:  batchStatus,
 		CostUSD: costUSD,
 	}
@@ -914,7 +933,7 @@ func (h *BatchHandler) finalizeBatch(ctx context.Context, tenantID, batchID, cal
 		return
 	}
 	payload := callbackPayload{
-		RunID:   batchID, // carries the batch ID for the receiver
+		BatchID: batchID, // batch-level callback uses batchId field, not runId
 		Status:  batchStatus,
 		CostUSD: costUSD,
 	}
