@@ -457,6 +457,22 @@ func (h *BatchHandler) dispatchBatch(batchID, tenantID string, body createBatchR
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }() // release slot
+			// Panic recovery: a panic in spawnBatchRun or waitAndRecord must not
+			// crash the control-plane (same guarantee as executeRunInline). Count
+			// the item as failed so the batch reaches terminal status.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("batch item goroutine panicked — recovered, server protected",
+						zap.String("batch_id", batchID), zap.Any("panic", r))
+					if _, e := h.srv.Pool.Exec(ctx,
+						`UPDATE batches SET pending_count = GREATEST(0, pending_count - 1),
+						 running_count = GREATEST(0, running_count - 1),
+						 failed_count = failed_count + 1 WHERE id = $1`, batchID,
+					); e != nil {
+						log.Error("batch panic recovery: counter update failed", zap.Error(e))
+					}
+				}
+			}()
 			runID := h.spawnBatchRun(ctx, batchID, tenantID, body.AgentName, item, log)
 			if runID != "" {
 				// Wait for this run to reach terminal state, then update batch counters.
