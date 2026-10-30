@@ -1,11 +1,11 @@
-# sign-images — cosign KEYLESS signing of the published Lantern runtime images.
+# sign-images — cosign KEYLESS signing of the published PAL Runtime runtime images.
 #
 # Signs images with Sigstore keyless signing (Fulcio short-lived cert + Rekor
 # transparency log) using the GitHub Actions OIDC token. NO long-lived keys,
 # NO secrets: the signature's identity IS this workflow
 #   (https://github.com/<owner>/<repo>/.github/workflows/sign-images.yml@<ref>)
 # which is exactly what the cluster-side Kyverno verifyImages policy
-# (infra/helm/lantern-data-plane, imageVerification.keyless.subject) trusts.
+# (infra/helm/pal-data-plane, imageVerification.keyless.subject) trusts.
 #
 # Two ways in:
 #   - workflow_call: invoke from your existing image-publish workflow AFTER the

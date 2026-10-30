@@ -1,26 +1,32 @@
 ---
 title: Environment variables
 description: Every environment variable read by the PAL control plane, schedulers, runtime manager, harness and dashboard, with defaults.
+glance:
+  what: "Every environment variable read by the control plane, schedulers, runtime manager, harness and dashboard, grouped by service with defaults."
+  why: "It tells you what each variable does and which ones make a process refuse to start in production when unset."
+  how: "Check the Production checklist first, then look up a variable in its service group."
 sidebar:
   order: 4
 ---
 
-Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, grouped by service, with its default and what it does. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `LANTERN_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
+Every environment variable the control plane, schedulers, runtime manager, in-VM harness and dashboard read, grouped by service, with its default and what it does. **Required in prod** means the process refuses to start (or, for the harness, refuses to run the workload) when `PAL_ENV` is `prod`, `production` or `staging` and the value is missing. Flag values accept `1`, `true` or `on` unless a row says otherwise.
+
+**Naming.** Every variable is spelled `PAL_*`. The old `LANTERN_*` spelling is still read as a legacy alias, so existing deployments keep working; when both are set, `PAL_*` wins.
 
 ## How to use this page
 
-Local development needs none of these: `make run-api` sets the database, Redis and S3 values, and every security variable has a dev default or is skipped with a warning. For production, start from the [checklist below](#production-checklist), then see [Operations](/lantern/docs/operate/operations/) for how the Helm chart supplies them. A production process that is missing a required value logs it by name and exits at startup.
+Local development needs none of these: `make run-api` sets the database, Redis and S3 values, and every security variable has a dev default or is skipped with a warning. For production, start from the [checklist below](#production-checklist), then see [Operations](/docs/operate/operations/) for how the Helm chart supplies them. A production process that is missing a required value logs it by name and exits at startup.
 
 ## Production checklist
 
 | Service | Must be set |
 | --- | --- |
-| Control plane | `JWT_SECRET`, `LANTERN_RECEIPT_SECRET`, `LANTERN_CREDENTIAL_KEY`, `LANTERN_GRPC_SERVICE_TOKEN`, `LANTERN_RLS_ENFORCE=1` with `LANTERN_APP_DB_PASSWORD`, `LANTERN_CONTROL_PLANE_TLS_CERT`/`_KEY`, `LANTERN_SCHEDULER_GRPC_ADDR`, `LANTERN_RUNTIME_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
-| Runtime scheduler | `LANTERN_GRPC_SERVICE_TOKEN`, `SCHEDULER_NODE_TOKEN`, `LANTERN_DEFAULT_MANAGER_ADDR`, manager TLS CA and client cert |
-| Runtime manager | `LANTERN_GRPC_SERVICE_TOKEN`, `LANTERN_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
-| Harness | `LANTERN_WORKLOAD_UID`, `LANTERN_HARNESS_EXEC_TOKEN` |
+| Control plane | `JWT_SECRET`, `PAL_RECEIPT_SECRET`, `PAL_CREDENTIAL_KEY`, `PAL_GRPC_SERVICE_TOKEN`, `PAL_RLS_ENFORCE=1` with `PAL_APP_DB_PASSWORD`, `PAL_CONTROL_PLANE_TLS_CERT`/`_KEY`, `PAL_SCHEDULER_GRPC_ADDR`, `PAL_RUNTIME_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
+| Runtime scheduler | `PAL_GRPC_SERVICE_TOKEN`, `SCHEDULER_NODE_TOKEN`, `PAL_DEFAULT_MANAGER_ADDR`, manager TLS CA and client cert |
+| Runtime manager | `PAL_GRPC_SERVICE_TOKEN`, `PAL_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
+| Harness | `PAL_WORKLOAD_UID`, `PAL_HARNESS_EXEC_TOKEN` |
 
-The control plane also refuses to start in prod with `LANTERN_TWILIO_WEBHOOK_AUTH=off` or `LANTERN_USE_CLAUDE_CODE=1`, and the scheduler refuses `LANTERN_DIALER=stub`.
+The control plane also refuses to start in prod with `PAL_TWILIO_WEBHOOK_AUTH=off` or `PAL_USE_CLAUDE_CODE=1`, and the scheduler refuses `PAL_DIALER=stub`.
 
 ## Control plane: listeners, stores, process
 
@@ -30,16 +36,16 @@ Binary: `services/control-plane/cmd/server`. HTTP REST is on `:8080`, gRPC on `:
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | REST listen address. |
 | `LISTEN_ADDR` | `:50051` | gRPC listen address (the tenant-trust boundary). |
-| `LANTERN_METRICS_ADDR` | `:9464` | Separate Prometheus `/metrics` listener. Unauthenticated and labelled with agent names, so scrape it from Prometheus only, never through ingress. |
+| `PAL_METRICS_ADDR` | `:9464` | Separate Prometheus `/metrics` listener. Unauthenticated and labelled with agent names, so scrape it from Prometheus only, never through ingress. |
 | `LOG_LEVEL` | `info` | Log level. |
-| `LANTERN_DRAIN_TIMEOUT` | `30s` | Graceful-shutdown drain window (Go duration). |
-| `LANTERN_ENV` | unset (dev) | `prod`, `production` or `staging` turns on every production startup guard in this table. The Helm chart defaults it to `production`. |
+| `PAL_DRAIN_TIMEOUT` | `30s` | Graceful-shutdown drain window (Go duration). |
+| `PAL_ENV` | unset (dev) | `prod`, `production` or `staging` turns on every production startup guard in this table. The Helm chart defaults it to `production`. |
 | `DATABASE_URL` | `postgres://localhost:5432/lantern?sslmode=disable` | Postgres DSN (pgvector image). Also read by `cmd/migrate` and the cron scheduler. |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis for rate limits, pub/sub and queues. |
-| `LANTERN_PG_MAX_CONNS` | `20` | Postgres pool size. |
-| `LANTERN_PG_MAX_CONN_LIFETIME` | `1h` | Max connection lifetime. |
-| `LANTERN_PG_MAX_CONN_IDLE_TIME` | `30m` | Max connection idle time. |
-| `LANTERN_REDIS_POOL_SIZE` | `20` | Redis pool size. |
+| `PAL_PG_MAX_CONNS` | `20` | Postgres pool size. |
+| `PAL_PG_MAX_CONN_LIFETIME` | `1h` | Max connection lifetime. |
+| `PAL_PG_MAX_CONN_IDLE_TIME` | `30m` | Max connection idle time. |
+| `PAL_REDIS_POOL_SIZE` | `20` | Redis pool size. |
 | `S3_ENDPOINT` | unset | S3-compatible endpoint for agent bundles and attachments. |
 | `S3_BUCKET` | `lantern-bundles-dev` | Bucket name. |
 | `S3_REGION` | unset | Signing region. |
@@ -49,49 +55,49 @@ Binary: `services/control-plane/cmd/server`. HTTP REST is on `:8080`, gRPC on `:
 
 ## Control plane: auth, secrets, trust boundaries
 
-These are the production-required ones. With `LANTERN_ENV=production` the control plane refuses to start when a required value is missing.
+These are the production-required ones. With `PAL_ENV=production` the control plane refuses to start when a required value is missing.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `JWT_SECRET` | dev default (public) | Signs dashboard JWTs. Unset or the dev default is fatal in prod. **Required in prod.** |
-| `LANTERN_RECEIPT_SECRET` | dev default | HMAC secret for run receipts and marketplace invocation signatures. Fatal in prod when unset. **Required in prod.** |
-| `LANTERN_RECEIPT_ED25519_SEED` | unset | Seed for the Ed25519 receipt key. Unset: receipts fall back to HMAC and cannot be verified offline by third parties. |
-| `LANTERN_CREDENTIAL_KEY` | unset (plaintext in dev) | 32-byte AES-256-GCM key that encrypts provider keys and connector tokens at rest. Fatal in prod when unset or malformed. **Required in prod.** |
-| `LANTERN_GRPC_SERVICE_TOKEN` | unset | Shared service token for the gRPC trust boundaries. Set the same value on the control plane, gateway, workflow engine, runtime scheduler, model router and runtime manager. Fatal in prod when unset; dev warns and allows unauthenticated calls. **Required in prod.** |
-| `LANTERN_CONTROL_PLANE_TLS_CERT` | unset | PEM path for the gRPC server certificate. Both cert and key, or neither; one alone is always fatal. Prod requires them. **Required in prod.** |
-| `LANTERN_CONTROL_PLANE_TLS_KEY` | unset | PEM path for the matching key. **Required in prod.** |
-| `LANTERN_RLS_ENFORCE` | unset (off) | `1` enforces Postgres row-level security through the `lantern_app` pool. Prod refuses to start without it. **Required in prod.** |
-| `LANTERN_APP_DB_PASSWORD` | unset | Password of the non-superuser `lantern_app` role used when RLS is enforced. Prod refuses to start without it. **Required in prod.** |
-| `LANTERN_AUTHZ_ENFORCE` | off | `1`/`true`/`on`: a key missing the endpoint's scope gets 403. Off: the miss is logged and the request proceeds. |
-| `LANTERN_CORS_ORIGINS` | `http://localhost:3001` | Comma-separated allowed browser origins. Public endpoints (receipt verify, `/.well-known/*`) stay open. |
-| `LANTERN_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is trusted for rate-limit keys. |
-| `LANTERN_RUNTIME_SECRET_TOKEN` | unset | Pre-shared token for the manager-to-control-plane secret relay. Unset: `POST /v1/runtime/secrets/resolve` returns 403. |
-| `LANTERN_AGENT_IDENTITY_SECRET` | unset | HMAC secret for per-instance agent identity tokens. |
-| `LANTERN_AGENT_IDENTITY_ED25519_SEED` | unset | Seed for Ed25519 agent identity tokens (preferred over the HMAC secret). |
-| `LANTERN_AGENT_IDENTITY_TTL` | `1h` | Identity token lifetime (Go duration). |
-| `LANTERN_DL_SIGNING_SECRET` | unset | Signing secret for short-lived document download links. |
-| `LANTERN_SIGNAL_TOKEN` | unset | Shared secret for `/v1/signals` (header `x-lantern-signal-token`). Unset: the endpoint is 401. |
+| `PAL_RECEIPT_SECRET` | dev default | HMAC secret for run receipts and marketplace invocation signatures. Fatal in prod when unset. **Required in prod.** |
+| `PAL_RECEIPT_ED25519_SEED` | unset | Seed for the Ed25519 receipt key. Unset: receipts fall back to HMAC and cannot be verified offline by third parties. |
+| `PAL_CREDENTIAL_KEY` | unset (plaintext in dev) | 32-byte AES-256-GCM key that encrypts provider keys and connector tokens at rest. Fatal in prod when unset or malformed. **Required in prod.** |
+| `PAL_GRPC_SERVICE_TOKEN` | unset | Shared service token for the gRPC trust boundaries. Set the same value on the control plane, gateway, workflow engine, runtime scheduler, model router and runtime manager. Fatal in prod when unset; dev warns and allows unauthenticated calls. **Required in prod.** |
+| `PAL_CONTROL_PLANE_TLS_CERT` | unset | PEM path for the gRPC server certificate. Both cert and key, or neither; one alone is always fatal. Prod requires them. **Required in prod.** |
+| `PAL_CONTROL_PLANE_TLS_KEY` | unset | PEM path for the matching key. **Required in prod.** |
+| `PAL_RLS_ENFORCE` | unset (off) | `1` enforces Postgres row-level security through the `lantern_app` pool. Prod refuses to start without it. **Required in prod.** |
+| `PAL_APP_DB_PASSWORD` | unset | Password of the non-superuser `lantern_app` role used when RLS is enforced. Prod refuses to start without it. **Required in prod.** |
+| `PAL_AUTHZ_ENFORCE` | off | `1`/`true`/`on`: a key missing the endpoint's scope gets 403. Off: the miss is logged and the request proceeds. |
+| `PAL_CORS_ORIGINS` | `http://localhost:3001` | Comma-separated allowed browser origins. Public endpoints (receipt verify, `/.well-known/*`) stay open. |
+| `PAL_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is trusted for rate-limit keys. |
+| `PAL_RUNTIME_SECRET_TOKEN` | unset | Pre-shared token for the manager-to-control-plane secret relay. Unset: `POST /v1/runtime/secrets/resolve` returns 403. |
+| `PAL_AGENT_IDENTITY_SECRET` | unset | HMAC secret for per-instance agent identity tokens. |
+| `PAL_AGENT_IDENTITY_ED25519_SEED` | unset | Seed for Ed25519 agent identity tokens (preferred over the HMAC secret). |
+| `PAL_AGENT_IDENTITY_TTL` | `1h` | Identity token lifetime (Go duration). |
+| `PAL_DL_SIGNING_SECRET` | unset | Signing secret for short-lived document download links. |
+| `PAL_SIGNAL_TOKEN` | unset | Shared secret for `/v1/signals` (header `x-lantern-signal-token`). Unset: the endpoint is 401. |
 | `SLACK_SIGNING_SECRET` | unset | Verifies Slack slash commands. Unset in prod: unsigned commands are refused. |
-| `LANTERN_TWILIO_WEBHOOK_AUTH` | on | `off` skips Twilio signature checks. Fatal in prod. |
-| `LANTERN_USE_CLAUDE_CODE` | unset | `1` routes through a local `claude` binary. Fatal in prod. |
-| `LANTERN_CLAUDE_BINARY` | found on PATH | Explicit path to that binary. |
+| `PAL_TWILIO_WEBHOOK_AUTH` | on | `off` skips Twilio signature checks. Fatal in prod. |
+| `PAL_USE_CLAUDE_CODE` | unset | `1` routes through a local `claude` binary. Fatal in prod. |
+| `PAL_CLAUDE_BINARY` | found on PATH | Explicit path to that binary. |
 
 ## Control plane: sign-up, mail, OAuth
 
-Behaviour and rationale are on [Accounts & sign-up](/lantern/docs/build/accounts/).
+Behaviour and rationale are on [Accounts & sign-up](/docs/build/accounts/).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LANTERN_SIGNUP_MODE` | `closed` in prod, `open` in dev | `open`, `invite` or `closed`. Any other value stops startup. |
-| `LANTERN_SIGNUP_INVITE_SECRET` | unset | HMAC key for invite codes. Required for `invite` mode. |
-| `LANTERN_TURNSTILE_SECRET` | unset | Cloudflare Turnstile secret. Setting it requires a captcha on every sign-up. |
-| `LANTERN_MAILER` | `log` | `log`, `smtp` or `http`. |
-| `LANTERN_MAIL_FROM` | `Lantern ` | From address for `smtp` and `http`. |
-| `LANTERN_SMTP_ADDR` | unset | `host:port`; required for `smtp`. |
-| `LANTERN_SMTP_USER` | unset | SMTP user (PLAIN auth). |
-| `LANTERN_SMTP_PASSWORD` | unset | SMTP password. |
-| `LANTERN_MAIL_HTTP_URL` | unset | Endpoint for the `http` driver. |
-| `LANTERN_MAIL_HTTP_TOKEN` | unset | Bearer token for the `http` driver. |
+| `PAL_SIGNUP_MODE` | `closed` in prod, `open` in dev | `open`, `invite` or `closed`. Any other value stops startup. |
+| `PAL_SIGNUP_INVITE_SECRET` | unset | HMAC key for invite codes. Required for `invite` mode. |
+| `PAL_TURNSTILE_SECRET` | unset | Cloudflare Turnstile secret. Setting it requires a captcha on every sign-up. |
+| `PAL_MAILER` | `log` | `log`, `smtp` or `http`. |
+| `PAL_MAIL_FROM` | `Lantern <no-reply@localhost>` | From address for `smtp` and `http`. |
+| `PAL_SMTP_ADDR` | unset | `host:port`; required for `smtp`. |
+| `PAL_SMTP_USER` | unset | SMTP user (PLAIN auth). |
+| `PAL_SMTP_PASSWORD` | unset | SMTP password. |
+| `PAL_MAIL_HTTP_URL` | unset | Endpoint for the `http` driver. |
+| `PAL_MAIL_HTTP_TOKEN` | unset | Bearer token for the `http` driver. |
 | `OAUTH_DASHBOARD_URL` | `http://localhost:3001` | Dashboard base URL used in emailed verify/reset links and OAuth redirects. |
 | `OAUTH_REDIRECT_BASE` | `http://localhost:8080` | Base URL for the Google sign-in redirect URI. Set it to the public API URL. |
 | `OAUTH_BASE_URL` | `http://localhost:8080` | Public base URL for connector OAuth redirect URIs. |
@@ -106,32 +112,32 @@ How the control plane reaches the scheduler and manager, plus the loops and caps
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LANTERN_SCHEDULER_GRPC_ADDR` | unset (stub scheduler) | Runtime scheduler, for example `localhost:50055`. Unset uses a stub that fabricates VM ids and spawns nothing, so prod refuses to start. **Required in prod.** |
-| `LANTERN_RUNTIME_MANAGER_ADDR` | unset | Runtime manager, for exec, pause and fork calls. Unset: those routes are unavailable. |
-| `LANTERN_RUNTIME_MANAGER_TLS_CA` | unset | CA used to verify the manager. Prod requires mTLS to the manager; dev allows plaintext. **Required in prod.** |
-| `LANTERN_RUNTIME_MANAGER_TLS_CERT` | unset | Client certificate (both cert and key, or neither). Prod requires it. **Required in prod.** |
-| `LANTERN_RUNTIME_MANAGER_TLS_KEY` | unset | Client key. **Required in prod.** |
-| `LANTERN_DEFAULT_MANAGER_ADDR` | unset | Manager address for the log-stream proxy and the health sweep. |
-| `LANTERN_MODEL_ROUTER_ADDR` | unset | Model router address; also a health-sweep target. |
-| `LANTERN_WORKFLOW_ENGINE_ADDR` | unset | Workflow engine address, a health-sweep target. |
-| `LANTERN_HEALTH_SWEEP_INTERVAL` | `60s` | Peer-service health sweep period. `0` or `off` disables it. |
-| `LANTERN_NODE_ADDR_` | unset | Explicit `host:port` for a named scheduler node whose address is not resolvable by DNS (node name upper-cased, `.` and `-` as `_`). |
-| `LANTERN_RECOVERY_INTERVAL` | `30s` | Crash-recovery sweep period. |
-| `LANTERN_RUN_LEASE_TTL` | `60s` | Run lease length; renewed every third of it while a run executes. |
-| `LANTERN_MAX_FORK_COUNT` | `100 (ceiling 1000)` | Per-call cap on `POST /v1/runtime/vms/{id}/fork`. |
-| `LANTERN_SESSION_VM_IDLE_TTL` | `30m` | Idle time before a session's sandbox VM is reaped. |
-| `LANTERN_RUNTIME_TERMINAL_GRACE` | `10m` | How long after a VM turns terminal the control plane still accepts its late log and audit reports. `0` disables the window. |
-| `LANTERN_SPAWN_RATE_PER_MIN` | `120` | Per-tenant VM spawn rate limit. |
-| `LANTERN_SPAWN_BURST` | `20` | Per-tenant spawn burst. |
-| `LANTERN_HOOK_RATE_PER_MIN` | `60` | Per-trigger rate limit on `POST /v1/hooks/{id}`. |
-| `LANTERN_HOOK_BURST` | `10` | Per-trigger burst. |
-| `LANTERN_DP_MAX_STREAMS_PER_TENANT` | `10` | Concurrent data-plane run streams per tenant. |
-| `LANTERN_RUNTIME_LOG_RETENTION_DAYS` | `14` | Retention for `runtime_vm_logs`. |
-| `LANTERN_JOURNAL_RETENTION_DAYS` | `90` | Retention for `journal_events`. |
-| `LANTERN_AUDIT_RETENTION_DAYS` | `365` | Retention for audit events. |
-| `LANTERN_USAGE_DAILY_RETENTION_DAYS` | `400` | Retention for `agent_usage_daily`. |
-| `LANTERN_SIDE_EFFECT_RETENTION_DAYS` | `30` | Retention for `side_effect_receipts`. |
-| `LANTERN_DEFAULT_TIMEZONE` | UTC | IANA zone for cron matching and the budget day boundary when a schedule sets none. |
+| `PAL_SCHEDULER_GRPC_ADDR` | unset (stub scheduler) | Runtime scheduler, for example `localhost:50055`. Unset uses a stub that fabricates VM ids and spawns nothing, so prod refuses to start. **Required in prod.** |
+| `PAL_RUNTIME_MANAGER_ADDR` | unset | Runtime manager, for exec, pause and fork calls. Unset: those routes are unavailable. |
+| `PAL_RUNTIME_MANAGER_TLS_CA` | unset | CA used to verify the manager. Prod requires mTLS to the manager; dev allows plaintext. **Required in prod.** |
+| `PAL_RUNTIME_MANAGER_TLS_CERT` | unset | Client certificate (both cert and key, or neither). Prod requires it. **Required in prod.** |
+| `PAL_RUNTIME_MANAGER_TLS_KEY` | unset | Client key. **Required in prod.** |
+| `PAL_DEFAULT_MANAGER_ADDR` | unset | Manager address for the log-stream proxy and the health sweep. |
+| `PAL_MODEL_ROUTER_ADDR` | unset | Model router address; also a health-sweep target. |
+| `PAL_WORKFLOW_ENGINE_ADDR` | unset | Workflow engine address, a health-sweep target. |
+| `PAL_HEALTH_SWEEP_INTERVAL` | `60s` | Peer-service health sweep period. `0` or `off` disables it. |
+| `PAL_NODE_ADDR_` | unset | Explicit `host:port` for a named scheduler node whose address is not resolvable by DNS (node name upper-cased, `.` and `-` as `_`). |
+| `PAL_RECOVERY_INTERVAL` | `30s` | Crash-recovery sweep period. |
+| `PAL_RUN_LEASE_TTL` | `60s` | Run lease length; renewed every third of it while a run executes. |
+| `PAL_MAX_FORK_COUNT` | `100 (ceiling 1000)` | Per-call cap on `POST /v1/runtime/vms/{id}/fork`. |
+| `PAL_SESSION_VM_IDLE_TTL` | `30m` | Idle time before a session's sandbox VM is reaped. |
+| `PAL_RUNTIME_TERMINAL_GRACE` | `10m` | How long after a VM turns terminal the control plane still accepts its late log and audit reports. `0` disables the window. |
+| `PAL_SPAWN_RATE_PER_MIN` | `120` | Per-tenant VM spawn rate limit. |
+| `PAL_SPAWN_BURST` | `20` | Per-tenant spawn burst. |
+| `PAL_HOOK_RATE_PER_MIN` | `60` | Per-trigger rate limit on `POST /v1/hooks/{id}`. |
+| `PAL_HOOK_BURST` | `10` | Per-trigger burst. |
+| `PAL_DP_MAX_STREAMS_PER_TENANT` | `10` | Concurrent data-plane run streams per tenant. |
+| `PAL_RUNTIME_LOG_RETENTION_DAYS` | `14` | Retention for `runtime_vm_logs`. |
+| `PAL_JOURNAL_RETENTION_DAYS` | `90` | Retention for `journal_events`. |
+| `PAL_AUDIT_RETENTION_DAYS` | `365` | Retention for audit events. |
+| `PAL_USAGE_DAILY_RETENTION_DAYS` | `400` | Retention for `agent_usage_daily`. |
+| `PAL_SIDE_EFFECT_RETENTION_DAYS` | `30` | Retention for `side_effect_receipts`. |
+| `PAL_DEFAULT_TIMEZONE` | UTC | IANA zone for cron matching and the budget day boundary when a schedule sets none. |
 
 ## Control plane: models, knowledge, flags
 
@@ -141,40 +147,40 @@ Flags marked *on* are on unless set to a disabling value.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | unset | Platform-level fallback provider key, used when a tenant has none configured. |
 | `ANTHROPIC_API_KEY` | unset | Same, for Anthropic. |
-| `LANTERN_USE_MODEL_ROUTER` | off | `1`/`true`/`on` sends plain completions through the model router; any router error falls back to the direct provider. |
-| `LANTERN_ROUTE_STRATEGY` | `balanced` | `balanced`, `cheap`, `quality` or `fast` for `model: auto`. |
-| `LANTERN_LLM_MAX_TURNS` | `12 (cap 40)` | Tool-loop turn limit per completion. |
-| `LANTERN_HAIKU_MODEL` | `claude-haiku-4-5-20251001` | Concrete model behind the small tier. |
-| `LANTERN_SONNET_MODEL` | `claude-sonnet-4-6` | Concrete model behind the mid tier. |
-| `LANTERN_OPUS_MODEL` | `claude-opus-4-8` | Concrete model behind the large tier. |
-| `LANTERN_WEBSEARCH_MODEL` | `claude-sonnet-4-6` | Anthropic model for the built-in `web_search` tool. |
-| `LANTERN_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model for `web_search`. |
-| `LANTERN_EMBED_MODEL` | `text-embedding-3-small` | Embedding model for knowledge and memory. |
-| `LANTERN_EMBED_CONCURRENCY` | `4 (1 to 32)` | Parallel embedding calls. |
-| `LANTERN_KB_MIN_SCORE` | `0.2` | Cosine floor for a knowledge-base vector hit; below it the full-text fallback runs. |
-| `LANTERN_LLM_BASEURL_OPENAI` | unset | Points OpenAI calls at a fixture or proxy base URL (used by demo mode and the replay server). |
-| `LANTERN_LLM_BASEURL_ANTHROPIC` | unset | Same, for Anthropic. |
-| `LANTERN_CONNECTOR_BASEURL_` | unset | Overrides a connector's API host, for example `LANTERN_CONNECTOR_BASEURL_GITHUB`; used by the recorded-server example tests. |
-| `LANTERN_COMPLEXITY_ROUTING` | on | Complexity-based model routing. `0`/`off`/`false` disables. |
-| `LANTERN_MULTI_STEP_PLANNER` | on | Multi-step planner. `0`/`off`/`false` disables. |
-| `LANTERN_CLAIM_VERIFY` | on | Claim-verify guard on completed-action claims. `0`/`off`/`false` disables; read on every call. |
-| `LANTERN_BROWSER_SKILL` | off | `on`/`1`/`true` enables browser-as-skill. |
-| `LANTERN_CROSS_APP` | off | `on`/`1`/`true` enables cross-app workflows. |
-| `LANTERN_CONFIDENCE_GATE` | off | `1`/`true`/`on` diverts low-confidence tool and connector steps to approval. See [Human-in-the-loop](/lantern/docs/pal/human-in-the-loop/). |
-| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score in [0,1] for auto-execution. |
-| `LANTERN_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` (also `self_consistency`, `sampling`) polls the model; anything else uses the heuristic. |
-| `LANTERN_CONFIDENCE_SAMPLES` | `5 (1 to 9)` | Independent judgments per self-consistency estimate; each is one LLM call. |
-| `LANTERN_CONFIDENCE_CALIBRATE` | off | Lowers the score by the step type's realized regret rate. |
-| `LANTERN_FREE_TIER_COST_USD_PER_DAY` | `2.00` | Tenant-wide LLM spend cap applied to new tenants. |
-| `LANTERN_FREE_TIER_MAX_VMS` | `2` | Concurrent sandbox VMs for new tenants. |
-| `LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY` | `1.00` | Sandbox spend cap for new tenants. |
-| `LANTERN_KIOSK` | off | Demo mode: anonymous throwaway workspaces. Refuses to start unless RLS and authz enforcement are on and `JWT_SECRET` is non-default. |
-| `LANTERN_KIOSK_ALLOW_PROD` | off | Required to run kiosk mode under a production-like `LANTERN_ENV`. |
-| `LANTERN_KIOSK_TTL_MIN` | `30` | Workspace lifetime in minutes. |
-| `LANTERN_KIOSK_MAX_SESSIONS` | `20` | Concurrent kiosk workspaces. |
-| `LANTERN_KIOSK_IP_PER_HOUR` | `3` | New workspaces per client IP per hour. |
-| `LANTERN_KIOSK_SWEEP_SEC` | `60` | Expiry sweep period in seconds. |
-| `LANTERN_OTEL_ENABLED` | unset | `1` enables tracing (with an OTLP endpoint). |
+| `PAL_USE_MODEL_ROUTER` | off | `1`/`true`/`on` sends plain completions through the model router; any router error falls back to the direct provider. |
+| `PAL_ROUTE_STRATEGY` | `balanced` | `balanced`, `cheap`, `quality` or `fast` for `model: auto`. |
+| `PAL_LLM_MAX_TURNS` | `12 (cap 40)` | Tool-loop turn limit per completion. |
+| `PAL_HAIKU_MODEL` | `claude-haiku-4-5-20251001` | Concrete model behind the small tier. |
+| `PAL_SONNET_MODEL` | `claude-sonnet-4-6` | Concrete model behind the mid tier. |
+| `PAL_OPUS_MODEL` | `claude-opus-4-8` | Concrete model behind the large tier. |
+| `PAL_WEBSEARCH_MODEL` | `claude-sonnet-4-6` | Anthropic model for the built-in `web_search` tool. |
+| `PAL_WEBSEARCH_OPENAI_MODEL` | `gpt-4o-mini-search-preview` | OpenAI fallback model for `web_search`. |
+| `PAL_EMBED_MODEL` | `text-embedding-3-small` | Embedding model for knowledge and memory. |
+| `PAL_EMBED_CONCURRENCY` | `4 (1 to 32)` | Parallel embedding calls. |
+| `PAL_KB_MIN_SCORE` | `0.2` | Cosine floor for a knowledge-base vector hit; below it the full-text fallback runs. |
+| `PAL_LLM_BASEURL_OPENAI` | unset | Points OpenAI calls at a fixture or proxy base URL (used by demo mode and the replay server). |
+| `PAL_LLM_BASEURL_ANTHROPIC` | unset | Same, for Anthropic. |
+| `PAL_CONNECTOR_BASEURL_` | unset | Overrides a connector's API host, for example `PAL_CONNECTOR_BASEURL_GITHUB`; used by the recorded-server example tests. |
+| `PAL_COMPLEXITY_ROUTING` | on | Complexity-based model routing. `0`/`off`/`false` disables. |
+| `PAL_MULTI_STEP_PLANNER` | on | Multi-step planner. `0`/`off`/`false` disables. |
+| `PAL_CLAIM_VERIFY` | on | Claim-verify guard on completed-action claims. `0`/`off`/`false` disables; read on every call. |
+| `PAL_BROWSER_SKILL` | off | `on`/`1`/`true` enables browser-as-skill. |
+| `PAL_CROSS_APP` | off | `on`/`1`/`true` enables cross-app workflows. |
+| `PAL_CONFIDENCE_GATE` | off | `1`/`true`/`on` diverts low-confidence tool and connector steps to approval. See [Human-in-the-loop](/docs/pal/human-in-the-loop/). |
+| `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score in [0,1] for auto-execution. |
+| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` (also `self_consistency`, `sampling`) polls the model; anything else uses the heuristic. |
+| `PAL_CONFIDENCE_SAMPLES` | `5 (1 to 9)` | Independent judgments per self-consistency estimate; each is one LLM call. |
+| `PAL_CONFIDENCE_CALIBRATE` | off | Lowers the score by the step type's realized regret rate. |
+| `PAL_FREE_TIER_COST_USD_PER_DAY` | `2.00` | Tenant-wide LLM spend cap applied to new tenants. |
+| `PAL_FREE_TIER_MAX_VMS` | `2` | Concurrent sandbox VMs for new tenants. |
+| `PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY` | `1.00` | Sandbox spend cap for new tenants. |
+| `PAL_KIOSK` | off | Demo mode: anonymous throwaway workspaces. Refuses to start unless RLS and authz enforcement are on and `JWT_SECRET` is non-default. |
+| `PAL_KIOSK_ALLOW_PROD` | off | Required to run kiosk mode under a production-like `PAL_ENV`. |
+| `PAL_KIOSK_TTL_MIN` | `30` | Workspace lifetime in minutes. |
+| `PAL_KIOSK_MAX_SESSIONS` | `20` | Concurrent kiosk workspaces. |
+| `PAL_KIOSK_IP_PER_HOUR` | `3` | New workspaces per client IP per hour. |
+| `PAL_KIOSK_SWEEP_SEC` | `60` | Expiry sweep period in seconds. |
+| `PAL_OTEL_ENABLED` | unset | `1` enables tracing (with an OTLP endpoint). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Standard OTLP endpoint; setting it also enables tracing. |
 
 ## Control plane: personal-assistant and bridge integration
@@ -183,31 +189,31 @@ Only relevant if you run the iMessage or WhatsApp bridges. All default to off or
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LANTERN_BRIDGE_URL` | unset | WhatsApp bridge base URL. |
-| `LANTERN_BRIDGE_TOKEN` | unset | Token the WhatsApp bridge validates. |
-| `LANTERN_BRIDGE_HEARTBEAT_TOKEN` | unset | Shared token for `POST /v1/surfaces/whatsapp/heartbeat`. |
-| `LANTERN_IMESSAGE_BRIDGE_URL` | unset | iMessage bridge base URL. |
-| `LANTERN_IMESSAGE_BRIDGE_TOKEN` | unset | Token the iMessage bridge validates (a different variable from the WhatsApp one). |
-| `LANTERN_PERSONAL_DOCS_BRIDGE_URL` | unset | Overrides the bridge URL for the personal-docs tool. |
-| `LANTERN_WHATSAPP_BRIDGE_URL` | unset | WhatsApp bridge URL for the personal-docs tool. |
-| `LANTERN_DEFAULT_TENANT_ID` | `00000000-0000-0000-0000-000000000001` | Tenant that single-owner background jobs act for. |
-| `LANTERN_OWNER_NAME` | unset | Owner first name for briefs and calls. |
-| `LANTERN_OWNER_EMAIL` | unset | Owner email: brief fallback and memory-ingest identity. |
-| `LANTERN_OWNER_PHONE` | unset | Owner number for the morning brief by SMS. |
-| `LANTERN_OWNER_VERIFY_PIN` | unset | PIN for the owner's Twilio line; unset authorizes on caller ID alone (spoofable). |
-| `LANTERN_OWNER_VERIFY_TTL` | `12h` | How long a PIN verification lasts. |
-| `LANTERN_TWILIO_NUMBER` | from the Twilio connector | SMS sending number override. |
-| `LANTERN_PUBLIC_BASE_URL` | unset | Public URL override for Twilio callbacks. |
-| `LANTERN_CONTROL_PLANE_URL` | unset | Control plane's own public URL (errand callbacks); also what the manager uses for the secret relay. |
-| `LANTERN_RCS_INBOUND` | off | `on` accepts inbound RCS. |
-| `LANTERN_JARVIS_BRIEF_HOUR` | unset (brief off) | Hour 0 to 23 for the morning brief push. |
-| `LANTERN_JARVIS_BRIEF_CHANNEL` | unset | Channel for the brief. |
-| `LANTERN_ERRAND` | off | Enables outbound errand calls. |
-| `LANTERN_ERRAND_PUBLIC_URL` | unset | Public URL for errand webhooks. |
-| `LANTERN_MEMORY_INGEST` | on | Background memory ingest. `off` disables. |
-| `LANTERN_MEMORY_INGEST_INTERVAL` | `15m (min 1m)` | Ingest period. |
-| `LANTERN_MEMORY_DISTILL` | off | `1`/`true`/`on` enables LLM memory distillation. |
-| `LANTERN_MEMORY_DISTILL_INTERVAL` | `6h (min 1m)` | Distillation period. |
+| `PAL_BRIDGE_URL` | unset | WhatsApp bridge base URL. |
+| `PAL_BRIDGE_TOKEN` | unset | Token the WhatsApp bridge validates. |
+| `PAL_BRIDGE_HEARTBEAT_TOKEN` | unset | Shared token for `POST /v1/surfaces/whatsapp/heartbeat`. |
+| `PAL_IMESSAGE_BRIDGE_URL` | unset | iMessage bridge base URL. |
+| `PAL_IMESSAGE_BRIDGE_TOKEN` | unset | Token the iMessage bridge validates (a different variable from the WhatsApp one). |
+| `PAL_PERSONAL_DOCS_BRIDGE_URL` | unset | Overrides the bridge URL for the personal-docs tool. |
+| `PAL_WHATSAPP_BRIDGE_URL` | unset | WhatsApp bridge URL for the personal-docs tool. |
+| `PAL_DEFAULT_TENANT_ID` | `00000000-0000-0000-0000-000000000001` | Tenant that single-owner background jobs act for. |
+| `PAL_OWNER_NAME` | unset | Owner first name for briefs and calls. |
+| `PAL_OWNER_EMAIL` | unset | Owner email: brief fallback and memory-ingest identity. |
+| `PAL_OWNER_PHONE` | unset | Owner number for the morning brief by SMS. |
+| `PAL_OWNER_VERIFY_PIN` | unset | PIN for the owner's Twilio line; unset authorizes on caller ID alone (spoofable). |
+| `PAL_OWNER_VERIFY_TTL` | `12h` | How long a PIN verification lasts. |
+| `PAL_TWILIO_NUMBER` | from the Twilio connector | SMS sending number override. |
+| `PAL_PUBLIC_BASE_URL` | unset | Public URL override for Twilio callbacks. |
+| `PAL_CONTROL_PLANE_URL` | unset | Control plane's own public URL (errand callbacks); also what the manager uses for the secret relay. |
+| `PAL_RCS_INBOUND` | off | `on` accepts inbound RCS. |
+| `PAL_JARVIS_BRIEF_HOUR` | unset (brief off) | Hour 0 to 23 for the morning brief push. |
+| `PAL_JARVIS_BRIEF_CHANNEL` | unset | Channel for the brief. |
+| `PAL_ERRAND` | off | Enables outbound errand calls. |
+| `PAL_ERRAND_PUBLIC_URL` | unset | Public URL for errand webhooks. |
+| `PAL_MEMORY_INGEST` | on | Background memory ingest. `off` disables. |
+| `PAL_MEMORY_INGEST_INTERVAL` | `15m (min 1m)` | Ingest period. |
+| `PAL_MEMORY_DISTILL` | off | `1`/`true`/`on` enables LLM memory distillation. |
+| `PAL_MEMORY_DISTILL_INTERVAL` | `6h (min 1m)` | Distillation period. |
 
 ## Cron scheduler
 
@@ -219,7 +225,7 @@ Binary: `services/scheduler/cmd/server`.
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis. |
 | `LISTEN_ADDR` | `:50058` | gRPC listen address. |
 | `LOG_LEVEL` | `info` | Log level. |
-| `LANTERN_GRPC_SERVICE_TOKEN` | unset | Shared service token. |
+| `PAL_GRPC_SERVICE_TOKEN` | unset | Shared service token. |
 
 ## Runtime scheduler (placement)
 
@@ -231,25 +237,25 @@ Binary: `services/runtime-scheduler/cmd/scheduler`; gRPC `:50055`, REST and `/me
 | `LOG_LEVEL` | `info` | Log level. |
 | `DATABASE_URL` | unset | Optional Postgres for write-through cluster state. |
 | `JWT_SECRET` | dev default | Verifies caller JWTs on the REST surface. |
-| `LANTERN_ENV` | unset (dev) | Production-like values arm the guards below. |
-| `LANTERN_GRPC_SERVICE_TOKEN` | unset | Shared service token for the gRPC port. **Required in prod.** |
+| `PAL_ENV` | unset (dev) | Production-like values arm the guards below. |
+| `PAL_GRPC_SERVICE_TOKEN` | unset | Shared service token for the gRPC port. **Required in prod.** |
 | `SCHEDULER_NODE_TOKEN` | unset | Token that node heartbeats must present. Fatal in prod when unset; dev warns. **Required in prod.** |
-| `LANTERN_DEFAULT_MANAGER_ADDR` | unset (log-only dialer) | Manager address for placements on `node-local`, `node-stub` or an empty node. Prod refuses to start without it. **Required in prod.** |
-| `LANTERN_DIALER` | unset | `stub` forces the stub dialer. Fatal in prod. |
-| `LANTERN_NODE_ADDR_` | unset | Explicit address for a named node. |
-| `LANTERN_RUNTIME_MANAGER_TLS_CA` | unset | CA for dialing managers. Prod requires the CA and a client cert. **Required in prod.** |
-| `LANTERN_RUNTIME_MANAGER_TLS_CERT` | unset | Client certificate. **Required in prod.** |
-| `LANTERN_RUNTIME_MANAGER_TLS_KEY` | unset | Client key. **Required in prod.** |
+| `PAL_DEFAULT_MANAGER_ADDR` | unset (log-only dialer) | Manager address for placements on `node-local`, `node-stub` or an empty node. Prod refuses to start without it. **Required in prod.** |
+| `PAL_DIALER` | unset | `stub` forces the stub dialer. Fatal in prod. |
+| `PAL_NODE_ADDR_` | unset | Explicit address for a named node. |
+| `PAL_RUNTIME_MANAGER_TLS_CA` | unset | CA for dialing managers. Prod requires the CA and a client cert. **Required in prod.** |
+| `PAL_RUNTIME_MANAGER_TLS_CERT` | unset | Client certificate. **Required in prod.** |
+| `PAL_RUNTIME_MANAGER_TLS_KEY` | unset | Client key. **Required in prod.** |
 | `SCHEDULER_TENANT_MAX_VMS` | `20` | Default per-tenant concurrent VM cap. |
 | `SCHEDULER_WEIGHT_WARM_POOL` | `0.40` | Placement score weight. |
 | `SCHEDULER_WEIGHT_REGION` | `0.25` | Placement score weight. |
 | `SCHEDULER_WEIGHT_FAIR_SHARE` | `0.15` | Placement score weight. |
 | `SCHEDULER_WEIGHT_COST` | `0.10` | Placement score weight. |
 | `SCHEDULER_WEIGHT_HEALTH` | `0.10` | Placement score weight. |
-| `LANTERN_MAX_FORK_COUNT` | `100` | Upper bound on one Fork call. |
-| `LANTERN_FORK_CONCURRENCY` | `16` | Concurrent fork spawns. |
-| `LANTERN_AGENT_INSTANCE_ID` | set by the control plane | Injected into spawned workloads, not an operator setting. |
-| `LANTERN_AGENT_INSTANCE_TOKEN` | set by the control plane | Injected into spawned workloads, not an operator setting. |
+| `PAL_MAX_FORK_COUNT` | `100` | Upper bound on one Fork call. |
+| `PAL_FORK_CONCURRENCY` | `16` | Concurrent fork spawns. |
+| `PAL_AGENT_INSTANCE_ID` | set by the control plane | Injected into spawned workloads, not an operator setting. |
+| `PAL_AGENT_INSTANCE_TOKEN` | set by the control plane | Injected into spawned workloads, not an operator setting. |
 
 ## Runtime manager
 
@@ -259,26 +265,26 @@ Binary: `services/runtime-manager` (Rust). Spawns workloads and owns the exec ch
 | --- | --- | --- |
 | `LISTEN_ADDR` | `0.0.0.0:50054` | gRPC listen address. |
 | `LOG_LEVEL` | `info` | Log level. |
-| `LANTERN_ENV` | unset (dev) | Production-like values make the guards below fatal. |
+| `PAL_ENV` | unset (dev) | Production-like values make the guards below fatal. |
 | `RUNTIME_BACKEND` | `k8s` | Backend: `k8s`, `docker`, `firecracker`, `kata` or `wasm`. |
-| `LANTERN_GRPC_SERVICE_TOKEN` | unset | Callers must present it as `x-lantern-service-token`. Refuses to start in prod without it; per-VM certs are always refused on manager methods. **Required in prod.** |
-| `LANTERN_MANAGER_TLS_CA` | unset | CA that harness and caller client certs must chain to. Fail-closed in prod, plaintext with a warning in dev. **Required in prod.** |
-| `LANTERN_MANAGER_TLS_CERT` | unset | Manager server certificate (PEM). **Required in prod.** |
-| `LANTERN_MANAGER_TLS_KEY` | unset | Manager server key (PEM). **Required in prod.** |
-| `LANTERN_VM_SIGNING_CA_CERT` | falls back to the manager CA | CA that signs per-VM certificates. |
-| `LANTERN_VM_SIGNING_CA_KEY` | falls back to the manager key | Its key. |
-| `LANTERN_CONTROL_PLANE_URL` | unset | Base URL for the secret relay and report forwarding. Set with the token below. |
-| `LANTERN_RUNTIME_SECRET_TOKEN` | unset | Sent as `X-Lantern-Runtime-Token` to the control plane. With the URL, activates the relay resolver; otherwise a dev env resolver is used. |
-| `LANTERN_RUNTIME_RELAY_ALLOW_INSECURE` | unset | `1` allows a non-TLS relay URL (dev only). |
+| `PAL_GRPC_SERVICE_TOKEN` | unset | Callers must present it as `x-lantern-service-token`. Refuses to start in prod without it; per-VM certs are always refused on manager methods. **Required in prod.** |
+| `PAL_MANAGER_TLS_CA` | unset | CA that harness and caller client certs must chain to. Fail-closed in prod, plaintext with a warning in dev. **Required in prod.** |
+| `PAL_MANAGER_TLS_CERT` | unset | Manager server certificate (PEM). **Required in prod.** |
+| `PAL_MANAGER_TLS_KEY` | unset | Manager server key (PEM). **Required in prod.** |
+| `PAL_VM_SIGNING_CA_CERT` | falls back to the manager CA | CA that signs per-VM certificates. |
+| `PAL_VM_SIGNING_CA_KEY` | falls back to the manager key | Its key. |
+| `PAL_CONTROL_PLANE_URL` | unset | Base URL for the secret relay and report forwarding. Set with the token below. |
+| `PAL_RUNTIME_SECRET_TOKEN` | unset | Sent as `X-Lantern-Runtime-Token` to the control plane. With the URL, activates the relay resolver; otherwise a dev env resolver is used. |
+| `PAL_RUNTIME_RELAY_ALLOW_INSECURE` | unset | `1` allows a non-TLS relay URL (dev only). |
 | `NODE_NAME` | `HOSTNAME`-derived | Node name reported to the scheduler. |
 | `NODE_ADVERTISE_ADDR` | `LISTEN_ADDR` with `0.0.0.0` as `localhost` | Address the scheduler dials back; set it on multi-host. |
 | `NODE_REGION` | `local` | Region label for placement. |
 | `NODE_ZONE` | `local-a` | Zone label. |
 | `SCHEDULER_URL` | unset | Runtime scheduler address for node heartbeats. |
 | `SCHEDULER_TOKEN` | unset | Heartbeat token (the scheduler's `SCHEDULER_NODE_TOKEN`). |
-| `LANTERN_NODE_VCPU_MILLIS` | detected | Override the advertised CPU capacity in millicores. Default: detected parallelism x 1000. |
-| `LANTERN_NODE_MEMORY_BYTES` | detected | Override the advertised memory in bytes. Default: detected, else 8 GiB with a warning. |
-| `LANTERN_REAPER_INTERVAL_SECS` | `15` | Orphan-VM reaper period (minimum 1). |
+| `PAL_NODE_VCPU_MILLIS` | detected | Override the advertised CPU capacity in millicores. Default: detected parallelism x 1000. |
+| `PAL_NODE_MEMORY_BYTES` | detected | Override the advertised memory in bytes. Default: detected, else 8 GiB with a warning. |
+| `PAL_REAPER_INTERVAL_SECS` | `15` | Orphan-VM reaper period (minimum 1). |
 | `AGENT_IMAGE` | `ghcr.io/lantern/agent-runner:latest` | Default workload image (docker, kata). |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path. |
 | `BUNDLE_S3_ENDPOINT` | `http://localhost:9000` | Where agent bundles are fetched from. |
@@ -296,23 +302,23 @@ Binary: `services/runtime-manager` (Rust). Spawns workloads and owns the exec ch
 | `FIRECRACKER_JAILER_UID` | `123` | Uid the jailer drops to. |
 | `FIRECRACKER_JAILER_GID` | `100` | Gid the jailer drops to. |
 | `FIRECRACKER_CHROOT_BASE` | `/srv/jailer` | Jailer chroot base. |
-| `LANTERN_WORKLOAD_UID_DEFAULT` | `1000` | Workload uid written to `spawn.json`; a caller-supplied `LANTERN_WORKLOAD_UID` is dropped. |
-| `LANTERN_WORKLOAD_GID_DEFAULT` | same as the uid | Workload gid. |
-| `LANTERN_EGRESS_MODE` | `guest` | `broker` (Firecracker only) gives VMs no NIC and enforces egress on the host over vsock. See [Egress and credentials](/lantern/docs/runtime/egress/). |
-| `LANTERN_EGRESS_ALLOWED_PORTS` | `443` | Comma list of ports the broker will dial. |
-| `LANTERN_EGRESS_PLAIN_INJECT` | unset | `1` permits credential injection over plain HTTP on port 80. Off by default. |
-| `LANTERN_HARNESS_EXEC_PORT` | `50056` | Port of the harness exec channel. |
-| `LANTERN_HARNESS_READY_TIMEOUT_MS` | `5000` | How long resume and fork wait for the harness. |
+| `PAL_WORKLOAD_UID_DEFAULT` | `1000` | Workload uid written to `spawn.json`; a caller-supplied `PAL_WORKLOAD_UID` is dropped. |
+| `PAL_WORKLOAD_GID_DEFAULT` | same as the uid | Workload gid. |
+| `PAL_EGRESS_MODE` | `guest` | `broker` (Firecracker only) gives VMs no NIC and enforces egress on the host over vsock. See [Egress and credentials](/docs/runtime/egress/). |
+| `PAL_EGRESS_ALLOWED_PORTS` | `443` | Comma list of ports the broker will dial. |
+| `PAL_EGRESS_PLAIN_INJECT` | unset | `1` permits credential injection over plain HTTP on port 80. Off by default. |
+| `PAL_HARNESS_EXEC_PORT` | `50056` | Port of the harness exec channel. |
+| `PAL_HARNESS_READY_TIMEOUT_MS` | `5000` | How long resume and fork wait for the harness. |
 | `KATA_RUNTIME_NAME` | `kata-runtime` | Docker runtime name registered for Kata. |
-| `LANTERN_RUNTIMECLASS_GVISOR` | unset | Kubernetes RuntimeClass for gVisor. Unset: that class is refused (fail-closed). |
-| `LANTERN_RUNTIMECLASS_KATA` | unset | RuntimeClass for Kata. |
-| `LANTERN_RUNTIMECLASS_KATA_CC` | unset | RuntimeClass for confidential Kata. |
-| `LANTERN_RUNTIMECLASS_WASM` | unset | RuntimeClass for Wasm pods. |
-| `LANTERN_NODE_LABEL_GVISOR` | unset | Node label that marks gVisor-capable nodes. |
-| `LANTERN_NODE_LABEL_KATA` | unset | Node label that marks Kata-capable nodes. |
-| `LANTERN_ALLOW_RUNC_STANDARD` | off | `1`/`true`/`yes`/`on` lets the `standard` class run on plain runc (admin override). |
-| `LANTERN_CC_TECH` | unset | Confidential-computing technology to report. |
-| `LANTERN_OTEL_ENABLED` | unset | `1` enables traces (with the OTLP endpoint). |
+| `PAL_RUNTIMECLASS_GVISOR` | unset | Kubernetes RuntimeClass for gVisor. Unset: that class is refused (fail-closed). |
+| `PAL_RUNTIMECLASS_KATA` | unset | RuntimeClass for Kata. |
+| `PAL_RUNTIMECLASS_KATA_CC` | unset | RuntimeClass for confidential Kata. |
+| `PAL_RUNTIMECLASS_WASM` | unset | RuntimeClass for Wasm pods. |
+| `PAL_NODE_LABEL_GVISOR` | unset | Node label that marks gVisor-capable nodes. |
+| `PAL_NODE_LABEL_KATA` | unset | Node label that marks Kata-capable nodes. |
+| `PAL_ALLOW_RUNC_STANDARD` | off | `1`/`true`/`yes`/`on` lets the `standard` class run on plain runc (admin override). |
+| `PAL_CC_TECH` | unset | Confidential-computing technology to report. |
+| `PAL_OTEL_ENABLED` | unset | `1` enables traces (with the OTLP endpoint). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Standard OTLP endpoint. |
 
 ## In-VM harness
@@ -321,41 +327,41 @@ Binary: `services/harness` (Rust, PID 1 in the VM). Almost everything here is wr
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LANTERN_ENV` | unset (dev) | Production-like values arm the guards below. |
-| `LANTERN_WORKLOAD_UID` | unset | Uid the workload, exec and shell children run as; also the only uid admitted to the secrets socket. In prod the harness refuses to start without it. **Required in prod.** |
-| `LANTERN_WORKLOAD_GID` | uid | Workload gid. |
-| `LANTERN_HARNESS_EXEC_TOKEN` | unset | Token the Exec RPC requires. Must be set in prod and staging. **Required in prod.** |
-| `LANTERN_HARNESS_EXEC_ADDR` | `0.0.0.0:50056` | Listen address of the one-shot exec server. |
-| `LANTERN_WORKLOAD_CMD` | from spawn.json | Workload command line. |
-| `LANTERN_WORKLOAD_ARGV` | from spawn.json | Workload arguments. |
-| `LANTERN_MAX_RESTARTS` | `5` | Workload restart limit. |
-| `LANTERN_DRAIN_GRACE_SECS` | `25` | Grace period on SIGTERM drain. |
-| `LANTERN_RUN_DIR` | `/run/lantern` | Directory for sockets (`secrets.sock`). |
-| `LANTERN_RLIMIT_AS_BYTES` | unset (no cap) | Address-space limit applied to the workload. |
-| `LANTERN_EGRESS_RULES` | `[]` | JSON `[{pattern, http_methods, rate_bps}]` declared egress. |
-| `LANTERN_EGRESS_FAIL_CLOSED` | off in dev | `1` refuses to boot without the iptables REDIRECT rule. Always on in prod; `0` is ignored there with a warning. |
-| `LANTERN_EGRESS_BIND` | `127.0.0.1:3128` | Listen address of the in-guest egress proxy. |
-| `LANTERN_EGRESS_ALLOWED_PORTS` | `443` | Comma list of ports the proxy may CONNECT to; empty re-applies the default. |
-| `LANTERN_NO_PROXY` | `127.0.0.1,localhost,::1,169.254.169.254` | Overrides the injected `NO_PROXY`. |
-| `LANTERN_EGRESS_MODE` | `guest` | `broker` swaps the proxy for a vsock forwarder. |
-| `LANTERN_EGRESS_VSOCK_PORT` | `3128` | Broker-mode vsock port to the host broker. |
-| `LANTERN_EGRESS_CA_PEM` | unset | Per-VM CA the broker uses to terminate TLS for injecting hosts. |
-| `LANTERN_MANAGER_ADDR` | from spawn.json | Manager address; in broker mode the manager's name, dialed over vsock. |
-| `LANTERN_MANAGER_VSOCK_PORT` | unset | Broker mode: vsock port of the control channel. |
-| `LANTERN_MANAGER_SERVER_NAME` | `manager.lantern.internal` | TLS server name used to verify the manager. |
-| `LANTERN_VM_TLS_CERT` | set at spawn | Per-VM client certificate path. |
-| `LANTERN_VM_TLS_KEY` | set at spawn | Per-VM client key path. |
-| `LANTERN_MANAGER_TLS_CA` | set at spawn | CA used to verify the manager. |
-| `LANTERN_ALLOW_SECRET_STUB` | off | `1`: read secrets from the harness's own env instead of the manager. Dev only; never in production. |
-| `LANTERN_DECLARED_SECRETS` | set at spawn | Secret refs the spec declared. |
-| `LANTERN_VM_ID` | set at spawn | This VM's id. |
-| `LANTERN_AGENT_INSTANCE_TOKEN` | set at spawn | Per-instance identity token. |
-| `LANTERN_TRACE_PARENT` | set at spawn | W3C trace parent for the spawn. |
-| `LANTERN_OTLP_SOCKET` | set at spawn | Unix socket for workload OTLP. |
-| `LANTERN_CONFIDENTIAL` | unset | Marks a confidential-computing VM for attestation. |
-| `LANTERN_CC_TECH` | unset | Confidential-computing technology. |
-| `LANTERN_CC_MEASUREMENT_PATH` | unset | File holding the launch measurement. |
-| `LANTERN_RUNTIME_CLASS` | unset | RuntimeClass the pod runs under (attestation). |
+| `PAL_ENV` | unset (dev) | Production-like values arm the guards below. |
+| `PAL_WORKLOAD_UID` | unset | Uid the workload, exec and shell children run as; also the only uid admitted to the secrets socket. In prod the harness refuses to start without it. **Required in prod.** |
+| `PAL_WORKLOAD_GID` | uid | Workload gid. |
+| `PAL_HARNESS_EXEC_TOKEN` | unset | Token the Exec RPC requires. Must be set in prod and staging. **Required in prod.** |
+| `PAL_HARNESS_EXEC_ADDR` | `0.0.0.0:50056` | Listen address of the one-shot exec server. |
+| `PAL_WORKLOAD_CMD` | from spawn.json | Workload command line. |
+| `PAL_WORKLOAD_ARGV` | from spawn.json | Workload arguments. |
+| `PAL_MAX_RESTARTS` | `5` | Workload restart limit. |
+| `PAL_DRAIN_GRACE_SECS` | `25` | Grace period on SIGTERM drain. |
+| `PAL_RUN_DIR` | `/run/lantern` | Directory for sockets (`secrets.sock`). |
+| `PAL_RLIMIT_AS_BYTES` | unset (no cap) | Address-space limit applied to the workload. |
+| `PAL_EGRESS_RULES` | `[]` | JSON `[{pattern, http_methods, rate_bps}]` declared egress. |
+| `PAL_EGRESS_FAIL_CLOSED` | off in dev | `1` refuses to boot without the iptables REDIRECT rule. Always on in prod; `0` is ignored there with a warning. |
+| `PAL_EGRESS_BIND` | `127.0.0.1:3128` | Listen address of the in-guest egress proxy. |
+| `PAL_EGRESS_ALLOWED_PORTS` | `443` | Comma list of ports the proxy may CONNECT to; empty re-applies the default. |
+| `PAL_NO_PROXY` | `127.0.0.1,localhost,::1,169.254.169.254` | Overrides the injected `NO_PROXY`. |
+| `PAL_EGRESS_MODE` | `guest` | `broker` swaps the proxy for a vsock forwarder. |
+| `PAL_EGRESS_VSOCK_PORT` | `3128` | Broker-mode vsock port to the host broker. |
+| `PAL_EGRESS_CA_PEM` | unset | Per-VM CA the broker uses to terminate TLS for injecting hosts. |
+| `PAL_MANAGER_ADDR` | from spawn.json | Manager address; in broker mode the manager's name, dialed over vsock. |
+| `PAL_MANAGER_VSOCK_PORT` | unset | Broker mode: vsock port of the control channel. |
+| `PAL_MANAGER_SERVER_NAME` | `manager.lantern.internal` | TLS server name used to verify the manager. |
+| `PAL_VM_TLS_CERT` | set at spawn | Per-VM client certificate path. |
+| `PAL_VM_TLS_KEY` | set at spawn | Per-VM client key path. |
+| `PAL_MANAGER_TLS_CA` | set at spawn | CA used to verify the manager. |
+| `PAL_ALLOW_SECRET_STUB` | off | `1`: read secrets from the harness's own env instead of the manager. Dev only; never in production. |
+| `PAL_DECLARED_SECRETS` | set at spawn | Secret refs the spec declared. |
+| `PAL_VM_ID` | set at spawn | This VM's id. |
+| `PAL_AGENT_INSTANCE_TOKEN` | set at spawn | Per-instance identity token. |
+| `PAL_TRACE_PARENT` | set at spawn | W3C trace parent for the spawn. |
+| `PAL_OTLP_SOCKET` | set at spawn | Unix socket for workload OTLP. |
+| `PAL_CONFIDENTIAL` | unset | Marks a confidential-computing VM for attestation. |
+| `PAL_CC_TECH` | unset | Confidential-computing technology. |
+| `PAL_CC_MEASUREMENT_PATH` | unset | File holding the launch measurement. |
+| `PAL_RUNTIME_CLASS` | unset | RuntimeClass the pod runs under (attestation). |
 | `RUST_LOG` | unset | Standard Rust log filter. |
 
 ## Dashboard (Next.js)
@@ -364,18 +370,18 @@ App: `apps/web`. `NEXT_PUBLIC_*` values are baked in at build time.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LANTERN_API_URL` | `http://localhost:8080` | Control-plane URL for server-side calls (checked before `NEXT_PUBLIC_API_URL`). |
+| `PAL_API_URL` | `http://localhost:8080` | Control-plane URL for server-side calls (checked before `NEXT_PUBLIC_API_URL`). |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8080` | Control-plane URL for the browser and the kiosk page. |
 | `NEXT_PUBLIC_DEMO_MODE` | unset | `1` shows the demo affordances on the login page. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | unset | Turnstile site key; renders the captcha widget. |
-| `LANTERN_API_KEY` | unset | Appears only in the generated "view code" samples; the dashboard itself does not read it. |
-| `LANTERN_BRIDGE_URL` | unset | WhatsApp bridge URL for the dashboard's bridge proxy route. |
+| `PAL_API_KEY` | unset | Appears only in the generated "view code" samples; the dashboard itself does not read it. |
+| `PAL_BRIDGE_URL` | unset | WhatsApp bridge URL for the dashboard's bridge proxy route. |
 | `NEXT_PUBLIC_LANTERN_BRIDGE_URL` | unset | Public fallback for the same URL, and the Surfaces page probe. |
-| `LANTERN_BRIDGE_TOKEN` | unset | Token the proxy sends to the WhatsApp bridge. |
-| `LANTERN_IMESSAGE_BRIDGE_URL` | unset | iMessage bridge URL for the proxy route. |
+| `PAL_BRIDGE_TOKEN` | unset | Token the proxy sends to the WhatsApp bridge. |
+| `PAL_IMESSAGE_BRIDGE_URL` | unset | iMessage bridge URL for the proxy route. |
 | `NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL` | unset | Public fallback, and the Surfaces page probe. |
-| `LANTERN_IMESSAGE_BRIDGE_TOKEN` | unset | Token the proxy sends to the iMessage bridge. |
-| `LANTERN_SIGNAL_TOKEN` | unset | Gates the dashboard's `/api/signals` route (header `x-lantern-signal-token`). |
+| `PAL_IMESSAGE_BRIDGE_TOKEN` | unset | Token the proxy sends to the iMessage bridge. |
+| `PAL_SIGNAL_TOKEN` | unset | Gates the dashboard's `/api/signals` route (header `x-lantern-signal-token`). |
 | `NODE_ENV` | set by Next.js | `production` marks the session cookie `Secure`. |
 
 ## How this list was built

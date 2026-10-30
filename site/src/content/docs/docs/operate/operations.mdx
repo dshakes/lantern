@@ -1,17 +1,21 @@
 ---
 title: Operations
 description: "Day-two operation of a PAL install: metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks."
+glance:
+  what: "Day-two operation of a PAL install: metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks."
+  why: "It covers what you do after helm install so you can detect problems, restore from backup and upgrade without losing data."
+  how: "Start with Install pointers, then wire the Metrics and Alert groups."
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-What you do after `helm install`: scrape the metrics, wire the alerts, keep backups you have actually restored, and upgrade without losing data. The install itself is on [Deployment](/lantern/docs/operate/deployment/#helm); every setting named here is in [Environment variables](/lantern/docs/reference/env-vars/).
+What you do after `helm install`: scrape the metrics, wire the alerts, keep backups you have actually restored, and upgrade without losing data. The install itself is on [Deployment](/docs/operate/deployment/#helm); every setting named here is in [Environment variables](/docs/reference/env-vars/).
 
 ## Install pointers
 
-One chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `LANTERN_ENV=production`, so the production startup guards are on.
+One chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
 helm install lantern ./infra/helm/lantern \
@@ -19,13 +23,13 @@ helm install lantern ./infra/helm/lantern \
   --values infra/helm/lantern/values-prod.yaml
 ```
 
-- Supply the secrets the guards require (`secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, and the rest listed under [Production settings](/lantern/docs/operate/deployment/#production-settings)). The [production checklist](/lantern/docs/reference/env-vars/#production-checklist) shows which process needs which.
+- Supply the secrets the guards require (`secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, and the rest listed under [Production settings](/docs/operate/deployment/#production-settings)). The [production checklist](/docs/reference/env-vars/#production-checklist) shows which process needs which.
 - `values-prod.yaml` turns the in-cluster Postgres and object store off. Set `externalDatabase.host` and `externalS3.endpoint` or `helm template` fails on purpose.
 - Turn on `networkPolicy.enabled=true` (needs a CNI that enforces policy, such as Calico or Cilium) and list your Prometheus namespace under `networkPolicy.metricsFrom`; the default allows the `monitoring` namespace.
 
 ## Metrics
 
-Two Prometheus endpoints exist. The control plane serves `/metrics` on its own listener, port `9464` (`LANTERN_METRICS_ADDR`), not on the public `:8080` API, because the endpoint is unauthenticated and its labels carry agent names: scrape it from Prometheus, never through ingress. The runtime scheduler serves `:8085/metrics`. The Helm chart annotates the control-plane pod with `prometheus.io/port: 9464` and the NetworkPolicy allows both scrape paths from `networkPolicy.metricsFrom`.
+Two Prometheus endpoints exist. The control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on the public `:8080` API, because the endpoint is unauthenticated and its labels carry agent names: scrape it from Prometheus, never through ingress. The runtime scheduler serves `:8085/metrics`. The Helm chart annotates the control-plane pod with `prometheus.io/port: 9464` and the NetworkPolicy allows both scrape paths from `networkPolicy.metricsFrom`.
 
 ```bash
 kubectl -n lantern port-forward deploy/lantern-control-plane 9464:9464 &
@@ -34,11 +38,11 @@ curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duratio
 
 You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
-Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/lantern/docs/runtime/observability/#gateway-and-model-router-traces)).
+Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/docs/runtime/observability/#gateway-and-model-router-traces)).
 
 ## Alert groups
 
-Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`platform-overview.json`, `data-plane-runtime.json`) are in `infra/monitoring/grafana/`. Every alert has a `runbook:` annotation pointing at a file in [docs/runbooks](https://github.com/dshakes/lantern/tree/master/docs/runbooks).
+Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`platform-overview.json`, `data-plane-runtime.json`) are in `infra/monitoring/grafana/`. Every alert has a `runbook:` annotation pointing at a file in [docs/runbooks](repo:/tree/master/docs/runbooks).
 
 | Group | Alerts | Needs |
 | --- | --- | --- |
@@ -73,7 +77,7 @@ scripts/db-restore-drill.sh --self-test         # exercises the script itself (C
 
 It restores with `ON_ERROR_STOP`, so a corrupt gzip fails, and requires the tables in `DRILL_EXPECT_TABLES` (default `agents runs journal_events`) to exist. Empty tables pass; set `DRILL_REQUIRE_ROWS=1` when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the server major version. A passing run exits 0; a failing one means the backups are not usable until it passes. Run it monthly and after any schema or major-version change.
 
-For a real restore, stop writes (scale the control plane to 0), restore into a *new* database, re-point the release, and scale back up. A dump contains no roles: recreate `lantern_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling `LANTERN_RLS_ENFORCE=1`. The full procedure for both topologies is [db-restore.md](https://github.com/dshakes/lantern/tree/master/docs/runbooks/db-restore.md).
+For a real restore, stop writes (scale the control plane to 0), restore into a *new* database, re-point the release, and scale back up. A dump contains no roles: recreate `lantern_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling `PAL_RLS_ENFORCE=1`. The full procedure for both topologies is [db-restore.md](repo:/tree/master/docs/runbooks/db-restore.md).
 
 ## Upgrading from the Bitnami-based chart
 
@@ -90,7 +94,7 @@ On production values this does not apply to your data: `values-prod.yaml` uses e
 
 ## Kiosk and demo deployments
 
-`make demo` (or `lantern demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM, and no sign-up. See [Demo](/lantern/docs/start/demo/) for the tour.
+`make demo` (or `lantern demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM, and no sign-up. See [Demo](/docs/start/demo/) for the tour.
 
 ```bash
 make demo         # then open http://localhost:3001/kiosk
@@ -99,15 +103,15 @@ lantern demo --no-open    # same stack from the CLI, without opening a browser
 lantern demo --down
 ```
 
-For a public demo host the guard is strict: `LANTERN_KIOSK=1` refuses to start unless `LANTERN_RLS_ENFORCE=1`, `LANTERN_AUTHZ_ENFORCE=1` and a non-default `JWT_SECRET` are set, and under a production-like `LANTERN_ENV` it also needs `LANTERN_KIOSK_ALLOW_PROD=1`. Caps (workspace lifetime, concurrent workspaces, new workspaces per IP per hour) are the `LANTERN_KIOSK_*` variables. Do not enable kiosk mode on a deployment that holds real tenants.
+For a public demo host the guard is strict: `PAL_KIOSK=1` refuses to start unless `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and a non-default `JWT_SECRET` are set, and under a production-like `PAL_ENV` it also needs `PAL_KIOSK_ALLOW_PROD=1`. Caps (workspace lifetime, concurrent workspaces, new workspaces per IP per hour) are the `PAL_KIOSK_*` variables. Do not enable kiosk mode on a deployment that holds real tenants.
 
 ## Node filesystem for snapshots and forks
 
-Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken; everything still works, but fork cost grows with disk size. Once your nodes' snapshot directory (`/var/lib/lantern/snapshots`) and jail root are on XFS or btrfs, set `LANTERN_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
+Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken; everything still works, but fork cost grows with disk size. Once your nodes' snapshot directory (`/var/lib/lantern/snapshots`) and jail root are on XFS or btrfs, set `PAL_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
 
 ## Runbooks
 
-On-call runbooks live in the repository, each as symptom, what fired it, triage, remediation, escalate: [control-plane 5xx](https://github.com/dshakes/lantern/tree/master/docs/runbooks/control-plane-5xx.md), [run failure spike](https://github.com/dshakes/lantern/tree/master/docs/runbooks/run-failure-spike.md), [budget 402 surge](https://github.com/dshakes/lantern/tree/master/docs/runbooks/budget-402-surge.md), [data plane disconnected](https://github.com/dshakes/lantern/tree/master/docs/runbooks/data-plane-disconnected.md), [database saturation](https://github.com/dshakes/lantern/tree/master/docs/runbooks/db-saturation.md), [scheduler not firing](https://github.com/dshakes/lantern/tree/master/docs/runbooks/scheduler-not-firing.md), [gateway latency](https://github.com/dshakes/lantern/tree/master/docs/runbooks/gateway-latency.md), [enabling RLS enforcement](https://github.com/dshakes/lantern/tree/master/docs/runbooks/rls-flip.md) and [staged rollout of GA features](https://github.com/dshakes/lantern/tree/master/docs/runbooks/ga-staged-rollout.md).
+On-call runbooks live in the repository, each as symptom, what fired it, triage, remediation, escalate: [control-plane 5xx](repo:/tree/master/docs/runbooks/control-plane-5xx.md), [run failure spike](repo:/tree/master/docs/runbooks/run-failure-spike.md), [budget 402 surge](repo:/tree/master/docs/runbooks/budget-402-surge.md), [data plane disconnected](repo:/tree/master/docs/runbooks/data-plane-disconnected.md), [database saturation](repo:/tree/master/docs/runbooks/db-saturation.md), [scheduler not firing](repo:/tree/master/docs/runbooks/scheduler-not-firing.md), [gateway latency](repo:/tree/master/docs/runbooks/gateway-latency.md), [enabling RLS enforcement](repo:/tree/master/docs/runbooks/rls-flip.md) and [staged rollout of GA features](repo:/tree/master/docs/runbooks/ga-staged-rollout.md).
 
 ## Limits
 
