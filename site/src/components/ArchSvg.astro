@@ -6,7 +6,7 @@
 // follows the site theme (data-theme) instead of prefers-color-scheme.
 // Wide drawings pan sideways on phones instead of shrinking text to nothing.
 import { readFileSync } from 'node:fs';
-import { docsHref } from './islands/types';
+import { docsHref } from './diagrams/types';
 interface Props { name: string; caption?: string; minWidth?: number }
 const { name, caption, minWidth = 760 } = Astro.props;
 let svg = readFileSync(new URL(`../../../docs/assets/diagrams/${name}.svg`, import.meta.url), 'utf8');

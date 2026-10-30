@@ -1,0 +1,45 @@
+---
+title: Architecture overview
+description: How PAL Runtime is put together, from callers to microVMs, as interactive diagrams.
+glance:
+  what: "A control plane that decides and a data plane in your VPC that runs the work, joined by an outbound-only tunnel."
+  why: "Untrusted agent code, tenant data and model keys each stay behind a boundary you can name."
+  how: "Step through the system context, then open any service in the explorer; the pages below go one level deeper."
+sidebar:
+  order: 1
+---
+
+import { SystemContext, ContainerView, ArchitectureExplorer, AgentNetwork } from '../../../../components/diagrams';
+
+## System context
+
+<SystemContext client:visible />
+
+## Containers
+
+<ContainerView client:visible />
+
+## Explore the components
+
+Select a service for its role, ports, guarantees and source. Double-click (or press Enter twice) to open the runtime manager or harness view.
+
+<ArchitectureExplorer client:visible />
+
+## Agents talking to agents
+
+<AgentNetwork client:visible />
+
+## Reference
+
+| Service | Language | Port | Role |
+| --- | --- | --- | --- |
+| gateway | Rust | `:8443` | TLS, JWT and API-key auth, rate limits, SSE proxy |
+| control-plane | Go | `:8080` REST, `:50051` gRPC | API, budgets, agents, runs, sessions; never touches user code |
+| workflow-engine | Go | `:50052` | Durable event-sourced steps; the only writer of run state |
+| model-router | Rust | `:50053` | Capability addressing, 4 strategies, cache, failover |
+| runtime-manager | Rust | `:50054` | VM lifecycle on a node; egress broker in broker mode |
+| runtime-scheduler | Go | `:50055` gRPC, `:8085` REST | Placement and leader election |
+| surface-gateway | Rust | `:8444` | Inbound channel webhooks |
+| harness | Rust | PID 1 in the VM | Heartbeats, secrets socket, egress, tool runner |
+
+Go deeper: [request lifecycle](/docs/architecture/request-lifecycle/), [VM lifecycle](/docs/architecture/vm-lifecycle/), [security boundaries](/docs/architecture/security-boundaries/), [durability](/docs/architecture/durability/), [deployment topology](/docs/architecture/deployment-topology/), [pal internals](/docs/architecture/pal/).

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import "./interactive.css";
 import { SourceLinks } from "./SourceLinks";
 import {
-  EGRESS_SEQUENCE, LIFECYCLE_SEQUENCE, RUN_SEQUENCE, TOOL_SEQUENCE, type SequenceDef,
+  CHECKPOINT_SEQUENCE, EGRESS_SEQUENCE, LIFECYCLE_SEQUENCE, MICROVM_RUN_SEQUENCE, RUN_SEQUENCE, TOOL_SEQUENCE, type SequenceDef,
 } from "./sequences";
 
 const COL = 150;
@@ -11,13 +11,13 @@ const TOP = 92;
 const ROW = 46;
 const TICK_MS = 2200;
 
-const SEQUENCES = { run: RUN_SEQUENCE, tool: TOOL_SEQUENCE, egress: EGRESS_SEQUENCE, lifecycle: LIFECYCLE_SEQUENCE };
+const SEQUENCES = { run: RUN_SEQUENCE, tool: TOOL_SEQUENCE, egress: EGRESS_SEQUENCE, lifecycle: LIFECYCLE_SEQUENCE, "microvm-run": MICROVM_RUN_SEQUENCE, checkpoint: CHECKPOINT_SEQUENCE };
 
 export function Sequence({ name }: { name: keyof typeof SEQUENCES }) {
   return <SequencePlayer def={SEQUENCES[name]} />;
 }
 
-function SequencePlayer({ def }: { def: SequenceDef }) {
+export function SequencePlayer({ def }: { def: SequenceDef }) {
   const uid = useId().replace(/:/g, "");
   const canvas = useRef<HTMLDivElement>(null);
   const [scn, setScn] = useState(0);
