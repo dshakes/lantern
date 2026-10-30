@@ -63,7 +63,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, seedDev bool) error {
 var devSeedStatements = []string{
 	// ---------------------------------------------------------------
 	// Seed default dev tenant and admin user
-	// Password is "pal" hashed with bcrypt.
+	// Password is "pal" hashed with bcrypt. A dev admin row seeded under an
+	// earlier email is moved to the current one (and its password reset to
+	// the dev default) exactly once; a row already on this email is untouched.
 	// ---------------------------------------------------------------
 	`INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
 	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'pal-t-dev')
@@ -80,5 +82,9 @@ var devSeedStatements = []string{
 		'$2a$10$TjzuOlrLRP/7gC9HGdUX0u4aLfWZH/ho3WzZUiW7bSbRkAf2VEIau',
 		'owner'
 	 )
-	 ON CONFLICT DO NOTHING`,
+	 ON CONFLICT (id) DO UPDATE SET
+		email = EXCLUDED.email,
+		auth_subject = EXCLUDED.auth_subject,
+		password_hash = EXCLUDED.password_hash
+	 WHERE users.email IS DISTINCT FROM EXCLUDED.email`,
 }
