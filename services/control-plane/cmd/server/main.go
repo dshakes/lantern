@@ -556,7 +556,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/bridges/enroll", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Enroll))
 	httpMux.HandleFunc("POST /v1/bridges/pair", bridgeHandler.Pair)
 	httpMux.HandleFunc("POST /v1/bridges/self/rotate", bridgeHandler.RotateSelf)
-	httpMux.HandleFunc("GET /v1/bridges", authHandler.WithScope(handlers.ScopeRead, bridgeHandler.List))
+	httpMux.HandleFunc("GET /v1/bridges", authHandler.WithScope(handlers.ScopeSettingsRead, bridgeHandler.List))
 	httpMux.HandleFunc("DELETE /v1/bridges/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Revoke))
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact

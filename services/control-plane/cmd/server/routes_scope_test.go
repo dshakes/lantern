@@ -68,7 +68,7 @@ var getExempt = map[string]string{
 	"GET /v1/connectors/oauth/callback":   "OAuth callback (connector flow, no scope needed)",
 
 	// Shared-token endpoints.
-	"GET /v1/signals": "PAL_SIGNAL_TOKEN shared secret (not JWT/API key)",
+	"GET /v1/signals": "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
 
 	// Public/unauthenticated by design.
 	"GET /v1/agents/{name}/card":              "A2A card: public for is_public agents; internal auth for own agents",

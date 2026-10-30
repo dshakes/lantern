@@ -36,7 +36,7 @@ import (
 //     device (scope bridge:signals:write / :read), or a user JWT / scoped API
 //     key. Signals are stored per tenant in device_signals under RLS.
 //   - LEGACY single-owner (the pre-tenancy install): the shared secret
-//     PAL_SIGNAL_TOKEN in x-lantern-signal-token (or x-pal-signal-token), with
+//     PAL_SIGNAL_TOKEN in x-pal-signal-token (or legacy x-lantern-signal-token), with
 //     NO Authorization header. Behaviour is byte-identical to before — the line
 //     is appended to the device-signals file the live bridge reads — and the
 //     signal is additionally mirrored, best-effort, into device_signals for the

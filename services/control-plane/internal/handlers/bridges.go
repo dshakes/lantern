@@ -449,7 +449,7 @@ func (h *BridgeHandler) Pair(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/bridges[?includeRevoked=true]: the caller's paired
 // devices, newest first. Never returns token material beyond the prefix.
 func (h *BridgeHandler) List(w http.ResponseWriter, r *http.Request) {
-	ctx, claims, ok := h.userContext(w, r, ScopeRead)
+	ctx, claims, ok := h.userContext(w, r, ScopeSettingsRead)
 	if !ok {
 		return
 	}
