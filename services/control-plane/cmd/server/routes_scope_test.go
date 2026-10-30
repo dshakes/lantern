@@ -23,6 +23,7 @@ var scopeExempt = map[string]string{
 
 	// Provider-signed webhooks.
 	"POST /v1/sms/twilio/webhook":            "Twilio signature",
+	"POST /v1/billing/webhook":               "Stripe signature",
 	"POST /v1/messaging/twilio/inbound":      "Twilio signature",
 	"POST /v1/voice/twilio/webhook":          "Twilio signature",
 	"POST /v1/voice/twilio/turn":             "Twilio signature",
