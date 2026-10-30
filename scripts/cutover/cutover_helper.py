@@ -57,6 +57,9 @@ def env_rename(path: str, old: str, new: str, dry: bool) -> dict:
     """Rename OLD_X keys to NEW_X. Values, comments, blank lines and ordering
     are untouched. A file that already defines both OLD_X and NEW_X is a
     conflict only when the values differ (then nothing is written)."""
+    if old == new:  # identity rename: every key would look like its own duplicate and be dropped
+        return {"file": path, "renamed": [], "dropped_duplicates": [], "conflicts": [],
+                "values_referencing_old_prefix": [], "values_with_old_state_path": [], "written": False}
     with open(path, "rb") as f:
         text = f.read().decode("utf-8", "surrogateescape")
     lines = text.splitlines(keepends=True)
@@ -162,6 +165,79 @@ def rename_dir(old: str, new: str) -> str:
     return "renamed"
 
 
+# ---------------------------------------------------------------- value maps
+CRED_KEY = re.compile(r"(S3|MINIO|AWS)", re.I)
+BUCKET_KEY = re.compile(r"BUCKET", re.I)
+
+
+def map_value(key: str, value: str, bucket_maps, cred_maps, exact_maps=()) -> str:
+    """Exact, key-scoped value rewrites (phase 2): a *BUCKET* key whose value
+    starts with an old bucket prefix gets the new prefix; an S3/MINIO/AWS key
+    whose value EQUALS an old credential gets the new one. Nothing else is
+    touched — values are opaque everywhere else."""
+    if not isinstance(value, str):
+        return value
+    for old, new in exact_maps:  # well-known dev constants (e.g. the dev JWT secret), any key
+        if value == old:
+            return new
+    if BUCKET_KEY.search(key):
+        for old, new in bucket_maps:
+            if value.startswith(old):
+                return new + value[len(old):]
+    if CRED_KEY.search(key):
+        for old, new in cred_maps:
+            if value == old:
+                return new
+    return value
+
+
+def env_map_values(path: str, bucket_maps, cred_maps, dry: bool, exact_maps=()) -> dict:
+    with open(path, "rb") as f:
+        text = f.read().decode("utf-8", "surrogateescape")
+    out, changed = [], []
+    for raw in text.splitlines(keepends=True):
+        body = raw.rstrip("\r\n")
+        eol = raw[len(body):]
+        m = ENV_LINE.match(body)
+        if m:
+            cur = _shell_value(m.group("rest"))
+            new = map_value(m.group("key"), cur, bucket_maps, cred_maps, exact_maps)
+            if new != cur:
+                changed.append(m.group("key"))
+                body = m.group("lead") + m.group("key") + "=" + shlex.quote(new)
+        out.append(body + eol)
+    if changed and not dry:
+        _write_atomic(path, "".join(out).encode("utf-8", "surrogateescape"), 0o600)
+    return {"file": path, "changed": changed}
+
+
+def residue(paths, patterns) -> list:
+    """KEY names (file:key) whose value matches any pattern. Env files and
+    plist EnvironmentVariables. Values are never returned."""
+    # "KEYRE=>VALRE" scopes a pattern to matching keys; a bare pattern applies to every key
+    rx = []
+    for p in patterns:
+        if not p:
+            continue
+        kre, _, vre = p.rpartition("=>")
+        rx.append((re.compile(kre) if kre else None, re.compile(vre)))
+    hits = []
+    for p in paths:
+        if p.endswith(".plist"):
+            items = (_load(p).get("EnvironmentVariables") or {}).items()
+        else:
+            items = []
+            with open(p, "rb") as f:
+                for raw in f.read().decode("utf-8", "surrogateescape").splitlines():
+                    m = ENV_LINE.match(raw)
+                    if m:
+                        items.append((m.group("key"), _shell_value(m.group("rest"))))
+        for k, v in items:
+            if isinstance(v, str) and any((kr is None or kr.search(k)) and vr.search(v) for kr, vr in rx):
+                hits.append(f"{os.path.basename(p)}:{k}")
+    return hits
+
+
 # ---------------------------------------------------------------- plists
 def _load(path: str) -> dict:
     with open(path, "rb") as f:
@@ -218,6 +294,10 @@ def plist_convert(args: dict) -> dict:
         kept_live = sorted(k for k in differ if k not in wins)   # deliberate local override kept
         for k in carried + kept_live:
             tenv[k] = renamed_env[k]
+        bm, cm, em = args.get("bucket_maps", []), args.get("cred_maps", []), args.get("exact_maps", [])
+        mapped = sorted(k for k in tenv if map_value(k, tenv[k], bm, cm, em) != tenv[k])
+        for k in mapped:
+            tenv[k] = map_value(k, tenv[k], bm, cm, em)
         if tenv:
             new["EnvironmentVariables"] = tenv
         source = "template"
@@ -226,6 +306,10 @@ def plist_convert(args: dict) -> dict:
         for key in ("ProgramArguments", "Program", "WorkingDirectory", "StandardOutPath", "StandardErrorPath"):
             if key in new:
                 new[key] = _subst(new[key], maps)
+        bm, cm, em = args.get("bucket_maps", []), args.get("cred_maps", []), args.get("exact_maps", [])
+        mapped = sorted(k for k in renamed_env if map_value(k, renamed_env[k], bm, cm, em) != renamed_env[k])
+        for k in mapped:
+            renamed_env[k] = map_value(k, renamed_env[k], bm, cm, em)
         if renamed_env:
             new["EnvironmentVariables"] = renamed_env
         carried, overridden, kept_live = sorted(renamed_env), [], []
@@ -241,6 +325,7 @@ def plist_convert(args: dict) -> dict:
         "env_keys_carried_from_live": carried,
         "env_keys_where_template_wins": overridden,
         "env_keys_live_override_kept": kept_live,
+        "env_values_mapped": mapped,
         "stdout": new.get("StandardOutPath", ""),
     }
 
@@ -296,16 +381,58 @@ def main(argv: list[str]) -> int:
     elif cmd == "plist-env-keys":
         print("\n".join(sorted((_load(rest[0]).get("EnvironmentVariables") or {}).keys())))
     elif cmd == "plist-convert":
-        a = {"maps": [], "dry": False, "template": None}
+        a = {"maps": [], "dry": False, "template": None, "bucket_maps": [], "cred_maps": [], "exact_maps": []}
         it = iter(rest)
         for flag in it:
             if flag == "--dry":
                 a["dry"] = True
             elif flag == "--map":
                 a["maps"].append(next(it))
+            elif flag == "--bucket-map":
+                a["bucket_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--cred-map":
+                a["cred_maps"].append(tuple(next(it).split("=", 1)))
+            elif flag == "--exact-map":
+                a["exact_maps"].append(tuple(next(it).split("=", 1)))
             else:
                 a[flag.lstrip("-").replace("-", "_")] = next(it)
         print(json.dumps(plist_convert(a)))
+    elif cmd == "env-map-values":
+        path, bm, cm, em, dry = rest[0], [], [], [], False
+        it = iter(rest[1:])
+        for flag in it:
+            if flag == "--exact-map":
+                em.append(tuple(next(it).split("=", 1)))
+            elif flag == "--bucket-map":
+                bm.append(tuple(next(it).split("=", 1)))
+            elif flag == "--cred-map":
+                cm.append(tuple(next(it).split("=", 1)))
+            elif flag == "--dry":
+                dry = True
+        print(json.dumps(env_map_values(path, bm, cm, dry, em)))
+    elif cmd == "residue":
+        sep = rest.index("--")
+        hits = residue(rest[:sep], rest[sep + 1:])
+        print("\n".join(hits))
+        return 1 if hits else 0
+    elif cmd == "plist-env-export":
+        for k, v in sorted((_load(rest[0]).get("EnvironmentVariables") or {}).items()):
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and isinstance(v, str):
+                print(f"export {k}={shlex.quote(v)}")
+    elif cmd == "objects":
+        # mc ls -r --json on stdin -> "key size etag" lines, sorted (for mirror verification)
+        rows = []
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") == "file":
+                rows.append(f'{d.get("key")} {d.get("size")} {d.get("etag", "")}')
+        print("\n".join(sorted(rows)))
     elif cmd == "url-part":
         sys.stdout.write(url_part(rest[0], rest[1]))
     else:

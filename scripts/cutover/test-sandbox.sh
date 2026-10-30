@@ -57,6 +57,7 @@ export STUB_WA_CREDS="$REPO_DIR/services/whatsapp-bridge/auth_sessions"
 export DB_CONTAINER="$PG_CONTAINER" DB_OLD_NAME=cutover_test DB_NEW_NAME=cutover_test_pal
 export DB_OLD_USER=lantern_test DB_NEW_USER=pal_test DB_OLD_APP_ROLE=lantern_app_test DB_NEW_APP_ROLE=pal_app_test
 export HEALTH_TIMEOUT_SECS=10
+export NEW_BUCKET_PREFIX=lantern-   # phase-1 scenario: no bucket rename (phase 2 has its own suite)
 STUBPATH="$HERE/sandbox"
 launchctl_s() { PATH="$STUBPATH:$PATH" launchctl "$@"; }
 

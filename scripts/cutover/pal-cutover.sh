@@ -50,6 +50,10 @@ UIDN="$(id -u)"
 TS="$(date +%Y%m%d%H%M%S)"
 TMP_ROLE="${DB_NEW_USER}_cutover_tmp"
 DRY=0
+STATE_SAME=0; [[ "$OLD_STATE_DIR" == "$NEW_STATE_DIR" ]] && STATE_SAME=1
+LABELS_SAME=0; [[ "$OLD_LABEL_PREFIX" == "$NEW_LABEL_PREFIX" ]] && LABELS_SAME=1
+MINIO_OLD_USER="${MINIO_OLD_USER:-}"; MINIO_OLD_PASS="${MINIO_OLD_PASS:-}"
+MINIO_NEW_USER="${MINIO_NEW_USER:-}"; MINIO_NEW_PASS="${MINIO_NEW_PASS:-}"
 BK=""
 WORK=""
 REL_SHA=""
@@ -86,6 +90,9 @@ guard_mode() {
       [[ "$t" == *test* ]] || die "sandbox: DB name '$t' must contain 'test' (refusing to touch real objects)"
     done
     [[ "$REPO_DIR" == "$HOME"/* ]] || die "sandbox: REPO_DIR must live under the sandbox HOME"
+    if [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" || -n "${MINIO_NEW_USER:-}${STUB_MINIO_CONTAINER:-}" ]]; then
+      [[ "$MINIO_CONTAINER" == *test* ]] || die "sandbox: MINIO_CONTAINER '$MINIO_CONTAINER' must contain 'test' (refusing to touch the real MinIO)"
+    fi
   else
     case "$HOME" in /private/tmp/*|/tmp/*) die "HOME=$HOME looks like a sandbox; set PAL_CUTOVER_SANDBOX=1";; esac
     [[ "$(command -v launchctl)" == /bin/launchctl ]] || die "launchctl is not /bin/launchctl (stub on PATH?)"
@@ -194,6 +201,89 @@ side_vars() {  # side_vars old|new — sets S_PREFIX S_STATE S_LOGS S_ENV
 }
 side_key() { echo "${S_ENV}${1#"$NEW_ENV_PREFIX"}"; }  # map a contract (new) key name to the side's prefix
 
+# ================================================================== phase-2 helpers
+compose_creds() {  # compose_creds REF → "user pass" (MINIO_ROOT_USER / _PASSWORD in the compose file at REF)
+  git -C "$REPO_DIR" show "$1:$COMPOSE_FILE" 2>/dev/null | python3 -I -c 'import re,sys
+t=sys.stdin.read()
+def g(k):
+    m=re.search(r"^\s*-?\s*"+k+r"\s*[:=]\s*[\x27\x22]?([^\x27\x22\s#]+)", t, re.M)
+    return m.group(1) if m else ""
+print(g("MINIO_ROOT_USER"), g("MINIO_ROOT_PASSWORD"))'
+}
+resolve_minio_creds() {  # resolve_minio_creds OLD_REF NEW_REF (only fills what the contract left unset)
+  local u p
+  if [[ -z "$MINIO_OLD_USER" || -z "$MINIO_OLD_PASS" ]]; then read -r u p <<< "$(compose_creds "$1")"; : "${MINIO_OLD_USER:=$u}"; : "${MINIO_OLD_PASS:=$p}"; fi
+  if [[ -n "${2:-}" && ( -z "$MINIO_NEW_USER" || -z "$MINIO_NEW_PASS" ) ]]; then read -r u p <<< "$(compose_creds "$2")"; : "${MINIO_NEW_USER:=$u}"; : "${MINIO_NEW_PASS:=$p}"; fi
+}
+minio_creds_change() { [[ -n "$MINIO_NEW_USER" && ( "$MINIO_OLD_USER" != "$MINIO_NEW_USER" || "$MINIO_OLD_PASS" != "$MINIO_NEW_PASS" ) ]]; }
+buckets_rename() { [[ "$OLD_BUCKET_PREFIX" != "$NEW_BUCKET_PREFIX" ]]; }
+mcx() {  # mcx USER PASS mc-args… — credentials travel on stdin, never argv
+  local u="$1" pw="$2"; shift 2
+  printf '%s\n%s\n' "$u" "$pw" | docker exec -i "$MINIO_CONTAINER" sh -c 'IFS= read -r U; IFS= read -r P; export MC_HOST_m="http://$U:$P@localhost:9000"; exec mc "$@"' _ "$@"
+}
+minio_buckets() {  # minio_buckets USER PASS → bucket names
+  mcx "$1" "$2" ls --json m/ 2>/dev/null | python3 -I -c 'import json,sys
+for l in sys.stdin:
+    l=l.strip()
+    if not l: continue
+    try: d=json.loads(l)
+    except ValueError: continue
+    if d.get("status")=="success" and d.get("type")=="folder": print(d["key"].rstrip("/"))'
+}
+minio_objects() { mcx "$1" "$2" ls -r --json "m/$3" 2>/dev/null | helper objects; }
+minio_login() { mcx "$1" "$2" ls m/ >/dev/null 2>&1; }
+
+VMAP=()
+value_map_args() {  # VMAP=(--bucket-map … --cred-map …) for the renames this contract performs
+  VMAP=()
+  local e
+  for e in $EXACT_VALUE_MAP; do VMAP+=(--exact-map "$e"); done
+  buckets_rename && VMAP+=(--bucket-map "$OLD_BUCKET_PREFIX=$NEW_BUCKET_PREFIX")
+  if minio_creds_change; then
+    [[ "$MINIO_OLD_USER" != "$MINIO_NEW_USER" ]] && VMAP+=(--cred-map "$MINIO_OLD_USER=$MINIO_NEW_USER")
+    [[ "$MINIO_OLD_PASS" != "$MINIO_NEW_PASS" ]] && VMAP+=(--cred-map "$MINIO_OLD_PASS=$MINIO_NEW_PASS")
+  fi
+  return 0
+}
+residue_patterns() {  # values that still point at an old DB / MinIO credential / bucket
+  db_renaming && printf '%s\n' "postgres(ql)?://${DB_OLD_USER}[:@]" "postgres(ql)?://[^ ]*/${DB_OLD_NAME}([?]|\$)"
+  if minio_creds_change && [[ "$MINIO_OLD_PASS" =~ ^[A-Za-z0-9._-]+$ && "$MINIO_OLD_PASS" != "$MINIO_NEW_PASS" ]]; then printf '%s\n' "(^|[^A-Za-z0-9])${MINIO_OLD_PASS}([^A-Za-z0-9]|\$)"; fi
+  buckets_rename && printf '%s\n' "s3://${OLD_BUCKET_PREFIX}" "(?i)BUCKET=>^${OLD_BUCKET_PREFIX}"
+  local e
+  for e in $EXACT_VALUE_MAP; do printf '%s\n' "^${e%%=*}\$"; done
+  return 0
+}
+residue_check() {  # residue_check LABEL files… → FAIL naming file:KEY for any leftover old value
+  local label="$1" hits pats=()
+  shift
+  while IFS= read -r l; do [[ -n "$l" ]] && pats+=("$l"); done < <(residue_patterns)
+  [[ ${#pats[@]} -gt 0 && $# -gt 0 ]] || return 0
+  hits="$(helper residue "$@" -- ${pats[@]+"${pats[@]}"})"
+  if [[ -n "$hits" ]]; then bad "$label still carry old DB/MinIO/bucket values in: $(echo "$hits" | tr '\n' ' ')"; return 1; fi
+  ok "$label: no old DB/MinIO/bucket values left"
+}
+repo_env_files() {  # existing gitignored env files in the checkout (relative paths)
+  local f
+  ( cd "$REPO_DIR" 2>/dev/null || exit 0
+    for f in $REPO_ENV_FILES services/*/.env services/*/.env.local; do [[ -f "$f" && ! -L "$f" ]] && echo "$f"; done ) | sort -u
+}
+rewrite_env_file() {  # rewrite_env_file FILE — key-prefix renames, then value maps; key names only in output
+  local f="$1" pair s rc
+  for pair in $EXTRA_ENV_RENAMES "$OLD_ENV_PREFIX:$NEW_ENV_PREFIX"; do
+    [[ "${pair%%:*}" == "${pair#*:}" ]] && continue
+    s="$(helper env-rename "$f" "${pair%%:*}" "${pair#*:}")"; rc=$?
+    [[ $rc == 0 ]] || { bad "$f: ${pair%%:*}* rename conflict ($(printf '%s' "$s" | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["conflicts"]))'))"; return 1; }
+    s="$(printf '%s' "$s" | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"
+    [[ -n "$s" ]] && log "  .     $f: renamed ${pair%%:*}* → ${pair#*:}*: $s"
+  done
+  value_map_args
+  if [[ ${#VMAP[@]} -gt 0 ]]; then
+    s="$(helper env-map-values "$f" ${VMAP[@]+"${VMAP[@]}"} | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')" || { bad "$f: value mapping"; return 1; }
+    [[ -n "$s" ]] && log "  .     $f: mapped values of $s"
+  fi
+  return 0
+}
+
 # ================================================================== snapshot
 snapshot() {  # snapshot OUT [old|new] — everything rollback promises to restore, as checksums
   local out="$1" side="${2:-old}" u db f
@@ -209,6 +299,8 @@ snapshot() {  # snapshot OUT [old|new] — everything rollback promises to resto
     { loaded_with_prefix "$OLD_LABEL_PREFIX"; loaded_with_prefix "$NEW_LABEL_PREFIX"; } | awk '{print $1}' | sort
     echo "## repo state"
     for f in $REPO_STATE_PATHS; do echo "# $f"; tree_manifest "$REPO_DIR/$f"; done
+    echo "## repo env files"
+    for f in $(repo_env_files); do printf '%s %s %s\n' "$(stat -f %Sp "$REPO_DIR/$f")" "$(shasum -a 256 "$REPO_DIR/$f" | awk '{print $1}')" "$f"; done
     echo "## git"
     git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null
     git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
@@ -240,9 +332,10 @@ preflight() {
   if [[ -L "$OLD_STATE_DIR" ]]; then bad "$OLD_STATE_DIR is already a symlink (cutover done? -> $(readlink "$OLD_STATE_DIR"))"
   elif [[ ! -d "$OLD_STATE_DIR" ]]; then bad "$OLD_STATE_DIR does not exist"
   else ok "state dir $OLD_STATE_DIR ($(find "$OLD_STATE_DIR" | wc -l | tr -d ' ') entries, $(du -sh "$OLD_STATE_DIR" | awk '{print $1}'))"; fi
-  if [[ -e "$NEW_STATE_DIR" || -L "$NEW_STATE_DIR" ]]; then bad "$NEW_STATE_DIR already exists — refusing to merge into it"
+  if [[ "$STATE_SAME" == 1 ]]; then ok "state dir name unchanged ($NEW_STATE_DIR) — no move"
+  elif [[ -e "$NEW_STATE_DIR" || -L "$NEW_STATE_DIR" ]]; then bad "$NEW_STATE_DIR already exists — refusing to merge into it"
   else ok "$NEW_STATE_DIR is free"; fi
-  if [[ -d "$OLD_STATE_DIR" ]]; then
+  if [[ "$STATE_SAME" == 0 && -d "$OLD_STATE_DIR" ]]; then
     same_volume "$OLD_STATE_DIR" "$(dirname "$NEW_STATE_DIR")" && ok "same volume: mv is a single atomic rename(2)" \
       || bad "$OLD_STATE_DIR and $(dirname "$NEW_STATE_DIR") are on different volumes (mv would copy, not rename)"
   fi
@@ -269,7 +362,9 @@ for k in d["values_with_old_state_path"]: print("PATHREF",k)' | while read -r ki
   PRE_LOADED="$(loaded_with_prefix "$OLD_LABEL_PREFIX")"
   if [[ -z "$PRE_LOADED" ]]; then bad "no $OLD_LABEL_PREFIX.* jobs loaded — nothing to cut over (already done?)"
   else ok "loaded $OLD_LABEL_PREFIX.* jobs: $(echo "$PRE_LOADED" | awk '{print $1}' | sed "s/^$OLD_LABEL_PREFIX\.//" | tr '\n' ' ')"; fi
-  for f in "$LA_DIR/$NEW_LABEL_PREFIX".*; do [[ -e "$f" ]] && bad "already installed: $f"; done
+  if [[ "$LABELS_SAME" == 0 ]]; then
+    for f in "$LA_DIR/$NEW_LABEL_PREFIX".*; do [[ -e "$f" ]] && bad "already installed: $f"; done
+  else ok "label prefix unchanged ($NEW_LABEL_PREFIX) — plists are re-rendered in place"; fi
   for f in "$LA_DIR/$OLD_LABEL_PREFIX".*; do
     case "$f" in *.plist) ;; *) [[ -e "$f" ]] && warn "stray file $(basename "$f") will be retired into the backup";; esac
   done
@@ -319,9 +414,27 @@ for k in d["values_with_old_state_path"]: print("PATHREF",k)' | while read -r ki
   # --- does the release actually expect the contract's names?
   readiness
   schema_checks "$head"
+  minio_preflight "$head"
   [[ -d "$WA_CREDS_OLD" ]] && ok "WhatsApp creds at $WA_CREDS_OLD ($(find "$WA_CREDS_OLD" -type f | wc -l | tr -d ' ') files)" || warn "no WhatsApp creds at $WA_CREDS_OLD (QR pairing will be needed)"
   if [[ "$WA_CREDS_OLD" != "$WA_CREDS_NEW" && -e "$WA_CREDS_NEW" ]]; then bad "WhatsApp creds target $WA_CREDS_NEW already exists"; fi
   for f in $REPO_STATE_PATHS; do [[ -e "$REPO_DIR/$f" ]] || warn "repo state path missing: $f"; done
+}
+
+minio_preflight() {  # minio_preflight OLD_HEAD
+  resolve_minio_creds "$1" "$REL_SHA"
+  minio_creds_change || buckets_rename || return 0
+  hdr "MinIO ($MINIO_CONTAINER)"
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$MINIO_CONTAINER" 2>/dev/null)" != true ]]; then bad "MinIO container $MINIO_CONTAINER is not running"; return; fi
+  [[ -n "$MINIO_OLD_USER" && -n "$MINIO_OLD_PASS" ]] || { bad "cannot read MINIO_ROOT_USER/PASSWORD from $COMPOSE_FILE at ${1:0:9}"; return; }
+  minio_login "$MINIO_OLD_USER" "$MINIO_OLD_PASS" && ok "MinIO accepts the current root credentials (from the running checkout's compose)" || { bad "MinIO rejects the current root credentials"; return; }
+  if minio_creds_change; then ok "release changes the MinIO root credentials (user $MINIO_OLD_USER → $MINIO_NEW_USER)"
+  else [[ -n "$MINIO_NEW_USER" ]] || warn "cannot read the release's MinIO credentials — assuming unchanged"; fi
+  if buckets_rename; then
+    local bs; bs="$(minio_buckets "$MINIO_OLD_USER" "$MINIO_OLD_PASS" | tr '\n' ' ')"
+    ok "buckets: $bs"
+    git -C "$REPO_DIR" show "$REL_SHA:$COMPOSE_FILE" 2>/dev/null | grep -q "${NEW_BUCKET_PREFIX}dev" \
+      && ok "release compose creates ${NEW_BUCKET_PREFIX}* buckets" || warn "release compose never mentions ${NEW_BUCKET_PREFIX}dev"
+  fi
 }
 
 schema_checks() {  # schema_checks OLD_HEAD — the release must boot; so must whatever rollback restarts
@@ -365,6 +478,7 @@ readiness() {
   a="$(git -C "$REPO_DIR" show "HEAD:$COMPOSE_FILE" 2>/dev/null | awk '/^name:/{print} /^volumes:/{v=1;next} v&&/^[^ ]/{v=0} v&&/^  [a-z]/{print}' | sort)"
   b="$(git -C "$REPO_DIR" show "$REL_SHA:$COMPOSE_FILE" 2>/dev/null | awk '/^name:/{print} /^volumes:/{v=1;next} v&&/^[^ ]/{v=0} v&&/^  [a-z]/{print}' | sort)"
   [[ "$a" == "$b" ]] && ok "compose project/volume names unchanged" || bad "compose project or volume names change in the release — infra would start an empty database"
+  [[ "$LABELS_SAME" == 1 ]] && return 0
   t="$(git -C "$REPO_DIR" grep -l "$OLD_LABEL_PREFIX\." "$REL_SHA" -- scripts 2>/dev/null | sed "s/^$REL_SHA://" | tr '\n' ' ')"
   [[ -z "$t" ]] && ok "release scripts reference no $OLD_LABEL_PREFIX.* labels" || warn "release scripts still name $OLD_LABEL_PREFIX.* labels: $t"
 }
@@ -394,13 +508,15 @@ render() {
     args=(plist-convert --old "$f" --out "$WORK/plists/$NEW_LABEL_PREFIX.$svc.plist" --label "$NEW_LABEL_PREFIX.$svc"
           --old-env "$OLD_ENV_PREFIX" --new-env "$NEW_ENV_PREFIX" --template-wins "$TEMPLATE_WINS_KEYS"
           --map "$OLD_LOG_DIR=$NEW_LOG_DIR" --map "$OLD_STATE_DIR=$NEW_STATE_DIR" --map "$OLD_LABEL_PREFIX.=$NEW_LABEL_PREFIX.")
+    value_map_args; args+=(${VMAP[@]+"${VMAP[@]}"})
     tmpl="$WORK/templates/$svc.plist"
     render_template "$svc" "$tmpl" && args+=(--template "$tmpl")
     summary="$(helper "${args[@]}")" || { bad "could not render $label"; continue; }
     printf '%s' "$summary" | python3 -I -c 'import json,sys; d=json.load(sys.stdin)
-print("  .     %-34s from %-14s env renamed[%s] carried-from-live[%s] template-wins[%s] live-override-kept[%s]" % (d["label"], d["source"], " ".join(d["env_keys_renamed"]), " ".join(d["env_keys_carried_from_live"]), " ".join(d["env_keys_where_template_wins"]), " ".join(d["env_keys_live_override_kept"])))'
+print("  .     %-34s from %-14s env renamed[%s] carried-from-live[%s] template-wins[%s] live-override-kept[%s] value-mapped[%s]" % (d["label"], d["source"], " ".join(d["env_keys_renamed"]), " ".join(d["env_keys_carried_from_live"]), " ".join(d["env_keys_where_template_wins"]), " ".join(d["env_keys_live_override_kept"]), " ".join(d["env_values_mapped"])))'
   done
   [[ -n "$(ls "$WORK/plists" 2>/dev/null)" ]] || bad "rendered nothing"
+  residue_check "rendered plists" "$WORK/plists"/*.plist
   local url
   if db_renaming; then
     for f in "$WORK/plists"/*.plist; do
@@ -462,6 +578,9 @@ step_backup() {
   else
     tar -czf "$BK/repo-state.tgz" -T /dev/null || { bad "tar repo state (empty)"; return 1; }
   fi
+  repo_env_files > "$BK/repo-env.list"
+  if [[ -s "$BK/repo-env.list" ]]; then tar -C "$REPO_DIR" -czf "$BK/repo-env.tgz" -T "$BK/repo-env.list" || { bad "tar repo env files"; return 1; }
+  else tar -czf "$BK/repo-env.tgz" -T /dev/null; fi
   docker exec "$DB_CONTAINER" pg_dump -U "$DB_OLD_USER" -Fc "$DB_OLD_NAME" > "$BK/db.dump" || { bad "pg_dump"; return 1; }
   db_plain_sha "$DB_OLD_USER" "$DB_OLD_NAME" > "$BK/db.plain.sha256"
   DB_SHA_CACHE="$DB_OLD_NAME $(cat "$BK/db.plain.sha256")"
@@ -479,19 +598,20 @@ step_backup() {
   snapshot "$BK/pre.snapshot" old
   DB_SHA_CACHE=""
   # integrity: every archive lists, its entry count matches the source, the dump is readable
-  for name in state plists repo-state; do
+  for name in state plists repo-state repo-env; do
     tar -tzf "$BK/$name.tgz" > "$BK/$name.entries" || { bad "$name.tgz is unreadable"; return 1; }
   done
   n1="$(find "$OLD_STATE_DIR" | wc -l | tr -d ' ')"; n2="$(grep -vc '^$' "$BK/state.entries")"
   [[ "$n1" == "$n2" ]] || { bad "state.tgz has $n2 entries, source has $n1"; return 1; }
   docker exec -i "$DB_CONTAINER" pg_restore -l < "$BK/db.dump" > "$BK/db.toc" || { bad "db.dump is not a readable archive"; return 1; }
-  ( cd "$BK" && shasum -a 256 state.tgz plists.tgz repo-state.tgz db.dump roles.tsv > SHA256SUMS && shasum -a 256 -c -s SHA256SUMS ) || { bad "checksum verify"; return 1; }
+  ( cd "$BK" && shasum -a 256 state.tgz plists.tgz repo-state.tgz repo-env.tgz db.dump roles.tsv > SHA256SUMS && shasum -a 256 -c -s SHA256SUMS ) || { bad "checksum verify"; return 1; }
   find "$BK" -maxdepth 1 -type f -exec chmod 600 {} +
   ok "state.tgz $n2 entries, plists $(wc -l < "$BK/plists.list" | tr -d ' '), dump $(du -h "$BK/db.dump" | awk '{print $1}') ($(grep -c 'TABLE DATA' "$BK/db.toc") tables), checksums verified"
 }
 
 step_state_move() {
   hdr "move $OLD_STATE_DIR → $NEW_STATE_DIR"
+  [[ "$STATE_SAME" == 1 ]] && { ok "same path — nothing to move"; return 0; }
   if [[ "$DRY" == 1 ]]; then
     would "mv $OLD_STATE_DIR $NEW_STATE_DIR   (rename(2), same volume)"
     [[ "$STATE_COMPAT_SYMLINK" == 1 ]] && would "ln -s $NEW_STATE_DIR $OLD_STATE_DIR   (compat for anything still hardcoding the old path)"
@@ -535,23 +655,39 @@ step_state_move() {
 }
 
 step_env() {
-  hdr "rewrite env keys $OLD_ENV_PREFIX* → $NEW_ENV_PREFIX* in $NEW_STATE_DIR/*.env"
-  local f s dir="$NEW_STATE_DIR" n
+  hdr "env files: key renames + value maps (state dir and checkout)"
+  local f dir="$NEW_STATE_DIR" n
   [[ "$DRY" == 1 ]] && dir="$OLD_STATE_DIR"
   n="$(env_files "$dir" | grep -c . || true)"
   if [[ "$n" != "$OLD_ENV_COUNT" ]]; then
     bad "found $n *.env file(s) in $dir but the old state dir had $OLD_ENV_COUNT — the state is not where it should be"
     return 1
   fi
+  if [[ "$DRY" == 1 ]]; then
+    value_map_args
+    for f in $(env_files "$dir"); do
+      would "rewrite $(basename "$f") (0600): rename $OLD_ENV_PREFIX* [$(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')]$([[ ${#VMAP[@]} -gt 0 ]] && echo "; map values [$(helper env-map-values "$f" ${VMAP[@]+"${VMAP[@]}"} --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["changed"]))')]")"
+    done
+    for f in $(repo_env_files); do
+      would "rewrite checkout $f: $(for p in $EXTRA_ENV_RENAMES "$OLD_ENV_PREFIX:$NEW_ENV_PREFIX"; do [[ "${p%%:*}" != "${p#*:}" ]] && printf '%s* [%s] ' "${p%%:*}" "$(helper env-rename "$REPO_DIR/$f" "${p%%:*}" "${p#*:}" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"; done)"
+    done
+    return 0
+  fi
   for f in $(env_files "$dir"); do
-    if [[ "$DRY" == 1 ]]; then
-      would "rewrite $(basename "$f") (0600): $(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"
-      continue
-    fi
     journal begin "env:$(basename "$f")"
-    s="$(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX")" || { bad "env rewrite $(basename "$f")"; return 1; }
-    ok "$(basename "$f"): renamed $(printf '%s' "$s" | python3 -I -c 'import json,sys;print(len(json.load(sys.stdin)["renamed"]))') keys, mode $(stat -f %Sp "$f")"
+    rewrite_env_file "$f" || return 1
+    chmod 600 "$f"
+    ok "$(basename "$f"): rewritten, mode $(stat -f %Sp "$f")"
   done
+  for f in $(repo_env_files); do
+    journal begin "repo-env:$f"
+    rewrite_env_file "$REPO_DIR/$f" || return 1
+    ok "checkout $f: rewritten"
+  done
+  local all=()
+  while IFS= read -r f; do [[ -n "$f" ]] && all+=("$f"); done < <(env_files "$dir"; repo_env_files | sed "s#^#$REPO_DIR/#")
+  [[ ${#all[@]} -gt 0 ]] && { residue_check "env files" ${all[@]+"${all[@]}"} || return 1; }
+  return 0
 }
 
 new_db_password() {  # from the rendered plist's DATABASE_URL; never printed
@@ -633,6 +769,95 @@ SQL
   journal end db
 }
 
+current_db() {  # "user db" that exist right now (after or before the rename)
+  if db_exists "$DB_NEW_USER" "$DB_NEW_NAME" 2>/dev/null; then echo "$DB_NEW_USER $DB_NEW_NAME"; else echo "$DB_OLD_USER $DB_OLD_NAME"; fi
+}
+
+step_minio() {
+  hdr "minio: mirror ${OLD_BUCKET_PREFIX}* → ${NEW_BUCKET_PREFIX}* (old buckets kept)"
+  if ! buckets_rename; then ok "bucket prefix unchanged — nothing to mirror"; return 0; fi
+  local b nb a1 a2 n u d cnt
+  local olds=()
+  while IFS= read -r b; do [[ "$b" == "$OLD_BUCKET_PREFIX"* ]] && olds+=("$b"); done < <(minio_buckets "$MINIO_OLD_USER" "$MINIO_OLD_PASS")
+  if [[ "$DRY" == 1 ]]; then
+    for b in ${olds[@]+"${olds[@]}"}; do would "mirror m/$b → m/$NEW_BUCKET_PREFIX${b#"$OLD_BUCKET_PREFIX"} ($(minio_objects "$MINIO_OLD_USER" "$MINIO_OLD_PASS" "$b" | grep -c . || true) objects), verify key/size/etag"; done
+    [[ ${#olds[@]} -eq 0 ]] && would "nothing to mirror (no ${OLD_BUCKET_PREFIX}* buckets)"
+    [[ "$BUNDLE_URI_REWRITE" == 1 ]] && would "UPDATE agent_versions.bundle_uri s3://${OLD_BUCKET_PREFIX}… → s3://${NEW_BUCKET_PREFIX}… ($(pg1 "$DB_OLD_USER" "$DB_OLD_NAME" "select count(*) from agent_versions where bundle_uri like 's3://${OLD_BUCKET_PREFIX}%'" 2>/dev/null || echo '?') rows)"
+    return 0
+  fi
+  journal begin minio
+  for b in ${olds[@]+"${olds[@]}"}; do
+    nb="$NEW_BUCKET_PREFIX${b#"$OLD_BUCKET_PREFIX"}"
+    mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" mb --ignore-existing "m/$nb" >/dev/null || { bad "mc mb $nb"; return 1; }
+    mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" mirror --overwrite --preserve "m/$b" "m/$nb" >/dev/null 2>&1 || { bad "mc mirror $b → $nb"; return 1; }
+    a1="$(minio_objects "$MINIO_OLD_USER" "$MINIO_OLD_PASS" "$b")"; a2="$(minio_objects "$MINIO_OLD_USER" "$MINIO_OLD_PASS" "$nb")"
+    n="$(printf '%s' "$a1" | grep -c . || true)"
+    if [[ "$a1" != "$a2" ]]; then
+      # same key+size but a different etag (multipart copies) → compare content
+      if [[ "$(printf '%s\n' "$a1" | awk '{print $1, $2}')" == "$(printf '%s\n' "$a2" | awk '{print $1, $2}')" ]]; then
+        while read -r k _; do
+          [[ -n "$k" ]] || continue
+          [[ "$(mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" cat "m/$b/$k" | shasum -a 256)" == "$(mcx "$MINIO_OLD_USER" "$MINIO_OLD_PASS" cat "m/$nb/$k" | shasum -a 256)" ]] || { bad "$nb/$k content differs from $b/$k"; return 1; }
+        done <<< "$a1"
+      else bad "$nb does not match $b after mirror (keys/sizes differ)"; return 1; fi
+    fi
+    ok "$b → $nb: $n object(s) verified"
+  done
+  if [[ "$BUNDLE_URI_REWRITE" == 1 ]]; then
+    read -r u d <<< "$(current_db)"
+    if [[ "$(pg1 "$u" "$d" "select to_regclass('public.agent_versions') is not null")" == t ]]; then
+      cnt="$(printf "UPDATE agent_versions SET bundle_uri = 's3://%s' || substr(bundle_uri, %d) WHERE bundle_uri LIKE 's3://%s%%';\n" \
+        "$NEW_BUCKET_PREFIX" "$(( ${#OLD_BUCKET_PREFIX} + 6 ))" "$OLD_BUCKET_PREFIX" | docker exec -i "$DB_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U "$u" -d "$d" 2>&1 | awk '/^UPDATE/{print $2}')"
+      [[ -n "$cnt" ]] || { bad "bundle_uri rewrite failed"; return 1; }
+      ok "agent_versions.bundle_uri: $cnt row(s) → s3://${NEW_BUCKET_PREFIX}…"
+    fi
+  fi
+  journal end minio
+}
+
+minio_recreate() {  # restart MinIO from the CURRENT checkout's compose file (or the contract's command)
+  if [[ -n "$MINIO_RECREATE_CMD" ]]; then bash -c "$MINIO_RECREATE_CMD"
+  else docker compose -f "$REPO_DIR/$COMPOSE_FILE" up -d --wait minio; fi
+}
+wait_minio_login() {  # wait_minio_login USER PASS LABEL
+  local i
+  for i in $(seq 1 40); do minio_login "$1" "$2" && { ok "MinIO accepts the $3 root credentials"; return 0; }; sleep 2; done
+  bad "MinIO does not accept the $3 root credentials after restart"; return 1
+}
+
+step_infra() {
+  hdr "infra: restart MinIO with the release's root credentials"
+  if ! minio_creds_change; then ok "MinIO credentials unchanged — no restart"; return 0; fi
+  if [[ "$DRY" == 1 ]]; then would "${MINIO_RECREATE_CMD:-docker compose -f $REPO_DIR/$COMPOSE_FILE up -d --wait minio} (same volume; new root creds from the release compose), then prove login with them"; return 0; fi
+  journal begin infra
+  minio_recreate >> "$BK/infra.log" 2>&1 || { bad "MinIO restart failed (see $BK/infra.log)"; return 1; }
+  wait_minio_login "$MINIO_NEW_USER" "$MINIO_NEW_PASS" new || return 1
+  local b missing=""
+  if buckets_rename; then
+    for b in $(minio_buckets "$MINIO_NEW_USER" "$MINIO_NEW_PASS" | grep "^$OLD_BUCKET_PREFIX"); do
+      minio_buckets "$MINIO_NEW_USER" "$MINIO_NEW_PASS" | grep -qx "$NEW_BUCKET_PREFIX${b#"$OLD_BUCKET_PREFIX"}" || missing="$missing $b"
+    done
+    [[ -z "$missing" ]] && ok "every ${OLD_BUCKET_PREFIX}* bucket has its ${NEW_BUCKET_PREFIX}* mirror" || { bad "no mirror for:$missing"; return 1; }
+  fi
+  journal end infra
+}
+
+post_cutover_checks() {  # new side: migrations applied, roles as the contract says, MinIO on new creds
+  local v d m u db
+  read -r u db <<< "$(current_db)"
+  m="$(max_migration "$(git -C "$REPO_DIR" rev-parse HEAD)")"
+  read -r v d <<< "$(db_schema_version "$u" "$db")"
+  if [[ -n "$v" && -n "$m" ]]; then
+    [[ "$v" == "$m" && "$d" == f* ]] && ok "schema v$v = the release's newest migration (migrations ran on start)" || bad "schema is v$v dirty=$d, release newest is $m — migrations did not finish"
+  fi
+  if [[ "$DB_OLD_APP_ROLE" != "$DB_NEW_APP_ROLE" ]]; then
+    role_exists "$u" "$DB_NEW_APP_ROLE" && ! role_exists "$u" "$DB_OLD_APP_ROLE" \
+      && ok "role $DB_NEW_APP_ROLE present, $DB_OLD_APP_ROLE gone (tool and migration agree)" \
+      || bad "roles after start: $DB_NEW_APP_ROLE=$(role_exists "$u" "$DB_NEW_APP_ROLE" && echo yes || echo no) $DB_OLD_APP_ROLE=$(role_exists "$u" "$DB_OLD_APP_ROLE" && echo yes || echo no)"
+  fi
+  if minio_creds_change; then minio_login "$MINIO_NEW_USER" "$MINIO_NEW_PASS" && ok "MinIO on the new root credentials" || bad "MinIO rejects the new root credentials"; fi
+}
+
 step_plists() {
   hdr "install $NEW_LABEL_PREFIX.* plists, retire $OLD_LABEL_PREFIX.*"
   local f
@@ -648,7 +873,12 @@ step_plists() {
     cp -p "$f" "$LA_DIR/$(basename "$f")" && chmod 600 "$LA_DIR/$(basename "$f")" || { bad "install $(basename "$f")"; return 1; }
     plutil -lint -s "$LA_DIR/$(basename "$f")" || { bad "$(basename "$f") fails plutil -lint"; return 1; }
   done
-  for f in "$LA_DIR/$OLD_LABEL_PREFIX".*; do [[ -e "$f" ]] && mv "$f" "$BK/retired-plists/"; done
+  for f in "$LA_DIR/$OLD_LABEL_PREFIX".*; do
+    [[ -e "$f" ]] || continue
+    # same prefix: the rendered plists were just installed under these names — only strays retire
+    [[ "$LABELS_SAME" == 1 && -f "$WORK/plists/$(basename "$f")" ]] && continue
+    mv "$f" "$BK/retired-plists/"
+  done
   ok "installed $(find "$WORK/plists" -name "*.plist" | wc -l | tr -d ' ') plists; old ones retired"
   journal end plists
 }
@@ -733,7 +963,17 @@ build_tree() {  # build_tree LABEL — what `make deploy-local` would rebuild, d
   done
   nd="$(node_dir_for dashboard "$prefix")"
   log "  .     dashboard: npm install + next build with $(node_desc "$nd") (the node its plist PATH resolves)"
-  ( cd "$REPO_DIR/$DASHBOARD_DIR" && with_node "$nd" npm install --no-audit --no-fund && rm -rf .next && with_node "$nd" npm run build ) >> "$log" 2>&1 || { bad "dashboard build (see $log)"; return 1; }
+  # NEXT_PUBLIC_* are inlined at BUILD time: build with exactly the env the
+  # wrapper runs with — the dashboard plist's EnvironmentVariables, then bridge.env
+  local dplist="$LA_DIR/$prefix.dashboard.plist" denv="$NEW_STATE_DIR/bridge.env"
+  [[ "$1" == rollback ]] && denv="$OLD_STATE_DIR/bridge.env"
+  [[ -f "$dplist" ]] && log "  .     dashboard build env: plist keys [$(helper plist-env-keys "$dplist" | tr '\n' ' ')] + $(basename "$denv")"
+  ( cd "$REPO_DIR/$DASHBOARD_DIR" || exit 1
+    # shellcheck disable=SC1090
+    [[ -f "$dplist" ]] && eval "$(helper plist-env-export "$dplist")"
+    # shellcheck disable=SC1090
+    [[ -f "$denv" ]] && { set -a; . "$denv"; set +a; }
+    with_node "$nd" npm install --no-audit --no-fund && rm -rf .next && with_node "$nd" npm run build ) >> "$log" 2>&1 || { bad "dashboard build (see $log)"; return 1; }
   # the wrapper serves .next/standalone and only builds when it is MISSING — a
   # first-boot `next build` under launchd outlasts the health window
   [[ -f "$REPO_DIR/$DASHBOARD_DIR/.next/standalone/server.js" ]] || { bad "dashboard build produced no .next/standalone/server.js (is output: \"standalone\" still set?)"; return 1; }
@@ -842,6 +1082,8 @@ health() {  # health old|new
     fi
   fi
   if [[ "$WA_CREDS_OLD" != "$WA_CREDS_NEW" && "$side" == new ]]; then [[ -d "$WA_CREDS_NEW" ]] && ok "WhatsApp creds at new path" || bad "WhatsApp creds missing at $WA_CREDS_NEW"; fi
+  if [[ "$side" == new ]]; then post_cutover_checks
+  elif minio_creds_change; then minio_login "$MINIO_OLD_USER" "$MINIO_OLD_PASS" && ok "MinIO on the old root credentials" || bad "MinIO rejects the old root credentials"; fi
   log "  .     owner check (NOT automated): send '?' in self-chat on both channels → exactly ONE Brief each, no echo loop for 10 min"
   [[ "$FAILED" == "$f0" ]]
 }
@@ -855,7 +1097,8 @@ cmd_plan() {
   preflight
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/pal-cutover-plan.XXXXXX")"; chmod 700 "$WORK"
   [[ -n "$REL_SHA" ]] && render
-  step_stop; step_backup; step_state_move; step_env; step_db; step_plists; step_git; step_build plan; start_side "$NEW_LABEL_PREFIX"; health new
+  step_stop; step_backup; step_state_move; step_env; step_db; step_minio; step_plists; step_git; step_build plan; step_infra; start_side "$NEW_LABEL_PREFIX"; health new
+  [[ -n "${OWNER_NOTES:-}" ]] && { hdr "owner follow-ups (not automated)"; printf '%s\n' "$OWNER_NOTES" | sed 's/^/  .     /'; }
   rm -rf "$WORK"
   hdr "plan summary: $FAILED failure(s), $WARNED warning(s)"
   [[ "$FAILED" == 0 ]] || { log "apply would REFUSE until the failures above are fixed"; return 1; }
@@ -897,9 +1140,11 @@ cmd_apply() {
   run_step state-move step_state_move
   run_step env step_env
   run_step db step_db
+  run_step minio step_minio
   run_step plists step_plists
   run_step git step_git
   run_step build step_build apply
+  run_step infra step_infra
   run_step start step_start
   journal end apply
   if health new; then
@@ -914,6 +1159,9 @@ cmd_verify() {
   guard_mode
   local side=new; [[ "${1:-}" == --old ]] && side=old
   local bkd; bkd="$(latest_backup)"
+  if [[ -n "$bkd" && -f "$bkd/git.env" ]]; then
+    resolve_minio_creds "$(sed -n 's/^OLD_HEAD=//p' "$bkd/git.env")" "$(sed -n 's/^REL_SHA=//p' "$bkd/git.env")"
+  else resolve_minio_creds HEAD ""; fi
   if [[ -n "$bkd" && -f "$bkd/loaded.txt" ]]; then PRE_LOADED="$(cat "$bkd/loaded.txt")"
   else side_vars "$side"; PRE_LOADED="$(loaded_with_prefix "$S_PREFIX" | sed "s/^$S_PREFIX\./$OLD_LABEL_PREFIX./")"; fi
   health "$side"
@@ -927,6 +1175,9 @@ cmd_rollback() {
   [[ -d "$bkd" ]] || die "no backup dir (looked in $BACKUP_ROOT)"
   BK="$bkd"
   hdr "ROLLBACK from $bkd (db mode: $dbmode)"
+  local gh gr
+  gh="$(sed -n 's/^OLD_HEAD=//p' "$bkd/git.env" 2>/dev/null)"; gr="$(sed -n 's/^REL_SHA=//p' "$bkd/git.env" 2>/dev/null)"
+  resolve_minio_creds "${gh:-HEAD}" "$gr"
   PRE_LOADED="$(cat "$bkd/loaded.txt" 2>/dev/null)"
   local has_backup=0 aside="$bkd/rolledback-$TS" l f
   [[ -f "$bkd/SHA256SUMS" ]] && ( cd "$bkd" && shasum -a 256 -c -s SHA256SUMS ) && has_backup=1
@@ -951,6 +1202,9 @@ cmd_rollback() {
     [[ -d "$OLD_STATE_DIR" ]] && mv "$OLD_STATE_DIR" "$aside/state-old"
     tar -C "$(dirname "$OLD_STATE_DIR")" -xpzf "$bkd/state.tgz" && ok "restored $OLD_STATE_DIR from state.tgz (post-cutover state kept at $aside)" || bad "state restore"
   fi
+  if [[ "$has_backup" == 1 && -s "$bkd/repo-env.list" ]]; then
+    tar -C "$REPO_DIR" -xpzf "$bkd/repo-env.tgz" && ok "restored checkout env files ($(tr '\n' ' ' < "$bkd/repo-env.list"))" || bad "repo env restore"
+  fi
   if journaled "$bkd" "end wa-creds-move" && [[ -d "$WA_CREDS_NEW" && ! -e "$WA_CREDS_OLD" ]]; then
     mv "$WA_CREDS_NEW" "$WA_CREDS_OLD" && ok "WhatsApp creds moved back"
   fi
@@ -958,6 +1212,12 @@ cmd_rollback() {
   if journaled "$bkd" "begin db" && db_renaming; then rollback_db "$bkd" "$dbmode" "$aside"; fi
   # 5. checkout
   if journaled "$bkd" "begin git"; then rollback_git "$bkd" || bad "git rollback"; fi
+  if journaled "$bkd" "begin infra"; then
+    hdr "MinIO back on the old root credentials"
+    minio_recreate >> "$bkd/infra-rollback.log" 2>&1 || bad "MinIO restart failed (see $bkd/infra-rollback.log)"
+    wait_minio_login "$MINIO_OLD_USER" "$MINIO_OLD_PASS" old
+    buckets_rename && log "  .     ${NEW_BUCKET_PREFIX}* mirror buckets are left in place (copies; delete by hand if unwanted)"
+  fi
   # 6. prove it (both snapshots are taken with every agent stopped)
   if [[ "$has_backup" == 1 ]]; then
     snapshot "$aside/post.snapshot" old

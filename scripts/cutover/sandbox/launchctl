@@ -20,6 +20,8 @@ case "${1:-}" in
     [[ -f "$S/jobs/$l" ]] && exit 37
     pid=$(( (RANDOM % 50000) + 1000 )); [[ "$l" == *.infra ]] && pid=-
     echo "$pid $plist" > "$S/jobs/$l"
+    # the API runs its migrations on start; the harness supplies what that does
+    [[ "$l" == *.api && -n "${STUB_ON_API_START:-}" ]] && bash -c "$STUB_ON_API_START" >> "$S/api-start.log" 2>&1
     out="$(plutil -extract StandardOutPath raw -o - "$plist" 2>/dev/null)"
     if [[ -n "$out" ]]; then
       mkdir -p "$(dirname "$out")"
