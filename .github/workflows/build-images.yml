@@ -1,4 +1,4 @@
-# build-images — builds, pushes, and cosign-signs the deployable Lantern service images
+# build-images — builds, pushes, and cosign-signs the deployable PAL Runtime service images
 # that Helm/Terraform reference (ghcr.io/dshakes/lantern/<name>). Runs on push to master
 # and on demand (workflow_dispatch). Each image is tagged with the git SHA and `latest`.
 #
@@ -7,7 +7,7 @@
 # (rather than `uses: ./.github/workflows/sign-images.yml`) so we can sign the exact
 # pushed DIGEST that build-push-action returns, which is the tamper-proof thing to sign.
 #
-# Image-name mapping matches what the Helm charts pull (infra/helm/lantern/values.yaml):
+# Image-name mapping matches what the Helm charts pull (infra/helm/pal/values.yaml):
 #   control-plane, gateway, model-router, runtime-manager, runtime-scheduler, web (dashboard).
 # Build contexts differ per service:
 #   - Go (control-plane, runtime-scheduler): context = repo root (Dockerfiles COPY gen/go/).

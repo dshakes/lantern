@@ -14,7 +14,7 @@
 -- after you adopt a dedicated migration tool). Then point the app's
 -- DATABASE_URL at lantern_app.
 --
---   psql "$ADMIN_DATABASE_URL" -v app_password="$LANTERN_APP_DB_PASSWORD" \
+--   psql "$ADMIN_DATABASE_URL" -v app_password="$PAL_APP_DB_PASSWORD" \
 --        -f infra/db/least-privilege.sql
 
 \set ON_ERROR_STOP on

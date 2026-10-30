@@ -1,10 +1,10 @@
 # Env vars are emitted as PAL_* (ADR 0032). The binaries still accept the legacy
 # LANTERN_* names, so existing overrides keep working; PAL_* wins if both are set.
-# Kiosk / demo overlay (ADR 0029). Use via `lantern demo` or `make demo`:
+# Kiosk / demo overlay (ADR 0029). Use via `pal demo` or `make demo`:
 #   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml up
 #
 # What it changes versus the dev stack:
-#   - LANTERN_KIOSK=1: POST /v1/kiosk/session mints ephemeral, auto-deleted tenants.
+#   - PAL_KIOSK=1: POST /v1/kiosk/session mints ephemeral, auto-deleted tenants.
 #   - RLS + authz enforcement ON, sign-up closed, mailer driver `log`.
 #   - Only the services the demo needs (no MinIO) are started (see `kioskServices` in
 #     packages/cli/internal/cli/demo.go and the Makefile): no gateway, model-router,
@@ -15,17 +15,17 @@
 #     if a key is set without its fixture base URL, and the fixture URL means the
 #     placeholder can only ever reach llm-replay.
 #
-# LANTERN_ENV is deliberately NOT set to staging/prod: the LLM base-URL override
+# PAL_ENV is deliberately NOT set to staging/prod: the LLM base-URL override
 # (W2-0) is fatal in prod-like environments. The kiosk compensates with its own
 # fail-closed guards (CheckKioskConfig) instead.
 #
-# DEPENDENCY: services/control-plane/cmd/llm-replay and LANTERN_LLM_BASEURL_*
+# DEPENDENCY: services/control-plane/cmd/llm-replay and PAL_LLM_BASEURL_*
 # come from W2-0 (branch ga/w2-0-llm-fixture). This overlay needs that merged.
 #
-# KIOSK_JWT_SECRET is required. `make demo` / `lantern demo` generate a random one per start
+# KIOSK_JWT_SECRET is required. `make demo` / `pal demo` generate a random one per start
 # (demo sessions are ephemeral, so a fresh secret each start loses nothing).
 
-x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:?KIOSK_JWT_SECRET must be set; make demo and lantern demo generate one}
+x-kiosk-secret: &kiosk-jwt ${KIOSK_JWT_SECRET:?KIOSK_JWT_SECRET must be set; make demo and pal demo generate one}
 
 services:
   # Host ports are env-driven so a second stack can run beside a dev one:

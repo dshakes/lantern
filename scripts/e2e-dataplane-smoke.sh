@@ -19,8 +19,8 @@ PSQL="$DC exec -T postgres psql -U lantern -d lantern"
 DB_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable"
 TENANT="00000000-0000-0000-0000-000000000001"
 
-CP_BIN="/tmp/lantern-cp-smoke"; AGENT_BIN="/tmp/lantern-dpa-smoke"
-CP_LOG="/tmp/lantern-cp-smoke.log"; AGENT_LOG="/tmp/lantern-dpa-smoke.log"
+CP_BIN="/tmp/pal-cp-smoke"; AGENT_BIN="/tmp/pal-dpa-smoke"
+CP_LOG="/tmp/pal-cp-smoke.log"; AGENT_LOG="/tmp/pal-dpa-smoke.log"
 CP_PID=""; AGENT_PID=""; PLANE_ID=""
 
 cleanup() {

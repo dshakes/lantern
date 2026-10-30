@@ -57,7 +57,7 @@ FAILED=0
 
 # ─── Prerequisites ──────────────────────────────────────────────────────────
 echo
-echo -e "${CYAN}=== Lantern RLS validation ===${RESET}"
+echo -e "${CYAN}=== PAL Runtime RLS validation ===${RESET}"
 echo
 
 info "DATABASE_URL = ${DATABASE_URL}"
@@ -87,7 +87,7 @@ FRESH_DB_NAME=""
 FRESH_DATABASE_URL=""
 
 if [[ "${RLS_VALIDATE_FRESH}" == "1" ]]; then
-  FRESH_DB_NAME="lantern_rls_validate_$$"
+  FRESH_DB_NAME="pal_rls_validate_$$"
   info "Creating throwaway database: ${FRESH_DB_NAME}"
 
   # Build an admin DSN (postgres database) by swapping the DB name.
