@@ -91,7 +91,7 @@ not using a context manager.
 |---|---|
 | `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
 | `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
-| `LANTERN_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Lantern-Route-Strategy`). Default `auto` |
+| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Lantern-Route-Strategy`). Default `auto` |
 
 ---
 
