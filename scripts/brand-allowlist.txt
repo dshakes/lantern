@@ -89,3 +89,22 @@ scope:^scripts/regression\.sh ^[^#]*"label":"lantern" # API label sent to the ma
 scope:^(scripts|\.github)/ postgres(ql)?://lantern:|/lantern\?sslmode|%lantern\b|/lantern\?|\(lantern/(lantern)?\)|`lantern` DB|"password":"lantern"|\$\{_PASSWORD:-lantern\}|\blantern\b(?=\$\{RST\}) # dev DB URL/user/password forms (owner's live dev DB name is allowlisted above)
 scope:^scripts/introspect/PROMPT\.md -Users-shakes-workspace-lantern # Claude Code memory dir derived from the checkout path
 lantern-egress-proxy # app label selector of the data-plane egress proxy: Deployment selectors are immutable, kept for in-place upgrades
+
+# --- SDKs + CLI (PR rename/pal-9-sdk-cli)
+scope:^packages/sdk-(ts|python)/ \bLantern(Client|ApiError|Error|GrpcError|StepError|LlmError|LlmJsonError|ToolError|MemoryError|ConnectorError|TimeoutError|CancelledError|ValidationError|Runtime|Agent|Sandbox|RuntimeClient)\b # deprecated public aliases so existing user code keeps compiling
+path:^packages/sdk-python/lantern/__init__\.py$ # the deprecated `import lantern` shim
+path:^packages/sdk-python/tests/test_compat\.py$ # proves the legacy import paths still work
+\blantern\.(web|python|fs|browser)\b # built-in tool ids sent to the runtime sidecar
+\blantern\.(runtime|modelrouter|memory|tools)\.v1\b # gRPC service paths of the runtime sidecar (renamed with lantern.v1)
+(?i)\bx-lantern-(truncated|route-strategy|tenant-id|run-id)\b # legacy wire headers, read/sent alongside x-pal-*
+\blantern-runner\b # legacy console-script alias of pal-runner
+scope:^packages/cli/ \blantern-demo\b # docker compose project that owns existing demo volumes
+\blantern-guide\b # server-side onboarding template id
+scope:^packages/cli/ legacyBinaryName = "lantern"|cmd/lantern|~/\.lantern\b|"\.lantern"|`lantern`|install_symlink "pal" => "lantern" # legacy binary name / config dir, kept as aliases
+path:^packages/cli/cmd/lantern/main\.go$ # legacy-named main package (go install ./cmd/lantern)
+scope:^packages/cli/internal/cli/infra\.go (lantern_data_plane|lantern-data-plane|lantern-dp|-n lantern\b) # terraform state address, cluster/release/namespace of existing installs
+scope:^packages/cli/internal/cli/dev\.go "LANTERN_API_URL= # child env written under both names
+\blanternAppRoleExists\b|\bLanternAppRoleExists\b # JSON field of the control-plane health payload
+scope:^packages/sdk-go/ ^package lantern$|Package lantern|\blantern\.[A-Z]\w*|`lantern\.X` # Go package clause, renamed with the module path
+scope:^Formula/ "lantern"|`lantern`|bin/"lantern" # Homebrew legacy symlink
+scope:^examples/ \blantern/(demos|examples|deploy-guardian|base|harness|web-scraper-harness)\b # image refs / GitHub status context persisted in users' branch protection
