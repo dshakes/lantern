@@ -782,14 +782,15 @@ are wired; select with `PAL_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
 passes the tenant-scoped `Deps.CallLLM` as the `sample` (nil-safe — estimators
 degrade gracefully when no LLM is wired). See ADR 0021.
 
-- **`verbalization_heuristic`** (default) — scans prior step text for LLM
+- **`verbalization_heuristic`** (opt-out: `PAL_CONFIDENCE_ESTIMATOR=verbalization`) — scans prior step text for LLM
   self-reported confidence ("Confidence: 85%", "70% confident"). Falls back to
   `DefaultConfidence=0.9` when none found. A HEURISTIC, and note the failure
   mode it encodes: **silence → 0.9 → auto-execute** (a model that hallucinates an
   action also cheerfully writes "confidence: 95%" about it, and no self-report at
-  all clears the 0.75 bar). Kept as the default for backward-compatibility and as
-  every estimator's safe fallback.
-- **`self_consistency`** (`SelfConsistencyEstimator`) — scores confidence from the
+  all clears the 0.75 bar). No longer the default (GA-AUDIT A4); kept as the
+  explicit opt-out and as every estimator's safe fallback.
+- **`self_consistency`** (`SelfConsistencyEstimator`, **default** when the gate is
+  on and `PAL_CONFIDENCE_ESTIMATOR` is unset or unrecognised) — scores confidence from the
   model's INDEPENDENT agreement, not its self-report: it re-poses the pending
   action to the model `N` times (`PAL_CONFIDENCE_SAMPLES`, default 5, clamped
   [1,9]) as a fresh skeptical YES/NO judgment and returns the fraction voting
@@ -822,13 +823,13 @@ The `confidence_evaluated` journal event tags which estimator ran via
 |-----|---------|---------|
 | `PAL_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
 | `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
-| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
+| `PAL_CONFIDENCE_ESTIMATOR` | `self-consistency` | Default polls for independent agreement (falls back to the heuristic when no LLM is wired). `verbalization` (aliases `heuristic`, `verbalization_heuristic`) opts out to the heuristic alone. Selection: `selectConfidenceEstimator` in `internal/handlers/rest.go`. |
 | `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
 | `PAL_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
 
 Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
-→ turn on `self-consistency` and tune `SAMPLES`/threshold → then production.
+(self-consistency by default) → tune `SAMPLES`/threshold → then production.
 
 #### Workflow-engine RLS (invariant #7)
 

@@ -2961,17 +2961,18 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 }
 
 // buildConfidenceGate constructs the confidence gate config from env vars.
-// Returns nil when LANTERN_CONFIDENCE_GATE is not set (feature off by default).
+// Returns nil when PAL_CONFIDENCE_GATE is not set (feature off by default).
 // Pattern mirrors modelRouterEnabled() in llm_proxy_router.go.
 //
 // Env vars:
 //
-//	LANTERN_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
-//	LANTERN_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
-//	LANTERN_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
-//	                                  (default: verbalization — backward-compatible)
-//	LANTERN_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
-//	LANTERN_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
+//	PAL_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
+//	PAL_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
+//	PAL_CONFIDENCE_ESTIMATOR          "self-consistency" | "verbalization"
+//	                                  (default: self-consistency — see
+//	                                  selectConfidenceEstimator)
+//	PAL_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
+//	PAL_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
 //	                                  this (agent, node_type)'s realized regret
 //	                                  rate (default: off — see ADR 0021, Phase 1)
 //
@@ -2991,23 +2992,7 @@ func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.
 		}
 	}
 
-	// Verbalization heuristic is the default estimator (unchanged behavior).
-	// Self-consistency polls the model for independent agreement instead of
-	// scraping its self-reported number; it falls back to the heuristic when no
-	// LLM sampler is available, so it is always safe to enable.
-	var est workflow.ConfidenceEstimator = workflow.VerbalizationHeuristic{DefaultConfidence: 0.9}
-	if e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_ESTIMATOR"))); e == "self-consistency" || e == "self_consistency" || e == "sampling" {
-		samples := 5
-		if s := strings.TrimSpace(os.Getenv("PAL_CONFIDENCE_SAMPLES")); s != "" {
-			if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 9 {
-				samples = n
-			}
-		}
-		est = workflow.SelfConsistencyEstimator{
-			Samples:  samples,
-			Fallback: workflow.VerbalizationHeuristic{DefaultConfidence: 0.9},
-		}
-	}
+	est := selectConfidenceEstimator(os.Getenv("PAL_CONFIDENCE_ESTIMATOR"), os.Getenv("PAL_CONFIDENCE_SAMPLES"))
 
 	// Outcome calibration (opt-in): wrap the selected estimator so this
 	// (agent, node_type)'s realized regret rate lowers the score. Fail-safe —
@@ -3019,6 +3004,31 @@ func (h *RESTHandler) buildConfidenceGate(tenantID, agentName string) *workflow.
 		}
 	}
 	return &workflow.ConfidenceGate{Estimator: est, Threshold: threshold}
+}
+
+// selectConfidenceEstimator picks the gate's estimator from the
+// PAL_CONFIDENCE_ESTIMATOR / PAL_CONFIDENCE_SAMPLES values.
+//
+// Self-consistency is the DEFAULT (unset / unknown value): it scores
+// confidence from the model's independent agreement instead of scraping a
+// self-reported number, so the heuristic's silence -> 0.9 -> auto-execute
+// failure mode is closed by default. It degrades to the verbalization
+// heuristic whenever no LLM sampler is wired or every sample fails, so it is
+// always safe. "verbalization" (aliases "heuristic", "verbalization_heuristic")
+// is the explicit opt-out to the heuristic alone.
+func selectConfidenceEstimator(estimator, samplesEnv string) workflow.ConfidenceEstimator {
+	heuristic := workflow.VerbalizationHeuristic{DefaultConfidence: 0.9}
+	switch strings.ToLower(strings.TrimSpace(estimator)) {
+	case "verbalization", "verbalization_heuristic", "verbalization-heuristic", "heuristic":
+		return heuristic
+	}
+	samples := 5
+	if s := strings.TrimSpace(samplesEnv); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 9 {
+			samples = n
+		}
+	}
+	return workflow.SelfConsistencyEstimator{Samples: samples, Fallback: heuristic}
 }
 
 func runToMap(r *lanternv1.Run) map[string]any {
