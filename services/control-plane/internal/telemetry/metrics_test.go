@@ -35,7 +35,8 @@ func TestInitMetricsExposesAlertedSeries(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"pal_run_budget_blocks_total",
-		`pal_run_total{pal_agent_name`,
+		`pal_run_total{`,
+		`pal_agent_name="a"`,
 		`http_server_request_duration_seconds_count{`,
 		`http_response_status_code="500"`,
 		`pal_traffic="api"`,
