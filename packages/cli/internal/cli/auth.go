@@ -26,7 +26,8 @@ func newLoginCommand() *cobra.Command {
 If --email and --password are provided, login is non-interactive.
 Otherwise, you will be prompted for credentials.
 
-The session token is stored in ~/.lantern/credentials.json.`,
+The session token is stored in credentials.json under $PAL_HOME, ~/.pal,
+or (for logins made before the rename) the legacy ~/.lantern.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Interactive mode: prompt for email and password.
 			if email == "" {
@@ -103,7 +104,7 @@ func newWhoamiCommand() *cobra.Command {
 				return fmt.Errorf("load credentials: %w", err)
 			}
 			if creds == nil || creds.Token == "" {
-				printInfo("Not logged in. Run 'lantern login' first.")
+				printInfo("Not logged in. Run 'pal login' first.")
 				return nil
 			}
 

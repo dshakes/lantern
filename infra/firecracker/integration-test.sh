@@ -266,7 +266,7 @@ log "Minting manager mTLS CA + server + client certs"
 # basicConstraints explicitly — without them the live mTLS dial silently hangs.
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "${WORK}/ca.key" -out "${WORK}/ca.crt" \
-  -subj "/CN=lantern-runtime-ca" \
+  -subj "/CN=pal-runtime-ca" \
   -addext "basicConstraints=critical,CA:TRUE" >/dev/null 2>&1 || fail "CA generation failed"
 
 openssl req -newkey rsa:2048 -nodes \
@@ -540,12 +540,12 @@ log "Invoking a tool in the guest (ExecTool -> shell_exec)"
 T0=$(ms)
 TOOL_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \
   -import-path "${PROTO_DIR}" -proto "${PROTO_FILE}" \
-  -d "{\"vm_id\":\"${VM_ID}\",\"run_id\":\"itest-run-001\",\"step_id\":\"itest-step-1\",\"tool_name\":\"shell_exec\",\"args\":{\"command\":\"echo lantern-tool-marker\"},\"idempotency_key\":\"itest-run-001:itest-step-1:1\"}" \
+  -d "{\"vm_id\":\"${VM_ID}\",\"run_id\":\"itest-run-001\",\"step_id\":\"itest-step-1\",\"tool_name\":\"shell_exec\",\"args\":{\"command\":\"echo pal-tool-marker\"},\"idempotency_key\":\"itest-run-001:itest-step-1:1\"}" \
   "${MANAGER_ADDR}" lantern.v1.RuntimeManager/ExecTool 2>>"${MANAGER_LOG}") || TOOL_RESP=""
 timing_record "shell_exec" "${T0}" "$(ms)"
 
 SHELL_EXEC_AVAILABLE=false
-if printf '%s' "${TOOL_RESP}" | grep -q "lantern-tool-marker"; then
+if printf '%s' "${TOOL_RESP}" | grep -q "pal-tool-marker"; then
   pass "tool invoked in-guest and returned its output (ExecTool -> shell_exec)"
   SHELL_EXEC_AVAILABLE=true
 elif printf '%s' "${TOOL_RESP}" | grep -q "No such file or directory"; then
@@ -566,7 +566,7 @@ SNAPSHOT_AVAILABLE=false
 if [ "${SHELL_EXEC_AVAILABLE}" = "true" ]; then
   # ---- 4c-i. write_file: drop a known marker into /workspace ----
   MARKER_PATH="/workspace/itest-state-marker.txt"
-  MARKER_CONTENT="lantern-state-survived-restore-$(date +%s)"
+  MARKER_CONTENT="pal-state-survived-restore-$(date +%s)"
   log "Writing state marker before snapshot (write_file -> ${MARKER_PATH})"
   T0=$(ms)
   WRITE_RESP=$(grpcurl -cacert "${WORK}/ca.crt" -cert "${WORK}/client.crt" -key "${WORK}/client.key" -servername localhost \

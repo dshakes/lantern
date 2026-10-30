@@ -1,4 +1,4 @@
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal-runtime/sdk";
 import { z } from "zod";
 
 // --- Input / Output types ---

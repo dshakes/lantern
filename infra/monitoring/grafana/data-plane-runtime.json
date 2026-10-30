@@ -1,7 +1,7 @@
 {
   "uid": "lantern-dataplane-runtime",
-  "title": "Lantern — Data Plane & Runtime",
-  "tags": ["lantern", "ga"],
+  "title": "PAL Runtime — Data Plane & Runtime",
+  "tags": ["pal", "ga"],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
@@ -336,7 +336,7 @@
       },
       "targets": [
         {
-          "expr": "lantern_data_plane_seconds_since_heartbeat",
+          "expr": "pal_data_plane_seconds_since_heartbeat or lantern_data_plane_seconds_since_heartbeat",
           "refId": "A",
           "legendFormat": "{{data_plane_id}} ({{cloud}}/{{region}})",
           "datasource": {

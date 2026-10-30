@@ -119,12 +119,15 @@ resource "azurerm_user_assigned_identity" "data_plane" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_storage_account" "bundles" {
-  name                     = replace("${substr(local.cluster_name, 0, 10)}bundles", "-", "")
-  resource_group_name      = local.rg_name
-  location                 = local.rg_location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  min_tls_version          = "TLS1_2"
+  # Storage account names are GLOBALLY unique (3-24 lowercase alphanumerics), so
+  # suffix a stable hash of subscription + resource group + cluster.
+  name                            = "${substr(replace(lower(local.cluster_name), "/[^a-z0-9]/", ""), 0, 10)}b${substr(sha1("${data.azurerm_subscription.current.subscription_id}/${local.rg_name}/${local.cluster_name}"), 0, 12)}"
+  allow_nested_items_to_be_public = false
+  resource_group_name             = local.rg_name
+  location                        = local.rg_location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
 
   blob_properties {
     versioning_enabled = true
@@ -183,12 +186,12 @@ resource "azurerm_kubernetes_cluster" "this" {
 }
 
 # ---------------------------------------------------------------------------
-# AKS Node Pool for Lantern workloads
+# AKS Node Pool for PAL Runtime workloads
 # ---------------------------------------------------------------------------
 
-resource "azurerm_kubernetes_cluster_node_pool" "lantern" {
+resource "azurerm_kubernetes_cluster_node_pool" "pal" {
   name                  = "lantern"
-  kubernetes_cluster_id = local.create_cluster ? azurerm_kubernetes_cluster.this[0].id : "/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${var.existing_resource_group}/providers/Microsoft.ContainerService/managedClusters/${var.existing_cluster_name}"
+  kubernetes_cluster_id = data.azurerm_kubernetes_cluster.target.id
   vm_size               = var.vm_size
   node_count            = var.node_count
   min_count             = var.node_min_count
@@ -208,15 +211,22 @@ data "azurerm_subscription" "current" {}
 # Federated Identity Credential for Workload Identity
 # ---------------------------------------------------------------------------
 
+# For BOTH new and existing clusters: without it Workload Identity silently
+# yields no token. An existing cluster must have the OIDC issuer enabled.
 resource "azurerm_federated_identity_credential" "data_plane" {
-  count = local.create_cluster ? 1 : 0
-
   name                = "lantern-data-plane"
   resource_group_name = local.rg_name
   parent_id           = azurerm_user_assigned_identity.data_plane.id
   audience            = ["api://AzureADTokenExchange"]
-  issuer              = azurerm_kubernetes_cluster.this[0].oidc_issuer_url
-  subject             = "system:serviceaccount:lantern:lantern-data-plane"
+  issuer              = data.azurerm_kubernetes_cluster.target.oidc_issuer_url
+
+  lifecycle {
+    precondition {
+      condition     = data.azurerm_kubernetes_cluster.target.oidc_issuer_url != ""
+      error_message = "The AKS cluster has no OIDC issuer: enable it (az aks update --enable-oidc-issuer --enable-workload-identity)."
+    }
+  }
+  subject = "system:serviceaccount:lantern:pal-data-plane"
 }
 
 # ---------------------------------------------------------------------------
@@ -250,34 +260,41 @@ provider "helm" {
 # Namespace
 # ---------------------------------------------------------------------------
 
-resource "kubernetes_namespace" "lantern" {
+resource "kubernetes_namespace" "pal" {
   metadata {
     name = "lantern"
 
     labels = {
-      "app.kubernetes.io/part-of"    = "lantern-data-plane"
+      "app.kubernetes.io/part-of"    = "pal-data-plane"
       "app.kubernetes.io/managed-by" = "terraform"
     }
   }
 
-  depends_on = [azurerm_kubernetes_cluster_node_pool.lantern]
+  depends_on = [azurerm_kubernetes_cluster_node_pool.pal]
 }
 
 # ---------------------------------------------------------------------------
-# Deploy lantern-data-plane Helm chart
+# Deploy pal-data-plane Helm chart
 # ---------------------------------------------------------------------------
 
-resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+resource "helm_release" "pal_data_plane" {
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.pal.metadata[0].name
+  chart     = "${path.module}/../../helm/pal-data-plane"
+  # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
+  # so helm must fetch them or the release fails "missing in charts/".
+  dependency_update = true
+  wait              = true
+  timeout           = 600
+
+  set {
+    name  = "global.image.tag"
+    value = local.chart_version
+  }
 
   set {
     name  = "controlPlane.endpoint"
-    value = var.lantern_control_plane_endpoint
+    value = local.control_plane_endpoint
   }
 
   set {
@@ -317,7 +334,24 @@ resource "helm_release" "lantern_data_plane" {
   }
 
   depends_on = [
-    kubernetes_namespace.lantern,
-    azurerm_kubernetes_cluster_node_pool.lantern,
+    kubernetes_namespace.pal,
+    azurerm_kubernetes_cluster_node_pool.pal,
   ]
+}
+
+# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
+# (no destroy/recreate). Remove once every deployment has applied this version.
+moved {
+  from = kubernetes_namespace.lantern
+  to   = kubernetes_namespace.pal
+}
+
+moved {
+  from = helm_release.lantern_data_plane
+  to   = helm_release.pal_data_plane
+}
+
+moved {
+  from = azurerm_kubernetes_cluster_node_pool.lantern
+  to   = azurerm_kubernetes_cluster_node_pool.pal
 }

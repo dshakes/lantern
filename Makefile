@@ -1,4 +1,4 @@
-.PHONY: demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-bench lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-bench lima-runtime lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint slo-rules ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -18,11 +18,11 @@ dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
 
 # Kiosk demo (ADR 0029): full stack, ephemeral workspaces, recorded LLM answers.
 demo:
-	KIOSK_JWT_SECRET=$${KIOSK_JWT_SECRET:-$$(openssl rand -hex 32)} docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo up -d --build postgres redis control-plane dashboard llm-replay
+	KIOSK_JWT_SECRET=$${KIOSK_JWT_SECRET:-$$(openssl rand -hex 32)} docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p pal-demo up -d --build postgres redis control-plane dashboard llm-replay
 	@echo "demo: http://localhost:3001/kiosk"
 
 demo-down:
-	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo down -v
+	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p pal-demo down -v
 
 dev-infra: ## Start only infrastructure (Postgres, Redis; no MinIO)
 	docker compose -f infra/docker/docker-compose.yml up -d postgres redis
@@ -79,7 +79,7 @@ run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
-	LANTERN_USE_CLAUDE_CODE=1 \
+	PAL_USE_CLAUDE_CODE=1 \
 	go run ./cmd/server
 
 bridge-setup: ## Interactive setup wizard for the personal-assistant bridges (WhatsApp / iMessage)
@@ -97,14 +97,14 @@ run-imessage-bridge: ## Start the iMessage bridge (macOS only)
 
 run-imessage: run-imessage-bridge ## Alias: start the iMessage bridge
 
-autostart-install: ## Install Lantern as macOS LaunchAgents (auto-start at login, auto-restart on crash)
+autostart-install: ## Install PAL Runtime as macOS LaunchAgents (auto-start at login, auto-restart on crash)
 	@bash scripts/launchd/install.sh
 
-autostart-uninstall: ## Remove all Lantern LaunchAgents
+autostart-uninstall: ## Remove all PAL Runtime LaunchAgents
 	@bash scripts/launchd/install.sh --uninstall
 
-autostart-status: ## Show currently-loaded Lantern LaunchAgents + recent log lines
-	@launchctl list | grep -i lantern || echo "(no lantern launchagents loaded — run 'make autostart-install')"
+autostart-status: ## Show currently-loaded PAL Runtime LaunchAgents + recent log lines
+	@launchctl list | grep -iE "dev\.(pal|lantern)" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
 	@echo ""
 	@for s in infra api dashboard whatsapp-bridge imessage-bridge; do \
 		echo "—— $$s last 3 lines ——"; \
@@ -161,11 +161,11 @@ build-ts: ## Build TypeScript packages
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
-	docker build -t lantern-control-plane -f services/control-plane/Dockerfile .
-	docker build -t lantern-gateway -f services/gateway/Dockerfile .
-	docker build -t lantern-model-router -f services/model-router/Dockerfile .
-	docker build -t lantern-workflow-engine -f services/workflow-engine/Dockerfile .
-	docker build -t lantern-web apps/web
+	docker build -t pal-control-plane -f services/control-plane/Dockerfile .
+	docker build -t pal-gateway -f services/gateway/Dockerfile .
+	docker build -t pal-model-router -f services/model-router/Dockerfile .
+	docker build -t pal-workflow-engine -f services/workflow-engine/Dockerfile .
+	docker build -t pal-web apps/web
 	
 # ---------- Proto ----------
 
@@ -256,7 +256,7 @@ test-db: ## Start dev Postgres if needed, then run Go tests that require a live 
 		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 		go test -race -count=1 ./...
 
-rls-validate: ## Validate RLS policies + handler cutover before flipping LANTERN_RLS_ENFORCE=1
+rls-validate: ## Validate RLS policies + handler cutover before flipping PAL_RLS_ENFORCE=1
 	@bash scripts/rls-validate.sh
 
 # ---------- Lint ----------
@@ -322,6 +322,9 @@ lima-measurement-e2e: ## Software measurement (ADR 0031) e2e inside the VM: repr
 lima-bench: ## Firecracker latency bench (cold boot, exec, pause, resume, fork, broker) inside the VM
 	@bash infra/lima/lima.sh bench
 
+lima-runtime: ## Long-running jailed Firecracker runtime-manager in the VM on :52054 for `dev` (foreground)
+	@bash infra/lima/lima.sh runtime
+
 lima-down: ## Stop the firecracker-dev VM
 	@bash infra/lima/lima.sh down
 
@@ -329,6 +332,9 @@ lima-clean: ## Drop the VM's cached cargo target + microVM image
 	@bash infra/lima/lima.sh clean
 
 # ---------- CI ----------
+
+slo-rules: ## Render + promtool check/test the SLO PrometheusRule (needs helm, promtool, PyYAML)
+	infra/monitoring/prometheus/check-slo-rules.sh
 
 ci-local: lint test audit ## Run the same checks as CI, locally
 	@echo "All CI checks passed."

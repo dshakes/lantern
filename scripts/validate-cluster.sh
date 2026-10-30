@@ -391,7 +391,7 @@ write_report() {
   fi
 
   {
-    printf '# Lantern cluster validation report\n\n'
+    printf '# PAL Runtime cluster validation report\n\n'
     printf 'Generated: %s  \n' "$ts"
     printf 'Context: `%s`  \n' "$KCTX"
     printf 'Script: `scripts/validate-cluster.sh`\n\n'
@@ -432,7 +432,7 @@ print_summary() {
 # ---------- Main ------------------------------------------------------------
 
 main() {
-  printf '%s%sLantern cluster validation harness%s %s— %s%s\n' \
+  printf '%s%sPAL Runtime cluster validation harness%s %s— %s%s\n' \
     "$BLD" "$CYN" "$RST" "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$RST"
   printf '  %sRepo: %s%s\n\n' "$DIM" "$REPO_ROOT" "$RST"
 

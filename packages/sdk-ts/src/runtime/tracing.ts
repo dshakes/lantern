@@ -1,8 +1,8 @@
 /**
- * Lightweight OTel-compatible tracing helpers for the Lantern SDK runtime.
+ * Lightweight OTel-compatible tracing helpers for the PAL SDK runtime.
  *
  * We ship a thin interface so the runtime modules create spans without
- * importing the full OTel SDK directly. When running inside a Lantern
+ * importing the full OTel SDK directly. When running inside a PAL
  * sandbox the sidecar provides a full OTel collector on localhost; the
  * spans created here flow through it. In dev mode, spans are no-ops.
  */
@@ -90,7 +90,7 @@ let _tracer: Tracer | undefined;
 export function getTracer(): Tracer {
   if (!_tracer) {
     if (palEnv("RUNTIME") === "true") {
-      _tracer = new OtelTracer("@lantern/sdk");
+      _tracer = new OtelTracer("@pal-runtime/sdk");
     } else {
       _tracer = new NoopTracer();
     }

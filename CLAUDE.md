@@ -969,6 +969,8 @@ expose through the ingress). The `lantern-instrumented-slos` alert group in
 CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`)
 restores the CronJob's real dump from in-cluster S3 and checks a marker table survived.
 
+**SLOs and burn-rate alerts (ADR 0041).** `monitoring.slos` in the Helm values is the single source for the 10 SLOs; the chart renders recording rules + multi-window burn alerts (`monitoring.alerts.enabled`, on in values-prod) and the `pal-slo` Grafana dashboard. model-router (`:9465`) and runtime-manager (`:9466`) expose `/metrics` only when `PAL_METRICS_ADDR` is set. Verify rule changes with `make slo-rules` (promtool check + unit tests). Runbooks: `docs/runbooks/slo-*.md`.
+
 ### Human takeover (W11a)
 
 Workflow `approval` nodes block on a `takeover_requests` row. Operators
@@ -1326,6 +1328,8 @@ CLI surface (`lantern run`, `lantern vm …` incl. `lantern vm pause|resume|fork
 (`/runtime`, `/runtime/{vm}` — Pause/Resume/Fork) consume these endpoints. SDKs: TS `client.runtime.{schedule,pause,resume,fork,execStream,listFiles,readFile,writeFile}` (`VmScheduleSpec` for typed schedule with `idleTimeoutSecs`),
 Python `client.runtime.{schedule,pause,resume,fork,exec_stream,list_files,read_file,write_file}` (pass `idle_timeout_secs` in spec dict), Go `ScheduleVM`/`PauseVM`/`ResumeVM`/`ForkVM`/`ListFiles`/`ReadFile`/`WriteFile` (`VMScheduleSpec.IdleTimeoutSecs`); CLI `lantern run --idle-timeout N`. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
+
+**Local sandbox detection (ADR 0045).** `dev` prints one `sandbox:` line and `doctor` a "Sandbox mode" check from `detectSandbox` (`packages/cli/internal/cli/sandbox_mode.go`): `firecracker` (Linux+KVM, manager `:50054`), `lima` (macOS, Lima `firecracker-dev` Running + `make lima-runtime` manager forwarded on `:52054`), `docker` (manager on `:50054` without KVM) or `stub` (says the fix). A mode is chosen only when its manager answers on TCP; non-stub starts/reuses the scheduler and sets `PAL_SCHEDULER_GRPC_ADDR` on the API.
 
 **Wiring env vars (set on control-plane + scheduler):**
 

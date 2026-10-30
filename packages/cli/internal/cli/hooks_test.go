@@ -1,6 +1,6 @@
 package cli
 
-// hooks_test.go — `lantern hooks …` against a mock control-plane mirroring
+// hooks_test.go — `pal hooks …` against a mock control-plane mirroring
 // the real /v1/agents/{name}/triggers and /v1/triggers/{id} shapes.
 
 import (

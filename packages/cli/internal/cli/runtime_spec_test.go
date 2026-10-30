@@ -1,6 +1,6 @@
 package cli
 
-// runtime_spec_test.go — `lantern init` output fed to `lantern run` used to
+// runtime_spec_test.go — `pal init` output fed to `pal run` used to
 // fail with a bare "400: invalid body" from the server, giving no hint that
 // the file was simply the wrong KIND of agent.yaml. The two shapes are
 // genuinely different things (control-plane agent vs microVM AgentSpec), so
@@ -25,7 +25,7 @@ func TestValidateRuntimeSpec_AcceptsCamelCase(t *testing.T) {
 	}
 }
 
-// `lantern init` writes `isolation: {class: trusted}`; the API wants a flat
+// `pal init` writes `isolation: {class: trusted}`; the API wants a flat
 // string. Both spellings should work.
 func TestValidateRuntimeSpec_FlattensNestedIsolation(t *testing.T) {
 	spec := map[string]any{
@@ -52,10 +52,10 @@ func TestValidateRuntimeSpec_DiagnosesControlPlaneManifest(t *testing.T) {
 
 	err := validateRuntimeSpec(raw, raw, "demo/agent.yaml")
 	if err == nil {
-		t.Fatal("a control-plane manifest must not be accepted by `lantern run`")
+		t.Fatal("a control-plane manifest must not be accepted by `pal run`")
 	}
 	msg := err.Error()
-	for _, want := range []string{"control-plane agent manifest", "image_digest", "lantern deploy", "demo"} {
+	for _, want := range []string{"control-plane agent manifest", "image_digest", "pal deploy", "demo"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error should mention %q; got:\n%s", want, msg)
 		}

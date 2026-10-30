@@ -175,7 +175,7 @@ function clip(t: string, n = 200): string {
 /** Owner self-chat + inbound contact lines from the WhatsApp bridge's
  *  wa-history.jsonl text (one JSON object per line: {ts, jid, isGroup,
  *  fromMe, senderName, text}). Self-chat = the owner's own JID (env
- *  LANTERN_WA_OWNER_JID); without it the self-chat slice is empty and the
+ *  PAL_WA_OWNER_JID); without it the self-chat slice is empty and the
  *  contact threads still count. Bot-emitted self-chat lines are skipped so
  *  the bot's own pings never become evidence. Groups excluded. */
 export function waHistoryEvidence(jsonl: string, opts: { sinceMs: number; ownerJid?: string; maxSelf?: number; maxThreads?: number }): EvidenceLines {

@@ -1,6 +1,10 @@
 ---
 title: Agents
 description: Create, configure, test, run and schedule agents on PAL Runtime.
+glance:
+  what: "An agent takes input, works through journaled steps (LLM calls, tool calls, API requests) and returns output."
+  why: "Every step is journaled, so a crashed run resumes where it stopped instead of starting over."
+  how: "Start at Creating an agent: use AI-assisted creation, manual creation or a template in the dashboard."
 sidebar:
   order: 1
 ---
@@ -109,7 +113,7 @@ Anything else returns **400**, including embedding, rerank and speech capabiliti
 
 The model that answered is shown on the run's `llm:main` step.
 
-See [Models](/lantern/docs/build/models/) for the full list of capabilities and how to configure providers.
+See [Models](/docs/build/models/) for the full list of capabilities and how to configure providers.
 
 ## Testing an agent
 
@@ -135,12 +139,12 @@ Agents can be triggered in several ways:
 - **CLI**: `lantern runs create --agent <name>`
 - **REST API**: `POST /v1/runs` (with `agentName` in the body)
 - **Schedule**: cron-based recurring runs
-- **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/lantern/docs/build/triggers/).
-- **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/lantern/docs/pal/surfaces/).
+- **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/docs/build/triggers/).
+- **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/docs/pal/surfaces/).
 
 ## Scheduling agents
 
-Run an agent on a cron expression. See [Scheduling](/lantern/docs/build/scheduling/).
+Run an agent on a cron expression. See [Scheduling](/docs/build/scheduling/).
 
 ## Workflow tool nodes
 
@@ -172,7 +176,7 @@ The first two mean no runtime-manager is reachable from the control plane (for e
 budget limit exceeded: tool "web_search" budget exhausted (50/50 today)
 ```
 
-See [Budgets](/lantern/docs/build/budgets/#per-tool-limits-in-workflows).
+See [Budgets](/docs/build/budgets/#per-tool-limits-in-workflows).
 
 ## Agent lifecycle
 
@@ -184,7 +188,7 @@ Each agent run goes through these states:
 4. **Failed**: a step failed after exhausting retries
 5. **Cancelled**: manually stopped by the user
 
-A run that crashes mid-step is picked up by the recovery sweep (every 30 s by default, `LANTERN_RECOVERY_INTERVAL`). Workflow steps that already completed are skipped, not re-run.
+A run that crashes mid-step is picked up by the recovery sweep (every 30 s by default, `PAL_RECOVERY_INTERVAL`). Workflow steps that already completed are skipped, not re-run.
 
 <Diagram name="crash-resume" />
 

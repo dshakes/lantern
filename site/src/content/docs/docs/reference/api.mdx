@@ -1,6 +1,10 @@
 ---
 title: API reference
 description: REST endpoints served by the PAL control plane, with request and response shapes.
+glance:
+  what: "The REST endpoints served by the PAL control plane on :8080, with request and response shapes for the core resources."
+  why: "The dashboard, CLI and SDKs all call this API, so this page is how you call it directly with curl."
+  how: "Create an API key, then send it as a Bearer token as described in Authentication."
 sidebar:
   order: 1
 ---
@@ -9,7 +13,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 The control plane serves REST on `:8080`. Every `/v1/` endpoint takes a Bearer token: a dashboard JWT or an API key.
 
-The dashboard, CLI and SDKs all call this API. Use this page to call it with `curl`. The [SDKs](/lantern/docs/reference/sdk/) wrap the same endpoints in typed methods. This page covers the core resources; the full route list is in `services/control-plane/cmd/server/main.go`.
+The dashboard, CLI and SDKs all call this API. Use this page to call it with `curl`. The [SDKs](/docs/reference/sdk/) wrap the same endpoints in typed methods. This page covers the core resources; the full route list is in `services/control-plane/cmd/server/main.go`.
 
 ## Authentication
 
@@ -19,7 +23,7 @@ Pass your API key in the `Authorization` header on every request:
 Authorization: Bearer hlx_live_your_api_key_here
 ```
 
-Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Scope enforcement is off by default; set `LANTERN_AUTHZ_ENFORCE=1` and a key missing the required scope gets `403`.
+Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Scope enforcement is off by default; set `PAL_AUTHZ_ENFORCE=1` and a key missing the required scope gets `403`.
 
 <Aside type="note" title="Self-hosted base URL">
 By default the control plane binds to `http://localhost:8080`. There is no managed cloud endpoint: you deploy the control plane yourself.
@@ -27,7 +31,7 @@ By default the control plane binds to `http://localhost:8080`. There is no manag
 
 ## Accounts
 
-Sign-up, login, email verification, password reset, data export and workspace deletion (`/auth/*` and `/v1/tenants/{id}`) are documented on [Accounts](/lantern/docs/build/accounts/).
+Sign-up, login, email verification, password reset, data export and workspace deletion (`/auth/*` and `/v1/tenants/{id}`) are documented on [Accounts](/docs/build/accounts/).
 
 ## Agents
 
@@ -347,12 +351,12 @@ DELETE /v1/schedules/{id}        — delete
 ```
 
 <Aside type="note" title="Timezone">
-`cronExpr` fires in the schedule's `timezone` (IANA, for example `America/New_York`). Omit for UTC. The deployment-wide default is `LANTERN_DEFAULT_TIMEZONE`; per-schedule timezone overrides it.
+`cronExpr` fires in the schedule's `timezone` (IANA, for example `America/New_York`). Omit for UTC. The deployment-wide default is `PAL_DEFAULT_TIMEZONE`; per-schedule timezone overrides it.
 </Aside>
 
 ## Triggers
 
-Inbound webhook triggers start a run of one agent when GitHub, Sentry, PagerDuty or a signed generic sender posts to a public URL. Setup, signatures and status codes are on [Webhook triggers](/lantern/docs/build/triggers/).
+Inbound webhook triggers start a run of one agent when GitHub, Sentry, PagerDuty or a signed generic sender posts to a public URL. Setup, signatures and status codes are on [Webhook triggers](/docs/build/triggers/).
 
 ```text
 POST   /v1/agents/{name}/triggers   — create {provider, secret?, inputTemplate?}; 201, secret shown once
@@ -400,5 +404,5 @@ Common HTTP status codes:
 - `500`: internal error.
 
 <Aside type="note">
-There are no rate-limit tiers or `X-RateLimit` headers. Spend and run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see [Budgets](/lantern/docs/build/budgets/).
+There are no rate-limit tiers or `X-RateLimit` headers. Spend and run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see [Budgets](/docs/build/budgets/).
 </Aside>

@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
@@ -48,7 +49,10 @@ func otelEnabled() bool {
 //	shutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane")
 //	if err != nil { /* handle */ }
 //	defer shutdown(ctx)
-func InitTracer(ctx context.Context, serviceName string) (shutdown func(context.Context) error, err error) {
+//
+// extra resource attributes (e.g. the region identity, ADR 0046) are added
+// to the resource alongside service.name.
+func InitTracer(ctx context.Context, serviceName string, extra ...attribute.KeyValue) (shutdown func(context.Context) error, err error) {
 	if !otelEnabled() {
 		// Install a no-op provider so otel.Tracer("...") calls in the codebase
 		// continue to compile and run without a provider configured.
@@ -60,6 +64,7 @@ func InitTracer(ctx context.Context, serviceName string) (shutdown func(context.
 		sdkresource.WithAttributes(
 			semconv.ServiceName(serviceName),
 		),
+		sdkresource.WithAttributes(extra...),
 		sdkresource.WithProcessRuntimeDescription(),
 		sdkresource.WithTelemetrySDK(),
 	)

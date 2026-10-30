@@ -4,7 +4,7 @@
 # What this proves
 # ----------------
 # Running the harness as PID 1 (rather than the workload directly) demonstrates
-# the full Lantern microVM contract:
+# the full PAL microVM contract:
 #
 #   1. The harness initialises /run/lantern, sets rlimits, and mounts a tmpfs
 #      so the workload sees a clean secret/socket directory on every boot.

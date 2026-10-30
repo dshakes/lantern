@@ -1,4 +1,4 @@
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal-runtime/sdk";
 import { z } from "zod";
 
 // --- Input / Output types ---
@@ -400,7 +400,7 @@ async function handleQuestion(
   ctx: any,
 ): Promise<string> {
   // Cost-aware routing: simple questions use chat-small, complex ones use reasoning-large
-  // This is a key Lantern differentiator — automatic big/small model selection
+  // This is a key PAL differentiator — automatic big/small model selection
   const capability = complexity === "simple" ? "chat-small" : "reasoning-large";
   const optimize = complexity === "simple" ? "cheap" : "best";
 

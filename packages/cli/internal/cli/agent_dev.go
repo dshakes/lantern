@@ -1,6 +1,6 @@
 package cli
 
-// agent_dev.go — `lantern agent dev <name>` build-harness inner loop.
+// agent_dev.go — `pal agent dev <name>` build-harness inner loop.
 //
 // Watches the local agent directory for file changes (1-second mtime polling,
 // no fsnotify dependency), then on each change:
@@ -59,7 +59,7 @@ change:
 
 Ctrl-C exits cleanly.
 
-Prerequisites: lantern dev (or make run-api) must be running on :8080.`,
+Prerequisites: pal dev (or make run-api) must be running on :8080.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -92,7 +92,7 @@ func runAgentDev(ctx context.Context, agentName string, opts agentDevOpts) error
 
 	client := internal.NewRESTClient(restURL, "", token)
 
-	fmt.Fprintf(os.Stderr, "%slantern agent dev%s — watching %s for %s\n",
+	fmt.Fprintf(os.Stderr, "%spal agent dev%s — watching %s for %s\n",
 		colorCyan, colorReset, opts.dir, agentName)
 	fmt.Fprintf(os.Stderr, "%s(Ctrl-C to exit)%s\n\n", colorDim, colorReset)
 
@@ -103,11 +103,11 @@ func runAgentDev(ctx context.Context, agentName string, opts agentDevOpts) error
 			var answer string
 			fmt.Scanln(&answer)
 			if answer != "" && strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				return fmt.Errorf("agent %q not found — run 'lantern agents create --name %s' first", agentName, agentName)
+				return fmt.Errorf("agent %q not found — run 'pal agents create --name %s' first", agentName, agentName)
 			}
 		}
 		if _, cerr := client.CreateAgentWithSystemPrompt(agentName,
-			"Dev agent created by `lantern agent dev`.",
+			"Dev agent created by `pal agent dev`.",
 			"You are a helpful AI assistant."); cerr != nil {
 			return fmt.Errorf("create agent %q: %w", agentName, cerr)
 		}

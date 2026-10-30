@@ -2,7 +2,7 @@
 //
 // Voice-clone (speaking to a recipient in the owner's OWN cloned voice)
 // is deepfake-class, so it is OFF by default and triple-gated:
-//   LANTERN_VOICE_CLONE=1 + LANTERN_ELEVENLABS_API_KEY + LANTERN_ELEVENLABS_VOICE_ID
+//   PAL_VOICE_CLONE=1 + PAL_ELEVENLABS_API_KEY + PAL_ELEVENLABS_VOICE_ID
 //
 // These lock in:
 //   (a) disabled/unconfigured → null (caller uses Polly <Say>);
@@ -27,7 +27,7 @@ const FULL_ENV = {
 
 // ── resolveVoiceCloneConfig / isVoiceCloneEnabled ──────────────────
 
-test("gate CLOSED when LANTERN_VOICE_CLONE unset, even with key+voice", () => {
+test("gate CLOSED when PAL_VOICE_CLONE unset, even with key+voice", () => {
   const env = {
     PAL_ELEVENLABS_API_KEY: "sk-secret-key",
     PAL_ELEVENLABS_VOICE_ID: "voice-abc",
@@ -60,7 +60,7 @@ test("gate OPEN only when all three present", () => {
   assert.equal(isVoiceCloneEnabled(FULL_ENV), true);
 });
 
-test("legacy LANTERN_ELEVENLABS_KEY alias is accepted", () => {
+test("legacy PAL_ELEVENLABS_KEY alias is accepted", () => {
   const env = {
     PAL_VOICE_CLONE: "1",
     PAL_ELEVENLABS_KEY: "sk-legacy",

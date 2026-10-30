@@ -9,20 +9,20 @@
 //   - GET /ws?tenantId=...   -- QR and message events
 //
 // Security posture (see docs/adr if you promote this to multi-user):
-//   1. Binds to 127.0.0.1 by default. Override with LANTERN_BRIDGE_BIND.
-//   2. Shared-token auth: if LANTERN_BRIDGE_TOKEN is set, every /session/*
+//   1. Binds to 127.0.0.1 by default. Override with PAL_BRIDGE_BIND.
+//   2. Shared-token auth: if PAL_BRIDGE_TOKEN is set, every /session/*
 //      request must present `Authorization: Bearer <token>` or a matching
 //      `token=` query param on the WebSocket.
 //   3. If bound to a non-loopback interface, a token is required at boot —
 //      we refuse to start otherwise rather than quietly run open.
-//   4. CORS: permissive by default for local dev; set LANTERN_BRIDGE_ORIGIN
+//   4. CORS: permissive by default for local dev; set PAL_BRIDGE_ORIGIN
 //      to a comma-separated allowlist for tighter posture.
 //
 // JIDs are validated at the boundary — see validateJid. The rest of the
 // service trusts the validated JID shape.
 
 // FIRST import: mirrors PAL_X <-> LANTERN_X before any module reads the env (ADR 0032).
-import "@lantern/bridge-core/env-compat";
+import "@pal/bridge-core/env-compat";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { createServer } from "http";
@@ -37,10 +37,10 @@ import pino from "pino";
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
 // Initialize bridge → control-plane auth. Lazily logs in on first use
-// (using LANTERN_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
+// (using PAL_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
 // for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
-import { initAuth, authEnabled } from "@lantern/bridge-core/auth";
-import { buildLabel } from "@lantern/bridge-core/build-info";
+import { initAuth, authEnabled } from "@pal/bridge-core/auth";
+import { buildLabel } from "@pal/bridge-core/build-info";
 initAuth(logger);
 
 // Resolve the bridge's package version once at boot so /diagnostics can
@@ -65,11 +65,11 @@ const BIND = process.env.PAL_BRIDGE_BIND || "127.0.0.1";
 const BRIDGE_TOKEN = process.env.PAL_BRIDGE_TOKEN || "";
 // Default to the local dashboard origin rather than "*" so a malicious web
 // page can't drive the loopback bridge API via the browser (DNS-rebinding /
-// CSRF). Override with LANTERN_BRIDGE_ORIGIN (comma-separated) or "*" to widen.
+// CSRF). Override with PAL_BRIDGE_ORIGIN (comma-separated) or "*" to widen.
 const CORS_ORIGIN = process.env.PAL_BRIDGE_ORIGIN || "http://localhost:3001";
 
-// Optional control-plane heartbeat. When both LANTERN_CONTROL_PLANE_URL
-// and LANTERN_BRIDGE_HEARTBEAT_TOKEN are set, the bridge POSTs the current
+// Optional control-plane heartbeat. When both PAL_CONTROL_PLANE_URL
+// and PAL_BRIDGE_HEARTBEAT_TOKEN are set, the bridge POSTs the current
 // pairing state for every active session to the control-plane every 30s.
 // This is what flips pairing-state from "lives only on the bridge box" to
 // "queryable from anywhere" — important for prod where the dashboard is
@@ -85,7 +85,7 @@ const isLoopback = BIND === "127.0.0.1" || BIND === "::1" || BIND === "localhost
 if (!isLoopback && !BRIDGE_TOKEN) {
   logger.fatal(
     { bind: BIND },
-    "refusing to start: bind is non-loopback but LANTERN_BRIDGE_TOKEN is not set"
+    "refusing to start: bind is non-loopback but PAL_BRIDGE_TOKEN is not set"
   );
   process.exit(1);
 }
@@ -115,7 +115,7 @@ logger.info(
   },
   authEnabled()
     ? "Agent auto-reply enabled (will log in to control-plane on first use)"
-    : "Agent auto-reply disabled (set LANTERN_BRIDGE_EMAIL + LANTERN_BRIDGE_PASSWORD, or LANTERN_API_TOKEN)"
+    : "Agent auto-reply disabled (set PAL_BRIDGE_EMAIL + PAL_BRIDGE_PASSWORD, or PAL_API_TOKEN)"
 );
 
 // sessions keyed by tenantId. One tenant = one Baileys socket.
@@ -126,7 +126,7 @@ const sessions = new Map<string, WhatsAppSession>();
 // ---------------------------------------------------------------------------
 
 // requireToken enforces shared-token auth on mutation endpoints. It is a
-// no-op when LANTERN_BRIDGE_TOKEN is unset (explicitly allowed only on
+// no-op when PAL_BRIDGE_TOKEN is unset (explicitly allowed only on
 // loopback binds; see the boot check above).
 function requireToken(req: Request, res: Response, next: NextFunction) {
   if (!BRIDGE_TOKEN) return next();
@@ -582,7 +582,7 @@ app.post("/session/:tenantId/contacts/search", async (req, res) => {
 // Symmetric to the iMessage bridge. Exposes the per-session PersonalDocs
 // instance so the control-plane's LLM tools (`search_personal_files`,
 // `read_personal_file`) can drive it. Path-restricted to
-// LANTERN_PERSONAL_DOCS_ROOTS, audit-logged inside PersonalDocs, and
+// PAL_PERSONAL_DOCS_ROOTS, audit-logged inside PersonalDocs, and
 // reachable only via loopback (BIND defaults to 127.0.0.1) + bridge
 // token (mounted under /session/* middleware).
 
@@ -593,7 +593,7 @@ app.post("/session/:tenantId/contacts/search", async (req, res) => {
 // reply is returned as JSON.
 //
 // Usage from iOS Shortcut:
-//   1. Tap "Hey Lantern" (or use Siri).
+//   1. Tap "Hey pal" (or use Siri).
 //   2. Shortcut prompts "What's up?" → records voice → transcribes
 //      via Apple's Dictation (or Whisper).
 //   3. Shortcut POSTs { text: "<transcript>" } to
@@ -605,7 +605,7 @@ app.post("/session/:tenantId/contacts/search", async (req, res) => {
 // Auth: requireToken middleware on /session/* — the shortcut must
 // send Authorization: Bearer <token>. For localhost-only usage
 // (bridge bound 127.0.0.1) token is optional; for tunneled access
-// (ngrok / Cloudflare) ALWAYS set LANTERN_BRIDGE_TOKEN.
+// (ngrok / Cloudflare) ALWAYS set PAL_BRIDGE_TOKEN.
 app.post("/session/:tenantId/jarvis/ask", async (req, res) => {
   const session = sessions.get(req.params.tenantId);
   if (!session) { res.status(400).json({ error: "session not started" }); return; }
@@ -999,14 +999,14 @@ function logConfigCapabilities(): void {
     ownerChannel:
       has(process.env.PAL_WA_OWNER_JID)
         ? "on (dedicated-bot mode)"
-        : "on (self-chat mode — set LANTERN_WA_OWNER_JID for dedicated-bot mode)",
+        : "on (self-chat mode — set PAL_WA_OWNER_JID for dedicated-bot mode)",
     personalDocs: has(process.env.PAL_PERSONAL_DOCS_ROOTS)
       ? "on"
-      : "default-roots (~/Documents:~/Desktop:iCloud — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
+      : "default-roots (~/Documents:~/Desktop:iCloud — set PAL_PERSONAL_DOCS_ROOTS to override)",
     ownerEmailMirror: has(process.env.PAL_OWNER_EMAIL) ? "on" : "off (optional)",
     controlPlaneAuth: explicitAuth
       ? "on"
-      : "on (dev default creds — set LANTERN_BRIDGE_EMAIL+PASSWORD or LANTERN_API_TOKEN for prod)",
+      : "on (dev default creds — set PAL_BRIDGE_EMAIL+PASSWORD or PAL_API_TOKEN for prod)",
     heartbeat:
       has(CONTROL_PLANE_URL) && has(HEARTBEAT_TOKEN)
         ? "on"

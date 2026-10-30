@@ -1,7 +1,7 @@
 // Encryption-at-rest for the bridges' PII JSONL state.
 //
 // episodes.jsonl / topic-index.jsonl / dislike-patterns.jsonl under
-// ~/.lantern/ hold raw conversation content (inbound text, bot replies,
+// ~/.pal/ hold raw conversation content (inbound text, bot replies,
 // topics). They were mode-0600 plaintext; this gives them the same
 // AES-256-GCM treatment the DB already uses for credentials.
 //
@@ -14,11 +14,11 @@
 // Nothing here throws: a tampered/garbage line decrypts to null and the
 // caller skips it, matching the modules' existing "log-and-skip" read loops.
 
+import { palStateDir } from "./state-dir.js";
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { appendFile, chmod, readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 
 const ALGO = "aes-256-gcm";
 const PREFIX = "enc1:";
@@ -26,13 +26,13 @@ const FILE_MODE = 0o600;
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
-const DEFAULT_STATE_DIR = join(homedir(), ".lantern");
+
 
 /**
  * Load the 32-byte state key from `<dir>/state.key`, creating it (mode 0600)
  * on first use. Stable across calls. Synchronous — callers memoize.
  */
-export function loadOrCreateStateKey(dir: string = DEFAULT_STATE_DIR): Buffer {
+export function loadOrCreateStateKey(dir: string = palStateDir()): Buffer {
   const keyPath = join(dir, "state.key");
   const existing = readKeyIfValid(keyPath);
   if (existing) return existing;

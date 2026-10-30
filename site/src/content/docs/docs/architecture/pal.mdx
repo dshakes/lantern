@@ -1,0 +1,44 @@
+---
+title: pal internals
+description: How pal ranks what needs you, holds risky replies, keeps your voice, remembers across channels and acts on its own.
+glance:
+  what: "The pipelines behind pal: the Brief, Holds, the voice line, cross-channel memory, the world model, nudges, skills and recaps."
+  why: "Each one is a gate or a grounded model call, never a canned string; seeing the order explains what pal will and won't do."
+  how: "Pick a diagram, play it, and switch scenarios to see the failure path."
+sidebar:
+  order: 7
+---
+
+import { BriefAttention, HoldsGates, VoicePipeline, CrossChannelMemory, WorldModel, ProactiveNudges, SkillForge, Recap } from '../../../../components/diagrams';
+
+## The Brief
+
+<BriefAttention client:visible />
+
+## Holds
+
+<HoldsGates client:visible />
+
+## The voice pipeline
+
+<VoicePipeline client:visible />
+
+## Cross-channel memory
+
+<CrossChannelMemory client:visible />
+
+## World model
+
+<WorldModel client:visible />
+
+## Proactive nudges
+
+<ProactiveNudges client:visible />
+
+## Skill forge
+
+<SkillForge client:visible />
+
+## Recap
+
+<Recap client:visible />

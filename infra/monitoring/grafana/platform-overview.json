@@ -1,7 +1,7 @@
 {
   "uid": "platform-overview",
-  "title": "Lantern — Platform Overview",
-  "tags": ["lantern", "ga"],
+  "title": "PAL Runtime — Platform Overview",
+  "tags": ["pal", "ga"],
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
@@ -68,7 +68,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"lantern-control-plane\"}",
+          "expr": "up{job=~\"(pal|lantern)-control-plane\"}",
           "refId": "A",
           "legendFormat": "control-plane",
           "datasource": {
@@ -121,7 +121,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"lantern-gateway\"}",
+          "expr": "up{job=~\"(pal|lantern)-gateway\"}",
           "refId": "A",
           "legendFormat": "gateway",
           "datasource": {
@@ -174,7 +174,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"lantern-model-router\"}",
+          "expr": "up{job=~\"(pal|lantern)-model-router\"}",
           "refId": "A",
           "legendFormat": "model-router",
           "datasource": {
@@ -227,7 +227,7 @@
       },
       "targets": [
         {
-          "expr": "probe_success{job=\"lantern-control-plane-readyz\"}",
+          "expr": "probe_success{job=~\"(pal|lantern)-control-plane-readyz\"}",
           "refId": "A",
           "legendFormat": "readyz",
           "datasource": {
@@ -331,7 +331,7 @@
       },
       "targets": [
         {
-          "expr": "max(lantern_schedules_overdue)",
+          "expr": "max(pal_schedules_overdue or lantern_schedules_overdue)",
           "refId": "A",
           "legendFormat": "overdue",
           "datasource": {
@@ -496,7 +496,7 @@
       },
       "targets": [
         {
-          "expr": "sum(pg_stat_database_numbackends{job=\"lantern-postgres-exporter\"}) / max(pg_settings_max_connections{job=\"lantern-postgres-exporter\"})",
+          "expr": "sum(pg_stat_database_numbackends{job=~\"(pal|lantern)-postgres-exporter\"}) / max(pg_settings_max_connections{job=~\"(pal|lantern)-postgres-exporter\"})",
           "refId": "A",
           "legendFormat": "connection saturation",
           "datasource": {

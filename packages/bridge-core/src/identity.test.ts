@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { resolveName, resolveHandlesByName, recordIdentityCorrection, detectIdentityCorrection } from "./identity.ts";
 
 function tmp(): string {
-  return join(mkdtempSync(join(tmpdir(), "lantern-id-")), "id.jsonl");
+  return join(mkdtempSync(join(tmpdir(), "pal-id-")), "id.jsonl");
 }
 
 test("no override → null (caller must NOT guess a name)", () => {

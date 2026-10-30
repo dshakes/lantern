@@ -1,4 +1,4 @@
-// Native-macOS action layer for Lantern's personal assistant.
+// Native-macOS action layer for pal's personal assistant.
 //
 // Wraps AppleScript so the bridge can create Calendar events, Notes,
 // and Mail drafts when the LLM asks for them via [CALENDAR:...] /
@@ -91,7 +91,7 @@ export class MacActions {
     // Reminders" — AppleScript reported success but the event was
     // invisible. Now we try in priority order:
     //   1. spec.calendarName (explicit request from LLM)
-    //   2. LANTERN_DEFAULT_CALENDAR env
+    //   2. PAL_DEFAULT_CALENDAR env
     //   3. Common defaults: "Home", "Calendar", "Personal", "Work"
     // and fall back to any writable calendar excluding the known
     // silent ones.

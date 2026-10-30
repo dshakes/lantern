@@ -1,11 +1,11 @@
-// Retry/backoff behavior for LanternClient's private fetch: 429/503 and
+// Retry/backoff behavior for PalClient's private fetch: 429/503 and
 // network errors are retried with bounded exponential backoff; 4xx
 // auth/validation errors are never retried.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LanternClient, LanternApiError } from "../src/client.js";
+import { PalClient, PalApiError } from "../src/client.js";
 
-describe("LanternClient retry", () => {
+describe("PalClient retry", () => {
   const realFetch = globalThis.fetch;
 
   afterEach(() => {
@@ -25,7 +25,7 @@ describe("LanternClient retry", () => {
       });
     });
 
-    const client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    const client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
     const agent = await client.agents.get("triage");
 
     expect(calls).toBe(2);
@@ -39,19 +39,19 @@ describe("LanternClient retry", () => {
       return new Response(JSON.stringify({ error: "bad request" }), { status: 400 });
     });
 
-    const client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
-    await expect(client.agents.get("triage")).rejects.toBeInstanceOf(LanternApiError);
+    const client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    await expect(client.agents.get("triage")).rejects.toBeInstanceOf(PalApiError);
     expect(calls).toBe(1);
   });
 
-  it("exhausts retries and surfaces the last error as LanternApiError", async () => {
+  it("exhausts retries and surfaces the last error as PalApiError", async () => {
     let calls = 0;
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       calls++;
       return new Response("still down", { status: 503 });
     });
 
-    const client = new LanternClient({ apiKey: "k", baseUrl: "http://localhost:9" });
+    const client = new PalClient({ apiKey: "k", baseUrl: "http://localhost:9" });
     await expect(client.agents.get("triage")).rejects.toMatchObject({ status: 503 });
     expect(calls).toBe(3); // default maxAttempts = 3
   });

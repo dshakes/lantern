@@ -4,7 +4,10 @@ Operational runbooks for running PAL in production. Each is written for an
 on-call operator: **symptom → what fired it → triage → remediation → escalate**,
 grounded in this repo's real service names, ports, and tables.
 
-Alert rules live in [`infra/monitoring/prometheus/alerts.yml`](../../infra/monitoring/prometheus/alerts.yml);
+Alert rules live in [`infra/monitoring/prometheus/alerts.yml`](../../infra/monitoring/prometheus/alerts.yml)
+(liveness and fixed-threshold alerts) and, for SLO error-budget burn, in the Helm chart
+(`infra/helm/pal/templates/monitoring/prometheusrule.yaml`, targets in `monitoring.slos`, policy in
+[ADR 0041](../adr/0041-slo-error-budgets.md));
 dashboards in [`infra/monitoring/grafana/`](../../infra/monitoring/grafana/).
 Each alert's `runbook:` annotation points at one of the files below.
 
@@ -13,16 +16,29 @@ Each alert's `runbook:` annotation points at one of the files below.
 | Runbook | Covers | Alerts |
 | ------- | ------ | ------ |
 | [control-plane-5xx.md](control-plane-5xx.md) | control-plane down / not-ready | `ControlPlaneDown`, `ControlPlaneNotReady` |
-| [run-failure-spike.md](run-failure-spike.md) | spike in failed runs | `RunFailureRateHigh` *(TODO metric)* |
+| [run-failure-spike.md](run-failure-spike.md) | spike in failed runs | `RunFailureRateHigh` |
 | [budget-402-surge.md](budget-402-surge.md) | budget / runtime-quota 402 surge | `SchedulerQuotaRejectionSurge`, `BudgetDenied402Surge` *(TODO)* |
 | [data-plane-disconnected.md](data-plane-disconnected.md) | data-plane heartbeat stale / no nodes | `DataPlaneHeartbeatStale`, `SchedulerNoRegisteredNodes` |
 | [db-saturation.md](db-saturation.md) | Postgres connection saturation | `PostgresConnectionSaturation`, `PostgresExporterDown` |
 | [scheduler-not-firing.md](scheduler-not-firing.md) | runtime placement + cron not firing | `SchedulerDown`, `SchedulerNoLeader`, `SchedulerScheduleErrorRateHigh`, `CronScheduleOverdue` |
 | [gateway-latency.md](gateway-latency.md) | gateway / model-router down or slow | `GatewayDown`, `ModelRouterDown`, `*P99LatencyHigh` *(TODO)* |
+| [slo-control-plane-api.md](slo-control-plane-api.md) | control-plane API availability + latency SLO burn | `SLOErrorBudgetBurn`, `SLOSignalAbsent` |
+| [slo-run-success.md](slo-run-success.md) | run success-rate SLO burn | `SLOErrorBudgetBurn` |
+| [slo-scheduling.md](slo-scheduling.md) | scheduling availability + latency SLO burn | `SLOErrorBudgetBurn` |
+| [slo-model-router-errors.md](slo-model-router-errors.md) | model-router error-rate SLO burn | `SLOErrorBudgetBurn` |
+| [slo-microvm-spawn.md](slo-microvm-spawn.md) | microVM spawn / restore SLO burn | `SLOErrorBudgetBurn` |
+| [slo-egress-broker.md](slo-egress-broker.md) | egress broker error SLO burn, deny spike | `SLOErrorBudgetBurn`, `EgressBrokerDenySpike` |
 | [db-restore.md](db-restore.md) | Postgres backup & restore (PITR / logical dump) | — *(DR procedure, not alert-driven)* |
 | [ga-staged-rollout.md](ga-staged-rollout.md) | enabling staged GA features (RLS enforce, model-router cutover, Kata, in-VM tools) | — *(enable/verify/rollback procedure)* |
 
 ## Metric reality — read this before trusting a dashboard
+
+> **Update (ADR 0041):** four services now expose Prometheus `/metrics`: control-plane `:9464`,
+> runtime-scheduler `:8085`, model-router `:9465` and runtime-manager `:9466` (the last two are opt-in via
+> `PAL_METRICS_ADDR`, set by the Helm chart). The SLO rules key off job labels `lantern-control-plane`,
+> `lantern-runtime-scheduler`, `lantern-model-router`, `lantern-runtime-manager` (override per SLO in
+> `monitoring.slos.<name>.job`). The gateway and workflow-engine still emit traces only. The paragraphs below
+> predate this and describe the original state.
 
 As of GA prep, only the **runtime-scheduler** emits Prometheus metrics
 (`:8085/metrics`, six metrics + Go/process collectors). DB-derived signals

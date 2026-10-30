@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the support-desk example to a running Lantern control-plane (stdlib only).
+"""Deploy the support-desk example to a running PAL control-plane (stdlib only).
 
     LANTERN_API_URL=http://localhost:8080 python3 setup.py
 

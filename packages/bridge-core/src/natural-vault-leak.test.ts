@@ -27,7 +27,7 @@ const STYLE = inferStyle(["hey", "sup", "lol yeah"]);
 const PROFILE_WITH_VAULT = `# Owner profile
 
 ## About me
-I'm Ada, a founder building Lantern.
+I'm Ada, a founder building PAL.
 
 ## Private
 - mother's maiden name: TestSurname
@@ -47,7 +47,7 @@ test("contact persona NEVER contains a vault secret (the key leak test)", () => 
   assert.ok(!prompt.includes("TestCity"), "vault birth city leaked into contact persona");
   assert.ok(!prompt.includes("TestSchool"), "vault first school leaked into contact persona");
   // And the legitimate prose still made it in.
-  assert.ok(prompt.includes("founder building Lantern"), "owner prose missing from persona");
+  assert.ok(prompt.includes("founder building PAL"), "owner prose missing from persona");
 });
 
 test("contact persona never contains the vault even if vault body is mistakenly read", () => {
