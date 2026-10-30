@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 pal_env = { path = "../../packages/pal-env-rs" }
+# Service-mesh mTLS to the control-plane (ADR 0043).
+pal_grpc_tls = { path = "../../packages/pal-grpc-tls-rs" }
 axum = { version = "0.8", features = ["macros"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }

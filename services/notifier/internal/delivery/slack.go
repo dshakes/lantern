@@ -79,7 +79,7 @@ func (s *SlackDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliver
 		Attachments: []slackAttachment{
 			{
 				Color:  "#6366f1",
-				Footer: fmt.Sprintf("Lantern | Run: %s", n.RunID),
+				Footer: fmt.Sprintf("PAL | Run: %s", n.RunID),
 			},
 		},
 	}

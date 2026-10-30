@@ -7,8 +7,8 @@ const pages = ['index.html', 'pal/index.html', 'runtime/index.html', 'compare/in
 const bad = [];
 for (const p of pages) {
   const html = readFileSync(dist + p, 'utf8');
-  for (const [, url] of html.matchAll(/(?:href|src|srcset)="(\/lantern\/[^"#?]*)/g)) {
-    const f = dist + url.replace(/^\/lantern\//, '');
+  for (const [, url] of html.matchAll(/(?:href|src|srcset)="(\/pal\/[^"#?]*)/g)) {
+    const f = dist + url.replace(/^\/pal\//, '');
     if (!(existsSync(f) && !f.endsWith('/')) && !existsSync(f + 'index.html') && !existsSync(f + '/index.html')) bad.push(`${p}: ${url}`);
   }
 }

@@ -3,7 +3,7 @@ package handlers
 // Personal-docs LLM tools. Built-in (always available — not gated by
 // connector_installs), proxied over loopback to the bridge process
 // running on the user's Mac. The bridge owns the actual file access:
-// path-restricted to LANTERN_PERSONAL_DOCS_ROOTS, audit-logged, and
+// path-restricted to PAL_PERSONAL_DOCS_ROOTS, audit-logged, and
 // reachable only via 127.0.0.1 + bridge token.
 //
 // Replaces the old regex pre-deciders in the bridge
@@ -377,9 +377,9 @@ func isPersonalDocsTool(name string) bool {
 }
 
 // executePersonalDocsTool proxies the call to the bridge running on the
-// user's Mac. Bridge URL configurable via LANTERN_PERSONAL_DOCS_BRIDGE_URL
+// user's Mac. Bridge URL configurable via PAL_PERSONAL_DOCS_BRIDGE_URL
 // (default http://127.0.0.1:3200, the iMessage bridge port). Auth via
-// LANTERN_IMESSAGE_BRIDGE_TOKEN / LANTERN_BRIDGE_TOKEN.
+// PAL_IMESSAGE_BRIDGE_TOKEN / PAL_BRIDGE_TOKEN.
 func executePersonalDocsTool(ctx context.Context, tenantID, name string, params map[string]any) (any, error) {
 	base := strings.TrimRight(os.Getenv("PAL_PERSONAL_DOCS_BRIDGE_URL"), "/")
 	if base == "" {

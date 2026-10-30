@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/packages/grpctls"
 	"github.com/dshakes/lantern/packages/palenv"
 	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
@@ -52,7 +53,7 @@ func main() {
 	zap.ReplaceGlobals(logger)
 
 	// --- Startup security guards ---
-	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Fail closed in production; warn and continue in dev (PAL_ENV unset).
 	runStartupGuards(logger)
 
 	// --- Region identity / standby mode (ADR 0046; all unset = single-region) ---
@@ -71,7 +72,7 @@ func main() {
 	defer cancel()
 
 	// --- OpenTelemetry ---
-	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / LANTERN_OTEL_ENABLED=1 are unset,
+	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / PAL_OTEL_ENABLED=1 are unset,
 	// so the default path is unchanged (no collector required, no spans exported).
 	otelShutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane", regionCfg.ResourceAttrs()...)
 	if err != nil {
@@ -110,13 +111,13 @@ func main() {
 	logger.Info("connected to postgres")
 
 	// Run migrations. seedDev=true injects the fixed dev tenant + admin account
-	// so `make dev` works without manual bootstrapping. In prod (LANTERN_ENV set)
+	// so `make dev` works without manual bootstrapping. In prod (PAL_ENV set)
 	// we skip those rows — a static-password seed is a backdoor.
 	// Kiosk mode (ADR 0029) never seeds the well-known dev admin: the instance is
 	// reachable by anonymous visitors.
 	seedDev := !handlers.IsProd() && !handlers.KioskEnabled()
 	if seedDev {
-		logger.Info("dev mode: seeding dev tenant + admin user (set LANTERN_ENV=prod to disable)")
+		logger.Info("dev mode: seeding dev tenant + admin user (set PAL_ENV=prod to disable)")
 	} else {
 		logger.Info("prod mode: skipping dev seed — provision an admin account manually")
 	}
@@ -153,10 +154,10 @@ func main() {
 
 	// --- RLS app pool (dual-pool, flag-gated, default no-op) ---
 	//
-	// When LANTERN_RLS_ENFORCE=1 AND LANTERN_APP_DB_PASSWORD is set, create a
-	// second pool that connects as 'lantern_app' (non-superuser, subject to RLS
-	// policies on 'agents' and 'runs'). Otherwise appPool aliases the privileged
-	// pool — zero behaviour change with no env vars set.
+	// When PAL_RLS_ENFORCE=1 AND PAL_APP_DB_PASSWORD is set (or in prod with
+	// only PAL_APP_DB_PASSWORD set), create a second pool that connects as
+	// 'lantern_app' (non-superuser, subject to RLS policies). Otherwise appPool
+	// aliases the privileged pool — zero behaviour change with no env vars set.
 	//
 	// The privileged pool (pool) remains the sole connection for:
 	//   - migrations (Migrate() must run as the schema owner)
@@ -167,11 +168,11 @@ func main() {
 	// Operator cutover steps (when ready to enforce RLS on all handler paths):
 	//   1. CREATE ROLE lantern_app LOGIN (done by Migrate).
 	//   2. ALTER ROLE lantern_app PASSWORD '<strong>';
-	//   3. Set LANTERN_APP_DB_PASSWORD=<strong> + LANTERN_RLS_ENFORCE=1.
+	//   3. Set PAL_APP_DB_PASSWORD=<strong> (prod: implicit; dev: also set PAL_RLS_ENFORCE=1).
 	//   4. Route remaining handler paths through srv.AppPool + db.WithTenantConn.
 	//      Add // TODO(rls-cutover) comments on each site still using Pool directly.
 	appPool := pool // alias — superuser path, RLS bypassed
-	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
+	if rlsEnforceActive(handlers.IsProd(), os.Getenv("PAL_RLS_ENFORCE"), os.Getenv("PAL_APP_DB_PASSWORD")) {
 		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd != "" {
 			appCfg, cfgErr := buildAppPoolConfig(cfg.DatabaseURL, appPwd)
@@ -191,7 +192,7 @@ func main() {
 			defer p.Close()
 			logger.Info("RLS enforcement active — AppPool connects as lantern_app")
 		} else {
-			logger.Warn("LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — AppPool aliased to privileged pool; RLS not enforced at runtime")
+			logger.Warn("PAL_RLS_ENFORCE=1 but PAL_APP_DB_PASSWORD is unset — AppPool aliased to privileged pool; RLS not enforced at runtime")
 		}
 	}
 
@@ -246,23 +247,34 @@ func main() {
 	// Service-token auth must run BEFORE tenant extraction: only callers holding
 	// the shared token may set a tenant_id. Empty token → pass-through (dev);
 	// runStartupGuards already refused to boot with an empty token in prod.
+	// mTLS (ADR 0043) is required ON TOP OF the token: with PAL_GRPC_TLS_* set,
+	// every non-exempt call needs a CA-verified, allowlisted client cert.
 	grpcServiceToken := os.Getenv("PAL_GRPC_SERVICE_TOKEN")
-	grpcOpts := []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(
-			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
-			regionCfg.UnaryReadOnly(),
-			middleware.UnaryTenantInterceptor(logger),
-			unaryTracingInterceptor(),
-		),
-		grpc.ChainStreamInterceptor(
-			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
-			regionCfg.StreamReadOnly(),
-			middleware.StreamTenantInterceptor(logger),
-			streamTracingInterceptor(),
-		),
+	tlsCreds, mtls := grpcTLSCreds(logger)
+	var unary []grpc.UnaryServerInterceptor
+	var stream []grpc.StreamServerInterceptor
+	if mtls {
+		unary = append(unary, middleware.UnaryRequireServiceCert(logger))
+		stream = append(stream, middleware.StreamRequireServiceCert(logger))
 	}
-	if creds := grpcTLSCreds(logger); creds != nil {
-		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+	unary = append(unary,
+		middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
+		regionCfg.UnaryReadOnly(),
+		middleware.UnaryTenantInterceptor(logger),
+		unaryTracingInterceptor(),
+	)
+	stream = append(stream,
+		middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
+		regionCfg.StreamReadOnly(),
+		middleware.StreamTenantInterceptor(logger),
+		streamTracingInterceptor(),
+	)
+	grpcOpts := []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(unary...),
+		grpc.ChainStreamInterceptor(stream...),
+	}
+	if tlsCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
 	}
 	grpcServer := grpc.NewServer(grpcOpts...)
 
@@ -312,13 +324,13 @@ func main() {
 	// --- REST handler (wraps gRPC handlers for direct HTTP access) ---
 	restHandler := handlers.NewRESTHandler(srv, authHandler, agentSvc, runSvc)
 
-	// SAFETY: warn loudly when LANTERN_USE_CLAUDE_CODE is set. The local CLI
+	// SAFETY: warn loudly when PAL_USE_CLAUDE_CODE is set. The local CLI
 	// is excluded from all user-facing paths (bridge replies, SMS, voice,
 	// sessions) unconditionally. It can only serve the developer-dashboard
 	// "Generate spec/code" path (Complete with empty AgentName). If you see
-	// this in prod logs, remove LANTERN_USE_CLAUDE_CODE from the deployment.
+	// this in prod logs, remove PAL_USE_CLAUDE_CODE from the deployment.
 	if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
-		logger.Warn("LANTERN_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
+		logger.Warn("PAL_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
 	}
 
 	// --- Domain-specific handlers ---
@@ -345,8 +357,8 @@ func main() {
 	crossAppHandler := handlers.NewCrossAppHandler(srv, authHandler)
 	crossAppHandler.SetLlmProxy(llmProxyHandler) // enables cross-app LLM composition
 
-	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF).
-	// Optionally wires RuntimeManager.ExecTool when LANTERN_RUNTIME_MANAGER_ADDR
+	// Browser-as-skill (PAL_BROWSER_SKILL=on, default OFF).
+	// Optionally wires RuntimeManager.ExecTool when PAL_RUNTIME_MANAGER_ADDR
 	// is set. Without the addr the handler is 503 for dispatch endpoints — honest
 	// increment 1 behavior until the runtime image ships (increment 2).
 	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
@@ -423,7 +435,7 @@ func main() {
 
 		// Check whether the lantern_app role exists. Best-effort: if the DB is
 		// unreachable the field reports false rather than erroring the health probe.
-		var lanternAppRoleExists bool
+		var appRoleExists bool
 		ctx, cancel := r.Context(), func() {}
 		if deadline, ok := r.Context().Deadline(); !ok || time.Until(deadline) > 2*time.Second {
 			ctx, cancel = context.WithTimeout(r.Context(), 2*time.Second)
@@ -431,13 +443,13 @@ func main() {
 		defer cancel()
 		_ = pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app')`,
-		).Scan(&lanternAppRoleExists)
+		).Scan(&appRoleExists)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w,
 			`{"status":"ok","llmMode":%q,"rlsEnforce":%v,"appPoolActive":%v,"lanternAppRoleExists":%v}`+"\n",
-			llmMode, rlsEnforce, appPoolActive, lanternAppRoleExists,
+			llmMode, rlsEnforce, appPoolActive, appRoleExists,
 		)
 	})
 	// /metrics is unauthenticated and its labels carry agent names, so it gets
@@ -482,26 +494,33 @@ func main() {
 	httpMux.HandleFunc("POST /auth/oauth/exchange", authHandler.OAuthExchange)
 
 	// REST API endpoints (direct, no gateway needed).
-	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)
+	httpMux.HandleFunc("GET /v1/agents", authHandler.WithScope(handlers.ScopeAgentsRead, restHandler.ListAgents))
 	httpMux.HandleFunc("POST /v1/agents", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.CreateAgent))
-	httpMux.HandleFunc("GET /v1/agents/{name}", restHandler.GetAgent)
+	httpMux.HandleFunc("GET /v1/agents/{name}", authHandler.WithScope(handlers.ScopeAgentsRead, restHandler.GetAgent))
 	httpMux.HandleFunc("PATCH /v1/agents/{name}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.UpdateAgent))
 	httpMux.HandleFunc("DELETE /v1/agents/{name}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.DeleteAgent))
-	httpMux.HandleFunc("GET /v1/runs", restHandler.ListRuns)
+	httpMux.HandleFunc("GET /v1/runs", authHandler.WithScope(handlers.ScopeRunsRead, restHandler.ListRuns))
 	httpMux.HandleFunc("POST /v1/runs", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CreateRun))
-	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
+	httpMux.HandleFunc("GET /v1/runs/{id}", authHandler.WithScope(handlers.ScopeRunsRead, restHandler.GetRun))
+	// SSE: in-handler auth accepts both Authorization header and ?token= query
+	// param for browser EventSource clients (which cannot set custom headers).
+	// WithScope cannot be used here — it calls validateRequest (header-only),
+	// which rejects EventSource connections before the handler can apply the
+	// query-param fallback. The handler enforces auth + tenant scoping itself.
 	httpMux.HandleFunc("GET /v1/runs/{id}/events", restHandler.GetRunEvents)
 	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.CancelRun))
 	httpMux.HandleFunc("DELETE /v1/runs/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, restHandler.DeleteRun))
 
 	// Connector endpoints.
 	httpMux.HandleFunc("POST /v1/connectors/install", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.InstallConnector))
-	httpMux.HandleFunc("GET /v1/connectors", connectorHandler.ListConnectors)
+	httpMux.HandleFunc("GET /v1/connectors", authHandler.WithScope(handlers.ScopeConnectorsRead, connectorHandler.ListConnectors))
 	httpMux.HandleFunc("GET /v1/connectors/oauth/callback", connectorHandler.OAuthCallback)
 	httpMux.HandleFunc("POST /v1/connectors/oauth/start", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.OAuthStart))
-	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", gmailHandler.GetMessages)
+	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", authHandler.WithScope(handlers.ScopeConnectorsRead, gmailHandler.GetMessages))
 	// Connector executor — registered before {id} to avoid path conflict.
-	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
+	// Both GET (?action= style) and POST can invoke write-capable connector
+	// actions (send message, create event, etc.) so both require connectors:write.
+	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorExecutor.Execute))
 	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", authHandler.WithScope(handlers.ScopeRunsExecute, connectorExecutor.Execute))
 	// Twilio webhooks — owner's private agent channel. NO auth
 	// middleware (Twilio HMAC verification is done inside the handler).
@@ -509,35 +528,35 @@ func main() {
 	httpMux.HandleFunc("POST /v1/messaging/twilio/inbound", messagingHandler.InboundWebhook)
 	httpMux.HandleFunc("POST /v1/voice/twilio/webhook", smsHandler.VoiceWebhook)
 	httpMux.HandleFunc("POST /v1/voice/twilio/turn", smsHandler.VoiceTurn)
-	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
+	httpMux.HandleFunc("GET /v1/connectors/{id}", authHandler.WithScope(handlers.ScopeConnectorsRead, connectorHandler.GetConnector))
 	httpMux.HandleFunc("POST /v1/connectors/{id}/test", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.TestConnector))
 	httpMux.HandleFunc("DELETE /v1/connectors/{id}", authHandler.WithScope(handlers.ScopeConnectorsWrite, connectorHandler.UninstallConnector))
 
 	// Surface endpoints.
 	httpMux.HandleFunc("POST /v1/surfaces", authHandler.WithScope(handlers.ScopeSettingsWrite, surfaceHandler.ConfigureSurface))
-	httpMux.HandleFunc("GET /v1/surfaces", surfaceHandler.ListSurfaces)
+	httpMux.HandleFunc("GET /v1/surfaces", authHandler.WithScope(handlers.ScopeSettingsRead, surfaceHandler.ListSurfaces))
 	// WhatsApp-specific routes are registered before the generic /{id}
 	// matchers so they're not shadowed.
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
-	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
+	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", authHandler.WithScope(handlers.ScopeSettingsRead, surfaceHandler.WhatsAppStatus))
 
 	// Personal device signals — iPhone Shortcuts POST app-context here
 	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
-	// JWT/tenant scope; gated by the LANTERN_SIGNAL_TOKEN shared secret
+	// JWT/tenant scope; gated by the PAL_SIGNAL_TOKEN shared secret
 	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
 	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
 	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).
-	httpMux.HandleFunc("GET /v1/whatsapp/vips", waPersonalHandler.ListVIPs)
+	httpMux.HandleFunc("GET /v1/whatsapp/vips", authHandler.WithScope(handlers.ScopeRead, waPersonalHandler.ListVIPs))
 	httpMux.HandleFunc("POST /v1/whatsapp/vips", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.AddVIP))
 	httpMux.HandleFunc("DELETE /v1/whatsapp/vips", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.RemoveVIP))
-	httpMux.HandleFunc("GET /v1/whatsapp/facts", waPersonalHandler.ListFacts)
+	httpMux.HandleFunc("GET /v1/whatsapp/facts", authHandler.WithScope(handlers.ScopeRead, waPersonalHandler.ListFacts))
 	httpMux.HandleFunc("POST /v1/whatsapp/facts", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.AddFact))
 	httpMux.HandleFunc("DELETE /v1/whatsapp/facts/{id}", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.DeleteFact))
 	httpMux.HandleFunc("POST /v1/whatsapp/drafts", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.CreateDraft))
-	httpMux.HandleFunc("GET /v1/whatsapp/drafts", waPersonalHandler.ListDrafts)
+	httpMux.HandleFunc("GET /v1/whatsapp/drafts", authHandler.WithScope(handlers.ScopeRead, waPersonalHandler.ListDrafts))
 	httpMux.HandleFunc("POST /v1/whatsapp/drafts/{id}/act", authHandler.WithScope(handlers.ScopeWrite, waPersonalHandler.ActOnDraft))
 
 	// Identity graph + unified cross-channel timeline (Jarvis memory).
@@ -545,20 +564,20 @@ func main() {
 	// /merge and /duplicates are registered before the bare GET /v1/people so
 	// the more-specific paths are not shadowed by a wildcard.
 	httpMux.HandleFunc("POST /v1/people/merge", authHandler.WithScope(handlers.ScopeWrite, identityHandler.MergePeople))
-	httpMux.HandleFunc("GET /v1/people/duplicates", identityHandler.ListDuplicates)
+	httpMux.HandleFunc("GET /v1/people/duplicates", authHandler.WithScope(handlers.ScopeRead, identityHandler.ListDuplicates))
 	httpMux.HandleFunc("POST /v1/people/relationship", authHandler.WithScope(handlers.ScopeWrite, identityHandler.StampRelationship))
-	httpMux.HandleFunc("GET /v1/people", identityHandler.ListPeople)
+	httpMux.HandleFunc("GET /v1/people", authHandler.WithScope(handlers.ScopeRead, identityHandler.ListPeople))
 	httpMux.HandleFunc("POST /v1/memory/events", authHandler.WithScope(handlers.ScopeWrite, identityHandler.IngestEvent))
-	httpMux.HandleFunc("GET /v1/memory/context", identityHandler.GetContext)
-	httpMux.HandleFunc("GET /v1/memory/search", identityHandler.SearchMemory)
+	httpMux.HandleFunc("GET /v1/memory/context", authHandler.WithScope(handlers.ScopeRead, identityHandler.GetContext))
+	httpMux.HandleFunc("GET /v1/memory/search", authHandler.WithScope(handlers.ScopeRead, identityHandler.SearchMemory))
 
 	// Proactive Jarvis — daily brief from the unified timeline.
-	httpMux.HandleFunc("GET /v1/jarvis/brief", jarvisHandler.Brief)
+	httpMux.HandleFunc("GET /v1/jarvis/brief", authHandler.WithScope(handlers.ScopeRead, jarvisHandler.Brief))
 	// Two-way brief: "done 1" / "snooze 2" resolved against the numbering
 	// persisted when that brief was sent.
 	// Mutating: closes/snoozes/dismisses a commitment, so it carries a write
 	// scope. Without WithScope a read-scoped API key could mutate under
-	// LANTERN_AUTHZ_ENFORCE=1.
+	// PAL_AUTHZ_ENFORCE=1.
 	httpMux.HandleFunc("POST /v1/jarvis/brief/act", authHandler.WithScope(handlers.ScopeRunsWrite, jarvisHandler.BriefAct))
 
 	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
@@ -566,7 +585,7 @@ func main() {
 	// them aloud. Authenticated via the standard bearer token.
 	httpMux.HandleFunc("POST /v1/shortcuts/pause", authHandler.WithScope(handlers.ScopeWrite, shortcutsHandler.Pause))
 	httpMux.HandleFunc("POST /v1/shortcuts/resume", authHandler.WithScope(handlers.ScopeWrite, shortcutsHandler.Resume))
-	httpMux.HandleFunc("GET /v1/shortcuts/status", shortcutsHandler.Status)
+	httpMux.HandleFunc("GET /v1/shortcuts/status", authHandler.WithScope(handlers.ScopeRead, shortcutsHandler.Status))
 	httpMux.HandleFunc("POST /v1/shortcuts/say", authHandler.WithScope(handlers.ScopeRunsExecute, shortcutsHandler.Say))
 	// Slack /lantern slash command. Signed via SLACK_SIGNING_SECRET when
 	// configured (dev accepts unverified + warns); ephemeral JSON replies.
@@ -578,7 +597,7 @@ func main() {
 
 	// API key endpoints.
 	httpMux.HandleFunc("POST /v1/api-keys", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.CreateApiKey))
-	httpMux.HandleFunc("GET /v1/api-keys", apiKeyHandler.ListApiKeys)
+	httpMux.HandleFunc("GET /v1/api-keys", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.ListApiKeys))
 	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", authHandler.WithScope(handlers.ScopeAdmin, apiKeyHandler.RevokeApiKey))
 
 	// LLM proxy / completions endpoint.
@@ -592,7 +611,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleStreamCompletion))
 	// Outbound TTS — OpenAI tts-1. Returns raw audio bytes (mp3 by
 	// default). Used by the bridges' voice-out path when the owner
-	// opts in via LANTERN_VOICE_OUT=on.
+	// opts in via PAL_VOICE_OUT=on.
 	httpMux.HandleFunc("POST /v1/voice/tts", authHandler.WithScope(handlers.ScopeRunsExecute, llmProxyHandler.HandleTTS))
 
 	// Agent AI generation endpoints.
@@ -605,20 +624,20 @@ func main() {
 
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
-	httpMux.HandleFunc("GET /v1/settings/llm-providers", llmProxyHandler.ListLlmProviders)
+	httpMux.HandleFunc("GET /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsRead, llmProxyHandler.ListLlmProviders))
 	httpMux.HandleFunc("POST /v1/settings/llm-providers/{provider}/test", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.TestLlmProvider))
 
 	// Deployment endpoints.
 	httpMux.HandleFunc("POST /v1/deployments", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.CreateDeployment))
-	httpMux.HandleFunc("GET /v1/deployments", deploymentHandler.ListDeployments)
-	httpMux.HandleFunc("GET /v1/deployments/{id}", deploymentHandler.GetDeployment)
+	httpMux.HandleFunc("GET /v1/deployments", authHandler.WithScope(handlers.ScopeAgentsRead, deploymentHandler.ListDeployments))
+	httpMux.HandleFunc("GET /v1/deployments/{id}", authHandler.WithScope(handlers.ScopeAgentsRead, deploymentHandler.GetDeployment))
 	httpMux.HandleFunc("POST /v1/data-planes", authHandler.WithScope(handlers.ScopeAdmin, deploymentHandler.RegisterDataPlane))
-	httpMux.HandleFunc("GET /v1/data-planes", deploymentHandler.ListDataPlanes)
+	httpMux.HandleFunc("GET /v1/data-planes", authHandler.WithScope(handlers.ScopeAdmin, deploymentHandler.ListDataPlanes))
 	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", authHandler.WithScope(handlers.ScopeAdmin, deploymentHandler.RemoveDataPlane))
 
 	// Cloud deploy endpoints (Gap 5: Managed Hosting).
 	httpMux.HandleFunc("POST /v1/agents/{name}/deploy", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.DeployAgent))
-	httpMux.HandleFunc("GET /v1/agents/{name}/deploy", deploymentHandler.GetCloudDeployment)
+	httpMux.HandleFunc("GET /v1/agents/{name}/deploy", authHandler.WithScope(handlers.ScopeAgentsRead, deploymentHandler.GetCloudDeployment))
 	httpMux.HandleFunc("POST /v1/agents/{name}/deploy/stop", authHandler.WithScope(handlers.ScopeAgentsWrite, deploymentHandler.StopDeployment))
 
 	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
@@ -628,28 +647,29 @@ func main() {
 
 	// Workflow persistence endpoints (visual editor).
 	httpMux.HandleFunc("PUT /v1/agents/{name}/workflow", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.SaveWorkflow))
-	httpMux.HandleFunc("GET /v1/agents/{name}/workflow", restHandler.GetWorkflow)
+	httpMux.HandleFunc("GET /v1/agents/{name}/workflow", authHandler.WithScope(handlers.ScopeAgentsRead, restHandler.GetWorkflow))
 
 	// Schedule endpoints.
 	httpMux.HandleFunc("POST /v1/schedules", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.CreateSchedule))
-	httpMux.HandleFunc("GET /v1/schedules", restHandler.ListSchedules)
+	httpMux.HandleFunc("GET /v1/schedules", authHandler.WithScope(handlers.ScopeAgentsRead, restHandler.ListSchedules))
 	httpMux.HandleFunc("PUT /v1/schedules/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.UpdateSchedule))
 	httpMux.HandleFunc("DELETE /v1/schedules/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, restHandler.DeleteSchedule))
 
 	// Session endpoints (interactive, long-lived agent sessions).
 	httpMux.HandleFunc("POST /v1/sessions", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.CreateSession))
-	httpMux.HandleFunc("GET /v1/sessions", sessionHandler.ListSessions)
+	httpMux.HandleFunc("GET /v1/sessions", authHandler.WithScope(handlers.ScopeRunsRead, sessionHandler.ListSessions))
 	httpMux.HandleFunc("POST /v1/sessions/{id}/messages", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.SendMessage))
+	// SSE: in-handler auth (see run_events note above for the reason).
 	httpMux.HandleFunc("GET /v1/sessions/{id}/events", sessionHandler.GetEvents)
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.StopSession))
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsExecute, sessionHandler.DeleteSession))
-	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+	httpMux.HandleFunc("GET /v1/sessions/{id}", authHandler.WithScope(handlers.ScopeRunsRead, sessionHandler.GetSession))
 	handlers.RegisterSupportDeskRoutes(httpMux, srv, authHandler, llmProxyHandler, sessionHandler) // knowledge base + session handoff (W2-X1)
 
 	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
 	httpMux.HandleFunc("POST /v1/life-events", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.CreateLifeEvent))
-	httpMux.HandleFunc("GET /v1/life-events", lifeEventHandler.ListLifeEvents)
-	httpMux.HandleFunc("GET /v1/life-events/prefs", lifeEventHandler.ListLifeEventPrefs)
+	httpMux.HandleFunc("GET /v1/life-events", authHandler.WithScope(handlers.ScopeRead, lifeEventHandler.ListLifeEvents))
+	httpMux.HandleFunc("GET /v1/life-events/prefs", authHandler.WithScope(handlers.ScopeRead, lifeEventHandler.ListLifeEventPrefs))
 	httpMux.HandleFunc("PUT /v1/life-events/prefs", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UpsertLifeEventPref))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
@@ -659,21 +679,21 @@ func main() {
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))
-	httpMux.HandleFunc("GET /v1/commitments", commitmentHandler.ListCommitments)
-	httpMux.HandleFunc("GET /v1/commitments/{id}", commitmentHandler.GetCommitment)
+	httpMux.HandleFunc("GET /v1/commitments", authHandler.WithScope(handlers.ScopeRead, commitmentHandler.ListCommitments))
+	httpMux.HandleFunc("GET /v1/commitments/{id}", authHandler.WithScope(handlers.ScopeRead, commitmentHandler.GetCommitment))
 	httpMux.HandleFunc("PUT /v1/commitments/{id}", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.UpdateCommitment))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/snooze", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.SnoozeCommitment))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/done", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.DoneCommitment))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.DismissCommitment))
 	// Stage 2: LLM-powered research + cited action plan.
 	httpMux.HandleFunc("POST /v1/commitments/{id}/research", authHandler.WithScope(handlers.ScopeRunsExecute, commitmentHandler.ResearchCommitment))
-	// Cross-app workflows (LANTERN_CROSS_APP=on, default OFF).
+	// Cross-app workflows (PAL_CROSS_APP=on, default OFF).
 	// Propose: autonomous read + LLM compose → stored proposal (no side-effect).
 	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
 	httpMux.HandleFunc("POST /v1/cross-app/propose", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.Propose))
 	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", authHandler.WithScope(handlers.ScopeRunsExecute, crossAppHandler.ExecuteAction))
 
-	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF — ADR 0017).
+	// Browser-as-skill (PAL_BROWSER_SKILL=on, default OFF — ADR 0017).
 	// Read: autonomous web read; dispatch 503 in increment 1 (no runtime yet).
 	// Propose: owner-confirm browser_act stored as a commitment (no execution).
 	// Execute: SOLE browser write path; owner confirm required.
@@ -683,13 +703,13 @@ func main() {
 
 	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
 	httpMux.HandleFunc("POST /v1/domain-records", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.CreateDomainRecord))
-	httpMux.HandleFunc("GET /v1/domain-records", domainRecordHandler.ListDomainRecords)
+	httpMux.HandleFunc("GET /v1/domain-records", authHandler.WithScope(handlers.ScopeRead, domainRecordHandler.ListDomainRecords))
 	httpMux.HandleFunc("PUT /v1/domain-records/{id}", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.UpdateDomainRecord))
 	httpMux.HandleFunc("DELETE /v1/domain-records/{id}", authHandler.WithScope(handlers.ScopeWrite, domainRecordHandler.DeleteDomainRecord))
-	httpMux.HandleFunc("GET /v1/domains/{domain}/digest", domainRecordHandler.DomainDigest)
+	httpMux.HandleFunc("GET /v1/domains/{domain}/digest", authHandler.WithScope(handlers.ScopeRead, domainRecordHandler.DomainDigest))
 
 	// AI Radar feed (news_radar loop agent).
-	httpMux.HandleFunc("GET /v1/news", newsHandler.ListNews)
+	httpMux.HandleFunc("GET /v1/news", authHandler.WithScope(handlers.ScopeRead, newsHandler.ListNews))
 	httpMux.HandleFunc("POST /v1/news/ask", authHandler.WithScope(handlers.ScopeRunsExecute, newsHandler.AskNews))
 
 	// Loop-agent platform primitive (Stage 3).
@@ -700,15 +720,15 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/forecast", authHandler.WithScope(handlers.ScopeRunsExecute, forecastHandler.Forecast))
 
 	// Accurate spend + run-health aggregation (agent_usage_daily + runs).
-	httpMux.HandleFunc("GET /v1/usage", usageHandler.GetUsage)
+	httpMux.HandleFunc("GET /v1/usage", authHandler.WithScope(handlers.ScopeBudgetsRead, usageHandler.GetUsage))
 
 	// Policy-as-code budgets (per-agent cost + per-tool rate limits).
 	httpMux.HandleFunc("PUT /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.UpsertBudget))
-	httpMux.HandleFunc("GET /v1/agents/{name}/budget", budgetHandler.GetBudget)
+	httpMux.HandleFunc("GET /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsRead, budgetHandler.GetBudget))
 	httpMux.HandleFunc("DELETE /v1/agents/{name}/budget", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.DeleteBudget))
-	httpMux.HandleFunc("GET /v1/budgets", budgetHandler.ListBudgets)
+	httpMux.HandleFunc("GET /v1/budgets", authHandler.WithScope(handlers.ScopeBudgetsRead, budgetHandler.ListBudgets))
 	httpMux.HandleFunc("PUT /v1/budgets/tenant", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.UpsertTenantBudget))
-	httpMux.HandleFunc("GET /v1/budgets/tenant", budgetHandler.GetTenantBudget)
+	httpMux.HandleFunc("GET /v1/budgets/tenant", authHandler.WithScope(handlers.ScopeBudgetsRead, budgetHandler.GetTenantBudget))
 	httpMux.HandleFunc("DELETE /v1/budgets/tenant", authHandler.WithScope(handlers.ScopeBudgetsWrite, budgetHandler.DeleteTenantBudget))
 
 	// Marketplace — publish, fork, star agents.
@@ -721,14 +741,14 @@ func main() {
 	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", authHandler.WithScope(handlers.ScopeWrite, marketplaceHandler.Star))
 	// W11c: cross-tenant invocations with HMAC-signed settlement.
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", authHandler.WithScope(handlers.ScopeRunsExecute, marketplaceHandler.Invoke))
-	httpMux.HandleFunc("GET /v1/marketplace/invocations", marketplaceHandler.ListInvocations)
+	httpMux.HandleFunc("GET /v1/marketplace/invocations", authHandler.WithScope(handlers.ScopeRunsRead, marketplaceHandler.ListInvocations))
 
 	// W11a: takeover handshake. Workflow approval nodes pause on these,
 	// the dashboard surfaces them, an operator grants → optionally
 	// exchanges WebRTC SDP → releases when done.
 	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler, restHandler)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Request))
-	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
+	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", authHandler.WithScope(handlers.ScopeRunsRead, takeoverHandler.ListForRun))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Grant))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/deny", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Deny))
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", authHandler.WithScope(handlers.ScopeRunsWrite, takeoverHandler.Answer))
@@ -738,58 +758,61 @@ func main() {
 	// curated use cases (Inbox Concierge, Morning Brief). Borrows the
 	// REST handler for agentSvc + pool access.
 	templateHandler := handlers.NewTemplateHandler(restHandler, authHandler)
-	httpMux.HandleFunc("GET /v1/agents/templates", templateHandler.ListTemplates)
+	httpMux.HandleFunc("GET /v1/agents/templates", authHandler.WithScope(handlers.ScopeRead, templateHandler.ListTemplates))
 	httpMux.HandleFunc("POST /v1/agents/from-template", authHandler.WithScope(handlers.ScopeAgentsWrite, templateHandler.Apply))
-	httpMux.HandleFunc("GET /v1/agents/{name}/setup", templateHandler.SetupStatus)
+	httpMux.HandleFunc("GET /v1/agents/{name}/setup", authHandler.WithScope(handlers.ScopeRead, templateHandler.SetupStatus))
 
 	// W11d: voice channel. Phone-number management + provider webhooks
 	// (Twilio today; LiveKit / Vapi pluggable via VoiceProvider).
 	voiceHandler := handlers.NewVoiceHandler(srv, authHandler)
 	httpMux.HandleFunc("POST /v1/voice/numbers", authHandler.WithScope(handlers.ScopeSettingsWrite, voiceHandler.CreateNumber))
-	httpMux.HandleFunc("GET /v1/voice/numbers", voiceHandler.ListNumbers)
+	httpMux.HandleFunc("GET /v1/voice/numbers", authHandler.WithScope(handlers.ScopeSettingsRead, voiceHandler.ListNumbers))
 	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, voiceHandler.DeleteNumber))
-	httpMux.HandleFunc("GET /v1/voice/calls", voiceHandler.ListCalls)
+	httpMux.HandleFunc("GET /v1/voice/calls", authHandler.WithScope(handlers.ScopeRunsRead, voiceHandler.ListCalls))
 	httpMux.HandleFunc("POST /v1/voice/calls/status/{provider}", voiceHandler.CallStatus)
 	httpMux.HandleFunc("POST /v1/voice/token", authHandler.WithScope(handlers.ScopeRunsExecute, voiceHandler.MintToken))
 	httpMux.HandleFunc("POST /v1/voice/webhook/{provider}", voiceHandler.Webhook)
 
 	// MCP server registry + per-agent attachments.
+	// MCP server catalog is a public resource (no tenant data) — no auth required.
 	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)
 	httpMux.HandleFunc("GET /v1/mcp/servers/{slug}", mcpHandler.GetServer)
 	httpMux.HandleFunc("POST /v1/agents/{name}/mcp-servers", authHandler.WithScope(handlers.ScopeAgentsWrite, mcpHandler.AttachToAgent))
-	httpMux.HandleFunc("GET /v1/agents/{name}/mcp-servers", mcpHandler.ListAttachments)
+	httpMux.HandleFunc("GET /v1/agents/{name}/mcp-servers", authHandler.WithScope(handlers.ScopeAgentsRead, mcpHandler.ListAttachments))
 	httpMux.HandleFunc("DELETE /v1/agents/{name}/mcp-servers/{slug}", authHandler.WithScope(handlers.ScopeAgentsWrite, mcpHandler.DetachFromAgent))
 
 	// Eval suites + runs + baselines (foundation for lantern test --against=last-green).
 	httpMux.HandleFunc("POST /v1/eval-suites", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.UpsertSuite))
-	httpMux.HandleFunc("GET /v1/eval-suites", evalHandler.ListSuites)
-	httpMux.HandleFunc("GET /v1/eval-suites/{id}", evalHandler.GetSuite)
+	httpMux.HandleFunc("GET /v1/eval-suites", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.ListSuites))
+	httpMux.HandleFunc("GET /v1/eval-suites/{id}", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetSuite))
 	httpMux.HandleFunc("DELETE /v1/eval-suites/{id}", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.DeleteSuite))
 	httpMux.HandleFunc("POST /v1/eval-runs", authHandler.WithScope(handlers.ScopeRunsWrite, evalHandler.RecordRun))
-	httpMux.HandleFunc("GET /v1/eval-runs", evalHandler.ListRuns)
-	httpMux.HandleFunc("GET /v1/eval-runs/{id}", evalHandler.GetRun)
+	httpMux.HandleFunc("GET /v1/eval-runs", authHandler.WithScope(handlers.ScopeRunsRead, evalHandler.ListRuns))
+	httpMux.HandleFunc("GET /v1/eval-runs/{id}", authHandler.WithScope(handlers.ScopeRunsRead, evalHandler.GetRun))
 	httpMux.HandleFunc("POST /v1/eval-baselines", authHandler.WithScope(handlers.ScopeAgentsWrite, evalHandler.SetBaseline))
-	httpMux.HandleFunc("GET /v1/eval-baselines", evalHandler.GetBaseline)
+	httpMux.HandleFunc("GET /v1/eval-baselines", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetBaseline))
 	// Eval observability (read-only): failure clustering + score/pass-rate trends.
-	httpMux.HandleFunc("GET /v1/eval-observability/failures", evalHandler.GetFailureClusters)
-	httpMux.HandleFunc("GET /v1/eval-observability/trends", evalHandler.GetTrends)
+	httpMux.HandleFunc("GET /v1/eval-observability/failures", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetFailureClusters))
+	httpMux.HandleFunc("GET /v1/eval-observability/trends", authHandler.WithScope(handlers.ScopeAgentsRead, evalHandler.GetTrends))
 
 	// A/B experiments with auto-promotion.
 	httpMux.HandleFunc("POST /v1/experiments", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Create))
-	httpMux.HandleFunc("GET /v1/experiments", experimentHandler.List)
-	httpMux.HandleFunc("GET /v1/experiments/{id}", experimentHandler.Get)
+	httpMux.HandleFunc("GET /v1/experiments", authHandler.WithScope(handlers.ScopeAgentsRead, experimentHandler.List))
+	httpMux.HandleFunc("GET /v1/experiments/{id}", authHandler.WithScope(handlers.ScopeAgentsRead, experimentHandler.Get))
 	httpMux.HandleFunc("POST /v1/experiments/{id}/record", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.RecordOutcome))
 	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", authHandler.WithScope(handlers.ScopeAgentsWrite, experimentHandler.Conclude))
 
 	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
 	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", authHandler.WithScope(handlers.ScopeRunsWrite, receiptHandler.IssueReceipt))
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
-	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-receipts", receiptHandler.WellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown) // legacy path for external verifiers (ADR 0032)
 
 	// Agent-instance identity public-key discovery. No auth (public endpoint).
 	// Ed25519 mode: returns {algorithm, publicKey, keyFingerprint}.
 	// HS256 mode (default): returns {algorithm:"HS256"} only — no secret emitted.
-	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/pal-agent-identity", handlers.AgentIdentityWellKnown)
+	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown) // legacy path (ADR 0032)
 
 	// Log the active agent-identity signing mode once at startup.
 	{
@@ -809,20 +832,20 @@ func main() {
 
 	// RLHF feedback loop — per-run thumbs + preferred-output capture.
 	httpMux.HandleFunc("POST /v1/runs/{id}/feedback", authHandler.WithScope(handlers.ScopeRunsWrite, feedbackHandler.SubmitFeedback))
-	httpMux.HandleFunc("GET /v1/runs/{id}/feedback", feedbackHandler.ListFeedback)
-	httpMux.HandleFunc("GET /v1/agents/{name}/feedback", feedbackHandler.AgentSummary)
+	httpMux.HandleFunc("GET /v1/runs/{id}/feedback", authHandler.WithScope(handlers.ScopeRunsRead, feedbackHandler.ListFeedback))
+	httpMux.HandleFunc("GET /v1/agents/{name}/feedback", authHandler.WithScope(handlers.ScopeAgentsRead, feedbackHandler.AgentSummary))
 
 	// Rehearsals — replay past failures against a candidate agent version.
 	httpMux.HandleFunc("POST /v1/runs/rehearse", authHandler.WithScope(handlers.ScopeRunsWrite, rehearseHandler.Rehearse))
 
-	// Immigration Deadline Sentinel (LANTERN_IMMIGRATION_SENTINEL, default OFF).
-	httpMux.HandleFunc("GET /v1/immigration/deadlines", immigrationHandler.List)
+	// Immigration Deadline Sentinel (PAL_IMMIGRATION_SENTINEL, default OFF).
+	httpMux.HandleFunc("GET /v1/immigration/deadlines", authHandler.WithScope(handlers.ScopeRead, immigrationHandler.List))
 	httpMux.HandleFunc("POST /v1/immigration/scan", authHandler.WithScope(handlers.ScopeRunsExecute, immigrationHandler.Scan))
 
-	// Memory distillation (LANTERN_MEMORY_DISTILL, default OFF).
+	// Memory distillation (PAL_MEMORY_DISTILL, default OFF).
 	// LLM-distilled long-term facts/preferences extracted from session
 	// transcripts + timeline events.  Loop started below.
-	httpMux.HandleFunc("GET /v1/memory/distillates", memoryDistillHandler.List)
+	httpMux.HandleFunc("GET /v1/memory/distillates", authHandler.WithScope(handlers.ScopeRead, memoryDistillHandler.List))
 	httpMux.HandleFunc("POST /v1/memory/distill", authHandler.WithScope(handlers.ScopeRunsExecute, memoryDistillHandler.Trigger))
 
 	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
@@ -832,7 +855,7 @@ func main() {
 		logger.Fatal("account lifecycle (ADR 0027)", zap.Error(err))
 	}
 
-	// Kiosk demo mode (ADR 0029): route + expiry sweep exist only when LANTERN_KIOSK=1.
+	// Kiosk demo mode (ADR 0029): route + expiry sweep exist only when PAL_KIOSK=1.
 	if handlers.KioskEnabled() {
 		kioskHandler := handlers.NewKioskHandler(srv, authHandler)
 		httpMux.HandleFunc("POST /v1/kiosk/session", kioskHandler.CreateSession)
@@ -840,14 +863,15 @@ func main() {
 	}
 
 	// System health snapshot — peer-service TCP reachability for the dashboard.
-	httpMux.HandleFunc("GET /v1/system/health", healthSweeper.ServeHealth)
+	// Requires auth: the response reveals internal service topology.
+	httpMux.HandleFunc("GET /v1/system/health", authHandler.WithScope(handlers.ScopeRead, healthSweeper.ServeHealth))
 
 	// Errand-runner v1: owner-confirmed outbound AI calls (FCC/TCPA compliant).
-	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
+	// Gated by PAL_ERRAND=1/true/on; all endpoints 404 when off (default).
 	// confirm-and-call is the SOLE dial path and requires owner/admin role.
 	errandHandler := handlers.NewErrandHandler(srv, authHandler, llmProxyHandler)
 	httpMux.HandleFunc("POST /v1/errands", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.Propose))
-	httpMux.HandleFunc("GET /v1/errands", errandHandler.List)
+	httpMux.HandleFunc("GET /v1/errands", authHandler.WithScope(handlers.ScopeRunsRead, errandHandler.List))
 	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", authHandler.WithScope(handlers.ScopeRunsExecute, errandHandler.ConfirmAndCall))
 	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", authHandler.WithScope(handlers.ScopeWrite, errandHandler.OptOut))
 	// ErrandTurn: Twilio <Gather> callback — unauthenticated by JWT,
@@ -881,18 +905,18 @@ func main() {
 
 	// Egress DLP policy CRUD — ADR 0030.
 	dlpPolicyHandler := handlers.NewDLPPolicyHandler(srv, authHandler)
-	httpMux.HandleFunc("GET /v1/egress/dlp-policy", dlpPolicyHandler.GetPolicy)
+	httpMux.HandleFunc("GET /v1/egress/dlp-policy", authHandler.WithScope(handlers.ScopeSettingsRead, dlpPolicyHandler.GetPolicy))
 	httpMux.HandleFunc("PUT /v1/egress/dlp-policy", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.PutPolicy))
 	httpMux.HandleFunc("POST /v1/egress/dlp-policy/rules", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.UpsertRule))
 	httpMux.HandleFunc("DELETE /v1/egress/dlp-policy/rules/{ruleId}", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.DeleteRule))
 	// Secret relay — service-to-service endpoint for the runtime-manager to
-	// resolve lantern.secret/... refs. Fail-closed when
-	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
+	// resolve pal.secret/... refs. Fail-closed when
+	// PAL_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
 	runtimeSecretsHandler := handlers.NewRuntimeSecretsHandler(srv, authHandler)
 	httpMux.HandleFunc("POST /v1/runtime/secrets/resolve", runtimeSecretsHandler.ResolveSecrets)
 	// Internal API-key introspection — the Rust gateway validates X-API-Key
 	// here. Guarded by the shared gRPC service token (fail-closed in prod
-	// when LANTERN_GRPC_SERVICE_TOKEN is unset).
+	// when PAL_GRPC_SERVICE_TOKEN is unset).
 	httpMux.HandleFunc("POST /internal/auth/introspect-key", authHandler.IntrospectKey)
 	// Secure short-lived file links: bridges stage a file (service-token gated),
 	// contacts fetch it from the public capability URL until it expires.
@@ -952,12 +976,12 @@ func main() {
 	if regionCfg.ReadOnly {
 		logger.Info("read-only standby: background writers disabled")
 	} else {
-		// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
+		// runtime_vm_logs retention: delete rows older than PAL_RUNTIME_LOG_RETENTION_DAYS
 		// (default 14) once per hour. Stops cleanly when ctx is cancelled.
 		go runtimeReportHandler.RunLogRetentionJanitor(ctx)
 
 		// side_effect_receipts retention: delete rows older than
-		// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
+		// PAL_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
 		go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
 
 		// High-growth table retention: journal_events (90d), runtime_audit_events
@@ -974,7 +998,7 @@ func main() {
 		defer sched.Stop()
 
 		// Periodic crash-recovery watchdog: re-drives orphaned runs every
-		// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
+		// PAL_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
 		// fires 2s after the HTTP server starts so /readyz serves first.
 		handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
 
@@ -983,7 +1007,7 @@ func main() {
 		// a chance to complete orphaned child runs), then every 30s.
 		handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
 
-		// Peer-service health sweep (LANTERN_HEALTH_SWEEP_INTERVAL, default 60s).
+		// Peer-service health sweep (PAL_HEALTH_SWEEP_INTERVAL, default 60s).
 		// Probes configured peer services via TCP dial; alerts the owner on
 		// up↔down transitions via sendSelfNote. Set to "0"/"off" to disable.
 		// Sweeper was created alongside the other handler declarations above so
@@ -994,13 +1018,13 @@ func main() {
 		go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
 
 		// Session-scoped microVM idle sweep: terminates VMs whose last_used_at
-		// is older than LANTERN_SESSION_VM_IDLE_TTL (default 30m).
+		// is older than PAL_SESSION_VM_IDLE_TTL (default 30m).
 		go handlers.RunSessionVMIdleSweep(ctx, runtimeHandler, logger)
 
-		// LLM-distilled long-term memory (LANTERN_MEMORY_DISTILL, default OFF).
+		// LLM-distilled long-term memory (PAL_MEMORY_DISTILL, default OFF).
 		go handlers.RunMemoryDistillLoop(ctx, memoryDistillHandler)
 
-		// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
+		// Proactive Jarvis morning brief (opt-in via PAL_JARVIS_BRIEF_HOUR).
 		go jarvisHandler.RunBriefScheduler(ctx)
 	}
 
@@ -1041,34 +1065,58 @@ func main() {
 }
 
 // rlsGuardDecision evaluates whether the RLS enforcement env vars are correctly
-// configured for a production environment.
+// configured for a production environment (ADR 0042).
 //
 // It returns (fatal bool, message string). When fatal is true, main.go should
 // call logger.Fatal with message; the caller decides — this keeps the function
 // pure and testable without triggering os.Exit in tests.
 //
-// Rules:
-//   - prod (LANTERN_ENV=prod/production/staging): FATAL when either
-//     LANTERN_RLS_ENFORCE != "1" or LANTERN_APP_DB_PASSWORD is empty.
-//     A prod server that does not connect as lantern_app could silently leak
-//     data across tenants if a WHERE clause is forgotten.
-//   - dev (LANTERN_ENV unset): optional; returns fatal=false with a warn
-//     message so the caller can log a WARN and continue.
+// Secure-default rule (ADR 0042):
+//   - prod + PAL_APP_DB_PASSWORD set: RLS ON implicitly; PAL_RLS_ENFORCE
+//     need not be set (setting it to "1" still works as before).
+//   - prod + PAL_APP_DB_PASSWORD unset + PAL_RLS_ENFORCE != "0": FATAL.
+//     A prod server without an app password cannot enforce RLS — it would
+//     silently bypass tenant isolation on every query.
+//   - prod + PAL_APP_DB_PASSWORD unset + PAL_RLS_ENFORCE == "0": WARN
+//     and continue. The operator has explicitly acknowledged operating without
+//     RLS enforcement (e.g. during an initial migration onto an existing cluster).
+//   - dev: advisory only; no fatal.
 func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, message string) {
 	if isProd {
-		if rlsEnforce != "1" {
-			return true, "LANTERN_RLS_ENFORCE is not set to '1' — production refuses to start without RLS enforcement; set LANTERN_RLS_ENFORCE=1 and LANTERN_APP_DB_PASSWORD"
+		v := strings.ToLower(strings.TrimSpace(rlsEnforce))
+		// Explicit opt-out always warns in prod, regardless of appPwd.
+		// This mirrors rlsEnforceActive: explicit "0" beats the password-implicit path.
+		if v == "0" || v == "false" || v == "off" {
+			return false, "PAL_RLS_ENFORCE=0 in production — RLS tenant isolation is DISABLED; this should only be set during initial cluster migration (PAL_APP_DB_PASSWORD is ignored when enforcement is explicitly off)"
 		}
-		if appPwd == "" {
-			return true, "LANTERN_APP_DB_PASSWORD is unset — production refuses to start without the lantern_app role password; set LANTERN_APP_DB_PASSWORD to enable RLS enforcement"
+		if appPwd != "" {
+			// Password configured + no explicit disable → RLS ON (implicit secure default).
+			return false, ""
 		}
-		return false, ""
+		return true, "PAL_APP_DB_PASSWORD is unset in production — set PAL_APP_DB_PASSWORD (and optionally PAL_RLS_ENFORCE=1) to enforce RLS; or set PAL_RLS_ENFORCE=0 to acknowledge operating without tenant isolation (not recommended)"
 	}
 	// Dev: advisory only.
-	if rlsEnforce != "1" || appPwd == "" {
-		return false, "LANTERN_RLS_ENFORCE is unset or LANTERN_APP_DB_PASSWORD is missing — RLS not enforced at runtime (acceptable in dev; required in production)"
+	if appPwd == "" {
+		return false, "PAL_APP_DB_PASSWORD is missing — RLS not enforced at runtime (acceptable in dev; required in production)"
 	}
 	return false, ""
+}
+
+// rlsEnforceActive returns true when the app pool should connect as lantern_app
+// (i.e. RLS enforcement is enabled). It is true when:
+//   - PAL_RLS_ENFORCE is explicitly "1"/"true"/"on", OR
+//   - running in prod AND PAL_APP_DB_PASSWORD is set (secure default, ADR 0042)
+//     AND PAL_RLS_ENFORCE is not explicitly "0"/"false"/"off".
+func rlsEnforceActive(isProd bool, rlsEnforce, appPwd string) bool {
+	v := strings.ToLower(strings.TrimSpace(rlsEnforce))
+	if v == "0" || v == "false" || v == "off" {
+		return false
+	}
+	if v == "1" || v == "true" || v == "on" {
+		return true
+	}
+	// Unset: implicit ON in prod when the password is configured.
+	return isProd && appPwd != ""
 }
 
 // insecureFlagsDecision reports dev-only escape hatches that must never be on
@@ -1079,10 +1127,10 @@ func insecureFlagsDecision(isProd bool, twilioWebhookAuth, useClaudeCode string)
 		return false, ""
 	}
 	if strings.EqualFold(twilioWebhookAuth, "off") {
-		return true, "LANTERN_TWILIO_WEBHOOK_AUTH=off is not allowed in production — Twilio webhooks would be accepted unsigned; unset it"
+		return true, "PAL_TWILIO_WEBHOOK_AUTH=off is not allowed in production — Twilio webhooks would be accepted unsigned; unset it"
 	}
 	if useClaudeCode == "1" {
-		return true, "LANTERN_USE_CLAUDE_CODE=1 is not allowed in production — it shells out to a local CLI; unset it"
+		return true, "PAL_USE_CLAUDE_CODE=1 is not allowed in production — it shells out to a local CLI; unset it"
 	}
 	return false, ""
 }
@@ -1090,9 +1138,9 @@ func insecureFlagsDecision(isProd bool, twilioWebhookAuth, useClaudeCode string)
 // runStartupGuards enforces fail-closed security checks before the server
 // starts accepting traffic.
 //
-// In production (LANTERN_ENV=prod/production/staging) any missing secret is
+// In production (PAL_ENV=prod/production/staging) any missing secret is
 // fatal — we refuse to boot rather than silently operate insecurely.
-// In dev (LANTERN_ENV unset) we WARN and continue so `make dev` still works
+// In dev (PAL_ENV unset) we WARN and continue so `make dev` still works
 // out-of-the-box with no env configuration.
 func runStartupGuards(logger *zap.Logger) {
 	prod := handlers.IsProd()
@@ -1118,23 +1166,23 @@ func runStartupGuards(logger *zap.Logger) {
 	// H1 — Receipt signing secret
 	receiptSecret := os.Getenv("PAL_RECEIPT_SECRET")
 	if prod && receiptSecret == "" {
-		logger.Fatal("LANTERN_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
+		logger.Fatal("PAL_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
 	}
 	if !prod && receiptSecret == "" {
-		logger.Warn("LANTERN_RECEIPT_SECRET is unset — using insecure dev default; set LANTERN_RECEIPT_SECRET in production")
+		logger.Warn("PAL_RECEIPT_SECRET is unset — using insecure dev default; set PAL_RECEIPT_SECRET in production")
 	}
 
 	// Secrets (connector keys / LLM API keys at rest)
 	encEnabled, encErr := secrets.EncryptionEnabled()
 	if encErr != nil {
 		// Malformed key — fatal in all environments.
-		logger.Fatal("LANTERN_CREDENTIAL_KEY is malformed", zap.Error(encErr))
+		logger.Fatal("PAL_CREDENTIAL_KEY is malformed", zap.Error(encErr))
 	}
 	if prod && !encEnabled {
-		logger.Fatal("LANTERN_CREDENTIAL_KEY is unset — connector tokens and LLM API keys would be stored in plaintext; set a 32-byte AES-256 key")
+		logger.Fatal("PAL_CREDENTIAL_KEY is unset — connector tokens and LLM API keys would be stored in plaintext; set a 32-byte AES-256 key")
 	}
 	if !prod && !encEnabled {
-		logger.Warn("LANTERN_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
+		logger.Warn("PAL_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
 	}
 
 	// G1 — RLS enforcement (multi-tenant isolation, invariant #7)
@@ -1150,20 +1198,26 @@ func runStartupGuards(logger *zap.Logger) {
 		logger.Warn(rlsMsg)
 	}
 
-	// State the scope-enforcement mode at boot so an operator can see (and an
-	// alert can key on) whether a missing API-key scope is a 403 or only a debug log.
+	// G2 — AuthZ scope enforcement (ADR 0042).
+	// In prod, API-key scope enforcement defaults ON. An explicit
+	// LANTERN_AUTHZ_ENFORCE=0 is allowed but generates a loud WARN so the
+	// operator can't miss it. Dev defaults remain OFF unless the flag is set.
+	if warnMsg := handlers.AuthzGuardDecision(prod, os.Getenv("PAL_AUTHZ_ENFORCE")); warnMsg != "" {
+		logger.Warn(warnMsg, zap.String("flag", "PAL_AUTHZ_ENFORCE"))
+	}
+	// State the enforcement mode so an alert can key on the "enforced=false" field.
 	logger.Info("authz: API-key scope enforcement",
 		zap.Bool("enforced", handlers.AuthzEnforcing()),
-		zap.String("flag", "LANTERN_AUTHZ_ENFORCE"))
+		zap.String("flag", "PAL_AUTHZ_ENFORCE"))
 
 	// gRPC service-token auth (trust boundary on :50051).
 	// Without a token, any caller reachable to :50051 can set an arbitrary
 	// tenant_id and read/write that tenant's data. Production must require it.
 	if prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
-		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
+		logger.Fatal("PAL_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
 	}
 	if !prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
 	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("PAL_TWILIO_WEBHOOK_AUTH"), os.Getenv("PAL_USE_CLAUDE_CODE")); fatal {
@@ -1187,13 +1241,19 @@ func runStartupGuards(logger *zap.Logger) {
 		logger.Fatal(schedulerMsg)
 	}
 	if !prod && os.Getenv("PAL_SCHEDULER_GRPC_ADDR") == "" {
-		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
+		logger.Warn("PAL_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
 	}
 
 	// Runtime-manager dial credentials (logs/exec proxy + browser skill). The
 	// manager forces mTLS in prod; refuse to start rather than fail every dial.
 	if _, err := handlers.ManagerTransportCreds(prod); err != nil {
 		logger.Fatal("runtime-manager client TLS", zap.Error(err))
+	}
+	// Service-mesh client identity (scheduler + model-router hops, ADR 0043).
+	// Without this the scheduler dial would fail and silently fall back to
+	// the stub, which prod must never do.
+	if _, err := handlers.ServiceClientCreds(prod); err != nil {
+		logger.Fatal("service-mesh client TLS", zap.Error(err))
 	}
 
 	// C-CB — Callback signing secret (ADR 0033).
@@ -1208,26 +1268,33 @@ func runStartupGuards(logger *zap.Logger) {
 }
 
 // grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
-// applying the prod-vs-dev fail-closed policy (audit H2, gateway→control-plane).
+// applying the prod-vs-dev fail-closed policy (audit H2, ADR 0043).
 //
-//   - configured + valid → returns creds; the server serves over TLS.
-//   - misconfigured (half-set or unloadable cert/key) → Fatal in all envs.
-//   - unset in prod → Fatal: the gateway hop must be encryptable.
-//   - unset in dev → WARN + returns nil: plaintext, so `make dev` still works.
-func grpcTLSCreds(logger *zap.Logger) credentials.TransportCredentials {
-	creds, err := handlers.GRPCServerTLS()
+//   - PAL_GRPC_TLS_* → mTLS (mtls=true; caller installs RequireServiceCert).
+//   - legacy PAL_CONTROL_PLANE_TLS_CERT/KEY → server-only TLS; WARN in prod.
+//   - misconfigured (half-set or unloadable) → Fatal in all envs.
+//   - unset in prod → Fatal, unless PAL_GRPC_INSECURE=1 (loud WARN).
+//   - unset in dev → WARN + plaintext, so `make dev` still works.
+func grpcTLSCreds(logger *zap.Logger) (credentials.TransportCredentials, bool) {
+	creds, mtls, err := handlers.GRPCServerTLS()
 	if err != nil {
 		logger.Fatal("control-plane gRPC TLS is misconfigured", zap.Error(err))
 	}
-	if creds != nil {
-		logger.Info("control-plane gRPC server: TLS enabled (LANTERN_CONTROL_PLANE_TLS_CERT/KEY)")
-		return creds
+	switch {
+	case mtls:
+		logger.Info("control-plane gRPC server: mTLS enabled (PAL_GRPC_TLS_*; client cert required except DataPlaneService/health)")
+	case creds != nil && handlers.IsProd():
+		logger.Warn("control-plane gRPC server: server-only TLS (legacy PAL_CONTROL_PLANE_TLS_CERT/KEY) — callers are NOT authenticated by certificate; set PAL_GRPC_TLS_CA/_CERT/_KEY for mTLS (ADR 0043)")
+	case creds != nil:
+		logger.Info("control-plane gRPC server: server-only TLS (PAL_CONTROL_PLANE_TLS_CERT/KEY)")
+	case handlers.IsProd() && grpctls.InsecureOverride():
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — control-plane gRPC (:50051) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	case handlers.IsProd():
+		logger.Fatal("control-plane gRPC TLS is unset — set PAL_GRPC_TLS_CA/_CERT/_KEY (mTLS, ADR 0043), or PAL_GRPC_INSECURE=1 to accept plaintext explicitly")
+	default:
+		logger.Warn("control-plane gRPC server: TLS unset — serving plaintext (acceptable in dev, required in production)")
 	}
-	if handlers.IsProd() {
-		logger.Fatal("control-plane gRPC TLS is unset — set LANTERN_CONTROL_PLANE_TLS_CERT and LANTERN_CONTROL_PLANE_TLS_KEY to encrypt the gateway→control-plane channel")
-	}
-	logger.Warn("control-plane gRPC server: TLS unset — serving plaintext (acceptable in dev, required in production)")
-	return nil
+	return creds, mtls
 }
 
 // config holds values read from environment variables.
@@ -1433,12 +1500,12 @@ func (w *wrappedStream) Context() context.Context {
 }
 
 // parsePgxPoolConfig parses DATABASE_URL into a *pgxpool.Config and applies
-// the env-driven tunables (LANTERN_PG_MAX_CONNS, LANTERN_PG_MAX_CONN_LIFETIME,
-// LANTERN_PG_MAX_CONN_IDLE_TIME). Sane defaults:
+// the env-driven tunables (PAL_PG_MAX_CONNS, PAL_PG_MAX_CONN_LIFETIME,
+// PAL_PG_MAX_CONN_IDLE_TIME). Sane defaults:
 //
-//	LANTERN_PG_MAX_CONNS           default 20
-//	LANTERN_PG_MAX_CONN_LIFETIME   default 1h
-//	LANTERN_PG_MAX_CONN_IDLE_TIME  default 30m
+//	PAL_PG_MAX_CONNS           default 20
+//	PAL_PG_MAX_CONN_LIFETIME   default 1h
+//	PAL_PG_MAX_CONN_IDLE_TIME  default 30m
 func parsePgxPoolConfig(databaseURL string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {

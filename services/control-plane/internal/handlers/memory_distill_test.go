@@ -18,7 +18,7 @@ import (
 func TestParseDistillResponse_HappyPath(t *testing.T) {
 	raw := `{"distillates":[
 		{"topic":"food_preference","content":"Shekhar prefers spicy food.","confidence":0.9},
-		{"topic":"work_role","content":"Shekhar is a founder building Lantern.","confidence":0.85,"personHint":""}
+		{"topic":"work_role","content":"Shekhar is a founder building PAL.","confidence":0.85,"personHint":""}
 	]}`
 	items := parseDistillResponse(raw)
 	if len(items) != 2 {
@@ -267,7 +267,7 @@ func TestUpsertDistillates_CrossTenantIsolation(t *testing.T) {
 func TestMemoryDistillFlagOff_Inert(t *testing.T) {
 	os.Unsetenv("PAL_MEMORY_DISTILL")
 	if memoryDistillEnabled() {
-		t.Skip("LANTERN_MEMORY_DISTILL is set in env — skipping inertness test")
+		t.Skip("PAL_MEMORY_DISTILL is set in env — skipping inertness test")
 	}
 	// With flag off, the loop never runs. We verify the pure functions still
 	// behave safely when called with empty input.

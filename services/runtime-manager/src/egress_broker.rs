@@ -464,7 +464,7 @@ fn valid_header_name(name: &str) -> bool {
 
 async fn respond<W: AsyncWrite + Unpin>(w: &mut W, status: &str, reason: &str) {
     let msg = format!(
-        "HTTP/1.1 {status}\r\nX-Lantern-Reason: {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {status}\r\nX-Pal-Reason: {reason}\r\nX-Lantern-Reason: {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     let _ = w.write_all(msg.as_bytes()).await;
     let _ = w.flush().await;
@@ -529,7 +529,7 @@ impl MitmCa {
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
-            format!("lantern egress broker CA {vm_id}"),
+            format!("pal egress broker CA {vm_id}"),
         );
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
         params.key_usages = vec![

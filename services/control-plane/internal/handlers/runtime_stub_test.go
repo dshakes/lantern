@@ -2,7 +2,7 @@ package handlers
 
 // runtime_stub_test.go — the silent-no-op bug, server half.
 //
-// Without LANTERN_SCHEDULER_GRPC_ADDR the handler falls back to
+// Without PAL_SCHEDULER_GRPC_ADDR the handler falls back to
 // stubSchedulerClient, which SYNTHESIZES a vm_id and spawns nothing. The
 // response was byte-identical to a real schedule, so `lantern run` printed
 // "scheduled vm_id=..." and exited 0 against a stack that ran no workload.

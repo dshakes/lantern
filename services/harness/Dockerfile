@@ -1,4 +1,4 @@
-# lantern-harness — statically linked PID 1 for Lantern microVMs.
+# lantern-harness — statically linked PID 1 for PAL microVMs.
 #
 # Build a musl-static binary so the harness can run in a minimal rootfs
 # (no glibc loader, no shared libs). The final image is alpine-based and

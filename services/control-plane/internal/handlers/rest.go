@@ -275,7 +275,7 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// Optional extension columns (not on the proto Agent message) are
 	// persisted with a follow-up UPDATE so the proto path stays untouched.
 	// db.WithTenantConn sets app.tenant_id (transaction-local) before running
-	// the UPDATE so that, under LANTERN_RLS_ENFORCE=1, the RLS policy evaluates
+	// the UPDATE so that, under PAL_RLS_ENFORCE=1, the RLS policy evaluates
 	// the GUC and allows the write.  WHERE tenant_id = $4 remains the primary
 	// correctness guard; RLS is defence-in-depth.
 	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil || body.Model != nil {
@@ -345,7 +345,7 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// avatar_url, style_prompt) — pulled directly so the dashboard can
 	// round-trip them through the create/edit forms.
 	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read (GUC matches the
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the read (GUC matches the
 	// tenant_id of the row). Without the GUC the policy matches nothing →
 	// returns empty even for the row's own owner.
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
@@ -504,7 +504,7 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// db.WithTenantConn sets app.tenant_id before the UPDATE so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the write. Without the GUC
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the write. Without the GUC
 	// set, the policy matches nothing → RowsAffected()==0 → false HTTP 404 for
 	// the agent's own owner. WHERE tenant_id = $5 is the primary correctness
 	// guard; RLS is defence-in-depth.
@@ -602,7 +602,7 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 			m := runToMap(run)
 			// Enrich: execution steps + agent name.
 			// db.WithTenantConn sets app.tenant_id so that, under
-			// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read.
+			// PAL_RLS_ENFORCE=1, the RLS policy allows the read.
 			// Without the GUC the policy matches nothing → empty enrichment
 			// even for the tenant's own runs.
 			var rawSteps []byte
@@ -931,7 +931,7 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	result := runToMap(run)
 	// Enrich: execution steps + agent name.
 	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
-	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read. Without the GUC,
+	// PAL_RLS_ENFORCE=1, the RLS policy allows the read. Without the GUC,
 	// the policy matches nothing → enrichment silently empty even for the
 	// tenant's own run.
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
@@ -1047,7 +1047,7 @@ func isPublicCORSPath(path string) bool {
 // reach them.
 //
 // All other routes reflect the request Origin only when it appears in the
-// allowlist built from LANTERN_CORS_ORIGINS (comma-separated; default
+// allowlist built from PAL_CORS_ORIGINS (comma-separated; default
 // http://localhost:3001). This prevents credential-bearing cross-origin
 // requests from arbitrary origins in production.
 func CORSMiddleware(next http.Handler) http.Handler {
@@ -1274,7 +1274,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 					zap.String("run_id", runID))
 				return
 			}
-			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
+			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("PAL: %s run completed", agentName), result); err != nil {
 				h.logger().Warn("email delivery failed",
 					zap.String("run_id", runID),
 					zap.String("to", deliveryEmail),
@@ -2045,8 +2045,8 @@ func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
 
 // deliverWhatsAppSelf POSTs the message to the bridge's send-self
 // endpoint, which routes to the bridge owner's own WhatsApp self-chat.
-// Bridge URL + optional shared token come from env (LANTERN_BRIDGE_URL,
-// LANTERN_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
+// Bridge URL + optional shared token come from env (PAL_BRIDGE_URL,
+// PAL_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
 func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
 	return deliverWhatsAppSelfNote(tenantID, message)
 }
@@ -2338,7 +2338,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		// journal_events so already-finished nodes are skipped — the walk
 		// resumes from the first incomplete step instead of restarting.
 		CompletedStep: h.journalCompletedStep,
-		// Confidence gate: when LANTERN_CONFIDENCE_GATE is set, evaluate
+		// Confidence gate: when PAL_CONFIDENCE_GATE is set, evaluate
 		// heuristic confidence for side-effecting nodes before executing them.
 		// Nil by default so the feature is completely opt-in per deployment.
 		ConfidenceGate: h.buildConfidenceGate(tenantID, agentName),
@@ -2800,7 +2800,7 @@ func (h *RESTHandler) SaveWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// db.WithTenantConn sets app.tenant_id so that, under PAL_RLS_ENFORCE=1,
 	// the RLS policy allows the UPDATE. Without the GUC the policy matches
 	// nothing → RowsAffected()==0 → false HTTP 404 for the agent's own owner.
 	var rowsAffected int64
@@ -2847,7 +2847,7 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 
-	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// db.WithTenantConn sets app.tenant_id so that, under PAL_RLS_ENFORCE=1,
 	// the RLS policy allows the SELECT. Without the GUC the policy matches
 	// nothing → pgx.ErrNoRows → false HTTP 404 for the agent's own owner.
 	var wfBytes []byte
@@ -2887,7 +2887,7 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 	}
 
 	// TenantPool routes to the RLS-enforced lantern_app role when
-	// LANTERN_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
+	// PAL_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
 	tx, err := h.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return
@@ -3054,17 +3054,17 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 }
 
 // buildConfidenceGate constructs the confidence gate config from env vars.
-// Returns nil when LANTERN_CONFIDENCE_GATE is not set (feature off by default).
+// Returns nil when PAL_CONFIDENCE_GATE is not set (feature off by default).
 // Pattern mirrors modelRouterEnabled() in llm_proxy_router.go.
 //
 // Env vars:
 //
-//	LANTERN_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
-//	LANTERN_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
-//	LANTERN_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
+//	PAL_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
+//	PAL_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
+//	PAL_CONFIDENCE_ESTIMATOR      "self-consistency" | "verbalization"
 //	                                  (default: verbalization — backward-compatible)
-//	LANTERN_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
-//	LANTERN_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
+//	PAL_CONFIDENCE_SAMPLES        int [1,9] for self-consistency; default 5
+//	PAL_CONFIDENCE_CALIBRATE      "1"/"true"/"on" to calibrate the score with
 //	                                  this (agent, node_type)'s realized regret
 //	                                  rate (default: off — see ADR 0021, Phase 1)
 //

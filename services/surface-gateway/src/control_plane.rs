@@ -2,11 +2,11 @@
 //!
 //! Mirrors services/gateway/src/grpc.rs in structure:
 //!   - hand-rolled prost message stubs (no build.rs / protoc)
-//!   - `x-lantern-service-token` metadata on every call (invariant #7)
+//!   - `x-pal-service-token` metadata on every call (invariant #7)
 //!   - `tenant_id` metadata so the interceptor chain can enforce RLS
 //!
 //! CONTROL_PLANE_ADDR must point to the gRPC port (:50051), not the REST
-//! port (:8080).  LANTERN_GRPC_SERVICE_TOKEN must match the control-plane's
+//! port (:8080).  PAL_GRPC_SERVICE_TOKEN must match the control-plane's
 //! configured value in production (fail-closed on the server side).
 
 use prost::Message;
@@ -32,7 +32,7 @@ struct CreateRunRequest {
     input: Vec<u8>,
     #[prost(int32, tag = "3")]
     trigger_kind: i32,
-    /// Lantern session UUID (groups run under the surface conversation).
+    /// PAL session UUID (groups run under the surface conversation).
     #[prost(string, tag = "8")]
     session_id: String,
 }
@@ -122,9 +122,24 @@ impl ControlPlaneClient {
     /// Uses `connect_lazy` so startup is instant and dial errors surface on
     /// the first RPC call rather than at process boot.
     pub async fn connect(addr: &str, service_token: String) -> anyhow::Result<Self> {
-        let endpoint = tonic::transport::Endpoint::from_shared(addr.to_string())
-            .map_err(|e| anyhow::anyhow!("invalid CONTROL_PLANE_ADDR {addr:?}: {e}"))?;
-        let channel = endpoint.connect_lazy();
+        // Service-mesh mTLS (ADR 0043): the control-plane demands a client cert
+        // in mTLS mode. Plaintext only in dev or with PAL_GRPC_INSECURE=1; the
+        // URI scheme follows the TLS decision.
+        let is_prod = pal_grpc_tls::is_prod();
+        let tls = pal_grpc_tls::client_tls(
+            &pal_grpc_tls::Files::from_env(),
+            is_prod,
+            pal_grpc_tls::insecure_override(),
+        )?;
+        if tls.is_none() && is_prod {
+            tracing::warn!(
+                addr,
+                "SECURITY: PAL_GRPC_INSECURE=1 — control-plane channel is PLAINTEXT in production"
+            );
+        }
+        let channel = pal_grpc_tls::endpoint(addr, tls)
+            .map_err(|e| anyhow::anyhow!("invalid CONTROL_PLANE_ADDR {addr:?}: {e}"))?
+            .connect_lazy();
 
         if service_token.is_empty() {
             tracing::warn!(
@@ -140,15 +155,20 @@ impl ControlPlaneClient {
         })
     }
 
-    /// Stamp `tenant_id` and `x-lantern-service-token` onto a request's metadata.
+    /// Stamp `tenant_id` and `x-pal-service-token` onto a request's metadata.
     fn inject_metadata<T>(&self, req: &mut Request<T>, tenant_id: &str) {
         let md = req.metadata_mut();
         if let Ok(val) = tenant_id.parse() {
             md.insert("tenant_id", val);
         }
+        // Sent under the PAL name and the pre-PAL name, so a control plane
+        // that has not upgraded still authenticates the call (ADR 0032).
         if !self.service_token.is_empty()
-            && let Ok(val) = self.service_token.parse()
+            && let Ok(val) = self
+                .service_token
+                .parse::<tonic::metadata::MetadataValue<_>>()
         {
+            md.insert("x-pal-service-token", val.clone());
             md.insert("x-lantern-service-token", val);
         }
     }

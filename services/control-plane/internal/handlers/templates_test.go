@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// TestTemplateLanternGuide_Registered verifies that the lantern-guide template
+// TestTemplatePALGuide_Registered verifies that the lantern-guide template
 // is present in the registry with the required fields.
-func TestTemplateLanternGuide_Registered(t *testing.T) {
+func TestTemplatePALGuide_Registered(t *testing.T) {
 	tpl, ok := templates["lantern-guide"]
 	if !ok {
 		t.Fatal("lantern-guide template is not registered in the templates map")
@@ -43,9 +43,9 @@ func TestTemplateLanternGuide_Registered(t *testing.T) {
 	}
 }
 
-// TestTemplateLanternGuide_BudgetCaps verifies the spend caps are set and
+// TestTemplatePALGuide_BudgetCaps verifies the spend caps are set and
 // are small enough not to surprise-bill.
-func TestTemplateLanternGuide_BudgetCaps(t *testing.T) {
+func TestTemplatePALGuide_BudgetCaps(t *testing.T) {
 	tpl := templates["lantern-guide"]
 
 	const maxDayCap = 1.00 // never more than a dollar a day for an onboarding guide
@@ -63,10 +63,10 @@ func TestTemplateLanternGuide_BudgetCaps(t *testing.T) {
 	}
 }
 
-// TestTemplateLanternGuide_NoScheduleNoConnectors verifies the guide template
+// TestTemplatePALGuide_NoScheduleNoConnectors verifies the guide template
 // has no cron schedule (it's invoked on-demand by onboard, not scheduled) and
 // requires no external connectors.
-func TestTemplateLanternGuide_NoScheduleNoConnectors(t *testing.T) {
+func TestTemplatePALGuide_NoScheduleNoConnectors(t *testing.T) {
 	tpl := templates["lantern-guide"]
 
 	if tpl.CronExpr != "" {

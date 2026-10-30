@@ -580,7 +580,7 @@ func (h *BatchHandler) spawnBatchRun(ctx context.Context, batchID, tenantID, age
 
 	// Use rest.CreateRun via an in-process recorder (same pattern as triggers.go
 	// startRun) so budget checks, spawn limits, and routing apply identically.
-	ctx = storeClaimsInCtx(ctx, &LanternClaims{TenantID: tenantID, Role: "service"})
+	ctx = storeClaimsInCtx(ctx, &PalClaims{TenantID: tenantID, Role: "service"})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/runs",
 		bytes.NewReader(inputJSON))
 	if err != nil {

@@ -11,7 +11,7 @@ package handlers
 // The LLM distils from raw signal; only items with confidence >= 0.60 and a
 // non-empty topic+content are kept.  Any error → no writes, never a crash.
 //
-// Flag-gated: LANTERN_MEMORY_DISTILL (default OFF).
+// Flag-gated: PAL_MEMORY_DISTILL (default OFF).
 //   - Unset → loop is a no-op, endpoints return empty/disabled response.
 //   - Zero behavior change when flag is off.
 //
@@ -192,7 +192,7 @@ func (h *MemoryDistillHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if !memoryDistillEnabled() {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": false,
-			"message": "memory distillation disabled (set LANTERN_MEMORY_DISTILL=1 to enable)",
+			"message": "memory distillation disabled (set PAL_MEMORY_DISTILL=1 to enable)",
 			"found":   0,
 		})
 		return
@@ -213,10 +213,10 @@ func (h *MemoryDistillHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 // RunMemoryDistillLoop starts the periodic distillation loop.
 // It is started once in main.go alongside the memory ingestor.
-// If LANTERN_MEMORY_DISTILL is off it logs once and returns immediately.
+// If PAL_MEMORY_DISTILL is off it logs once and returns immediately.
 func RunMemoryDistillLoop(ctx context.Context, h *MemoryDistillHandler) {
 	if !memoryDistillEnabled() {
-		h.logger().Info("memory distillation disabled (LANTERN_MEMORY_DISTILL not set)")
+		h.logger().Info("memory distillation disabled (PAL_MEMORY_DISTILL not set)")
 		return
 	}
 	h.logger().Info("memory distillation loop started", zap.Duration("interval", h.interval))

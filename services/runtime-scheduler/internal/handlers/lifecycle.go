@@ -34,7 +34,7 @@ import (
 )
 
 // defaultMaxForkCount is the default upper bound for a single Fork call.
-// Override with LANTERN_MAX_FORK_COUNT (ceiling: maxForkCountCeiling).
+// Override with PAL_MAX_FORK_COUNT (ceiling: maxForkCountCeiling).
 const (
 	defaultMaxForkCount    = 100
 	maxForkCountCeiling    = 1000
@@ -42,7 +42,7 @@ const (
 )
 
 // maxForkCount returns the configured per-call fork limit.
-// LANTERN_MAX_FORK_COUNT (default 100, ceiling 1000).
+// PAL_MAX_FORK_COUNT (default 100, ceiling 1000).
 func maxForkCount() int {
 	if v := envInt("PAL_MAX_FORK_COUNT", defaultMaxForkCount); v > 0 {
 		if v > maxForkCountCeiling {
@@ -55,7 +55,7 @@ func maxForkCount() int {
 
 // forkConcurrency returns the maximum number of fork spawns to issue in
 // parallel within a single Fork call.
-// LANTERN_FORK_CONCURRENCY (default 16).
+// PAL_FORK_CONCURRENCY (default 16).
 func forkConcurrency() int {
 	if v := envInt("PAL_FORK_CONCURRENCY", defaultForkConcurrency); v > 0 {
 		return v

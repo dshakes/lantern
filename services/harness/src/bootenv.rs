@@ -708,7 +708,7 @@ fn umount(target: &str) -> bool {
 
 /// Map one boot-arg key to the environment variable the harness reads.
 ///
-/// Returns `None` for kernel parameters that are not part of the Lantern
+/// Returns `None` for kernel parameters that are not part of the PAL
 /// contract (`console=`, `panic=`, `pci=off`, …).
 fn cmdline_key_to_env(key: &str) -> Option<String> {
     // `lantern.env.FOO=bar` carries caller-supplied env through verbatim.

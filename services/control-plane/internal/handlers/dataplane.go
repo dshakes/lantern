@@ -55,7 +55,7 @@ import (
 )
 
 // maxRunStreamsPerTenant is the maximum number of concurrent RunStream
-// connections allowed per tenant. Configurable via LANTERN_DP_MAX_STREAMS_PER_TENANT.
+// connections allowed per tenant. Configurable via PAL_DP_MAX_STREAMS_PER_TENANT.
 // Default is 10.
 const defaultMaxRunStreamsPerTenant = 10
 
@@ -72,8 +72,11 @@ func maxRunStreamsPerTenant() int {
 
 const (
 	dpSessionTyp    = "dataplane-session"
-	dpSessionIssuer = "lantern-cp"
-	dpSessionTTL    = time.Hour
+	dpSessionIssuer = "pal-cp"
+	// dpLegacySessionIssuer is the pre-PAL issuer (ADR 0032). Session tokens
+	// minted before the rename stay valid until they expire.
+	dpLegacySessionIssuer = "lantern-cp"
+	dpSessionTTL          = time.Hour
 )
 
 // dpClaims is the JWT payload for a data-plane session token.
@@ -277,6 +280,9 @@ func (s *DataPlaneService) verifySessionToken(tokenStr string) (*dpClaims, error
 	}
 	if c.Typ != dpSessionTyp {
 		return nil, status.Errorf(codes.Unauthenticated, "wrong token type")
+	}
+	if c.Issuer != dpSessionIssuer && c.Issuer != dpLegacySessionIssuer {
+		return nil, status.Errorf(codes.Unauthenticated, "wrong token issuer")
 	}
 	if c.PlaneID == "" || c.TenantID == "" {
 		return nil, status.Errorf(codes.Unauthenticated, "missing plane_id or tenant_id claim")

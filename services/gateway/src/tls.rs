@@ -2,14 +2,14 @@
 //!
 //! # Design
 //!
-//! - Cert + key are loaded from paths in `LANTERN_TLS_CERT` / `LANTERN_TLS_KEY`.
+//! - Cert + key are loaded from paths in `PAL_TLS_CERT` / `PAL_TLS_KEY`.
 //! - When those env vars are present a `rustls::ServerConfig` is returned and
 //!   main.rs wraps the TCP listener in a `TlsListener` that implements
 //!   `axum::serve::Listener`, passing it straight to `axum::serve`.
-//! - **Prod gate** (`LANTERN_ENV` ∈ {prod, production, staging}):
+//! - **Prod gate** (`PAL_ENV` ∈ {prod, production, staging}):
 //!   missing cert/key → `eprintln!` + `std::process::exit(1)`. The gateway
 //!   MUST NOT serve user traffic in cleartext on :8443 in production.
-//! - **Dev / unset `LANTERN_ENV`**: missing cert/key → `WARN` log + returns
+//! - **Dev / unset `PAL_ENV`**: missing cert/key → `WARN` log + returns
 //!   `Ok(None)`, main.rs falls through to the plain TCP path.
 
 use std::fs;
@@ -56,7 +56,7 @@ pub fn build_server_config() -> anyhow::Result<Option<Arc<ServerConfig>>> {
     }
 }
 
-/// Returns `true` when `LANTERN_ENV` indicates a production-like environment.
+/// Returns `true` when `PAL_ENV` indicates a production-like environment.
 pub fn is_prod_env() -> bool {
     matches!(
         pal_env::var("PAL_ENV")
@@ -239,7 +239,7 @@ mod tests {
             );
             assert_eq!(
                 result, expected,
-                "LANTERN_ENV={val:?} should be prod={expected}"
+                "PAL_ENV={val:?} should be prod={expected}"
             );
         };
 

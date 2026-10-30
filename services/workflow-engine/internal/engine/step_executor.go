@@ -20,13 +20,13 @@ import (
 // ErrModelRouterUnavailable is returned by an llm_call step when the engine was
 // started without a configured model-router address (no ModelServiceClient).
 // The step fails honestly rather than returning a fabricated completion.
-var ErrModelRouterUnavailable = errors.New("model router not configured (set LANTERN_MODEL_ROUTER_ADDR)")
+var ErrModelRouterUnavailable = errors.New("model router not configured (set PAL_MODEL_ROUTER_ADDR)")
 
 // ErrRuntimeManagerUnavailable is returned by a tool_call step when the engine
 // was started without a configured runtime-manager address (no
 // RuntimeManagerClient). The step fails honestly rather than fabricating a
 // tool result.
-var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set LANTERN_RUNTIME_MANAGER_ADDR)")
+var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set PAL_RUNTIME_MANAGER_ADDR)")
 
 // ErrChildRunUnavailable is returned by a child_run step: dispatching a child
 // agent run via the control plane is not implemented yet. The step fails

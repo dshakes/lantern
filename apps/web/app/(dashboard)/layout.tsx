@@ -121,7 +121,7 @@ export default function DashboardLayout({
                       Settings
                     </button>
                     <a
-                      href="https://github.com/dshakes/lantern"
+                      href="https://github.com/dshakes/pal"
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => setShowUserMenu(false)}

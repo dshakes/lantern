@@ -85,7 +85,7 @@ func TestKiosk_DisabledIs404(t *testing.T) {
 	w := httptest.NewRecorder()
 	k.CreateSession(w, httptest.NewRequest("POST", "/v1/kiosk/session", nil))
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("want 404 without LANTERN_KIOSK=1, got %d", w.Code)
+		t.Fatalf("want 404 without PAL_KIOSK=1, got %d", w.Code)
 	}
 }
 

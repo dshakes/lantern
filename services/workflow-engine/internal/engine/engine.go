@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
-	lanterndb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
+	paldb "github.com/dshakes/lantern/services/workflow-engine/internal/db"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
 
@@ -243,7 +243,7 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 
 	// Load the run's input from the database.
 	var inputJSON []byte
-	err := lanterndb.WithTenant(ctx, e.tenantPool(), state.TenantID, func(tx pgx.Tx) error {
+	err := paldb.WithTenant(ctx, e.tenantPool(), state.TenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT input FROM runs WHERE id = $1`, state.RunID).Scan(&inputJSON)
 	})
 	if err != nil {
@@ -296,7 +296,7 @@ func (e *Engine) executeRunWorkflow(ctx context.Context, state *RunState) error 
 func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID string) error {
 	// Update run status to running.
 	var tag pgconn.CommandTag
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
+	if err := paldb.WithTenant(ctx, e.tenantPool(), tenantID, func(tx pgx.Tx) error {
 		var terr error
 		// AND tenant_id: RLS is DEFAULT-OFF, so relying on the policy alone
 		// would leave this with no tenant defense in every deployment that has
@@ -331,7 +331,7 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) error {
 	// Load run metadata scoped to the caller's tenant.
 	var agentVersionID, runStatus string
-	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+	err := paldb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
@@ -347,7 +347,7 @@ func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) er
 	}
 
 	// Update to resumable so the scheduler picks it up, still scoped by tenant.
-	if err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+	if err := paldb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		_, terr := tx.Exec(ctx, `
 			UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID)
@@ -460,7 +460,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) er
 	// Update the database, scoped by tenant_id so a cross-tenant caller
 	// modifies nothing even if the in-memory check was bypassed.
 	var tag pgconn.CommandTag
-	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+	err := paldb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		var terr error
 		tag, terr = tx.Exec(ctx, `
 			UPDATE runs SET status = 'cancelled', finished_at = now()
@@ -762,7 +762,7 @@ func (e *Engine) SetAppPool(p *pgxpool.Pool) {
 // run exists, which is itself a leak.
 func (e *Engine) VerifyRunOwnership(ctx context.Context, runID, callerTenantID string) error {
 	var exists bool
-	err := lanterndb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
+	err := paldb.WithTenant(ctx, e.tenantPool(), callerTenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
 		`, runID, callerTenantID).Scan(&exists)
