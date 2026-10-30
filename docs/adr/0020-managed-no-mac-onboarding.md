@@ -7,7 +7,7 @@
 
 ## Context
 
-Today a new user of the *personal* side of Lantern effectively needs a Mac they
+Today a new user of the *personal* side of PAL Runtime effectively needs a Mac they
 control: the bridges read `chat.db` (Full Disk Access), drive Messages/Calendar/
 Notes/Mail via AppleScript automation, read `knowledgeC.db`, and keep all state
 in local `~/.lantern/*.jsonl`. That is a hard onboarding wall — it excludes
@@ -45,7 +45,7 @@ up any infrastructure:
     operated runtime nodes. The runtime-scheduler + runtime-manager +
     Firecracker/Kata path (ADR 0002–0008, W12) is exactly this. Onboarding just
     needs the managed node pool provisioned and the scheduler addr wired
-    (`LANTERN_SCHEDULER_GRPC_ADDR`, required in prod).
+    (`PAL_SCHEDULER_GRPC_ADDR`, required in prod).
   - **Customer-VPC data plane (BYO-cloud):** for customers who need code to run
     in their own VPC, `POST /v1/data-planes` registers an EKS/GKE/AKS data plane
     that heartbeats back; control-plane dispatches to it over gRPC. Already
@@ -71,7 +71,7 @@ The bridges bundle features with very different portability. Classify them:
 | **WhatsApp channel** (Baileys) | **Portable** | Baileys is a Node library talking to WhatsApp Web protocol — it runs on any Linux host, not just a Mac. The QR-pair + creds (`/session/:tenant/*`) can run in a managed container. This is the de-Mac'd personal channel. |
 | Calendar / Notes / Mail actions (`mac-actions.ts` AppleScript) | **Mac-bound as written** | AppleScript is macOS-only. Managed alternative: swap the AppleScript backend for the **existing connector layer** — Google Calendar / Gmail / Notion connectors already exist in the 17-connector set. The `mac-actions` interface stays; the backend becomes a connector call for managed tenants. |
 | `search_email` (Apple Mail Envelope Index) | **Mac-bound** | Reads local Mail SQLite. Managed alternative: Gmail/IMAP connector (OAuth), which is a superset and needs no Mac. |
-| Personal-docs (`LANTERN_PERSONAL_DOCS_ROOTS`, OCR) | **Mac-bound (local FS)** | Reads the user's local disk. Managed alternative: Google Drive / iCloud-web / Dropbox connector as the doc source; OCR already goes through the control-plane `/v1/vision/ocr` endpoint, which is portable. |
+| Personal-docs (`PAL_PERSONAL_DOCS_ROOTS`, OCR) | **Mac-bound (local FS)** | Reads the user's local disk. Managed alternative: Google Drive / iCloud-web / Dropbox connector as the doc source; OCR already goes through the control-plane `/v1/vision/ocr` endpoint, which is portable. |
 | `knowledgeC.db` app-usage signal | **HARD Mac-bound** | Reads a private macOS DB. No cloud equivalent; drop in managed mode. |
 | iPhone Shortcuts device signals (`/v1/signals`) | **Portable** | Already an HTTP endpoint on the control-plane through the tunnel — the iPhone posts directly, no Mac in the path. Works in managed mode unchanged. |
 | Owner-profile, episodes, topic index, dislikes, all `~/.lantern/*.jsonl` state | **Portable (needs relocation)** | Logic is host-agnostic; only the *storage location* is local. For managed WhatsApp, this state moves to per-tenant encrypted storage (Postgres/S3, reusing the encrypt-at-rest posture) instead of `~/.lantern`. |

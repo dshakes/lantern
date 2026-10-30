@@ -15,6 +15,7 @@ FROM rust:1.94-alpine AS builder
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static protobuf-dev protoc
 WORKDIR /app
 COPY packages/proto packages/proto
+COPY packages/pal-env-rs packages/pal-env-rs
 COPY services/harness services/harness
 WORKDIR /app/services/harness
 # musl target is the default on alpine; --release pulls LTO + strip via Cargo.toml.

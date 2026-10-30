@@ -23,7 +23,7 @@ Two further gaps on the existing policies:
   `INSERT`/`UPDATE`. A buggy or hostile write could create a row under a
   `tenant_id` that doesn't match `app.tenant_id`.
 - **Not landed where it matters.** The runtime manager already has an RLS-capable
-  pool (`AppPool` / `lantern_app`, gated by `LANTERN_RLS_ENFORCE`), but with no
+  pool (`AppPool` / `lantern_app`, gated by `PAL_RLS_ENFORCE`), but with no
   policies on most tables, switching it on bought nothing for them.
 
 ## Decision
@@ -40,13 +40,13 @@ The change is inert until enforcement is deliberately turned on:
 
 1. **Land the policies (this ADR).** The privileged `lantern` superuser pool
    (`Server.Pool`) bypasses RLS — superusers are never subject to it — so all
-   existing code paths, which run on `Pool`, are unaffected. `LANTERN_RLS_ENFORCE`
+   existing code paths, which run on `Pool`, are unaffected. `PAL_RLS_ENFORCE`
    is off in dev and `AppPool` aliases `Pool` when unset. Nothing breaks.
 2. **Cut handlers over to `Server.WithTenant` / `TenantPool()` table by table.**
    Each cutover routes that table's tenant-scoped queries through the
    `app.tenant_id` GUC so they keep working when enforcement flips. `sessions.go`
    is the first proof cutover; `agents.go`/`runs.go` were already on the pattern.
-3. **Flip `LANTERN_RLS_ENFORCE=1`** (with `LANTERN_APP_DB_PASSWORD` set so
+3. **Flip `PAL_RLS_ENFORCE=1`** (with `PAL_APP_DB_PASSWORD` set so
    `AppPool` connects as `lantern_app`, a non-superuser without `BYPASSRLS`).
    From that point the database itself denies any tenant-mismatched read or
    write — defence-in-depth behind the application's `WHERE` clauses.
@@ -96,7 +96,7 @@ than the GUC-only simulation in `internal/db/rls_test.go`:
   (`AppPool`) connects to Postgres **as the non-superuser `lantern_app` role**
   over its own DSN, so RLS is genuinely enforced at the database for every query
   routed through `s.srv.WithTenant`, exactly as production behaves under
-  `LANTERN_RLS_ENFORCE=1`. It runs `Migrate`, stamps a test password on the
+  `PAL_RLS_ENFORCE=1`. It runs `Migrate`, stamps a test password on the
   `lantern_app` role (`ALTER ROLE … PASSWORD …`, the documented prod step), and
   reuses the production `buildAppPoolConfig` logic (parse `DATABASE_URL`, swap
   user+password, preserve all other DSN params). Skips cleanly when
@@ -224,14 +224,14 @@ LIVE-path judgment calls (kept on `Pool` with explicit tenant filter +
   remain shared `*Pool` helpers keyed by `tenantID` arg (self-scoping; left as-is
   per the prior batches' convention).
 
-**`LANTERN_RLS_ENFORCE=1` is now safe to flip per-env (with the prod app-pool
+**`PAL_RLS_ENFORCE=1` is now safe to flip per-env (with the prod app-pool
 password set).** The whole `internal/handlers` package keeps same-tenant
 reads/writes working under the `lantern_app` role (proven by the
 `newEnforcedServer` harness tests across every group) and the database denies
 cross-tenant access. The only sites that stay on the privileged `Pool` are
 genuinely pre-auth / system / public-catalog / child-table / detached-executor,
 each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
-`ALTER ROLE lantern_app PASSWORD '<strong>'` and set `LANTERN_APP_DB_PASSWORD`.
+`ALTER ROLE lantern_app PASSWORD '<strong>'` and set `PAL_APP_DB_PASSWORD`.
 
 ## Consequences
 
@@ -271,4 +271,4 @@ each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
    cross-tenant) enforcement tests pass under the `lantern_app` harness; the full
    `internal/handlers` suite stays green; `go test -race ./internal/handlers/ -run
    RLS` is clean. **Non-exempt tenant-scoped `srv.Pool.<method>` sites across the
-   ENTIRE package: 0.** `LANTERN_RLS_ENFORCE=1` is safe to flip per-env.
+   ENTIRE package: 0.** `PAL_RLS_ENFORCE=1` is safe to flip per-env.

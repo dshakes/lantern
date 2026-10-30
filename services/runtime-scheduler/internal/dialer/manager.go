@@ -34,7 +34,7 @@ import (
 // without any configuration. Operators opt into prod behaviour by setting
 // LANTERN_ENV to "prod", "production", or "staging".
 func IsProd() bool {
-	e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_ENV")))
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
 }
 
@@ -74,9 +74,9 @@ func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal 
 //   - unset in prod, client cert missing in prod, half-set cert/key, or an
 //     unreadable file → error. The caller treats it as fatal at startup.
 func ManagerTransportCreds(isProd bool) (credentials.TransportCredentials, error) {
-	caPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CA"))
-	certPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_CERT"))
-	keyPath := strings.TrimSpace(os.Getenv("LANTERN_RUNTIME_MANAGER_TLS_KEY"))
+	caPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CA"))
+	certPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("PAL_RUNTIME_MANAGER_TLS_KEY"))
 	if (certPath == "") != (keyPath == "") {
 		return nil, fmt.Errorf("runtime-manager client TLS is half-configured: set BOTH LANTERN_RUNTIME_MANAGER_TLS_CERT and LANTERN_RUNTIME_MANAGER_TLS_KEY (or neither)")
 	}
@@ -247,7 +247,7 @@ func NewGRPCDialer(logger *zap.Logger, creds credentials.TransportCredentials, s
 func resolveTarget(nodeAddr string) string {
 	// 1. Explicit per-node override.
 	if nodeAddr != "" {
-		envKey := "LANTERN_NODE_ADDR_" + sanitizeEnvKey(nodeAddr)
+		envKey := "PAL_NODE_ADDR_" + sanitizeEnvKey(nodeAddr)
 		if v := os.Getenv(envKey); v != "" {
 			return v
 		}
@@ -255,7 +255,7 @@ func resolveTarget(nodeAddr string) string {
 
 	// 2. Synthetic / unset → default.
 	if nodeAddr == "" || nodeAddr == "node-local" || nodeAddr == "node-stub" {
-		if v := os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"); v != "" {
+		if v := os.Getenv("PAL_DEFAULT_MANAGER_ADDR"); v != "" {
 			return v
 		}
 		// No override available; fall through to the raw value so the

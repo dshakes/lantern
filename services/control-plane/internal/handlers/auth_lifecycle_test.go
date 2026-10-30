@@ -94,11 +94,11 @@ func mintInvite(secret, email string, exp time.Time) string {
 // setSignupEnv pins every env var the sign-up path reads.
 func setSignupEnv(t *testing.T, env, mode, turnstile string) {
 	t.Helper()
-	t.Setenv("LANTERN_ENV", env)
-	t.Setenv("LANTERN_SIGNUP_MODE", mode)
-	t.Setenv("LANTERN_TURNSTILE_SECRET", turnstile)
-	t.Setenv("LANTERN_SIGNUP_INVITE_SECRET", "")
-	t.Setenv("LANTERN_MAILER", "")
+	t.Setenv("PAL_ENV", env)
+	t.Setenv("PAL_SIGNUP_MODE", mode)
+	t.Setenv("PAL_TURNSTILE_SECRET", turnstile)
+	t.Setenv("PAL_SIGNUP_INVITE_SECRET", "")
+	t.Setenv("PAL_MAILER", "")
 }
 
 // ---------- pure ----------
@@ -138,8 +138,8 @@ func TestSignupModeDefaults(t *testing.T) {
 		{"", "closed", signupClosed},
 	}
 	for _, tc := range cases {
-		t.Setenv("LANTERN_ENV", tc.env)
-		t.Setenv("LANTERN_SIGNUP_MODE", tc.mode)
+		t.Setenv("PAL_ENV", tc.env)
+		t.Setenv("PAL_SIGNUP_MODE", tc.mode)
 		if got := signupMode(); got != tc.want {
 			t.Errorf("env=%q mode=%q: got %q, want %q", tc.env, tc.mode, got, tc.want)
 		}
@@ -172,17 +172,17 @@ func TestCheckSignupConfig(t *testing.T) {
 			if tc.prod {
 				env = "production"
 			}
-			t.Setenv("LANTERN_ENV", env)
-			t.Setenv("LANTERN_SIGNUP_MODE", tc.mode)
-			t.Setenv("LANTERN_SIGNUP_INVITE_SECRET", tc.invite)
-			t.Setenv("LANTERN_TURNSTILE_SECRET", tc.turnstile)
-			t.Setenv("LANTERN_MAILER", tc.mailDriver)
+			t.Setenv("PAL_ENV", env)
+			t.Setenv("PAL_SIGNUP_MODE", tc.mode)
+			t.Setenv("PAL_SIGNUP_INVITE_SECRET", tc.invite)
+			t.Setenv("PAL_TURNSTILE_SECRET", tc.turnstile)
+			t.Setenv("PAL_MAILER", tc.mailDriver)
 			smtpAddr := "mx.example.test:587"
 			if tc.name == "broken mailer config" {
 				smtpAddr = ""
 			}
-			t.Setenv("LANTERN_SMTP_ADDR", smtpAddr)
-			t.Setenv("LANTERN_MAIL_HTTP_URL", "https://mail.example.test/emails")
+			t.Setenv("PAL_SMTP_ADDR", smtpAddr)
+			t.Setenv("PAL_MAIL_HTTP_URL", "https://mail.example.test/emails")
 			fatal, msg := CheckSignupConfig(tc.prod)
 			if fatal != tc.wantFatal || !strings.Contains(msg, tc.wantMsg) {
 				t.Fatalf("got (%v, %q), want (%v, ~%q)", fatal, msg, tc.wantFatal, tc.wantMsg)
@@ -330,7 +330,7 @@ func TestSignup_GatesBeforeDB(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setSignupEnv(t, tc.env, tc.mode, tc.turnstile)
-			t.Setenv("LANTERN_SIGNUP_INVITE_SECRET", "inv")
+			t.Setenv("PAL_SIGNUP_INVITE_SECRET", "inv")
 			b := map[string]string{"email": body["email"], "password": body["password"], "captchaToken": tc.captcha, "inviteCode": tc.invite}
 			rr := callJSON(noDBAuthHandler().Signup, "/auth/signup", b)
 			if rr.Code != tc.wantStatus || !strings.Contains(rr.Body.String(), tc.wantErr) {
@@ -687,7 +687,7 @@ func TestRLSExportTenant(t *testing.T) {
 // registered behind WithScope(admin), so a read-only API key gets the scope
 // 403 when LANTERN_AUTHZ_ENFORCE=1.
 func TestExportRoute_ReadScopedKeyForbiddenUnderEnforce(t *testing.T) {
-	t.Setenv("LANTERN_AUTHZ_ENFORCE", "1")
+	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	pool := gdprTestDB(t)
 	srv := &server.Server{Pool: pool, Logger: zap.NewNop()}
 	auth := NewAuthHandler(srv, testJWTSecret)

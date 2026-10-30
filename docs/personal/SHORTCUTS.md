@@ -59,22 +59,22 @@ iMessage is ready, bot on, 1 paused."
 
 ```bash
 TOKEN="lnt_xxx..."  # your API key
-LANTERN_URL="https://your.lantern.url"
+PAL_URL="https://your.lantern.url"
 
 # Status
-curl -X GET "$LANTERN_URL/v1/shortcuts/status" \
+curl -X GET "$PAL_URL/v1/shortcuts/status" \
   -H "Authorization: Bearer $TOKEN"
 
 # Pause both channels
-curl -X POST "$LANTERN_URL/v1/shortcuts/pause" \
+curl -X POST "$PAL_URL/v1/shortcuts/pause" \
   -H "Authorization: Bearer $TOKEN"
 
 # Resume
-curl -X POST "$LANTERN_URL/v1/shortcuts/resume" \
+curl -X POST "$PAL_URL/v1/shortcuts/resume" \
   -H "Authorization: Bearer $TOKEN"
 
 # Post a self-chat note (handy for "hey siri, tell lantern I'm at lunch")
-curl -X POST "$LANTERN_URL/v1/shortcuts/say" \
+curl -X POST "$PAL_URL/v1/shortcuts/say" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"message": "📝 at lunch — back at 1pm"}'

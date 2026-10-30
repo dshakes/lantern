@@ -17,7 +17,7 @@ import (
 // Exported so cmd/server/main.go can use it for startup guards without
 // creating a circular dependency.
 func IsProd() bool {
-	e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_ENV")))
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_ENV")))
 	return e == "prod" || e == "production" || e == "staging"
 }
 
@@ -25,17 +25,17 @@ func IsProd() bool {
 // package (receipts, auth, cors, etc.) — keeps call sites concise.
 func isProd() bool { return IsProd() }
 
-// authzEnforce reports whether LANTERN_AUTHZ_ENFORCE is active.
+// authzEnforce reports whether PAL_AUTHZ_ENFORCE is active.
 //
 // Secure-default rule (ADR 0042):
 //   - Production (LANTERN_ENV=prod/production/staging): ON by default.
-//     Set LANTERN_AUTHZ_ENFORCE=0 to override with a startup WARN.
+//     Set PAL_AUTHZ_ENFORCE=0 to override with a startup WARN.
 //   - Dev (LANTERN_ENV unset): OFF by default; set =1/true/on to enable.
 //
 // This means an operator who forgets to set the flag still gets enforcement
 // in prod, while dev stays friction-free.
 func authzEnforce() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_AUTHZ_ENFORCE")))
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_AUTHZ_ENFORCE")))
 	// Explicit opt-out always wins.
 	if v == "0" || v == "false" || v == "off" {
 		return false
@@ -55,10 +55,10 @@ func AuthzEnforcing() bool { return authzEnforce() }
 // safely configured for the current environment.
 //
 // Returns (warnMsg string). An empty string means no warning needed.
-// When LANTERN_AUTHZ_ENFORCE=0 in prod, returns a loud WARN message.
+// When PAL_AUTHZ_ENFORCE=0 in prod, returns a loud WARN message.
 // (There is no fatal case — enforcement being off is operationally bad but
 // not a crash-worthy startup condition; it is instead surfaced as a WARN so
-// an alert can key on it. contrast with LANTERN_RLS_ENFORCE which IS fatal
+// an alert can key on it. contrast with PAL_RLS_ENFORCE which IS fatal
 // in prod when the app DB password is also missing.)
 func AuthzGuardDecision(isProdEnv bool, authzEnforceVal string) string {
 	if !isProdEnv {
@@ -66,9 +66,9 @@ func AuthzGuardDecision(isProdEnv bool, authzEnforceVal string) string {
 	}
 	v := strings.ToLower(strings.TrimSpace(authzEnforceVal))
 	if v == "0" || v == "false" || v == "off" {
-		return "LANTERN_AUTHZ_ENFORCE=0 in production — API-key scope enforcement is OFF; " +
+		return "PAL_AUTHZ_ENFORCE=0 in production — API-key scope enforcement is OFF; " +
 			"a key missing the endpoint's required scope will be allowed through; " +
-			"set LANTERN_AUTHZ_ENFORCE=1 (or remove the var) to re-enable the secure default"
+			"set PAL_AUTHZ_ENFORCE=1 (or remove the var) to re-enable the secure default"
 	}
 	return ""
 }
@@ -98,8 +98,8 @@ const devJWTSecret = "lantern-dev-jwt-secret-do-not-use-in-production"
 //     cert/key pair failed to load). Always fatal regardless of environment —
 //     a half-configured or broken cert is never the intended state.
 func GRPCServerTLS() (credentials.TransportCredentials, error) {
-	certPath := strings.TrimSpace(os.Getenv("LANTERN_CONTROL_PLANE_TLS_CERT"))
-	keyPath := strings.TrimSpace(os.Getenv("LANTERN_CONTROL_PLANE_TLS_KEY"))
+	certPath := strings.TrimSpace(os.Getenv("PAL_CONTROL_PLANE_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("PAL_CONTROL_PLANE_TLS_KEY"))
 
 	if certPath == "" && keyPath == "" {
 		// Not configured. Caller (main.go) applies prod-vs-dev policy.
@@ -150,7 +150,7 @@ func CheckSchedulerAddr(isProdEnv bool, addr string) (fatal bool, message string
 // Default dev value: http://localhost:3001 (Next.js dashboard dev server).
 // Override in any environment via LANTERN_CORS_ORIGINS (comma-separated list).
 func corsAllowedOrigins() map[string]struct{} {
-	raw := strings.TrimSpace(os.Getenv("LANTERN_CORS_ORIGINS"))
+	raw := strings.TrimSpace(os.Getenv("PAL_CORS_ORIGINS"))
 	if raw == "" {
 		raw = "http://localhost:3001"
 	}

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-23
-- **Deciders:** Lantern control-plane / services team
+- **Deciders:** PAL Runtime control-plane / services team
 - **Tags:** grpc, protobuf, billing, scheduler, memory, health
 - **Related:** [CLAUDE.md](../../CLAUDE.md) (proto workflow, invariants #2/#6/#7), `packages/proto/lantern/v1/`
 

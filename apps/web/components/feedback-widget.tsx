@@ -81,14 +81,14 @@ export function FeedbackWidget({ runId, source = "dashboard" }: FeedbackWidgetPr
           onChange={(e) => setComment(e.target.value)}
           placeholder="What was wrong (or right) about this run?"
           rows={2}
-          className="w-full rounded-md border border-zinc-800 bg-surface-1 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-lantern-500/50 focus:outline-none"
+          className="w-full rounded-md border border-zinc-800 bg-surface-1 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-pal-500/50 focus:outline-none"
         />
         <textarea
           value={preferredOutput}
           onChange={(e) => setPreferredOutput(e.target.value)}
           placeholder="Optional: paste the output you would have preferred"
           rows={3}
-          className="w-full rounded-md border border-zinc-800 bg-surface-1 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-lantern-500/50 focus:outline-none"
+          className="w-full rounded-md border border-zinc-800 bg-surface-1 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-pal-500/50 focus:outline-none"
         />
         <div className="flex items-center justify-end gap-2">
           <button
@@ -100,7 +100,7 @@ export function FeedbackWidget({ runId, source = "dashboard" }: FeedbackWidgetPr
           <button
             onClick={submitDetailed}
             disabled={submitting}
-            className="inline-flex items-center gap-1.5 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-pal-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             Submit

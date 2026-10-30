@@ -18,7 +18,7 @@ func TestResolveLocation(t *testing.T) {
 	})
 
 	t.Run("invalid tz falls back to UTC", func(t *testing.T) {
-		os.Unsetenv("LANTERN_DEFAULT_TIMEZONE")
+		os.Unsetenv("PAL_DEFAULT_TIMEZONE")
 		loc := ResolveLocation("Not/A/Zone")
 		if loc != time.UTC {
 			t.Errorf("got %q, want UTC", loc)
@@ -26,7 +26,7 @@ func TestResolveLocation(t *testing.T) {
 	})
 
 	t.Run("empty tz returns UTC when env unset", func(t *testing.T) {
-		os.Unsetenv("LANTERN_DEFAULT_TIMEZONE")
+		os.Unsetenv("PAL_DEFAULT_TIMEZONE")
 		loc := ResolveLocation("")
 		if loc != time.UTC {
 			t.Errorf("got %q, want UTC", loc)
@@ -34,7 +34,7 @@ func TestResolveLocation(t *testing.T) {
 	})
 
 	t.Run("empty tz uses LANTERN_DEFAULT_TIMEZONE", func(t *testing.T) {
-		t.Setenv("LANTERN_DEFAULT_TIMEZONE", "America/Chicago")
+		t.Setenv("PAL_DEFAULT_TIMEZONE", "America/Chicago")
 		loc := ResolveLocation("")
 		if loc.String() != "America/Chicago" {
 			t.Errorf("got %q, want America/Chicago", loc)
@@ -42,7 +42,7 @@ func TestResolveLocation(t *testing.T) {
 	})
 
 	t.Run("explicit tz wins over env", func(t *testing.T) {
-		t.Setenv("LANTERN_DEFAULT_TIMEZONE", "America/Chicago")
+		t.Setenv("PAL_DEFAULT_TIMEZONE", "America/Chicago")
 		loc := ResolveLocation("America/New_York")
 		if loc.String() != "America/New_York" {
 			t.Errorf("got %q, want America/New_York", loc)
@@ -50,7 +50,7 @@ func TestResolveLocation(t *testing.T) {
 	})
 
 	t.Run("invalid LANTERN_DEFAULT_TIMEZONE falls back to UTC", func(t *testing.T) {
-		t.Setenv("LANTERN_DEFAULT_TIMEZONE", "Bad/Zone")
+		t.Setenv("PAL_DEFAULT_TIMEZONE", "Bad/Zone")
 		loc := ResolveLocation("")
 		if loc != time.UTC {
 			t.Errorf("got %q, want UTC", loc)

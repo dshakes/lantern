@@ -192,7 +192,7 @@ export default function EvalSuitesPage() {
                   className="group flex items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 p-4 transition-colors hover:border-zinc-700"
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-lantern-500/10 text-lantern-400">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-pal-500/10 text-pal-400">
                       <BookCheck className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
@@ -450,7 +450,7 @@ export default function EvalSuitesPage() {
                   onChange={(e) =>
                     setEditing({ ...editing, agentName: e.target.value })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
                 >
                   <option value="">Select...</option>
                   {agents.map((a) => (
@@ -468,7 +468,7 @@ export default function EvalSuitesPage() {
                     setEditing({ ...editing, name: e.target.value })
                   }
                   placeholder="e.g. golden-set"
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
                 />
               </ModalField>
             </div>
@@ -479,7 +479,7 @@ export default function EvalSuitesPage() {
                 onChange={(e) =>
                   setEditing({ ...editing, description: e.target.value })
                 }
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
               />
             </ModalField>
 
@@ -505,7 +505,7 @@ export default function EvalSuitesPage() {
                       ],
                     })
                   }
-                  className="text-lantern-400 hover:text-lantern-300"
+                  className="text-pal-400 hover:text-pal-300"
                 >
                   Add case
                 </Button>
@@ -527,7 +527,7 @@ export default function EvalSuitesPage() {
                           updateCase(idx, { name: e.target.value })
                         }
                         placeholder="case name"
-                        className="flex-1 rounded-md border border-zinc-700 bg-surface-2 px-2 py-1 font-mono text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                        className="flex-1 rounded-md border border-zinc-700 bg-surface-2 px-2 py-1 font-mono text-xs text-zinc-100 outline-none focus:border-pal-500"
                       />
                       <button
                         onClick={() =>
@@ -552,7 +552,7 @@ export default function EvalSuitesPage() {
                       }
                       placeholder="Input sent to the agent"
                       rows={2}
-                      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-pal-500"
                     />
                     <input
                       type="text"
@@ -561,7 +561,7 @@ export default function EvalSuitesPage() {
                         updateCase(idx, { expected: e.target.value })
                       }
                       placeholder="Expected substring (output must contain)"
-                      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-pal-500"
                     />
                   </div>
                 ))}
@@ -613,7 +613,7 @@ export default function EvalSuitesPage() {
               if (e.key === "Enter" && branchInput.trim()) confirmPinBaseline();
             }}
             placeholder="main"
-            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
           />
         </ModalField>
       </Modal>

@@ -179,8 +179,8 @@ type SpawnRateLimiter struct {
 // LANTERN_SPAWN_RATE_PER_MIN and LANTERN_SPAWN_BURST. It starts a background
 // janitor that evicts idle in-memory buckets; Stop() shuts it down.
 func NewSpawnRateLimiter() *SpawnRateLimiter {
-	rate := envIntOrDefault("LANTERN_SPAWN_RATE_PER_MIN", defaultSpawnRatePerMin)
-	burst := envIntOrDefault("LANTERN_SPAWN_BURST", defaultSpawnBurst)
+	rate := envIntOrDefault("PAL_SPAWN_RATE_PER_MIN", defaultSpawnRatePerMin)
+	burst := envIntOrDefault("PAL_SPAWN_BURST", defaultSpawnBurst)
 	return newSpawnRateLimiterWithClock(float64(rate), float64(burst), time.Now)
 }
 

@@ -70,14 +70,14 @@ func TestW2S_TransitionMetricDoesNotPanicOnNilOrSame(t *testing.T) {
 }
 
 func TestW2S_FreeTierEnv(t *testing.T) {
-	t.Setenv("LANTERN_FREE_TIER_COST_USD_PER_DAY", "")
-	t.Setenv("LANTERN_FREE_TIER_MAX_VMS", "banana")
+	t.Setenv("PAL_FREE_TIER_COST_USD_PER_DAY", "")
+	t.Setenv("PAL_FREE_TIER_MAX_VMS", "banana")
 	ft := freeTierFromEnv()
 	if ft.CostUSDPerDay != defaultFreeCostUSDPerDay || ft.MaxVMs != defaultFreeMaxVMs {
 		t.Fatalf("defaults not applied: %+v", ft)
 	}
-	t.Setenv("LANTERN_FREE_TIER_COST_USD_PER_DAY", "off")
-	t.Setenv("LANTERN_FREE_TIER_MAX_VMS", "5")
+	t.Setenv("PAL_FREE_TIER_COST_USD_PER_DAY", "off")
+	t.Setenv("PAL_FREE_TIER_MAX_VMS", "5")
 	ft = freeTierFromEnv()
 	if ft.CostUSDPerDay != 0 || ft.MaxVMs != 5 {
 		t.Fatalf("env not honoured: %+v", ft)
@@ -100,9 +100,9 @@ func freeTierRows(t *testing.T, h *AuthHandler, tenantID string) (budget *float6
 
 func TestW2S_SignupAppliesFreeTier(t *testing.T) {
 	h := newAuthTestHandler(t)
-	t.Setenv("LANTERN_ENV", "")
-	t.Setenv("LANTERN_FREE_TIER_COST_USD_PER_DAY", "3.5")
-	t.Setenv("LANTERN_FREE_TIER_MAX_VMS", "3")
+	t.Setenv("PAL_ENV", "")
+	t.Setenv("PAL_FREE_TIER_COST_USD_PER_DAY", "3.5")
+	t.Setenv("PAL_FREE_TIER_MAX_VMS", "3")
 	email := uniqueEmail(t)
 	t.Cleanup(func() { cleanupUserByEmail(t, h, email) })
 	rr := doSignup(h, email, "supersecret-pw-123", "Free Tier")
@@ -128,8 +128,8 @@ func TestW2S_ApplyFreeTierDefaults(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = h.srv.Pool.Exec(ctx, `DELETE FROM tenants WHERE id=$1`, tenantID) })
 
-	t.Setenv("LANTERN_FREE_TIER_COST_USD_PER_DAY", "off")
-	t.Setenv("LANTERN_FREE_TIER_MAX_VMS", "off")
+	t.Setenv("PAL_FREE_TIER_COST_USD_PER_DAY", "off")
+	t.Setenv("PAL_FREE_TIER_MAX_VMS", "off")
 	run := func() {
 		tx, _ := h.srv.Pool.Begin(ctx)
 		defer tx.Rollback(ctx) //nolint:errcheck
@@ -142,8 +142,8 @@ func TestW2S_ApplyFreeTierDefaults(t *testing.T) {
 	if b, v := freeTierRows(t, h, tenantID); b != nil || v != nil {
 		t.Fatalf("off still wrote rows: %v %v", b, v)
 	}
-	t.Setenv("LANTERN_FREE_TIER_COST_USD_PER_DAY", "2")
-	t.Setenv("LANTERN_FREE_TIER_MAX_VMS", "2")
+	t.Setenv("PAL_FREE_TIER_COST_USD_PER_DAY", "2")
+	t.Setenv("PAL_FREE_TIER_MAX_VMS", "2")
 	run()
 	_, _ = h.srv.Pool.Exec(ctx, `UPDATE agent_budgets SET max_cost_usd_per_day=50 WHERE tenant_id=$1 AND agent_name='*'`, tenantID)
 	run()
@@ -184,11 +184,11 @@ func TestW2S_VerifyGate(t *testing.T) {
 	vt, vu := mk("local", true)
 	ot, ou := mk("google", false)
 
-	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("PAL_ENV", "")
 	if rr := call(ut, uu, "owner"); rr.Code != http.StatusNoContent {
 		t.Fatalf("dev mode must not gate: %d", rr.Code)
 	}
-	t.Setenv("LANTERN_ENV", "production")
+	t.Setenv("PAL_ENV", "production")
 	if rr := call(ut, uu, "owner"); rr.Code != http.StatusForbidden || code(rr) != "email_unverified" {
 		t.Fatalf("unverified in prod: %d %s", rr.Code, rr.Body.String())
 	}

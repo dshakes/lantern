@@ -55,7 +55,7 @@ final config. Re-run it any time the routing looks wrong.
 
 | Var | Where | Why |
 |-----|-------|-----|
-| `LANTERN_SIGNAL_TOKEN` | **API** (`dev.lantern.api.plist`) **and** dashboard | Gates `POST /v1/signals`; the iOS Shortcut sends it as `x-lantern-signal-token`. Pick any long random string. |
+| `PAL_SIGNAL_TOKEN` | **API** (`dev.lantern.api.plist`) **and** dashboard | Gates `POST /v1/signals`; the iOS Shortcut sends it as `x-lantern-signal-token`. Pick any long random string. |
 | `NEXT_PUBLIC_API_URL` | **dashboard** (`dev.lantern.dashboard.plist`) | Set to `https://<your-mac>.<tailnet>.ts.net` so the dashboard's *client-side* API calls resolve to the tailnet host instead of `localhost:8080` (which a phone can't reach). |
 
 Set plist env via `PlistBuddy` then reload with `launchctl bootout … && bootstrap …`

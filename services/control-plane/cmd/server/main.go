@@ -121,7 +121,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to parse REDIS_URL", zap.Error(err))
 	}
-	redisOpts.PoolSize = envIntMain("LANTERN_REDIS_POOL_SIZE", 20)
+	redisOpts.PoolSize = envIntMain("PAL_REDIS_POOL_SIZE", 20)
 	rdb := redis.NewClient(redisOpts)
 	defer rdb.Close() //nolint:errcheck
 
@@ -132,10 +132,10 @@ func main() {
 
 	// --- RLS app pool (dual-pool, flag-gated, default no-op) ---
 	//
-	// When LANTERN_RLS_ENFORCE=1 AND LANTERN_APP_DB_PASSWORD is set, create a
-	// second pool that connects as 'lantern_app' (non-superuser, subject to RLS
-	// policies on 'agents' and 'runs'). Otherwise appPool aliases the privileged
-	// pool — zero behaviour change with no env vars set.
+	// When PAL_RLS_ENFORCE=1 AND PAL_APP_DB_PASSWORD is set (or in prod with
+	// only PAL_APP_DB_PASSWORD set), create a second pool that connects as
+	// 'lantern_app' (non-superuser, subject to RLS policies). Otherwise appPool
+	// aliases the privileged pool — zero behaviour change with no env vars set.
 	//
 	// The privileged pool (pool) remains the sole connection for:
 	//   - migrations (Migrate() must run as the schema owner)
@@ -146,12 +146,12 @@ func main() {
 	// Operator cutover steps (when ready to enforce RLS on all handler paths):
 	//   1. CREATE ROLE lantern_app LOGIN (done by Migrate).
 	//   2. ALTER ROLE lantern_app PASSWORD '<strong>';
-	//   3. Set LANTERN_APP_DB_PASSWORD=<strong> + LANTERN_RLS_ENFORCE=1.
+	//   3. Set PAL_APP_DB_PASSWORD=<strong> (prod: implicit; dev: also set PAL_RLS_ENFORCE=1).
 	//   4. Route remaining handler paths through srv.AppPool + db.WithTenantConn.
 	//      Add // TODO(rls-cutover) comments on each site still using Pool directly.
 	appPool := pool // alias — superuser path, RLS bypassed
-	if rlsEnforceActive(handlers.IsProd(), os.Getenv("LANTERN_RLS_ENFORCE"), os.Getenv("LANTERN_APP_DB_PASSWORD")) {
-		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+	if rlsEnforceActive(handlers.IsProd(), os.Getenv("PAL_RLS_ENFORCE"), os.Getenv("PAL_APP_DB_PASSWORD")) {
+		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd != "" {
 			appCfg, cfgErr := buildAppPoolConfig(cfg.DatabaseURL, appPwd)
 			if cfgErr != nil {
@@ -169,7 +169,7 @@ func main() {
 			defer p.Close()
 			logger.Info("RLS enforcement active — AppPool connects as lantern_app")
 		} else {
-			logger.Warn("LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — AppPool aliased to privileged pool; RLS not enforced at runtime")
+			logger.Warn("PAL_RLS_ENFORCE=1 but PAL_APP_DB_PASSWORD is unset — AppPool aliased to privileged pool; RLS not enforced at runtime")
 		}
 	}
 
@@ -224,7 +224,7 @@ func main() {
 	// Service-token auth must run BEFORE tenant extraction: only callers holding
 	// the shared token may set a tenant_id. Empty token → pass-through (dev);
 	// runStartupGuards already refused to boot with an empty token in prod.
-	grpcServiceToken := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN")
+	grpcServiceToken := os.Getenv("PAL_GRPC_SERVICE_TOKEN")
 	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
@@ -287,7 +287,7 @@ func main() {
 	// sessions) unconditionally. It can only serve the developer-dashboard
 	// "Generate spec/code" path (Complete with empty AgentName). If you see
 	// this in prod logs, remove LANTERN_USE_CLAUDE_CODE from the deployment.
-	if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+	if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
 		logger.Warn("LANTERN_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
 	}
 
@@ -320,9 +320,9 @@ func main() {
 	// is set. Without the addr the handler is 503 for dispatch endpoints — honest
 	// increment 1 behavior until the runtime image ships (increment 2).
 	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
-	if rmAddr := os.Getenv("LANTERN_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
+	if rmAddr := os.Getenv("PAL_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
 		// Same creds as every manager dial: service token + mTLS when configured.
-		rmOpts, rmErr := handlers.ManagerDialOptions(os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"))
+		rmOpts, rmErr := handlers.ManagerDialOptions(os.Getenv("PAL_GRPC_SERVICE_TOKEN"))
 		var rmConn *grpc.ClientConn
 		if rmErr == nil {
 			rmConn, rmErr = grpc.NewClient(rmAddr, rmOpts...)
@@ -383,13 +383,13 @@ func main() {
 		// Kept backward-compatible by also accepting old text 'ok' shape:
 		// callers that just check status code still work.
 		llmMode := "api"
-		if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+		if os.Getenv("PAL_USE_CLAUDE_CODE") == "1" {
 			llmMode = "claude-code-local"
 		}
 
 		// RLS readiness fields — safe to expose (no secret material, only booleans).
-		rlsEnforce := os.Getenv("LANTERN_RLS_ENFORCE") == "1"
-		appPoolActive := rlsEnforce && os.Getenv("LANTERN_APP_DB_PASSWORD") != ""
+		rlsEnforce := os.Getenv("PAL_RLS_ENFORCE") == "1"
+		appPoolActive := rlsEnforce && os.Getenv("PAL_APP_DB_PASSWORD") != ""
 
 		// Check whether the lantern_app role exists. Best-effort: if the DB is
 		// unreachable the field reports false rather than erroring the health probe.
@@ -414,7 +414,7 @@ func main() {
 	// its own listener instead of riding the public :8080 API port. Expose it
 	// to Prometheus only (NetworkPolicy metricsFrom), never via ingress.
 	if metricsHandler != nil {
-		metricsAddr := os.Getenv("LANTERN_METRICS_ADDR")
+		metricsAddr := os.Getenv("PAL_METRICS_ADDR")
 		if metricsAddr == "" {
 			metricsAddr = ":9464"
 		}
@@ -989,7 +989,7 @@ func main() {
 
 	// Drain in-flight inline runs (SIGTERM graceful drain).
 	// The durable-replay recovery loop covers any runs that exceed the timeout.
-	drainTimeout := envDurationMain("LANTERN_DRAIN_TIMEOUT", 30*time.Second)
+	drainTimeout := envDurationMain("PAL_DRAIN_TIMEOUT", 30*time.Second)
 	logger.Info("draining in-flight runs", zap.Duration("timeout", drainTimeout))
 	restHandler.DrainInFlightRuns(drainTimeout)
 	logger.Info("in-flight runs drained")
@@ -1005,12 +1005,12 @@ func main() {
 // pure and testable without triggering os.Exit in tests.
 //
 // Secure-default rule (ADR 0042):
-//   - prod + LANTERN_APP_DB_PASSWORD set: RLS ON implicitly; LANTERN_RLS_ENFORCE
+//   - prod + PAL_APP_DB_PASSWORD set: RLS ON implicitly; PAL_RLS_ENFORCE
 //     need not be set (setting it to "1" still works as before).
-//   - prod + LANTERN_APP_DB_PASSWORD unset + LANTERN_RLS_ENFORCE != "0": FATAL.
+//   - prod + PAL_APP_DB_PASSWORD unset + PAL_RLS_ENFORCE != "0": FATAL.
 //     A prod server without an app password cannot enforce RLS — it would
 //     silently bypass tenant isolation on every query.
-//   - prod + LANTERN_APP_DB_PASSWORD unset + LANTERN_RLS_ENFORCE == "0": WARN
+//   - prod + PAL_APP_DB_PASSWORD unset + PAL_RLS_ENFORCE == "0": WARN
 //     and continue. The operator has explicitly acknowledged operating without
 //     RLS enforcement (e.g. during an initial migration onto an existing cluster).
 //   - dev: advisory only; no fatal.
@@ -1023,9 +1023,9 @@ func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, messa
 		// No app password: check for explicit opt-out.
 		v := strings.ToLower(strings.TrimSpace(rlsEnforce))
 		if v == "0" || v == "false" || v == "off" {
-			return false, "LANTERN_RLS_ENFORCE=0 in production without LANTERN_APP_DB_PASSWORD — RLS tenant isolation is DISABLED; this should only be set during initial cluster migration"
+			return false, "PAL_RLS_ENFORCE=0 in production without PAL_APP_DB_PASSWORD — RLS tenant isolation is DISABLED; this should only be set during initial cluster migration"
 		}
-		return true, "LANTERN_APP_DB_PASSWORD is unset in production — set LANTERN_APP_DB_PASSWORD (and optionally LANTERN_RLS_ENFORCE=1) to enforce RLS; or set LANTERN_RLS_ENFORCE=0 to acknowledge operating without tenant isolation (not recommended)"
+		return true, "PAL_APP_DB_PASSWORD is unset in production — set PAL_APP_DB_PASSWORD (and optionally PAL_RLS_ENFORCE=1) to enforce RLS; or set PAL_RLS_ENFORCE=0 to acknowledge operating without tenant isolation (not recommended)"
 	}
 	// Dev: advisory only.
 	if appPwd == "" {
@@ -1036,9 +1036,9 @@ func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, messa
 
 // rlsEnforceActive returns true when the app pool should connect as lantern_app
 // (i.e. RLS enforcement is enabled). It is true when:
-//   - LANTERN_RLS_ENFORCE is explicitly "1"/"true"/"on", OR
-//   - running in prod AND LANTERN_APP_DB_PASSWORD is set (secure default, ADR 0042)
-//     AND LANTERN_RLS_ENFORCE is not explicitly "0"/"false"/"off".
+//   - PAL_RLS_ENFORCE is explicitly "1"/"true"/"on", OR
+//   - running in prod AND PAL_APP_DB_PASSWORD is set (secure default, ADR 0042)
+//     AND PAL_RLS_ENFORCE is not explicitly "0"/"false"/"off".
 func rlsEnforceActive(isProd bool, rlsEnforce, appPwd string) bool {
 	v := strings.ToLower(strings.TrimSpace(rlsEnforce))
 	if v == "0" || v == "false" || v == "off" {
@@ -1096,7 +1096,7 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 
 	// H1 — Receipt signing secret
-	receiptSecret := os.Getenv("LANTERN_RECEIPT_SECRET")
+	receiptSecret := os.Getenv("PAL_RECEIPT_SECRET")
 	if prod && receiptSecret == "" {
 		logger.Fatal("LANTERN_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
 	}
@@ -1122,7 +1122,7 @@ func runStartupGuards(logger *zap.Logger) {
 	// Postgres enforces the tenant_isolation_{agents,runs} RLS policies even if
 	// a handler forgets a WHERE clause.  Dev is advisory-only so `make dev`
 	// works without any DB role management.
-	rlsFatal, rlsMsg := rlsGuardDecision(prod, os.Getenv("LANTERN_RLS_ENFORCE"), os.Getenv("LANTERN_APP_DB_PASSWORD"))
+	rlsFatal, rlsMsg := rlsGuardDecision(prod, os.Getenv("PAL_RLS_ENFORCE"), os.Getenv("PAL_APP_DB_PASSWORD"))
 	if rlsFatal {
 		logger.Fatal(rlsMsg)
 	}
@@ -1134,25 +1134,25 @@ func runStartupGuards(logger *zap.Logger) {
 	// In prod, API-key scope enforcement defaults ON. An explicit
 	// LANTERN_AUTHZ_ENFORCE=0 is allowed but generates a loud WARN so the
 	// operator can't miss it. Dev defaults remain OFF unless the flag is set.
-	if warnMsg := handlers.AuthzGuardDecision(prod, os.Getenv("LANTERN_AUTHZ_ENFORCE")); warnMsg != "" {
-		logger.Warn(warnMsg, zap.String("flag", "LANTERN_AUTHZ_ENFORCE"))
+	if warnMsg := handlers.AuthzGuardDecision(prod, os.Getenv("PAL_AUTHZ_ENFORCE")); warnMsg != "" {
+		logger.Warn(warnMsg, zap.String("flag", "PAL_AUTHZ_ENFORCE"))
 	}
 	// State the enforcement mode so an alert can key on the "enforced=false" field.
 	logger.Info("authz: API-key scope enforcement",
 		zap.Bool("enforced", handlers.AuthzEnforcing()),
-		zap.String("flag", "LANTERN_AUTHZ_ENFORCE"))
+		zap.String("flag", "PAL_AUTHZ_ENFORCE"))
 
 	// gRPC service-token auth (trust boundary on :50051).
 	// Without a token, any caller reachable to :50051 can set an arbitrary
 	// tenant_id and read/write that tenant's data. Production must require it.
-	if prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+	if prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
 		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
 	}
-	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+	if !prod && os.Getenv("PAL_GRPC_SERVICE_TOKEN") == "" {
 		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 
-	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH"), os.Getenv("LANTERN_USE_CLAUDE_CODE")); fatal {
+	if fatal, msg := insecureFlagsDecision(prod, os.Getenv("PAL_TWILIO_WEBHOOK_AUTH"), os.Getenv("PAL_USE_CLAUDE_CODE")); fatal {
 		logger.Fatal(msg)
 	}
 
@@ -1168,11 +1168,11 @@ func runStartupGuards(logger *zap.Logger) {
 	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
 	// data corruption, not a graceful degradation. Refuse to start.
 	// In dev the stub is intentional (no real scheduler needed).
-	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"))
+	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("PAL_SCHEDULER_GRPC_ADDR"))
 	if schedulerFatal {
 		logger.Fatal(schedulerMsg)
 	}
-	if !prod && os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR") == "" {
+	if !prod && os.Getenv("PAL_SCHEDULER_GRPC_ADDR") == "" {
 		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
 	}
 
@@ -1413,9 +1413,9 @@ func parsePgxPoolConfig(databaseURL string) (*pgxpool.Config, error) {
 // *pgxpool.Config. Called for both the privileged pool and the AppPool so
 // both benefit from the same env configuration.
 func applyPgxPoolTuning(cfg *pgxpool.Config) {
-	cfg.MaxConns = int32(envIntMain("LANTERN_PG_MAX_CONNS", 20))
-	cfg.MaxConnLifetime = envDurationMain("LANTERN_PG_MAX_CONN_LIFETIME", time.Hour)
-	cfg.MaxConnIdleTime = envDurationMain("LANTERN_PG_MAX_CONN_IDLE_TIME", 30*time.Minute)
+	cfg.MaxConns = int32(envIntMain("PAL_PG_MAX_CONNS", 20))
+	cfg.MaxConnLifetime = envDurationMain("PAL_PG_MAX_CONN_LIFETIME", time.Hour)
+	cfg.MaxConnIdleTime = envDurationMain("PAL_PG_MAX_CONN_IDLE_TIME", 30*time.Minute)
 }
 
 // envIntMain reads an integer env var, falling back to fallback when absent or

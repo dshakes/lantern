@@ -75,7 +75,7 @@ const (
 	//
 	// Default: 10 minutes. Parse as time.Duration (e.g. "10m", "5m30s").
 	// Set to "0" to disable the grace window entirely (strict: terminal → reject).
-	envTerminalGrace = "LANTERN_RUNTIME_TERMINAL_GRACE"
+	envTerminalGrace = "PAL_RUNTIME_TERMINAL_GRACE"
 
 	// defaultTerminalGrace is used when LANTERN_RUNTIME_TERMINAL_GRACE is absent
 	// or unparseable.
@@ -866,7 +866,7 @@ func decodePromPayload(s string) string {
 const (
 	// envLogRetentionDays is the environment variable that controls how long
 	// runtime_vm_logs rows are kept. Default: 14 days.
-	envLogRetentionDays = "LANTERN_RUNTIME_LOG_RETENTION_DAYS"
+	envLogRetentionDays = "PAL_RUNTIME_LOG_RETENTION_DAYS"
 
 	// defaultLogRetentionDays is the fallback when the env var is absent or
 	// unparseable.

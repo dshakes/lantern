@@ -1,14 +1,14 @@
 // Typed client for the control-plane's WhatsApp personal-assistant
 // endpoints (VIPs, contact facts, pending drafts). Mirrors the
 // bridge-client pattern: pure functions, no state, single auth source
-// (the lantern_token cookie/localStorage via api.ts).
+// (the pal_token cookie/localStorage via api.ts).
 
 import { api } from "@/lib/api";
 
 const API_BASE =
   (typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080")
-    : (process.env.LANTERN_API_URL ?? "http://localhost:8080"));
+    : ((process.env.PAL_API_URL ?? process.env.LANTERN_API_URL) ?? "http://localhost:8080"));
 
 function authHeaders(): HeadersInit {
   const token = api.token ?? api.restoreToken();

@@ -9,8 +9,9 @@
 #      .deploy.json, .receipt.json)
 set -euo pipefail
 dir=${1:-.}
-: "${LANTERN_API_URL:?set LANTERN_API_URL}" "${LANTERN_API_KEY:?set LANTERN_API_KEY}"
-api=${LANTERN_API_URL%/}
+: "${PAL_API_URL:=${LANTERN_API_URL:-}}" "${PAL_API_KEY:=${LANTERN_API_KEY:-}}"
+: "${PAL_API_URL:?set PAL_API_URL (LANTERN_API_URL still accepted)}" "${PAL_API_KEY:?set PAL_API_KEY (LANTERN_API_KEY still accepted)}"
+api=${PAL_API_URL%/}
 res=${EVAL_RESULT:-.eval-result.json}
 deploy=${DEPLOY_JSON:-.deploy.json}
 receipt=${RECEIPT_JSON:-.receipt.json}
@@ -22,7 +23,7 @@ jq -e '.passed == true and .regressed == false' "$res" >/dev/null 2>&1 \
 echo "release: deployed $(jq -c '{id,status,url}' "$deploy")"
 
 run=$(jq -r .runId "$res")
-curl -fsS -X POST -H "Authorization: Bearer $LANTERN_API_KEY" "$api/v1/runs/$run/receipt" >"$receipt"
+curl -fsS -X POST -H "Authorization: Bearer $PAL_API_KEY" "$api/v1/runs/$run/receipt" >"$receipt"
 verdict=$(curl -fsS -X POST -H 'Content-Type: application/json' -d @"$receipt" "$api/v1/runs/receipts/verify")
 echo "release: receipt verify -> $verdict"
 jq -e '.valid == true' <<<"$verdict" >/dev/null || { echo "release: receipt did not verify" >&2; exit 1; }

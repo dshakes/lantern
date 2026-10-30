@@ -86,7 +86,7 @@ Each maps directly to a service block in `runtime.proto`. The split is the subje
    - Opens a vsock connection to the manager.
    - Sends `Heartbeat` every 5s; the manager treats a heartbeat older than 30s (`HEARTBEAT_STALE_SECS`) as stale.
    - Resolves each `SecretRef` via `VendSecret` (one round-trip per secret) — short-TTL JWT exchange, see [ADR 0005](../adr/0005-secret-vending-via-short-jwt.md).
-   - Installs the egress filter from `AgentSpec.egress_rules` — see [ADR 0006](../adr/0006-egress-allowlist-at-harness.md). In broker mode (`LANTERN_EGRESS_MODE=broker`, [ADR 0026](../adr/0026-host-egress-broker.md)) the VM has no NIC; the harness instead forwards `127.0.0.1:3128` over vsock to the manager's host-side broker, which enforces the rules and injects `EgressRule.inject` credentials on the way out.
+   - Installs the egress filter from `AgentSpec.egress_rules` — see [ADR 0006](../adr/0006-egress-allowlist-at-harness.md). In broker mode (`PAL_EGRESS_MODE=broker`, [ADR 0026](../adr/0026-host-egress-broker.md)) the VM has no NIC; the harness instead forwards `127.0.0.1:3128` over vsock to the manager's host-side broker, which enforces the rules and injects `EgressRule.inject` credentials on the way out.
    - Exec's the worker (user agent code).
 5. **worker runs.** stdout/stderr stream out via the harness `Report` stream; OTel spans and Prometheus metrics ride the same channel as oneof bodies (`runtime.proto:380`).
 6. **completion.** Worker exits, harness sends a final `Heartbeat` with `state=TERMINATED`, manager releases the VM, scheduler decrements its tally. If `idempotent=true` and the worker exited non-zero, the scheduler re-queues with a different node.
@@ -132,8 +132,8 @@ A request crosses these trust boundaries; each is a checkpoint:
 | Boundary | Trust transition | Enforced by |
 |---|---|---|
 | Caller → control-plane | external untrusted → tenant-authenticated | JWT verification, RBAC, tenant_id stamping |
-| control-plane → scheduler | gRPC, `x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`) | service-auth interceptor, fail-closed in prod |
-| scheduler → manager | gRPC, service token + client TLS (`LANTERN_RUNTIME_MANAGER_TLS_*`) | manager interceptor ([ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md)) |
+| control-plane → scheduler | gRPC, `x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`) | service-auth interceptor, fail-closed in prod |
+| scheduler → manager | gRPC, service token + client TLS (`PAL_RUNTIME_MANAGER_TLS_*`) | manager interceptor ([ADR 0025](../adr/0025-sandbox-spawn-contract-and-manager-authz.md)) |
 | manager → harness | host → guest (vsock) | guest cannot reach manager except over vsock; no IP routing host↔guest |
 | harness → worker | guest PID 1 → guest user process | seccomp profile, dropped caps, read-only rootfs |
 | worker → internet | guest user process → outside world | harness egress allowlist + host CNI policy (defense in depth, [ADR 0006](../adr/0006-egress-allowlist-at-harness.md)) |
@@ -187,12 +187,12 @@ byte-exact (the old kernel-cmdline path mangled spaces and quotes); the cmdline 
 kept only for harness builds that predate the file. The harness rejects unknown
 `version`s, drops the workload, exec and shell children to `workload_uid`/`gid`,
 and gives them an explicit env with `LANTERN_*` withheld except a non-secret
-allowlist. The uid is set by the manager (`LANTERN_WORKLOAD_UID_DEFAULT`); a
-caller-supplied `LANTERN_WORKLOAD_UID` is dropped.
+allowlist. The uid is set by the manager (`PAL_WORKLOAD_UID_DEFAULT`); a
+caller-supplied `PAL_WORKLOAD_UID` is dropped.
 
 **Identity pinning.** Per-VM certs are CN = `vm_id` and carry `OU=lantern-vm`. The
 manager's `RuntimeManager` interceptor refuses any such cert and requires
-`x-lantern-service-token` (`LANTERN_GRPC_SERVICE_TOKEN`), so a guest can reach only
+`x-lantern-service-token` (`PAL_GRPC_SERVICE_TOKEN`), so a guest can reach only
 `RuntimeHarness`, where each message is bound to its own `vm_id`. `ExecTool`
 carries `tenant_id` and returns `NOT_FOUND` on mismatch. Snapshots record the
 owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
@@ -204,10 +204,10 @@ owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
    State becomes `paused`; `snapshotId` is recorded on the VM.
 2. `resume` — claims a quota slot (402 if none; 409 if the VM is not `paused`),
    restores the snapshot under the same `vm_id`, and the harness re-identifies.
-3. `fork {count 1..LANTERN_MAX_FORK_COUNT}` — restores the snapshot `count` times
+3. `fork {count 1..PAL_MAX_FORK_COUNT}` — restores the snapshot `count` times
    (default cap 100, hard ceiling 1000); each fork gets a new `vm_id`, cert and
    agent identity, with `parentVmId` pointing at the source.  Fork spawns fan out
-   with bounded concurrency (`LANTERN_FORK_CONCURRENCY`, default 16) so N=100
+   with bounded concurrency (`PAL_FORK_CONCURRENCY`, default 16) so N=100
    forks saturate the node's restore pipeline without unbounded goroutine
    explosion.  Two CoW mechanisms keep fork disk I/O O(1):
 
@@ -228,7 +228,7 @@ owning tenant and agent version; restoring across tenants is `NOT_FOUND`.
      `elapsed_ms`) so operators can see the cost in dashboards.  This keeps
      pause/resume/fork working on ext4 hosts (Lima, GitHub KVM runners, many
      customer nodes) without availability impact.  **Set
-     `LANTERN_REQUIRE_REFLINK=1`** on nodes whose snapshot directory is on
+     `PAL_REQUIRE_REFLINK=1`** on nodes whose snapshot directory is on
      XFS/btrfs to enforce FICLONE and fail with a typed error rather than
      silently falling back — this is the recommended production setting for
      high-fan-out fork workloads.
@@ -330,7 +330,7 @@ mkfs.xfs -m reflink=1 -m crc=1 /dev/nvme0n1p2
 mount -o noatime /dev/nvme0n1p2 /data
 mkdir -p /data/snapshots /data/jailer
 # Then set env on the manager:
-export LANTERN_SNAPSHOT_DIR=/data/snapshots
+export PAL_SNAPSHOT_DIR=/data/snapshots
 export FIRECRACKER_CHROOT_BASE=/data/jailer
 ```
 
@@ -343,9 +343,9 @@ sudo filefrag -v /data/jailer/firecracker/<vm_id>/root/snapshot/rootfs | head -1
 
 On non-reflink filesystems (ext4, tmpfs), the manager logs `disk_staging="full_copy"` with `bytes` and `elapsed_ms` per staging event plus a once-per-process WARN.  Alert on `disk_staging="full_copy"` in production to catch filesystem misconfiguration.
 
-**Enforcing FICLONE in production.**  Set `LANTERN_REQUIRE_REFLINK=1` on the manager to fail with a typed error instead of falling back.  Recommended for high-fan-out fork workloads on XFS/btrfs nodes.  Default is off — the fallback keeps pause/resume/fork working on any filesystem.
+**Enforcing FICLONE in production.**  Set `PAL_REQUIRE_REFLINK=1` on the manager to fail with a typed error instead of falling back.  Recommended for high-fan-out fork workloads on XFS/btrfs nodes.  Default is off — the fallback keeps pause/resume/fork working on any filesystem.
 
-**Dev / CI.**  No configuration needed.  The manager automatically falls back to a full byte copy on ext4/tmpfs with a WARN.  `LANTERN_REQUIRE_REFLINK` should NOT be set in dev/CI unless you have intentionally configured XFS with reflinks.
+**Dev / CI.**  No configuration needed.  The manager automatically falls back to a full byte copy on ext4/tmpfs with a WARN.  `PAL_REQUIRE_REFLINK` should NOT be set in dev/CI unless you have intentionally configured XFS with reflinks.
 
 ---
 
@@ -402,7 +402,7 @@ The runtime-manager's `exec_tool` previously returned `TOOL_STATUS_UNAVAILABLE` 
 
 - **`shell_exec`** — run a shell command with enforced timeout; returns stdout, stderr, exit code.
 - **`http_fetch`** — HTTP request forced through the `127.0.0.1:3128` egress-allowlist proxy; 1 MiB response cap.
-- **`read_file` / `write_file` / `list_dir`** — confined to `LANTERN_WORKSPACE` (default `/workspace`); these back the sandbox file API.
+- **`read_file` / `write_file` / `list_dir`** — confined to `PAL_WORKSPACE` (default `/workspace`); these back the sandbox file API.
 - Unknown tool names return `TOOL_STATUS_ERROR` (typed, never `UNAVAILABLE`).
 
 Transport: the existing `RuntimeHarness.Exec` gRPC stream, with a `__lantern_tool_call__` sentinel in `argv[0]` followed by a JSON envelope. The harness intercepts the sentinel before the general exec audit path so serialized arguments never appear in audit logs (invariant #10). `TOOL_STATUS_UNAVAILABLE` now strictly means the VM is not found or the harness is unreachable.

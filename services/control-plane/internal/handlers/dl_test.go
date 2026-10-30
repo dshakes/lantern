@@ -66,7 +66,7 @@ func newDLHandlerForTest(t *testing.T) *DLHandler {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
 	h := &DLHandler{srv: &server.Server{Logger: logger}, dir: t.TempDir(), secret: []byte("test-secret-abc"), blob: newMockBlob()}
-	t.Setenv("LANTERN_PUBLIC_BASE_URL", "https://tunnel.example.com")
+	t.Setenv("PAL_PUBLIC_BASE_URL", "https://tunnel.example.com")
 	return h
 }
 
@@ -166,7 +166,7 @@ func TestDL_RawUploadRequiresContentLength(t *testing.T) {
 func TestDL_TempDirFallbackWhenNoBlob(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	h := &DLHandler{srv: &server.Server{Logger: logger}, dir: t.TempDir(), secret: []byte("s")} // blob nil
-	t.Setenv("LANTERN_PUBLIC_BASE_URL", "https://tunnel.example.com")
+	t.Setenv("PAL_PUBLIC_BASE_URL", "https://tunnel.example.com")
 	mux := dlMux(h)
 	path := stage(t, mux, "note.txt", "fallback-bytes")
 	rec := httptest.NewRecorder()
@@ -252,13 +252,13 @@ func TestDL_StageRejectsEmptyAndOversize(t *testing.T) {
 }
 
 func TestDL_ProdRequiresConfiguredSecret(t *testing.T) {
-	t.Setenv("LANTERN_ENV", "production")
-	t.Setenv("LANTERN_DL_SIGNING_SECRET", "")
-	t.Setenv("LANTERN_GRPC_SERVICE_TOKEN", "")
+	t.Setenv("PAL_ENV", "production")
+	t.Setenv("PAL_DL_SIGNING_SECRET", "")
+	t.Setenv("PAL_GRPC_SERVICE_TOKEN", "")
 	if resolveDLSecret() != nil {
 		t.Fatal("prod must NOT fall back to an ephemeral secret (breaks cross-replica verify)")
 	}
-	t.Setenv("LANTERN_DL_SIGNING_SECRET", "shared-secret")
+	t.Setenv("PAL_DL_SIGNING_SECRET", "shared-secret")
 	if string(resolveDLSecret()) != "shared-secret" {
 		t.Fatal("should use the configured shared secret")
 	}

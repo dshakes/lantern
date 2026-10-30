@@ -65,7 +65,7 @@ function ResetPassword() {
         </Button>
       </form>
       <div className="mt-4 text-center text-xs text-zinc-500">
-        <Link href="/auth/forgot" className="text-lantern-400 transition-colors hover:text-lantern-300">Request a new link</Link>
+        <Link href="/auth/forgot" className="text-pal-400 transition-colors hover:text-pal-300">Request a new link</Link>
       </div>
     </AuthShell>
   );

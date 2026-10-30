@@ -77,11 +77,11 @@ const __dirname = dirname(__filename);
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
-const PORT = parseInt(process.env.LANTERN_IMESSAGE_BRIDGE_PORT || "3200", 10);
-const BIND = process.env.LANTERN_IMESSAGE_BRIDGE_BIND || "127.0.0.1";
+const PORT = parseInt(process.env.PAL_IMESSAGE_BRIDGE_PORT || "3200", 10);
+const BIND = process.env.PAL_IMESSAGE_BRIDGE_BIND || "127.0.0.1";
 const isLoopback = BIND === "127.0.0.1" || BIND === "::1" || BIND === "localhost";
-const BRIDGE_TOKEN = process.env.LANTERN_IMESSAGE_BRIDGE_TOKEN || "";
-const CORS_ORIGIN = process.env.LANTERN_IMESSAGE_BRIDGE_ORIGIN || "http://localhost:3001";
+const BRIDGE_TOKEN = process.env.PAL_IMESSAGE_BRIDGE_TOKEN || "";
+const CORS_ORIGIN = process.env.PAL_IMESSAGE_BRIDGE_ORIGIN || "http://localhost:3001";
 const STATE_DIR = join(__dirname, "..", "bridge_state");
 
 initAuth(logger);
@@ -284,7 +284,7 @@ app.post("/session/:tenantId/send-doc", async (req, res) => {
 app.post("/session/:tenantId/send-self", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s || !s.isReady()) { res.status(400).json({ error: "not ready" }); return; }
-  const ownerHandle = process.env.LANTERN_IMESSAGE_OWNER_HANDLE;
+  const ownerHandle = process.env.PAL_IMESSAGE_OWNER_HANDLE;
   if (!ownerHandle) {
     res.status(400).json({ error: "LANTERN_IMESSAGE_OWNER_HANDLE not configured on the bridge host" });
     return;
@@ -578,10 +578,10 @@ wss.on("connection", (ws, req) => {
 // LANTERN_IMESSAGE_AUTOSTART=0 to disable (e.g. for a multi-tenant
 // prod host that expects explicit /start per tenant).
 const DEFAULT_TENANT =
-  process.env.LANTERN_TENANT_ID ||
-  process.env.LANTERN_DEFAULT_TENANT_ID ||
+  process.env.PAL_TENANT_ID ||
+  process.env.PAL_DEFAULT_TENANT_ID ||
   "00000000-0000-0000-0000-000000000001";
-const AUTOSTART = (process.env.LANTERN_IMESSAGE_AUTOSTART ?? "1") !== "0";
+const AUTOSTART = (process.env.PAL_IMESSAGE_AUTOSTART ?? "1") !== "0";
 
 server.listen(PORT, BIND, async () => {
   logger.info({ port: PORT, bind: BIND, build: buildLabel(), platform: process.platform }, "lantern-imessage-bridge listening");

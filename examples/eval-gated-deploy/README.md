@@ -36,7 +36,7 @@ new run as the baseline after it passes.
 
 ```bash
 make dev-infra && make run-api   # terminal 1; add a provider key, or run llm-replay (below)
-export LANTERN_API_URL=http://localhost:8080 LANTERN_API_KEY=<jwt or key with agents:write, runs:execute, runs:write>
+export PAL_API_URL=http://localhost:8080 PAL_API_KEY=<jwt or key with agents:write, runs:execute, runs:write>
 cd examples/eval-gated-deploy
 
 EVAL_PIN=1 scripts/eval.sh .                    # baseline: 3/3, pinned
@@ -45,7 +45,7 @@ scripts/eval.sh candidates/improved && scripts/release.sh candidates/improved
 ```
 
 Without a provider key, start `go run ./services/control-plane/cmd/llm-replay -rules fixtures/llm-rules.json` and
-point the control plane at it with `LANTERN_LLM_BASEURL_OPENAI` / `LANTERN_LLM_BASEURL_ANTHROPIC`.
+point the control plane at it with `PAL_LLM_BASEURL_OPENAI` / `PAL_LLM_BASEURL_ANTHROPIC`.
 
 The end-to-end test (`e2e/examples/eval_gated_deploy_test.go`, run by `make test-e2e-examples`) drives exactly these
 scripts: the regressing candidate exits 1 on `422` and no agent or deployment row is created; the passing one

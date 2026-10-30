@@ -20,7 +20,7 @@ home-screen icon. Voice input → answer spoken back.
    - **Local wifi (simplest)**: iPhone + Mac on the same wifi network.
      Use your Mac's local IP (System Settings → Network → your active
      interface). The bridge binds 127.0.0.1 by default; flip to LAN by
-     setting `LANTERN_BRIDGE_BIND=0.0.0.0` and restart.
+     setting `PAL_BRIDGE_BIND=0.0.0.0` and restart.
    - **Cloudflare Tunnel (recommended for "anywhere" access)**:
      `brew install cloudflared` → `cloudflared tunnel --url http://localhost:3100`
      → it prints a `https://xxx.trycloudflare.com` URL. Use that.
@@ -30,7 +30,7 @@ home-screen icon. Voice input → answer spoken back.
 
 2. **A bridge token** (REQUIRED for non-loopback access):
    ```bash
-   export LANTERN_BRIDGE_TOKEN="$(openssl rand -hex 32)"
+   export PAL_BRIDGE_TOKEN="$(openssl rand -hex 32)"
    ```
    Add it to your `~/.lantern/whatsapp.env` so it survives restarts.
    Save the token — the shortcut needs it.
