@@ -62,6 +62,7 @@ var getExempt = map[string]string{
 	// Auth flow — these ARE the authentication endpoints.
 	"GET /auth/me":                        "auth endpoint (returns current user, internal JWT validation)",
 	"GET /auth/oauth/{provider}/start":    "OAuth flow start (no credential yet)",
+	"GET /auth/providers":                 "pre-auth: sign-in page lists enabled login providers (no credential yet)",
 	"GET /auth/oauth/{provider}/callback": "OAuth callback (no credential yet)",
 	"GET /v1/connectors/oauth/callback":   "OAuth callback (connector flow, no scope needed)",
 

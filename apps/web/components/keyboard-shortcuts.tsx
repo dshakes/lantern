@@ -4,7 +4,7 @@
 //
 // Convention:
 //   - 1-4 jump to the four primary destinations (handled in sidebar already).
-//   - `g <key>` go-to combos: g a → Agents, g i → Inbox, g r → Runs, etc.
+//   - `g <key>` go-to combos: g t → Today, g o → Overview, g r → Runs, etc.
 //     Press `g`, release, then press the target letter within 800ms.
 //   - `?` opens the shortcut cheat sheet.
 //   - `Esc` closes the cheat sheet.
@@ -28,14 +28,15 @@ interface ShortcutDef {
 }
 
 const SHORTCUTS: ShortcutDef[] = [
-  { combo: "g a", description: "Go to Agents", group: "Navigate", goToKey: "a", href: "/agents" },
-  { combo: "g i", description: "Go to Activity (Inbox)", group: "Navigate", goToKey: "i", href: "/inbox" },
-  { combo: "g s", description: "Go to Settings", group: "Navigate", goToKey: "s", href: "/settings" },
+  { combo: "g t", description: "pal: Today (your Brief)", group: "Navigate", goToKey: "t", href: "/brief" },
+  { combo: "g h", description: "pal: Holds (replies waiting on you)", group: "Navigate", goToKey: "h", href: "/personal/drafts" },
+  { combo: "g o", description: "Runtime: Overview", group: "Navigate", goToKey: "o", href: "/overview" },
+  { combo: "g a", description: "Runtime: Agents", group: "Navigate", goToKey: "a", href: "/agents" },
+  { combo: "g r", description: "Runtime: Runs", group: "Navigate", goToKey: "r", href: "/runs" },
+  { combo: "g v", description: "Runtime: Sandboxes", group: "Navigate", goToKey: "v", href: "/runtime" },
+  { combo: "g s", description: "Settings", group: "Navigate", goToKey: "s", href: "/settings" },
   { combo: "g n", description: "New agent", group: "Navigate", goToKey: "n", href: "/agents/create" },
-  { combo: "g m", description: "Templates marketplace", group: "Navigate", goToKey: "m", href: "/marketplace" },
-  { combo: "g x", description: "Analytics", group: "Navigate", goToKey: "x", href: "/evaluations" },
-  { combo: "/", description: "Search agents", group: "Action" },
-  { combo: "⌘K", description: "Open command palette", group: "Action" },
+  { combo: "⌘K", description: "Ask PAL / command bar", group: "Action" },
   { combo: "?", description: "Show this cheat sheet", group: "Help" },
   { combo: "Esc", description: "Close dialogs / cheat sheet", group: "Help" },
 ];

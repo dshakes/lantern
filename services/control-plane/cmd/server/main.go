@@ -487,6 +487,7 @@ func main() {
 	httpMux.HandleFunc("POST /auth/signup", authHandler.Signup)
 	httpMux.HandleFunc("POST /auth/login", authHandler.Login)
 	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
+	httpMux.HandleFunc("GET /auth/providers", authHandler.AuthProviders)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/start", authHandler.OAuthStart)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/callback", authHandler.OAuthCallback)
 	// One-time-code exchange: the OAuth callback redirects with ?code=… (not
@@ -621,6 +622,7 @@ func main() {
 	// Agentic onboarding: resumable state (tenants.settings->onboarding) + the
 	// onboarding agent's run explanation.
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	handlers.NewAssistHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 
 	// LLM provider settings endpoints.

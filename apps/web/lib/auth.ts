@@ -29,7 +29,8 @@ export interface AuthState {
   ) => Promise<{ verificationRequired: boolean }>;
   login: (email: string, password: string) => Promise<void>;
   loginDemo: () => void;
-  logout: () => void;
+  /** Clears the session; resolves once the HttpOnly cookie is cleared too. */
+  logout: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,11 +144,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsDemoMode(true);
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     api.logout();
     setToken(null);
     setUser(null);
     setIsDemoMode(false);
+    // Await the cookie DELETE so a following navigation can't race it and get
+    // waved through by middleware with a still-present cookie.
+    await api.whenCookieSynced();
   }, []);
 
   const value: AuthState = {

@@ -135,7 +135,7 @@ export default function RunsPage() {
             </div>
             <h3 className="mt-4 text-sm font-semibold text-zinc-100">Couldn&apos;t load runs</h3>
             <p className="mt-1 max-w-sm text-center text-xs text-zinc-500">{error.message}. Check that the control-plane API is reachable.</p>
-            <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">lantern dev</code>
+            <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">pal dev</code>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState

@@ -136,7 +136,7 @@ export function RehearsalsPanel({ agentName }: Props) {
           )}
           <p className="text-[12px] text-zinc-500">
             To actually re-execute these cases, run{" "}
-            <code className="rounded bg-surface-0 px-1 text-zinc-300">lantern test --rehearse --agent={agentName}</code>
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">pal test --rehearse --agent={agentName}</code>
             {" "}from your terminal. Results post back via{" "}
             <code className="rounded bg-surface-0 px-1 text-zinc-300">/v1/eval-runs</code> and gate merges via
             the existing eval baseline.
