@@ -127,5 +127,5 @@ validation is next.
 We want **design partners** who need agents in their own cloud with real cost, eval
 and audit controls, and early users for the personal agent.
 
-*Run it: `git clone https://github.com/dshakes/lantern && cd lantern && make dev`.
+*Run it: `git clone https://github.com/dshakes/pal && cd pal && make dev`.
 See the [README](README.md) and [SECURITY.md](SECURITY.md).*
