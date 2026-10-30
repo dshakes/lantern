@@ -96,7 +96,7 @@ func TestManagerTransportCreds(t *testing.T) {
 }
 
 // TestGRPCDialer_AttachesServiceToken proves every manager RPC carries
-// x-lantern-service-token (required by the manager when the token is set).
+// x-pal-service-token (required by the manager when the token is set).
 func TestGRPCDialer_AttachesServiceToken(t *testing.T) {
 	got := make(chan string, 1)
 	srv := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {

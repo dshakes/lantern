@@ -13,16 +13,16 @@
 
 global:
   image:
-    # Published images: ghcr.io/dshakes/lantern/<name> (build-images.yml). The
+    # Published images: ghcr.io/dshakes/pal/<name> (build-images.yml). The
     # per-component image.name comes from values.yaml; an empty registry used to
     # render "/pal/pal-gateway:tag", which no runtime can pull.
     registry: ghcr.io
-    repository: dshakes/lantern
+    repository: dshakes/pal
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
 
-# -- Row-Level Security: ON here, and only here --
+# -- Row-Level Security + AuthZ: ON here, and only here --
 #
 # PAL_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
 # `lantern_app` role, which the policies actually apply to. Without the second
@@ -84,26 +84,9 @@ controlPlane:
     # A key missing the endpoint's scope gets 403. JWT sessions and unscoped
     # (legacy) keys are unaffected. Re-scope keys first: ga-staged-rollout.md.
     PAL_AUTHZ_ENFORCE: "1"
-  # REQUIRED for a prod-class PAL_ENV (production) — the control-plane refuses
-  # to start without these (runStartupGuards / grpcTLSCreds). Besides the
-  # `secrets:` values listed at the top, supply per environment:
-  #   PAL_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
-  #   PAL_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
+  # Internal gRPC TLS is wired by `mtls` below (cert-manager). Without it a
+  # prod-class env refuses to serve gRPC unless PAL_GRPC_INSECURE=1 (ADR 0043).
   # PAL_SCHEDULER_GRPC_ADDR is wired by the chart (in-cluster scheduler svc).
-  # The TLS inputs below are operator-supplied Secrets (the chart cannot mint
-  # them); the control-plane refuses to boot in prod until they are mounted.
-  # extraEnv (append):
-  #   - {name: PAL_CONTROL_PLANE_TLS_CERT, value: /etc/pal/tls/tls.crt}
-  #   - {name: PAL_CONTROL_PLANE_TLS_KEY, value: /etc/pal/tls/tls.key}
-  #   - {name: PAL_RUNTIME_MANAGER_TLS_CA, value: /etc/pal/manager-tls/ca.crt}
-  #   - {name: PAL_RUNTIME_MANAGER_TLS_CERT, value: /etc/pal/manager-tls/tls.crt}
-  #   - {name: PAL_RUNTIME_MANAGER_TLS_KEY, value: /etc/pal/manager-tls/tls.key}
-  # extraVolumeMounts:
-  #   - {name: cp-tls, mountPath: /etc/pal/tls, readOnly: true}
-  #   - {name: manager-tls, mountPath: /etc/pal/manager-tls, readOnly: true}
-  # extraVolumes:
-  #   - {name: cp-tls, secret: {secretName: pal-control-plane-tls}}
-  #   - {name: manager-tls, secret: {secretName: pal-manager-client-tls}}
 
 workflowEngine:
   replicas: 2
@@ -163,8 +146,7 @@ runtimeScheduler:
   replicas: 2
   env:
     PAL_ENV: "production"
-  # The scheduler dials the manager over mTLS in prod; mount the client cert like
-  # controlPlane.extraVolumes and set PAL_RUNTIME_MANAGER_TLS_CA/CERT/KEY.
+  # Manager + service-mesh mTLS certs come from `mtls` below.
   resources:
     requests:
       cpu: 100m
@@ -179,6 +161,13 @@ surfaceGateway:
     PAL_ENV: "production"
   # Secret with SLACK_SIGNING_SECRET, TELEGRAM_SECRET_TOKEN, ... (create it out of band)
   existingSecret: ""
+
+# -- Internal gRPC mTLS: ON (ADR 0043) --
+# Requires cert-manager. Set mtls.reloader=true if stakater/Reloader is
+# installed (rolls the Rust services on cert renewal); otherwise restart them
+# within renewBefore of each renewal. Bring-your-own PKI: mtls.certManager.enabled=false.
+mtls:
+  enabled: true
 
 networkPolicy:
   enabled: true

@@ -278,3 +278,29 @@ func TestSanitizeFilename(t *testing.T) {
 		}
 	}
 }
+
+// ADR 0032: /internal/dl/stage authenticates x-pal-service-token and the
+// legacy x-lantern-service-token through the same constant-time compare; a
+// wrong PAL token is not rescued by a right legacy one.
+func TestDL_AuthServiceAcceptsPALAndLegacyHeader(t *testing.T) {
+	t.Setenv(dlServiceTokenEnv, "dl-secret")
+	h := newDLHandlerForTest(t)
+	for _, tc := range []struct {
+		name string
+		hdr  map[string]string
+		ok   bool
+	}{
+		{"pal", map[string]string{"x-pal-service-token": "dl-secret"}, true},
+		{"legacy", map[string]string{"x-lantern-service-token": "dl-secret"}, true},
+		{"pal wrong legacy right", map[string]string{"x-pal-service-token": "no", "x-lantern-service-token": "dl-secret"}, false},
+		{"none", map[string]string{}, false},
+	} {
+		req := httptest.NewRequest("POST", "/internal/dl/stage", nil)
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		if got := h.authService(httptest.NewRecorder(), req); got != tc.ok {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.ok)
+		}
+	}
+}

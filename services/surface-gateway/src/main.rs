@@ -171,15 +171,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let tenant_resolver = TenantResolver::new(config.lantern_tenant_id.clone());
-    if config.lantern_tenant_id.is_none() {
+    let tenant_resolver = TenantResolver::new(config.pal_tenant_id.clone());
+    if config.pal_tenant_id.is_none() {
         tracing::warn!(
             "LANTERN_TENANT_ID is not set — all inbound webhooks will be rejected at \
-             tenant resolution; set this to the Lantern tenant UUID for this deployment"
+             tenant resolution; set this to the PAL tenant UUID for this deployment"
         );
     } else {
         tracing::info!(
-            tenant_id = ?config.lantern_tenant_id,
+            tenant_id = ?config.pal_tenant_id,
             "tenant resolver configured"
         );
     }
@@ -187,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     if config.agent_name.is_none() {
         tracing::warn!(
             "LANTERN_AGENT_NAME is not set — run creation will fail for every inbound \
-             message; set this to the Lantern agent name for this deployment"
+             message; set this to the PAL agent name for this deployment"
         );
     }
 
@@ -259,7 +259,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
     }
 }
 
-/// Returns true when `LANTERN_ENV` indicates a production-like environment.
+/// Returns true when `PAL_ENV` indicates a production-like environment.
 /// Mirrors the same helper in services/harness/src/tls.rs and
 /// services/gateway/src/tls.rs — one function per binary so crates stay
 /// self-contained.

@@ -10,7 +10,7 @@ package handlers
 //   1. https://api.slack.com/apps → your app → Slash Commands → Create New
 //      Command name: /lantern
 //      Request URL:  https://<your-control-plane>/v1/surfaces/slack/command
-//      Short desc:   Lantern agent control
+//      Short desc:   PAL agent control
 //      Usage hint:   status | ping | agents | help
 //   2. Copy your app's Signing Secret into SLACK_SIGNING_SECRET on the
 //      control-plane so we can verify request authenticity. In dev (no
@@ -111,7 +111,7 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 	// out of the box on the seeded data.
 	tenantID := h.resolveTenantFromSlackTeam(r.Context(), teamID)
 	if tenantID == "" {
-		writeJSON(w, http.StatusOK, slackReply("This Slack workspace is not linked to a Lantern tenant."))
+		writeJSON(w, http.StatusOK, slackReply("This Slack workspace is not linked to a PAL tenant."))
 		return
 	}
 
@@ -153,7 +153,7 @@ func slackReply(text string) map[string]any {
 
 func slackHelpBlock() string {
 	return strings.Join([]string{
-		":robot_face: *Lantern commands*",
+		":robot_face: *PAL commands*",
 		"",
 		"`/lantern status` — control-plane uptime + configured surfaces + recent runs",
 		"`/lantern ping` — quick liveness check",
@@ -167,7 +167,7 @@ func slackHelpBlock() string {
 // to "0" rather than aborting the whole reply.
 func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) string {
 	if tenantID == "" {
-		return ":warning: This Slack workspace isn't linked to a Lantern tenant yet. Install the Slack surface in the dashboard first."
+		return ":warning: This Slack workspace isn't linked to a PAL tenant yet. Install the Slack surface in the dashboard first."
 	}
 	var (
 		surfaces         int
@@ -200,7 +200,7 @@ func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) 
 	})
 
 	lines := []string{
-		":green_circle: *Lantern is alive*",
+		":green_circle: *PAL is alive*",
 		fmt.Sprintf("agents: %d · connectors: %d · surfaces: %d", agents, connectors, surfaces),
 		fmt.Sprintf("runs (24h): %d", runs24h),
 	}
@@ -213,7 +213,7 @@ func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) 
 // agentsReply lists the tenant's active agents with their model.
 func (h *SlackCommandHandler) agentsReply(ctx context.Context, tenantID string) string {
 	if tenantID == "" {
-		return ":warning: This Slack workspace isn't linked to a Lantern tenant yet."
+		return ":warning: This Slack workspace isn't linked to a PAL tenant yet."
 	}
 	lines := []string{":scroll: *Agents*"}
 	count := 0

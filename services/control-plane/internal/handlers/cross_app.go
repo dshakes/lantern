@@ -8,7 +8,7 @@
 //	POST /v1/commitments/{id}/execute-action — SOLE side-effect path; fires ONLY
 //	                                           when the owner calls this endpoint
 //
-// Feature-gated behind LANTERN_CROSS_APP=on (default OFF).
+// Feature-gated behind PAL_CROSS_APP=on (default OFF).
 package handlers
 
 import (
@@ -27,7 +27,7 @@ import (
 )
 
 // crossAppEnabled reports whether cross-app workflows are enabled.
-// Default OFF — set LANTERN_CROSS_APP=on to enable.
+// Default OFF — set PAL_CROSS_APP=on to enable.
 func crossAppEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CROSS_APP")))
 	return v == "on" || v == "1" || v == "true"
@@ -124,7 +124,7 @@ func (h *CrossAppHandler) connectorCall(
 // Returns: {commitmentId, proposedAction}
 func (h *CrossAppHandler) Propose(w http.ResponseWriter, r *http.Request) {
 	if !crossAppEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cross-app workflows disabled (set LANTERN_CROSS_APP=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cross-app workflows disabled (set PAL_CROSS_APP=on)"})
 		return
 	}
 
@@ -304,7 +304,7 @@ Output ONLY valid JSON (no markdown fences, no explanation outside the JSON):
 // this endpoint constitutes explicit confirmation.
 //
 // Safety invariants enforced:
-//   - Feature-gated: same LANTERN_CROSS_APP flag as Propose.
+//   - Feature-gated: same PAL_CROSS_APP flag as Propose.
 //   - Atomic exclusive claim: UPDATE WHERE status='suggested' RETURNING — only ONE
 //     concurrent caller can proceed; all others get 409 before the connector runs.
 //   - Secondary side-effect receipt: claimSideEffect inserts into side_effect_receipts
@@ -316,7 +316,7 @@ func (h *CrossAppHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) 
 	// Finding #2: gate matches Propose — side-effect path must also be off when
 	// the feature is disabled.
 	if !crossAppEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cross-app workflows disabled (set LANTERN_CROSS_APP=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "cross-app workflows disabled (set PAL_CROSS_APP=on)"})
 		return
 	}
 

@@ -244,21 +244,24 @@ const (
 // 401. The token is never logged.
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv("PAL_SIGNAL_TOKEN")
-	provided := r.Header.Get("x-lantern-signal-token")
+	// x-pal-signal-token, or the legacy x-lantern-signal-token that the
+	// owner's iPhone Shortcuts send (accepted forever, ADR 0032). One value is
+	// compared: the PAL header when present, else the legacy one.
+	provided := r.Header.Get("x-pal-signal-token")
 	if provided == "" {
-		provided = r.Header.Get("x-pal-signal-token")
+		provided = r.Header.Get("x-lantern-signal-token")
 	}
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		// Log the rejection (never the token) — a silent 401 is undebuggable.
 		// The "server token unset" case is the giveaway that the wrong API
-		// (one without LANTERN_SIGNAL_TOKEN) is serving this port.
+		// (one without PAL_SIGNAL_TOKEN) is serving this port.
 		reason := "token mismatch"
 		switch {
 		case expected == "":
-			reason = "LANTERN_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
+			reason = "PAL_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
 		case provided == "":
-			reason = "request missing x-lantern-signal-token header"
+			reason = "request missing x-pal-signal-token (or x-lantern-signal-token) header"
 		}
 		h.logger().Warn("signal rejected (401)", zap.String("reason", reason), zap.String("from", r.RemoteAddr))
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -267,14 +270,14 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// signalsFilePath returns ~/.lantern/device-signals.jsonl, honoring HOME so
-// tests can isolate writes to a temp dir.
+// signalsFilePath returns <state dir>/device-signals.jsonl (see palStateDir;
+// ~/.lantern on existing installs), honoring HOME so tests can isolate writes
+// to a temp dir.
 func signalsFilePath() (dir, path string, err error) {
-	home, err := os.UserHomeDir()
+	dir, err = palStateDir()
 	if err != nil {
 		return "", "", err
 	}
-	dir = filepath.Join(home, ".lantern")
 	return dir, filepath.Join(dir, "device-signals.jsonl"), nil
 }
 

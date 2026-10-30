@@ -19,8 +19,8 @@ package handlers
 //
 // Configuration (env vars, unchanged from the previous implementation):
 //
-//	LANTERN_SPAWN_RATE_PER_MIN  max spawns per 60-second window (default 120)
-//	LANTERN_SPAWN_BURST         burst size for the in-memory fallback (default 20)
+//	PAL_SPAWN_RATE_PER_MIN  max spawns per 60-second window (default 120)
+//	PAL_SPAWN_BURST         burst size for the in-memory fallback (default 20)
 
 import (
 	"context"
@@ -176,7 +176,7 @@ type SpawnRateLimiter struct {
 }
 
 // NewSpawnRateLimiter constructs a SpawnRateLimiter reading configuration from
-// LANTERN_SPAWN_RATE_PER_MIN and LANTERN_SPAWN_BURST. It starts a background
+// PAL_SPAWN_RATE_PER_MIN and PAL_SPAWN_BURST. It starts a background
 // janitor that evicts idle in-memory buckets; Stop() shuts it down.
 func NewSpawnRateLimiter() *SpawnRateLimiter {
 	rate := envIntOrDefault("PAL_SPAWN_RATE_PER_MIN", defaultSpawnRatePerMin)

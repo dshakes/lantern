@@ -160,11 +160,11 @@ func TestCheckSignupConfig(t *testing.T) {
 		{name: "invite with secret dev", mode: "invite", invite: "x", wantFatal: false},
 		{name: "prod default closed", prod: true, wantFatal: false},
 		{name: "prod open no captcha", prod: true, mode: "open", mailDriver: "http", wantFatal: true, wantMsg: "TURNSTILE"},
-		{name: "prod open log mailer", prod: true, mode: "open", turnstile: "t", wantFatal: true, wantMsg: "LANTERN_MAILER=log"},
+		{name: "prod open log mailer", prod: true, mode: "open", turnstile: "t", wantFatal: true, wantMsg: "PAL_MAILER=log"},
 		{name: "prod open ok", prod: true, mode: "open", turnstile: "t", mailDriver: "smtp", wantFatal: false},
-		{name: "prod invite log mailer", prod: true, mode: "invite", invite: "x", wantFatal: true, wantMsg: "LANTERN_MAILER=log"},
+		{name: "prod invite log mailer", prod: true, mode: "invite", invite: "x", wantFatal: true, wantMsg: "PAL_MAILER=log"},
 		{name: "prod invite ok no captcha", prod: true, mode: "invite", invite: "x", mailDriver: "http", wantFatal: false},
-		{name: "broken mailer config", mailDriver: "smtp", wantFatal: true, wantMsg: "LANTERN_SMTP_ADDR"},
+		{name: "broken mailer config", mailDriver: "smtp", wantFatal: true, wantMsg: "PAL_SMTP_ADDR"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -583,7 +583,7 @@ func TestExportTenant(t *testing.T) {
 	m.waitFor(t, email)
 	g := NewGDPRHandler(h.srv, h)
 	// A webhook trigger's signing secret (plaintext JSON when
-	// LANTERN_CREDENTIAL_KEY is unset) once rode along in the export.
+	// PAL_CREDENTIAL_KEY is unset) once rode along in the export.
 	const triggerSecret = "whsec-export-canary-7f3a"
 	if _, err := h.srv.Pool.Exec(context.Background(),
 		`INSERT INTO agent_triggers (tenant_id, agent_name, provider, secret_enc) VALUES ($1, 'export-agent', 'generic', to_jsonb($2::text))`,
@@ -688,7 +688,7 @@ func TestRLSExportTenant(t *testing.T) {
 
 // TestExportRoute_ReadScopedKeyForbiddenUnderEnforce: the export route is
 // registered behind WithScope(admin), so a read-only API key gets the scope
-// 403 when LANTERN_AUTHZ_ENFORCE=1.
+// 403 when PAL_AUTHZ_ENFORCE=1.
 func TestExportRoute_ReadScopedKeyForbiddenUnderEnforce(t *testing.T) {
 	t.Setenv("PAL_AUTHZ_ENFORCE", "1")
 	pool := gdprTestDB(t)

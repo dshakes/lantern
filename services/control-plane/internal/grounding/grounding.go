@@ -3,7 +3,7 @@
 // that has no backing successful tool invocation is softened to honest
 // intent ("I'll send", "I'll book", …).
 //
-// Gate: LANTERN_CLAIM_VERIFY (default ON — empty string is NOT disabled).
+// Gate: PAL_CLAIM_VERIFY (default ON — empty string is NOT disabled).
 // See internal/handlers/intelligence.go for the thin handler-layer wrapper
 // that converts []ToolInvocation → map[string]bool and logs each rewrite.
 package grounding
@@ -15,7 +15,7 @@ import (
 )
 
 // Enabled reports whether the G3 claim-verify guard is active.
-// Reads LANTERN_CLAIM_VERIFY on every call so ops can toggle without restart.
+// Reads PAL_CLAIM_VERIFY on every call so ops can toggle without restart.
 // Default is ON (empty / absent env var → enabled).
 func Enabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("PAL_CLAIM_VERIFY"))) {

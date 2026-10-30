@@ -1,5 +1,5 @@
 # build-images — builds, pushes, and cosign-signs the deployable PAL Runtime service images
-# that Helm/Terraform reference (ghcr.io/dshakes/lantern/<name>). Runs on push to master
+# that Helm/Terraform reference (ghcr.io/dshakes/pal/<name>). Runs on push to master
 # and on demand (workflow_dispatch). Each image is tagged with the git SHA and `latest`.
 #
 # Signing is Sigstore KEYLESS (Fulcio short-lived cert + Rekor), identical in trust to
@@ -45,7 +45,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/dshakes/lantern
+  IMAGE_PREFIX: ghcr.io/dshakes/pal
   # The keyless identity build-images.yml signs as on master. Kyverno attestors
   # (data-plane chart + infra/k8s/supply-chain) trust exactly this subject.
   SIGNER_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-images.yml@${{ github.ref }}

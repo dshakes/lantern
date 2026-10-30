@@ -152,9 +152,9 @@ Rules:
 	"lantern-guide": {
 		ID:          "lantern-guide",
 		Name:        "lantern-guide",
-		Description: "Lantern's onboarding guide — explains what your first run did and suggests the next command.",
+		Description: "PAL's onboarding guide — explains what your first run did and suggests the next command.",
 		Model:       "auto",
-		SystemPrompt: `You are Lantern's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
+		SystemPrompt: `You are PAL's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
 
 Rules:
 - Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.

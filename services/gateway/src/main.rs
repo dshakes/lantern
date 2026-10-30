@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     let jwt_secret = config.jwt_secret.clone();
 
     // API-key introspection against the control-plane. None (fail-closed) when
-    // LANTERN_CONTROL_PLANE_URL / LANTERN_GRPC_SERVICE_TOKEN are unset.
+    // PAL_CONTROL_PLANE_URL / PAL_GRPC_SERVICE_TOKEN are unset.
     let introspector = introspect::ApiKeyIntrospector::from_env().map(std::sync::Arc::new);
     if introspector.is_none() {
         tracing::warn!(

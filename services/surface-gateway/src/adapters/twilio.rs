@@ -389,7 +389,7 @@ impl TwilioAdapter {
 pub fn voice_twiml_greeting() -> String {
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Welcome to Lantern. Please describe what you need after the beep. Press any key when finished.</Say>
+    <Say voice="alice">Welcome to PAL. Please describe what you need after the beep. Press any key when finished.</Say>
     <Record maxLength="120" transcribe="true" transcribeCallback="/webhooks/twilio/transcription" playBeep="true" finishOnKey="*" />
     <Say voice="alice">I didn't receive a recording. Goodbye.</Say>
 </Response>"#

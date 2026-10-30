@@ -1,4 +1,4 @@
-// lantern-harness — PID 1 init process running inside every Lantern microVM.
+// lantern-harness — PID 1 init process running inside every PAL microVM.
 //
 // Responsibilities (see README.md for the full boot contract):
 //   1. Init: prep /run/lantern, mount tmpfs, set rlimits.
@@ -174,7 +174,10 @@ async fn run() -> Result<()> {
         manager = %env.manager_addr,
         workload = ?env.workload_cmd,
         secrets = env.declared_secrets.len(),
-        "starting lantern-harness (PID 1)"
+        // One line carrying the PAL banner and the legacy one (ADR 0032):
+        // boot checks grep for "starting lantern-harness (PID 1)" and count
+        // its occurrences, so it stays exactly once per boot until they move.
+        "starting pal-harness (PID 1) | starting lantern-harness (PID 1)"
     );
 
     // 1. Init: mount tmpfs, prep dirs, set rlimits.

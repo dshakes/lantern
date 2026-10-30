@@ -3,12 +3,40 @@
 // (frontmatter `glance: { what, why, how }`) above the body.
 import Default from '@astrojs/starlight/components/MarkdownContent.astro';
 const glance = Astro.locals.starlightRoute.entry.data.glance;
+// Inline `code` in a glance line renders as <code>; everything else is escaped.
+const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const md = (t: string) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>');
 ---
 {glance && (
   <dl class="glance not-content" aria-label="At a glance">
-    <div><dt>What</dt><dd>{glance.what}</dd></div>
-    <div><dt>Why</dt><dd>{glance.why}</dd></div>
-    <div><dt>How</dt><dd>{glance.how}</dd></div>
+    <div><dt>What</dt><dd set:html={md(glance.what)} /></div>
+    <div><dt>Why</dt><dd set:html={md(glance.why)} /></div>
+    <div><dt>How</dt><dd set:html={md(glance.how)} /></div>
   </dl>
 )}
 <Default><slot /></Default>
+
+<style>
+  .glance {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem;
+    margin: 0 0 2rem; padding: 0;
+  }
+  .glance > div {
+    padding: 0.9rem 1rem; border-radius: 12px;
+    border: 1px solid var(--sl-color-hairline-light);
+    background: color-mix(in srgb, var(--sl-color-accent) 5%, var(--sl-color-bg));
+  }
+  .glance dt {
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--sl-color-accent-high); margin-bottom: 0.35rem;
+  }
+  .glance dd :global(code) { font-size: 0.85em; padding: 0.05em 0.35em; border-radius: 5px; background: var(--sl-color-gray-6); color: var(--sl-color-white); }
+  .glance dd { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--sl-color-gray-2); }
+  @media (max-width: 50rem) {
+    .glance { grid-template-columns: 1fr; gap: 0; border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; overflow: hidden; }
+    .glance > div { border: 0; border-radius: 0; padding: 0.6rem 0.85rem; }
+    .glance > div + div { border-top: 1px solid var(--sl-color-hairline); }
+    .glance dt { display: inline; margin-right: 0.4rem; }
+    .glance dd { display: inline; font-size: 0.88rem; }
+  }
+</style>

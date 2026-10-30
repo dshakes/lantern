@@ -76,7 +76,7 @@ var migrations = []string{
 	//
 	// The control-plane's baseline migration creates lantern_app and grants it
 	// on the tables it owns — but step_state, journal_events and run_locks are
-	// created here, so nothing ever granted them. Under LANTERN_RLS_ENFORCE=1
+	// created here, so nothing ever granted them. Under PAL_RLS_ENFORCE=1
 	// tenant-scoped transactions run as lantern_app and write all three in the
 	// SAME transaction as the run update, so without this the engine fails on
 	// ordinary work with permission errors the moment enforcement is switched

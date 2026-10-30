@@ -189,7 +189,7 @@ func bearerToken(r *http.Request) string {
 // endpoints and enforces settings:write unconditionally — minting or revoking a
 // device credential is a credential-management action, so it is not left to
 // the PAL_AUTHZ_ENFORCE staging flag. Kiosk (demo) sessions never qualify.
-func (h *BridgeHandler) userContext(w http.ResponseWriter, r *http.Request, required Scope) (context.Context, *LanternClaims, bool) {
+func (h *BridgeHandler) userContext(w http.ResponseWriter, r *http.Request, required Scope) (context.Context, *PalClaims, bool) {
 	if strings.HasPrefix(bearerToken(r), bridgeTokenPrefix) {
 		// A device must never manage devices (no lateral re-pairing).
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "bridge credentials cannot manage bridges"})

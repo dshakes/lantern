@@ -15,7 +15,7 @@ import (
 func TestIsProd_UnsetIsNotProd(t *testing.T) {
 	t.Setenv("PAL_ENV", "")
 	if IsProd() {
-		t.Error("expected IsProd()=false when LANTERN_ENV is unset")
+		t.Error("expected IsProd()=false when PAL_ENV is unset")
 	}
 }
 
@@ -25,7 +25,7 @@ func TestIsProd_ProdValues(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("PAL_ENV", v)
 			if !IsProd() {
-				t.Errorf("expected IsProd()=true for LANTERN_ENV=%q", v)
+				t.Errorf("expected IsProd()=true for PAL_ENV=%q", v)
 			}
 		})
 	}
@@ -37,7 +37,7 @@ func TestIsProd_DevValues(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv("PAL_ENV", v)
 			if IsProd() {
-				t.Errorf("expected IsProd()=false for LANTERN_ENV=%q", v)
+				t.Errorf("expected IsProd()=false for PAL_ENV=%q", v)
 			}
 		})
 	}
@@ -56,13 +56,13 @@ func TestCheckManagerDialer_ProdUnsetAddr_Fatal(t *testing.T) {
 }
 
 func TestCheckManagerDialer_ProdStubDialer_Fatal(t *testing.T) {
-	// Even if addr is set, LANTERN_DIALER=stub must be fatal in prod.
+	// Even if addr is set, PAL_DIALER=stub must be fatal in prod.
 	fatal, msg := CheckManagerDialer(true, "manager.internal:50054", "stub")
 	if !fatal {
-		t.Error("prod + LANTERN_DIALER=stub: expected fatal=true")
+		t.Error("prod + PAL_DIALER=stub: expected fatal=true")
 	}
 	if msg == "" {
-		t.Error("prod + LANTERN_DIALER=stub: expected non-empty message")
+		t.Error("prod + PAL_DIALER=stub: expected non-empty message")
 	}
 }
 
@@ -85,10 +85,10 @@ func TestCheckManagerDialer_DevUnset_OK(t *testing.T) {
 }
 
 func TestCheckManagerDialer_DevStub_OK(t *testing.T) {
-	// In dev, LANTERN_DIALER=stub is the explicit dev override — must be allowed.
+	// In dev, PAL_DIALER=stub is the explicit dev override — must be allowed.
 	fatal, msg := CheckManagerDialer(false, "", "stub")
 	if fatal {
-		t.Errorf("dev + LANTERN_DIALER=stub: expected fatal=false, got msg=%q", msg)
+		t.Errorf("dev + PAL_DIALER=stub: expected fatal=false, got msg=%q", msg)
 	}
 	_ = msg
 }
