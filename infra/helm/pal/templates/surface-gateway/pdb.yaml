@@ -1,0 +1,13 @@
+{{- if (gt (int .Values.surfaceGateway.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "pal.fullname" . }}-surface-gateway
+  labels:
+    {{- include "pal.componentLabels" (dict "root" . "component" "surface-gateway") | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "pal.componentSelectorLabels" (dict "root" . "component" "surface-gateway") | nindent 6 }}
+{{- end }}
