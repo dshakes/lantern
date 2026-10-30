@@ -1,6 +1,10 @@
 ---
 title: Verifiable receipts
 description: Signed, tamper-evident, offline-verifiable proof of what a run executed.
+glance:
+  what: "A signed receipt is tamper-evident, offline-verifiable proof of what a run executed, signed over the hash of the run's journal."
+  why: "Anyone, such as an auditor or customer, can check which agent ran and what it cost, and that nobody edited the record."
+  how: "Request one as described in Issuing a receipt, then check it with Verifying offline."
 sidebar:
   order: 12
 ---
@@ -13,11 +17,11 @@ A receipt is proof, not a promise. When an agent claims it did the task, the rec
 
 ## What a receipt attests
 
-The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/lantern/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
+The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
 
 ## Payload fields
 
-The signature (**Ed25519** when `LANTERN_RECEIPT_ED25519_SEED` is set) covers the canonical JSON of a `receiptPayload` struct with these fields (alphabetically sorted keys, compact JSON, no whitespace):
+The signature (**Ed25519** when `PAL_RECEIPT_ED25519_SEED` is set) covers the canonical JSON of a `receiptPayload` struct with these fields (alphabetically sorted keys, compact JSON, no whitespace):
 
 - `agentName`: always present.
 - `agentVersion`: omitted when blank.
@@ -44,7 +48,7 @@ POST /v1/runs/{id}/receipt
 
 The receipt is an **Ed25519** signature over the journal hash. It is persisted alongside the run, so it can be retrieved and re-verified later.
 
-Verify with `POST /v1/runs/receipts/verify` (no auth required). If `LANTERN_RECEIPT_ED25519_SEED` is unset, the control plane falls back to an HMAC-SHA256 signature for dev. Set the seed in any real deployment.
+Verify with `POST /v1/runs/receipts/verify` (no auth required). If `PAL_RECEIPT_ED25519_SEED` is unset, the control plane falls back to an HMAC-SHA256 signature for dev. Set the seed in any real deployment.
 
 ## Verifying offline
 
@@ -57,7 +61,7 @@ GET /.well-known/lantern-receipts
 Anyone holding an Ed25519 receipt and the public key published there can confirm the receipt was signed by this deployment's key. Matching the journal hash against the run's actual event log (that is, confirming nothing was altered after the fact) additionally requires the run's journal export. An HMAC-SHA256 receipt can only be checked by the deployment that holds the secret.
 
 <Aside>
-A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/lantern/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
+A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
 </Aside>
 
 You do not need a terminal to check one: the dashboard's public `/proof` page (no sign-in) accepts a receipt and calls `POST /v1/runs/receipts/verify`, which needs no auth either.
@@ -68,4 +72,4 @@ You do not need a terminal to check one: the dashboard's public `/proof` page (n
 - **Tamper-evidence.** Editing the journal after the fact invalidates the signature.
 - **Offline verification.** The key fingerprint at `/.well-known/lantern-receipts` lets external verifiers check a receipt without trusting (or contacting) your control plane.
 
-Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/lantern/docs/reference/api/) for the full request/response shape.
+Receipts share the same signing and verification machinery as run receipts elsewhere on the platform. See the [API reference](/docs/reference/api/) for the full request/response shape.

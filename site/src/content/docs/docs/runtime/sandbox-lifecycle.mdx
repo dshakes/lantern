@@ -1,9 +1,15 @@
 ---
 title: Sandbox lifecycle
 description: Pause, resume and fork a microVM, idle suspend, snapshots, streaming exec and file access, with REST, TypeScript, Python and CLI examples.
+glance:
+  what: "MicroVM sandboxes can idle-suspend, pause, resume under the same vm_id and fork into copies, with streaming exec and file access."
+  why: "Pausing frees the concurrency slot, and forking lets you try several approaches from one warmed-up state."
+  how: "Call the pause, resume and fork endpoints under REST, or use the SDK and CLI tabs."
 sidebar:
   order: 5
 ---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 MicroVM sandboxes are stateful. A running VM suspends itself when idle and wakes on the next request. You can also pause it (snapshot, quota slot freed), resume it under the same `vm_id`, or fork it into independent copies. Command output streams over SSE as it is produced.
 
@@ -15,7 +21,7 @@ Set `idleTimeoutSecs` on the schedule request (`--idle-timeout N` on the CLI; `0
 
 The snapshot stays in storage while suspended. Lifecycle latency numbers (Lima nested-virt, Apple M4 Max, aarch64, indicative, not bare metal) are in `docs/benchmarks/runtime-latency.md`.
 
-Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `LANTERN_MAX_FORK_COUNT` (ceiling 1000).
+Forks share the parent snapshot's memory copy-on-write, so N forks cost one snapshot's memory plus whatever each child writes. Each fork gets its own private copy of the captured disk. The per-call cap defaults to 100 and is set with `PAL_MAX_FORK_COUNT` (ceiling 1000).
 
 ## Snapshots
 
@@ -54,7 +60,7 @@ Indicative numbers from `docs/benchmarks/runtime-latency.md`, measured in a Lima
 
 The snapshot row predates disk capture, so add the `rootfs` copy (reflinked on XFS/btrfs, a full copy elsewhere) to snapshot time. The benchmark doc estimates the per-VM rootfs copy at about 5 to 50 ms for a 20 to 100 MiB image.
 
-After a restore the runtime-manager holds the first exec until the restored harness has re-identified and sent its first heartbeat (`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. On Lima that first exec lands in 2.6 to 3.1 s, almost all of it slow CPU-bound guest work under nested virtualization; bare-metal KVM has not been measured.
+After a restore the runtime-manager holds the first exec until the restored harness has re-identified and sent its first heartbeat (`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s), so a caller makes one call instead of retrying. On Lima that first exec lands in 2.6 to 3.1 s, almost all of it slow CPU-bound guest work under nested virtualization; bare-metal KVM has not been measured.
 
 ## REST
 
@@ -67,7 +73,7 @@ POST /v1/runtime/vms/{id}/pause
 POST /v1/runtime/vms/{id}/resume
 → { "vmId": "...", "snapshotId": "...", "state": "running" }
 
-# Fork: count 1..100 by default (LANTERN_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
+# Fork: count 1..100 by default (PAL_MAX_FORK_COUNT, ceiling 1000); forks share the snapshot memory copy-on-write. Each fork gets its own vm_id, cert and agent identity.
 POST /v1/runtime/vms/{id}/fork
 { "count": 3 }
 → { "sourceVmId": "...", "snapshotId": "...",
@@ -95,7 +101,10 @@ PUT /v1/runtime/vms/{id}/files/content?path=a.txt  # body = file bytes → { pat
 
 ## SDKs
 
-### TypeScript
+The Go SDK exposes `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`.
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript">
 
 ```ts
 const { snapshotId } = await client.runtime.pause(vmId);
@@ -116,7 +125,8 @@ for await (const ev of client.runtime.execStream(vmId, {
 }
 ```
 
-### Python
+</TabItem>
+<TabItem label="Python">
 
 ```python
 await client.runtime.pause(vm_id)
@@ -137,9 +147,8 @@ async for ev in client.runtime.exec_stream(vm_id, "/bin/sh", ["-c", "python job.
         print(ev.data, end="")
 ```
 
-### CLI and Go
-
-The Go SDK exposes `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`.
+</TabItem>
+<TabItem label="CLI">
 
 ```bash
 lantern vm pause <id>
@@ -150,6 +159,9 @@ lantern vm cat <id> <path>
 lantern vm put <id> <local-file|-> <path>
 ```
 
+</TabItem>
+</Tabs>
+
 The dashboard VM detail page (`/runtime/{vm}`) has Pause, Resume and Fork actions.
 
-Related: [Isolation classes](/lantern/docs/runtime/isolation/), [Durable execution](/lantern/docs/runtime/durable-execution/), [CLI reference](/lantern/docs/reference/cli/).
+Related: [Isolation classes](/docs/runtime/isolation/), [Durable execution](/docs/runtime/durable-execution/), [CLI reference](/docs/reference/cli/).
