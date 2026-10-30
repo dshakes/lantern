@@ -44,6 +44,59 @@ example, if the DB stays `lantern`, set `DB_NEW_NAME=lantern`, and likewise for
 6. You're at the Mac, logged in to the GUI session. launchd user agents live
    in `gui/<uid>`.
 
+## The database schema is ahead of the running code (decide BEFORE apply)
+
+The control-plane embeds its migrations
+(`services/control-plane/internal/db/migrations/`) and runs golang-migrate
+`Up()` at boot. When the database's `schema_migrations.version` is **higher**
+than the newest migration the binary embeds, `Up()` fails with
+`no migration found for version N` and **the API does not start**.
+
+On 2026-10-30 the live `lantern` DB was at **v31**, because agent test runs
+migrated it. The checkout everything runs from (`a2e6ae2c`) embeds only up to
+**0022**. Two consequences:
+
+- **The API running right now cannot restart.** It has been up since Oct 25.
+  Any kickstart, crash or reboot leaves it down. Don't restart it before the
+  cutover.
+- **A rollback to the pre-cutover commit cannot start the API either.**
+  Restoring the DB dump brings back v31, not v22.
+
+`plan` and `apply` check this in a "schema version vs. embedded migrations"
+section:
+
+| Check | Result when the DB is ahead |
+|---|---|
+| the release commit | **FAIL**: the cutover would leave the API down; pick a release that embeds ≥ the DB version |
+| the current checkout | WARN: what is running now cannot restart |
+| the rollback target | **FAIL** until you choose one of the two options below |
+| a dirty `schema_migrations` | **FAIL**: a migration failed half-way; fix that first |
+
+Rollback runs the check again against the checkout it is about to start, and so
+does `verify --old`. Either prints `FAIL rollback checkout / running checkout:
+… is at schema vN but … embeds migrations only up to M`, so an API that won't
+start can't be mistaken for a clean rollback.
+
+**Your choice (pick one before `apply`):**
+
+1. **Roll back to the release commit** (recommended). Run
+   `PAL_CUTOVER_ROLLBACK_REF=<release sha> $T plan`, then the same variable on
+   `apply` and on `rollback`. Rollback still restores every name: the
+   `dev.lantern.*` agents, `~/.lantern`, the `LANTERN_*` env keys, the DB dump
+   and the old remote. Only the code stays at the release, which can start
+   against v31. This works only if the release still reads the old names
+   (the compat fallbacks in PAL-RENAME-PLAN: `PAL_*` with `LANTERN_*`
+   fallback, `~/.pal` then `~/.lantern`). `plan` doesn't prove that, so treat
+   it as **roll forward only** if those fallbacks were removed.
+2. **Roll forward only.** Run `PAL_CUTOVER_ROLL_FORWARD_ONLY=1 $T apply`.
+   Rollback still restores names, state, plists and the DB, but the API stays
+   down until a commit that embeds ≥ v31 is checked out. The rollback exits
+   non-zero and says so. If the cutover fails, the fix is to repair forward.
+
+There is no safe way to "down-migrate" the live DB to v22: the extra tables
+(`brief_items`, `pal_region_fence`, …) were created by migrations that the old
+code doesn't know about.
+
 ## Exact commands
 
 ```bash
@@ -261,8 +314,12 @@ machine:
 - a synthetic repo with an old commit and a release commit
 
 The run is plan → backup → apply → verify → rollback → verify --old, followed
-by three failure injections: after the state move, after the DB rename, and
+by three failure injections, plus four schema-version cases (DB ahead of the
+old code: plan refuses until a choice is made; DB ahead of the release: plan
+refuses; rollback to `PAL_CUTOVER_ROLLBACK_REF`: everything but git is
+identical; roll-forward-only: rollback and `verify --old` report the API cannot
+start). The failure injections are: after the state move, after the DB rename, and
 a build failure after checkout. Each must auto-roll back to a snapshot
 byte-identical to the start. The snapshot covers file checksums and modes,
 plists, launchd jobs, git HEAD/remote/worktree, the DB data checksum and the
-role verifiers. Expected result: `52 passed, 0 failed`.
+role verifiers. Expected result: `67 passed, 0 failed`.
