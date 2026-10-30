@@ -4838,7 +4838,10 @@ mod tests {
         // appear when None, or Firecracker rejects the malformed field.
         let e = EntropyDevice::default();
         let json = serde_json::to_string(&e).unwrap();
-        assert_eq!(json, "{}", "unthrottled entropy device must serialize to {{}}");
+        assert_eq!(
+            json, "{}",
+            "unthrottled entropy device must serialize to {{}}"
+        );
     }
 
     #[test]
