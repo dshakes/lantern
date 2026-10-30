@@ -29,7 +29,7 @@ When present:
 1. The URL is SSRF-validated at request time (blocks private/loopback/link-local
    ranges, metadata IP `169.254.169.254`, enforces HTTPS in prod) before the run
    is created.
-2. The URL is persisted in a new `runs.callback_url TEXT` column (migration 0030).
+2. The URL is persisted in a new `runs.callback_url TEXT` column (migration 0032).
 3. After the inline executor reaches a terminal state (success **or** failure),
    `fireCallbackForRun` is called in `executeRunInline`; it dispatches a
    background goroutine via `inFlightRuns` (drained on shutdown).
@@ -44,7 +44,7 @@ When present:
 
 ### B. Batch invocation (gap #3)
 
-New `batches` table (tenant-scoped, RLS enabled per migration 0030).
+New `batches` table (tenant-scoped, RLS enabled per migration 0032).
 
 `POST /v1/batches` accepts:
 - `agentName`, `items[{input, idempotencyKey?}]` (max `PAL_BATCH_MAX_ITEMS`,
@@ -85,7 +85,7 @@ batch → 200, no-op).
   for compat), `PAL_BATCH_MAX_ITEMS` / `LANTERN_BATCH_MAX_ITEMS`.
 - **No new dependency.** The HTTP client for callback delivery reuses the stdlib
   `net/http.Client`.
-- **Migration 0030** adds `runs.callback_url`, `runs.batch_id`, and the `batches`
+- **Migration 0032** adds `runs.callback_url`, `runs.batch_id`, and the `batches`
   table.
 - **SDK surfaces:** TypeScript and Python SDK wrappers are a follow-up (not in
   this PR). The REST contract is stable.

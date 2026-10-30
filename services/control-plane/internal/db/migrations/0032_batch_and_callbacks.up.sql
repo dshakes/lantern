@@ -1,4 +1,4 @@
--- 0030_batch_and_callbacks.up.sql
+-- 0032_batch_and_callbacks.up.sql
 -- Async completion callbacks (gap #2) + batch invocation (gap #3).
 -- ADR 0033.
 
