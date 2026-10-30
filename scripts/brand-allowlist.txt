@@ -41,7 +41,7 @@ path:^packages/bridge-core/src/bot-self(\.test)?\.ts$ # echo registry: lantern-e
 scope:^packages/bridge-core/src/(nl|voice)-commands(\.test)?\.ts$ (?i)lantern # legacy "lantern," / "/lantern" owner commands are still accepted
 scope:^services/(imessage|whatsapp)-bridge/src/session\.ts$ /lantern\b # legacy /lantern slash commands are still accepted
 scope:^(packages/bridge-core|services/(imessage|whatsapp)-bridge|evals)/ \bprocess\.env\.LANTERN_[A-Z0-9_]+ # PAL_-first legacy env fallback (env-read-check form)
-scope:^services/(imessage|whatsapp)-bridge/src/index\.ts$ \bLANTERN_(X\b|/) # env-compat bootstrap notes name the legacy prefix
+scope:^(services/(imessage|whatsapp)-bridge/src/index\.ts|packages/bridge-core/src/[a-z-]+\.ts)$ \bLANTERN_(X\b|/) # env-compat bootstrap notes name the legacy prefix
 scope:^packages/bridge-core/src/doc-link(\.test)?\.ts$ \bx-lantern-(service-token\b|\*) # dual-sent until every control plane accepts x-pal-service-token
 scope:^(packages/bridge-core|services/(imessage|whatsapp)-bridge)/src/ (label: "lantern"|EMAIL_LABEL = "lantern"|\blantern(-self)? label\b) # owner's existing Gmail label; renaming splits their mail filing
 scope:^services/whatsapp-bridge/src/session\.ts$ browser: \["Lantern" # Baileys device name of the live paired WhatsApp session
