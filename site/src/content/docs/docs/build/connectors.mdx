@@ -1,13 +1,17 @@
 ---
 title: Connectors
 description: The 18 built-in connectors, their actions, credentials, recorded test mode and per-agent assignment.
+glance:
+  what: "Connectors give an agent hands: PAL Runtime ships 18, each with fixed actions such as searching Gmail or posting to Slack."
+  why: "Connect a service once and credentials are stored for the agent to use, instead of wiring each API by hand."
+  how: "Pick a connector from Available connectors, then install it with the bash examples further down."
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/pal/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
+A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
 
 ## Available connectors (18)
 
@@ -80,25 +84,25 @@ PagerDuty has no dashboard card yet. Install it over the API, then call it. Agen
 ```bash
 # install PagerDuty (config.apiKey = a REST API key)
 curl -X POST http://localhost:8080/v1/connectors/install \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"connectorId": "pagerduty", "displayName": "PagerDuty", "config": {"apiKey": "..."}}'
 
 # read an incident
 curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=get_incident" \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"incident_id": "PABC123"}'
 
 # acknowledge it (write; "from" is required by PagerDuty)
 curl -X POST "http://localhost:8080/v1/connectors/pagerduty/execute?action=update_incident" \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"incident_id": "PABC123", "from": "oncall@example.com", "status": "acknowledged"}'
 
 # reply in a Slack thread
 curl -X POST "http://localhost:8080/v1/connectors/slack/execute?action=reply_thread" \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"channel": "C0123", "thread_ts": "1700000000.000100", "text": "On it."}'
 ```
@@ -114,14 +118,14 @@ go run ./cmd/connector-replay            # 127.0.0.1:9191
 go run ./cmd/connector-replay -addr 127.0.0.1:9292
 ```
 
-**2. Point the control plane at it** before starting it (`LANTERN_ENV` must not be prod, production or staging):
+**2. Point the control plane at it** before starting it (`PAL_ENV` must not be prod, production or staging):
 
 ```bash
-export LANTERN_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9191
-export LANTERN_CONNECTOR_BASEURL_GITHUB=http://127.0.0.1:9191
-export LANTERN_CONNECTOR_BASEURL_SENTRY=http://127.0.0.1:9191
-export LANTERN_CONNECTOR_BASEURL_GOOGLE=http://127.0.0.1:9191
-export LANTERN_CONNECTOR_BASEURL_PAGERDUTY=http://127.0.0.1:9191
+export PAL_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9191
+export PAL_CONNECTOR_BASEURL_GITHUB=http://127.0.0.1:9191
+export PAL_CONNECTOR_BASEURL_SENTRY=http://127.0.0.1:9191
+export PAL_CONNECTOR_BASEURL_GOOGLE=http://127.0.0.1:9191
+export PAL_CONNECTOR_BASEURL_PAGERDUTY=http://127.0.0.1:9191
 make run-api
 ```
 
@@ -137,11 +141,11 @@ Each recorded call has `method`, `path`, `query`, `header`, `body`, `hasAuth`, `
 
 | Variable | Vendor host replaced | Connectors affected |
 | --- | --- | --- |
-| `LANTERN_CONNECTOR_BASEURL_SLACK` | `slack.com` | Slack |
-| `LANTERN_CONNECTOR_BASEURL_GITHUB` | `api.github.com` | GitHub |
-| `LANTERN_CONNECTOR_BASEURL_SENTRY` | `sentry.io` | Sentry |
-| `LANTERN_CONNECTOR_BASEURL_GOOGLE` | `www.googleapis.com` | Google Calendar, Google Drive |
-| `LANTERN_CONNECTOR_BASEURL_PAGERDUTY` | `api.pagerduty.com` | PagerDuty |
+| `PAL_CONNECTOR_BASEURL_SLACK` | `slack.com` | Slack |
+| `PAL_CONNECTOR_BASEURL_GITHUB` | `api.github.com` | GitHub |
+| `PAL_CONNECTOR_BASEURL_SENTRY` | `sentry.io` | Sentry |
+| `PAL_CONNECTOR_BASEURL_GOOGLE` | `www.googleapis.com` | Google Calendar, Google Drive |
+| `PAL_CONNECTOR_BASEURL_PAGERDUTY` | `api.pagerduty.com` | PagerDuty |
 
 The value must be an absolute `http` or `https` URL with a host. Only scheme and host are replaced; the vendor path is kept, so the fixture server serves real paths such as `/api/chat.postMessage`. An unmatched request gets 404:
 
@@ -155,7 +159,7 @@ Fixtures are exact method + path matches in `internal/connectorreplay/fixtures.j
 
 A bearer token must never be sent to an arbitrary host, so overrides are blocked twice:
 
-- **Startup:** with `LANTERN_ENV` set to `prod`, `production` or `staging`, the control plane exits if any override variable is set: `LANTERN_CONNECTOR_BASEURL_X set in production — connector base-URL overrides are test-only and would redirect tenant credentials to another host; unset them` (names of every variable set are listed). In any environment a malformed value is also fatal: `LANTERN_CONNECTOR_BASEURL_X is malformed: must be an absolute http(s) URL, got "..."`.
+- **Startup:** with `PAL_ENV` set to `prod`, `production` or `staging`, the control plane exits if any override variable is set: `PAL_CONNECTOR_BASEURL_X set in production — connector base-URL overrides are test-only and would redirect tenant credentials to another host; unset them` (names of every variable set are listed). In any environment a malformed value is also fatal: `PAL_CONNECTOR_BASEURL_X is malformed: must be an absolute http(s) URL, got "..."`.
 - **Request time:** the outbound transport ignores overrides whenever the environment is prod, even if one slipped in.
 
 ## Setting up a connector
@@ -181,7 +185,7 @@ Linear, Sentry, Vercel, Stripe, Twilio, Telegram and others take a key or token 
 1. Open **Integrations**.
 2. Click the connector and select **Manual credentials**.
 3. Enter your API key or credentials.
-4. Click **Save**. Credentials are encrypted at rest (AES-256-GCM) when `LANTERN_CREDENTIAL_KEY` is set; without it they are stored as plaintext, so set it outside dev.
+4. Click **Save**. Credentials are encrypted at rest (AES-256-GCM) when `PAL_CREDENTIAL_KEY` is set; without it they are stored as plaintext, so set it outside dev.
 
 <Aside type="caution">
 Credentials never appear in logs, traces or run state. Connector actions run in the control plane, which resolves the credential at call time.
@@ -204,12 +208,12 @@ Assigned connectors reach the LLM as tools; it decides when to call them. You ca
 
 ```bash
 curl -X POST "http://localhost:8080/v1/connectors/gmail/execute?action=search" \
-  -H "Authorization: Bearer $LANTERN_API_KEY" \
+  -H "Authorization: Bearer $PAL_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"query": "from:boss@company.com subject:urgent"}'
 ```
 
-PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/pal/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
+PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
 
 ## Connector permissions
 

@@ -1,6 +1,10 @@
 ---
 title: Demo mode
 description: Run the whole stack in kiosk mode with private per-visitor workspaces, recorded answers and no API key.
+glance:
+  what: "lantern demo starts the whole stack in kiosk mode with private per-visitor workspaces, sample agents and recorded answers."
+  why: "It needs only Docker, no LLM key and no sign-up, and each workspace is deleted after 30 minutes."
+  how: "Run make demo or lantern demo as shown under Try it."
 sidebar:
   order: 1
 ---
@@ -28,7 +32,7 @@ Press **Start demo**. The tour has five steps over real pages: the inbox, runnin
 ## How visitors are isolated
 
 - `POST /v1/kiosk/session` creates a fresh `kiosk-<rand>` tenant and returns a short-lived JWT with role `kiosk`. Row-level security is enforced, so visitor B reading visitor A's run or agent gets `404`.
-- The token cannot write settings, connectors or budgets, mint API keys, or delete the tenant (`LANTERN_AUTHZ_ENFORCE=1` is part of the overlay).
+- The token cannot write settings, connectors or budgets, mint API keys, or delete the tenant (`PAL_AUTHZ_ENFORCE=1` is part of the overlay).
 - A sweep deletes expired tenants through the same erasure code path as `DELETE /v1/tenants/{id}`, across every table that has a `tenant_id` column.
 - No provider key exists in a kiosk tenant. The server refuses to start in kiosk mode if a provider key is set without a fixture base URL.
 
@@ -36,15 +40,15 @@ Press **Start demo**. The tour has five steps over real pages: the inbox, runnin
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LANTERN_KIOSK` | off | `1` enables the endpoint, sweep and guards. Otherwise `/v1/kiosk/session` is 404. |
-| `LANTERN_KIOSK_ALLOW_PROD` | off | Required to run kiosk in prod/production/staging. Use only on a dedicated demo host. |
-| `LANTERN_KIOSK_TTL_MIN` | 30 | Session lifetime in minutes. |
-| `LANTERN_KIOSK_SWEEP_SEC` | 60 | How often expired sessions are purged. |
-| `LANTERN_KIOSK_MAX_SESSIONS` | 20 | Live-session cap; over it returns 503. |
-| `LANTERN_KIOSK_IP_PER_HOUR` | 3 | Sessions per client address per hour; over it returns 429. |
+| `PAL_KIOSK` | off | `1` enables the endpoint, sweep and guards. Otherwise `/v1/kiosk/session` is 404. |
+| `PAL_KIOSK_ALLOW_PROD` | off | Required to run kiosk in prod/production/staging. Use only on a dedicated demo host. |
+| `PAL_KIOSK_TTL_MIN` | 30 | Session lifetime in minutes. |
+| `PAL_KIOSK_SWEEP_SEC` | 60 | How often expired sessions are purged. |
+| `PAL_KIOSK_MAX_SESSIONS` | 20 | Live-session cap; over it returns 503. |
+| `PAL_KIOSK_IP_PER_HOUR` | 3 | Sessions per client address per hour; over it returns 429. |
 | `KIOSK_JWT_SECRET` | random per start | Compose overlay. Required; `make demo` and `lantern demo` generate a random one. The control-plane refuses to start kiosk mode with an empty or dev-default `JWT_SECRET`. |
 
-Kiosk mode also requires `LANTERN_RLS_ENFORCE=1`, `LANTERN_AUTHZ_ENFORCE=1` and an explicit `JWT_SECRET`; the compose overlay `infra/docker/docker-compose.kiosk.yml` sets all of them and points `LANTERN_LLM_BASEURL_OPENAI`/`_ANTHROPIC` at the replay server.
+Kiosk mode also requires `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and an explicit `JWT_SECRET`; the compose overlay `infra/docker/docker-compose.kiosk.yml` sets all of them and points `PAL_LLM_BASEURL_OPENAI`/`_ANTHROPIC` at the replay server.
 
 ## Limits
 
@@ -52,4 +56,4 @@ Kiosk mode also requires `LANTERN_RLS_ENFORCE=1`, `LANTERN_AUTHZ_ENFORCE=1` and 
 - The per-address limit is in-memory and per process; behind a proxy all visitors share one address.
 - The sandbox step shows the view only; the overlay does not start the microVM runtime.
 
-See also [Accounts](/pal/docs/build/accounts/) and [Security](/pal/docs/runtime/security/).
+See also [Accounts](/docs/build/accounts/) and [Security](/docs/runtime/security/).

@@ -1,0 +1,87 @@
+---
+// A self-chat with pal that plays one real moment: you ask "?", pal sends the
+// Brief, then a contact asks for money and pal holds the reply it drafted.
+// Send / Edit are real buttons. Every name and message is invented; the shapes
+// (Brief items, the HELD page) follow the bridges (attention.ts, commitment-gate.ts).
+// Without JS, or with reduced motion, the whole thread is shown at once.
+---
+<figure class="chat" data-chat aria-label="A demo chat: pal sends a Brief, then holds a reply that promised money">
+  <div class="chat-top">
+    <span class="chat-dot" aria-hidden="true"></span>
+    <span><b>You</b> · self-chat with pal</span>
+    <button type="button" class="chat-replay" data-replay>Replay</button>
+  </div>
+  <div class="chat-thread" aria-live="polite">
+    <p class="bubble me step" data-step>?</p>
+    <div class="pal-msg step" data-step data-typing>
+      <p class="from">pal</p>
+      <p>3 things need you</p>
+      <ol>
+        <li><span>1</span><span>⏳ <b>Jordan</b> has waited 2 days about Saturday</span></li>
+        <li><span>2</span><span>✍️ A draft to <b>Priya</b> is ready</span></li>
+        <li><span>3</span><span>You said you’d send <b>Alex</b> the slides</span></li>
+      </ol>
+    </div>
+    <div class="held step" data-step data-typing role="note">
+      <p class="tag">Held</p>
+      <p class="held-line">Maya asked for her $300 back. My reply promised money, so I held it.</p>
+      <p class="draft">“sending it tonight 👍”</p>
+      <p class="why">pal held a reply that promised money — send / edit?</p>
+      <div class="btns">
+        <button type="button" data-act="send">Send</button>
+        <button type="button" data-act="edit">Edit</button>
+      </div>
+    </div>
+    <p class="bubble me step" data-out="send">send</p>
+    <div class="pal-msg step" data-out="send"><p class="from">pal</p><p>Sent to Maya.</p></div>
+    <p class="bubble me step" data-out="edit">edit: let me check and get back to you tonight</p>
+    <div class="pal-msg step" data-out="edit"><p class="from">pal</p><p>Sent your words to Maya instead.</p></div>
+    <div class="typing" aria-hidden="true"><i></i><i></i><i></i></div>
+  </div>
+  <figcaption>Invented example. Try Send or Edit.</figcaption>
+</figure>
+
+<script>
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, reduce ? 0 : ms));
+  for (const root of document.querySelectorAll<HTMLElement>('[data-chat]')) {
+    const steps = [...root.querySelectorAll<HTMLElement>('[data-step]')];
+    const typing = root.querySelector<HTMLElement>('.typing')!;
+    const held = root.querySelector<HTMLElement>('.held')!;
+    let run = 0;
+    const show = (el: HTMLElement) => el.classList.add('on');
+    async function play() {
+      const id = ++run;
+      root.querySelectorAll('.step').forEach((el) => el.classList.remove('on'));
+      held.classList.remove('done');
+      root.classList.add('live');
+      for (const el of steps) {
+        if (id !== run) return;
+        if (el.hasAttribute('data-typing')) {
+          typing.classList.add('on');
+          await wait(1100);
+          typing.classList.remove('on');
+        } else await wait(500);
+        if (id !== run) return;
+        show(el);
+        await wait(900);
+      }
+    }
+    async function answer(kind: string) {
+      if (held.classList.contains('done')) return;
+      held.classList.add('done');
+      const id = run;
+      const [mine, reply] = root.querySelectorAll<HTMLElement>(`[data-out="${kind}"]`);
+      show(mine);
+      typing.classList.add('on');
+      await wait(900);
+      typing.classList.remove('on');
+      if (id === run) show(reply);
+    }
+    root.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) => b.addEventListener('click', () => answer(b.dataset.act!)));
+    root.querySelector('[data-replay]')!.addEventListener('click', play);
+    new IntersectionObserver((es, io) => {
+      if (es.some((e) => e.isIntersecting)) { io.disconnect(); play(); }
+    }, { threshold: 0.35 }).observe(root);
+  }
+</script>

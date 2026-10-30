@@ -1,6 +1,10 @@
 ---
 title: SDK reference
 description: The TypeScript, Python and Go SDKs for the PAL management API, with client setup and namespace listings.
+glance:
+  what: "Three SDKs for the management API: TypeScript (@lantern/sdk), Python (lantern-sdk, imported as lantern) and Go."
+  why: "They wrap the REST API in typed methods, so you call client.runs.create(...) instead of writing HTTP."
+  how: "Install the SDK for your language, then follow Client setup and Creating and streaming a run."
 sidebar:
   order: 2
 ---
@@ -9,7 +13,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Three SDKs: TypeScript (`@lantern/sdk`), Python (`lantern-sdk`, imported as `lantern`) and Go (`github.com/dshakes/lantern/packages/sdk-go`). They cover agents, runs, sessions, connectors, budgets, evals, experiments, marketplace, MCP, receipts, feedback, rehearsals and sandbox VMs. The TypeScript client has the most surface; the listings below show what each one exposes.
 
-The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...)` instead of writing HTTP. Use them to trigger agents from your app, wire runs into your backend, or script bulk operations. For the raw endpoints see the [API reference](/pal/docs/reference/api/).
+The SDKs wrap the REST API in typed methods, so you call `client.runs.create(...)` instead of writing HTTP. Use them to trigger agents from your app, wire runs into your backend, or script bulk operations. For the raw endpoints see the [API reference](/docs/reference/api/).
 
 ## TypeScript SDK
 
@@ -34,12 +38,12 @@ After that, `import { LanternClient } from "@lantern/sdk"` resolves to the built
 import { LanternClient } from "@lantern/sdk";
 
 const client = new LanternClient({
-  apiKey: process.env.LANTERN_API_KEY,   // hlx_live_...
-  baseUrl: process.env.LANTERN_API_URL,  // e.g. http://localhost:8080
+  apiKey: process.env.PAL_API_KEY,   // hlx_live_...
+  baseUrl: process.env.PAL_API_URL,  // e.g. http://localhost:8080
 });
 ```
 
-With no constructor options the SDK reads `LANTERN_API_KEY` and `LANTERN_API_URL`. If `LANTERN_API_URL` is unset, the base URL defaults to `https://api.lantern.run`, so set it for a self-hosted control plane. (`LANTERN_RUNTIME=true` is a different switch: the platform sets it inside a running agent to enable the production sidecar.)
+With no constructor options the SDK reads `PAL_API_KEY` and `PAL_API_URL`. If `PAL_API_URL` is unset, the base URL defaults to `https://api.lantern.run`, so set it for a self-hosted control plane. (`PAL_RUNTIME=true` is a different switch: the platform sets it inside a running agent to enable the production sidecar.)
 
 ### Creating and streaming a run
 
@@ -136,7 +140,7 @@ try {
 
 Retries are built in. The TypeScript client retries HTTP 429, 503 and network errors up to 3 attempts with full-jitter backoff (500 ms base, 4 s cap). It never retries other 4xx or 5xx. There is no separate `@lantern/retry` package.
 
-Sandbox VMs live under `client.runtime` in TypeScript and Python; Go has `ScheduleVM`, `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/).
+Sandbox VMs live under `client.runtime` in TypeScript and Python; Go has `ScheduleVM`, `PauseVM`, `ResumeVM`, `ForkVM`, `ListFiles`, `ReadFile` and `WriteFile`. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
 ## Python SDK
 
@@ -159,8 +163,8 @@ pip install "./packages/sdk-python[deepagents]"
 from lantern import LanternClient
 
 client = LanternClient(
-    api_key="hlx_live_your_key",        # or LANTERN_API_KEY env var
-    base_url="http://localhost:8080",   # or LANTERN_API_URL env var
+    api_key="hlx_live_your_key",        # or PAL_API_KEY env var
+    base_url="http://localhost:8080",   # or PAL_API_URL env var
 )
 # Request methods are coroutines: call from async code, or asyncio.run(main())
 ```
@@ -229,7 +233,7 @@ export default agent<{ query: string }>({
 });
 ```
 
-Use capability names like `auto`, `reasoning-large`, `chat-small`, `vision-large`. Do not hardcode a vendor model. The model router maps the capability to a concrete model at call time. See [Models](/pal/docs/build/models/) for the full list.
+Use capability names like `auto`, `reasoning-large`, `chat-small`, `vision-large`. Do not hardcode a vendor model. The model router maps the capability to a concrete model at call time. See [Models](/docs/build/models/) for the full list.
 
 ### Parallel fan-out
 

@@ -1,51 +1,54 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
+import react from '@astrojs/react';
+import { GH as gh, SITE_ORIGIN, SITE_URL, BASE_PATH, repoLinks } from './repo.config.mjs';
 
-const gh = 'https://github.com/dshakes/pal';
-const og = 'https://dshakes.github.io/pal/og.png';
+const og = `${SITE_URL}og.png`;
 
 // Old flat doc slugs (pre-PAL docs) -> their new homes. Static redirect pages,
-// not indexed by search or listed in the sitemap. Destinations must carry the
-// base (/pal); Astro does not add it to redirect targets.
-const redirects = {
-  '/docs/accounts': '/pal/docs/build/accounts/',
-  '/docs/agents': '/pal/docs/build/agents/',
-  '/docs/api': '/pal/docs/reference/api/',
-  '/docs/architecture': '/pal/docs/runtime/architecture/',
-  '/docs/budgets': '/pal/docs/build/budgets/',
-  '/docs/cli': '/pal/docs/reference/cli/',
-  '/docs/connectors': '/pal/docs/build/connectors/',
-  '/docs/demo': '/pal/docs/start/demo/',
-  '/docs/deployment': '/pal/docs/operate/deployment/',
-  '/docs/env-vars': '/pal/docs/reference/env-vars/',
-  '/docs/evaluations': '/pal/docs/build/evaluations/',
-  '/docs/examples': '/pal/docs/start/examples/',
-  '/docs/human-in-the-loop': '/pal/docs/pal/human-in-the-loop/',
-  '/docs/installation': '/pal/docs/start/installation/',
-  '/docs/knowledge': '/pal/docs/pal/knowledge/',
-  '/docs/marketplace': '/pal/docs/build/marketplace/',
-  '/docs/models': '/pal/docs/build/models/',
-  '/docs/operations': '/pal/docs/operate/operations/',
-  '/docs/personal': '/pal/docs/pal/',
-  '/docs/quickstart': '/pal/docs/start/quickstart/',
-  '/docs/scheduling': '/pal/docs/build/scheduling/',
-  '/docs/sdk': '/pal/docs/reference/sdk/',
-  '/docs/security': '/pal/docs/runtime/security/',
-  '/docs/stack': '/pal/docs/runtime/stack/',
-  '/docs/surfaces': '/pal/docs/pal/surfaces/',
-  '/docs/testing': '/pal/docs/build/testing/',
-  '/docs/triggers': '/pal/docs/build/triggers/',
-};
+// not indexed by search or listed in the sitemap. Astro does not add the base
+// to redirect targets, so it is prefixed here.
+const redirects = Object.fromEntries(Object.entries({
+  '/docs/accounts': '/docs/build/accounts/',
+  '/docs/agents': '/docs/build/agents/',
+  '/docs/api': '/docs/reference/api/',
+  '/docs/architecture': '/docs/runtime/architecture/',
+  '/docs/budgets': '/docs/build/budgets/',
+  '/docs/cli': '/docs/reference/cli/',
+  '/docs/connectors': '/docs/build/connectors/',
+  '/docs/demo': '/docs/start/demo/',
+  '/docs/deployment': '/docs/operate/deployment/',
+  '/docs/env-vars': '/docs/reference/env-vars/',
+  '/docs/evaluations': '/docs/build/evaluations/',
+  '/docs/examples': '/docs/start/examples/',
+  '/docs/human-in-the-loop': '/docs/pal/human-in-the-loop/',
+  '/docs/installation': '/docs/start/installation/',
+  '/docs/knowledge': '/docs/pal/knowledge/',
+  '/docs/marketplace': '/docs/build/marketplace/',
+  '/docs/models': '/docs/build/models/',
+  '/docs/operations': '/docs/operate/operations/',
+  '/docs/personal': '/docs/pal/',
+  '/docs/quickstart': '/docs/start/quickstart/',
+  '/docs/scheduling': '/docs/build/scheduling/',
+  '/docs/sdk': '/docs/reference/sdk/',
+  '/docs/security': '/docs/runtime/security/',
+  '/docs/stack': '/docs/runtime/stack/',
+  '/docs/surfaces': '/docs/pal/surfaces/',
+  '/docs/testing': '/docs/build/testing/',
+  '/docs/triggers': '/docs/build/triggers/',
+}).map(([from, to]) => [from, BASE_PATH + to]));
 
-// Landing is src/pages/index.astro at /pal/; Starlight docs live in
-// src/content/docs/docs/** so they publish under /pal/docs/<slug>/.
+// Landing is src/pages/index.astro at the base; Starlight docs live in
+// src/content/docs/docs/** so they publish under <base>/docs/<slug>/.
 export default defineConfig({
-  site: 'https://dshakes.github.io',
-  base: '/pal/',
+  site: SITE_ORIGIN,
+  base: `${BASE_PATH}/`,
   trailingSlash: 'ignore',
   redirects,
+  vite: { plugins: [repoLinks] },
   integrations: [
+    react(),
     starlight({
       title: 'PAL',
       // Fails the build on any broken internal link or anchor in the docs.
@@ -94,9 +97,10 @@ export default defineConfig({
         '@fontsource-variable/inter-tight/wght.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
         './src/styles/tokens.css',
+        './src/styles/diagrams.css',
         './src/styles/starlight.css',
       ],
-      components: { SiteTitle: './src/components/SiteTitle.astro' },
+      components: { SiteTitle: './src/components/SiteTitle.astro', MarkdownContent: './src/components/MarkdownContent.astro' },
       // Groups follow the directories under src/content/docs/docs/, in this order.
       sidebar: [
         { label: 'Start', items: [{ autogenerate: { directory: 'docs/start' } }] },

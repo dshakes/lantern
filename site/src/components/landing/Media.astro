@@ -1,0 +1,22 @@
+---
+// One of the ten animated product diagrams in public/media/ (built from
+// docs/brand). They are drawn on the dark brand surface in both themes.
+import { u } from '../../data/site';
+const ALT = {
+  'pal-brief': 'Brief: you type a question mark in your self-chat. pal ranks a thread waiting on you, a draft and a promise, and replies with three numbered items. A thumbs-up drafts the reply to the top item; you say send, and it goes.',
+  'pal-holds': 'Holds: a contact asks for money. pal’s draft promises it, the commitment gate holds it, you get a HELD message in your self-chat, and your own words go out instead.',
+  'pal-voice': 'Sounds like you: a stock-phrase draft scores 0.71, past your own p95 floor of 0.44, and is rewritten from your five closest real messages to 0.19 before it is sent.',
+  'pal-memory': 'Memory: an iMessage number and a WhatsApp name resolve to one person with one timeline, so a later WhatsApp reply recalls what was said on iMessage.',
+  'pal-world': 'World model: mail, calendar and your own note update a dated fact with a cited source, and three nudges arrive: a meeting in ten minutes, a thread waiting three days, an anniversary tomorrow.',
+  'runtime-architecture': 'Architecture: SDK, CLI and console talk to the control plane. The data plane runs in your VPC with the workflow engine, runtime manager, microVMs and your data. It dials out; inbound connections are refused.',
+  'runtime-lifecycle': 'Lifecycle: schedule a microVM, pause it to a snapshot and free its quota slot, resume it with the same id, then fork it into three VMs that share memory copy-on-write.',
+  'runtime-egress': 'Egress: agent code in a microVM with no network device reaches the host broker over vsock. A GitHub call is allowed and gets its token injected; a POST containing card numbers is blocked; an unknown host is refused. Every decision is audited.',
+  'runtime-durable': 'Durable runs: four steps run and are journaled, the worker crashes on the send step, the recovery sweep reclaims the run, cached steps are skipped, send runs once, and a signed receipt verifies.',
+  'runtime-guardrails': 'Guardrails: a run asks for reasoning-large, passes the budget check, the router fails over from a rate-limited provider, cost is recorded; the next run is refused with 402 and a regressed eval suite returns 422.',
+} as const;
+interface Props { name: keyof typeof ALT; class?: string }
+const { name, class: cls } = Astro.props;
+---
+<figure class:list={['media', cls]}>
+  <img src={u(`media/${name}.svg`)} alt={ALT[name]} width="960" height="540" loading="lazy" decoding="async" />
+</figure>

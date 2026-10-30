@@ -1,0 +1,34 @@
+---
+// Inlines one of the repo's architecture drawings (docs/assets/diagrams/<name>.svg,
+// the single source shared with the README) at build time, restyled to the PAL
+// palette. Each SVG carries its colours as CSS variables in a <style> block, so we
+// swap that block for one that reads the --lx-* diagram tokens: the drawing then
+// follows the site theme (data-theme) instead of prefers-color-scheme.
+// Wide drawings pan sideways on phones instead of shrinking text to nothing.
+import { readFileSync } from 'node:fs';
+import { docsHref } from './islands/types';
+interface Props { name: string; caption?: string; minWidth?: number }
+const { name, caption, minWidth = 760 } = Astro.props;
+let svg = readFileSync(new URL(`../../../docs/assets/diagrams/${name}.svg`, import.meta.url), 'utf8');
+const STYLE = `.lx{--bg:var(--lx-bg);--surface:var(--lx-surface);--surface2:var(--lx-surface-2);--ink:var(--lx-ink);--ink2:var(--lx-ink-2);--ink3:var(--lx-ink-3);--line:var(--lx-line);--flame:var(--lx-flame);--flame-soft:var(--lx-flame-soft);--glass:var(--lx-glass);--glass-soft:var(--lx-glass-soft);--patina:var(--lx-patina);--patina-soft:var(--lx-patina-soft);--signal:var(--lx-signal);--signal-soft:var(--lx-signal-soft)}`;
+svg = svg
+  .replace(/\.lx\{--bg:[^}]*\}\s*@media \(prefers-color-scheme:dark\)\{\.lx\{[^}]*\}\}/, STYLE)
+  .replace(/"IBM Plex Sans",/g, 'var(--p-font),').replace(/"IBM Plex Mono",/g, 'var(--p-mono),')
+  .replace(/\bLANTERN_/g, 'PAL_')
+  .replace(/(?<![-\w])Lantern(?![-\w])/g, 'PAL') // prose only; wire names like X-Lantern-* stay
+  .replace(/href="(\/[^"]*)"/g, (_, h) => `href="${docsHref(h)}"`);
+---
+<figure class="arch-svg not-content">
+  <div class="arch-svg-canvas" tabindex="0" role="region" aria-label={caption ?? 'Architecture diagram'} style={`--mw:${minWidth}px`}>
+    <Fragment set:html={svg} />
+  </div>
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+<style is:global>
+  .arch-svg { margin: 28px 0; }
+  .arch-svg-canvas { overflow-x: auto; overscroll-behavior-x: contain; border-radius: 18px; border: 1px solid var(--lx-line); background: var(--lx-bg); }
+  .arch-svg-canvas:focus-visible { outline: 2px solid var(--p-rt-3); outline-offset: 2px; }
+  .arch-svg-canvas > svg { display: block; width: 100%; min-width: var(--mw); height: auto; }
+  .arch-svg figcaption { margin-top: 10px; font-size: 14px; color: var(--p-text-3, var(--sl-color-gray-3)); }
+  .arch-svg .canvas { fill: transparent; }
+</style>

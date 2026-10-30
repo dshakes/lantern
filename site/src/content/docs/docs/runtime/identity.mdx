@@ -1,6 +1,10 @@
 ---
 title: Identity and secrets
 description: Per-instance Ed25519 identity and short-TTL secret vending for microVM workloads, plus broker mode where credentials never enter the VM.
+glance:
+  what: "Every spawn gets its own Ed25519 identity, and secrets are vended to it at execution time over a mutually authenticated channel."
+  why: "Real API keys never sit where agent code can casually find them: the config holds only a reference, not a value."
+  how: "Reference secrets with the lantern.secret/... form described in that section, and read Broker mode for the strongest isolation."
 sidebar:
   order: 7
 ---
@@ -25,9 +29,9 @@ GET /.well-known/lantern-agent-identity
 
 ## Short-TTL secret vending
 
-The workload never ships with secrets. Instead it requests them at runtime via the harness's secrets socket (`/run/lantern/secrets.sock`), which authenticates every connecting peer with `SO_PEERCRED` (kernel-attested uid and pid, not spoofable). The harness only vends to the workload uid injected by the manager as `LANTERN_WORKLOAD_UID`. Secrets have a 300-second TTL.
+The workload never ships with secrets. Instead it requests them at runtime via the harness's secrets socket (`/run/lantern/secrets.sock`), which authenticates every connecting peer with `SO_PEERCRED` (kernel-attested uid and pid, not spoofable). The harness only vends to the workload uid injected by the manager as `PAL_WORKLOAD_UID`. Secrets have a 300-second TTL.
 
-The control-plane resolves `lantern.secret/...` references through a relay endpoint protected by a pre-shared `X-Lantern-Runtime-Token` header (SHA-256 compared, set via `LANTERN_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
+The control-plane resolves `lantern.secret/...` references through a relay endpoint protected by a pre-shared `X-Lantern-Runtime-Token` header (SHA-256 compared, set via `PAL_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
 
 <Aside type="caution">
 mTLS between the runtime-manager and control-plane is the planned stronger follow-up and is not yet implemented.
@@ -47,15 +51,15 @@ secrets:
     secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
 ```
 
-The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/pal/docs/runtime/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
+The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/docs/runtime/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
 
 <Aside type="caution">
-Pair secret vending with the right [isolation class](/pal/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
+Pair secret vending with the right [isolation class](/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
 </Aside>
 
 ## Broker mode: credentials never enter the VM
 
-Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`LANTERN_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/pal/docs/runtime/egress/).
+Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/runtime/egress/).
 
 ## What you get
 
@@ -65,8 +69,8 @@ Vending still puts a short-lived value inside the VM, so a compromised workload 
 
 ## Operating notes
 
-- **The manager never holds the decryption key.** `LANTERN_CREDENTIAL_KEY` lives only on the control plane, which resolves a `lantern.secret/` ref over `POST /v1/runtime/secrets/resolve`. A compromised manager node cannot decrypt a tenant's secrets on its own.
-- **The relay is fail-closed.** It needs the pre-shared `LANTERN_RUNTIME_SECRET_TOKEN` on both the control plane and the manager (unset on the control plane: 403), and is not reachable with an end-user JWT.
+- **The manager never holds the decryption key.** `PAL_CREDENTIAL_KEY` lives only on the control plane, which resolves a `lantern.secret/` ref over `POST /v1/runtime/secrets/resolve`. A compromised manager node cannot decrypt a tenant's secrets on its own.
+- **The relay is fail-closed.** It needs the pre-shared `PAL_RUNTIME_SECRET_TOKEN` on both the control plane and the manager (unset on the control plane: 403), and is not reachable with an end-user JWT.
 - **Per-VM mTLS.** The manager binds the `vm_id` reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
-- **Dev stub.** Without a manager, the harness reads secrets from its own environment when `LANTERN_ALLOW_SECRET_STUB=1`. Never set it in production.
-- **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `LANTERN_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/pal/docs/reference/env-vars/).
+- **Dev stub.** Without a manager, the harness reads secrets from its own environment when `PAL_ALLOW_SECRET_STUB=1`. Never set it in production.
+- **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `PAL_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/docs/reference/env-vars/).

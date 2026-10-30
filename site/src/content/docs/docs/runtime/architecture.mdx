@@ -1,6 +1,10 @@
 ---
 title: Architecture
 description: Every PAL Runtime process, its port, the trust boundary it enforces, and the sequences that connect them.
+glance:
+  what: "Every PAL Runtime process, the port it listens on, the trust boundary it enforces and the sequences that connect them."
+  why: "It lets you see which component does what, and where each credential and trust boundary sits, before you debug or deploy."
+  how: "Start with the System map, then read A run, end to end under Sequences."
 sidebar:
   order: 13
 ---
@@ -21,7 +25,7 @@ The system has three zones: callers outside, a control plane, and a data plane t
 
 | Component | Language / port | Role and boundary |
 | --- | --- | --- |
-| SDKs | TypeScript, Python 3.11+, Go | Typed clients for the REST API. Each reads its base URL from `LANTERN_API_URL`. Untrusted caller: every request carries a Bearer JWT or API key that the control plane validates. Models are addressed by capability (`auto`, `reasoning-large`), never by vendor name. |
+| SDKs | TypeScript, Python 3.11+, Go | Typed clients for the REST API. Each reads its base URL from `PAL_API_URL`. Untrusted caller: every request carries a Bearer JWT or API key that the control plane validates. Models are addressed by capability (`auto`, `reasoning-large`), never by vendor name. |
 | `lantern` CLI | Go (Cobra) | Static binary that wraps the same REST API: runs, sandboxes (`lantern vm ...`), onboarding. Authenticates like the SDKs. |
 | Dashboard | TypeScript (Next.js), `:3001` (dev) | Operator UI over the same REST endpoints: agents, runs and their journal waterfall, sandboxes, budgets. Browser session, JWT-authenticated like any other caller. |
 | LLM providers | Anthropic, OpenAI (external HTTPS) | Reached directly by the control plane's failover chain (the default) or through the model router. Calls carry an `Idempotency-Key` so a retry or crash-replay is deduplicated at the provider. Tenant provider keys are AES-256-GCM encrypted at rest and never logged. |
@@ -44,10 +48,10 @@ Control plane invariants:
 
 Model router invariants:
 
-- The control plane uses it only when `LANTERN_USE_MODEL_ROUTER` is on (default off); any router error falls through to the direct provider chain.
+- The control plane uses it only when `PAL_USE_MODEL_ROUTER` is on (default off); any router error falls through to the direct provider chain.
 - Workflow-engine `llm_call` steps always go through it.
 
-Gateway invariant: without `LANTERN_TLS_CERT`/`LANTERN_TLS_KEY` it serves plaintext and warns. Never run that way in production.
+Gateway invariant: without `PAL_TLS_CERT`/`PAL_TLS_KEY` it serves plaintext and warns. Never run that way in production.
 
 ### Data plane (your VPC)
 
@@ -78,7 +82,7 @@ Runtime manager invariants:
 
 Host egress broker invariants:
 
-- Opt-in: `LANTERN_EGRESS_MODE=broker` on the manager, Firecracker only. Default is guest mode.
+- Opt-in: `PAL_EGRESS_MODE=broker` on the manager, Firecracker only. Default is guest mode.
 - HTTPS is terminated only for hosts whose rule injects a credential; every other host is an opaque tunnel.
 - The credential never enters the VM.
 
@@ -88,7 +92,7 @@ Harness invariant: security audits are logged locally before forwarding and surv
 
 | Store | Port | Role |
 | --- | --- | --- |
-| Postgres 16 + pgvector | `:5432` | System of record: tenants, agents, runs, the `journal_events` log, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy, enforced when `LANTERN_RLS_ENFORCE=1`. `journal_events` is append-only: `step_started`, then `step_completed` or `step_failed`, keyed `(run_id, seq)`. |
+| Postgres 16 + pgvector | `:5432` | System of record: tenants, agents, runs, the `journal_events` log, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy, enforced when `PAL_RLS_ENFORCE=1`. `journal_events` is append-only: `step_started`, then `step_completed` or `step_failed`, keyed `(run_id, seq)`. |
 | Redis | `:6379` | Caching, rate limiting and session event pub/sub for SSE. Internal only. |
 | S3 / MinIO | `:9000` | Agent bundles, attachments, and the optional second tier of microVM snapshots. Snapshot uploads are best-effort: the local copy on the node is authoritative. |
 
@@ -161,7 +165,7 @@ From `POST /v1/runs` to a journaled result, including the budget gate, the optio
 5. Status becomes `running`.
 6. `checkCachedLLMStep`: is there already a `step_completed` for this LLM step? On a first attempt, no.
 7. Journal `step_started`, written before the call so the waterfall shows the step in flight and recovery knows it began.
-8. `ModelService.Complete`, only when `LANTERN_USE_MODEL_ROUTER` is on (default off). Otherwise the control plane calls the provider directly, and any router error falls through to that direct chain.
+8. `ModelService.Complete`, only when `PAL_USE_MODEL_ROUTER` is on (default off). Otherwise the control plane calls the provider directly, and any router error falls through to that direct chain.
 9. The provider request carries an `Idempotency-Key` derived from the run, so a retry or crash-replay is deduplicated by the provider.
 10. The completion returns text, model used, tokens in and out.
 11. Journal `step_completed`. The full output payload is persisted: this row is what makes replay skip the call next time.
@@ -179,7 +183,7 @@ From `POST /v1/runs` to a journaled result, including the budget gate, the optio
 
 1. A run is mid-step: the LLM step has journaled `step_started`.
 2. The process dies (restart, deploy or crash) before `step_completed` is written. The run row still says `running`.
-3. Every `LANTERN_RECOVERY_INTERVAL` (default 30 s) the recovery sweep finds runs in `running`/`queued` whose `run_locks` row is absent or expired.
+3. Every `PAL_RECOVERY_INTERVAL` (default 30 s) the recovery sweep finds runs in `running`/`queued` whose `run_locks` row is absent or expired.
 4. `acquireRecoveryLock`: an UPSERT on `run_locks` that only steals an expired lock, so two replicas never re-drive the same run.
 5. `redriveRun` re-enters the executor (or the workflow interpreter) for that run.
 6. `checkCachedLLMStep`: a `step_completed` row means reuse the stored output with no LLM call. Workflow nodes do the same via `journalCompletedStep`.
@@ -225,10 +229,10 @@ The workflow engine never runs tools itself: it asks the runtime manager, which 
 ### Egress in broker mode
 
 <Aside type="note" title="Opt-in">
-`LANTERN_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
+`PAL_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
 </Aside>
 
-The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/pal/docs/runtime/egress/).
+The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/runtime/egress/).
 
 <Diagram name="sandbox-egress" />
 
@@ -237,7 +241,7 @@ The workload's request leaves the VM over vsock; the host broker decides, dials,
 1. The workload sends `CONNECT api.github.com:443` using `HTTPS_PROXY=http://127.0.0.1:3128` as usual.
 2. The forwarder splices bytes over vsock `:3128`. The VM has no network device; the forwarder connects to vsock CID 2 (the host), port 3128.
 3. The broker reads the head (at most 64 KiB, 10 s). A slow or silent guest is dropped; `CONNECT` goes to `handle_connect`, anything else to `handle_plain`.
-4. `Policy.evaluate`: port in `LANTERN_EGRESS_ALLOWED_PORTS` (default 443), not a private/metadata IP literal, first matching rule.
+4. `Policy.evaluate`: port in `PAL_EGRESS_ALLOWED_PORTS` (default 443), not a private/metadata IP literal, first matching rule.
 5. The broker answers `200 Connection Established`. This rule injects, so the broker terminates TLS with a leaf from the per-VM ephemeral CA. Nothing is dialled yet.
 6. The workload sends its real request (`GET /user`) inside TLS, with a placeholder or no `Authorization` header.
 7. Preflight: not `TRACE` or `CONNECT`; the target and exactly one `Host:` header must name `api.github.com`.
@@ -251,13 +255,13 @@ The workload's request leaves the VM over vsock; the host broker decides, dials,
 
 **Not allowlisted** (example: `paste.example`). `Policy.evaluate` returns the deny reason. The deny is always logged locally, and goes into the shared audit channel at a burst of 20, then 5 per second per VM. The workload gets `403 Forbidden`, with `X-Lantern-Reason` carrying the static reason. Nothing was dialled.
 
-**Plain HTTP with a credential.** A plain-HTTP proxy request goes to a host whose rule injects a credential (port 80 opened in the allowlist). `handle_plain` allows it by policy, but the broker returns `403 plain-HTTP injection refused`: a credential would cross the network in cleartext. Only `LANTERN_EGRESS_PLAIN_INJECT=1` allows it, and only to port 80.
+**Plain HTTP with a credential.** A plain-HTTP proxy request goes to a host whose rule injects a credential (port 80 opened in the allowlist). `handle_plain` allows it by policy, but the broker returns `403 plain-HTTP injection refused`: a credential would cross the network in cleartext. Only `PAL_EGRESS_PLAIN_INJECT=1` allows it, and only to port 80.
 
 **Host mismatch.** After `200` and TLS termination, the workload sends `GET /` with `Host: evil.example` inside an approved tunnel. The Host is not bound to the approved host, which is checked before any secret is resolved or anything dialled and audited as an `egress_inject` deny. The workload gets `403 Forbidden`: the credential never rides a request addressed elsewhere.
 
 ### Sandbox lifecycle
 
-Schedule, idle-suspend with transparent resume, explicit pause and resume, and copy-on-write forks. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/).
+Schedule, idle-suspend with transparent resume, explicit pause and resume, and copy-on-write forks. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
 **Schedule**
 
@@ -293,7 +297,7 @@ Schedule, idle-suspend with transparent resume, explicit pause and resume, and c
 
 **Fork x N**
 
-1. `POST .../vms/{id}/fork { count }`: count is 1..`LANTERN_MAX_FORK_COUNT` (default 100, ceiling 1000).
+1. `POST .../vms/{id}/fork { count }`: count is 1..`PAL_MAX_FORK_COUNT` (default 100, ceiling 1000).
 2. The control plane forks with one identity per child. Each child gets its own agent identity; inheriting the source's would let N sandboxes act as one.
 3. The scheduler reserves N slots, all-or-nothing, before any snapshot I/O.
 4. `Snapshot { keep_running }`: a RUNNING source keeps running; a PAUSED source forks from its pause snapshot.

@@ -1,6 +1,10 @@
 ---
 title: The stack
 description: The languages, data stores and rules behind PAL Runtime, and why each layer uses the tool it does.
+glance:
+  what: "The four languages, three data stores and one contract format behind PAL Runtime, and the job each layer holds."
+  why: "It explains why both Rust and Go are used and what rules keep the layers consistent."
+  how: "Read The rule, then Languages, and the job each one holds."
 sidebar:
   order: 15
 ---
@@ -11,7 +15,7 @@ Running other people's agents is three jobs. **Coordinate** (who owns what, what
 
 ## The rule
 
-Right tool per layer. **Never unify for unification's sake.** Adding a new language requires an ADR ([ADR 0001](https://github.com/dshakes/pal/blob/master/docs/adr/0001-language-stack.md)). The bar is high: each language adds a CI matrix, a set of security advisories and something new contributors must learn.
+Right tool per layer. **Never unify for unification's sake.** Adding a new language requires an ADR ([ADR 0001](repo:/blob/master/docs/adr/0001-language-stack.md)). The bar is high: each language adds a CI matrix, a set of security advisories and something new contributors must learn.
 
 ## Languages, and the job each one holds
 
@@ -38,7 +42,7 @@ Right tool per layer. **Never unify for unification's sake.** Adding a new langu
 | **Control plane / data plane** | The split between the part that decides (tenants, runs, budgets) and the part that executes (the data plane in your cloud account, where agent code and data live). |
 | **pgvector** | A Postgres extension that stores embeddings and finds similar ones: semantic search without running a separate vector database. |
 | **OTel (OpenTelemetry)** | The vendor-neutral standard for traces and metrics. Every PAL service emits it, so one run can be followed across five services in whatever monitoring tool you already own. |
-| **RLS (Row-Level Security)** | A Postgres feature that filters rows by tenant inside the database itself. When enforcement is on (`LANTERN_RLS_ENFORCE=1`, off by default), tenant isolation survives an application bug: the database refuses to return another tenant's rows. |
+| **RLS (Row-Level Security)** | A Postgres feature that filters rows by tenant inside the database itself. When enforcement is on (`PAL_RLS_ENFORCE=1`, off by default), tenant isolation survives an application bug: the database refuses to return another tenant's rows. |
 
 ## Data stores
 
@@ -52,7 +56,7 @@ Three, and adding a fourth requires an ADR. Between them they cover every curren
 
 ## End to end: one sandbox run
 
-What happens between `lantern run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `LANTERN_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
+What happens between `lantern run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `PAL_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
 
 ```text
   you --> CLI / SDK / dashboard                          (Go, TypeScript)
@@ -93,7 +97,7 @@ The stack choices above only pay off because a handful of boundaries are never c
 - **Streaming never buffers.** No service is allowed to collect a whole response and then forward it.
 - **Untrusted code gets a microVM.** Never a bare container. If the node cannot provide isolation for an untrusted or hostile workload, the manager refuses it instead of downgrading.
 - **Models are named by capability, not vendor.** Your code says `reasoning-large`; the router resolves it to a vendor model, so a swap needs no code change.
-- **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application once `LANTERN_RLS_ENFORCE=1` is set.
+- **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application once `PAL_RLS_ENFORCE=1` is set.
 - **Secrets never appear in logs, traces, or run state.** Only a `lantern.secret/...` reference travels; it is resolved at the moment of use.
 
 ## What this costs

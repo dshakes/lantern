@@ -1,6 +1,10 @@
 ---
 title: Examples
 description: Runnable end-to-end agents that work with no SaaS account and no model key.
+glance:
+  what: "Runnable end-to-end agents under examples/, each with a README and a test run against recorded servers and a fixture model."
+  why: "They work with no SaaS account and no model key, so you can see a real agent run end to end."
+  how: "Start with the Support desk example and follow its commands."
 sidebar:
   order: 4
 ---
@@ -9,7 +13,7 @@ Runnable, end-to-end agents. Each lives under `examples/` in the repo with a REA
 
 ## Support desk
 
-A webchat agent that answers from your docs (with the source shown), and hands the conversation to a human when it cannot answer, pinging Slack. Path: `examples/support-desk/`. See [Knowledge base and human handoff](/pal/docs/pal/knowledge/) for the APIs.
+A webchat agent that answers from your docs (with the source shown), and hands the conversation to a human when it cannot answer, pinging Slack. Path: `examples/support-desk/`. See [Knowledge base and human handoff](/docs/pal/knowledge/) for the APIs.
 
 ```bash
 make dev-infra && make run-api          # terminal 1
@@ -23,7 +27,7 @@ Try it: ask *How do I reset my password?* (a cited answer), then *I want a refun
 
 ## PR triage to a Slack thread
 
-**What:** every opened GitHub pull request is read, triaged by a model in one line, commented on the PR, and announced in Slack with the verdict in the thread. **Why:** a reviewer sees risk before opening the diff. **Uses:** a [webhook trigger](/pal/docs/build/triggers/), the GitHub `get_pr` and `comment_pr` actions, Slack `post_message` and `reply_thread`, in a `workflow.json` graph.
+**What:** every opened GitHub pull request is read, triaged by a model in one line, commented on the PR, and announced in Slack with the verdict in the thread. **Why:** a reviewer sees risk before opening the diff. **Uses:** a [webhook trigger](/docs/build/triggers/), the GitHub `get_pr` and `comment_pr` actions, Slack `post_message` and `reply_thread`, in a `workflow.json` graph.
 
 ```bash
 cd examples/pr-triage-webhook
@@ -38,7 +42,7 @@ For real GitHub, install the `github` and `slack` connectors, then add a reposit
 
 ## Incident responder with an approval
 
-**What:** a Sentry alert (or PagerDuty incident) is summarized with the Sentry issue and the PagerDuty incident in hand, a runbook step is posted to Slack, and the run parks at an approval node. Approving posts a note on the PagerDuty incident; denying fails the step and posts nothing. **Uses:** two triggers (`sentry`, `pagerduty`), Sentry `get_issue`, PagerDuty `get_incident` and `add_note`, and the [approval node](/pal/docs/pal/human-in-the-loop/).
+**What:** a Sentry alert (or PagerDuty incident) is summarized with the Sentry issue and the PagerDuty incident in hand, a runbook step is posted to Slack, and the run parks at an approval node. Approving posts a note on the PagerDuty incident; denying fails the step and posts nothing. **Uses:** two triggers (`sentry`, `pagerduty`), Sentry `get_issue`, PagerDuty `get_incident` and `add_note`, and the [approval node](/docs/pal/human-in-the-loop/).
 
 ```bash
 cd examples/incident-responder
@@ -52,7 +56,7 @@ curl -X POST $API/v1/runs/<run-id>/takeover/<takeover-id>/deny  -d '{"notes":"no
 
 ## Daily digest to Slack
 
-**What:** every weekday at 09:00 New York time the agent lists open GitHub PRs, has a model write a short digest, and posts it to Slack. **Why:** the smallest unattended agent: a [schedule](/pal/docs/build/scheduling/) with a timezone, a three-node workflow, and a hard budget cap. Path: `examples/daily-digest/`.
+**What:** every weekday at 09:00 New York time the agent lists open GitHub PRs, has a model write a short digest, and posts it to Slack. **Why:** the smallest unattended agent: a [schedule](/docs/build/scheduling/) with a timezone, a three-node workflow, and a hard budget cap. Path: `examples/daily-digest/`.
 
 ```bash
 cd examples/daily-digest
@@ -65,7 +69,7 @@ curl -X POST $API/v1/schedules -H "Authorization: Bearer $TOKEN" -d @schedule.js
 
 ## Telegram assistant
 
-**What:** message a Telegram bot (or WhatsApp Cloud number) and a workflow reads your Google Calendar and answers in the same chat. **Uses:** the surface-gateway, [Telegram](/pal/docs/pal/surfaces/#telegram) secret-token and WhatsApp `X-Hub-Signature-256` checks, the calendar `list_events` action. Path: `examples/telegram-assistant/`.
+**What:** message a Telegram bot (or WhatsApp Cloud number) and a workflow reads your Google Calendar and answers in the same chat. **Uses:** the surface-gateway, [Telegram](/docs/pal/surfaces/#telegram) secret-token and WhatsApp `X-Hub-Signature-256` checks, the calendar `list_events` action. Path: `examples/telegram-assistant/`.
 
 ```bash
 cd examples/telegram-assistant
@@ -78,7 +82,7 @@ The priming run is needed because the gateway starts runs over gRPC, which refus
 
 ## Voice receptionist
 
-**What:** a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an over-budget call is declined with `<Reject/>` before it connects, and the status callback reconciles the $0.05 reservation to the real per-started-minute cost. Path: `examples/voice-receptionist/`; details in [Voice](/pal/docs/pal/surfaces/#voice-twilio-and-livekit).
+**What:** a Twilio number answers inbound calls under a hard spend cap: forged webhooks get 403, an over-budget call is declined with `<Reject/>` before it connects, and the status callback reconciles the $0.05 reservation to the real per-started-minute cost. Path: `examples/voice-receptionist/`; details in [Voice](/docs/pal/surfaces/#voice-twilio-and-livekit).
 
 ```bash
 cd examples/voice-receptionist
@@ -91,7 +95,7 @@ Budgets and voice numbers are not part of the deploy manifest, so those stay RES
 
 ## Data analyst in a sandbox
 
-**What:** upload a CSV, run pandas in an isolated microVM, and get JSON plus a chart back; an agent then explains the result. **Why:** the code that touches the data never runs in the control plane, and egress is deny-by-default. Path: `examples/data-analyst/` (`Dockerfile`, `analyze.py`, `agent.yaml`, `spec.json`, `sales.csv`, `replay-rules.json`). See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/).
+**What:** upload a CSV, run pandas in an isolated microVM, and get JSON plus a chart back; an agent then explains the result. **Why:** the code that touches the data never runs in the control plane, and egress is deny-by-default. Path: `examples/data-analyst/` (`Dockerfile`, `analyze.py`, `agent.yaml`, `spec.json`, `sales.csv`, `replay-rules.json`). See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
 
 ```bash
 BASE=http://localhost:8080
@@ -106,7 +110,7 @@ Try it in CI form: `make test-e2e-analyst` runs `TestDataAnalystSandbox` against
 
 ## Eval-gated deploy
 
-**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/pal/docs/build/evaluations/#recording-a-run-and-the-ci-gate).
+**What:** a CI pipeline that cannot ship a worse agent. It runs an eval suite against the candidate, records it with `POST /v1/eval-runs`, and a `422` (regressed vs. the pinned baseline) stops the job before `lantern deploy --json`. A passing change is deployed, a receipt is issued with `POST /v1/runs/{id}/receipt`, and verified at `POST /v1/runs/receipts/verify`. Path: `examples/eval-gated-deploy/` (scripts plus a sample GitHub Actions workflow). See [Recording a run and CI gate](/docs/build/evaluations/#recording-a-run-and-the-ci-gate).
 
 ```bash
 cd examples/eval-gated-deploy

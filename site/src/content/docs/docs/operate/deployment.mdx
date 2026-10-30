@@ -1,6 +1,10 @@
 ---
 title: Deployment
 description: Control plane and data plane topologies, the Helm chart, Terraform, namespace isolation and database migrations.
+glance:
+  what: "PAL splits into a control plane (scheduling, routing, dashboard) and a data plane (microVMs, execution, secrets) that runs in your cloud."
+  why: "Keeping the data plane in your VPC means agent data never leaves your cloud account."
+  how: "Choose a topology under Deployment options, then install with the Helm section."
 sidebar:
   order: 1
 ---
@@ -11,7 +15,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 PAL splits into a **control plane** (scheduling, routing, dashboard) and a **data plane** (microVMs, execution, secrets). The data plane runs in your cloud: agent data never leaves your VPC.
 
-The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/pal/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
+The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
 
 ## Architecture: the control plane / data plane split
 
@@ -49,7 +53,7 @@ Defined in `packages/proto/lantern/v1/dataplane.proto`, served on the control pl
 | `RunStream` (bidi) | agent and CP | CP pushes assignments; agent reports accepted / completed |
 
 <Aside type="note" title="Per-tenant cap">
-Up to `LANTERN_DP_MAX_STREAMS_PER_TENANT` concurrent `RunStream` connections (default 10). Excess connections return gRPC `RESOURCE_EXHAUSTED`.
+Up to `PAL_DP_MAX_STREAMS_PER_TENANT` concurrent `RunStream` connections (default 10). Excess connections return gRPC `RESOURCE_EXHAUSTED`.
 </Aside>
 
 ### Fully self-hosted
@@ -62,7 +66,7 @@ You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity be
 
 ## Helm
 
-The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `LANTERN_ENV=production`, so the production startup guards are on.
+The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
 helm install lantern ./infra/helm/lantern \
@@ -126,10 +130,10 @@ Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This pro
 
 ## Monitoring
 
-Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `LANTERN_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/pal/docs/runtime/observability/) for details.
+Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `PAL_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/docs/runtime/observability/) for details.
 
 <Aside type="caution">
-The [Operations](/pal/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`LANTERN_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
+The [Operations](/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
 </Aside>
 
 ## Database migrations

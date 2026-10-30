@@ -1,6 +1,10 @@
 ---
 title: Evaluations
 description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
+glance:
+  what: "Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals, all on the same REST API as the dashboard."
+  why: "Changing a prompt can make an agent worse; a pinned baseline makes the API answer 422 so CI fails first."
+  how: "Create a suite under Eval suites, record a run, then pin it as the baseline."
 sidebar:
   order: 7
 ---
@@ -69,7 +73,7 @@ Response: 422 Unprocessable Entity — regressed vs. baseline
 { "id": "run-uuid", "score": 0.91, "regressed": true, "baselineScore": 0.94, ... }
 ```
 
-A complete pipeline (run, post, stop on 422, deploy, receipt) is in the [Eval-gated deploy](/pal/docs/start/examples/) example.
+A complete pipeline (run, post, stop on 422, deploy, receipt) is in the [Eval-gated deploy](/docs/start/examples/) example.
 
 ```http
 GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)
@@ -226,4 +230,4 @@ Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
 
 ## OTel traces
 
-Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `LANTERN_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `PAL_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.

@@ -1,6 +1,10 @@
 ---
 title: Get started
 description: Describe an agent in plain language; the onboarding agent designs it, checks your model key, creates it and runs it.
+glance:
+  what: "Describe an agent in plain language; PAL's onboarding agent designs it, tests your model key, creates it and runs it."
+  why: "You see real output from your own agent in about five minutes."
+  how: "Follow In the dashboard or In the terminal under Before you start."
 sidebar:
   order: 2
 ---
@@ -12,20 +16,20 @@ Describe what you want your agent to do in plain language. PAL's onboarding agen
 <Aside type="note">The CLI and packages are still named `lantern` while the rename lands.</Aside>
 
 <Aside type="tip" title="No API key yet?">
-Run `make demo` from a checkout. It needs Docker only, answers from recorded replays and opens at `http://localhost:3001/kiosk`. See [Demo mode](/pal/docs/start/demo/). The rest of this page runs your own agent against your own key.
+Run `make demo` from a checkout. It needs Docker only, answers from recorded replays and opens at `http://localhost:3001/kiosk`. See [Demo mode](/docs/start/demo/). The rest of this page runs your own agent against your own key.
 </Aside>
 
 Three terms used throughout: an *agent* is an AI worker with a name and instructions. A *run* is one execution of that agent: input in, output out. The *event stream* is the live record of a run, so you can watch each step as it happens.
 
 ## Before you start
 
-- A running stack: `lantern dev` (or `make dev-infra`, which starts Postgres and Redis only, + `make run-api` + `make dashboard-dev`). See [Installation](/pal/docs/start/installation/).
+- A running stack: `lantern dev` (or `make dev-infra`, which starts Postgres and Redis only, + `make run-api` + `make dashboard-dev`). See [Installation](/docs/start/installation/).
 - An OpenAI or Anthropic API key. You can add it during onboarding.
 - The CLI, if you want the terminal path: `( cd packages/cli && go install ./cmd/lantern )`. Run `lantern doctor` to check the stack, including whether the sandbox runtime is wired.
 
 ## In the dashboard
 
-Where email verification is required (see [Accounts](/pal/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`; onboarding shows a **Resend verification email** button and an **I've verified, try again** button instead of failing silently.
+Where email verification is required (see [Accounts](/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`; onboarding shows a **Resend verification email** button and an **I've verified, try again** button instead of failing silently.
 
 Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (dev: `admin@lantern.dev` / `lantern`). The page is a conversation on the right and a progress rail on the left. Each step moves on only after the platform confirms it actually worked.
 
@@ -78,10 +82,10 @@ lantern onboard --yes \
 Both paths use the same public endpoints, so you can script them yourself:
 
 ```bash
-export LANTERN_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
+export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
-H="Authorization: Bearer $LANTERN_TOKEN"
+H="Authorization: Bearer $PAL_TOKEN"
 
 # 1. Provider key + a real test call
 curl -s -X POST localhost:8080/v1/settings/llm-providers -H "$H" \
@@ -108,8 +112,8 @@ generate-spec returns `400` with `"code":"no_provider"` when no key is configure
 ## What's next
 
 <CardGrid>
-  <LinkCard title="Connect a channel" description="Slack, WhatsApp, Telegram, web chat." href="/pal/docs/pal/surfaces/" />
-  <LinkCard title="Set a budget" description="Per-run and per-day caps before real traffic." href="/pal/docs/build/budgets/" />
-  <LinkCard title="Add an eval" description="Pin expected answers; CI fails on regressions." href="/pal/docs/build/evaluations/" />
-  <LinkCard title="PAL Runtime" description="MicroVM isolation, durable execution, receipts." href="/pal/docs/runtime/" />
+  <LinkCard title="Connect a channel" description="Slack, WhatsApp, Telegram, web chat." href="/docs/pal/surfaces/" />
+  <LinkCard title="Set a budget" description="Per-run and per-day caps before real traffic." href="/docs/build/budgets/" />
+  <LinkCard title="Add an eval" description="Pin expected answers; CI fails on regressions." href="/docs/build/evaluations/" />
+  <LinkCard title="PAL Runtime" description="MicroVM isolation, durable execution, receipts." href="/docs/runtime/" />
 </CardGrid>

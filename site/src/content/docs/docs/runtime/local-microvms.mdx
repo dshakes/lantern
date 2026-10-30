@@ -1,6 +1,10 @@
 ---
 title: Run real microVMs on your Mac
 description: Run Firecracker microVMs locally on Apple Silicon with a Lima guest and nested virtualization.
+glance:
+  what: "On an Apple Silicon Mac, a Lima Linux guest with nested virtualization provides /dev/kvm so Firecracker microVMs can run locally."
+  why: "macOS has no KVM, so this is how you try real microVMs on a laptop instead of a Linux host."
+  how: "Check Requirements, then follow Setup or the Manual steps."
 sidebar:
   order: 8
 ---
@@ -30,7 +34,7 @@ Provisioning fails with a `/dev/kvm missing` error on an M1/M2 or a pre-macOS-15
 | Placement | real VMs you can exec into, pause, resume and fork | faked: a generated vm id placed on node `node-stub` / zone `az-stub` |
 | Setup | Lima guest, runtime-manager built inside it | none |
 
-Without `LANTERN_SCHEDULER_GRPC_ADDR` the control-plane uses a stub scheduler client, and without `LANTERN_DEFAULT_MANAGER_ADDR` the scheduler keeps a log-only dialer. Both are fine for dashboard work and are rejected in production.
+Without `PAL_SCHEDULER_GRPC_ADDR` the control-plane uses a stub scheduler client, and without `PAL_DEFAULT_MANAGER_ADDR` the scheduler keeps a log-only dialer. Both are fine for dashboard work and are rejected in production.
 
 ## Setup
 
@@ -120,7 +124,7 @@ sudo \
   FC_KERNEL_PATH=/tmp/fc-image/vmlinux \
   FC_ROOTFS_PATH=/tmp/fc-image/rootfs.ext4 \
   RUNTIME_BACKEND=firecracker \
-  LANTERN_RUNTIME_BACKEND=firecracker \
+  PAL_RUNTIME_BACKEND=firecracker \
   MANAGER_BIN="$MANAGER_BIN" \
   EXPECT_VENDSECRET=1 \
   FIRECRACKER_JAILER_PATH=/usr/local/bin/jailer \
@@ -146,15 +150,15 @@ Build and run the runtime-manager inside the guest (it needs `/dev/kvm`) with `R
 
 | Env var | Set on | Value |
 | --- | --- | --- |
-| `LANTERN_SCHEDULER_GRPC_ADDR` | control-plane | `localhost:50055` |
-| `LANTERN_DEFAULT_MANAGER_ADDR` | scheduler | `localhost:50054` |
-| `LANTERN_NODE_ADDR_<NODE>` | scheduler | `host:port`, only when the scheduler picks a named node whose address is not discoverable |
+| `PAL_SCHEDULER_GRPC_ADDR` | control-plane | `localhost:50055` |
+| `PAL_DEFAULT_MANAGER_ADDR` | scheduler | `localhost:50054` |
+| `PAL_NODE_ADDR_<NODE>` | scheduler | `host:port`, only when the scheduler picks a named node whose address is not discoverable |
 
 <Aside type="caution">
 The repo does not spell out the forward end to end: `firecracker-dev.yaml` defines no explicit `portForwards` and `infra/lima/README.md` only says to use "the Lima port forward". Confirm that `localhost:50054` reaches the manager before debugging anything else.
 </Aside>
 
-Dev setups without a shared service token warn and allow unauthenticated gRPC; production requires `LANTERN_GRPC_SERVICE_TOKEN` on every hop. See [Isolation classes](/pal/docs/runtime/isolation/) for the other backends.
+Dev setups without a shared service token warn and allow unauthenticated gRPC; production requires `PAL_GRPC_SERVICE_TOKEN` on every hop. See [Isolation classes](/docs/runtime/isolation/) for the other backends.
 
 ## Verify it works
 
@@ -171,8 +175,8 @@ Dev setups without a shared service token warn and allow unauthenticated gRPC; p
 | Fork step prints `SKIP: fork test SKIPPED (manual run)` | `FIRECRACKER_JAILER_PATH` unset. Set it to `/usr/local/bin/jailer` (`make lima-e2e` sets it for you). |
 | Build refuses to start: VM disk over the limit | `make lima-clean`, or raise `LIMA_DISK_MAX_PCT`. |
 | An e2e target sits waiting on `:50054` | Another manager run is using the port in the VM. It waits up to `LIMA_PORT_WAIT_SECS`; check `ss -ltnp \| grep 50054` in the guest. |
-| First exec after a restore takes about 3 s | The manager holds it until the restored harness re-identifies and heartbeats; the guest work is slow under nested virtualization. See [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/). |
-| Node shows `node-stub` | `LANTERN_SCHEDULER_GRPC_ADDR` is unset on the control-plane, so its stub scheduler client fakes placement. |
+| First exec after a restore takes about 3 s | The manager holds it until the restored harness re-identifies and heartbeats; the guest work is slow under nested virtualization. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/). |
+| Node shows `node-stub` | `PAL_SCHEDULER_GRPC_ADDR` is unset on the control-plane, so its stub scheduler client fakes placement. |
 
 ## Limits
 
@@ -181,4 +185,4 @@ Dev setups without a shared service token warn and allow unauthenticated gRPC; p
 - The repo mount is read-only, so build outputs land inside the guest.
 - Not a supported production topology.
 
-Related: [Sandbox lifecycle](/pal/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/pal/docs/runtime/egress/).
+Related: [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/), [Egress and credentials](/docs/runtime/egress/).
