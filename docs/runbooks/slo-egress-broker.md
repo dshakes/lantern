@@ -1,7 +1,7 @@
 # Runbook: egress broker errors and deny spike
 
 > **Fires from:** `SLOErrorBudgetBurn` (SLOs: egress-broker-errors; ticket EgressBrokerDenySpike), `SLOSignalAbsent` where noted.
-> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "Lantern SLOs and error budgets" (`lantern-slo`).
+> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "PAL SLOs and error budgets" (`pal-slo`).
 
 ## Reading the alert
 

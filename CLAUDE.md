@@ -969,7 +969,7 @@ expose through the ingress). The `lantern-instrumented-slos` alert group in
 CI: `helm-install` job in `.github/workflows/runtime-cluster-e2e.yml` (kind + Calico, `values-ci.yaml`)
 restores the CronJob's real dump from in-cluster S3 and checks a marker table survived.
 
-**SLOs and burn-rate alerts (ADR 0041).** `monitoring.slos` in the Helm values is the single source for the 10 SLOs; the chart renders recording rules + multi-window burn alerts (`monitoring.alerts.enabled`, on in values-prod) and the `lantern-slo` Grafana dashboard. model-router (`:9465`) and runtime-manager (`:9466`) expose `/metrics` only when `PAL_METRICS_ADDR` is set. Verify rule changes with `make slo-rules` (promtool check + unit tests). Runbooks: `docs/runbooks/slo-*.md`.
+**SLOs and burn-rate alerts (ADR 0041).** `monitoring.slos` in the Helm values is the single source for the 10 SLOs; the chart renders recording rules + multi-window burn alerts (`monitoring.alerts.enabled`, on in values-prod) and the `pal-slo` Grafana dashboard. model-router (`:9465`) and runtime-manager (`:9466`) expose `/metrics` only when `PAL_METRICS_ADDR` is set. Verify rule changes with `make slo-rules` (promtool check + unit tests). Runbooks: `docs/runbooks/slo-*.md`.
 
 ### Human takeover (W11a)
 

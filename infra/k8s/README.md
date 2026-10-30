@@ -26,7 +26,7 @@ make k8s-validate          # or: bash infra/k8s/validate.sh
 ```
 
 Requires Docker running plus `kind` + `kubectl` (`brew install kind kubectl`).
-Takes ~3–5 minutes: creates a throwaway kind cluster (`lantern-k8s-validate`),
+Takes ~3–5 minutes: creates a throwaway kind cluster (`pal-k8s-validate`),
 installs **Calico**, applies the manifests, runs live `kubectl exec` probes and
 jsonpath assertions, prints PASS/FAIL per assertion, exits non-zero on any
 FAIL, and tears the cluster down via an EXIT trap.
@@ -35,7 +35,7 @@ Knobs:
 
 | Env | Effect |
 | --- | --- |
-| `KEEP_CLUSTER=1` | skip teardown for debugging (`kind delete cluster --name lantern-k8s-validate` later) |
+| `KEEP_CLUSTER=1` | skip teardown for debugging (`kind delete cluster --name pal-k8s-validate` later) |
 | `CALICO_MANIFEST=<url>` | override the pinned Calico manifest (default v3.28.2) |
 | `NO_COLOR=1` | plain output |
 

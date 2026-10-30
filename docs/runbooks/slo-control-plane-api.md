@@ -1,7 +1,7 @@
 # Runbook: control-plane API availability and latency
 
 > **Fires from:** `SLOErrorBudgetBurn` (SLOs: control-plane-api-availability, control-plane-api-latency), `SLOSignalAbsent` where noted.
-> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "Lantern SLOs and error budgets" (`lantern-slo`).
+> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "PAL SLOs and error budgets" (`pal-slo`).
 
 ## Reading the alert
 
@@ -13,7 +13,7 @@ burning at 14.4x (1h/5m) or 6x (6h/30m), i.e. 2% to 5% of the 28-day budget is g
 ## What the SLI measures
 
 `http_server_request_duration_seconds` (otelhttp) on the control-plane `:9464` listener, restricted to
-`lantern_traffic="api"` (health probes and SSE/log streams are excluded: a stream's duration is its lifetime,
+`pal_traffic="api"` (health probes and SSE/log streams are excluded: a stream's duration is its lifetime,
 not latency). Availability = not a 5xx. Latency = answered within 1s (`le="1"` bucket).
 
 ## Triage
@@ -37,7 +37,7 @@ Roll back the last control-plane release, scale replicas if CPU-bound, fail over
 ## `SLOSignalAbsent`
 
 The SLI has no series for 30 minutes, so the burn alerts cannot fire. Check that Prometheus scrapes
-`:9464` with job `lantern-control-plane` (the `job` in `monitoring.slos.<name>.job`), that the NetworkPolicy
+`:9464` with job `pal-control-plane` (the `job` in `monitoring.slos.<name>.job`), that the NetworkPolicy
 `allow-metrics-scrape` admits your Prometheus namespace, and that `LANTERN_METRICS_ADDR` is not disabled.
 
 ## Escalate

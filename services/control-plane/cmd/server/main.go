@@ -899,7 +899,7 @@ func main() {
 		"lantern.control-plane.http",
 		otelhttp.WithSpanNameFormatter(httpSpanName),
 		otelhttp.WithMetricAttributesFn(func(r *http.Request) []attribute.KeyValue {
-			return []attribute.KeyValue{attribute.String("lantern.traffic", trafficClass(r))}
+			return []attribute.KeyValue{attribute.String("pal.traffic", trafficClass(r))}
 		}),
 	)
 	httpServer := &http.Server{

@@ -26,7 +26,7 @@ func TestInitMetricsExposesAlertedSeries(t *testing.T) {
 	api := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(500)
 	}), "t", otelhttp.WithMetricAttributesFn(func(*http.Request) []attribute.KeyValue {
-		return []attribute.KeyValue{attribute.String("lantern.traffic", "api")}
+		return []attribute.KeyValue{attribute.String("pal.traffic", "api")}
 	}))
 	api.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/x", nil))
 
@@ -38,7 +38,7 @@ func TestInitMetricsExposesAlertedSeries(t *testing.T) {
 		`lantern_run_total{lantern_agent_name`,
 		`http_server_request_duration_seconds_count{`,
 		`http_response_status_code="500"`,
-		`lantern_traffic="api"`,
+		`pal_traffic="api"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in /metrics:\n%s", want, body)

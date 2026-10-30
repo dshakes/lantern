@@ -21,7 +21,7 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
 
    | SLO | Objective | SLI (metric) |
    | --- | --------- | ------------ |
-   | control-plane-api-availability | 99.9% | non-5xx of API requests (`http_server_request_duration_seconds_count`, `lantern_traffic="api"`) |
+   | control-plane-api-availability | 99.9% | non-5xx of API requests (`http_server_request_duration_seconds_count`, `pal_traffic="api"`) |
    | control-plane-api-latency | 99% | API requests under 1s (same histogram, `le="1"`) |
    | run-success | 98% | `lantern_run_total{lantern_status}` (failed vs all) |
    | scheduling-availability | 99.5% | `lantern_scheduler_schedule_total` error vs ok+error |
@@ -43,7 +43,7 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
 
 3. **New instrumentation, minimal and in each service's own style.**
    - runtime-scheduler: `lantern_scheduler_schedule_duration_seconds{result}` histogram (client_golang).
-   - control-plane: `lantern.traffic` attribute (`api|probe|stream`) on the existing otelhttp metric so
+   - control-plane: `pal.traffic` attribute (`api|probe|stream`) on the existing otelhttp metric so
      health probes and SSE/log streams (whose duration is the connection lifetime) do not pollute the API SLIs.
    - model-router and runtime-manager (Rust, previously no metrics): `prometheus` 0.14 with
      `default-features = false` (no protobuf dependency), a small `metrics.rs` per service, and an opt-in
@@ -57,7 +57,7 @@ all: the Rust services (model-router, runtime-manager) exported traces only.
 
 4. **Delivery.** `monitoring.alerts.enabled` renders a `PrometheusRule` (needs the prometheus-operator CRDs,
    off by default, on in `values-prod.yaml`); `monitoring.dashboards.enabled` renders a Grafana dashboard
-   ConfigMap (`lantern-slo`). Every alert has a `runbook_url` to `docs/runbooks/slo-*.md`.
+   ConfigMap (`pal-slo`). Every alert has a `runbook_url` to `docs/runbooks/slo-*.md`.
    Rules are verified by `infra/monitoring/prometheus/check-slo-rules.sh` (`promtool check rules` and
    `promtool test rules` over the rendered chart).
 
@@ -89,5 +89,5 @@ triaged within one working day. Emergency changes (security patches) are exempt 
 - Alerts only fire where the SLI has data. `SLOSignalAbsent` guards the two control-plane SLOs; a fully down
   service is caught by the existing `*Down` alerts rather than by burn alerts.
 - Prometheus must scrape the new ports; the NetworkPolicy `allow-metrics-scrape` now admits 9465 and 9466.
-  Scrape `job` names are assumed (`lantern-*`) and overridable per SLO.
+  Scrape `job` names are assumed (`pal-*`, `lantern-*` still matched) and overridable per SLO.
 - Cardinality: all new metrics use bounded label sets (method, outcome, kind, result); no tenant or VM ids.

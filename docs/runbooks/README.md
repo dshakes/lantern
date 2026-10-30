@@ -6,7 +6,7 @@ grounded in this repo's real service names, ports, and tables.
 
 Alert rules live in [`infra/monitoring/prometheus/alerts.yml`](../../infra/monitoring/prometheus/alerts.yml)
 (liveness and fixed-threshold alerts) and, for SLO error-budget burn, in the Helm chart
-(`infra/helm/lantern/templates/monitoring/prometheusrule.yaml`, targets in `monitoring.slos`, policy in
+(`infra/helm/pal/templates/monitoring/prometheusrule.yaml`, targets in `monitoring.slos`, policy in
 [ADR 0041](../adr/0041-slo-error-budgets.md));
 dashboards in [`infra/monitoring/grafana/`](../../infra/monitoring/grafana/).
 Each alert's `runbook:` annotation points at one of the files below.

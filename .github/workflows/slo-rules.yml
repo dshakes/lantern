@@ -4,8 +4,8 @@ name: slo-rules
 on:
   pull_request:
     paths:
-      - "infra/helm/lantern/templates/monitoring/**"
-      - "infra/helm/lantern/values*.yaml"
+      - "infra/helm/pal/templates/monitoring/**"
+      - "infra/helm/pal/values*.yaml"
       - "infra/monitoring/prometheus/**"
       - ".github/workflows/slo-rules.yml"
 
@@ -27,6 +27,6 @@ jobs:
       - name: Build chart dependencies
         run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm dependency build infra/helm/lantern
+          helm dependency build infra/helm/pal
       - name: promtool check + test
         run: infra/monitoring/prometheus/check-slo-rules.sh

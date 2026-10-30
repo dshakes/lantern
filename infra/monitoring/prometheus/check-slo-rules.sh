@@ -4,7 +4,7 @@
 # (PROMTOOL=/path/to/promtool, or on PATH).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-chart="$here/../../helm/lantern"
+chart="$here/../../helm/pal"
 promtool="${PROMTOOL:-promtool}"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT

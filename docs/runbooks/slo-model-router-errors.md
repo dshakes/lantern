@@ -1,7 +1,7 @@
 # Runbook: model-router error rate
 
 > **Fires from:** `SLOErrorBudgetBurn` (SLOs: model-router-errors), `SLOSignalAbsent` where noted.
-> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "Lantern SLOs and error budgets" (`lantern-slo`).
+> **Policy:** [ADR 0041](../adr/0041-slo-error-budgets.md). **Dashboard:** "PAL SLOs and error budgets" (`pal-slo`).
 
 ## Reading the alert
 

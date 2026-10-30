@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-image.sh — build the Firecracker microVM boot artifacts for Lantern.
+# build-image.sh — build the Firecracker microVM boot artifacts for PAL Runtime.
 #
 # Produces two files the runtime-manager Firecracker backend needs to cold-boot
 # a microVM (see services/runtime-manager/src/backends/firecracker.rs):
@@ -236,7 +236,7 @@ build_rootfs() {
   # Minimal defaults file (ADR-0004). The manager overrides these via the
   # kernel cmdline (build_boot_args) and the per-VM env contract.
   sudo tee "${mnt}/etc/lantern/harness.toml" >/dev/null <<'TOML'
-# Lantern harness defaults — overridden by the kernel cmdline / env contract.
+# PAL Runtime harness defaults — overridden by the kernel cmdline / env contract.
 # See services/harness/README.md "Boot contract".
 run_dir = "/run/lantern"
 secrets_socket = "/run/lantern/secrets.sock"
