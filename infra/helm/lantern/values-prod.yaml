@@ -84,26 +84,9 @@ controlPlane:
     # A key missing the endpoint's scope gets 403. JWT sessions and unscoped
     # (legacy) keys are unaffected. Re-scope keys first: ga-staged-rollout.md.
     LANTERN_AUTHZ_ENFORCE: "1"
-  # REQUIRED for a prod-class LANTERN_ENV (production) — the control-plane refuses
-  # to start without these (runStartupGuards / grpcTLSCreds). Besides the
-  # `secrets:` values listed at the top, supply per environment:
-  #   LANTERN_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
-  #   LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
+  # Internal gRPC TLS is wired by `mtls` below (cert-manager). Without it a
+  # prod-class env refuses to serve gRPC unless PAL_GRPC_INSECURE=1 (ADR 0043).
   # LANTERN_SCHEDULER_GRPC_ADDR is wired by the chart (in-cluster scheduler svc).
-  # The TLS inputs below are operator-supplied Secrets (the chart cannot mint
-  # them); the control-plane refuses to boot in prod until they are mounted.
-  # extraEnv (append):
-  #   - {name: LANTERN_CONTROL_PLANE_TLS_CERT, value: /etc/lantern/tls/tls.crt}
-  #   - {name: LANTERN_CONTROL_PLANE_TLS_KEY, value: /etc/lantern/tls/tls.key}
-  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_CA, value: /etc/lantern/manager-tls/ca.crt}
-  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_CERT, value: /etc/lantern/manager-tls/tls.crt}
-  #   - {name: LANTERN_RUNTIME_MANAGER_TLS_KEY, value: /etc/lantern/manager-tls/tls.key}
-  # extraVolumeMounts:
-  #   - {name: cp-tls, mountPath: /etc/lantern/tls, readOnly: true}
-  #   - {name: manager-tls, mountPath: /etc/lantern/manager-tls, readOnly: true}
-  # extraVolumes:
-  #   - {name: cp-tls, secret: {secretName: lantern-control-plane-tls}}
-  #   - {name: manager-tls, secret: {secretName: lantern-manager-client-tls}}
 
 workflowEngine:
   replicas: 2
@@ -163,8 +146,7 @@ runtimeScheduler:
   replicas: 2
   env:
     LANTERN_ENV: "production"
-  # The scheduler dials the manager over mTLS in prod; mount the client cert like
-  # controlPlane.extraVolumes and set LANTERN_RUNTIME_MANAGER_TLS_CA/CERT/KEY.
+  # Manager + service-mesh mTLS certs come from `mtls` below.
   resources:
     requests:
       cpu: 100m
@@ -179,6 +161,13 @@ surfaceGateway:
     LANTERN_ENV: "production"
   # Secret with SLACK_SIGNING_SECRET, TELEGRAM_SECRET_TOKEN, ... (create it out of band)
   existingSecret: ""
+
+# -- Internal gRPC mTLS: ON (ADR 0043) --
+# Requires cert-manager. Set mtls.reloader=true if stakater/Reloader is
+# installed (rolls the Rust services on cert renewal); otherwise restart them
+# within renewBefore of each renewal. Bring-your-own PKI: mtls.certManager.enabled=false.
+mtls:
+  enabled: true
 
 networkPolicy:
   enabled: true

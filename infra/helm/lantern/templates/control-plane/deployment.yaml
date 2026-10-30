@@ -145,12 +145,19 @@ spec:
             # Prod/staging refuse to start on the stub scheduler (CheckSchedulerAddr).
             - name: PAL_SCHEDULER_GRPC_ADDR
               value: "{{ include "lantern.fullname" . }}-runtime-scheduler:{{ .Values.runtimeScheduler.service.grpcPort }}"
+            # Internal gRPC mTLS (ADR 0043): serves :50051, dials the scheduler,
+            # model-router (service CA) and runtime-manager (manager CA).
+            {{- include "lantern.mtls.env" (dict "root" . "name" "control-plane" "peers" (list "gateway" "surface-gateway")) | nindent 12 }}
+            {{- include "lantern.mtls.managerClientEnv" . | nindent 12 }}
             {{- with .Values.controlPlane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.controlPlane.extraVolumeMounts }}
+          {{- if or .Values.mtls.enabled .Values.controlPlane.extraVolumeMounts }}
           volumeMounts:
+            {{- include "lantern.mtls.volumeMounts" (dict "root" . "manager" true) | nindent 12 }}
+            {{- with .Values.controlPlane.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet:
@@ -170,7 +177,10 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.controlPlane.resources | nindent 12 }}
-      {{- with .Values.controlPlane.extraVolumes }}
+      {{- if or .Values.mtls.enabled .Values.controlPlane.extraVolumes }}
       volumes:
+        {{- include "lantern.mtls.volumes" (dict "root" . "name" "control-plane" "manager" true) | nindent 8 }}
+        {{- with .Values.controlPlane.extraVolumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}

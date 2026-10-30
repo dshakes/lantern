@@ -123,3 +123,79 @@ http://{{ include "lantern.fullname" . }}-minio:9000
 {{- define "lantern.s3AccessKey" -}}
 {{- if .Values.minio.enabled }}{{ .Values.minio.auth.rootUser }}{{ else }}{{ required "externalS3.accessKeyId is required when minio.enabled=false" .Values.externalS3.accessKeyId }}{{ end -}}
 {{- end }}
+
+{{/*
+Internal gRPC mTLS (ADR 0043). All emit nothing unless mtls.enabled.
+
+lantern.mtls.env — service-mesh identity env for a component.
+  include "lantern.mtls.env" (dict "root" . "name" "model-router" "peers" (list "control-plane"))
+"peers" (optional) is the server-side allowlist, as service names.
+*/}}
+{{- define "lantern.mtls.env" -}}
+{{- if .root.Values.mtls.enabled }}
+- name: PAL_GRPC_TLS_CA
+  value: /etc/pal/mtls/ca.crt
+- name: PAL_GRPC_TLS_CERT
+  value: /etc/pal/mtls/tls.crt
+- name: PAL_GRPC_TLS_KEY
+  value: /etc/pal/mtls/tls.key
+{{- if .peers }}
+{{- $td := .root.Values.mtls.trustDomain }}
+{{- $ids := list }}
+{{- range .peers }}{{ $ids = append $ids (printf "spiffe://%s/svc/%s" $td .) }}{{ end }}
+- name: PAL_GRPC_TLS_ALLOWED_PEERS
+  value: {{ join "," $ids | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* lantern.mtls.managerClientEnv — client identity for dialing the runtime-manager. */}}
+{{- define "lantern.mtls.managerClientEnv" -}}
+{{- if .Values.mtls.enabled }}
+- name: PAL_RUNTIME_MANAGER_TLS_CA
+  value: /etc/pal/manager-mtls/ca.crt
+- name: PAL_RUNTIME_MANAGER_TLS_CERT
+  value: /etc/pal/manager-mtls/tls.crt
+- name: PAL_RUNTIME_MANAGER_TLS_KEY
+  value: /etc/pal/manager-mtls/tls.key
+{{- end }}
+{{- end }}
+
+{{/* lantern.mtls.volumeMounts — (dict "root" . "manager" bool) */}}
+{{- define "lantern.mtls.volumeMounts" -}}
+{{- if .root.Values.mtls.enabled }}
+- name: pal-mtls
+  mountPath: /etc/pal/mtls
+  readOnly: true
+{{- if .manager }}
+- name: pal-manager-mtls
+  mountPath: /etc/pal/manager-mtls
+  readOnly: true
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* lantern.mtls.volumes — (dict "root" . "name" "control-plane" "manager" bool) */}}
+{{- define "lantern.mtls.volumes" -}}
+{{- if .root.Values.mtls.enabled }}
+- name: pal-mtls
+  secret:
+    secretName: {{ include "lantern.fullname" .root }}-{{ .name }}-mtls
+{{- if .manager }}
+- name: pal-manager-mtls
+  secret:
+    secretName: {{ include "lantern.fullname" .root }}-manager-client-mtls
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+lantern.mtls.podAnnotations — Rust services (tonic) load their cert once, so a
+cert-manager renewal needs a rolling restart; stakater/Reloader does that when
+mtls.reloader is on. Go services hot-reload the leaf and need nothing.
+*/}}
+{{- define "lantern.mtls.podAnnotations" -}}
+{{- if and .root.Values.mtls.enabled .root.Values.mtls.reloader }}
+secret.reloader.stakater.com/reload: {{ printf "%s-%s-mtls" (include "lantern.fullname" .root) .name | quote }}
+{{- end }}
+{{- end }}

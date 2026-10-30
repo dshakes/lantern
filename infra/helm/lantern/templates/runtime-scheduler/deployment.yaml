@@ -84,12 +84,19 @@ spec:
                   key: postgres-password
             - name: DATABASE_URL
               value: {{ include "lantern.databaseURL" . | quote }}
+            # Internal gRPC mTLS (ADR 0043): serves :50055 to the control-plane
+            # only; dials the runtime-manager with the manager-CA client cert.
+            {{- include "lantern.mtls.env" (dict "root" . "name" "runtime-scheduler" "peers" (list "control-plane")) | nindent 12 }}
+            {{- include "lantern.mtls.managerClientEnv" . | nindent 12 }}
             {{- with .Values.runtimeScheduler.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.runtimeScheduler.extraVolumeMounts }}
+          {{- if or .Values.mtls.enabled .Values.runtimeScheduler.extraVolumeMounts }}
           volumeMounts:
+            {{- include "lantern.mtls.volumeMounts" (dict "root" . "manager" true) | nindent 12 }}
+            {{- with .Values.runtimeScheduler.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           livenessProbe:
             httpGet:
@@ -109,7 +116,10 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.runtimeScheduler.resources | nindent 12 }}
-      {{- with .Values.runtimeScheduler.extraVolumes }}
+      {{- if or .Values.mtls.enabled .Values.runtimeScheduler.extraVolumes }}
       volumes:
+        {{- include "lantern.mtls.volumes" (dict "root" . "name" "runtime-scheduler" "manager" true) | nindent 8 }}
+        {{- with .Values.runtimeScheduler.extraVolumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}

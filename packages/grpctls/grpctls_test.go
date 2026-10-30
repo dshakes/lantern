@@ -313,3 +313,46 @@ func TestFromEnvAndAllowlist(t *testing.T) {
 		}
 	}
 }
+
+// A renewed leaf on disk (cert-manager rotation) is served without a restart;
+// a broken write keeps the last good pair.
+func TestKeypairReloadsRotatedLeaf(t *testing.T) {
+	old := reloadEvery
+	reloadEvery = 0
+	t.Cleanup(func() { reloadEvery = old })
+
+	root := newCA(t, "ca")
+	c1, k1 := root.leaf(t, "spiffe://x/svc/one", "")
+	f := files(t, root.pem, c1, k1)
+	srv, err := ServerConfig(f, false, false, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving := func() string {
+		c, err := srv.GetCertificate(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf, _ := x509.ParseCertificate(c.Certificate[0])
+		return leaf.URIs[0].String()
+	}
+	if got := serving(); got != "spiffe://x/svc/one" {
+		t.Fatalf("initial: %s", got)
+	}
+	c2, k2 := root.leaf(t, "spiffe://x/svc/two", "")
+	future := time.Now().Add(time.Minute)
+	for p, b := range map[string][]byte{f.Cert: c2, f.Key: k2} {
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chtimes(p, future, future)
+	}
+	if got := serving(); got != "spiffe://x/svc/two" {
+		t.Fatalf("after rotation: %s", got)
+	}
+	_ = os.WriteFile(f.Cert, []byte("garbage"), 0o600)
+	_ = os.Chtimes(f.Cert, future.Add(time.Minute), future.Add(time.Minute))
+	if got := serving(); got != "spiffe://x/svc/two" {
+		t.Fatalf("broken write must keep the last good pair, got %s", got)
+	}
+}

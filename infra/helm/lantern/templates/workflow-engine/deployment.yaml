@@ -109,19 +109,48 @@ spec:
                 secretKeyRef:
                   name: {{ include "lantern.fullname" . }}-secrets
                   key: minio-password
+            # llm_call / tool_call dispatch targets (invariants #5, #6). The
+            # in-binary defaults use bare names that match no cert SAN.
+            - name: PAL_MODEL_ROUTER_ADDR
+              value: "{{ include "lantern.fullname" . }}-model-router:50053"
+            - name: PAL_RUNTIME_MANAGER_ADDR
+              value: "{{ include "lantern.fullname" . }}-runtime-manager:{{ .Values.runtimeManager.service.port }}"
+            # Internal gRPC mTLS (ADR 0043).
+            {{- include "lantern.mtls.env" (dict "root" . "name" "workflow-engine" "peers" (list "control-plane")) | nindent 12 }}
+            {{- include "lantern.mtls.managerClientEnv" . | nindent 12 }}
+          {{- if .Values.mtls.enabled }}
+          volumeMounts:
+            {{- include "lantern.mtls.volumeMounts" (dict "root" . "manager" true) | nindent 12 }}
+          {{- end }}
           livenessProbe:
+            {{- if .Values.mtls.enabled }}
+            # kubelet gRPC probes cannot present a client cert; mTLS ports
+            # would fail them, so probe the socket instead.
+            tcpSocket:
+              port: 50052
+            {{- else }}
             grpc:
               port: 50052
+            {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
+            {{- if .Values.mtls.enabled }}
+            tcpSocket:
+              port: 50052
+            {{- else }}
             grpc:
               port: 50052
+            {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           resources:
             {{- toYaml .Values.workflowEngine.resources | nindent 12 }}
+      {{- if .Values.mtls.enabled }}
+      volumes:
+        {{- include "lantern.mtls.volumes" (dict "root" . "name" "workflow-engine" "manager" true) | nindent 8 }}
+      {{- end }}

@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/dshakes/lantern/packages/palenv"
 )
@@ -118,9 +120,9 @@ func ServerConfig(f Files, isProd, allowInsecure bool, allowedPeers []string, op
 	if err != nil {
 		return nil, err
 	}
-	cert, err := tls.LoadX509KeyPair(f.Cert, f.Key)
+	kp, err := newKeypair(f)
 	if err != nil {
-		return nil, fmt.Errorf("load %s/%s (%s, %s): %w", f.name("CERT"), f.name("KEY"), f.Cert, f.Key, err)
+		return nil, err
 	}
 	auth := tls.RequireAndVerifyClientCert
 	if optionalClientCert {
@@ -128,10 +130,12 @@ func ServerConfig(f Files, isProd, allowInsecure bool, allowedPeers []string, op
 	}
 	peers := append([]string(nil), allowedPeers...)
 	return &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    pool,
-		ClientAuth:   auth,
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return kp.get()
+		},
+		ClientCAs:  pool,
+		ClientAuth: auth,
 		// Runs after chain verification; no cert only reaches here in optional mode.
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
@@ -168,11 +172,13 @@ func ClientConfig(f Files, isProd, allowInsecure bool) (*tls.Config, error) {
 	}
 	cfg := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	if f.Cert != "" {
-		cert, err := tls.LoadX509KeyPair(f.Cert, f.Key)
+		kp, err := newKeypair(f)
 		if err != nil {
-			return nil, fmt.Errorf("load %s/%s (%s, %s): %w", f.name("CERT"), f.name("KEY"), f.Cert, f.Key, err)
+			return nil, err
 		}
-		cfg.Certificates = []tls.Certificate{cert}
+		cfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return kp.get()
+		}
 	}
 	return cfg, nil
 }
@@ -201,6 +207,58 @@ func CheckPeer(leaf *x509.Certificate, allowed []string) error {
 		got = append(got, u.String())
 	}
 	return fmt.Errorf("peer identity %v is not in the allowlist", got)
+}
+
+// reloadEvery bounds how often a keypair re-stats its files. cert-manager
+// renews a leaf well before expiry (and the kubelet swaps the Secret volume
+// atomically), so a long-lived process picks the new cert up within this
+// window instead of serving the old one until it expires. The CA bundle is
+// NOT reloaded: rotating a CA is a rollout (ADR 0043).
+var reloadEvery = 30 * time.Second
+
+// keypair serves this process's identity, re-reading the PEM files when the
+// cert file changes. A failed reload keeps the last good pair (a half-written
+// file must not take the service down).
+type keypair struct {
+	f       Files
+	mu      sync.Mutex
+	cert    *tls.Certificate
+	mod     time.Time
+	checked time.Time
+}
+
+func newKeypair(f Files) (*keypair, error) {
+	k := &keypair{f: f}
+	if err := k.load(); err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+func (k *keypair) load() error {
+	st, err := os.Stat(k.f.Cert)
+	if err != nil {
+		return fmt.Errorf("stat %s %s: %w", k.f.name("CERT"), k.f.Cert, err)
+	}
+	c, err := tls.LoadX509KeyPair(k.f.Cert, k.f.Key)
+	if err != nil {
+		return fmt.Errorf("load %s/%s (%s, %s): %w", k.f.name("CERT"), k.f.name("KEY"), k.f.Cert, k.f.Key, err)
+	}
+	k.cert, k.mod = &c, st.ModTime()
+	return nil
+}
+
+func (k *keypair) get() (*tls.Certificate, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if time.Since(k.checked) < reloadEvery {
+		return k.cert, nil
+	}
+	k.checked = time.Now()
+	if st, err := os.Stat(k.f.Cert); err == nil && !st.ModTime().Equal(k.mod) {
+		_ = k.load() // keep the last good pair on failure
+	}
+	return k.cert, nil
 }
 
 func loadPool(f Files) (*x509.CertPool, error) {
