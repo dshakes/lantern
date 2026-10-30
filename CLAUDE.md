@@ -331,6 +331,31 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 | `DELETE` | `/v1/onboarding`          | Start over                                                          |
 | `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
 
+### pal first-run (ADR 0048)
+
+The consumer twin of the flow above: dashboard `/pal/onboarding` and `pal setup`.
+Steps: welcome + consent → channels (WhatsApp QR / iMessage Full Disk Access +
+Automation, detected from the bridges' own diagnostics) → voice (consent-gated:
+the owner's own sent messages → profile + a draft to approve) → trust (life-event
+auto/ask/off, holds, quiet hours) → profile (LLM-captured facts/relationships,
+each quote-grounded and confirmed) → first Brief. State is
+`tenants.settings->'palOnboarding'`. The Go server owns the state machine and
+returns `resumeStep`; the dashboard mirrors it, the CLI follows the server, and
+`services/testdata/pal_onboarding_cases.json` pins all three. Bridges are used
+read-only through existing endpoints. `pal setup --apply` merges the result into
+the local owner profile + `bridge.env` (backed up, 0600, read back).
+
+| Method   | Path                                   | Description                                                        |
+| -------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `GET`    | `/v1/pal/onboarding`                   | Document + `resumeStep` + `consentVersion`; `read`                 |
+| `PUT`    | `/v1/pal/onboarding`                   | Replace it; rejects unreachable steps and a voice profile without the opt-in (`consent_required`); `settings:write` |
+| `DELETE` | `/v1/pal/onboarding`                   | Start over                                                         |
+| `GET`    | `/v1/pal/onboarding/profile`           | Confirmed items rendered as owner-profile lines                    |
+| `POST`   | `/v1/pal/onboarding/guide`             | One turn of the setup guide (LLM; `runs:execute`)                  |
+| `POST`   | `/v1/pal/onboarding/voice`             | Samples → profile + preview; 403 without persisted consent, 422 `not_enough_samples` (LLM) |
+| `POST`   | `/v1/pal/onboarding/profile/extract`   | Free text → quote-grounded profile items (LLM)                     |
+| `POST`   | `/v1/pal/onboarding/trust/suggest`     | Owner's words → modes/quiet hours; never `auto` for bill/fraud (LLM) |
+
 ### Runs
 
 | Method | Path                   | Description              |

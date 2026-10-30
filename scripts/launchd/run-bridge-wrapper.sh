@@ -29,6 +29,14 @@ if [ -f "$HOME/.lantern/bridge.env" ]; then
   . "$HOME/.lantern/bridge.env"
   set +a
 fi
+# The pal state dir (written by `pal setup --apply`) wins over the legacy one.
+PAL_ENV_FILE="${PAL_STATE_DIR:-$HOME/.pal}/bridge.env"
+if [ -f "$PAL_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$PAL_ENV_FILE"
+  set +a
+fi
 
 # Self-heal a missing/broken tsx runner before boot.
 # Also covers a checkout still linked under the pre-rename package name (ADR
