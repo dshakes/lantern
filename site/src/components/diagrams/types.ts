@@ -9,11 +9,12 @@ import { GH } from "../../../repo.config.mjs";
 const REPO = `${GH}/blob/master`;
 
 export function srcHref(s: Src): string {
-  return `${REPO}/${s.p}${s.l ? `#L${s.l}` : ""}`;
+  // No #L anchors: they point at moving lines on master and drift. Link the file.
+  return `${REPO}/${s.p}`;
 }
 
 export function srcLabel(s: Src): string {
-  return `${s.p.split("/").slice(-2).join("/")}${s.l ? `:${s.l}` : ""}`;
+  return s.p.split("/").slice(-2).join("/");
 }
 
 export type Tone = "host" | "guest" | "deny" | "store" | "client" | "plain";

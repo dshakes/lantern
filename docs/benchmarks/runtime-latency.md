@@ -99,6 +99,50 @@ is the maximum.
   still hard-linked (MAP_PRIVATE CoW). On XFS/btrfs, fork spawn should be
   faster.
 
+### Root-cause findings (fix/microvm-readiness)
+
+Two of the slow paths above were traced to root cause on this same Lima VM by
+capturing the guest serial console (the manager logs it) and the harness's own
+per-phase log:
+
+- **Cold boot was CRNG-starved. FIXED.** The guest console showed
+  `random: crng init done` only at guest-time **9.3 s**, and `jitterentropy:
+  Initialization failed` — the Firecracker CI guest kernel has no usable entropy
+  source, so the CRNG seeds only from scarce interrupt entropy. The harness's
+  first blocking `getrandom()` (the mTLS handshake) therefore stalled: its own
+  log went silent for **~5.2 s** between "mTLS client cert loaded" and the first
+  heartbeat. (`bootenv::report_entropy_source` reads `/dev/urandom`, which never
+  blocks pre-init, so it reported "ok" — a false all-clear; rustls/ring use the
+  blocking `getrandom` syscall.) **Fix:** the Firecracker backend now attaches a
+  virtio-rng device (`PUT /entropy`) at boot (the CI guest kernel ships the
+  `virtio_rng` driver). `crng init done` moves to **2.6 s**, the harness
+  start→first-heartbeat gap drops from ~5.9 s to **0.72 s**, and cold-boot
+  Spawn→first-exec drops from **~11.4 s to ~5.7 s** (3-sample p50 5.9 s). The
+  residual ~5 s is the guest kernel's own boot under nested virt (cert-drive
+  ext4 mount lands at guest-time ~6.5 s), unrelated to entropy. Resume/fork
+  inherit the device from the snapshot; fork N=1 readiness improved ~2.7 s →
+  ~1.9 s as a side effect.
+
+- **Fork N≥10 concurrent readiness is resource contention, NOT a spin or a
+  reconnect storm.** With the entropy fix in place, N=10 still fails (10/10 never
+  answered exec in 20 s). The manager log for that run rules out the leading
+  hypotheses: `crng init done` fires only once (the source cold boot), so the
+  restored guests are **not** entropy-blocked; there were **0** superseded-cert
+  heartbeat drops and only 2 heartbeat streams ever opened, so it is **not** a
+  stale-identity reconnect storm. Instead the restored guests are stuck mid
+  re-identify with **no errors**: of 10 forks, 7 noticed the swapped cert drive
+  but only 1 finished adopting the new identity, and 9 never re-opened their
+  heartbeat stream. Combined with the super-linear scaling (N=1 ≈ 1.9 s, N=3 ≈
+  25–30 s, N=10 never), the cause is the aggregate CPU/IO of resuming many VMs at
+  once on a 4-vCPU nested host — the manager's per-fork work (cert issuance +, on
+  this no-reflink ext4, a 64 MiB rootfs byte-copy per fork) plus each 1-vCPU
+  guest's re-identify (ext4 mount + two mTLS reconnects) all contend for the same
+  4 vCPUs, so individual guests cannot finish re-identify inside the window. This
+  is environmental, not a harness/manager bug; the levers are to stagger
+  concurrent resumes (lower `LANTERN_FORK_CONCURRENCY`), reflink the rootfs
+  (XFS/btrfs), push the new identity over vsock to skip the per-fork ext4 mount,
+  and confirm on bare-metal KVM. No code change is made for fork here.
+
 ### Reproduce
 
 ```bash

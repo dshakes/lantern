@@ -9,9 +9,9 @@ import { u, DEMO, GH } from '../../data/site';
 // Same SDK call and 402 body as the handler (rest.go, CheckBudget's reason
 // string). Only the dollar amounts are an example. The SDK class keeps its
 // old name until the rename lands.
-const SAMPLE = `const pal = new LanternClient({
+const SAMPLE = `const pal = new PalClient({
   baseUrl: "http://localhost:8080",
-  apiKey: process.env.LANTERN_API_KEY,
+  apiKey: process.env.PAL_API_KEY,
 });
 
 await pal.agents.create({ name: "triage" });
@@ -80,12 +80,12 @@ const SPANS = [
         <div data-reveal><Media name="runtime-architecture" /></div>
       </div>
       <ol class="ladder" style="margin-top:56px" data-reveal>
-        <li><h3>Describe</h3><p><code>lantern onboard</code> turns one sentence into a running agent. Or scaffold with <code>lantern init</code>.</p></li>
-        <li><h3>Iterate</h3><p><code>lantern agents dev</code> watches the folder, republishes on save and streams run events.</p></li>
-        <li><h3>Gate</h3><p><code>lantern test</code> runs the eval suite against your baseline. A regression returns 422 and blocks the deploy.</p></li>
-        <li><h3>Deploy</h3><p><code>lantern deploy</code> sends the same <code>agent.yaml</code> to whichever control plane you’re logged in to.</p></li>
+        <li><h3>Describe</h3><p><code>pal onboard</code> turns one sentence into a running agent. Or scaffold with <code>pal init</code>.</p></li>
+        <li><h3>Iterate</h3><p><code>pal agents dev</code> watches the folder, republishes on save and streams run events.</p></li>
+        <li><h3>Gate</h3><p><code>pal test</code> runs the eval suite against your baseline. A regression returns 422 and blocks the deploy.</p></li>
+        <li><h3>Deploy</h3><p><code>pal deploy</code> sends the same <code>agent.yaml</code> to whichever control plane you’re logged in to.</p></li>
       </ol>
-      <p class="small" style="margin-top:12px">The CLI keeps its old name, <code>lantern</code>, until the rename lands. <code>lantern doctor</code> checks health, auth, your model provider and a live run.</p>
+      <p class="small" style="margin-top:12px">The CLI is <code>pal</code> (<code>lantern</code> still works as an alias). <code>pal doctor</code> checks health, auth, your model provider and a live run.</p>
     </div>
   </section>
 
@@ -245,7 +245,7 @@ const SPANS = [
       <ol class="footnotes" style="margin:48px auto 0;text-align:left">
         <li id="fn-1"><span>1.</span><span>Without broker mode the allowlist is enforced inside the VM by a proxy, and secrets you vend to the workload do enter the guest.</span></li>
         <li id="fn-2"><span>2.</span><span>Enforced today: per-agent daily cost, runs and tokens, and a tenant-wide daily cost cap. Workflow runs also stop mid-run at a per-run cap and at per-tool limits.</span></li>
-        <li id="fn-3"><span>3.</span><span>Policies are in place on every tenant table; enforcement is switched on per environment.</span></li>
+        <li id="fn-3"><span>3.</span><span>Policies are in place on every tenant table. Enforcement is on in production whenever PAL_APP_DB_PASSWORD is set; without it the control plane refuses to start unless you set PAL_RLS_ENFORCE=0.</span></li>
         <li id="fn-4"><span>4.</span><span>Ed25519 once a signing key is configured; development falls back to HMAC.</span></li>
       </ol>
     </div>
