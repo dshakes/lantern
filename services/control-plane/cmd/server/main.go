@@ -1029,7 +1029,7 @@ func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, messa
 	}
 	// Dev: advisory only.
 	if appPwd == "" {
-		return false, "LANTERN_APP_DB_PASSWORD is missing — RLS not enforced at runtime (acceptable in dev; required in production)"
+		return false, "PAL_APP_DB_PASSWORD is missing — RLS not enforced at runtime (acceptable in dev; required in production)"
 	}
 	return false, ""
 }
