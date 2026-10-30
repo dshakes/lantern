@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 root=$PWD
 export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
 
-DB=${E2E_EXAMPLES_DB:-lantern_e2e_examples}
+DB=${E2E_EXAMPLES_DB:-pal_e2e_examples}
 API_PORT=${E2E_EXAMPLES_API_PORT:-18480}
 GRPC_PORT=${E2E_EXAMPLES_GRPC_PORT:-18451}
 CONN_PORT=${E2E_EXAMPLES_CONNECTOR_PORT:-19191}

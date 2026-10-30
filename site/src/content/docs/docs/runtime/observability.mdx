@@ -1,6 +1,10 @@
 ---
 title: Observability
 description: One OTel trace per spawn, GenAI token telemetry, the five lantern.run.* metrics, anomaly detection and the service-health sweep.
+glance:
+  what: "One OpenTelemetry trace per spawn, GenAI token telemetry, the five lantern.run.* metrics and real-time anomaly detection."
+  why: "It answers what an agent is doing now and what it did last Tuesday, using the same identifiers everywhere."
+  how: "Turn it on under Enabling OTel, then use Find a run to follow one run across signals."
 sidebar:
   order: 11
 ---
@@ -24,7 +28,7 @@ lantern.run_id
 lantern.step_id     # per-step spans in the inline executor
 ```
 
-On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/lantern/docs/runtime/identity/) for the per-spawn identity). A [durable resume](/lantern/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
+On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/docs/runtime/identity/) for the per-spawn identity). A [durable resume](/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
 
 The trace spine, with W3C `traceparent` propagated at every boundary:
 
@@ -43,7 +47,7 @@ Export is env-gated. Set the endpoint and traces flow; leave it unset and tracin
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 # or
-LANTERN_OTEL_ENABLED=1   # uses default localhost endpoint
+PAL_OTEL_ENABLED=1   # uses default localhost endpoint
 ```
 
 <Aside title="W3C traceparent is always active">
@@ -87,14 +91,14 @@ The runtime watches the live event stream for pathological shapes, such as a too
 
 ## Peer-service health sweep
 
-A background loop in the control-plane TCP-probes its peer services every 60 s (`LANTERN_HEALTH_SWEEP_INTERVAL`; set `"0"` or `"off"` to disable). After 3 consecutive failures it declares a peer **DOWN** and sends one alert to the operator's notification channel. It sends one more when the peer recovers. There are no alert storms: only state transitions fire notifications.
+A background loop in the control-plane TCP-probes its peer services every 60 s (`PAL_HEALTH_SWEEP_INTERVAL`; set `"0"` or `"off"` to disable). After 3 consecutive failures it declares a peer **DOWN** and sends one alert to the operator's notification channel. It sends one more when the peer recovers. There are no alert storms: only state transitions fire notifications.
 
 Services probed when their address env var is set:
 
-- `model-router`: `LANTERN_MODEL_ROUTER_ADDR` (only when `LANTERN_USE_MODEL_ROUTER=1` or the address is non-default).
-- `runtime-scheduler`: `LANTERN_SCHEDULER_GRPC_ADDR`.
-- `runtime-manager`: `LANTERN_DEFAULT_MANAGER_ADDR`.
-- `workflow-engine`: `LANTERN_WORKFLOW_ENGINE_ADDR` (optional).
+- `model-router`: `PAL_MODEL_ROUTER_ADDR` (only when `PAL_USE_MODEL_ROUTER=1` or the address is non-default).
+- `runtime-scheduler`: `PAL_SCHEDULER_GRPC_ADDR`.
+- `runtime-manager`: `PAL_DEFAULT_MANAGER_ADDR`.
+- `workflow-engine`: `PAL_WORKFLOW_ENGINE_ADDR` (optional).
 
 Read the current snapshot:
 
@@ -152,7 +156,7 @@ lantern vm logs <vm-id>                                    # or: GET /v1/runtime
 curl "$API/v1/runtime/audit?limit=50" -H "Authorization: Bearer $TOKEN"
 ```
 
-Logs are stored in `runtime_vm_logs` with a retention sweep (`LANTERN_RUNTIME_LOG_RETENTION_DAYS`, see [Environment variables](/lantern/docs/reference/env-vars/)). Audit events are also attached to the trace as span events.
+Logs are stored in `runtime_vm_logs` with a retention sweep (`PAL_RUNTIME_LOG_RETENTION_DAYS`, see [Environment variables](/docs/reference/env-vars/)). Audit events are also attached to the trace as span events.
 
 ## Prometheus alerts, dashboards, runbooks
 

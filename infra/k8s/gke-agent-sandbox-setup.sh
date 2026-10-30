@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gke-agent-sandbox-setup.sh — provision a GKE cluster that can run Lantern's
+# gke-agent-sandbox-setup.sh — provision a GKE cluster that can run PAL Runtime's
 # gVisor/Kata EXECUTION legs (validate.sh --execution).
 #
 # GitHub-hosted CI cannot run these legs (no runsc, no nested virt). This script
@@ -26,7 +26,7 @@ set -euo pipefail
 
 PROJECT="${PROJECT:?set PROJECT=<gcp-project-id>}"
 REGION="${REGION:-us-central1}"
-CLUSTER="${CLUSTER:-lantern-sandbox-e2e}"
+CLUSTER="${CLUSTER:-pal-sandbox-e2e}"
 GVISOR_POOL="${GVISOR_POOL:-gvisor-pool}"
 KATA_POOL="${KATA_POOL:-kata-pool}"
 MACHINE="${MACHINE:-e2-standard-4}"
@@ -62,7 +62,7 @@ gcloud container clusters get-credentials "$CLUSTER" \
 
 echo "==> Installing RuntimeClasses (gvisor + kata)"
 # GKE Sandbox registers the 'gvisor' handler; we create the RuntimeClass objects
-# Lantern's pods reference. For a real Kata cluster, set handler: kata-qemu.
+# PAL Runtime's pods reference. For a real Kata cluster, set handler: kata-qemu.
 kubectl apply -f - <<'YAML'
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass

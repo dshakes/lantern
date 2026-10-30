@@ -18,11 +18,11 @@ dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
 
 # Kiosk demo (ADR 0029): full stack, ephemeral workspaces, recorded LLM answers.
 demo:
-	KIOSK_JWT_SECRET=$${KIOSK_JWT_SECRET:-$$(openssl rand -hex 32)} docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo up -d --build postgres redis control-plane dashboard llm-replay
+	KIOSK_JWT_SECRET=$${KIOSK_JWT_SECRET:-$$(openssl rand -hex 32)} docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p pal-demo up -d --build postgres redis control-plane dashboard llm-replay
 	@echo "demo: http://localhost:3001/kiosk"
 
 demo-down:
-	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo down -v
+	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p pal-demo down -v
 
 dev-certs: ## Generate a local CA + per-service mTLS certs in .dev-certs/ (ADR 0043; dev only)
 	bash scripts/dev-certs.sh .dev-certs
@@ -82,7 +82,7 @@ run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 
 	REDIS_URL="redis://localhost:6379" \
 	S3_ENDPOINT="http://localhost:9000" \
 	LOG_LEVEL="debug" \
-	LANTERN_USE_CLAUDE_CODE=1 \
+	PAL_USE_CLAUDE_CODE=1 \
 	go run ./cmd/server
 
 bridge-setup: ## Interactive setup wizard for the personal-assistant bridges (WhatsApp / iMessage)
@@ -100,14 +100,14 @@ run-imessage-bridge: ## Start the iMessage bridge (macOS only)
 
 run-imessage: run-imessage-bridge ## Alias: start the iMessage bridge
 
-autostart-install: ## Install Lantern as macOS LaunchAgents (auto-start at login, auto-restart on crash)
+autostart-install: ## Install PAL Runtime as macOS LaunchAgents (auto-start at login, auto-restart on crash)
 	@bash scripts/launchd/install.sh
 
-autostart-uninstall: ## Remove all Lantern LaunchAgents
+autostart-uninstall: ## Remove all PAL Runtime LaunchAgents
 	@bash scripts/launchd/install.sh --uninstall
 
-autostart-status: ## Show currently-loaded Lantern LaunchAgents + recent log lines
-	@launchctl list | grep -i lantern || echo "(no lantern launchagents loaded — run 'make autostart-install')"
+autostart-status: ## Show currently-loaded PAL Runtime LaunchAgents + recent log lines
+	@launchctl list | grep -iE "dev\.(pal|lantern)" || echo "(no PAL launchagents loaded — run 'make autostart-install')"
 	@echo ""
 	@for s in infra api dashboard whatsapp-bridge imessage-bridge; do \
 		echo "—— $$s last 3 lines ——"; \
@@ -164,11 +164,11 @@ build-ts: ## Build TypeScript packages
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
-	docker build -t lantern-control-plane -f services/control-plane/Dockerfile .
-	docker build -t lantern-gateway -f services/gateway/Dockerfile .
-	docker build -t lantern-model-router -f services/model-router/Dockerfile .
-	docker build -t lantern-workflow-engine -f services/workflow-engine/Dockerfile .
-	docker build -t lantern-web apps/web
+	docker build -t pal-control-plane -f services/control-plane/Dockerfile .
+	docker build -t pal-gateway -f services/gateway/Dockerfile .
+	docker build -t pal-model-router -f services/model-router/Dockerfile .
+	docker build -t pal-workflow-engine -f services/workflow-engine/Dockerfile .
+	docker build -t pal-web apps/web
 	
 # ---------- Proto ----------
 
@@ -261,7 +261,7 @@ test-db: ## Start dev Postgres if needed, then run Go tests that require a live 
 		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 		go test -race -count=1 ./...
 
-rls-validate: ## Validate RLS policies + handler cutover before flipping LANTERN_RLS_ENFORCE=1
+rls-validate: ## Validate RLS policies + handler cutover before flipping PAL_RLS_ENFORCE=1
 	@bash scripts/rls-validate.sh
 
 # ---------- Lint ----------
