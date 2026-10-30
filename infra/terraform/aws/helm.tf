@@ -53,9 +53,16 @@ resource "helm_release" "pal_data_plane" {
   name      = "lantern-dp"
   namespace = kubernetes_namespace.pal.metadata[0].name
   chart     = "${path.module}/../../helm/pal-data-plane"
-  version   = local.chart_version
-  wait      = true
-  timeout   = 600
+  # Local chart: Bitnami postgresql/redis deps (Chart.lock) are not vendored,
+  # so helm must fetch them or the release fails "missing in charts/".
+  dependency_update = true
+  wait              = true
+  timeout           = 600
+
+  set {
+    name  = "global.image.tag"
+    value = local.chart_version
+  }
 
   set {
     name  = "controlPlane.endpoint"

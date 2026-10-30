@@ -104,7 +104,12 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 	printSection("Service ports", checkPorts())
 
 	// ── Sandbox runtime (soft) ────────────────────────────────────────────
-	printSection("Sandbox runtime", checkRuntime(defaultRuntimeEnv(restURL, token)))
+	sandbox := detectSandbox(defaultSandboxProbe())
+	rtEnv := defaultRuntimeEnv(restURL, token)
+	if sandbox.managerAddr != "" {
+		rtEnv.managerAddr = sandbox.managerAddr // e.g. the Lima-forwarded :52054
+	}
+	printSection("Sandbox runtime", append([]checkResult{sandbox.check()}, checkRuntime(rtEnv)...))
 
 	// ── Peer-service health ───────────────────────────────────────────────
 	if peerResults := checkSystemHealth(restURL, token); len(peerResults) > 0 {
