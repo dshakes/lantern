@@ -21,12 +21,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/packages/palenv"
 )
 
 // callbackMaxAttempts is the number of delivery tries before giving up.
@@ -59,10 +60,7 @@ var cbHTTPClient = &http.Client{
 // Falls back to a dev constant when the env var is unset (never in prod —
 // IsProd() checks that the env var is present at startup).
 func callbackSigningSecret(tenantID string) []byte {
-	root := os.Getenv("PAL_CALLBACK_SIGNING_SECRET")
-	if root == "" {
-		root = os.Getenv("LANTERN_CALLBACK_SIGNING_SECRET")
-	}
+	root := palenv.Get("CALLBACK_SIGNING_SECRET")
 	if root == "" {
 		root = "dev-callback-secret-do-not-use-in-production"
 	}

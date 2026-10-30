@@ -43,5 +43,5 @@ CREATE POLICY tenant_isolation_batches ON batches
     USING  (tenant_id::text = current_setting('app.tenant_id', true))
     WITH CHECK (tenant_id::text = current_setting('app.tenant_id', true));
 
-ALTER TABLE runs ADD CONSTRAINT IF NOT EXISTS runs_batch_id_fk
+ALTER TABLE runs ADD CONSTRAINT runs_batch_id_fk
     FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE SET NULL;
