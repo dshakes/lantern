@@ -31,12 +31,18 @@ const redirects = Object.fromEntries(Object.entries({
   '/docs/personal': '/docs/pal/',
   '/docs/quickstart': '/docs/start/quickstart/',
   '/docs/scheduling': '/docs/build/scheduling/',
-  '/docs/sdk': '/docs/reference/sdk/',
-  '/docs/security': '/docs/runtime/security/',
+  '/docs/sdk': '/docs/sdks/',
   '/docs/stack': '/docs/runtime/stack/',
   '/docs/surfaces': '/docs/pal/surfaces/',
   '/docs/testing': '/docs/build/testing/',
   '/docs/triggers': '/docs/build/triggers/',
+  // site/v2 IA: security, observability and SDKs got their own sections.
+  '/docs/runtime/security': '/docs/security/',
+  '/docs/runtime/egress': '/docs/security/egress/',
+  '/docs/runtime/identity': '/docs/security/identity/',
+  '/docs/runtime/receipts': '/docs/security/receipts/',
+  '/docs/runtime/observability': '/docs/observability/',
+  '/docs/reference/sdk': '/docs/sdks/',
 }).map(([from, to]) => [from, BASE_PATH + to]));
 
 // Landing is src/pages/index.astro at the base; Starlight docs live in
@@ -103,11 +109,14 @@ export default defineConfig({
       components: { SiteTitle: './src/components/SiteTitle.astro', MarkdownContent: './src/components/MarkdownContent.astro' },
       // Groups follow the directories under src/content/docs/docs/, in this order.
       sidebar: [
-        { label: 'Start', items: [{ autogenerate: { directory: 'docs/start' } }] },
-        { label: 'PAL', items: [{ autogenerate: { directory: 'docs/pal' } }] },
+        { label: 'Get started', items: [{ autogenerate: { directory: 'docs/start' } }] },
+        { label: 'pal', items: [{ autogenerate: { directory: 'docs/pal' } }] },
         { label: 'PAL Runtime', items: [{ autogenerate: { directory: 'docs/runtime' } }] },
-        { label: 'Build', items: [{ autogenerate: { directory: 'docs/build' } }] },
-        { label: 'Reference', items: [{ autogenerate: { directory: 'docs/reference' } }], collapsed: true },
+        { label: 'Build agents', items: [{ autogenerate: { directory: 'docs/build' } }] },
+        { label: 'Security', items: [{ autogenerate: { directory: 'docs/security' } }] },
+        { label: 'Observability', items: [{ autogenerate: { directory: 'docs/observability' } }] },
+        { label: 'SDKs', items: [{ autogenerate: { directory: 'docs/sdks' } }] },
+        { label: 'Reference', items: [{ autogenerate: { directory: 'docs/reference' } }] },
         { label: 'Operate', items: [{ autogenerate: { directory: 'docs/operate' } }], collapsed: true },
         { slug: 'docs/changelog' },
       ],

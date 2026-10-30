@@ -114,10 +114,10 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 
 ## Terraform
 
-`lantern infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
+`pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
 
 ```bash
-lantern infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
 cd terraform
 terraform init
 terraform plan
@@ -130,7 +130,7 @@ Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This pro
 
 ## Monitoring
 
-Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `PAL_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/docs/runtime/observability/) for details.
+Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `PAL_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/docs/observability/) for details.
 
 <Aside type="caution">
 The [Operations](/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.

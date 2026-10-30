@@ -2,23 +2,23 @@
 title: CLI reference
 description: "The PAL command-line tool: local stack, agents, runs, evals, sandbox VMs, webhook triggers and data-plane install."
 glance:
-  what: "One static Go binary, installed as lantern while the rename lands, that manages agents, runs, evals and VMs."
+  what: "One static Go binary, pal, that runs the local stack and manages agents, runs, evals and sandbox VMs."
   why: "It covers the whole workflow from a terminal, from a first demo to gating CI on evals."
-  how: "Run lantern demo to look around, or lantern dev to boot the stack and lantern onboard to build an agent."
+  how: "Run pal demo to look around, or pal dev to boot the stack and pal onboard to build an agent."
 sidebar:
   order: 3
 ---
 
-One static Go binary. It is still installed as `lantern` while the rename lands; a `pal` alias is coming, and every command below will work under either name. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+One static Go binary, `pal`. Until the rename release ships, its source lives at `packages/cli/cmd/lantern`; the install line below builds it under the name `pal`, so every command on this site works as written. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
 
-Just looking? `lantern demo` needs Docker and no API key. To build your own, `lantern dev` boots the stack and `lantern onboard` walks you through your first agent.
+Just looking? `pal demo` needs Docker and no API key. To build your own, `pal dev` boots the stack and `pal onboard` walks you through your first agent.
 
 ## Install
 
 ```bash
 # Build from the repo
-cd packages/cli && go install ./cmd/lantern
-lantern --version
+cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/lantern
+pal --version
 ```
 
 ## demo
@@ -28,9 +28,9 @@ Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visit
 Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/docs/start/demo/).
 
 ```bash
-lantern demo             # start (first run builds images)
-lantern demo --no-open   # start without opening the browser
-lantern demo --down      # stop and delete all demo data
+pal demo             # start (first run builds images)
+pal demo --no-open   # start without opening the browser
+pal demo --down      # stop and delete all demo data
 ```
 
 ## onboard
@@ -38,8 +38,8 @@ lantern demo --down      # stop and delete all demo data
 First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/docs/start/quickstart/).
 
 ```bash
-lantern onboard                 # interactive
-lantern onboard --yes --provider anthropic --api-key "$KEY" \
+pal onboard                 # interactive
+pal onboard --yes --provider anthropic --api-key "$KEY" \
   --description "Triage support tickets"   # CI
 ```
 
@@ -48,7 +48,7 @@ lantern onboard --yes --provider anthropic --api-key "$KEY" \
 Runs readiness checks against the local stack, one pass/fail line each. Exits non-zero if any hard check fails. Run it before you report a bug. The Sandbox runtime section, which never fails the run, reports whether the API uses a real scheduler or the stub, whether the scheduler and runtime manager are reachable, and whether KVM and Firecracker are present. Each failing check prints its fix.
 
 ```bash
-lantern doctor
+pal doctor
 ```
 
 ## dev
@@ -56,10 +56,10 @@ lantern doctor
 Boots the local stack: Postgres, Redis and MinIO (Docker), the control-plane API (host Go process), the Next.js dashboard, and the WhatsApp and iMessage bridges (iMessage is skipped off macOS). Logs interleave in one terminal. Flags: `--infra-only`, `--with-whatsapp=false`, `--with-imessage=false`, `--no-open`, `--dashboard-port` (3001), `--api-port` (8080).
 
 ```bash
-lantern dev                # start everything
-lantern dev down           # stop infra containers (--volumes also deletes data)
-lantern dev logs           # tail all infra logs
-lantern dev logs postgres  # tail one service
+pal dev                # start everything
+pal dev down           # stop infra containers (--volumes also deletes data)
+pal dev logs           # tail all infra logs
+pal dev logs postgres  # tail one service
 ```
 
 ## init
@@ -67,8 +67,8 @@ lantern dev logs postgres  # tail one service
 Scaffold a new agent directory with `agent.yaml` and starter code. Templates: `basic` (default), `research`, `tool-use`, `connector`, `personal`, `scheduled`, `approval`.
 
 ```bash
-lantern init my-agent
-lantern init my-agent --template research
+pal init my-agent
+pal init my-agent --template research
 ```
 
 ## agents
@@ -76,13 +76,13 @@ lantern init my-agent --template research
 Manage agents. Aliased as `agent`.
 
 ```bash
-lantern agents create --name my-agent --description "Triage tickets" [--label team=support]
-lantern agents list
-lantern agents get my-agent
-lantern agents delete my-agent [--force]
+pal agents create --name my-agent --description "Triage tickets" [--label team=support]
+pal agents list
+pal agents get my-agent
+pal agents delete my-agent [--force]
 
 # Development inner loop — watches the agent dir and re-publishes on change
-lantern agents dev my-agent [--dir ./my-agent] [--input '{"prompt":"hi"}'] [--eval] [--yes]
+pal agents dev my-agent [--dir ./my-agent] [--input '{"prompt":"hi"}'] [--eval] [--yes]
 ```
 
 `agents dev` is the agent development inner loop: it watches the local directory for changes to `agent.yaml` or code files, re-publishes the agent version on each change, runs a smoke input (`--input`), and streams the run events. `--eval` also runs the agent's eval suite after each publish.
@@ -92,18 +92,18 @@ lantern agents dev my-agent [--dir ./my-agent] [--input '{"prompt":"hi"}'] [--ev
 Manage runs: create, list, inspect, cancel.
 
 ```bash
-lantern runs create --agent my-agent --input '{"topic":"AI"}' [--stream]
-lantern runs list [--agent my-agent] [--status succeeded]
-lantern runs get <run-id>
-lantern runs cancel <run-id> [--reason "..."]
+pal runs create --agent my-agent --input '{"topic":"AI"}' [--stream]
+pal runs list [--agent my-agent] [--status succeeded]
+pal runs get <run-id>
+pal runs cancel <run-id> [--reason "..."]
 ```
 
 ## logs
 
-Stream a run's journal events. For dev-stack containers use `lantern dev logs`.
+Stream a run's journal events. For dev-stack containers use `pal dev logs`.
 
 ```bash
-lantern logs <run-id> [-f]   # journal events; -f keeps the stream open
+pal logs <run-id> [-f]   # journal events; -f keeps the stream open
 ```
 
 ## test
@@ -111,34 +111,34 @@ lantern logs <run-id> [-f]   # journal events; -f keeps the stream open
 Run an agent's eval suite and compare against the branch baseline. Exits non-zero with a regression summary when the score drops below the baseline. Wire it into CI to gate merges. `--set-baseline` pins the run as the branch baseline. `--rehearse` replays past failed or low-score production runs instead of a suite (`--window`, default 7d). Runs execute asynchronously on the control plane, so each case waits for its run to finish; `--timeout` (default 2m) bounds that wait per case, and a failed or timed-out run scores as a failed case with its error.
 
 ```bash
-lantern test --agent my-agent --suite factual-accuracy
-lantern test --agent my-agent --suite factual-accuracy --against last-green
-lantern test --agent my-agent --rehearse --window 24h
+pal test --agent my-agent --suite factual-accuracy
+pal test --agent my-agent --suite factual-accuracy --against last-green
+pal test --agent my-agent --rehearse --window 24h
 ```
 
 ## vm
 
-Schedule and manage headless sandbox VMs. `lantern run` takes a spec file; `vm` (aliases `vms`, `runtime`) manages what it started.
+Schedule and manage headless sandbox VMs. `pal run` takes a spec file; `vm` (aliases `vms`, `runtime`) manages what it started.
 
 ```bash
 # Schedule a headless agent from a spec file
-lantern run agent.yaml [--input '{...}'] [--follow] [--idle-timeout 600]
+pal run agent.yaml [--input '{...}'] [--follow] [--idle-timeout 600]
 
 # VM subcommands
-lantern vm list [--state running] [--limit 50]
-lantern vm get <vm-id>
-lantern vm logs <vm-id>          # SSE log stream from the harness
-lantern vm stop <vm-id> [--grace 30]
-lantern vm pause <vm-id>         # snapshot + stop, frees the quota slot
-lantern vm resume <vm-id>        # restore under the same vm id
-lantern vm fork <vm-id> --count 3   # N copies; the server caps N (100 by default, PAL_MAX_FORK_COUNT, ceiling 1000)
-lantern vm exec <vm-id> -- ls /tmp  # exec into a running VM (-t/-i for a PTY)
-lantern vm ls <vm-id> [path]     # list /workspace
-lantern vm cat <vm-id> <path>    # print a file (1 MiB cap)
-lantern vm put <vm-id> ./f.txt /workspace/f.txt   # write a file (1 MiB cap)
-lantern vm quota get             # current quota + today's usage
-lantern vm quota set --max-concurrent 10 --max-cost 50   # owner only
-lantern vm cluster               # node load + warm-pool capacity (owner only)
+pal vm list [--state running] [--limit 50]
+pal vm get <vm-id>
+pal vm logs <vm-id>          # SSE log stream from the harness
+pal vm stop <vm-id> [--grace 30]
+pal vm pause <vm-id>         # snapshot + stop, frees the quota slot
+pal vm resume <vm-id>        # restore under the same vm id
+pal vm fork <vm-id> --count 3   # N copies; the server caps N (100 by default, PAL_MAX_FORK_COUNT, ceiling 1000)
+pal vm exec <vm-id> -- ls /tmp  # exec into a running VM (-t/-i for a PTY)
+pal vm ls <vm-id> [path]     # list /workspace
+pal vm cat <vm-id> <path>    # print a file (1 MiB cap)
+pal vm put <vm-id> ./f.txt /workspace/f.txt   # write a file (1 MiB cap)
+pal vm quota get             # current quota + today's usage
+pal vm quota set --max-concurrent 10 --max-cost 50   # owner only
+pal vm cluster               # node load + warm-pool capacity (owner only)
 ```
 
 ## deploy
@@ -156,7 +156,7 @@ description: demo
 model: auto
 system_prompt: You are terse.
 
-$ lantern --api-url http://localhost:8080 deploy --json
+$ pal --api-url http://localhost:8080 deploy --json
 {
   "agent": "created",
   "agentName": "demo-bot",
@@ -176,11 +176,11 @@ Manage inbound webhook triggers: a public `POST /v1/hooks/{id}` URL bound to an 
 `create` prints the signing secret once; `--secret-stdin` reads one from stdin instead (Sentry and PagerDuty generate their own). `--template` maps the payload into run input. `update` needs at least one of its flags; `--enable` / `--disable` and `--template` / `--clear-template` are mutually exclusive, and a disabled trigger answers deliveries with 404.
 
 ```bash
-lantern hooks create <agent> [--provider generic|github|sentry|pagerduty] [--template '{"pr":"{{payload.number}}"}'] [--secret-stdin]
-lantern hooks list <agent>
-lantern hooks get <trigger-id>
-lantern hooks update <trigger-id> [--enable | --disable] [--template JSON | --clear-template] [--secret-stdin]
-lantern hooks delete <trigger-id>
+pal hooks create <agent> [--provider generic|github|sentry|pagerduty] [--template '{"pr":"{{payload.number}}"}'] [--secret-stdin]
+pal hooks list <agent>
+pal hooks get <trigger-id>
+pal hooks update <trigger-id> [--enable | --disable] [--template JSON | --clear-template] [--secret-stdin]
+pal hooks delete <trigger-id>
 ```
 
 ## infra
@@ -188,18 +188,18 @@ lantern hooks delete <trigger-id>
 Generate and manage the data plane for AWS, GCP or Azure (EKS, GKE, AKS) via Terraform.
 
 ```bash
-lantern infra install --cloud aws [--region us-east-1] [--node-count 3] [--firecracker]
-lantern infra status      # show connection status
-lantern infra upgrade [--version latest]
-lantern infra uninstall [--force]   # tear down the data plane
+pal infra install --cloud aws [--region us-east-1] [--node-count 3] [--firecracker]
+pal infra status      # show connection status
+pal infra upgrade [--version latest]
+pal infra uninstall [--force]   # tear down the data plane
 ```
 
 ## login / whoami / logout
 
 ```bash
-lantern login [--email --password]   # authenticate to the control plane
-lantern whoami                       # show current authenticated user
-lantern logout                       # clear stored credentials
+pal login [--email --password]   # authenticate to the control plane
+pal whoami                       # show current authenticated user
+pal logout                       # clear stored credentials
 ```
 
 ## Global flags

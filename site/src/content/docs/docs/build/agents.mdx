@@ -48,7 +48,7 @@ For full control, use the manual creation form and configure each field yourself
 Pick a template in the dashboard and edit it. The CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
 
 ```bash
-lantern init my-agent --template research
+pal init my-agent --template research
 ```
 
 ## Configuring an agent
@@ -126,7 +126,7 @@ Every agent has a **Chat** tab in the dashboard (next to Build, Runs, Schedule a
 From the CLI:
 
 ```bash
-lantern runs create --agent my-agent \
+pal runs create --agent my-agent \
   --input '{"topic": "quantum computing"}' \
   --stream
 ```
@@ -136,7 +136,7 @@ lantern runs create --agent my-agent \
 Agents can be triggered in several ways:
 
 - **Dashboard**: manual runs for testing
-- **CLI**: `lantern runs create --agent <name>`
+- **CLI**: `pal runs create --agent <name>`
 - **REST API**: `POST /v1/runs` (with `agentName` in the body)
 - **Schedule**: cron-based recurring runs
 - **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/docs/build/triggers/).

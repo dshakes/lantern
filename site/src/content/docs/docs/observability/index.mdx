@@ -6,7 +6,7 @@ glance:
   why: "It answers what an agent is doing now and what it did last Tuesday, using the same identifiers everywhere."
   how: "Turn it on under Enabling OTel, then use Find a run to follow one run across signals."
 sidebar:
-  order: 11
+  order: 1
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -28,7 +28,7 @@ lantern.run_id
 lantern.step_id     # per-step spans in the inline executor
 ```
 
-On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/docs/runtime/identity/) for the per-spawn identity). A [durable resume](/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
+On the **microVM tier**, scheduler spans carry `tenant_id` and `vm_id`; the per-VM isolation class is recorded as a container/pod label, and the trace context propagates through the manager into the harness (see [Identity and secrets](/docs/security/identity/) for the per-spawn identity). A [durable resume](/docs/runtime/durable-execution/) starts a new trace tagged with the same `lantern.run_id`.
 
 The trace spine, with W3C `traceparent` propagated at every boundary:
 
@@ -152,7 +152,7 @@ Every control-plane span carries `lantern.run_id`, so one run is one query in yo
 VM logs and the runtime audit trail (spawn, terminate, secret vend, egress deny, 403s) are plain API calls:
 
 ```bash
-lantern vm logs <vm-id>                                    # or: GET /v1/runtime/vms/{id}/logs (SSE)
+pal vm logs <vm-id>                                    # or: GET /v1/runtime/vms/{id}/logs (SSE)
 curl "$API/v1/runtime/audit?limit=50" -H "Authorization: Bearer $TOKEN"
 ```
 

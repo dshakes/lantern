@@ -56,7 +56,7 @@ Three, and adding a fourth requires an ADR. Between them they cover every curren
 
 ## End to end: one sandbox run
 
-What happens between `lantern run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `PAL_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
+What happens between `pal run agent.yaml` and a result. Every hop is a process boundary. Workflow runs go through the workflow engine and, with `PAL_USE_MODEL_ROUTER=1`, the model router; see the notes under the diagram.
 
 ```text
   you --> CLI / SDK / dashboard                          (Go, TypeScript)

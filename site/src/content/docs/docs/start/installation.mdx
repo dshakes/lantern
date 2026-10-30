@@ -6,7 +6,7 @@ glance:
   why: "One command starts everything PAL needs on your laptop."
   how: "Follow the numbered steps below, starting with the clone and the first make command."
 sidebar:
-  order: 3
+  order: 5
 ---
 
 import { Aside, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
@@ -38,14 +38,14 @@ The "stack" is everything PAL needs on your laptop: Postgres (agents and runs), 
 3. **Start the stack.** One command boots everything:
 
    ```bash
-   (cd packages/cli && go install ./cmd/lantern)   # installs the lantern CLI
-   lantern dev
+   (cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/lantern)   # installs the pal CLI
+   pal dev
    ```
 
    Or run services individually for faster iteration:
 
    ```bash
-   # Terminal 1: Postgres and Redis only (no MinIO; lantern dev --infra-only adds it)
+   # Terminal 1: Postgres and Redis only (no MinIO; pal dev --infra-only adds it)
    make dev-infra
 
    # Terminal 2: control-plane API on :8080
@@ -107,7 +107,7 @@ Seeded automatically on first boot. No setup required.
 | Target | What it does |
 | --- | --- |
 | `make dev` | Full docker-compose stack |
-| `make dev-infra` | Postgres + Redis only, no MinIO (`lantern dev --infra-only` adds it) |
+| `make dev-infra` | Postgres + Redis only, no MinIO (`pal dev --infra-only` adds it) |
 | `make dev-doctor` | Health-check every service |
 | `make run-api` | Control-plane on `:8080` |
 | `make dashboard-dev` | Next.js dashboard on `:3001` |

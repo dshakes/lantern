@@ -38,7 +38,7 @@ curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duratio
 
 You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
-Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/docs/runtime/observability/#gateway-and-model-router-traces)).
+Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/docs/observability/#gateway-and-model-router-traces)).
 
 ## Alert groups
 
@@ -94,13 +94,13 @@ On production values this does not apply to your data: `values-prod.yaml` uses e
 
 ## Kiosk and demo deployments
 
-`make demo` (or `lantern demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM, and no sign-up. See [Demo](/docs/start/demo/) for the tour.
+`make demo` (or `pal demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM, and no sign-up. See [Demo](/docs/start/demo/) for the tour.
 
 ```bash
 make demo         # then open http://localhost:3001/kiosk
 make demo-down    # stop it and delete its data
-lantern demo --no-open    # same stack from the CLI, without opening a browser
-lantern demo --down
+pal demo --no-open    # same stack from the CLI, without opening a browser
+pal demo --down
 ```
 
 For a public demo host the guard is strict: `PAL_KIOSK=1` refuses to start unless `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and a non-default `JWT_SECRET` are set, and under a production-like `PAL_ENV` it also needs `PAL_KIOSK_ALLOW_PROD=1`. Caps (workspace lifetime, concurrent workspaces, new workspaces per IP per hour) are the `PAL_KIOSK_*` variables. Do not enable kiosk mode on a deployment that holds real tenants.
