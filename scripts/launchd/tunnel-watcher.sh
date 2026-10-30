@@ -17,14 +17,20 @@
 
 set -u
 
-CFLOG=~/Library/Logs/Lantern/cloudflared.err.log
-SECONDARY_LOG=~/Library/Logs/Lantern/cloudflared.log  # legacy nohup path
-STATE_FILE=~/.lantern/tunnel-current-url
-API_PLIST=~/Library/LaunchAgents/dev.lantern.api.plist
+# Works on either side of the PAL cutover (ADR 0032): once dev.pal.api is
+# installed, use the dev.pal.* label, PAL_* env keys, the PAL log dir and ~/.pal.
+LABEL_PREFIX=dev.lantern ENV_PREFIX=LANTERN LOG_DIR=~/Library/Logs/Lantern STATE_DIR=~/.lantern
+if [ -e ~/Library/LaunchAgents/dev.pal.api.plist ]; then
+  LABEL_PREFIX=dev.pal ENV_PREFIX=PAL LOG_DIR=~/Library/Logs/PAL STATE_DIR=~/.pal
+fi
+CFLOG=$LOG_DIR/cloudflared.err.log
+SECONDARY_LOG=$LOG_DIR/cloudflared.log  # legacy nohup path
+STATE_FILE=$STATE_DIR/tunnel-current-url
+API_PLIST=~/Library/LaunchAgents/$LABEL_PREFIX.api.plist
 TWILIO_NUMBER_ENV="+15128819998"
 
 mkdir -p "$(dirname "$STATE_FILE")"
-mkdir -p ~/Library/Logs/Lantern
+mkdir -p "$LOG_DIR"
 
 log() {
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $*"
@@ -101,10 +107,10 @@ if nums: print(nums[0]['sid'])
 update_api_plist() {
   local new_url="$1"
   /usr/libexec/PlistBuddy -c \
-    "Set :EnvironmentVariables:LANTERN_PUBLIC_BASE_URL $new_url" \
+    "Set :EnvironmentVariables:${ENV_PREFIX}_PUBLIC_BASE_URL $new_url" \
     "$API_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c \
-      "Add :EnvironmentVariables:LANTERN_PUBLIC_BASE_URL string $new_url" \
+      "Add :EnvironmentVariables:${ENV_PREFIX}_PUBLIC_BASE_URL string $new_url" \
       "$API_PLIST" 2>/dev/null
   # Reload the API so the new env var is picked up.
   local uid
@@ -112,8 +118,8 @@ update_api_plist() {
   launchctl unload "$API_PLIST" 2>/dev/null || true
   sleep 1
   launchctl load "$API_PLIST" 2>/dev/null || true
-  launchctl kickstart "gui/$uid/dev.lantern.api" 2>/dev/null || true
-  log "✅ API plist LANTERN_PUBLIC_BASE_URL set; control-plane reloaded"
+  launchctl kickstart "gui/$uid/$LABEL_PREFIX.api" 2>/dev/null || true
+  log "✅ API plist ${ENV_PREFIX}_PUBLIC_BASE_URL set; control-plane reloaded"
 }
 
 last_url=""
