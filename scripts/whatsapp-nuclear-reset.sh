@@ -46,7 +46,7 @@ continuing, you ${RED}MUST${RST} do this on your phone:
   1. Open WhatsApp on your phone
   2. Tap Settings → ${BLD}Linked Devices${RST}
   3. Tap ${BLD}every device${RST} listed and log it out
-     (Lantern bridge, web.whatsapp.com, any others)
+     (PAL Runtime bridge, web.whatsapp.com, any others)
   4. Wait ${YLW}60 seconds${RST} for WhatsApp to clear server-side pre-key caches
 
 ${DIM}Why: stale pre-keys on WhatsApp's servers are what cause the 'Waiting

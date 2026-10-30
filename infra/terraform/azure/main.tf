@@ -183,10 +183,10 @@ resource "azurerm_kubernetes_cluster" "this" {
 }
 
 # ---------------------------------------------------------------------------
-# AKS Node Pool for Lantern workloads
+# AKS Node Pool for PAL Runtime workloads
 # ---------------------------------------------------------------------------
 
-resource "azurerm_kubernetes_cluster_node_pool" "lantern" {
+resource "azurerm_kubernetes_cluster_node_pool" "pal" {
   name                  = "lantern"
   kubernetes_cluster_id = local.create_cluster ? azurerm_kubernetes_cluster.this[0].id : "/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${var.existing_resource_group}/providers/Microsoft.ContainerService/managedClusters/${var.existing_cluster_name}"
   vm_size               = var.vm_size
@@ -216,7 +216,7 @@ resource "azurerm_federated_identity_credential" "data_plane" {
   parent_id           = azurerm_user_assigned_identity.data_plane.id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = azurerm_kubernetes_cluster.this[0].oidc_issuer_url
-  subject             = "system:serviceaccount:lantern:lantern-data-plane"
+  subject             = "system:serviceaccount:lantern:pal-data-plane"
 }
 
 # ---------------------------------------------------------------------------
@@ -250,34 +250,34 @@ provider "helm" {
 # Namespace
 # ---------------------------------------------------------------------------
 
-resource "kubernetes_namespace" "lantern" {
+resource "kubernetes_namespace" "pal" {
   metadata {
     name = "lantern"
 
     labels = {
-      "app.kubernetes.io/part-of"    = "lantern-data-plane"
+      "app.kubernetes.io/part-of"    = "pal-data-plane"
       "app.kubernetes.io/managed-by" = "terraform"
     }
   }
 
-  depends_on = [azurerm_kubernetes_cluster_node_pool.lantern]
+  depends_on = [azurerm_kubernetes_cluster_node_pool.pal]
 }
 
 # ---------------------------------------------------------------------------
-# Deploy lantern-data-plane Helm chart
+# Deploy pal-data-plane Helm chart
 # ---------------------------------------------------------------------------
 
-resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+resource "helm_release" "pal_data_plane" {
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.pal.metadata[0].name
+  chart     = "${path.module}/../../helm/pal-data-plane"
+  version   = local.chart_version
+  wait      = true
+  timeout   = 600
 
   set {
     name  = "controlPlane.endpoint"
-    value = var.lantern_control_plane_endpoint
+    value = local.control_plane_endpoint
   }
 
   set {
@@ -317,7 +317,24 @@ resource "helm_release" "lantern_data_plane" {
   }
 
   depends_on = [
-    kubernetes_namespace.lantern,
-    azurerm_kubernetes_cluster_node_pool.lantern,
+    kubernetes_namespace.pal,
+    azurerm_kubernetes_cluster_node_pool.pal,
   ]
+}
+
+# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
+# (no destroy/recreate). Remove once every deployment has applied this version.
+moved {
+  from = kubernetes_namespace.lantern
+  to   = kubernetes_namespace.pal
+}
+
+moved {
+  from = helm_release.lantern_data_plane
+  to   = helm_release.pal_data_plane
+}
+
+moved {
+  from = azurerm_kubernetes_cluster_node_pool.lantern
+  to   = azurerm_kubernetes_cluster_node_pool.pal
 }

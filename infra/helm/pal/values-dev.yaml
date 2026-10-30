@@ -1,0 +1,138 @@
+# values-dev.yaml -- Development overrides for local Kind clusters.
+#
+# Usage:
+#   helm install pal infra/helm/pal \
+#     -f infra/helm/pal/values.yaml \
+#     -f infra/helm/pal/values-dev.yaml
+
+global:
+  image:
+    registry: ""          # images are loaded directly into Kind
+    repository: pal
+    tag: dev
+    pullPolicy: Never     # already loaded via `kind load docker-image`
+  logLevel: debug
+
+# -- Single replica for every service --
+
+gateway:
+  replicas: 1
+  image:
+    name: pal-gateway
+  service:
+    type: NodePort
+    port: 8443
+    nodePort: 30080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+    CONTROL_PLANE_ADDR: "pal-control-plane:50051"
+    MODEL_ROUTER_ADDR: "pal-model-router:50053"
+    LOG_LEVEL: "debug"
+
+controlPlane:
+  replicas: 1
+  image:
+    name: pal-control-plane
+  service:
+    type: NodePort
+    grpcPort: 50051
+    httpPort: 8080
+    grpcNodePort: 30051
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  env:
+    LISTEN_ADDR: ":50051"
+    LOG_LEVEL: "debug"
+    # values.yaml defaults to "production" (secure by default). Kind/dev has no
+    # scheduler, TLS material or prod secrets, so opt out of the prod-only
+    # startup guards here; they would otherwise refuse to boot.
+    PAL_ENV: "development"
+
+modelRouter:
+  replicas: 1
+  image:
+    name: pal-model-router
+  env:
+    PAL_ENV: "development"   # see controlPlane.env.PAL_ENV
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+workflowEngine:
+  replicas: 1
+  image:
+    name: pal-workflow-engine
+  env:
+    PAL_ENV: "development"   # see controlPlane.env.PAL_ENV
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+runtimeManager:
+  replicas: 0            # Not needed for local dev without microVMs
+  image:
+    name: pal-runtime-manager
+  env:
+    PAL_ENV: "development"   # see controlPlane.env.PAL_ENV
+
+dashboard:
+  replicas: 1
+  image:
+    name: pal-web
+  service:
+    type: NodePort
+    port: 3000
+    nodePort: 30081
+  env:
+    PAL_API_URL: "http://pal-gateway:8443"
+
+# -- Infrastructure with dev credentials --
+
+postgresql:
+  persistence:
+    size: 1Gi
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+minio:
+  persistence:
+    size: 1Gi
+
+ingress:
+  enabled: false
+
+secrets:
+  jwtSecret: "dev-jwt-secret-not-for-production"
+  openaiApiKey: "sk-dev-placeholder"
+  anthropicApiKey: "sk-ant-dev-placeholder"
+  postgresPassword: "lantern-dev"
+  minioPassword: "lantern-dev-secret"
+
+serviceAccount:
+  create: true
+  name: "pal"
+  annotations: {}

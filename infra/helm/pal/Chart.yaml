@@ -1,0 +1,45 @@
+apiVersion: v2
+name: pal
+description: >-
+  PAL Runtime — Serverless platform for production AI agents.
+  This is the all-in-one chart that deploys every component into a single
+  cluster. Use it for local development, CI, and simple self-hosted
+  deployments.
+
+  For production split deployments, use the dedicated charts:
+    - pal-control-plane (infra/helm/pal-control-plane/)
+    - pal-data-plane    (infra/helm/pal-data-plane/)
+
+  See docs/architecture/17-deployment-model.md for the full deployment
+  architecture.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai-agents
+  - serverless
+  - workflow
+  - llm
+home: https://lantern.run
+sources:
+  - https://github.com/dshakes/lantern
+maintainers:
+  - name: dshakes
+
+# ---------------------------------------------------------------------------
+# Subchart dependencies
+#
+# Redis is the only Bitnami subchart. Postgres (pgvector) and the S3-compatible store are
+# first-party templates (templates/postgresql, templates/minio).
+# Versions are pinned exactly; run `helm dependency build` (uses Chart.lock) to
+# vendor the matching .tgz into charts/ before `helm install`/`helm template`.
+#
+# Each dependency is gated by its `<name>.enabled` value so an operator can skip
+# the in-cluster instance and point PAL Runtime at managed infra (Postgres / Redis /
+# object storage). For this all-in-one chart they default to enabled.
+# ---------------------------------------------------------------------------
+dependencies:
+  - name: redis
+    version: 27.0.10
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

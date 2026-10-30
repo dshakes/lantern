@@ -124,7 +124,7 @@ check_redis() {
 
 check_minio() {
   if ! port_listen 9000; then
-    warn "minio :9000" "no listener" "Run \`lantern dev --infra-only\` or \`make dev\` if you need bundle storage (\`make dev-infra\` starts only Postgres and Redis)"
+    warn "minio :9000" "no listener" "Run \`pal dev --infra-only\` or \`make dev\` if you need bundle storage (\`make dev-infra\` starts only Postgres and Redis)"
     return
   fi
   local code
@@ -242,7 +242,7 @@ check_dashboard() {
 # ---- Main -------------------------------------------------------------------
 
 main() {
-  printf "${BLD}Lantern dev doctor${RST} ${DIM}— $(date '+%H:%M:%S')${RST}\n"
+  printf "${BLD}PAL Runtime dev doctor${RST} ${DIM}— $(date '+%H:%M:%S')${RST}\n"
 
   section "Infrastructure"
   check_docker

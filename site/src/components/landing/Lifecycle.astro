@@ -1,0 +1,66 @@
+---
+// Interactive sandbox lifecycle: spawn -> pause -> fork x3 -> resume.
+// Timings are the measured Lima run in docs/benchmarks/runtime-latency.md
+// (snapshot, restore Spawn RPC, fork_spawn_1..3). No cold-boot number exists
+// there, so spawn shows none. Change these only together with that file.
+import { BLOB } from '../../data/site';
+const STEPS = [
+  { id: 'spawn', label: 'Spawn', ms: '', log: 'Scheduled vm-7f2a. A node was picked, the microVM booted and its harness checked in.' },
+  { id: 'pause', label: 'Pause', ms: '634 ms', log: 'Snapshotted 128 MiB of memory to disk and stopped the VM. Its quota slot is free again.' },
+  { id: 'fork', label: 'Fork ×3', ms: '131 · 145 · 160 ms', log: 'Three forks from one snapshot. Each gets its own id and identity; they share memory pages until one writes.' },
+  { id: 'resume', label: 'Resume', ms: '138 ms', log: 'Restored vm-7f2a from its snapshot. Same id, same memory, picks up where it stopped.' },
+];
+---
+<div class="lc" data-lc data-state="idle">
+  <div class="lc-controls" role="group" aria-label="Sandbox lifecycle steps">
+    {STEPS.map((s, i) => (
+      <button type="button" class="lc-btn" data-go={s.id} disabled={i > 0}>
+        <span class="lc-n">{i + 1}</span>{s.label}
+      </button>
+    ))}
+    <button type="button" class="lc-reset" data-reset>Reset</button>
+  </div>
+  <div class="lc-stage" aria-hidden="true">
+    <div class="lc-vm lc-src">
+      <span class="lc-id">vm-7f2a</span>
+      <span class="lc-state" data-label>not started</span>
+      <span class="lc-bar"><i></i></span>
+    </div>
+    <div class="lc-snap"><span>snapshot</span><b>128 MiB</b></div>
+    <div class="lc-forks">
+      <div class="lc-vm lc-fork"><span class="lc-id">vm-a1c0</span><span class="lc-state">running</span><span class="lc-t">131 ms</span></div>
+      <div class="lc-vm lc-fork"><span class="lc-id">vm-b29e</span><span class="lc-state">running</span><span class="lc-t">145 ms</span></div>
+      <div class="lc-vm lc-fork"><span class="lc-id">vm-c74d</span><span class="lc-state">running</span><span class="lc-t">160 ms</span></div>
+    </div>
+  </div>
+  <div class="lc-read" aria-live="polite">
+    <p class="lc-ms" data-ms>—</p>
+    <p class="lc-log" data-log>Press Spawn to start a sandbox.</p>
+  </div>
+  <p class="lc-note">Times measured on a dev laptop under nested virtualization (Apple M4 Max, Lima; 1 vCPU, 128 MiB VM; 2026-10-27), not production hardware. <a class="link" href={`${BLOB}/docs/benchmarks/runtime-latency.md`}>Method and raw numbers</a>.</p>
+  <script type="application/json" data-steps set:html={JSON.stringify(STEPS)} />
+</div>
+
+<script>
+  type Step = { id: string; label: string; ms: string; log: string };
+  const ORDER = ['idle', 'spawn', 'pause', 'fork', 'resume'];
+  for (const root of document.querySelectorAll<HTMLElement>('[data-lc]')) {
+    const steps: Step[] = JSON.parse(root.querySelector('[data-steps]')!.textContent!);
+    const btns = [...root.querySelectorAll<HTMLButtonElement>('[data-go]')];
+    const ms = root.querySelector<HTMLElement>('[data-ms]')!;
+    const log = root.querySelector<HTMLElement>('[data-log]')!;
+    const label = root.querySelector<HTMLElement>('[data-label]')!;
+    const LABEL: Record<string, string> = { idle: 'not started', spawn: 'running', pause: 'paused', fork: 'paused', resume: 'running' };
+    const set = (state: string) => {
+      root.dataset.state = state;
+      const i = ORDER.indexOf(state);
+      btns.forEach((b, j) => { b.disabled = j !== i; b.classList.toggle('done', j < i); });
+      label.textContent = LABEL[state];
+      const s = steps.find((x) => x.id === state);
+      ms.textContent = s ? (s.ms || 'booted') : '—';
+      log.textContent = s ? s.log : 'Press Spawn to start a sandbox.';
+    };
+    btns.forEach((b) => b.addEventListener('click', () => set(b.dataset.go!)));
+    root.querySelector('[data-reset]')!.addEventListener('click', () => set('idle'));
+  }
+</script>
