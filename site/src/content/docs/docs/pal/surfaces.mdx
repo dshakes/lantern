@@ -3,7 +3,7 @@ title: Surfaces
 description: The channels where people talk to an agent - WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat.
 glance:
   what: "A surface is a channel where people talk to an agent: WhatsApp, iMessage, Slack, Discord, Telegram, voice and web chat."
-  why: "Replies go back on the channel the message came from, with the same agent and guardrails on every channel."
+  why: "One agent and one set of guardrails answer on every channel; the gateway posts replies back for Telegram and WhatsApp Cloud."
   how: "Pick a channel under Available surfaces, then link it to an agent in Assigning surfaces to agents."
 sidebar:
   order: 2
@@ -14,7 +14,7 @@ import { CrossChannelMemory } from '../../../../components/diagrams';
 
 <CrossChannelMemory client:visible />
 
-Seven channels are wired. Replies go back on the channel the message came from, and the agent and its guardrails are the same on each; only the entry point changes. For pal itself, start with the two bridges: WhatsApp (personal) and iMessage.
+Seven channels are wired. The agent and its guardrails are the same on each; only the entry point changes. Replies are posted back by the surface gateway only for Telegram and WhatsApp Cloud; the bridges (WhatsApp personal, iMessage), web chat and voice reply through their own paths, and a Slack or Discord run completes without posting back. For pal itself, start with the two bridges: WhatsApp (personal) and iMessage.
 
 ## Available surfaces
 
@@ -63,7 +63,7 @@ Connect a Telegram bot to an agent:
 Limits:
 
 - The agent needs a promoted version before the gateway can run it: run it once from the dashboard or `POST /v1/runs` first, otherwise the gateway logs `agent has no promoted version`.
-- Replies are plain text, sent once when the run ends (no token streaming to the chat). Replies are wired for Telegram and WhatsApp only; a Slack or Discord run completes but is not posted back.
+- Replies are plain text, sent once when the run ends (no token streaming to the chat). Gateway replies are wired for Telegram and WhatsApp Cloud only.
 - A run that does not finish within 3 minutes gets no reply.
 - `TELEGRAM_API_BASE_URL` re-points Bot API calls at a fixture server for tests; the gateway refuses to start with it when `PAL_ENV` is prod, production or staging.
 

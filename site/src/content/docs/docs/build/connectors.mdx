@@ -14,7 +14,7 @@ import { ConnectorActions } from '../../../../components/diagrams';
 
 <ConnectorActions client:visible />
 
-Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits on a [budget](/docs/build/budgets/) are enforced on workflow tool and connector nodes only.
+Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant, available to every agent in the workspace. Per-tool limits on a [budget](/docs/build/budgets/) are enforced on workflow tool and connector nodes only.
 
 ## Available connectors (18)
 
@@ -167,7 +167,7 @@ A bearer token must never be sent to an arbitrary host, so overrides are blocked
 
 ### OAuth-based connectors
 
-Gmail, Google Calendar, Drive, Sheets, Slack, GitHub and Notion support OAuth. In **Integrations** (`/connectors`), click the connector, click **Connect**, authorize on the service's consent screen, and you land back with the connector installed.
+Most connectors support OAuth (Gmail, Google Calendar, Drive, Sheets, Slack, GitHub, Discord, Notion, Linear, Jira, HubSpot, Stripe, Salesforce) when the deployment has OAuth client credentials configured. In **Integrations** (`/connectors`), click the provider button (for example **Sign in with Google** or **Add to Slack**), authorize on the consent screen, and you land back with the connector installed.
 
 <Aside type="tip">
 Revoke access any time by uninstalling the connector (`DELETE /v1/connectors/{id}`).
@@ -175,15 +175,15 @@ Revoke access any time by uninstalling the connector (`DELETE /v1/connectors/{id
 
 ### API key-based connectors
 
-Linear, Sentry, Vercel, Stripe, Twilio, Telegram and others take a key or token. In **Integrations**, click the connector, use the manual option (for example *Enter bot token*), enter the key and save. Credentials are encrypted at rest (AES-256-GCM) when `PAL_CREDENTIAL_KEY` is set; without it they are plaintext, so set it outside dev.
+Telegram, Twilio, Sentry, PagerDuty and Vercel take a key or token. In **Integrations**, choose the manual option (for example **Enter bot token**) and fill in the credentials; they are tested before the connector shows as connected. Credentials are encrypted at rest (AES-256-GCM) when `PAL_CREDENTIAL_KEY` is set; without it they are plaintext, so set it outside dev.
 
 <Aside type="caution">
 Credentials never appear in logs, traces or run state. Connector actions run in the control plane, which resolves the credential at call time.
 </Aside>
 
-## Per-agent connector assignment
+## Which agents can use a connector
 
-An agent can only use connectors explicitly assigned to it. On the agent's detail page, toggle the connectors in its **Connectors** section.
+Connectors are installed per workspace, not per agent: once connected, every agent in the workspace can call it. To limit blast radius, use [budgets](/docs/build/budgets/) `toolLimits` (workflow nodes only), the approval and confidence gates, or a separate workspace. The agent page's Connectors card is a read-only list linking to `/connectors`.
 
 ## How agents use connectors
 
@@ -196,7 +196,7 @@ curl -X POST "http://localhost:8080/v1/connectors/gmail/execute?action=search" \
   -d '{"query": "from:boss@company.com subject:urgent"}'
 ```
 
-PAL Runtime classifies list, get, search and query actions as read-only; everything else (send, post, create) counts as side-effecting. In the workflow engine, [confidence gating](/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
+PAL Runtime keeps an explicit allowlist of read-only actions (for example `list_*`, `get_*`, `search`, `query` on the built-in connectors); every other action, including any on an unknown connector, counts as side-effecting. Agents receive a curated subset of actions as tools (for example `github__list_prs`, `slack__post_message`, `gmail__search`); the full list above is always callable over REST and from workflow connector nodes. Install needs `connectors:write`; `execute` needs `runs:execute`. In the workflow engine, [confidence gating](/docs/pal/human-in-the-loop/) (off by default) can route side-effecting steps to a human first.
 
 ## Connector permissions
 

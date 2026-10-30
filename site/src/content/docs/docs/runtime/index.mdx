@@ -54,9 +54,11 @@ manifest:
   isolation: microvm          # routes this agent version to the microVM stack
   image_digest: …@sha256:…
   limits: { vcpu: "250m", memory: "128Mi", timeout: "60s" }
-  egress_rules: [{ host: "api.openai.com" }]
+  egress_rules: [{ pattern: "api.openai.com" }]
   idempotent: true
 ```
+
+`isolation: microvm` selects the microVM tier and schedules the workload with isolation class `standard`. To choose a stronger class (`untrusted`, `hostile`, `wasm`), schedule a headless agent with `pal run agent.yaml`; see [Isolation classes](/docs/runtime/isolation/).
 
 The in-guest tool runner gives the harness a typed tool registry: `shell_exec`, `http_fetch`, `read_file`, `write_file` and `list_dir`. File tools are confined to `/workspace`. Workflow-graph agents reach it through the engine's `tool_call` step.
 
@@ -88,11 +90,12 @@ Checkpointing, auto-restart, throttling and monitoring, with environment-variabl
 
 | Capability | Mechanism | Knobs / views |
 | --- | --- | --- |
-| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots persisted to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
-| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `PAL_RESUME=1`, at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
+| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots kept on the node and optionally mirrored to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
+| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `LANTERN_RESUME=1` (`PAL_RESUME=1` is accepted as an alias), at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
 | Throttling | Budget gate blocks over-budget runs with 402. Per-tenant concurrent-VM hard cap (gRPC `ResourceExhausted`). Spawn-storm guard returns 429. Per-step timeout | `PAL_SPAWN_RATE_PER_MIN` (default 120), `PAL_SPAWN_BURST`, [Budgets](/docs/build/budgets/) |
 | Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `pal vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
-| Telemetry | Five `lantern.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/observability/) |
+| Backend | One per runtime-manager process, `RUNTIME_BACKEND` = `k8s` (default), `firecracker`, `kata`, `docker`, `wasm` | `RUNTIME_BACKEND` |
+| Telemetry | Five `lantern.run.*` OTel metrics (the names keep the legacy prefix). Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/observability/) |
 | Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/docs/security/receipts/), [Observability](/docs/observability/) |
 
 Interactive multi-turn agents use sessions, which run on the shared tier ([Agents](/docs/build/agents/)). For how the control plane, scheduler, manager and harness collaborate, see [Runtime internals](/docs/runtime/architecture/).

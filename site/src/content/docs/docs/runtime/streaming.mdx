@@ -68,6 +68,10 @@ Emitted when the LLM call fails mid-stream after at least one delta has been sen
 }
 ```
 
+<Aside type="caution" title="Failure before the first delta">
+If the provider fails before any delta is sent, no `message_error` is emitted. The turn ends with a legacy `agent.message` (a canned "give me a sec" reply) plus `session.status_idle`, which `streamMessage()` ignores, so set a timeout around the iterator (derived from code, not run).
+</Aside>
+
 <Aside type="caution" title="Tool-bearing turns do not stream deltas">
 When the session has tools attached, the LLM call runs through a non-streaming tool-use loop (up to 5 rounds). For those turns the client receives a single `message_completed` without any preceding `message_delta` events.
 </Aside>

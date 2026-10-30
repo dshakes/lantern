@@ -53,7 +53,7 @@ An S3 upload failure is logged and does not fail the snapshot; the local copy is
 
 Each snapshot stores `mem` (up to the VM's RAM) plus a full copy of the disk, and every restore or fork copies the disk again. Disk capture happens while the VM is paused, so it adds to pause time (the copy reflinks on XFS/btrfs and byte-copies elsewhere). On the jailed path forks share the memory file via a hard link, so only the disk is copied per fork.
 
-Indicative numbers from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-27), measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). Dev laptop, nested virtualization: not production numbers. (Firecracker's own ~125 ms bare-metal cold boot is a published figure, not our measurement.)
+Indicative numbers from [`docs/benchmarks/runtime-latency.md`](repo:/blob/master/docs/benchmarks/runtime-latency.md) (run 2026-10-27), measured in a Lima nested-virt guest on an Apple M4 Max (aarch64, 1 vCPU, 128 MiB VM, jailed). Dev laptop, nested virtualization: preliminary, not production numbers. (Firecracker's own ~125 ms bare-metal cold boot is a published figure, not our measurement.)
 
 | Step | Indicative |
 | --- | --- |

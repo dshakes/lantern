@@ -63,8 +63,10 @@ POST /v1/marketplace/publish
 DELETE /v1/marketplace/{slug}     # unpublish
 ```
 
+Returns `{ id, slug, url }`. The slug is `<your-tenant-slug>-<agent-name>`.
+
 <Aside type="caution">
-Anyone can read a published agent's manifest, including its system prompt. Do not put secrets in a manifest. Use `lantern.secret/...` refs, which each tenant resolves from its own store at run time.
+Any signed-in tenant can read a published agent's manifest, including its system prompt (`GET /v1/marketplace` and `/{slug}` return 401 without auth); the public A2A card needs no auth. Do not put secrets in a manifest. Use `lantern.secret/...` refs (the ref prefix keeps its original name), which each tenant resolves from its own store at run time.
 </Aside>
 
 ## Discovering and forking agents
@@ -76,6 +78,8 @@ POST /v1/marketplace/{slug}/fork            { "newName": "my-copy" }
 POST /v1/marketplace/{slug}/star
 ```
 
+Fork returns `{ agentId, agentName }`.
+
 A fork is a normal agent in your tenant. Edit its prompt, swap models, add connectors; the original is unaffected.
 
 ## Cross-tenant invocation (commerce)
@@ -86,12 +90,21 @@ A buyer can invoke a published agent without forking it. The run executes in the
 POST /v1/marketplace/{slug}/invoke
 { "input": { "topic": "..." } }
 
-Receipt fields: invocationId, buyerTenant, sellerTenant, marketplace,
-  agentName, runId, costUsd, issuedAt, signature, algorithm
-
 GET /v1/marketplace/invocations?role=buyer    # buyer-side history
 GET /v1/marketplace/invocations?role=seller   # seller-side history
 ```
+
+Invoke returns `{ invocationId, status, output, costUsd, signature, sellerTenantId, agentName, issuedAt, receipt }`. The `receipt` object carries invocationId, buyerTenant, sellerTenant, marketplace, agentName, runId, costUsd, issuedAt, signature and algorithm. Verifying it needs the platform signing key; there is no public verifier for these yet.
+
+| Status | When |
+| --- | --- |
+| 400 | Input fails the manifest's `inputSchema` |
+| 402 | Seller budget reached |
+| 404 | Unknown slug |
+| 502 | The seller run failed |
+| 503 | Execution unavailable |
+
+There is no `pal marketplace` command; the Python SDK has `client.marketplace`.
 
 ## Cross-platform interop
 

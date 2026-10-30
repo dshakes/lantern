@@ -32,7 +32,7 @@ An *agent* is an AI worker with a name and instructions. A *run* is one executio
 
 ## In the dashboard
 
-Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (dev seed: `admin@lantern.dev` / `lantern`). A conversation on the right, a progress rail on the left.
+Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (the seeded dev account; the e-mail domain is a legacy name: `admin@lantern.dev` / `lantern`). A conversation on the right, a progress rail on the left.
 
 <Steps>
 
@@ -76,6 +76,8 @@ pal onboard --yes \
   --description "Summarize support tickets into one-line triage notes"
 ```
 
+Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@lantern.dev --password lantern`.
+
 ## Under the hood
 
 Both paths use public endpoints you can script:
@@ -84,25 +86,25 @@ Both paths use public endpoints you can script:
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
-H="Authorization: Bearer $PAL_TOKEN"
+H="Authorization: Bearer $PAL_TOKEN"; J="Content-Type: application/json"
 
 # 1. Provider key + a real test call
-curl -s -X POST localhost:8080/v1/settings/llm-providers -H "$H" \
+curl -s -X POST localhost:8080/v1/settings/llm-providers -H "$H" -H "$J" \
   -d '{"provider":"anthropic","apiKey":"sk-ant-..."}'
 curl -s -X POST localhost:8080/v1/settings/llm-providers/anthropic/test -H "$H"
 
 # 2. Design an agent from a goal (returns the spec: name, systemPrompt, firstInput, rationale, steps)
-curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" \
+curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" -H "$J" \
   -d '{"description":"Turn meeting notes into action items"}' | tee spec.json
 
 # 3. Create it (the instruction field is systemPrompt)
 jq '{name, description, systemPrompt}' spec.json | \
-  curl -s -X POST localhost:8080/v1/agents -H "$H" -d @-
+  curl -s -X POST localhost:8080/v1/agents -H "$H" -H "$J" -d @-
 
 # 4. Run it with the suggested first task, then stream events (named SSE events)
 RUN_ID=$(jq --argjson i "$(jq .firstInput spec.json)" -n \
   "{agentName: \"$(jq -r .name spec.json)\", input: \$i}" | \
-  curl -s -X POST localhost:8080/v1/runs -H "$H" -d @- | jq -r .id)
+  curl -s -X POST localhost:8080/v1/runs -H "$H" -H "$J" -d @- | jq -r .id)
 curl -N localhost:8080/v1/runs/$RUN_ID/events -H "$H" -H "Accept: text/event-stream"
 ```
 

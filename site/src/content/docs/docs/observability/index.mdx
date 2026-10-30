@@ -1,8 +1,8 @@
 ---
 title: Observability
-description: One OTel trace per spawn, GenAI token telemetry, the five lantern.run.* metrics, anomaly detection and the service-health sweep.
+description: One OTel trace per spawn, GenAI token telemetry, the lantern.* run metrics, anomaly detection and the service-health sweep.
 glance:
-  what: "One OpenTelemetry trace per run tagged with tenant, run and step ids, GenAI token attributes, the five lantern.run.* metrics and anomaly events."
+  what: "One OpenTelemetry trace per run tagged with tenant, run and step ids, GenAI token attributes, the lantern.* run metrics and anomaly events."
   why: "You can answer what an agent is doing now, and what it did last Tuesday, with one id."
   how: "Set OTEL_EXPORTER_OTLP_ENDPOINT, then query your trace backend for lantern.run_id=<run_id>."
 sidebar:
@@ -65,9 +65,9 @@ Control-plane spans use the first four keys, set via `internal/middleware.Enrich
 | Cost USD | `cost_usd` | Model-router completion span |
 | Tokens in / out | `tokens_in` / `tokens_out` | Model-router completion span |
 
-## The five `lantern.run.*` metrics
+## The `lantern.*` run metrics
 
-The inline executor emits five OTel metric instruments via the `lantern.runtime` meter (`internal/middleware/metrics.go`). They are no-ops when the global `MeterProvider` is unset (the default no-op provider is safe to import with zero overhead).
+The control plane registers seven OTel metric instruments via the `lantern.runtime` meter (`internal/middleware/metrics.go`). They are no-ops when the global `MeterProvider` is unset (the default no-op provider is safe to import with zero overhead).
 
 | Instrument | Type | Attributes | Description |
 | --- | --- | --- | --- |
@@ -76,6 +76,8 @@ The inline executor emits five OTel metric instruments via the `lantern.runtime`
 | `lantern.run.replay.skips` | Counter | `lantern.agent_name` | `CompletedStep` cache hits during crash-resume. Each hit means one node was skipped rather than re-executed. |
 | `lantern.run.budget.blocks` | Counter | `lantern.agent_name` | Runs denied by the agent's hard-fail budget policy (HTTP 402). |
 | `lantern.run.total` | Counter | `lantern.agent_name`, `lantern.tier`, `lantern.status` | Total runs dispatched through the inline executor. `lantern.tier` is currently always `shared`; `lantern.status` is `succeeded` or `failed` (workflow runs whose steps failed are counted as `succeeded`, a known gap). |
+| `lantern.budget.check.errors` | Counter | `lantern.budget_check` (`tenant`, `agent`, `run`, `tool`), `lantern.agent_name` | Budget lookups that errored and failed closed. |
+| `lantern.onboarding.step.total` | Counter | `lantern.onboarding_step`, `lantern.onboarding_event` | Steps of the agentic onboarding flow. |
 
 ## Real-time anomaly detection
 
@@ -127,8 +129,8 @@ Returns a `vmMetricsDTO` array with `vmId`, `state`, `node`, `az`, `isolationCla
 
 The **gateway** emits one span per HTTP request (`gateway.request`, tagged with `tenant_id`) via OTLP/HTTP. The **model-router** emits one span per routing call tagged with `tenant_id`, `run_id`, `step_id`, `model_used`, `tokens_in/out`, `cost_usd`, and `escalated` via OTLP/gRPC. Both honour inbound W3C `traceparent`, so spans join the caller's distributed trace automatically.
 
-<Aside type="caution" title="No Prometheus histograms yet for gateway / model-router">
-Latency SLOs live in your tracing backend (Tempo / Jaeger / Honeycomb). Alert rules that would cover p99 latency are parked in the `pal-TODO-needs-instrumentation` group in `infra/monitoring/prometheus/alerts.yml` until the histogram metric ships.
+<Aside type="caution" title="The gateway has no Prometheus metrics yet">
+The model-router and runtime-manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set (ports 9465 and 9466 in ADR 0041); the gateway still emits traces only, so its latency SLO lives in your tracing backend (Tempo / Jaeger / Honeycomb). Rules that need a missing series are parked in the `pal-TODO-needs-instrumentation` group in `infra/monitoring/prometheus/alerts.yml`.
 </Aside>
 
 ## Find a run, its logs and its audit trail
@@ -159,5 +161,24 @@ Production monitoring artifacts live in `infra/monitoring/`:
 | `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | runtime-scheduler `:8085/metrics` |
 | `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | `up` scrape + blackbox `/readyz` |
 | `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | postgres_exporter + custom queries |
+| `pal-instrumented-slos` | ControlPlane5xxRateHigh, ControlPlane403RateElevated, RunFailureRateHigh, BudgetDenied402Surge | control-plane `:9464` |
 
 Operator runbooks live in `docs/runbooks/` and are linked from each alert's `runbook:` annotation in `alerts.yml`. Grafana dashboards: `grafana/platform-overview.json` and `grafana/data-plane-runtime.json`.
+
+## SLOs and error budgets
+
+Ten SLOs over a 28-day window are defined once in the Helm values (`monitoring.slos`: SLI as bad over total, objective, job, runbook); recording rules and alerts are generated from that list (ADR 0041).
+
+| SLO | Objective |
+| --- | --- |
+| control-plane API availability / latency (under 1 s) | 99.9% / 99% |
+| run success | 98% |
+| scheduling availability / latency (under 1 s) | 99.5% / 99% |
+| model-router errors | 99.5% |
+| microVM spawn availability | 99.5% |
+| microVM cold boot (under 5 s) / snapshot restore (under 2 s) | 95% / 99% |
+| egress-broker errors | 99.5% |
+
+Alerts burn on multiple windows: page at 14.4x over 1 h and 5 m or 6x over 6 h and 30 m, ticket at 3x over 1 d and 2 h or 1x over 3 d and 6 h. Both windows must exceed the threshold, so a burst that already ended does not page. A policy deny at the egress broker counts as good; only platform faults burn that SLO.
+
+`monitoring.alerts.enabled` renders a `PrometheusRule` (needs the prometheus-operator CRDs; on in `values-prod.yaml`) and `monitoring.dashboards.enabled` a Grafana dashboard. Each alert links its `docs/runbooks/slo-*.md` runbook. The targets were chosen without production history, so review them after the first full window.

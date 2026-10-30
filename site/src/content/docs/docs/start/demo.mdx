@@ -15,15 +15,15 @@ Every visitor gets a private workspace with sample agents and a guided tour, del
 
 ```bash
 # From a PAL checkout. Needs Docker; make demo also needs openssl.
-make demo               # builds, starts; prints "demo: http://localhost:3001/kiosk"
+make demo               # starts and returns; open http://localhost:3001/kiosk once the dashboard is up
 make demo-down          # stop and delete all demo data
 
-# Same stack through the CLI (go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal from packages/cli):
+# Same stack through the CLI (build it with ./cmd/pal from packages/cli):
 pal demo            # builds, waits until healthy, opens the browser (--no-open to skip)
 pal demo --down     # stop and delete all demo data
 ```
 
-The stack is a separate compose project (`pal-demo` from `make demo`, `lantern-demo` from `pal demo`) and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images and is slow. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both commands honour them). If something fails to start, use `docker compose -p <project> logs` with the project name above.
+The stack is a separate compose project (`pal-demo` from `make demo`, `lantern-demo` from `pal demo`; stop a demo with the command that started it) and starts only Postgres, Redis, the control plane, the dashboard and the replay server (no gateway, model router, workflow engine or MinIO). The first run builds images and is slow. The control plane is published on `:8080` and the dashboard on `:3001`, the same host ports as `make dev`: stop one before starting the other, or set `KIOSK_API_PORT` and `KIOSK_WEB_PORT` (both commands honour them). If something fails to start, use `docker compose -p <project> logs` with the project name above.
 
 Press **Start demo**. The tour has five steps over real pages: the inbox, running an agent (watch the step waterfall), a budget that returns HTTP 402, a signed-receipt check at `/proof`, and the sandbox view. After 120 seconds without input, or when the 30-minute timer ends, the session is closed and the workspace deleted.
 

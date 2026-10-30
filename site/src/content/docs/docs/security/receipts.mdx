@@ -35,6 +35,7 @@ The signature (**Ed25519** when `PAL_RECEIPT_ED25519_SEED` is set) covers the ca
 - `tenantId`: always present.
 - `tokensIn` / `tokensOut`: prompt and completion token counts.
 - `version`: schema version (currently `1`).
+- `softwareMeasurement`: the host-asserted launch measurement ([Identity and secrets](/docs/security/identity/#software-measurement-of-the-launched-vm)); omitted for runs that did not use a microVM or when measurement was not configured.
 - `confidentialCompute`: present only for confidential runs (`attested: false`: the launch measurement is recorded, not verified).
 
 The canonical JSON is produced by a three-step round-trip: marshal the struct, unmarshal into `map[string]any`, re-marshal (Go sorts map keys alphabetically on re-marshal). The result is compact JSON with keys in alphabetical order, reproducible offline with any JSON library that sorts keys.

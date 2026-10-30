@@ -42,7 +42,9 @@ Fill the form yourself:
 
 ### 3. From a template
 
-Pick a template in the dashboard and edit it. The CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
+The dashboard offers its own ready-made agents (research, support, code review, email digest and more); the CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
+
+Over REST, `GET /v1/agents/templates` lists templates, `POST /v1/agents/from-template` creates an agent from one (`agents:write`), and `GET /v1/agents/{name}/setup` reports which connectors or channels the agent still needs.
 
 ```bash
 pal init my-agent --template research
@@ -102,6 +104,8 @@ Agents can be triggered in several ways:
 - **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/docs/build/triggers/).
 - **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/docs/pal/surfaces/).
 
+API keys need `agents:write` to create or update agents and `runs:execute` to start runs.
+
 ## Workflow tool nodes
 
 A `tool` node in a saved workflow graph really executes, or the step fails. There is no simulated success. Routing is by tool name:
@@ -140,9 +144,10 @@ Each agent run goes through these states:
 
 1. **Queued**: the run is waiting to be picked up
 2. **Running**: steps are actively executing
-3. **Succeeded**: all steps finished successfully
-4. **Failed**: a step failed after exhausting retries
-5. **Cancelled**: manually stopped by the user
+3. **Paused**: waiting on a human approval, takeover or signal
+4. **Succeeded**: all steps finished successfully
+5. **Failed**: a step failed after exhausting retries
+6. **Cancelled**: manually stopped by the user
 
 A run that crashes mid-step is picked up by the recovery sweep (30 s by default, `PAL_RECOVERY_INTERVAL`); completed workflow steps are skipped, not re-run.
 

@@ -10,6 +10,7 @@ sidebar:
 ---
 
 import Diagram from '../../../../components/Diagram.astro';
+import { Aside } from '@astrojs/starlight/components';
 import { EgressSequence, BrokerDemo } from '../../../../components/diagrams';
 
 <EgressSequence client:visible />
@@ -38,6 +39,14 @@ In broker mode (`PAL_EGRESS_MODE=broker`) the VM has no network device, so a cli
 Specs reference secrets by `secret_uri`, never by value. The broker resolves the ref on the host and sets the header on the outbound request, so the secret exists only on the host side of the vsock. A compromised workload cannot exfiltrate a key it never received.
 
 For HTTPS, the broker terminates TLS only for hosts whose rule injects a credential, using a per-VM ephemeral CA that is name-constrained to those hosts. Every other host is an opaque CONNECT tunnel with end-to-end TLS.
+
+## Data-loss prevention
+
+Broker mode can also scan outbound request headers and the first part of the body (64 KiB by default, 1 MiB ceiling) for cards (Luhn-checked), secret keys (AWS, GitHub, Slack, PEM), emails, phones and your own RE2 patterns (ADR 0030). Each rule runs in `off`, `audit` or `block` mode; a block returns 403 with `X-Lantern-Reason: dlp-block`. Rules are per tenant: `GET`/`PUT /v1/egress/dlp-policy` and `POST /v1/egress/dlp-policy/rules`, fixed when a VM is scheduled.
+
+<Aside type="caution">
+DLP needs broker mode: a node without it refuses a spawn whose policy has a `block` rule. It is a guard rail and an audit trail, not containment. Opaque CONNECT tunnels are never inspected, only a body prefix is scanned, and encoded data is not detected.
+</Aside>
 
 ## See it on a real VM
 

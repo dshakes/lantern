@@ -18,6 +18,7 @@ What you do after `helm install`: scrape the metrics, wire the alerts, keep back
 One chart, `infra/helm/pal`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
+helm dependency build ./infra/helm/pal
 helm install pal ./infra/helm/pal \
   --namespace pal --create-namespace \
   --values infra/helm/pal/values-prod.yaml
@@ -38,7 +39,7 @@ curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duratio
 
 You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
-Gateway and model-router emit traces only, no Prometheus histograms yet, so their latency SLOs live in your tracing backend (see [Observability](/docs/observability/#gateway-and-model-router-traces)).
+The gateway emits traces only, and the model-router and runtime-manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set, so gateway latency lives in your tracing backend. The 28-day SLOs and burn-rate alerts are described under [SLOs and error budgets](/docs/observability/#slos-and-error-budgets). See [Observability](/docs/observability/#gateway-and-model-router-traces).
 
 ## Alert groups
 
@@ -49,7 +50,7 @@ Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`
 | `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | scrape job `pal-runtime-scheduler` on `:8085` |
 | `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | jobs `pal-control-plane`, `pal-gateway`, `pal-model-router`, and a blackbox probe `pal-control-plane-readyz` on `/readyz` |
 | `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | `postgres_exporter` with `postgres-exporter-queries.yaml` |
-| `pal-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
+| `pal-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), ControlPlane403RateElevated, RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
 
 The job names must match the ones in the rules. Gateway and model-router p99 rules are parked, commented out, in a "needs instrumentation" group: do not enable a rule before its series exists, because a rule over a missing series is silently always green. `RunFailureRateHigh` counts inline-executor runs only; microVM-tier runs are not counted yet.
 

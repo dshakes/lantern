@@ -17,10 +17,10 @@ import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. **Boot the stack** (Docker for Postgres, Redis and MinIO; the API and dashboard run on the host):
+1. **Boot the stack** (Docker for Postgres, Redis and MinIO; the API and dashboard run on the host, so you need Go 1.26+ and Node 22+, see [Installation](/docs/start/installation/)):
 
    ```bash
-   pal dev                 # API :8080, dashboard :3001, logs in one terminal
+   pal dev                 # API :8080, dashboard :3001, WhatsApp bridge :3100 (iMessage bridge on macOS); logs in one terminal
    pal dev --infra-only    # just the containers, if you run the API yourself
    ```
 
@@ -43,7 +43,7 @@ import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
    pal agent dev my-agent --input '{"prompt":"hi"}' --eval
    ```
 
-   On every change to `agent.yaml` or a `.yaml`, `.ts`, `.py`, `.js` or `.json` file it:
+   On every change to `agent.yaml` or any `.yaml/.yml`, `.json`, `.ts/.tsx`, `.js/.jsx`, `.py` or `.go` file it:
    1. publishes a new agent version,
    2. fires a smoke run with `--input`,
    3. streams `step_started`, `step_completed`, `step_failed` and `confidence_evaluated` as a waterfall,
@@ -54,7 +54,7 @@ import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
 4. **Gate it like CI will:**
 
    ```bash
-   pal test --agent my-agent --suite factual-accuracy          # non-zero exit on regression
+   pal test --agent my-agent --suite <your-suite>          # non-zero exit on regression
    pal test --agent my-agent --rehearse --window 24h          # replay recent real failures
    ```
 
@@ -74,7 +74,7 @@ import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
 </details>
 
 <Aside type="tip" title="Real microVMs on a Mac">
-Runs in the inner loop use the shared tier by default. To exercise the microVM tier locally, see [Run real microVMs on your Mac](/docs/runtime/local-microvms/).
+`pal dev` prints at start-up whether the sandbox is a stub or a real runtime. Runs in the inner loop use the shared tier by default. To exercise the microVM tier locally, see [Run real microVMs on your Mac](/docs/runtime/local-microvms/).
 </Aside>
 
 When the loop is green, [deploy it](/docs/start/deploy/).

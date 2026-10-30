@@ -69,3 +69,15 @@ A skill is a prompt, not code: it can search the web and reply to you, and nothi
 `what did I miss`, `catch me up` or `what happened while I was out`, optionally with `last 3 hours`, `today` or `overnight` (default: 6 hours). pal gathers the contacts waiting on you and what it did on your behalf, and writes a short recap with the important things first. If the model call fails you still get a ranked list.
 
 <Recap client:visible />
+
+## Also running in the background
+
+| What | Behavior | Off switch |
+| --- | --- | --- |
+| Commitment ledger | Promises you made stay open until pal sees evidence in your messages or mail that they are done. It then tells you `✅ closed: <title> — saw: "<quote>"`, quoting the evidence word for word. | `PAL_COMMITMENT_LEDGER=0` |
+| Event scout | Weekly, pal searches the web for events near you over the next 60 days and sends a short numbered list. `book 1,3` adds picks to Calendar with reminders; `scan events` runs it now. WhatsApp's scheduled scan is off unless `PAL_EVENT_SCOUT_WA=1`. | `PAL_EVENT_SCOUT=0` |
+| Live watches | When a contact mentions something still unfolding (a flight in the air, a game), pal re-checks it with web search and sends one follow-up text when it resolves. One per contact, at most 12 hours. | `PAL_LIVE_WATCH=0` |
+| Life events | Bills, deliveries, appointments, receipts and similar messages are classified and shown in the dashboard Automations feed, with a per-kind trust setting (`auto`, `ask`, `off`) and undo. | `PAL_LIFE_EVENT_AUTOACT` sets the default |
+| Mac actions | When you say yes to a follow-up pal offered, it adds the Calendar event, Note or Mail draft itself, without another model call. Owner chat only. | none; owner-only by design |
+
+All of these respect the kill switch, mute and quiet hours.

@@ -35,7 +35,7 @@ The workload never ships with secrets. Instead it requests them at runtime via t
 The control-plane resolves `lantern.secret/...` references through a relay endpoint protected by a pre-shared `X-Lantern-Runtime-Token` header (SHA-256 compared, set via `PAL_RUNTIME_SECRET_TOKEN`; the endpoint returns 403 when unset).
 
 <Aside type="caution">
-mTLS between the runtime-manager and control-plane is the planned stronger follow-up and is not yet implemented.
+The relay is authenticated by the pre-shared token. The manager-to-control-plane hop also uses mutual TLS when `PAL_GRPC_TLS_*` is configured (ADR 0043).
 </Aside>
 
 ## The `lantern.secret/...` ref form
@@ -65,3 +65,11 @@ Vending still puts a short-lived value inside the VM, so a compromised workload 
 - **Per-VM mTLS.** The manager binds the `vm_id` reported on a vend to the mTLS peer certificate, so a workload cannot claim to be another VM. When the VM terminates its instance token stops working.
 - **Dev stub.** Without a manager, the harness reads secrets from its own environment when `PAL_ALLOW_SECRET_STUB=1`. Never set it in production.
 - **Credential encryption.** Provider keys and connector tokens are AES-256-GCM encrypted at rest with `PAL_CREDENTIAL_KEY`; the control plane refuses to start in production without it. See [Environment variables](/docs/reference/env-vars/).
+
+## Software measurement of the launched VM
+
+Each Firecracker VM gets a SHA-256 measurement over its kernel, rootfs, harness, boot arguments and spawn contract (ADR 0031). Secrets and per-VM identity are excluded, so two VMs from the same images and spec match. `PAL_MEASUREMENT_GATE` on the runtime-manager is `off`, `warn` (the default) or `enforce`, which refuses a VM whose measurement matches no reference.
+
+<Aside type="caution">
+The measurement is host-asserted: the manager hashes the files it is about to boot and records what it launched. It does not prove what ran inside the VM, and a compromised host could forge it. Hardware attestation (ADR 0023) is a separate mechanism that needs confidential-compute hardware and is unverified here. The value appears as `softwareMeasurement` in [receipts](/docs/security/receipts/) for microVM runs.
+</Aside>

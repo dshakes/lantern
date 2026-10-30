@@ -132,7 +132,7 @@ Keys are AES-256-GCM encrypted at rest when `PAL_CREDENTIAL_KEY` is set (plainte
 
 ## Model-router service
 
-A separate Rust model-router service exists (gRPC `:50053`, Anthropic and OpenAI providers). The control plane only routes plain completions through it when `PAL_USE_MODEL_ROUTER=1`; it is **off by default**, and any router error falls back to the direct path. Enable it on a non-critical tenant first.
+A separate Rust model-router service exists (gRPC `:50053`, address set with `PAL_MODEL_ROUTER_ADDR`, default `model-router:50053`; Anthropic and OpenAI providers). The control plane only routes plain completions through it when `PAL_USE_MODEL_ROUTER=1` (also `true` or `on`); it is **off by default**, and any router error falls back to the direct path. Enable it on a non-critical tenant first.
 
 The router has its own, separate mapping. The control plane resolves a model first using the table above, converts it back to a router capability (Opus to `reasoning-frontier`, Sonnet to `reasoning-large`, Haiku to `reasoning-small`, `gpt-4o` to `chat-large`, `-mini` to `chat-small`, anything else to `auto`), and the router then picks the concrete model for that capability. Each provider supports a capability only if it lists it exactly:
 

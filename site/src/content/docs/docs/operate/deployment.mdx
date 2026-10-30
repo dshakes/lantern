@@ -20,7 +20,7 @@ The control plane decides what should run (dashboards, scheduling, budgets). The
 
 ## Architecture: the control plane / data plane split
 
-The control plane never runs user code. Specs, identity and trace context go down; heartbeats, step events and audit come back, token-authenticated (mTLS is planned). Prompts and data stay in your VPC.
+The control plane never runs user code. Specs, identity and trace context go down; heartbeats, step events and audit come back, over server-authenticated TLS with a bootstrap token and session JWT (no client certificates). Prompts and data stay in your VPC.
 
 <Diagram name="your-cloud" />
 
@@ -68,9 +68,15 @@ You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity be
 The repo ships three charts under `infra/helm/`: `pal` (everything in one release, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`), plus `pal-control-plane` and `pal-data-plane` for the split topology (the data-plane chart installs the workflow engine, runtime manager and the agent that tunnels out to your control plane; see its README). The rest of this page documents `pal`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
+helm dependency build ./infra/helm/pal    # vendors the Redis subchart
 helm install pal ./infra/helm/pal \
   --namespace pal --create-namespace \
-  --values infra/helm/pal/values-prod.yaml
+  --values infra/helm/pal/values-prod.yaml \
+  --set secrets.jwtSecret="$JWT_SECRET" \
+  --set secrets.credentialKey="$PAL_CREDENTIAL_KEY" \
+  --set secrets.receiptSecret="$PAL_RECEIPT_SECRET" \
+  --set secrets.grpcServiceToken="$PAL_GRPC_SERVICE_TOKEN" \
+  --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
 ```
 
 Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. To stand up a cluster for a data plane in another cloud, use the Terraform path below.
@@ -116,12 +122,18 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 `pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
 
 ```bash
-pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
-cd terraform
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates lantern-data-plane-aws/ (override with the output-dir flag)
+cd lantern-data-plane-aws
 terraform init
 terraform plan
 terraform apply
 ```
+
+## Multi-region (active-passive)
+
+Opt-in and flag-gated (ADR 0046). A standby region runs the same chart read-only (`PAL_READ_ONLY=1`: HTTP 503 with `Retry-After`, gRPC `UNAVAILABLE`) against a cross-region Postgres read replica and a replicated bucket. A fence epoch in the `pal_region_fence` table (`PAL_FENCE_EPOCH`, `PAL_REGION`) stops a stale region from writing runs, locks or journal rows after a failover. Data-plane agents take an ordered list in `PAL_CONTROL_PLANE_ENDPOINTS` (primary first) and probe for failback every `PAL_CONTROL_PLANE_FAILBACK_INTERVAL` (default 60 s).
+
+Targets are RPO of 1 minute for Postgres and 15 minutes for S3 bundles, RTO of 30 minutes. Promotion is manual; automated promotion is future work. Follow the [region-failover runbook](repo:/blob/master/docs/runbooks/region-failover.md).
 
 ## Namespace isolation
 

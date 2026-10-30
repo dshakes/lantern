@@ -20,7 +20,7 @@ import { MicroVmRunSequence } from '../../../../components/diagrams';
 From the repo root, in separate terminals:
 
 ```bash
-make dev-infra            # Postgres + Redis + MinIO
+make dev-infra            # Postgres + Redis (MinIO is not started)
 make run-runtime-manager  # runtime-manager on :50054
 make run-scheduler        # scheduler on :50055 / :8085
 make run-api-runtime      # control-plane wired to the scheduler, :8080
@@ -77,21 +77,23 @@ pal run examples/headless-agents/01-hello/agent.yaml \
 
 The CLI posts the parsed spec to `POST /v1/runtime/schedule`. Add `--follow` to stream logs after scheduling.
 
-The response carries a `vm_id`. If you are over your per-tenant quota the call returns HTTP 402 instead of scheduling.
+The response (HTTP 201) carries a `vmId`. If it also carries `"stub": true`, the control plane is on the stub scheduler and nothing was spawned: set `PAL_SCHEDULER_GRPC_ADDR` (`make run-api-runtime` does this). Over your per-tenant quota, the call returns HTTP 402 instead.
+
+For debugging, `pal vm exec <id> -- <cmd>` runs a command in the VM, and `--idle-timeout N` auto-suspends an idle sandbox.
 
 ## 4. Watch logs, traces and cost
 
 Stream the harness log lines over SSE:
 
 ```bash
-curl -N http://localhost:8080/v1/runtime/vms/<vm_id>/logs \
+curl -N http://localhost:8080/v1/runtime/vms/<vmId>/logs \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
 Inspect the instance and its recent audit events:
 
 ```bash
-curl http://localhost:8080/v1/runtime/vms/<vm_id> \
+curl http://localhost:8080/v1/runtime/vms/<vmId> \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
@@ -102,7 +104,7 @@ Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log
 A clean-exiting workload is torn down automatically. To drain and stop one early:
 
 ```bash
-curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vm_id>?grace=30s" \
+curl -X DELETE "http://localhost:8080/v1/runtime/vms/<vmId>?grace=30s" \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 

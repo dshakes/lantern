@@ -23,7 +23,7 @@ Local development needs none of these: `make run-api` sets the database, Redis a
 
 | Service | Must be set |
 | --- | --- |
-| Control plane | `JWT_SECRET`, `PAL_RECEIPT_SECRET`, `PAL_CREDENTIAL_KEY`, `PAL_GRPC_SERVICE_TOKEN`, `PAL_RLS_ENFORCE=1` with `PAL_APP_DB_PASSWORD`, `PAL_CONTROL_PLANE_TLS_CERT`/`_KEY`, `PAL_SCHEDULER_GRPC_ADDR`, `PAL_RUNTIME_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
+| Control plane | `JWT_SECRET`, `PAL_RECEIPT_SECRET`, `PAL_CREDENTIAL_KEY`, `PAL_GRPC_SERVICE_TOKEN`, `PAL_APP_DB_PASSWORD` (turns on row-level security; missing it is fatal unless `PAL_RLS_ENFORCE=0`), `PAL_CONTROL_PLANE_TLS_CERT`/`_KEY`, `PAL_SCHEDULER_GRPC_ADDR`, `PAL_RUNTIME_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
 | Runtime scheduler | `PAL_GRPC_SERVICE_TOKEN`, `SCHEDULER_NODE_TOKEN`, `PAL_DEFAULT_MANAGER_ADDR`, manager TLS CA and client cert |
 | Runtime manager | `PAL_GRPC_SERVICE_TOKEN`, `PAL_MANAGER_TLS_CA`/`_CERT`/`_KEY` |
 | Harness | `PAL_WORKLOAD_UID`, `PAL_HARNESS_EXEC_TOKEN` |

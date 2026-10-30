@@ -23,6 +23,7 @@ The stack is Postgres (agents and runs), Redis (live updates), MinIO (agent bund
    | Node.js | v22+ | `brew install node` |
    | Go | v1.26+ | `brew install go` |
    | Git | any | `brew install git` |
+   | Rust (stable) | only for `make build` / `make test` of the Rust services | `brew install rustup` |
 
    <Aside>Docker must be running before you start. Postgres, Redis, and MinIO run in Docker containers.</Aside>
 
@@ -59,16 +60,17 @@ The stack is Postgres (agents and runs), Redis (live updates), MinIO (agent bund
 
    ```bash
    curl -s http://localhost:8080/healthz
-   # -> {"status":"ok"}
+   # -> {"status":"ok","llmMode":"api","rlsEnforce":false,...}
 
    make dev-doctor   # probes every service and reports status
+   pal doctor         # the same check from the CLI
    ```
 
 </Steps>
 
 ## Dev credentials
 
-Seeded automatically on first boot. No setup required.
+Seeded automatically on first boot. They keep the legacy name; these are the literal seeded values.
 
 | Service | Value |
 | --- | --- |
@@ -83,6 +85,8 @@ Seeded automatically on first boot. No setup required.
 <Aside type="caution">Never use these credentials in production. Rotate all secrets before any production deployment.</Aside>
 
 ## Service ports
+
+Only the control plane (`:8080`/`:50051`) and dashboard (`:3001`) run under `pal dev`; `make dev` adds the rest except the surface-gateway, which you run yourself.
 
 | Service | Port | Protocol |
 | --- | --- | --- |

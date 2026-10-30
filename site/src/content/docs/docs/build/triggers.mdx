@@ -163,6 +163,8 @@ PagerDuty shows its signing secret after you create the webhook subscription, so
 
 ### Generic HMAC
 
+These header names keep the `X-Lantern-` prefix on the wire; they are not renamed.
+
 For anything else, sign `<unix-timestamp>.<body>` with HMAC-SHA256 and send `X-Lantern-Signature: t=<unix>,v1=<hex>`. The timestamp must be within five minutes of server time, in either direction. Send `X-Lantern-Delivery` as a stable id per event and optionally `X-Lantern-Event`.
 
 ```bash
@@ -238,6 +240,10 @@ An `inputTemplate` (a JSON object, set on create or update; `null` clears it) re
 pal hooks create my-agent --provider github \
   --template '{"pr":"{{payload.number}}","title":"{{payload.pull_request.title}}","note":"PR {{payload.number}} opened"}'
 ```
+
+## Other ways to start a run
+
+`POST /v1/runs`; a [schedule](/docs/build/scheduling/); a channel message ([Surfaces](/docs/pal/surfaces/)); an A2A call to `POST /v1/agents/{name}/a2a/invoke` ([Marketplace and A2A](/docs/build/marketplace/)).
 
 ## Budgets and spend
 

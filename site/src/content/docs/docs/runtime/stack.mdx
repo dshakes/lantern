@@ -43,7 +43,7 @@ Right tool per layer. **Never unify for unification's sake.** Adding a new langu
 | **Control plane / data plane** | The split between the part that decides (tenants, runs, budgets) and the part that executes (the data plane in your cloud account, where agent code and data live). |
 | **pgvector** | A Postgres extension that stores embeddings and finds similar ones: semantic search without running a separate vector database. |
 | **OTel (OpenTelemetry)** | The vendor-neutral standard for traces and metrics. Every PAL service emits it, so one run can be followed across five services in whatever monitoring tool you already own. |
-| **RLS (Row-Level Security)** | A Postgres feature that filters rows by tenant inside the database itself. When enforcement is on (`PAL_RLS_ENFORCE=1`, off by default), tenant isolation survives an application bug: the database refuses to return another tenant's rows. |
+| **RLS (Row-Level Security)** | A Postgres feature that filters rows by tenant inside the database itself. When enforcement is on (in production whenever `PAL_APP_DB_PASSWORD` is set; opt out with `PAL_RLS_ENFORCE=0`), tenant isolation survives an application bug: the database refuses to return another tenant's rows. |
 
 ## Data stores
 
@@ -98,7 +98,7 @@ These boundaries are load-bearing: breaking one causes an incident, not a bug.
 - **Streaming never buffers.** No service is allowed to collect a whole response and then forward it.
 - **Untrusted code gets a microVM.** Never a bare container. If the node cannot provide isolation for an untrusted or hostile workload, the manager refuses it instead of downgrading.
 - **Models are named by capability, not vendor.** Your code says `reasoning-large`; the router resolves it to a vendor model, so a swap needs no code change.
-- **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application once `PAL_RLS_ENFORCE=1` is set.
+- **Multi-tenant by default.** Every row carries a tenant, every call carries a tenant, and Postgres row-level security backs it below the application in production, where the control plane refuses to start without the app database password unless you set `PAL_RLS_ENFORCE=0`.
 - **Secrets never appear in logs, traces, or run state.** Only a `lantern.secret/...` reference travels; it is resolved at the moment of use.
 
 ## What this costs

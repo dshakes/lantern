@@ -23,7 +23,7 @@ Pass your API key in the `Authorization` header on every request:
 Authorization: Bearer hlx_live_your_api_key_here
 ```
 
-Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Scope enforcement is off by default; set `PAL_AUTHZ_ENFORCE=1` and a key missing the required scope gets `403`.
+Create keys under **Settings > API Keys**. Keys start with `hlx_live_` and carry scopes (`read`, `write`, `admin`, or fine-grained ones such as `agents:write` and `runs:execute`). Every route is annotated with the scope it needs (for example `GET /v1/runs` needs `runs:read`, `POST /v1/runs` needs `runs:execute`). Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev; a key missing the required scope then gets `403`. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`.
 
 <Aside type="note" title="Self-hosted base URL">
 By default the control plane binds to `http://localhost:8080`. There is no managed cloud endpoint: you deploy the control plane yourself.
@@ -113,7 +113,7 @@ Content-Type: application/json
 Response: 201 Created
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "agentName": "research-agent",
+  "agentId": "...",
   "status": "queued",
   "input": { "topic": "quantum computing" },
   "createdAt": "2026-04-12T10:00:00Z"
@@ -128,7 +128,7 @@ GET /v1/runs/{id}
 Response: 200 OK
 {
   "id": "550e8400-...",
-  "agentName": "research-agent",
+  "agentId": "...",
   "status": "succeeded",
   "input": { "topic": "quantum computing" },
   "output": { "summary": "..." },
@@ -136,21 +136,24 @@ Response: 200 OK
   "tokensOut": 2100,
   "costUsd": 0.0042,
   "createdAt": "2026-04-12T10:00:00Z",
-  "updatedAt": "2026-04-12T10:00:08Z"
+  "startedAt": "2026-04-12T10:00:01Z",
+  "finishedAt": "2026-04-12T10:00:08Z"
 }
 ```
 
-Run `status` values: `queued`, `running`, `succeeded`, `failed`, `waiting`, `cancelled`.
+Run `status` values: `queued`, `running`, `paused`, `succeeded`, `failed`, `cancelled`. A failed run carries `error: {code, message}`; `parentRunId` and `sessionId` appear when set.
 
 ### List runs
 
 ```text
-GET /v1/runs?limit=20&agentName=research-agent
+GET /v1/runs?agent=research-agent&status=succeeded
 
-Response: 200 OK — bare array
+Response: 200 OK — bare array, at most 100 (no limit parameter)
 [
-  { "id": "...", "agentName": "...", "status": "succeeded", ... }
+  { "id": "...", "agentId": "...", "status": "succeeded", ... }
 ]
+
+Filters: agent, status, sessionId
 ```
 
 ### Stream run events (SSE)
@@ -427,10 +430,12 @@ Common HTTP status codes:
 - `403`: insufficient scope or cross-tenant access.
 - `402`: budget or VM quota exceeded (hard-fail policy).
 - `404`: resource not found, including another tenant's resource.
+- `429`: too many runs on `POST /v1/runs`, or the auth endpoints are rate limited.
+- `503`: a hard-fail budget could not be read, so the run fails closed.
 - `409`: wrong state (for example resuming a VM that is not paused).
 - `422`: an eval run regressed against its branch baseline.
 - `500`: internal error.
 
 <Aside type="note">
-There are no rate-limit tiers or `X-RateLimit` headers. Spend and run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see [Budgets](/docs/build/budgets/).
+There are no rate-limit tiers or `X-RateLimit` headers, though `POST /v1/runs` and the auth endpoints answer `429` when overloaded. Spend and run limits are per-agent (cost, tokens and runs per day enforced; cost/run enforced mid-run in workflows only); see [Budgets](/docs/build/budgets/).
 </Aside>

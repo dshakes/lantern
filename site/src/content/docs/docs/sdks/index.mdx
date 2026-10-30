@@ -55,7 +55,7 @@ import { PalClient } from "@pal-runtime/sdk";
 
 const client = new PalClient({
   apiKey: process.env.PAL_API_KEY,
-  baseUrl: process.env.PAL_API_URL, // e.g. http://localhost:8080
+  baseUrl: process.env.PAL_API_URL ?? "http://localhost:8080",
 });
 ```
 </TabItem>
@@ -183,7 +183,7 @@ await client.sessions.delete(session.id);
 <TabItem label="Python" icon="seti:python">
 ```python
 session = await client.sessions.create(agent="my-agent")
-await client.sessions.send_message(session.id, "What is the capital of France?")
+await client.sessions.send_message(session.id, content="What is the capital of France?")
 async for event in client.sessions.stream_events(session.id):
     print(event)  # the reply arrives here
 await client.sessions.delete(session.id)

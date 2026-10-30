@@ -16,7 +16,9 @@ An eval suite is a set of inputs with expected results. Run it like a test suite
 
 ## Eval suites
 
-A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object (e.g. `{"contains":"1945"}`, or `{"grounded":true}` to fail outputs that claim actions nothing backed). Suites are upserted by `(tenant, agent, name)`.
+A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object. Suites are upserted by `(tenant, agent, name)`.
+
+PAL stores `expected` and `assert` with the case; your runner (or `pal test`) decides pass/fail and reports `passed` and `score` per case. The one assertion the server checks itself is `{"grounded":true}`, which forces a case to fail when the output claims an action nothing backed.
 
 ### Create or update a suite
 
@@ -50,7 +52,7 @@ DELETE /v1/eval-suites/{id}        — delete suite
 
 ## Recording a run and the CI gate
 
-Run the agent on each case yourself (or use `pal test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the branch baseline. A regression returns **HTTP 422**, which fails a CI step.
+Run the agent on each case yourself (or use `pal test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the pinned baseline for the same agent and branch. A score more than 0.01 below the baseline returns **HTTP 422**, which fails a CI step. With no baseline pinned, nothing regresses.
 
 ```http
 POST /v1/eval-runs
@@ -87,8 +89,10 @@ Pin an eval run as the baseline for an agent and branch. Later runs on that bran
 ```http
 POST /v1/eval-baselines
 { "agentName": "research-agent", "branch": "main", "evalRunId": "run-uuid" }
+→ { "status": "baseline set" }
 
 GET /v1/eval-baselines?agentName=research-agent&branch=main
+→ { "agentName", "branch", "evalRunId", "score", "setAt" }   (404 {"error":"no baseline"} when unset)
 ```
 
 ## Eval observability
@@ -143,7 +147,7 @@ Response:
 
 ## A/B experiments
 
-Split traffic between two agent versions. The split is deterministic (FNV-1a hash of the run ID), so a run always lands on the same variant. Record a score per run; with `autoPromote` on, PAL promotes the winner once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
+An experiment records scores for two agent versions and can promote the winner. `PickVariant` implements a deterministic FNV-1a split, but nothing in the run path calls it yet, so **experiments do not route traffic today**: you assign variants and `record` each outcome yourself. With `autoPromote` on, PAL promotes the leader once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
 
 ### Create an experiment
 
@@ -159,8 +163,8 @@ POST /v1/experiments
   "minRunsToPromote": 100     // per arm; default 100
 }
 
-Response: 201 Created
-{ "id": "exp-uuid", "status": "running", ... }
+Response: 200 OK
+{ "id": "exp-uuid" }
 ```
 
 ### Record an outcome

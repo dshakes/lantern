@@ -590,7 +590,7 @@
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
   "default": "unset",
-  "description": "Password of the non-superuser `lantern_app` role used when RLS is enforced. Prod refuses to start without it. **Required in prod.**",
+  "description": "Password of the non-superuser `lantern_app` role used when RLS is enforced. Setting it turns RLS on in production; if it is missing, startup is fatal unless `PAL_RLS_ENFORCE=0`. **Required in prod.**",
   "prod": true,
   "source": "infra/helm/pal/values-prod.yaml:7"
  },
@@ -646,10 +646,10 @@
    "control-plane"
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
-  "default": "off",
-  "description": "`1`/`true`/`on`: a key missing the endpoint's scope gets 403. Off: the miss is logged and the request proceeds.",
-  "prod": false,
-  "source": "services/control-plane/cmd/server/main.go:1110"
+  "default": "on in production, off in dev",
+  "description": "Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. `=0` opts out (logged as a warning); `=1` forces it on in dev. A key missing the endpoint's scope then gets 403.",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/env.go:33"
  },
  {
   "name": "PAL_BENCH_IMAGE",
@@ -1029,6 +1029,28 @@
   "description": "Marks a confidential-computing VM for attestation.",
   "prod": false,
   "source": "services/harness/src/cc_attest.rs:31"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_ENDPOINTS",
+  "services": [
+   "data-plane-agent"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Ordered, comma-separated control-plane endpoints, primary region first; the data-plane agent fails over down the list.",
+  "prod": false,
+  "source": "services/data-plane-agent/cmd/agent/main.go:160"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_FAILBACK_INTERVAL",
+  "services": [
+   "data-plane-agent"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`60s`",
+  "description": "How often the data-plane agent probes the primary endpoint to fail back after a failover.",
+  "prod": false,
+  "source": "services/data-plane-agent/cmd/agent/main.go:161"
  },
  {
   "name": "PAL_CONTROL_PLANE_TLS_CA",
@@ -1594,6 +1616,17 @@
   "description": "`1` enables the scheduled event scan on WhatsApp too.",
   "prod": false,
   "source": "services/whatsapp-bridge/src/session.ts:10582"
+ },
+ {
+  "name": "PAL_FENCE_EPOCH",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Positive-integer fencing epoch for failover; a stale region cannot write after a newer epoch is promoted. See `docs/runbooks/region-failover.md`.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
  },
  {
   "name": "PAL_FOCUS",
@@ -3056,6 +3089,17 @@
   "source": "services/control-plane/internal/handlers/messaging.go:85"
  },
  {
+  "name": "PAL_READ_ONLY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "off",
+  "description": "`1`/`true`/`on` makes this region a read-only standby that rejects writes; `0`/`false`/`off` is writable. Anything else fails startup.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
+ },
+ {
   "name": "PAL_REAPER_INTERVAL_SECS",
   "services": [
    "runtime-manager"
@@ -3122,6 +3166,17 @@
   "source": "services/runtime-manager/src/backends/firecracker.rs:3215"
  },
  {
+  "name": "PAL_REGION",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Region label for active-passive multi-region (lowercase `[a-z0-9-]`, 1-63 chars). A malformed value fails startup. ADR 0046.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
+ },
+ {
   "name": "PAL_REPLY_MODEL_TIER",
   "services": [
    "imessage-bridge",
@@ -3176,10 +3231,10 @@
    "workflow-engine"
   ],
   "group": "Control plane: auth, secrets, trust boundaries",
-  "default": "unset (off)",
-  "description": "`1` enforces Postgres row-level security through the `lantern_app` pool. Prod refuses to start without it. **Required in prod.**",
+  "default": "on in production when `PAL_APP_DB_PASSWORD` is set",
+  "description": "Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set. Without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. `1` enforces it elsewhere through the `lantern_app` pool.",
   "prod": true,
-  "source": "packages/cli/internal/cli/doctor.go:150"
+  "source": "services/control-plane/cmd/server/main.go:1050"
  },
  {
   "name": "PAL_ROUTE_STRATEGY",

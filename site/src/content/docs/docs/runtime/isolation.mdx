@@ -56,7 +56,8 @@ This is the load-bearing invariant: untrusted and hostile code never runs in a b
 
 - A node may satisfy `untrusted` only if it advertises the `gvisor` RuntimeClass.
 - A node may satisfy `hostile` only if it advertises `kata-qemu` / `kata-fc`.
-- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. It is never downgraded to `runc`.
+- A node that lacks the required hardened RuntimeClass fails closed: the run is refused. `untrusted` and `hostile` are never downgraded to `runc`.
+- `standard`, `devcontainer` and `wasm` also refuse by default, but the manager can be told to degrade them to bare `runc` with `PAL_ALLOW_RUNC_STANDARD=1`. That flag never applies to `untrusted` or `hostile`.
 
 The requirement is enforced in two places: the manager, which refuses the spawn when the RuntimeClass is not configured, and a pod `nodeSelector` (`lantern.dev/runtimeclass`) that only matches nodes labelled as having the handler.
 
@@ -65,7 +66,7 @@ If your cluster has not provisioned the `gvisor` / `kata` RuntimeClasses, `untru
 </Aside>
 
 <Aside>
-gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those, or get a `runc`-on-trusted exception via the admin override.
+gVisor intercepts syscalls in user space, so a minority of workloads hit an unimplemented syscall. Declare `hostile` (full kernel via Kata) for those.
 </Aside>
 
 ## In a spec

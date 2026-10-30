@@ -204,7 +204,7 @@ Same request, responses and limits as resend; sends a reset link instead.
 
 ### `GET /v1/tenants/{id}/export` and `DELETE /v1/tenants/{id}`
 
-Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation, which blocks when `PAL_AUTHZ_ENFORCE=1` (on in production: a key without the scope gets `403`); either way API keys are not owners, so they get `403`.
+Bearer owner JWT. See [Data export](#data-export) and [Workspace deletion](#workspace-deletion). Both routes also pass the `admin` scope annotation. Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. Either way API keys are not owners, so they get `403`.
 
 ## Free-tier caps
 

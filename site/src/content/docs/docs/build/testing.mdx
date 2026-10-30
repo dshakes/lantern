@@ -26,7 +26,7 @@ export PAL_E2E_API_URL=http://localhost:8080
 make test-e2e    # terminal 2
 ```
 
-The target runs `make e2e-lint`, then the `e2e/runtime` and `e2e/quickstart` suites (Go, build tag `e2e`, standalone modules, so plain `go test ./...` never runs them). `make test-e2e-llm` is an alias. It targets the single-tier topology (stub scheduler, no KVM needed). Quickstart needs an LLM provider configured for the dev tenant.
+The target runs `make e2e-lint`, then the `e2e/runtime`, `e2e/quickstart`, `e2e/examples` and `e2e/deploy` suites (Go, build tag `e2e`, standalone modules, so plain `go test ./...` never runs them). `make test-e2e-llm` is an alias. It targets the single-tier topology (stub scheduler, no KVM needed). Quickstart needs an LLM provider configured for the dev tenant.
 
 On a two-tier stack (`PAL_SCHEDULER_GRPC_ADDR` plus a Docker-backend runtime-manager) set `PAL_E2E_IMAGE_DIGEST` to a locally pullable image; with the placeholder default, schedule returns 500.
 
@@ -35,6 +35,8 @@ On a two-tier stack (`PAL_SCHEDULER_GRPC_ADDR` plus a Docker-backend runtime-man
 | Dir | Covers |
 | --- | --- |
 | `e2e/runtime` | `/v1/runtime/*` control path: auth gates, schedule (201 + vm_id), tenant-scoped list, detail and audit, logs SSE, terminate, quota 402. |
+| `e2e/examples` | The fixture-tier example flows (digest, Telegram, voice); see [Example suites on a fixture stack](#example-suites-on-a-fixture-stack). Needs the fixture stack that `make test-e2e-examples` builds. |
+| `e2e/deploy` | The deploy CLI against a control-plane (the `deploy-cli` CI job). |
 | `e2e/quickstart` | The `examples/quickstart/` agents: create from `spec.json`, post `run.json`, poll to `succeeded`, assert an output shape; incident-summarizer also issues and verifies a receipt. Real LLM calls. |
 
 ## Spend policy
@@ -48,7 +50,7 @@ Enforced by `e2e/internal/e2ekit`, which is the only way a suite creates agents 
 - A `402` on `POST /v1/runs` fails the test with `e2e daily budget exhausted for <name> (cap working; rerun after local midnight)`.
 - `make e2e-lint` fails the build if anything under `e2e/` references `/v1/budgets/tenant`; the tests never touch the tenant-wide cap.
 
-The quickstart suite posts 3 runs per invocation against one slot, and the cap is 15 runs/day, so expect about 5 full runs per day. The pinned model is advisory until the run executor honors the agent's `model` field; the budget is what actually bounds spend.
+The quickstart suite posts 3 runs per invocation against one slot, and the cap is 15 runs/day, so expect about 5 full runs per day. The pinned model is the agent's `model`, so runs try the cheapest tier first; the budget is still what bounds spend.
 
 ## Environment variables
 
