@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useModels } from "@/lib/model-context";
 import { format } from "date-fns";
 import {
@@ -26,10 +27,8 @@ import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { api } from "@/lib/api";
 import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
-import { PageHeader } from "@/components/page-header";
 import { DangerZone } from "./danger-zone";
 import { BillingPlans } from "@/components/settings/billing-plans";
-import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/button";
 
 // ---------------------------------------------------------------------------
@@ -129,7 +128,10 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const { refresh: refreshModels } = useModels();
 
-  const [activeTab, setActiveTab] = useState<TabId>("general");
+  // The tab is the URL (?tab=) so the Settings nav (lib/settings-nav) can link
+  // straight to it and new settings pages slot in beside it.
+  const tabParam = useSearchParams().get("tab");
+  const activeTab: TabId = TABS.some((t) => t.id === tabParam) ? (tabParam as TabId) : "general";
   const [general, setGeneral] = useState<GeneralSettings>(defaultGeneral);
   const [generalSaving, setGeneralSaving] = useState(false);
   const [keys, setKeys] = useState<StoredApiKey[]>([]);
@@ -144,11 +146,8 @@ export default function SettingsPage() {
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
 
-  // Deep link: /settings?tab=billing (Stripe Checkout/Portal return here).
-  useEffect(() => {
-    const tab = new URLSearchParams(window.location.search).get("tab");
-    if (tab && TABS.some((t) => t.id === tab)) setActiveTab(tab as TabId);
-  }, []);
+  // Stripe Checkout/Portal return to /settings?tab=billing; the tab is the URL
+  // (lib/settings-nav), so no extra deep-link handling is needed.
 
   // Load from real API with localStorage fallback
   useEffect(() => {
@@ -326,47 +325,14 @@ export default function SettingsPage() {
     toast("success", next.hardLimit ? "Hard limit enabled" : "Hard limit disabled");
   };
 
-  // Tabs primitive driven by our route-agnostic state. The strip
-  // sits inside the PageHeader so there's no double-bar of chrome.
-  const tabDefs = TABS.map((t) => ({
-    id: t.id,
-    label: t.label,
-    icon: t.icon,
-  }));
-
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
-      {/* Use the shared PageHeader for guaranteed visibility — matches
-          every other page (Agents, Inbox, Connectors). */}
-      <PageHeader
-        title="Settings"
-        description="API keys, model providers, team access, and billing for this workspace."
-      />
-
-      {/* Tab strip — sits as its own bordered band right below the header,
-          like GitHub's per-repo nav. The container clamp matches the
-          content below so they share the same left edge. */}
-      <div className="border-b border-zinc-800 bg-surface-1">
-        <div className="mx-auto w-full max-w-[1400px] px-6 md:px-8">
-          <Tabs
-            tabs={tabDefs}
-            value={activeTab}
-            onChange={(id) => setActiveTab(id as TabId)}
-            variant="underline"
-          />
-        </div>
-      </div>
-
-      {/* Content — wider container so two-column form fields can breathe.
-          mx-auto keeps it centered on ultrawide displays. */}
-      <div className="flex-1 px-6 py-8 md:px-8">
-        <div className="mx-auto w-full max-w-3xl">
+    <div>
+      <div className="w-full max-w-3xl">
           {activeTab === "general" && <GeneralTab general={general} setGeneral={setGeneral} saving={generalSaving} onSave={handleSaveGeneral} />}
           {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
           {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
           {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
           {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} fleetUsage={fleetUsage} />}
-        </div>
       </div>
 
       {/* Modals */}

@@ -23,7 +23,13 @@ function AuthCallbackInner() {
 
     // Full reload after auth so AuthProvider re-runs its mount effect and
     // fetches /auth/me with the new token (router.replace keeps stale user).
-    const finish = () => window.location.replace("/agents");
+    // Await the HttpOnly cookie write first: navigating before it lands lets
+    // middleware bounce the gated route back to /login (the auth loop).
+    // "/" then picks the landing (welcome for a brand-new account).
+    const finish = async () => {
+      await api.whenCookieSynced();
+      window.location.replace("/");
+    };
 
     if (code) {
       // Preferred: exchange the one-time code for a JWT (token is never in the
@@ -37,7 +43,7 @@ function AuthCallbackInner() {
         });
     } else if (token) {
       api.setToken(token);
-      finish();
+      void finish();
     } else {
       setError("No sign-in code received");
       setTimeout(() => router.replace("/login"), 3000);

@@ -488,6 +488,7 @@ func main() {
 	httpMux.HandleFunc("POST /auth/signup", authHandler.Signup)
 	httpMux.HandleFunc("POST /auth/login", authHandler.Login)
 	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
+	httpMux.HandleFunc("GET /auth/providers", authHandler.AuthProviders)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/start", authHandler.OAuthStart)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/callback", authHandler.OAuthCallback)
 	// One-time-code exchange: the OAuth callback redirects with ?code=… (not
@@ -622,6 +623,8 @@ func main() {
 	// Agentic onboarding: resumable state (tenants.settings->onboarding) + the
 	// onboarding agent's run explanation.
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	handlers.NewAssistHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", authHandler.WithScope(handlers.ScopeSettingsWrite, llmProxyHandler.SaveLlmProvider))
@@ -675,6 +678,8 @@ func main() {
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
 	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
+	batchHandler := handlers.NewBatchHandler(srv, authHandler, restHandler)
+	batchHandler.RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))
@@ -1019,6 +1024,11 @@ func main() {
 		// fires 2s after the HTTP server starts so /readyz serves first.
 		handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
 
+		// Batch crash-recovery: finalizes batches stuck in 'running' after a
+		// process restart. Fires 15s after startup (after the run-level sweep has
+		// a chance to complete orphaned child runs), then every 30s.
+		handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
+
 		// Billing: dunning sweep + Stripe meter export (no-op unless Stripe is
 		// configured). Writer-only: never on a read-only standby.
 		handlers.RunBillingLoop(ctx, billingHandler, envDurationMain("PAL_BILLING_SYNC_INTERVAL", time.Hour))
@@ -1270,6 +1280,16 @@ func runStartupGuards(logger *zap.Logger) {
 	// the stub, which prod must never do.
 	if _, err := handlers.ServiceClientCreds(prod); err != nil {
 		logger.Fatal("service-mesh client TLS", zap.Error(err))
+	}
+
+	// C-CB — Callback signing secret (ADR 0033).
+	// Without a secret the server uses a well-known dev default, which allows
+	// trivial callback signature forgery.  Prod must have a strong random value.
+	if prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Fatal("PAL_CALLBACK_SIGNING_SECRET is unset — callback HMAC signatures would use the well-known dev secret; set a strong random value in production (callbacks with callbackUrl are disabled until this is set)")
+	}
+	if !prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Warn("PAL_CALLBACK_SIGNING_SECRET is unset — using insecure dev default for callback signing; set PAL_CALLBACK_SIGNING_SECRET in production")
 	}
 }
 

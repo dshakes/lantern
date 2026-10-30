@@ -10,34 +10,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  Bot, Inbox, Plus, Menu, Settings, Server, Zap, Smartphone, MessageSquare,
-  Plug, BarChart3, Store, Rocket, DollarSign, X,
-} from "lucide-react";
+import { Menu, Settings, Sparkles, X } from "lucide-react";
 import clsx from "clsx";
-
-const PRIMARY = [
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/inbox", label: "Activity", icon: Inbox },
-  { href: "/agents/create", label: "New", icon: Plus },
-] as const;
-
-// Everything else, reachable from the More sheet.
-const MORE = [
-  { href: "/personal", label: "Personal", icon: Smartphone },
-  { href: "/automations", label: "Automations", icon: Zap },
-  { href: "/runtime", label: "Runtime", icon: Server },
-  { href: "/surfaces", label: "Channels", icon: MessageSquare },
-  { href: "/connectors", label: "Connectors", icon: Plug },
-  { href: "/evaluations", label: "Analytics", icon: BarChart3 },
-  { href: "/deployments", label: "Deployments", icon: Rocket },
-  { href: "/budgets", label: "Budgets", icon: DollarSign },
-  { href: "/marketplace", label: "Marketplace", icon: Store },
-  { href: "/settings", label: "Settings", icon: Settings },
-] as const;
+import { ModeSwitch } from "@/components/mode-switch";
+import { navIcon } from "@/components/nav-icon";
+import { openAsk } from "@/lib/ask-events";
+import { MOBILE_PRIMARY, allNavItems, isNavActive } from "@/lib/workspace-nav";
+import { useWorkspaceMode } from "@/lib/use-workspace-mode";
 
 export function MobileNav() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "/";
+  const { mode } = useWorkspaceMode();
+  const all = allNavItems(mode);
+  const primary = MOBILE_PRIMARY[mode];
+  const MORE = [
+    ...all.filter((i) => !primary.includes(i)).map((i) => ({ href: i.href, label: i.label, icon: navIcon(i.icon), item: i })),
+    { href: "/settings", label: "Settings", icon: Settings, item: null },
+  ];
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -56,7 +45,9 @@ export function MobileNav() {
     router.prefetch(href);
   };
 
-  const moreActive = MORE.some((m) => pathname === m.href || pathname.startsWith(m.href + "/"));
+  const activeFor = (m: (typeof MORE)[number]) =>
+    m.item ? isNavActive(m.item, pathname, all) : pathname === m.href || pathname.startsWith(m.href + "/");
+  const moreActive = MORE.some(activeFor);
 
   return (
     <>
@@ -75,10 +66,13 @@ export function MobileNav() {
                 <X className="h-5 w-5" />
               </button>
             </div>
+            <div className="px-4 pb-3">
+              <ModeSwitch compact />
+            </div>
             <div className="grid grid-cols-4 gap-1 px-3 pb-5">
               {MORE.map((item) => {
                 const Icon = item.icon;
-                const active = pathname === item.href || pathname.startsWith(item.href + "/");
+                const active = activeFor(item);
                 return (
                   <Link
                     key={item.href}
@@ -105,9 +99,9 @@ export function MobileNav() {
         className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-surface-1/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
       >
         <div className="flex h-14 items-stretch justify-around">
-          {PRIMARY.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+          {primary.map((item) => {
+            const Icon = navIcon(item.icon);
+            const isActive = isNavActive(item, pathname, all);
             return (
               <Link
                 key={item.href}
@@ -125,6 +119,14 @@ export function MobileNav() {
               </Link>
             );
           })}
+          <button
+            onClick={() => openAsk()}
+            aria-label="Ask PAL"
+            className="relative flex flex-1 flex-col items-center justify-center gap-0.5 text-zinc-500 transition-colors duration-150 active:text-zinc-200"
+          >
+            <Sparkles className="h-5 w-5 text-pal-400" />
+            <span className="text-[11px] font-medium">Ask</span>
+          </button>
           <button
             onClick={() => { if ("vibrate" in navigator) navigator.vibrate?.(8); setMoreOpen(true); }}
             aria-haspopup="dialog"
