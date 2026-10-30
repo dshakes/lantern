@@ -43,18 +43,26 @@
   --sl-color-hairline-light: rgba(11, 12, 15, 0.12);
 }
 body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-feature-settings: 'cv11', 'ss01'; }
-/* one brand moment: a hairline of the pal -> Runtime gradient above the header */
-header.header::before { content: ''; position: absolute; inset: 0 0 auto; height: 2px; background: var(--p-brand-grad); opacity: 0.85; }
-header.header { backdrop-filter: saturate(160%) blur(12px); -webkit-backdrop-filter: saturate(160%) blur(12px); border-bottom: 1px solid var(--sl-color-hairline); }
+/* header: translucent, blurred, with a thin corona of the pal -> Runtime gradient under it */
+header.header { backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px); border-bottom: 1px solid var(--sl-color-hairline); }
+header.header::after { content: ''; position: absolute; inset: auto 0 -1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--pal-coral) 25%, var(--pal-magenta) 50%, var(--rt-indigo) 75%, transparent); opacity: .55; }
+.site-title { font-family: var(--p-display); font-weight: 650; letter-spacing: -0.01em; }
 /* search: a command palette */
-site-search button[data-open-modal] { border-radius: 10px; border-color: var(--sl-color-hairline-light); background: var(--sl-color-gray-6); transition: border-color .15s; }
-site-search button[data-open-modal]:hover { border-color: color-mix(in srgb, var(--sl-color-accent) 55%, transparent); }
+site-search button[data-open-modal] { border-radius: 10px; border-color: var(--sl-color-hairline-light); background: var(--sl-color-gray-6); transition: border-color .15s, box-shadow .2s; }
+site-search button[data-open-modal]:hover { border-color: color-mix(in srgb, var(--sl-color-accent) 55%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--pal-magenta) 14%, transparent); }
 site-search button[data-open-modal] kbd { border-radius: 6px; border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-black); font-family: var(--p-mono); }
-site-search dialog { border-radius: 18px; border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-black); box-shadow: 0 40px 120px -30px rgba(0,0,0,.6); }
+site-search dialog { border-radius: 18px; border: 1px solid var(--sl-color-hairline-light); background: color-mix(in srgb, var(--sl-color-black) 90%, transparent);
+  backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.2), 0 40px 120px -30px rgba(0,0,0,.6), 0 0 80px -20px color-mix(in srgb, var(--pal-magenta) 18%, transparent); }
+site-search dialog::backdrop { background: color-mix(in srgb, var(--sl-color-black) 55%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+site-search .pagefind-ui__search-input { height: 3.25rem; font-size: 1.05rem; font-weight: 500; }
 site-search :is(#starlight__search, .pagefind-ui) {
   --pagefind-ui-primary: var(--sl-color-accent); --pagefind-ui-text: var(--sl-color-white); --pagefind-ui-background: transparent;
   --pagefind-ui-border: var(--sl-color-hairline-light); --pagefind-ui-border-radius: 12px; --pagefind-ui-font: var(--p-font); }
-site-search .pagefind-ui__result { border-radius: 12px; padding: 0.9rem 1rem; }
+site-search .pagefind-ui__result { border-radius: 12px; border: 1px solid transparent; padding: 0.9rem 1rem; margin-block: 0.25rem; transition: background .15s, border-color .15s; }
+site-search .pagefind-ui__result:hover, site-search .pagefind-ui__result:focus-within { background: var(--sl-color-gray-6); border-color: var(--sl-color-hairline-light); }
+site-search .pagefind-ui__result-link { color: var(--sl-color-white); font-weight: 600; }
 site-search mark { background: color-mix(in srgb, var(--sl-color-accent) 35%, transparent); color: inherit; border-radius: 3px; }
 /* sidebar: quiet group labels, a pill for the current page */
 .sidebar-pane { border-inline-end: 1px solid var(--sl-color-hairline); }
@@ -64,8 +72,8 @@ nav.sidebar a:hover { color: var(--sl-color-white); background: var(--sl-color-g
 nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 600; }
 /* content typography */
 .sl-markdown-content { line-height: 1.72; }
-.sl-markdown-content :is(h1, h2, h3, h4), .content-panel h1#_top { font-family: var(--p-display); letter-spacing: -0.03em; font-weight: 650; }
-.content-panel h1#_top { font-size: clamp(2rem, 5vw, var(--sl-text-h1)); }
+.sl-markdown-content :is(h1, h2, h3, h4) { font-family: var(--p-display); letter-spacing: -0.03em; font-weight: 620; }
+.content-panel h1#_top { font-family: var(--p-display); font-size: clamp(2rem, 4vw, var(--sl-text-h1)); letter-spacing: -0.045em; font-weight: 640; }
 .sl-markdown-content a { text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 45%, transparent); text-underline-offset: 3px; }
 .sl-markdown-content a:hover { text-decoration-color: var(--sl-color-accent); }
 .sl-markdown-content :not(pre) > code { padding: 0.12em 0.4em; border-radius: 6px; background: var(--sl-color-gray-6); border: 1px solid var(--sl-color-hairline-light); font-size: 0.86em; overflow-wrap: anywhere; }
@@ -90,7 +98,9 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 }
 .sl-markdown-content blockquote { border-inline-start: 3px solid var(--sl-color-accent); background: var(--sl-color-gray-6); border-radius: 0 10px 10px 0; padding: 0.6rem 1rem; }
 .starlight-aside { border-radius: 12px; border-inline-start-width: 3px; }
-.card, .sl-link-card { border-radius: 14px; border-color: var(--sl-color-hairline-light); }
+.card { border-radius: 14px; border-color: var(--sl-color-hairline-light); background: var(--sl-color-gray-7); transition: border-color 0.2s; }
+.card:hover { border-color: var(--sl-color-gray-4); }
+.sl-link-card { border-radius: 14px; border-color: var(--sl-color-hairline-light); }
 .pagination-links a { border-radius: 12px; border-color: var(--sl-color-hairline-light); }
 .pagination-links a:hover { border-color: var(--sl-color-accent); }
 /* diagrams: theme pairs. Unlayered, so restate Starlight's theme hiding at higher specificity. */
@@ -103,23 +113,14 @@ nav.sidebar a[aria-current='page'], nav.sidebar a[aria-current='page']:hover { b
 :focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
-/* ---- v3 docs: portal + wide showcase pages, readable rhythm, accordions ---- */
-.main-pane:has(.portal) .content-panel:first-child { display: none; }
-.main-pane:has(.portal) .sl-container,
-.main-pane:has(.capg) .sl-container { max-width: 70rem; }
-.main-pane:has(.portal) .glance { display: none; }
-/* Diagram pages: let figures use the full column, keep prose at a readable measure. */
-.sl-markdown-content > p, .sl-markdown-content > ul, .sl-markdown-content > ol { max-width: 44rem; }
-.sl-markdown-content { --sl-content-gap-y: 1.15rem; }
-.sl-markdown-content h2 { margin-top: 2.6rem; padding-top: 0.25rem; letter-spacing: -0.02em; }
-.sl-markdown-content h2 + p { margin-top: 0.75rem; }
-.sl-markdown-content details { border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; padding: 0 16px; background: var(--sl-color-bg-nav); max-width: 44rem; }
+/* ---- rhythm and accordions ---- */
+.sl-markdown-content h2 { margin-top: 2.6rem; letter-spacing: -0.02em; }
+.sl-markdown-content details { border: 1px solid var(--sl-color-hairline-light); border-radius: 12px; padding: 0 16px; background: var(--sl-color-gray-7); }
 .sl-markdown-content details + details { margin-top: 8px; }
 .sl-markdown-content details summary { cursor: pointer; padding: 12px 0; font-weight: 600; color: var(--sl-color-white); list-style: none; display: flex; align-items: center; gap: 10px; }
 .sl-markdown-content details summary::-webkit-details-marker { display: none; }
-.sl-markdown-content details summary::before { content: '›'; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--p-rt-bg); color: var(--p-rt-text); font-weight: 700; transition: transform 160ms; }
+.sl-markdown-content details summary::before { content: '›'; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 700; transition: transform 160ms; }
 .sl-markdown-content details[open] summary::before { transform: rotate(90deg); }
 .sl-markdown-content details[open] { padding-bottom: 12px; }
 .sl-markdown-content details > :not(summary) { margin-top: 0; }
-.sl-markdown-content .expressive-code figcaption .title { font-size: 0.78rem; }
 @media (min-width: 72rem) { :root { --sl-content-width: 48rem; } }

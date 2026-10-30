@@ -1,52 +1,24 @@
 ---
-title: Marketplace and A2A
+title: Marketplace
 description: Publish, fork and invoke agents, and expose public agents to other platforms through A2A agent cards.
-glance:
-  what: "Publish an agent to a public registry, fork or invoke one someone else published, and expose public agents to other platforms through A2A cards."
-  why: "You reuse existing agents, and other platforms can call yours without ever sharing your tenant."
-  how: "POST /v1/marketplace/publish to list an agent, or POST /v1/marketplace/{slug}/fork to copy one."
 sidebar:
   order: 8
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import { AgentNetwork } from '../../../../components/diagrams';
 
-<AgentNetwork client:visible />
-
-A2A (Agent-to-Agent) is an open protocol for agents to find and call each other; an *agent card* is the public description an agent publishes. A *fork* is your private copy of a published agent.
+The **Marketplace** is a public registry where you publish an agent, fork one someone else published, or invoke it without forking. **A2A** (Agent-to-Agent) is an open protocol for agents to find and call each other, and an **agent card** is the public description an agent publishes. A **fork** is your private copy of a published agent: the original author sees none of your data or runs. Other platforms can call your public agents through A2A without ever sharing your tenant.
 
 ## Two registries
 
-The dashboard **Marketplace** (`/marketplace`) fronts two:
+The dashboard Marketplace (`/marketplace`) fronts two registries.
 
-- **Agent Marketplace**: published agents (`/v1/marketplace`). Filter by category or search text; star, fork, or unpublish your own. Listings carry a description, tags, README, star and fork counts.
-- **MCP Marketplace**: a curated registry of Model Context Protocol servers (`/v1/mcp/servers`). Attach one to an agent with `POST /v1/agents/{name}/mcp-servers`.
+| Registry | Endpoint | What you do |
+| --- | --- | --- |
+| Agent Marketplace | `/v1/marketplace` | Filter by category or search text; star, fork, or unpublish your own. Listings carry a description, tags, README, star and fork counts. |
+| MCP Marketplace | `/v1/mcp/servers` | Browse a curated registry of Model Context Protocol servers. Attach one with `POST /v1/agents/{name}/mcp-servers`. |
 
-A fork is a copy in your tenant; the original author sees none of your data or runs.
-
-## A2A agent cards and visibility
-
-Agents are **private by default** (`agents.is_public = false`). The card, the well-known directory and A2A invoke expose an agent to a non-owner only when it is public.
-
-<Aside type="caution">
-No REST endpoint sets the flag yet; today it is a column on `agents` that an operator flips.
-</Aside>
-
-### Visibility rules
-
-- An authenticated caller always sees and can invoke their **own** agents regardless of visibility.
-- A card or invoke for another tenant's agent returns **404** (not 403) when the agent is not public, to avoid leaking that the agent exists.
-- `GET /.well-known/agent.json` lists only `is_public = true` agents.
-
-### Agent card endpoints
-
-```http
-GET /v1/agents/{name}/card          — own agent or is_public; else 404
-GET /.well-known/agent.json          — lists only public agents
-```
-
-## Publishing your agent
+## Publish an agent
 
 Publishing copies the agent's manifest into the public registry under a slug. There is no review queue and no unlisted mode: the listing is live when the call returns.
 
@@ -63,13 +35,13 @@ POST /v1/marketplace/publish
 DELETE /v1/marketplace/{slug}     # unpublish
 ```
 
-Returns `{ id, slug, url }`. The slug is `<your-tenant-slug>-<agent-name>`.
+It returns `{ id, slug, url }`. The slug is `<your-tenant-slug>-<agent-name>`.
 
 <Aside type="caution">
-Any signed-in tenant can read a published agent's manifest, including its system prompt (`GET /v1/marketplace` and `/{slug}` return 401 without auth); the public A2A card needs no auth. Do not put secrets in a manifest. Use `lantern.secret/...` refs (the ref prefix keeps its original name), which each tenant resolves from its own store at run time.
+Any signed-in tenant can read a published agent's manifest, including its system prompt (`GET /v1/marketplace` and `/{slug}` return 401 without auth). The public A2A card needs no auth. Do not put secrets in a manifest. Use `lantern.secret/...` refs (the ref prefix keeps its original name), which each tenant resolves from its own store at run time.
 </Aside>
 
-## Discovering and forking agents
+## Discover and fork
 
 ```http
 GET  /v1/marketplace?category=research&q=citations
@@ -78,11 +50,9 @@ POST /v1/marketplace/{slug}/fork            { "newName": "my-copy" }
 POST /v1/marketplace/{slug}/star
 ```
 
-Fork returns `{ agentId, agentName }`.
+Fork returns `{ agentId, agentName }`. A fork is a normal agent in your tenant: edit its prompt, swap models, add connectors, and the original is unaffected.
 
-A fork is a normal agent in your tenant. Edit its prompt, swap models, add connectors; the original is unaffected.
-
-## Cross-tenant invocation (commerce)
+## Invoke without forking
 
 A buyer can invoke a published agent without forking it. The run executes in the **seller's** tenant, with their LLM keys and budgets. The seller's hard-fail budget applies (HTTP 402), and the buyer's input is validated against the manifest's `inputSchema` when one exists. The buyer gets the output and an HMAC-SHA256 signed receipt.
 
@@ -94,7 +64,7 @@ GET /v1/marketplace/invocations?role=buyer    # buyer-side history
 GET /v1/marketplace/invocations?role=seller   # seller-side history
 ```
 
-Invoke returns `{ invocationId, status, output, costUsd, signature, sellerTenantId, agentName, issuedAt, receipt }`. The `receipt` object carries invocationId, buyerTenant, sellerTenant, marketplace, agentName, runId, costUsd, issuedAt, signature and algorithm. Verifying it needs the platform signing key; there is no public verifier for these yet.
+Invoke returns `{ invocationId, status, output, costUsd, signature, sellerTenantId, agentName, issuedAt, receipt }`. The `receipt` object carries invocationId, buyerTenant, sellerTenant, marketplace, agentName, runId, costUsd, issuedAt, signature and algorithm.
 
 | Status | When |
 | --- | --- |
@@ -104,12 +74,26 @@ Invoke returns `{ invocationId, status, output, costUsd, signature, sellerTenant
 | 502 | The seller run failed |
 | 503 | Execution unavailable |
 
-There is no `pal marketplace` command; the Python SDK has `client.marketplace`.
+## Expose an agent over A2A
 
-## Cross-platform interop
+Agents are **private by default** (`agents.is_public = false`). The card, the well-known directory and A2A invoke expose an agent to a non-owner only when it is public.
 
-- **Discovery**: other platforms read `/.well-known/agent.json` and `/v1/agents/{name}/card`. Both are limited to public agents (plus your own, when authenticated).
-- **Inbound call**: `POST /v1/agents/{name}/a2a/invoke` requires an authenticated caller; it returns 401 without credentials.
-- **Outbound call**: inside a running agent, `ctx.a2a(agentCardUrl).submit({ input })` calls a remote A2A agent through the runtime sidecar (production runtime only; the Python `AgentContext` stub raises `NotImplementedError`). `ctx.subagent(name, input)` calls another agent by name.
+```http
+GET /v1/agents/{name}/card          # own agent or is_public; else 404
+GET /.well-known/agent.json         # lists only public agents
+POST /v1/agents/{name}/a2a/invoke   # authenticated callers only; 401 without credentials
+```
 
-Next: [accounts and sign-up](/docs/build/accounts/).
+- An authenticated caller always sees and can invoke their **own** agents, whatever the visibility.
+- A card or invoke for another tenant's non-public agent returns **404**, not 403, so the agent's existence does not leak.
+- Other platforms discover agents through `/.well-known/agent.json` and `/v1/agents/{name}/card`.
+- Inside a running agent, `ctx.a2a(agentCardUrl).submit({ input })` calls a remote A2A agent through the runtime sidecar, and `ctx.subagent(name, input)` calls another agent by name. The outbound A2A call works in the production runtime only; the Python `AgentContext` stub raises `NotImplementedError`.
+
+## Limits
+
+- **No endpoint sets `is_public`.** Today it is a column on `agents` that an operator flips.
+- **No public verifier for invocation receipts.** Verifying one needs the platform signing key.
+- **No `pal marketplace` command.** The Python SDK has `client.marketplace`.
+- **No review queue** and no unlisted mode for published agents.
+
+Next: [Accounts and teams](/docs/build/accounts/).

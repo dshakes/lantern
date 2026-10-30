@@ -1,18 +1,21 @@
 ---
 title: SDKs
-description: "The TypeScript, Python and Go SDKs for the PAL management API, side by side, with client setup, runs, sessions, errors and the full namespace listing."
-glance:
-  what: "Three SDKs over the same REST API: TypeScript (the fullest), Python (async, at management parity with Go) and Go."
-  why: "Typed methods instead of hand-written HTTP: trigger agents from your app, wire runs into a backend, script bulk operations."
-  how: "Pick your language once in any tab below; every tabbed example on the site switches with it."
+description: "The TypeScript, Python and Go SDKs for the PAL management API, side by side."
 sidebar:
   order: 1
-  label: TypeScript, Python, Go
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/lantern/packages/sdk-go` (package `lantern`). For the raw endpoints see the [API reference](/docs/reference/api/).
+The **SDKs** wrap the control plane's REST API in typed methods, so you can start runs, hold sessions and script bulk operations from your own code instead of hand-writing HTTP. There are three: **TypeScript** (the fullest, and the only one that also writes agent code), **Python** (async, at management parity with Go) and **Go**. Pick your language in any tab; every tabbed example on the site follows it. For the raw endpoints see [REST API](/docs/reference/api/).
+
+| SDK | Package | Import | Notes |
+| --- | --- | --- | --- |
+| TypeScript | `@pal-runtime/sdk` | `PalClient` | Event streams, retries, agent authoring (`agent`, `step`) |
+| Python | `pal-runtime` | `from pal import PalClient` | Async; runtime context (`ctx.*`) is stubbed |
+| Go | `github.com/dshakes/lantern/packages/sdk-go` | package `lantern` | Retries; no run event stream yet |
+
+Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`).
 
 ## Install
 
@@ -46,7 +49,7 @@ go get github.com/dshakes/lantern/packages/sdk-go
 
 ## Client setup
 
-All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `LANTERN_*` names still work). The built-in default URL (`https://api.lantern.run`) is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
+All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `LANTERN_*` names still work). The built-in default URL is not a live service, so always set `PAL_API_URL` to your own control plane, for example `http://localhost:8080`.
 
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">

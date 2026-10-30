@@ -1,25 +1,21 @@
 ---
 title: Changelog
 description: What shipped in PAL Runtime since the 0.2.0 release.
-glance:
-  what: "What shipped in PAL Runtime since the 0.2.0 release, newest areas first, with one breaking change called out."
-  why: "It tells you whether a feature or fix is in your checkout and whether an upgrade needs action."
-  how: "Read Breaking first, then scan New; CHANGELOG.md in the repo has every entry."
 ---
 
-The full history is in [CHANGELOG.md](repo:/blob/master/CHANGELOG.md).
+This page lists what shipped in **PAL Runtime** since the 0.2.0 release, with the one **breaking change** first. Read Breaking before you upgrade, then scan New to see what is in your checkout. The full history is in [CHANGELOG.md](repo:/blob/master/CHANGELOG.md).
 
 ## Breaking
 
-- **Firecracker guests no longer get caller env on the kernel cmdline.** `spawn.json` is the only channel for caller env; the cmdline carries just the manager-owned `LANTERN_ENV`, `LANTERN_MANAGER_ADDR` and `LANTERN_WORKLOAD_UID`. Harness builds that predate `spawn.json` are unsupported for caller env. The old path leaked values such as an instance token into console logs.
+- **Firecracker guests no longer get caller env on the kernel cmdline.** `spawn.json` is the only channel for caller env; the cmdline carries just the manager-owned `LANTERN_ENV`, `LANTERN_MANAGER_ADDR` and `LANTERN_WORKLOAD_UID`. Harness builds that predate `spawn.json` are unsupported for caller env. The old path leaked values, such as an instance token, into console logs.
 
 ## Renamed
 
-The product is now **PAL** ([ADR 0032](repo:/blob/master/docs/adr/0032-rename-lantern-to-pal.md)). Docs, dashboard copy, widget and CLI help say PAL, the CLI binary is `pal`, and variables are spelled `PAL_*`. The old `LANTERN_*` names are still read as aliases, and wire identifiers (`x-lantern-service-token`, `lantern.secret/`, `lantern.v1`) are unchanged.
+The product is now **PAL** ([ADR 0032](repo:/blob/master/docs/adr/0032-rename-lantern-to-pal.md)). Docs, dashboard copy, widget and CLI help say PAL, the CLI binary is `pal`, and variables are spelled `PAL_*`. The old `LANTERN_*` names are still read as aliases. Wire identifiers (`x-lantern-service-token`, `lantern.secret/`, `lantern.v1`) are unchanged.
 
 ## New since 0.2.0
 
-- **[Demo mode](/docs/start/demo/).** `make demo` or `pal demo`: Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes.
+- **[Demo mode](/docs/start/demo/).** `make demo` or `pal demo`. Docker only, no API key. Each visitor gets a private workspace with recorded answers, deleted after 30 minutes.
 - **[Knowledge base and handoff](/docs/pal/knowledge/).** Upload docs for cited answers, and hand a chat to a human with a Slack ping.
 - **[Webhook triggers](/docs/build/triggers/).** A signed public URL per agent. GitHub, Sentry, PagerDuty or any HMAC sender starts a run; duplicates are deduplicated.
 - **[Accounts and sign-up](/docs/build/accounts/).** Gated sign-up, email verification, password reset, invite codes, captcha, data export and workspace deletion.

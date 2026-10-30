@@ -1,31 +1,60 @@
 ---
 title: Security boundaries
-description: Every trust boundary from the internet to code inside a microVM, tenant isolation, and egress through the host broker.
-glance:
-  what: "The credential each hop demands, the microVM wall, row-level security, and the egress broker with DLP."
-  why: "Agent code is untrusted and tenants share infrastructure; each boundary fails closed in production."
-  how: "Step through the boundaries in order, then try the cross-tenant and spoofed-tenant scenarios and the egress cases."
+description: Every trust boundary from the internet to code inside a microVM, with the credential each one demands and the file that enforces it.
 sidebar:
   order: 4
 ---
 
-import { TrustBoundaries, TenancyRls, EgressSequence, BrokerDemo } from '../../../../components/diagrams';
+Agent code is untrusted and tenants share infrastructure, so every hop between the internet and a microVM demands its own credential and **fails closed in production**. The overview and the picture of the zones are in [Security model](/docs/security/); the sandbox walls are in [Isolation](/docs/runtime/isolation/) and the egress rules in [Egress](/docs/security/egress/).
 
-<TrustBoundaries client:visible />
+## Boundaries in order
+
+| Boundary | Credential it demands | Fails closed when | Enforced in |
+| --- | --- | --- | --- |
+| Internet to gateway | TLS, then a JWT or API key | Key introspection is not configured: API-key auth is refused. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` the gateway serves plaintext and warns; never run that way in production. | `services/gateway` |
+| Gateway to control plane | `x-lantern-service-token` on gRPC `:50051` | `PAL_GRPC_SERVICE_TOKEN` unset in production: the control plane refuses to start | `services/control-plane` interceptors |
+| Caller to REST API | Bearer JWT or API key, then a required scope | Scope enforcement is on by default in production (`PAL_AUTHZ_ENFORCE`; `=0` opts out with a warning) | `internal/handlers/auth.go` |
+| Service to service | Service token on `:50051`, `:50052`, `:50053`, `:50054`, `:50055`, plus a client certificate when `PAL_GRPC_TLS_*` is set (mutual TLS, ADR 0043) | Token or certificate missing in production: the service refuses to start | each service's interceptor |
+| Data-plane tunnel | Server-auth TLS, a bootstrap token, then a session JWT | Exempt from the client certificate; `DataPlaneService` authenticates itself | control plane `DataPlaneService` |
+| Control plane to runtime manager | Service token; per-VM certificates refused | A peer presenting a per-VM certificate (`OU=pal-vm`, or the older `OU=lantern-vm`) gets `PERMISSION_DENIED` on every `RuntimeManager` method | `services/runtime-manager/src/authz.rs` |
+| Guest to manager | A per-VM certificate bound to the request's `vm_id` | `vm_id` does not match the certificate, or the certificate is from another incarnation | `RuntimeHarness` service |
+| Workload to harness | Kernel-attested peer uid (`SO_PEERCRED`) on the secrets socket | Any uid other than the workload uid: denied, audited as `secret_access_denied` | `services/harness/src` |
+| Workload to internet | Egress allowlist | Not allowlisted: refused and audited | harness proxy or host broker |
+
+The internal gRPC service token is the shared secret for the trust boundary: only a caller presenting it may set a `tenant_id`. Without it, any caller who could reach those ports could claim any tenant.
 
 ## Tenant isolation
 
-<TenancyRls client:visible />
+Every row carries a `tenant_id`, every gRPC call carries one in metadata, and there are no cross-tenant joins. Three layers back this up.
+
+1. **Handlers scope by the verified tenant.** The tenant comes from the auth context, never from a request body or path. Tenant-scoped queries run through `Server.WithTenant`, which sets the `app.tenant_id` setting so row-level security admits the read or write.
+2. **Postgres row-level security.** Every tenant table has a `tenant_isolation` policy with both `USING` and `WITH CHECK`. It is enforced when the connection uses the restricted `lantern_app` role. In production it is on whenever `PAL_APP_DB_PASSWORD` is set; without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. A catalog test fails the build when a tenant table has neither a policy nor an explicit exemption.
+3. **Not-found, not forbidden.** A run, VM, snapshot, card or invoke that belongs to another tenant answers `NOT_FOUND` (404), indistinguishable from one that does not exist. The workflow engine's `CancelRun`, `ResumeRun` and `SignalRun` filter by the verified `tenant_id` the same way.
+
+The workflow engine writes run state for every tenant, so it uses a second, restricted connection pool for tenant-scoped work and keeps the privileged pool only for cross-tenant work such as polling for runnable runs and `run_locks` bookkeeping. A restricted connection with no tenant set matches no rows, which is why the two cannot be swapped.
+
+## The microVM wall
+
+The runtime manager is the only process that touches microVMs. Untrusted code runs in Firecracker or Kata, never a bare pod, and a backend that cannot satisfy the requested isolation class refuses the workload instead of downgrading it.
+
+Inside the guest, the harness is PID 1 and the last boundary:
+
+- It runs the workload as its own uid and gid, with every `PAL_*` key (and its legacy `LANTERN_*` alias) withheld from the child except a short allowlist of non-secret identifiers.
+- It vends short-lived secrets only to that uid, and only for URIs declared in the VM's own spawn record.
+- Tool file operations are confined to `/workspace` with `openat2` and `RESOLVE_BENEATH`.
+- Security audits (`secret_vend`, egress deny, `secret_access_denied`, `egress_preflight`) are logged locally before they are forwarded and survive a manager outage.
 
 ## Egress, credential injection and DLP
 
-<EgressSequence client:visible />
+Egress runs in one of two modes, chosen on the manager.
 
-<BrokerDemo client:visible />
+| Mode | Where the allowlist is enforced | What the guest has |
+| --- | --- | --- |
+| `guest` (default) | An in-guest CONNECT proxy at `127.0.0.1:3128`. It binds only with the image's iptables REDIRECT rule, which the harness checks at boot. | A network device |
+| `broker` (`PAL_EGRESS_MODE=broker`, Firecracker only, ADR 0026) | The host broker, over vsock port 3128 | No network device at all |
 
-## Reference
+In guest mode, production always fails closed: if rules are declared and the REDIRECT rule is missing, the harness refuses to start the workload, and an explicit `PAL_EGRESS_FAIL_CLOSED=0` is ignored with a warning.
 
-- Internal gRPC ports `:50051`–`:50055` require `x-lantern-service-token` and, with `PAL_GRPC_TLS_*` set, a client certificate (mutual TLS, ADR 0043); production refuses to start without either. The data-plane tunnel (`DataPlaneService`) is exempt from the certificate: it uses server-auth TLS plus a bootstrap token and session JWT.
-- A per-VM certificate is refused on every `RuntimeManager` method.
-- Broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only): no NIC in the guest; credentials are injected on the host and never enter the VM.
-- DLP (ADR 0030) inspects TLS-terminated injecting hosts and plain HTTP only; it is a guard rail and an audit trail, not the boundary.
+In broker mode the host dials upstream and injects credentials. A rule that names a `secret_uri` is resolved on the host at request time, scoped to the VM's tenant, and written into one header. The value never enters the guest, logs, traces or audits. TLS is terminated only for hosts whose rule injects, with a per-VM name-constrained ephemeral CA; every other host is an opaque tunnel. An injected request must be addressed to the exact approved host. The step-by-step cases (allowed, not allowlisted, plain HTTP with a credential, host mismatch) are under [Runtime internals](/docs/runtime/architecture/#egress-in-broker-mode), and the picture is on [Egress](/docs/security/egress/).
+
+DLP (ADR 0030) inspects TLS-terminated injecting hosts and plain HTTP only. It is a guard rail and an audit trail, not the boundary.

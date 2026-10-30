@@ -1,96 +1,62 @@
 ---
 title: Sessions and memory
-description: Interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
-glance:
-  what: "A session is a multi-turn conversation that replays its full history each turn; memory distillates are durable facts an LLM extracts from transcripts every 6 hours."
-  why: "The agent remembers what you said two messages ago, and keeps what matters after the conversation ends without storing every word."
-  how: "POST /v1/sessions with an agentName, then POST a message and read GET /v1/sessions/{id}/events."
+description: Multi-turn sessions that replay their history each turn, and LLM-distilled long-term memory.
 sidebar:
   order: 9
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import { SessionsMemory } from '../../../../components/diagrams';
 
-<SessionsMemory client:visible />
-
-A session is a multi-turn conversation. Memory is what survives it: PAL Runtime periodically distills transcripts into durable facts ("prefers morning meetings", "works at Acme") and re-injects them into future sessions.
+A **session** is a multi-turn conversation with an agent. The full history is passed to the model on every turn, so the agent remembers what you said two messages ago. **Memory** is what survives a conversation: an optional pass distills transcripts into durable facts such as "prefers morning meetings" and re-injects them into future sessions. You keep what matters without storing or replaying every word.
 
 ## Sessions
 
-Session turns run in the control plane's session handler, not the run executor, so no run row is created. Each turn calls the provider-failover chain directly: streaming when no tools are attached, otherwise a non-streaming tool loop of up to 5 rounds. History lives in the `messages` JSONB column of `sessions` and is passed in full on every turn.
+Session turns run in the control plane's session handler, not the run executor, so no run row is created. Each turn calls the provider-failover chain: streaming when no tools are attached, otherwise a non-streaming tool loop of up to 5 rounds. History lives in the `messages` JSONB column of `sessions`.
 
-### Lifecycle
-
-```
-# Create a session
-POST /v1/sessions
-{ "agentName": "my-agent" }
-→ { "id": "sess_abc123", "status": "active" }
-
-# Send a message (streams events on GET /v1/sessions/{id}/events)
-POST /v1/sessions/sess_abc123/messages
-{ "content": "What can you help me with?" }
-
-# Stop the session (marks it stopped and terminates its microVM; a turn already in flight still completes)
-POST /v1/sessions/sess_abc123/stop
-
-# Delete
+```text
+POST   /v1/sessions                       { "agentName": "my-agent" }  →  { "id": "sess_abc123", "status": "active" }
+POST   /v1/sessions/sess_abc123/messages  { "content": "What can you help me with?" }
+GET    /v1/sessions/sess_abc123/events    # SSE: the reply streams here
+POST   /v1/sessions/sess_abc123/stop      # marks it stopped, terminates its microVM; a turn in flight still completes
 DELETE /v1/sessions/sess_abc123
 ```
 
-### Token streaming
-
-Replies stream over SSE on `GET /v1/sessions/{id}/events`; the event contract and the `sessions.streamMessage()` iterator are in [Token streaming](/docs/runtime/streaming/).
-
-### Durability
-
-Session turns are not journaled. A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run (see [Durable execution](/docs/runtime/durable-execution/)).
-
-### SDK
+With the TypeScript SDK:
 
 ```ts
-const client = new PalClient({ apiKey: "..." });
+import { PalClient } from "@pal-runtime/sdk";
 
-// Create
+const client = new PalClient({ apiKey: "...", baseUrl: "http://localhost:8080" });
 const session = await client.sessions.create({ agent: "my-agent" });
 
-// Send (returns immediately; the reply arrives on sessions.events())
-await client.sessions.sendMessage(session.id, { content: "Hello" });
-
-// Send + stream tokens
 for await (const event of client.sessions.streamMessage(session.id, {
   content: "Summarise the quarter.",
 })) {
   if (event.type === "delta") process.stdout.write(event.delta);
 }
 
-// Clean up
 await client.sessions.delete(session.id);
 ```
 
-### Session-scoped microVMs (flag-gated)
+The event contract is in [Streaming](/docs/runtime/streaming/).
 
-When an agent declares `isolation: "microvm"`, sessions optionally reuse a single long-lived VM across all turns (*session-scoped microVMs*, ADR 0022). The VM is spawned on the first turn and kept alive between turns, so later messages skip the per-turn VM boot. The VM is terminated when the session is deleted or stopped, or reaped after `PAL_SESSION_VM_IDLE_TTL` (default 30 minutes) of inactivity.
+<Aside type="caution" title="Turns are not journaled">
+A control-plane crash mid-turn loses that turn; resend the message. Provider requests still carry an `Idempotency-Key` header derived from the request body. For crash-resume from the journal, use a run ([Durable execution](/docs/runtime/durable-execution/)).
+</Aside>
+
+### Session-scoped microVMs
+
+When an agent declares `isolation: "microvm"`, sessions can reuse one long-lived VM across all turns (ADR 0022). The VM is spawned on the first turn, so later messages skip the boot. It is terminated when the session is deleted or stopped, or reaped after `PAL_SESSION_VM_IDLE_TTL` (default 30 minutes) of inactivity.
 
 ## Memory distillates
 
-<Aside type="caution" title="Flag-gated, default OFF">
-Set `PAL_MEMORY_DISTILL=1` to enable. When unset, the distillation loop is a no-op and the endpoints return empty responses. Zero behavior change when the flag is off.
+<Aside type="caution" title="Off by default">
+Set `PAL_MEMORY_DISTILL=1` to enable. When unset, the loop does nothing and the endpoints return empty responses.
 </Aside>
 
-Raw timeline events (stored by `memory_ingest.go` and `identity.go`) and recent session transcripts accumulate over time. The memory distillation pass runs every 6 hours by default (override: `PAL_MEMORY_DISTILL_INTERVAL`, Go duration string; minimum 1 minute) and uses the LLM to extract durable facts, preferences and relationship notes, one compact row per (topic, person) in the `memory_distillates` table.
+Raw timeline events (`memory_ingest.go`, `identity.go`) and recent session transcripts accumulate. A distillation pass runs every 6 hours by default (`PAL_MEMORY_DISTILL_INTERVAL`, a Go duration, minimum 1 minute). It asks the LLM, through the provider-failover chain, to extract durable facts, preferences and relationship notes, one compact row per (topic, person) in `memory_distillates`.
 
-### Quality bar
-
-The LLM is called via the provider-failover chain (never a hardcoded vendor, invariant #6). Items are only persisted when the LLM returns:
-
-- `confidence >= 0.60` (the prompt's own stated minimum).
-- A non-empty `topic` and `content`.
-
-Any error (DB, LLM, parse) results in no writes, never a crash. PII in session content is never logged above debug level (invariant #10).
-
-### Distillate shape
+An item is persisted only if the LLM returns `confidence >= 0.60` and a non-empty `topic` and `content`. Any error (database, LLM, parse) results in no writes. Session content is never logged above debug level.
 
 ```json
 {
@@ -100,30 +66,15 @@ Any error (DB, LLM, parse) results in no writes, never a crash. PII in session c
   "content":     "Prefers short, direct replies. No bullet lists.",
   "confidence":  0.87,
   "source_kind": "session",
-  "source_ref":  "sess_abc123",
-  "created_at":  "2026-07-23T10:00:00Z",
-  "updated_at":  "2026-07-23T18:00:00Z"
+  "source_ref":  "sess_abc123"
 }
 ```
 
-`person_id` is omitted when the distillate is not tied to a person; `source_ref` is omitted when empty.
-
-### Endpoints
+`person_id` and `source_ref` are omitted when empty.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/v1/memory/distillates` | List active (non-superseded) distillates for the tenant. Returns `{ enabled: false }` when the flag is off. |
-| `POST` | `/v1/memory/distill` | Trigger a distillation pass now. Returns `{ found: N }` where N is the number of items persisted. |
+| `GET` | `/v1/memory/distillates` | Active (non-superseded) distillates for the tenant. Returns `{ enabled: false }` when the flag is off |
+| `POST` | `/v1/memory/distill` | Run a pass now. Returns `{ found: N }`, the number of items persisted |
 
-### Environment variables
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PAL_MEMORY_DISTILL` | off | `1` / `true` / `on` enables the distillation loop and endpoints. |
-| `PAL_MEMORY_DISTILL_INTERVAL` | `6h` | Go duration string for how often the loop runs. Minimum 1 minute. |
-
-### RLS and multi-tenancy
-
-The `memory_distillates` table is RLS-enforced (migration 0013). All DB writes use `db.WithTenantConn`; reads use `srv.WithTenant`. No cross-tenant data can be read or written by the distillation pass.
-
-Full endpoint shapes: [API reference](/docs/reference/api/).
+The `memory_distillates` table is row-level-security enforced, and the pass reads and writes through tenant-scoped connections. Full shapes: [REST API](/docs/reference/api/). For how pal uses one memory across iMessage and WhatsApp, see [Knowledge and handoff](/docs/pal/knowledge/).

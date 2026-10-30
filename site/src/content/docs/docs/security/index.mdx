@@ -1,123 +1,78 @@
 ---
-title: Security
-description: Trust boundaries, what is shipped versus planned, encryption, isolation and secret handling in PAL Runtime.
-glance:
-  what: "Each hop from caller to control plane to data-plane host to microVM has its own credential, and every control here is labelled shipped or planned."
-  why: "You can tell which protections to rely on today and which are still designs."
-  how: "Read What is shipped today, then follow the links to Egress, Identity and Receipts."
+title: Security model
+description: What PAL Runtime protects, from whom, by which control, what fails closed, and what is still a known gap.
 sidebar:
   order: 1
 ---
 
 import Diagram from '../../../../components/Diagram.astro';
-
 import { Aside } from '@astrojs/starlight/components';
-import { TrustBoundaries, TenancyRls } from '../../../../components/diagrams';
 
-<TrustBoundaries client:visible />
-<TenancyRls client:visible />
+PAL Runtime runs agents for many **tenants** on shared infrastructure, and some of that code is untrusted. The security model is four **trust boundaries**: edge authentication, tenant isolation in the database, a service token on every internal gRPC port, and the **sandbox** around the workload. Each boundary has its own credential, and each one refuses to start or refuses the request when its credential is missing in production. This page lists what is enforced today, and which protections are only designs.
 
-<Diagram name="sandbox-egress" />
+<Diagram name="trust-zones" alt="Four trust boundaries from caller to workload: edge authentication, tenant isolation with row-level security, a service token on internal gRPC ports, and the microVM sandbox. Each boundary refuses the request when its check fails." />
 
-How a sandbox reaches the network, and why it never holds a credential in broker mode: [Egress and credentials](/docs/security/egress/).
+## What is protected, from whom
 
-Three questions this page answers:
+| Protected | From | Control | When the control is missing |
+| --- | --- | --- | --- |
+| One tenant's rows | Another tenant | Row-level security on every tenant-scoped table (`USING` and `WITH CHECK`) | Production control plane refuses to start without `PAL_APP_DB_PASSWORD`, unless you set `PAL_RLS_ENFORCE=0` |
+| Endpoints | An API key with too few rights | Per-endpoint scopes (`agents:write`, `runs:execute`, and so on); a missing scope gets 403 | On by default in production, off in dev. `PAL_AUTHZ_ENFORCE=0` opts out with a warning |
+| Internal gRPC ports (`:50051` to `:50055`) | A caller that is not a PAL service | Shared service token (`x-lantern-service-token`, set from `PAL_GRPC_SERVICE_TOKEN`), checked in constant time before the tenant is read; mutual TLS when `PAL_GRPC_TLS_CA`, `_CERT`, `_KEY` are set (ADR 0043) | Control plane refuses to start in production without the token. Without TLS material it refuses too, unless `PAL_GRPC_INSECURE=1` (loud warning). Dev falls back to plaintext with a warning |
+| Provider keys and connector tokens | Anyone reading the database | AES-256-GCM at rest with `PAL_CREDENTIAL_KEY` | Control plane refuses to start in production without it. Dev stores plaintext and warns |
+| The host and other tenants | A compromised workload | MicroVM per workload, egress allowlist, no credentials inside in broker mode ([Isolation](/docs/runtime/isolation/), [Egress](/docs/security/egress/)) | Untrusted and hostile classes are refused, never downgraded to a bare pod |
+| Another run's audit stream | A compromised microVM | Step events and exit reports are bound to that VM's own run; a report with another `run_id` gets 403 | Rejected |
+| Spend | A runaway agent | Budgets; a hard-fail budget returns 402 before the run starts | If the budget cannot be read, run create returns 503 |
+| Private agents | A cross-tenant A2A caller | The agent card and invoke return 404 unless the agent is public or owned by the caller | Rejected |
 
-- **Can one customer's agent see another customer's data?** No. Every record is fenced by tenant, enforced down to the database row.
-- **What happens if an agent runs malicious code?** It runs inside a microVM, with egress limited to a per-sandbox allowlist: structurally in broker mode, where the VM has no network device, and in default mode when the image installs the iptables REDIRECT rule.
-- **Can you prove what an agent did?** Yes. You can issue a signed receipt for any completed run; with an Ed25519 seed configured, anyone can verify it.
+Two more token gates fail closed. The API-key introspection endpoint the gateway calls returns 403 in production when `PAL_GRPC_SERVICE_TOKEN` is unset. The personal `/v1/signals` endpoint returns 401 whenever `PAL_SIGNAL_TOKEN` is unset.
 
-<Aside type="caution" title="Shipped versus planned">
-Items marked (planned) are designed but not implemented. Do not rely on them for compliance decisions.
-</Aside>
+For the exact behavior of scopes and row-level security, see [Environment variables](/docs/reference/env-vars/). `make rls-validate` checks the policies against a live database, and a catalog test fails CI when a new tenant table has neither a policy nor an explicit exemption.
 
-## What is shipped today
+## Controls that sit outside the model
 
-- **AES-256-GCM encryption at rest** for connector credentials and LLM provider keys. Active only when `PAL_CREDENTIAL_KEY` is set. When unset, these columns are stored as plaintext pass-through, so set the key in any real deployment.
-- **HttpOnly session cookie.** Dashboard auth uses an HttpOnly session cookie; the JWT is also kept in `localStorage` for client-side API calls.
-- **Row-Level Security (RLS)** policies on every tenant-scoped table (`USING` + `WITH CHECK`), guarded by a catalog gate-test: a new tenant table without RLS (or an explicit exemption) fails CI. Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set; without it the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. The handler cutover is complete and `make rls-validate` proves the policies end to end against a live database.
-- **Per-endpoint API-key scopes.** Mutating endpoints are annotated with required scopes (`agents:write`, `runs:execute`, and so on). Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. Set `PAL_AUTHZ_ENFORCE=0` to opt out (logged as a warning) or `=1` to force it on in dev. A key missing the endpoint's scope gets 403; dashboard/owner JWT sessions and unscoped legacy keys keep full access.
-- **Service-token auth and mTLS on every internal gRPC port:** control plane `:50051`, workflow engine `:50052`, model router `:50053`, runtime manager `:50054` and runtime scheduler `:50055`. The token check is constant-time, runs before tenant extraction and is fail-closed in production. Hops are mutual TLS when `PAL_GRPC_TLS_CA`, `PAL_GRPC_TLS_CERT` and `PAL_GRPC_TLS_KEY` are set (ADR 0043); in production the control plane refuses to start without them unless `PAL_GRPC_INSECURE=1`, and dev falls back to plaintext with a warning.
-- **Runtime report binding.** Step events and exit reports from a microVM are bound to that VM's own run: a report carrying another run's `run_id` is rejected with 403, so a compromised harness cannot spoof another tenant's audit or log stream.
-- **Signed run receipts.** Issued on request for a completed run (`POST /v1/runs/{id}/receipt`). A SHA-256 of the run's full `journal_events` stream is signed with Ed25519 when `PAL_RECEIPT_ED25519_SEED` is set (verifiable with no PAL account at `/proof` against the key at `/.well-known/lantern-receipts`), with an HMAC-SHA256 dev fallback otherwise (verifiable only by the deployment).
-- **Fail-closed token gates.** The gateway's API-key introspection endpoint refuses (403) in production when `PAL_GRPC_SERVICE_TOKEN` is unset (dev allows it with a warning). The personal `/v1/signals` endpoint refuses (401) whenever `PAL_SIGNAL_TOKEN` is unset. Both gates use constant-time token comparisons when a token is set.
-- **A2A tenant isolation.** `GetAgentCard` / `InvokeAgent` gate on `is_public` OR caller tenant; private agents return 404 to cross-tenant callers.
-- **Surface-gateway tenant resolution.** The surface gateway resolves a real `PAL_TENANT_ID` instead of using platform IDs; unknown installs are rejected.
-- **LLM idempotency keys on all provider calls**, derived from `(run_id, step_id, attempt)` and reused across same-provider retries.
-- **Dependency vulnerability gate.** `govulncheck`, `cargo-audit`, and `npm audit` run on every CI build.
-- **OTel traces with tenant identity.** Every control-plane HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id` and `lantern.step_id`.
+These are enforced by the platform, so a prompt injection cannot talk past them.
 
-## Privacy levels (planned)
-
-The following privacy levels are part of the architecture design and are not yet implemented. They are documented here for reference.
-
-- **Standard.** The default level. Data is encrypted at rest and in transit. Logs include input/output for debugging. Suitable for most use cases.
-- **Strict (planned).** Inputs and outputs are not logged. PII is automatically detected and redacted in traces. Audit log entries are created for all data access.
-- **Paranoid (planned).** End-to-end encryption. Data is encrypted before leaving the client and decrypted only inside the microVM. The control plane never sees plaintext data. Designed for healthcare, finance, and legal use cases.
-
-Privacy levels can be set per agent and per connector once the feature ships.
-
-## Runtime controls
-
-These constraints are enforced by the platform, outside the model, so a prompt injection cannot talk its way past them.
-
-- **Budgets.** Per-agent caps on cost per day and runs per day, and a tenant-wide daily cost cap. A hard-fail budget returns HTTP 402 before the run starts. Tokens/day is enforced at the same gates. The per-run cap is enforced mid-run in workflows and reported after the fact elsewhere; per-tool limits apply to workflow tool and connector nodes. Hard-fail budgets fail closed (503 on run create) when the budget cannot be read.
-- **Egress allowlist.** Declared per spawn. In broker mode anything not on the allowlist is denied structurally (there is no network device). In default mode the allowlist binds only when the VM host/image installs the iptables REDIRECT rule. See [Egress and credentials](/docs/security/egress/).
-- **Human approval.** Workflow approval nodes block on a takeover request until an operator grants it. Nested approvals inside child runs fail today rather than wait.
+- **Budgets.** Per-agent cost and runs per day, plus a tenant-wide daily cap. See [Budgets](/docs/build/budgets/).
+- **Egress allowlist.** Declared per spawn. In broker mode the VM has no network device. In the default mode the allowlist binds only when the VM image installs the iptables REDIRECT rule; in production the harness refuses to start the workload without it.
+- **Human approval.** Workflow approval nodes block until an operator grants the request. Nested approvals inside child runs fail today rather than wait.
 - **Confidence gate.** Low-confidence tool and connector steps divert to approval. Off by default (`PAL_CONFIDENCE_GATE`).
+- **Signed receipts.** Proof of what a run executed. See [Receipts](/docs/security/receipts/).
 
 <Aside type="caution">
-The dashboard also has output filters (blocked topics and similar). These run in the browser on displayed output. They are a convenience, not a security control.
+The dashboard also has output filters (blocked topics and similar). They run in the browser on displayed output. They are a convenience, not a security control.
 </Aside>
 
-### PII redaction (planned)
+## Encryption
 
-Automatic PII detection and redaction in agent inputs, outputs and traces is not implemented. Do not rely on it.
+- **At rest.** Connector credentials and LLM provider keys are encrypted at the application layer. Other Postgres columns use plain Postgres storage, and disk encryption is the host's job. Object-store encryption for bundles and snapshots is a bucket setting on your storage; PAL does not set it.
+- **In transit.** The gateway terminates TLS with rustls default protocol versions (TLS 1.2 and 1.3). Internal gRPC carries the service token and, when configured, mutual TLS. The data-plane tunnel to the control plane is server-authenticated TLS and does not use client certificates.
+- **Browser session.** Dashboard auth sets an HttpOnly session cookie. The JWT is also kept in `localStorage` for client-side API calls, so an XSS bug on the dashboard can read it.
 
-## Data encryption
+## Known gaps
 
-### At rest
-
-- Connector credentials and LLM provider API keys are AES-256-GCM encrypted at the application layer when `PAL_CREDENTIAL_KEY` is configured; when it is unset they are stored unencrypted (plaintext pass-through).
-- Other Postgres columns use standard Postgres storage. Disk-level encryption is the responsibility of the host.
-- S3/MinIO objects (agent bundles, snapshots): encryption is a bucket setting you configure on your storage. PAL does not set it.
-
-### In transit
-
-- All external traffic uses modern TLS. The gateway is built on rustls safe defaults (TLS 1.2 and 1.3).
-- Internal gRPC traffic carries a pre-shared service token (`PAL_GRPC_SERVICE_TOKEN`, constant-time compare, before tenant extraction, fail-closed in production) and, when configured, mutual TLS on every hop (ADR 0043). The data-plane tunnel to the control plane is server-authenticated TLS; it does not use client certificates.
-- Default egress mode: in-VM secret vending uses kernel-attested peer auth (`SO_PEERCRED`) on the Unix domain socket. Only the expected workload uid may receive secrets, and the harness refuses any other peer at the kernel level.
-
-### Bring your own key (BYOK) (planned)
-
-Enterprise customers will be able to provide their own encryption keys via AWS KMS, Google Cloud KMS, or Azure Key Vault. This feature is on the roadmap and not yet available.
-
-## Audit logging (partial)
-
-Run-level events are recorded in `journal_events` (the run event journal). A full immutable audit log covering secret access, role changes, and dashboard actions is on the roadmap. The following are tracked today:
-
-- Run start, completion, and failure (via `journal_events`).
-- A2A agent card access (tenant-scoped; cross-tenant requests return 404).
-
-SIEM export via webhook or S3 is planned but not yet available.
-
-## Isolation
-
-Agent runs execute in isolated sandboxes whose strength depends on the workload type: gVisor (standard), Kata microVM (hostile), and Firecracker for the strongest tier. Untrusted or hostile workloads are refused unless the right RuntimeClass is configured, and are never silently downgraded to a bare pod. The classes and the decision tree are on [Isolation classes](/docs/runtime/isolation/); how a sandbox reaches the network is on [Egress and credentials](/docs/security/egress/).
-
-<Aside type="danger" title="Architectural invariant">
-User-supplied code, Python `exec`, browser automation, and anything that loads packages from the internet MUST run inside a microVM. Never run untrusted code in a bare container.
+<Aside type="danger" title="Do not rely on these">
+Everything in this list is a design or a limit, not a shipped control.
 </Aside>
 
-## Secret management
+- **Privacy levels** (strict, paranoid) are not implemented. Today there is one level: data is encrypted at rest and in transit, and logs include inputs and outputs.
+- **PII redaction** in inputs, outputs and traces is not implemented.
+- **Bring your own key** (AWS KMS, Google Cloud KMS, Azure Key Vault) is not available.
+- **Audit log is partial.** Run events are in `journal_events`, and A2A card access is tenant-scoped. There is no immutable audit log of secret access, role changes or dashboard actions, and no SIEM export.
+- **The Firecracker root filesystem is writable.** Only the cert and spawn drive is mounted read-only. Do not assume a workload cannot modify its own rootfs.
+- **Broker egress is opt-in.** The default is guest mode, which depends on the image installing the iptables REDIRECT rule.
+- **Forced isolation for marketplace and LLM-generated bundles** is policy in ADR 0002, not enforced at schedule time: a request for `trusted` is honoured as sent.
+- **Launch measurement is host-asserted.** It records what the manager booted. It does not prove what ran inside the VM. See [Identity and secrets](/docs/security/identity/#software-measurement-of-the-launched-vm).
 
-Secrets (API keys, OAuth tokens, credentials) are referenced via the `lantern.secret/...` form and resolved at execution time by the runtime manager's secret resolver (via the control-plane relay). Stored credentials are AES-256-GCM encrypted when `PAL_CREDENTIAL_KEY` is configured. Resolved values never appear in:
+## Telemetry and supply chain
 
-- Logs or traces
-- Run state or step outputs
-- Dashboard UI
-- API responses
+Every control-plane HTTP request and gRPC call carries a span with `pal.tenant_id`, `pal.run_id` and `pal.step_id`. The old `lantern.*` attribute names are also emitted for one release so saved trace queries keep matching. `govulncheck`, `cargo audit` and `npm audit` run on every pull request.
 
-<Aside type="tip">
-Rotate LLM provider keys from Settings > LLM Providers; rotate connector credentials by re-installing the connector from Integrations.
-</Aside>
+## Where to go next
+
+| You want to know | Read |
+| --- | --- |
+| How a sandbox reaches the network, and why it holds no credential | [Egress](/docs/security/egress/) |
+| How workloads get secrets and identity | [Identity and secrets](/docs/security/identity/) |
+| How to prove what a run did | [Receipts](/docs/security/receipts/) |
+| Which isolation class to pick | [Isolation](/docs/runtime/isolation/) |

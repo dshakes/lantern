@@ -1,22 +1,17 @@
 ---
 title: Scheduling
 description: Run an agent on a cron expression, with per-schedule input and timezone.
-glance:
-  what: "A schedule starts an agent on a five-field cron expression, in an IANA timezone, with its own input template."
-  why: "One agent can have many schedules, an over-budget agent does not fire, and scheduled runs look like any other run."
-  how: "POST /v1/schedules with agentName, cronExpr and timezone, as in Create a schedule."
 sidebar:
   order: 5
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import { CronSchedules } from '../../../../components/diagrams';
 
-<CronSchedules client:visible />
+A **schedule** starts an agent on a five-field **cron expression**, in an **IANA timezone**, with its own input template. One agent can have many schedules, and a scheduled run looks like any other run in the run list and journal. An agent that is over its hard-fail [budget](/docs/build/budgets/) does not fire, so an unattended schedule cannot run past its cap.
 
 ## Cron expressions
 
-Five fields: minute, hour, day of month, month, day of week. Each field accepts `*`, lists, ranges and `*/N` steps:
+Five fields: minute, hour, day of month, month, day of week. Each field accepts `*`, lists, ranges and `*/N` steps.
 
 ```text
 # ┌─── minute (0-59)
@@ -36,24 +31,23 @@ Five fields: minute, hour, day of month, month, day of week. Each field accepts 
 Classic Vixie cron fires on _either_ when both are set. PAL Runtime requires both to match, so `0 9 1-7 * 1` fires on the first Monday of the month. If you port a crontab that relied on the OR behavior, rewrite it as two schedules. The search for the next fire time gives up after two years.
 </Aside>
 
-## Schedule API
+## Create a schedule
 
-### Create a schedule
-
-```text
-POST /v1/schedules
-Content-Type: application/json
-
-{
+```bash
+curl -s -X POST http://localhost:8080/v1/schedules \
+  -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{
   "agentName": "research-agent",
   "cronExpr": "0 9 * * 1-5",
   "timezone": "America/New_York",
   "inputTemplate": { "mode": "daily-digest" },
   "deliveryEmail": "me@example.com",
   "enabled": true
-}
+}'
+```
 
-Response: 201 Created
+The response is `201 Created`:
+
+```json
 {
   "id": "sched-uuid",
   "tenantId": "...",
@@ -66,54 +60,43 @@ Response: 201 Created
 }
 ```
 
-`deliveryEmail` is optional. The create response does not echo `timezone`; `nextFireAt` is already computed in that zone. Schedules are REST-only: there is no `pal schedule` command or SDK namespace.
+`deliveryEmail` is optional. The create response does not echo `timezone`, but `nextFireAt` is already computed in that zone.
 
-### List schedules
+## Manage schedules
 
-```text
-GET /v1/schedules
-
-Response: 200 OK — bare array
-[
-  { "id": "sched-uuid", "agentName": "...", "cronExpr": "...", "enabled": true, ... }
-]
-```
-
-### Update a schedule
-
-```text
-PUT /v1/schedules/{id}
-Content-Type: application/json
-
-{ "enabled": false }
-```
+| Action | Request | Response |
+| --- | --- | --- |
+| List | `GET /v1/schedules` | `200`, a bare array of schedules |
+| Update | `PUT /v1/schedules/{id}` with e.g. `{ "enabled": false }` | `200` with a JSON body that includes `id` and `cronExpr` |
+| Delete | `DELETE /v1/schedules/{id}` | `204 No Content` |
 
 `PUT` accepts `enabled`, `cronExpr`, `deliveryEmail` and `timezone` only. To change `inputTemplate`, delete the schedule and create a new one.
 
-### Delete a schedule
+## Timezone
 
-```text
-DELETE /v1/schedules/{id}
+`timezone` is an optional IANA name; an invalid one returns 400. Cron then matches the schedule's local time. Resolution order: the schedule's zone, then `PAL_DEFAULT_TIMEZONE`, then UTC. With neither set, `0 9 * * *` fires at 09:00 UTC.
 
-Response: 204 No Content
-```
-
-## Timezone handling
-
-`timezone` is an optional IANA name (an invalid one returns 400). Cron then matches the schedule's local time. Resolution order: the schedule's zone, then `PAL_DEFAULT_TIMEZONE`, then UTC. With neither set, `0 9 * * *` fires at 09:00 UTC.
-
-The deployment default (not a per-schedule zone) also sets the [budget](/docs/build/budgets/) day boundary: daily limits roll at local midnight in that zone.
+The deployment default (not a per-schedule zone) also sets the [budget](/docs/build/budgets/) day boundary, so daily limits roll at local midnight in that zone.
 
 ## Example: weekday digest to Slack
 
-`examples/daily-digest` is a workflow (GitHub open PRs, an AI step, a Slack post) on the schedule `0 9 * * 1-5` in `America/New_York`. Run `pal deploy` in that directory (the manifest carries the prompt and workflow), install the Slack and GitHub connectors, then post `schedule.json` to `POST /v1/schedules`. The response's `nextFireAt` is the next weekday 09:00 New York time.
+`examples/daily-digest` is a workflow (GitHub open PRs, an AI step, a Slack post) on the schedule `0 9 * * 1-5` in `America/New_York`.
 
-The scheduler polls every 60 seconds, so a due schedule fires within a minute. With several control-plane replicas each due window fires at most once; if the process is down at fire time, that occurrence is skipped, not replayed. To test without waiting for 09:00, set the row due (`UPDATE schedules SET next_fire_at = now() WHERE id = ...`) and watch `GET /v1/runs?agent=...`. The e2e suite does exactly this against fixtures (see [Testing](/docs/build/testing/)). An agent over its hard-fail budget does not fire at all, so an unattended schedule cannot run past its cap.
+1. Run `pal deploy` in that directory. The manifest carries the prompt and workflow.
+2. Install the Slack and GitHub connectors ([Connectors](/docs/build/connectors/)).
+3. Post `schedule.json` to `POST /v1/schedules`.
 
-<Aside type="note">
-Setting `deliveryEmail` also mails the run output. That path is not covered by the fixture suite.
-</Aside>
+The response's `nextFireAt` is the next weekday 09:00 New York time.
 
-Inbound channel messages ([Surfaces](/docs/pal/surfaces/)) and [webhooks](/docs/build/triggers/) start runs too, with the same lifecycle.
+To test without waiting for 09:00, set the row due (`UPDATE schedules SET next_fire_at = now() WHERE id = ...`) and watch `GET /v1/runs?agent=...`. The e2e suite does this against fixtures ([Testing](/docs/build/testing/)).
 
-Next: [sessions and memory](/docs/runtime/sessions-and-memory/).
+## Limits
+
+- **Polling:** the scheduler polls every 60 seconds, so a due schedule fires within a minute.
+- **Replicas and downtime:** with several control-plane replicas each due window fires at most once. If the process is down at fire time, that occurrence is skipped, not replayed.
+- **REST only.** There is no `pal schedule` command and no SDK namespace for cron schedules.
+- **`deliveryEmail`** also mails the run output. The fixture suite does not cover that path.
+
+Inbound channel messages ([Connect your channels](/docs/pal/surfaces/)) and [webhook triggers](/docs/build/triggers/) start runs too, with the same lifecycle.
+
+Next: [Sessions and memory](/docs/runtime/sessions-and-memory/).

@@ -1,71 +1,72 @@
 ---
-title: Verifiable receipts
-description: Signed, tamper-evident, offline-verifiable proof of what a run executed.
-glance:
-  what: "A receipt is an Ed25519 signature over a run's metadata and the SHA-256 of its journal_events stream."
-  why: "An auditor or customer can check which agent ran, what it cost, and that nobody edited the record afterward."
-  how: "POST /v1/runs/{id}/receipt, then paste it into the public /proof page or POST /v1/runs/receipts/verify."
+title: Receipts
+description: Signed, tamper-evident proof of what a run executed, verifiable without a PAL account.
 sidebar:
   order: 4
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import { SignedReceipts } from '../../../../components/diagrams';
 
-<SignedReceipts client:visible />
+A **receipt** is a signed record of one run: which agent ran, what it cost, and a **SHA-256 hash of the run's journal**. Because the signature covers that hash, editing the event log after the fact makes the receipt fail verification. You issue a receipt for a run you own, and anyone can check it with the deployment's published public key. Use receipts when an auditor or a customer needs evidence that does not depend on trusting your dashboard.
 
-A receipt is proof, not a promise. Because it is signed over the run's journal hash, any later edit to the event log invalidates the signature. Verification needs no account: the signature checks out or it does not.
+## Issue a receipt
 
-## What a receipt attests
-
-The receipt binds together the run's identity and the cryptographic hash of its [event-sourced journal](/docs/runtime/durable-execution/). Because the journal is the authoritative record of every step that executed, signing over its hash means the receipt attests to *the exact sequence of steps that ran*, not a summary that could drift from reality.
-
-## Payload fields
-
-The signature (**Ed25519** when `PAL_RECEIPT_ED25519_SEED` is set) covers the canonical JSON of a `receiptPayload` struct with these fields (alphabetically sorted keys, compact JSON, no whitespace):
-
-- `agentName`: always present.
-- `agentVersion`: omitted when blank.
-- `costUsd`: accumulated cost for the run.
-- `issuedAt`: RFC3339 timestamp.
-- `journalHash`: SHA-256 of the ordered `journal_events` rows.
-- `model` / `provider`: reserved; currently always omitted.
-- `runId`: always present.
-- `status`: the run's status at issuance (for example `succeeded`, `failed`, `cancelled`; issuing on a non-terminal run is not refused).
-- `tenantId`: always present.
-- `tokensIn` / `tokensOut`: prompt and completion token counts.
-- `version`: schema version (currently `1`).
-- `softwareMeasurement`: the host-asserted launch measurement ([Identity and secrets](/docs/security/identity/#software-measurement-of-the-launched-vm)); omitted for runs that did not use a microVM or when measurement was not configured.
-- `confidentialCompute`: present only for confidential runs (`attested: false`: the launch measurement is recorded, not verified).
-
-The canonical JSON is produced by a three-step round-trip: marshal the struct, unmarshal into `map[string]any`, re-marshal (Go sorts map keys alphabetically on re-marshal). The result is compact JSON with keys in alphabetical order, reproducible offline with any JSON library that sorts keys.
-
-## Issuing a receipt
-
-Issue and persist a signed receipt for a completed run:
-
-```
-POST /v1/runs/{id}/receipt
+```sh
+# Issue and persist a receipt for a run ($TOKEN is a JWT or API key with runs:write)
+curl -X POST http://localhost:8080/v1/runs/$RUN_ID/receipt \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-The receipt is an **Ed25519** signature over the journal hash. It is persisted alongside the run, so it can be retrieved and re-verified later.
+The response is `{payload, signature, algorithm}`. The receipt is stored with the run, and issuing again for the same run replaces the stored one with a freshly signed receipt. Issuing is not refused for a run that has not finished: `status` records the state at issuance, so issue after the run is terminal.
 
-Verify with `POST /v1/runs/receipts/verify` (no auth required). If `PAL_RECEIPT_ED25519_SEED` is unset, the control plane falls back to an HMAC-SHA256 signature for dev. Set the seed in any real deployment.
+## What the signature covers
 
-## Verifying offline
+The signature covers the canonical JSON of the payload: compact, with keys sorted alphabetically, so any JSON library that sorts keys reproduces the bytes.
 
-Verification needs no privileged access. The signing key's algorithm, fingerprint and (for Ed25519) public key are published at a well-known endpoint, so an external party can verify a receipt without calling back into your control plane:
+| Field | Meaning |
+| --- | --- |
+| `runId`, `tenantId`, `agentName` | Always present |
+| `agentVersion` | Digest of the agent's current version; omitted when blank |
+| `status` | The run's status at issuance |
+| `costUsd`, `tokensIn`, `tokensOut` | Accumulated cost and token counts |
+| `journalHash` | SHA-256 over the run's `journal_events` rows in `seq` order, each hashed as `seq\|kind\|payload` plus a newline |
+| `issuedAt` | RFC 3339 timestamp |
+| `version` | Schema version, currently `1` |
+| `softwareMeasurement` | Host-asserted launch measurement of the microVM; omitted for runs without one ([Identity and secrets](/docs/security/identity/#software-measurement-of-the-launched-vm)) |
+| `confidentialCompute` | Present only for confidential runs, with `attested: false`: the measurement is recorded, not verified |
 
+`model` and `provider` are reserved and currently always omitted. The journal is the record that [durable execution](/docs/runtime/durable-execution/) replays on recovery, so one record backs both crash safety and provenance.
+
+## Signing algorithms
+
+| Algorithm | When | Who can verify |
+| --- | --- | --- |
+| Ed25519 | `PAL_RECEIPT_ED25519_SEED` is set (32 bytes, base64 or hex) | Anyone with the published public key |
+| HMAC-SHA256 | The seed is unset, or invalid (the control plane logs the error and falls back) | Only the deployment that holds the secret |
+
+Set the Ed25519 seed in any real deployment. The HMAC fallback is for dev.
+
+## Verify a receipt
+
+The signing algorithm, key fingerprint and, for Ed25519, the public key are published without auth:
+
+```sh
+# Public key and fingerprint for offline verification
+curl http://localhost:8080/.well-known/pal-receipts
 ```
-GET /.well-known/lantern-receipts
-```
 
-Anyone holding an Ed25519 receipt and the public key published there can confirm the receipt was signed by this deployment's key. Matching the journal hash against the run's actual event log (that is, confirming nothing was altered after the fact) additionally requires the run's journal export. An HMAC-SHA256 receipt can only be checked by the deployment that holds the secret.
+The older `/.well-known/lantern-receipts` path also answers, for external verifiers written before the rename.
 
-<Aside>
-A receipt is signed over the journal hash, so tampering with even one event after issuance breaks verification. The journal is also what [durable execution](/docs/runtime/durable-execution/) replays on recovery: the same record underpins both crash-safety and provenance.
+You have three ways to check a receipt:
+
+1. **The `/proof` page.** The dashboard's public page needs no sign-in. Paste the receipt.
+2. **The API.** `POST /v1/runs/receipts/verify` takes the receipt body and needs no auth. It returns `{valid: true, runId, issuedAt, tenantId}` or `{valid: false, reason}`.
+3. **Locally.** Fetch the public key once, canonicalize the payload, and run `ed25519.Verify`. This does not call your control plane.
+
+When the run exists on the server, the verify endpoint compares the signature and the full payload against what it issued, so an edited `costUsd` or `status` carrying the original signature fails.
+
+<Aside type="caution">
+A signature check proves the receipt was issued by this deployment's key and was not edited. It does not by itself prove the event log is intact today. To confirm that, recompute `journalHash` from an export of the run's journal and compare. An HMAC receipt cannot be checked by anyone outside the deployment.
 </Aside>
 
-You do not need a terminal to check one: the dashboard's public `/proof` page (no sign-in) accepts a receipt and calls `POST /v1/runs/receipts/verify`, which needs no auth either.
-
-Full request and response shapes: [API reference](/docs/reference/api/).
+Full request and response shapes: [REST API](/docs/reference/api/).

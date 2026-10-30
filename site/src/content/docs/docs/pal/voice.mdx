@@ -1,48 +1,43 @@
 ---
 title: Teach it your voice
-description: "How pal drafts a reply, checks it against what you have actually sent, and learns from every thumbs-down."
-glance:
-  what: "Every contact reply passes eight stages between the draft and the send; three of them compare it with your own messages."
-  why: "A reply that reads like a bot is a reply your contact notices. The checks are code, not prompt advice."
-  how: "Nothing to switch on: the voice floor and refinement are on by default. Tap 👎 on a bad reply and pal learns from it."
+description: "How pal learns your voice, checks each draft against what you have actually sent, and learns from every thumbs-down."
 ---
 
-import { VoicePipeline } from '../../../../components/diagrams';
+pal drafts replies in your voice, then measures the draft against **your own sent messages** before it goes out. Three checks are about voice: a **bot-tell guard**, a **voice floor** and a **critique-refine** pass. They are code, not prompt advice, so a draft that reads like a bot is rewritten or dropped rather than sent. You teach pal in three ways: during `pal setup`, by tapping thumbs-down on a bad reply, and by telling it facts in your own chat.
 
-<VoicePipeline client:visible />
+## The checks that protect your voice
 
-## The reply pipeline
+These sit inside the full reply pipeline, which also holds money and unverifiable claims: see [Holds and trust](/docs/pal/human-in-the-loop/). A failure here triggers one regeneration, not a hold.
 
-Stages 1–4 are soft: a failure triggers one regeneration. Stages 5 and 6 are hard: they hold the reply for you. The rules in the prompt are advice; these stages are enforced in code.
+| Check | What it looks at | On failure |
+| --- | --- | --- |
+| Bot-tell guard | Stock phrases, leaked reasoning, denials of your own facts, and a reply that repeats the shape of your last three replies to that contact | Regenerate once |
+| Voice floor | Stylometric distance from your own sent messages | Regenerate once, with a hint about which feature drifted |
+| Critique-refine | Medium and low confidence drafts only: edited against the 5 real messages of yours most like it | Keep the original if the edit is not closer to your voice |
 
-| # | Stage | What it checks | On failure |
-| --- | --- | --- | --- |
-| 1 | Draft | Purpose-keyed session, web search on, read-only tools | — |
-| 2 | Bot-tell guard | Stock phrases, leaked reasoning, denials of your own facts, a reply that repeats the shape of the last three | Regenerate |
-| 3 | Voice floor | Stylometric distance from your own sent messages | Regenerate |
-| 4 | Critique-refine | MEDIUM/LOW drafts only, edited against your 5 most similar real messages | Keep the original if the edit is not closer to your voice |
-| 5 | Commitment gate | Promises of money or an action, in any language | [Hold for you](/docs/pal/human-in-the-loop/) |
-| 6 | Grounding gate | Facts about your plans pal can't verify; bad news answered in the wrong tone | [Hold for you](/docs/pal/human-in-the-loop/) |
-| 7 | Claim rewrite | "I sent it" becomes "I'll send it" unless the action was recorded for that contact in the last 10 minutes | Rewrite |
-| 8 | Paced send | Your real reply latency for that contact, jittered, clamped to 3 – 25 s | — |
+After these, the reply waits a human-paced delay drawn from your real reply times to that contact, jittered and clamped to between 3 and 25 seconds.
 
-## How the voice floor works
+### How the voice floor works
 
-The floor is fitted in-process on your own sent messages (at least 50 samples). A draft further from your style than 95% of your real messages is suppressed as `voice-drift` and regenerated once, with a hint about which feature drifted. Every contact draft logs `voice score {delta, floor, ok}`, so you can see it working.
+The floor is fitted on your own sent messages, in memory, and needs at least 50 of them. A draft further from your style than 95% of your real messages is suppressed as `voice-drift`. Every contact draft logs `voice score {delta, floor, ok}`, so you can see it working.
 
 It scores surface style, not meaning. It never runs on your own chat, on groups, or on one- and two-word replies.
 
-## Teach it with 👎
+## Teach it during setup
+
+Step 3 of [`pal setup`](/docs/pal/surfaces/) can read your recent one-to-one messages, only if you agree at step 1. It shows a profile (register, sentence length, warmth, patterns) and a sample reply as you. Answer `a` if it sounds like you, `r` to say what is off and try again, or `s` to skip. With `pal setup --apply`, an approved profile sets `PAL_VOICE_REASONING=1`, which makes pal use that reasoned profile instead of a fixed heuristic.
+
+## Teach it with a thumbs-down
 
 1. Tap 👎 on a reply. The inbound message, the bad reply and your better reply (if you send one) are logged.
-2. Patterns that recur across three or more rejections graduate into **style lessons**, written to the `## Style lessons (managed)` section of your owner profile.
-3. Lessons are injected into every future prompt, for every contact.
+2. Patterns that recur across three or more rejections become **style lessons**, written to the `## Style lessons (managed)` section of your owner profile.
+3. Lessons go into every future prompt, for every contact.
 
-An LLM clustering pass also finds patterns the fixed rules miss. It can only add or raise a lesson, never remove one, and any error falls back to the deterministic pass.
+A model pass also finds patterns the fixed rules miss. It can only add or raise a lesson, never remove one, and any error falls back to the fixed rules. To retire a lesson, delete its bullet from the profile.
 
 ## Tell it facts
 
-Your owner profile (`~/.pal/owner-profile.md`, or `$PAL_OWNER_PROFILE`) holds facts pal must never contradict and per-contact naming rules:
+Your owner profile (`~/.pal/owner-profile.md`, or the path in `PAL_OWNER_PROFILE`) holds facts pal must never contradict and per-contact naming rules:
 
 ```markdown
 ## Facts
@@ -54,7 +49,7 @@ Your owner profile (`~/.pal/owner-profile.md`, or `$PAL_OWNER_PROFILE`) holds fa
 - Jordan: college friend | address as: Jo | never: buddy, bro
 ```
 
-You can also teach it in your own chat: "remember: anniversary is May 2 2015" or "don't call Jordan buddy". pal acknowledges with `📝 noted — …`.
+Dates are `YYYY-MM-DD`. You can also teach it in your own chat: "remember: anniversary is May 2 2015" or "don't call Jordan buddy". pal answers `📝 noted — …`. `address as:` sets what to call someone; `never:` lists terms pal must not use for them.
 
 ## Settings
 
@@ -62,5 +57,7 @@ You can also teach it in your own chat: "remember: anniversary is May 2 2015" or
 | --- | --- | --- |
 | `PAL_VOICE_FLOOR` | on | `0` disables the stylometric floor |
 | `PAL_VOICE_REFINE` | on | `0` disables critique-refine |
-| `PAL_DISLIKE_LLM_CLUSTER` | on | `0` keeps only the deterministic lesson miner |
-| `PAL_VOICE_CLONE` | off | Opt-in and deepfake-class. `1` speaks outbound phone calls in a cloned voice (ElevenLabs) instead of a stock one; needs `PAL_ELEVENLABS_API_KEY`, `PAL_ELEVENLABS_VOICE_ID` and a public cache URL, or it falls back to the stock voice. The recording-consent announcement still plays. |
+| `PAL_DISLIKE_LLM_CLUSTER` | on | `0` keeps only the fixed-rule lesson miner |
+| `PAL_VOICE_CLONE` | off | Opt-in and deepfake-class. `1` speaks outbound phone calls in a cloned voice (ElevenLabs) instead of a stock one. It needs `PAL_ELEVENLABS_API_KEY`, `PAL_ELEVENLABS_VOICE_ID` and a public cache URL, or it falls back to the stock voice. The recording-consent announcement still plays. |
+
+The remaining voice variables are in [Environment variables](/docs/reference/env-vars/) and [pal internals](/docs/architecture/pal/).

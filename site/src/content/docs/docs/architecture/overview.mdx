@@ -1,35 +1,38 @@
 ---
-title: Architecture overview
-description: How PAL Runtime is put together, from callers to microVMs, as interactive diagrams.
-glance:
-  what: "A control plane that decides and a data plane in your VPC that runs the work, joined by an outbound-only tunnel."
-  why: "Untrusted agent code, tenant data and model keys each stay behind a boundary you can name."
-  how: "Step through the system context, then open any service in the explorer; the pages below go one level deeper."
+title: How PAL Runtime works
+description: How a request travels from your client through the gateway and control plane to the services that run the work.
 sidebar:
   order: 1
 ---
 
-import { SystemContext, ContainerView, ArchitectureExplorer, AgentNetwork } from '../../../../components/diagrams';
+import Diagram from '../../../../components/Diagram.astro';
 
-## System context
+PAL Runtime is split into a **control plane** that decides and **runtime services** that do the work. The control plane authenticates the caller, checks budgets, stores state and talks to the model providers. The workflow engine drives runs step by step, and the scheduler, runtime-manager and harness place and run untrusted code in microVMs. You write an agent and call one API; the split below decides where each part of the run happens.
 
-<SystemContext client:visible />
+<Diagram name="runtime-how-it-works" alt="Clients call the gateway, which authenticates and forwards to the control plane. The control plane works with the workflow engine and the model router. For microVM runs it asks the scheduler, which places the workload through the runtime-manager into a microVM." />
 
-## Containers
+## Who does what
 
-<ContainerView client:visible />
+| | Your code | The control plane | The runtime services |
+| --- | --- | --- | --- |
+| Owns | The agent definition, prompts, tools, input | Auth, tenants, budgets, agents, runs, sessions, provider keys | Run state (workflow engine), VM placement and lifecycle (scheduler, manager) |
+| Runs | Inside a microVM, if you declare `isolation: microvm` | Shared-tier runs and the model-call path. Never user code in a microVM | Durable steps, model routing, VM spawn, egress enforcement |
+| Sees | Its input and the secrets it is vended | Every request, tagged with `tenant_id` | Only its own tenant's runs, checked on every call |
 
-## Explore the components
+Three rules hold the split together. The control plane never touches code in a microVM; only the runtime-manager does. The workflow engine is the only writer of run state. Models are addressed by capability, so the router, not your agent, picks the vendor model.
 
-Select a service for its role, ports, guarantees and source. Double-click (or press Enter twice) to open the runtime manager or harness view.
+## How a request travels
 
-<ArchitectureExplorer client:visible />
+1. **The gateway authenticates.** A client sends `POST /v1/runs` with a JWT or API key. The gateway terminates TLS, validates the credential, applies rate limits and forwards to the control plane.
+2. **The control plane admits the run.** It resolves the agent version, reads `manifest.isolation`, and checks the [budget](/docs/build/budgets/). A reached hard-fail limit returns 402 here, before any model call.
+3. **The run executes.** On the shared tier the control plane's executor drives it. On the microVM tier it asks the scheduler for a node, and the runtime-manager spawns the VM.
+4. **Model calls go out by capability.** `model: "auto"` or `reasoning-large` is mapped to a concrete model. See [Models and routing](/docs/build/models/).
+5. **Every step is journaled** to `journal_events` before it runs. A crash resumes from the journal ([Durable execution](/docs/runtime/durable-execution/)).
+6. **Events stream back** to the caller over SSE, with no full-response buffering in between ([Streaming](/docs/runtime/streaming/)).
 
-## Agents talking to agents
+The step-by-step version with failure paths is [Request lifecycle](/docs/architecture/request-lifecycle/).
 
-<AgentNetwork client:visible />
-
-## Reference
+## What runs where
 
 | Service | Language | Port | Role |
 | --- | --- | --- | --- |
@@ -42,4 +45,8 @@ Select a service for its role, ports, guarantees and source. Double-click (or pr
 | surface-gateway | Rust | `:8444` | Inbound channel webhooks |
 | harness | Rust | PID 1 in the VM | Heartbeats, secrets socket, egress, tool runner |
 
-Go deeper: [request lifecycle](/docs/architecture/request-lifecycle/), [VM lifecycle](/docs/architecture/vm-lifecycle/), [security boundaries](/docs/architecture/security-boundaries/), [durability](/docs/architecture/durability/), [deployment topology](/docs/architecture/deployment-topology/), [pal internals](/docs/architecture/pal/).
+The model-router service is off by default for the control plane's own completions (`PAL_USE_MODEL_ROUTER`); see [Models and routing](/docs/build/models/#model-router-service).
+
+## Go deeper
+
+[Request lifecycle](/docs/architecture/request-lifecycle/), [microVM lifecycle](/docs/architecture/vm-lifecycle/), [Security boundaries](/docs/architecture/security-boundaries/), [Durability](/docs/architecture/durability/), [Deployment topology](/docs/architecture/deployment-topology/), [pal internals](/docs/architecture/pal/).

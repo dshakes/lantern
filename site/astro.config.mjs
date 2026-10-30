@@ -1,7 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
-import react from '@astrojs/react';
 import { GH as gh, SITE_ORIGIN, SITE_URL, BASE_PATH, repoLinks } from './repo.config.mjs';
 
 const og = `${SITE_URL}og.png`;
@@ -54,7 +53,6 @@ export default defineConfig({
   redirects,
   vite: { plugins: [repoLinks] },
   integrations: [
-    react(),
     starlight({
       title: 'PAL',
       // Fails the build on any broken internal link or anchor in the docs.
@@ -103,87 +101,87 @@ export default defineConfig({
         '@fontsource-variable/inter-tight/wght.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
         './src/styles/tokens.css',
-        './src/styles/diagrams.css',
-        './src/styles/starlight.css',
+            './src/styles/starlight.css',
       ],
-      components: { SiteTitle: './src/components/SiteTitle.astro', MarkdownContent: './src/components/MarkdownContent.astro' },
-      // The sidebar is a story, read top to bottom: see it run, then the personal
-      // agent, then build -> make reliable -> make safe -> ship -> operate -> go deeper.
-      // Starlight's Previous/Next links follow this order, so every page ends on the next step.
+      components: { SiteTitle: './src/components/SiteTitle.astro' },
+      // Halos-style IA: one "Start here" decision page, then getting started,
+      // the personal agent, concepts, task guides, the deep dive and reference.
+      // Starlight's Previous/Next links follow this order.
       sidebar: [
-        { label: 'Start here', items: [
-          { slug: 'docs', label: 'Overview' },
-          { slug: 'docs/capabilities' },
+        { slug: 'docs', label: 'Start here' },
+        { label: 'Getting started', items: [
+          { slug: 'docs/capabilities', label: 'What PAL is' },
+          { slug: 'docs/start/installation', label: 'Install' },
+          { slug: 'docs/start/demo', label: 'Try it: the demo' },
           { slug: 'docs/start/sixty-seconds', label: 'Quickstart in 60 seconds' },
           { slug: 'docs/start/quickstart', label: 'Your first agent' },
-          { slug: 'docs/start/local-dev' },
-          { slug: 'docs/start/deploy' },
-          { slug: 'docs/start/demo' },
-          { slug: 'docs/start/installation' },
-          { slug: 'docs/start/examples' },
+          { slug: 'docs/start/local-dev', label: 'Develop locally' },
+          { slug: 'docs/start/deploy', label: 'Deploy to the cloud' },
+          { slug: 'docs/start/examples', label: 'Examples' },
         ] },
-        { label: 'pal: your personal agent', items: [
-          { slug: 'docs/pal', label: 'Meet pal' },
+        { label: 'pal, your personal agent', items: [
+          { slug: 'docs/pal', label: 'How pal works' },
           { slug: 'docs/pal/surfaces', label: 'Connect your channels' },
           { slug: 'docs/pal/voice', label: 'Teach it your voice' },
-          { slug: 'docs/pal/human-in-the-loop', label: 'Trust and holds' },
+          { slug: 'docs/pal/human-in-the-loop', label: 'Holds and trust' },
           { slug: 'docs/pal/daily', label: 'Daily use' },
           { slug: 'docs/pal/knowledge', label: 'Knowledge and handoff' },
           { slug: 'docs/pal/privacy', label: 'Privacy and control' },
         ] },
-        { label: 'Build agents', items: [
+        { label: 'Concepts', items: [
           { slug: 'docs/runtime', label: 'What PAL Runtime is' },
-          { slug: 'docs/build/agents' },
-          { slug: 'docs/runtime/quickstart', label: 'Headless agent quickstart' },
-          { slug: 'docs/runtime/invocation' },
-          { slug: 'docs/build/models' },
-          { slug: 'docs/build/connectors' },
-          { slug: 'docs/build/triggers' },
-          { slug: 'docs/build/scheduling' },
-          { slug: 'docs/runtime/sessions-and-memory' },
-          { slug: 'docs/runtime/streaming' },
-          { slug: 'docs/build/marketplace' },
-          { slug: 'docs/build/accounts' },
-        ] },
-        { label: 'Make it reliable', items: [
-          { slug: 'docs/runtime/durable-execution' },
-          { slug: 'docs/build/budgets' },
-          { slug: 'docs/build/evaluations' },
-          { slug: 'docs/build/testing' },
-        ] },
-        { label: 'Make it safe', items: [
+          { slug: 'docs/architecture/overview', label: 'How PAL Runtime works' },
+          { slug: 'docs/build/agents', label: 'Agents' },
+          { slug: 'docs/build/models', label: 'Models and routing' },
+          { slug: 'docs/runtime/sessions-and-memory', label: 'Sessions and memory' },
+          { slug: 'docs/runtime/streaming', label: 'Streaming' },
+          { slug: 'docs/runtime/durable-execution', label: 'Durable execution' },
+          { slug: 'docs/build/budgets', label: 'Budgets' },
+          { slug: 'docs/build/evaluations', label: 'Evaluations' },
           { slug: 'docs/security', label: 'Security model' },
-          { slug: 'docs/runtime/isolation' },
-          { slug: 'docs/runtime/sandbox-lifecycle' },
-          { slug: 'docs/security/egress' },
-          { slug: 'docs/security/identity' },
-          { slug: 'docs/security/receipts' },
+          { slug: 'docs/runtime/isolation', label: 'Isolation' },
+          { slug: 'docs/security/egress', label: 'Egress' },
+          { slug: 'docs/security/identity', label: 'Identity and secrets' },
+          { slug: 'docs/security/receipts', label: 'Receipts' },
         ] },
-        { label: 'Ship it', items: [
-          { slug: 'docs/runtime/local-microvms' },
-          { slug: 'docs/operate/deployment', label: 'Production deployment' },
+        { label: 'Guides', items: [
+          { label: 'Build agents', items: [
+            { slug: 'docs/runtime/quickstart', label: 'Headless agent quickstart' },
+            { slug: 'docs/runtime/invocation', label: 'Invoke an agent' },
+            { slug: 'docs/build/connectors', label: 'Connectors' },
+            { slug: 'docs/build/channels', label: 'Channels' },
+            { slug: 'docs/build/knowledge', label: 'Knowledge and handoff' },
+            { slug: 'docs/build/approvals', label: 'Approvals' },
+            { slug: 'docs/build/triggers', label: 'Triggers' },
+            { slug: 'docs/build/scheduling', label: 'Scheduling' },
+            { slug: 'docs/build/testing', label: 'Testing' },
+            { slug: 'docs/build/marketplace', label: 'Marketplace' },
+            { slug: 'docs/build/accounts', label: 'Accounts and teams' },
+          ] },
+          { label: 'Run in production', items: [
+            { slug: 'docs/runtime/local-microvms', label: 'microVMs on your machine' },
+            { slug: 'docs/runtime/sandbox-lifecycle', label: 'Sandbox lifecycle' },
+            { slug: 'docs/operate/deployment', label: 'Production deployment' },
+            { slug: 'docs/observability', label: 'Observability' },
+            { slug: 'docs/operate/operations', label: 'Operations' },
+          ] },
         ] },
-        { label: 'Operate it', items: [
-          { slug: 'docs/observability' },
-          { slug: 'docs/operate/operations' },
-        ] },
-        { label: 'Go deeper', collapsed: true, items: [
-          { slug: 'docs/architecture/overview' },
-          { slug: 'docs/architecture/request-lifecycle' },
-          { slug: 'docs/architecture/vm-lifecycle' },
-          { slug: 'docs/architecture/security-boundaries' },
-          { slug: 'docs/architecture/durability' },
-          { slug: 'docs/architecture/deployment-topology' },
+        { label: 'Architecture deep dive', collapsed: true, items: [
+          { slug: 'docs/architecture/request-lifecycle', label: 'Request lifecycle' },
+          { slug: 'docs/architecture/vm-lifecycle', label: 'microVM lifecycle' },
+          { slug: 'docs/architecture/durability', label: 'Durability' },
+          { slug: 'docs/architecture/security-boundaries', label: 'Security boundaries' },
+          { slug: 'docs/architecture/deployment-topology', label: 'Deployment topology' },
           { slug: 'docs/architecture/pal', label: 'pal internals' },
           { slug: 'docs/runtime/architecture', label: 'Runtime internals' },
-          { slug: 'docs/runtime/stack' },
+          { slug: 'docs/runtime/stack', label: 'Tech stack' },
         ] },
-        { label: 'Reference', collapsed: true, items: [
-          { slug: 'docs/reference/api' },
-          { slug: 'docs/sdks' },
-          { slug: 'docs/reference/cli' },
-          { slug: 'docs/reference/env-vars' },
-          { slug: 'docs/changelog' },
+        { label: 'Reference', items: [
+          { slug: 'docs/reference/api', label: 'REST API' },
+          { slug: 'docs/sdks', label: 'SDKs' },
+          { slug: 'docs/reference/cli', label: 'CLI' },
+          { slug: 'docs/reference/env-vars', label: 'Environment variables' },
+          { slug: 'docs/changelog', label: 'Changelog' },
         ] },
       ],
     }),

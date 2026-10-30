@@ -1,49 +1,43 @@
 ---
 title: Operations
-description: "Day-two operation of a PAL install: metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks."
-glance:
-  what: "What to do after helm install: scrape :9464/metrics, load the four alert groups, and prove backups restore with scripts/db-restore-drill.sh."
-  why: "You find out about problems before users do, and a restore works when you need it."
-  how: "kubectl -n pal port-forward deploy/pal-control-plane 9464:9464, then follow Metrics and Alert groups."
+description: Day-two operation of a PAL install, covering metrics, alerts, backups and restore drills, upgrades, kiosk mode and runbooks.
 sidebar:
   order: 2
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-What you do after `helm install`: scrape the metrics, wire the alerts, keep backups you have actually restored, and upgrade without losing data. The install itself is on [Deployment](/docs/operate/deployment/#helm); every setting named here is in [Environment variables](/docs/reference/env-vars/).
+This is what you do after `helm install`: scrape the **metrics**, wire the **alerts**, keep **backups** you have actually restored, and upgrade without losing data. The install itself is in [Production deployment](/docs/operate/deployment/#helm). Every setting named here is in [Environment variables](/docs/reference/env-vars/).
 
-## Install pointers
+## Before you start
 
-One chart, `infra/helm/pal`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
-
-```bash
-helm dependency build ./infra/helm/pal
-helm install pal ./infra/helm/pal \
-  --namespace pal --create-namespace \
-  --values infra/helm/pal/values-prod.yaml
-```
-
-- Supply the secrets the guards require (`secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, and the rest listed under [Production settings](/docs/operate/deployment/#production-settings)). The [production checklist](/docs/reference/env-vars/#production-checklist) shows which process needs which.
-- `values-prod.yaml` turns the in-cluster Postgres and object store off. Set `externalDatabase.host` and `externalS3.endpoint` or `helm template` fails on purpose.
-- Turn on `networkPolicy.enabled=true` (needs a CNI that enforces policy, such as Calico or Cilium) and list your Prometheus namespace under `networkPolicy.metricsFrom`; the default allows the `monitoring` namespace.
+- Supply the secrets the production guards require (`secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken` and the rest listed under [Production settings](/docs/operate/deployment/#production-settings)). The [production checklist](/docs/reference/env-vars/#production-checklist) shows which process needs which.
+- `values-prod.yaml` turns the in-cluster Postgres and object store off. Set `externalDatabase.host` and `externalS3.endpoint`, or `helm template` fails on purpose.
+- Set `networkPolicy.enabled=true` (needs a CNI that enforces policy, such as Calico or Cilium) and list your Prometheus namespace under `networkPolicy.metricsFrom`. The default allows the `monitoring` namespace.
 
 ## Metrics
 
-Two Prometheus endpoints exist. The control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on the public `:8080` API, because the endpoint is unauthenticated and its labels carry agent names: scrape it from Prometheus, never through ingress. The runtime scheduler serves `:8085/metrics`. The Helm chart annotates the control-plane pod with `prometheus.io/port: 9464` and the NetworkPolicy allows both scrape paths from `networkPolicy.metricsFrom`.
+Two Prometheus endpoints exist.
+
+| Endpoint | Port | Notes |
+| --- | --- | --- |
+| Control plane `/metrics` | `9464` (`PAL_METRICS_ADDR`) | Its own listener, not the public `:8080` API. Unauthenticated, and labels carry agent names: scrape it from Prometheus, never through ingress. |
+| Runtime scheduler `/metrics` | `8085` | |
+
+The chart annotates the control-plane pod with `prometheus.io/port: 9464`, and the NetworkPolicy allows both scrape paths from `networkPolicy.metricsFrom`.
 
 ```bash
 kubectl -n pal port-forward deploy/pal-control-plane 9464:9464 &
-curl -s localhost:9464/metrics | grep -E '^(lantern_|http_server_request_duration_seconds_count)' | head
+curl -s localhost:9464/metrics | grep -E '^(pal_|lantern_|http_server_request_duration_seconds_count)' | head
 ```
 
-You should see `lantern_run_total` (label `lantern_status`), `lantern_run_budget_blocks_total` and the `http_server_request_duration_seconds` series that the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
+Check it worked: you see `pal_run_total` and `lantern_run_total` (the same counter under both names, see [Observability](/docs/observability/#run-metrics)), `lantern_run_budget_blocks_total`, and the `http_server_request_duration_seconds` series the 5xx alert uses. Step-level series (duration, retries, replay skips, budget-check errors, onboarding steps) appear as the matching events happen. Deployment and CronJob names are prefixed with your release name; adjust them.
 
-The gateway emits traces only, and the model-router and runtime-manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set, so gateway latency lives in your tracing backend. The 28-day SLOs and burn-rate alerts are described under [SLOs and error budgets](/docs/observability/#slos-and-error-budgets). See [Observability](/docs/observability/#gateway-and-model-router-traces).
+The gateway emits traces only. The model router and runtime manager expose Prometheus metrics only when `PAL_METRICS_ADDR` is set. Gateway latency lives in your tracing backend; see [Observability](/docs/observability/#gateway-and-model-router-traces) and [SLOs and error budgets](/docs/observability/#slos-and-error-budgets).
 
 ## Alert groups
 
-Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`platform-overview.json`, `data-plane-runtime.json`) are in `infra/monitoring/grafana/`. Every alert has a `runbook:` annotation pointing at a file in [docs/runbooks](repo:/tree/master/docs/runbooks).
+Rules are in `infra/monitoring/prometheus/alerts.yml`. Two Grafana dashboards (`platform-overview.json`, `data-plane-runtime.json`) are in `infra/monitoring/grafana/`. Every alert has a `runbook:` annotation pointing at a file in [docs/runbooks](repo:/tree/master/docs/runbooks).
 
 | Group | Alerts | Needs |
 | --- | --- | --- |
@@ -52,21 +46,19 @@ Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`
 | `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | `postgres_exporter` with `postgres-exporter-queries.yaml` |
 | `pal-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), ControlPlane403RateElevated, RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
 
-The job names must match the ones in the rules. Gateway and model-router p99 rules are parked, commented out, in a "needs instrumentation" group: do not enable a rule before its series exists, because a rule over a missing series is silently always green. `RunFailureRateHigh` counts inline-executor runs only; microVM-tier runs are not counted yet.
+The job names must match the ones in the rules. Gateway and model-router p99 rules are parked, commented out, in a "needs instrumentation" group. Do not enable a rule before its series exists: a rule over a missing series is silently always green. `RunFailureRateHigh` counts inline-executor runs only; microVM-tier runs are not counted yet.
 
 ## Backups and the restore drill
 
-**Production: use managed Postgres** (RDS, Cloud SQL, Azure Database) with automated backups and point-in-time recovery, and set `postgresql.enabled=false` with `externalDatabase.*`. The in-cluster Postgres is a single pod on a PVC for dev and evaluation. If you self-host it, enable the logical backup as a floor:
+**In production, use managed Postgres** (RDS, Cloud SQL, Azure Database) with automated backups and point-in-time recovery, with `postgresql.enabled=false` and `externalDatabase.*`. The in-cluster Postgres is one pod on a PVC for dev and evaluation. If you self-host it, enable the logical backup as a floor:
 
 ```bash
 # values: backup.enabled=true  (schedule "0 2 * * *", s3Bucket lantern-backups, retentionDays 14)
 kubectl create job --from=cronjob/pal-postgres-backup backup-manual-1 -n pal   # dump on demand
-aws s3 ls s3://lantern-backups/postgres/                                              # newest object should be under 24 h old
+aws s3 ls s3://lantern-backups/postgres/                                        # newest object should be under 24 h old
 ```
 
 The CronJob (`<release>-postgres-backup`) runs `pg_dump`, gzips it to `s3://<bucket>/postgres/pal-<ts>.sql.gz`, and prunes dumps older than `retentionDays`. A failed or empty dump fails the pod before anything is uploaded or pruned. With `backup.useChartMinio=true` (the default) it uploads to the release's own object store; for real durability point it at external S3 with `backup.existingSecret`.
-
-### The restore drill
 
 A backup you have never restored is a hope. The drill needs only Docker and touches no live database:
 
@@ -76,14 +68,14 @@ scripts/db-restore-drill.sh ./latest.sql.gz     # restores into a throwaway pgve
 scripts/db-restore-drill.sh --self-test         # exercises the script itself (CI runs this)
 ```
 
-It restores with `ON_ERROR_STOP`, so a corrupt gzip fails, and requires the tables in `DRILL_EXPECT_TABLES` (default `agents runs journal_events`) to exist. Empty tables pass; set `DRILL_REQUIRE_ROWS=1` when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the server major version. A passing run exits 0; a failing one means the backups are not usable until it passes. Run it monthly and after any schema or major-version change.
+The drill restores with `ON_ERROR_STOP`, so a corrupt gzip fails, and requires the tables in `DRILL_EXPECT_TABLES` (default `agents runs journal_events`) to exist. Empty tables pass; set `DRILL_REQUIRE_ROWS=1` when you know the source has data. `DRILL_PG_IMAGE` (default `pgvector/pgvector:pg16`) must match the server's major version. Exit 0 means the backup restores; a failure means your backups are not usable until it passes. Run it monthly and after any schema or major-version change.
 
-For a real restore, stop writes (scale the control plane to 0), restore into a *new* database, re-point the release, and scale back up. A dump contains no roles: recreate `lantern_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before enabling `PAL_RLS_ENFORCE=1`. The full procedure for both topologies is [db-restore.md](repo:/tree/master/docs/runbooks/db-restore.md).
+For a real restore, stop writes (scale the control plane to 0), restore into a new database, re-point the release, and scale back up. A dump contains no roles: recreate `lantern_app` and its password, then run `DATABASE_URL=... scripts/check-app-grants.sh` before you rely on RLS enforcement. The full procedure for both topologies is [db-restore.md](repo:/blob/master/docs/runbooks/db-restore.md).
 
 ## Upgrading from the Bitnami-based chart
 
 <Aside type="caution" title="Not an in-place upgrade">
-Postgres (pgvector) and the S3-compatible store (SeaweedFS) are now first-party templates instead of Bitnami subcharts. Their StatefulSet selectors differ, so `helm upgrade` from the old chart cannot adopt the existing volumes. Redis is still a Bitnami subchart (pinned by `Chart.lock`).
+Postgres (pgvector) and the S3-compatible store (SeaweedFS) are now first-party templates instead of Bitnami subcharts. Their StatefulSet selectors differ, so `helm upgrade` from the old chart cannot adopt the existing volumes. Redis is still a Bitnami subchart, pinned by `Chart.lock`.
 </Aside>
 
 1. Take a dump from the old release and keep it off the cluster (`pg_dump`, or the backup CronJob if it was on).
@@ -91,28 +83,43 @@ Postgres (pgvector) and the S3-compatible store (SeaweedFS) are now first-party 
 3. `helm uninstall` the old release, then `helm install` the new chart.
 4. Restore the dump into the new database, recreate `lantern_app`, and verify with the drill above.
 
-On production values this does not apply to your data: `values-prod.yaml` uses external Postgres and S3, which the chart never owned. Plan the cutover for the in-cluster stores only.
+This does not apply to production values: `values-prod.yaml` uses external Postgres and S3, which the chart never owned. Plan the cutover for the in-cluster stores only.
 
 ## Kiosk and demo deployments
 
-`make demo` (or `pal demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM, and no sign-up. See [Demo](/docs/start/demo/) for the tour.
+`make demo` (or `pal demo`) runs the stack in kiosk mode on Docker alone: every visitor gets a private throwaway workspace, a fixture LLM and no sign-up. The tour is in [Try it: the demo](/docs/start/demo/).
 
 ```bash
-make demo         # then open http://localhost:3001/kiosk
-make demo-down    # stop it and delete its data
+make demo             # then open http://localhost:3001/kiosk
+make demo-down        # stop it and delete its data
 pal demo --no-open    # same stack from the CLI, without opening a browser
 pal demo --down
 ```
 
-For a public demo host the guard is strict: `PAL_KIOSK=1` refuses to start unless `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and a non-default `JWT_SECRET` are set, and under a production-like `PAL_ENV` it also needs `PAL_KIOSK_ALLOW_PROD=1`. Caps (workspace lifetime, concurrent workspaces, new workspaces per IP per hour) are the `PAL_KIOSK_*` variables. Do not enable kiosk mode on a deployment that holds real tenants.
+For a public demo host the guard is strict. `PAL_KIOSK=1` refuses to start unless `PAL_RLS_ENFORCE=1`, `PAL_AUTHZ_ENFORCE=1` and a non-default `JWT_SECRET` are set, and under a production-like `PAL_ENV` it also needs `PAL_KIOSK_ALLOW_PROD=1`. Caps on workspace lifetime, concurrent workspaces and new workspaces per IP per hour are the `PAL_KIOSK_*` variables. Do not enable kiosk mode on a deployment that holds real tenants.
 
 ## Node filesystem for snapshots and forks
 
-Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken; everything still works, but fork cost grows with disk size. Once your nodes' snapshot directory (`/var/lib/lantern/snapshots`) and jail root are on XFS or btrfs, set `PAL_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
+Pause, resume and fork stage each child's disk from the snapshot. On XFS (formatted with `reflink=1`) or btrfs the runtime manager clones it copy-on-write (`FICLONE`), so a fork costs metadata, not a copy of the disk. On ext4 or tmpfs it falls back to a full byte copy and logs a warning with `disk_staging="full_copy"`, the bytes copied and the time taken. Everything still works, but fork cost grows with disk size.
+
+Once your nodes' snapshot directory (`/var/lib/lantern/snapshots`) and jail root are on XFS or btrfs, set `PAL_REQUIRE_REFLINK=1` on the runtime manager to turn the fallback into an error. It is off in every shipped values file.
 
 ## Runbooks
 
-On-call runbooks live in the repository, each as symptom, what fired it, triage, remediation, escalate: [control-plane 5xx](repo:/tree/master/docs/runbooks/control-plane-5xx.md), [run failure spike](repo:/tree/master/docs/runbooks/run-failure-spike.md), [budget 402 surge](repo:/tree/master/docs/runbooks/budget-402-surge.md), [data plane disconnected](repo:/tree/master/docs/runbooks/data-plane-disconnected.md), [database saturation](repo:/tree/master/docs/runbooks/db-saturation.md), [scheduler not firing](repo:/tree/master/docs/runbooks/scheduler-not-firing.md), [gateway latency](repo:/tree/master/docs/runbooks/gateway-latency.md), [enabling RLS enforcement](repo:/tree/master/docs/runbooks/rls-flip.md) and [staged rollout of GA features](repo:/tree/master/docs/runbooks/ga-staged-rollout.md).
+On-call runbooks live in the repository, each as symptom, what fired it, triage, remediation, escalate.
+
+| Runbook | Use it when |
+| --- | --- |
+| [control-plane 5xx](repo:/blob/master/docs/runbooks/control-plane-5xx.md) | `ControlPlane5xxRateHigh` fires |
+| [run failure spike](repo:/blob/master/docs/runbooks/run-failure-spike.md) | `RunFailureRateHigh` fires |
+| [budget 402 surge](repo:/blob/master/docs/runbooks/budget-402-surge.md) | `BudgetDenied402Surge` fires |
+| [data plane disconnected](repo:/blob/master/docs/runbooks/data-plane-disconnected.md) | `DataPlaneHeartbeatStale` fires |
+| [database saturation](repo:/blob/master/docs/runbooks/db-saturation.md) | `PostgresConnectionSaturation` fires |
+| [scheduler not firing](repo:/blob/master/docs/runbooks/scheduler-not-firing.md) | `CronScheduleOverdue` fires |
+| [gateway latency](repo:/blob/master/docs/runbooks/gateway-latency.md) | Gateway latency regresses in your tracing backend |
+| [enabling RLS enforcement](repo:/blob/master/docs/runbooks/rls-flip.md) | Turning row-level security enforcement on |
+| [staged rollout of GA features](repo:/blob/master/docs/runbooks/ga-staged-rollout.md) | Enabling flag-gated features in stages |
+| [region failover](repo:/blob/master/docs/runbooks/region-failover.md) | Promoting a standby region |
 
 ## Limits
 

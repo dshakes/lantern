@@ -1,158 +1,82 @@
 ---
 title: Agents
-description: Create, configure, test and run agents, and how workflow tool nodes execute.
-glance:
-  what: "An agent is a name, a system prompt, a capability model and optional connectors or a workflow graph; a run is one execution of it."
-  why: "Each step is journaled, so a crashed run resumes where it stopped instead of re-spending tokens."
-  how: "Run pal init my-agent --template research, or Agents > New Agent in the dashboard."
+description: What an agent is, how to create and configure one, and how its runs behave.
 sidebar:
   order: 1
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
-
 import { Aside } from '@astrojs/starlight/components';
-import { RunSequence } from '../../../../components/diagrams';
 
-<RunSequence client:visible />
+An **agent** is a name, a **system prompt**, a **capability model** and optional **connectors** or a **workflow graph**. A **run** is one execution of it. Each step of a run is journaled, so a run that crashes resumes where it stopped instead of starting over. The full picture of a run is on [How PAL Runtime works](/docs/architecture/overview/).
 
+## Create an agent
 
-## Creating an agent
+| Way | How |
+| --- | --- |
+| AI-assisted | Dashboard, **Agents > New Agent > AI-assisted**. Describe the job; PAL drafts the configuration and prompt, and you edit before anything is created |
+| Manual | Fill in name (lowercase, hyphens), description, system prompt, model capability and connectors |
+| Template | The dashboard offers ready-made agents; the CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled`, `approval` |
 
-There are three ways to create an agent in the dashboard.
-
-### 1. AI-assisted creation
-
-Go to **Agents > New Agent**, select **AI-assisted** and describe the job. PAL Runtime drafts the configuration and system prompt, and you edit before anything is created:
-
-```text
-Monitor my GitHub repositories for new issues labeled "bug",
-triage them by severity, and post a summary to Slack every morning.
+```bash
+pal init my-agent --template research   # scaffold from a starter
 ```
-
-### 2. Manual creation
-
-Fill the form yourself:
-
-- **Name**: a unique identifier (lowercase, hyphens allowed)
-- **Description**: what this agent does (shown in the dashboard)
-- **System prompt**: the instructions the LLM follows
-- **Model**: the capability to use (for example `"auto"` or `"reasoning-large"`)
-- **Connectors**: which external services the agent can access
-
-### 3. From a template
-
-The dashboard offers its own ready-made agents (research, support, code review, email digest and more); the CLI scaffolds from seven starters: `basic`, `research`, `tool-use`, `connector`, `personal`, `scheduled` and `approval`.
 
 Over REST, `GET /v1/agents/templates` lists templates, `POST /v1/agents/from-template` creates an agent from one (`agents:write`), and `GET /v1/agents/{name}/setup` reports which connectors or channels the agent still needs.
 
-```bash
-pal init my-agent --template research
-```
+## Configure it
 
-## Configuring an agent
-
-### Instructions and system prompt
-
-The system prompt does most of the work. State the role, the steps and the failure behavior:
+The system prompt does most of the work. State the role, the steps and what to do on failure:
 
 ```text
 You are a research assistant. When given a topic:
 1. Generate 3-5 search queries
 2. Search the web for each query
-3. Read the top 3 results for each
-4. Synthesize findings into a structured report with citations
+3. Synthesize findings into a structured report with citations
 
-Always cite your sources. If you cannot find reliable information,
-say so rather than making things up.
+If you cannot find reliable information, say so rather than making things up.
 ```
 
 <Aside type="caution">
 "Be helpful" is not an instruction. Specific steps and explicit failure behavior make agents reliable.
 </Aside>
 
-### Model selection
+The `model` field takes a **capability** (`auto`, `reasoning-large`, ...), not a vendor model. Pin a cheap one on a high-volume agent and a stronger one where quality matters. Allowed values, failover and validation: [Models and routing](/docs/build/models/#per-agent-model).
 
-Agents ask for a **capability** (`auto`, `reasoning-large`, `code-large`, `vision-small`, ...), not a vendor model. The router maps it to a concrete model at call time; the full table is in [Models](/docs/build/models/).
+## Test and run
 
-Set `model` on the agent (`POST /v1/agents` or `PATCH /v1/agents/{name}`) to pin a cheap model on a high-volume agent or a stronger one where quality matters. Allowed values, failover and validation: [Per-agent model](/docs/build/models/#per-agent-model).
-
-## Testing an agent
-
-Every agent has a **Chat** tab in the dashboard (next to Build, Runs, Schedule and Settings). It lets you:
-
-- Send test inputs and see streaming output in real time
-- Inspect each step as it executes (timing, model used, tokens)
-- View the full event stream and step trace on the Runs tab
-
-From the CLI:
+Every agent has a **Chat** tab in the dashboard. It shows streaming output and each step as it executes (timing, model, tokens); the Runs tab has the full event trace. From the CLI:
 
 ```bash
 pal runs create --agent my-agent \
   --input '{"topic": "quantum computing"}' \
-  --stream
+  --stream                              # stream run events after creation
 ```
 
-## Running agents
-
-Agents can be triggered in several ways:
-
-- **Dashboard**: manual runs for testing
-- **CLI**: `pal runs create --agent <name>`
-- **REST API**: `POST /v1/runs` (with `agentName` in the body)
-- **Schedule**: cron-based recurring runs ([Scheduling](/docs/build/scheduling/))
-- **Webhook**: a signed request to a trigger URL. See [Webhook triggers](/docs/build/triggers/).
-- **Surfaces**: messages on WhatsApp, Slack, Telegram or webchat. See [Surfaces](/docs/pal/surfaces/).
+| Trigger | See |
+| --- | --- |
+| Dashboard or `pal runs create --agent <name>` | above |
+| `POST /v1/runs` with `agentName` in the body | [REST API](/docs/reference/api/) |
+| Cron | [Scheduling](/docs/build/scheduling/) |
+| Signed webhook | [Triggers](/docs/build/triggers/) |
+| WhatsApp, Slack, Telegram, webchat | [Connect your channels](/docs/pal/surfaces/) |
 
 API keys need `agents:write` to create or update agents and `runs:execute` to start runs.
 
+## Run states
+
+A run is `queued`, `running`, `paused` (waiting on an approval, takeover or signal), `succeeded`, `failed` (a step failed after its retries) or `cancelled`. A run that crashes mid-step is picked up by the recovery sweep; completed workflow steps are skipped, not re-run. Side effects carry an idempotency key derived from run ID, step ID and attempt, so a replay does not repeat them. See [Durable execution](/docs/runtime/durable-execution/) for the diagram and the details.
+
 ## Workflow tool nodes
 
-A `tool` node in a saved workflow graph really executes, or the step fails. There is no simulated success. Routing is by tool name:
+A `tool` node in a saved workflow graph really executes, or the step fails. There is no simulated success.
 
 | Tool | Runs |
 | --- | --- |
 | `web_search` | In the control plane, via the tenant's Anthropic key (OpenAI search-preview as fallback). Its model spend is metered like an ai-step |
 | Any other name | In the run's microVM through the runtime-manager. The in-VM harness serves `shell_exec`, `http_fetch`, `read_file`, `write_file`, `list_dir` |
 
-The step output is `{ "tool_name": ..., "result": ... }` for sandbox tools. Failures are explicit; the step fails with an error such as:
+A sandbox tool's output is `{ "tool_name": ..., "result": ... }`. When no runtime-manager is reachable from the control plane (for example the stub scheduler in dev), the step fails with `tool runtime unavailable: "shell_exec" needs the microVM runtime and none is wired`. Only `web_search` works without a runtime.
 
-```text
-tool runtime unavailable: "shell_exec" needs the microVM runtime and none is wired
-tool "shell_exec": tool runtime unavailable
-tool runtime unavailable: "shell_exec": <detail from the manager>
-tool failed: "shell_exec": <detail from the tool>
-tool failed: web_search: <error>
-tool "shell_exec": ExecTool: <transport error>   # manager unreachable
-```
+Each sandbox tool call carries the key `hex(sha256("runID|stepID|attempt"))`, so a retry of the same attempt dedups at the manager. Inside a loop the `stepID` includes the iteration, `<loopNodeId>[<i>]/<nodeId>`, so each iteration has its own key.
 
-The first two mean no runtime-manager is reachable from the control plane (for example the stub scheduler in dev). The third is the manager reporting the tool unavailable for that VM; an `ExecTool:` error means the manager was configured but could not be reached. Only `web_search` works without a runtime.
-
-**Idempotency.** Each sandbox tool call carries the key `hex(sha256("runID|stepID|attempt"))`, so a crash-replay or retry of the same attempt dedups at the manager. Inside a loop the `stepID` includes the iteration and the body node path, `<loopNodeId>[<i>]/<nodeId>` (for example `loop1[2]/search`), so each iteration gets its own key.
-
-**Budgets.** `toolLimits` on the agent's budget (keyed by tool name, or `connector.action` for connector nodes) are checked before dispatch and counted after. A hard-fail budget fails the step with:
-
-```text
-budget limit exceeded: tool "web_search" budget exhausted (50/50 today)
-```
-
-See [Budgets](/docs/build/budgets/#per-tool-limits-in-workflows).
-
-## Agent lifecycle
-
-Each agent run goes through these states:
-
-1. **Queued**: the run is waiting to be picked up
-2. **Running**: steps are actively executing
-3. **Paused**: waiting on a human approval, takeover or signal
-4. **Succeeded**: all steps finished successfully
-5. **Failed**: a step failed after exhausting retries
-6. **Cancelled**: manually stopped by the user
-
-A run that crashes mid-step is picked up by the recovery sweep (30 s by default, `PAL_RECOVERY_INTERVAL`); completed workflow steps are skipped, not re-run.
-
-<Diagram name="crash-resume" />
-
-<Aside>
-Side effects (API calls, webhooks) carry an idempotency key derived from run ID, step ID and attempt, so a replay does not repeat them.
-</Aside>
+`toolLimits` on the agent's budget are checked before dispatch and counted after. A hard-fail budget fails the step with `budget limit exceeded: tool "web_search" budget exhausted (50/50 today)`. See [Budgets](/docs/build/budgets/#per-tool-limits-in-workflows).

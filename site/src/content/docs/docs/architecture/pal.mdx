@@ -1,44 +1,114 @@
 ---
 title: pal internals
-description: How pal ranks what needs you, holds risky replies, keeps your voice, remembers across channels and acts on its own.
-glance:
-  what: "The pipelines behind pal: the Brief, Holds, the voice line, cross-channel memory, the world model, nudges, skills and recaps."
-  why: "Each one is a gate or a grounded model call, never a canned string; seeing the order explains what pal will and won't do."
-  how: "Pick a diagram, play it, and switch scenarios to see the failure path."
-sidebar:
-  order: 7
+description: "The modules, session keys and state files behind pal's Brief, holds, voice checks, memory and background loops."
 ---
 
-import { BriefAttention, HoldsGates, VoicePipeline, CrossChannelMemory, WorldModel, ProactiveNudges, SkillForge, Recap } from '../../../../components/diagrams';
+pal is a set of mostly **pure decision modules** in `packages/bridge-core/src/`, wired into two bridges: `services/imessage-bridge/src/session.ts` and `services/whatsapp-bridge/src/session.ts`. The control plane supplies sessions, memory and model routing through the same REST API your own agents use. This page is the map for people changing pal; for using it, start with [How pal works](/docs/pal/).
 
-## The Brief
+## Design rules
 
-<BriefAttention client:visible />
+- **A gate, not advice.** Anything that must never happen (promising money, asserting an unverifiable fact) is enforced in code at the send boundary. A prompt rule can be ignored by a model; a gate cannot.
+- **Two layers where it matters.** A model judge handles paraphrase; a deterministic backstop always runs, so a model outage cannot fail open.
+- **Auxiliary calls never touch a contact's session.** Each side call uses a purpose-keyed session, so its output cannot leak into the live thread (see below).
+- **Fail safe.** Every loop treats a model, parse or read error as "do nothing" or "use the fixed order", never as a crash or an invented result.
+- **Parity.** `packages/bridge-core/src/bridge-parity.test.ts` fails the build when a shared reply-pipeline or owner-loop module is wired into one bridge but not the other.
 
-## Holds
+## The reply pipeline
 
-<HoldsGates client:visible />
+The sequence and its two hold paths are drawn in [Holds and trust](/docs/pal/human-in-the-loop/). Where each step lives:
 
-## The voice pipeline
+| Step | Module | Notes |
+| --- | --- | --- |
+| Draft | `natural.ts` | Persona prompt; `canWebSearch` adds the live-lookup rule when the `webSearch` session flag is set |
+| Bot-tell guard | `natural.ts` (`detectBotTells`) | Includes the repeat-skeleton check (Jaccard 0.75 or more against the last 3 replies to that contact) |
+| Voice floor | `voice-score.ts` | Fitted in memory on 50 or more of your sent messages; threshold is your own 95th percentile |
+| Confidence tier | `confidence-tier.ts` | Decides critique-refine and draft-confirm |
+| Critique-refine | `voice-refine.ts` | MEDIUM and LOW only; accepted only if no further from your voice and guard-clean |
+| Commitment gate | `commitment-gate.ts` | `isConfidentContactShare` decides number sharing |
+| Grounding gate | `grounding-gate.ts` | Date contradiction, memorial and party lexicons |
+| Claim verifier | `verifiable-claims.ts` | Honours only actions the bridge recorded for that contact in the last 10 minutes |
+| Paced send | `pacing.ts` | Median owner reply latency for that contact, adjusted by time of day, jittered, 3 s floor and 25 s ceiling |
 
-<VoicePipeline client:visible />
+Related inputs: `emotional-register.ts` (tone when the English lexeme table is silent), `relationship-infer.ts` (a cached, unconfirmed label for a contact with no declared relationship; persona only, never widens an access gate), `working-memory.ts` and `presence.ts` (self-context and truthful location).
 
-## Cross-channel memory
+## Session keys
 
-<CrossChannelMemory client:visible />
+`respondTo(jid)` is a stateful session. A side call must use `${jid}::purpose` or its text can appear in the contact's thread.
 
-## World model
+| Key | Used for |
+| --- | --- |
+| `<jid>::refine` | Critique-refine |
+| `<jid>::commitgate`, `<jid>::groundgate` | Gate judges |
+| `<handle>::relationship` | Relationship inference |
+| `owner::worldmodel` | World-model refresh |
+| `owner::commit-judge` | Commitment ledger closure |
+| `owner::voice-profile` | Reasoned voice profile (`PAL_VOICE_REASONING`) |
+| `owner::dislike-cluster::<ts>` | One-off clustering run |
+| `owner::intent::<ts>` | Intent router (`PAL_INTENT_ROUTER`) |
+| `attention::rank` | Brief ranking |
+| `skillforge::spec` | Skill drafting |
+| `recap::synth` | Recap |
 
-<WorldModel client:visible />
+## Owner loops
 
-## Proactive nudges
+| Feature | Module | Trigger |
+| --- | --- | --- |
+| Brief | `attention.ts`, `reaction-commands.ts` | `?`, `today`, `whats up`; the model only reorders and annotates existing items |
+| Nudges | `anticipation.ts` (`computeProactiveNudges`) | Proactive tick; stable `dedupeKey`s in `fired-nudges.json` |
+| World model | `world-model.ts` | Every `PAL_WORLD_MODEL_HOURS` (default 6); each item must cite a `source` that appears verbatim in the inputs and carry an `until:` within 120 days |
+| Skills | `skill-forge.ts` | Proactive tick; `dueSkills` matches a 50-minute window; `lastFiredDay` is stamped before execution, so a crash drops a delivery rather than doubling it |
+| Recap | `time-travel.ts` | Request grammar capped at 80 characters so ordinary messages are not mistaken for it |
+| Event scout | `event-scout.ts` | Weekly, on the proactive tick |
+| Commitment ledger | `commitments-edge.ts` | Proactive tick, above the mute gate |
+| Live watches | `live-watch.ts` | Re-checked every 15 to 120 minutes; at most 8 active, 12 hours each |
+| 👎 flywheel | `dislike-consolidator.ts`, `dislike-memory.ts` | Patterns recurring in 3 or more rejections |
 
-<ProactiveNudges client:visible />
+Loops that serve the owner sit above the mute gate on the proactive tick; anything below `proactivePaused()` is dead code on a muted channel.
 
-## Skill forge
+## Memory and state
 
-<SkillForge client:visible />
+State is owner-only (mode 0600) JSONL in the state directory, resolved by `state-dir.ts`: `PAL_STATE_DIR`, else `~/.pal` when it exists, else the older `~/.lantern`. The highest-detail stores (`episodes.jsonl`, `topic-index.jsonl`, `dislike-patterns.jsonl`, `sent-log.jsonl`) are AES-256-GCM encrypted through `secure-store.ts`: an `enc1:` line envelope, a key created owner-only at `<stateDir>/state.key`, and legacy plaintext lines still read and age out.
 
-## Recap
+| Store | Purpose |
+| --- | --- |
+| `episodes.jsonl` | 14-day episodic memory, `(date, topic, outcome)` |
+| `topic-index.jsonl` | 7-day topic-tagged messages for cross-thread recall |
+| `sent-log.jsonl` | Every sent contact reply, with text, so quality is measurable |
+| `world-model.json`, `skills.json`, `event-scout.json`, `live-watches.jsonl`, `fired-nudges.json` | Loop state |
+| `quiet-queue.jsonl` | Messages held during quiet hours (`PAL_QUIET_QUEUE_MAX`, default 200) |
+| `mac-usage.json` | Rolling app-usage summary, only with `PAL_MAC_USAGE=on` |
 
-<Recap client:visible />
+The cross-channel person graph and timeline live in the control plane: `POST /v1/people/resolve`, `/v1/people/merge`, `/v1/memory/events`, `/v1/memory/context` and `/v1/memory/search`. The last takes `?q=&limit=&windowDays=&excludeChannel=&excludeHandle=` and runs the same hybrid ranking as context over every other person in the tenant. The local topic graph is the offline fallback. Memory has no gRPC service on purpose.
+
+## Setup service
+
+`pal setup` and the dashboard `/pal/onboarding` share one state machine, owned by the control plane in `services/control-plane/internal/handlers/pal_onboarding.go`. The CLI (`packages/cli/internal/cli/pal_setup.go`) never re-derives the next step; it reads `resumeStep` from the server.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/pal/onboarding` | Resume document |
+| `PUT` | `/v1/pal/onboarding` | Replace it (`settings:write`) |
+| `POST` | `/v1/pal/onboarding/voice` | Build a voice profile and preview from samples |
+| `POST` | `/v1/pal/onboarding/trust/suggest` | Turn "how hands-off" into per-kind modes and quiet hours |
+| `POST` | `/v1/pal/onboarding/profile/extract` | Propose facts and relationships from free text |
+| `GET` | `/v1/pal/onboarding/profile` | Rendered `## Facts` and `## Relationships` lines for `--apply` |
+| `POST` | `/v1/pal/onboarding/guide` | Short guided answer for a step |
+
+The consent version is pinned between the CLI and the server by `services/testdata/pal_onboarding_cases.json`.
+
+## Environment variables
+
+The essentials. Every variable accepts a `PAL_` name; the older `LANTERN_` name still works. The full list is in [Environment variables](/docs/reference/env-vars/).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PAL_OWNER_NAME`, `PAL_OWNER_TIMEZONE` | process timezone | Document ranking; quiet hours, digests, calendar |
+| `PAL_IMESSAGE_OWNER_HANDLE`, `PAL_WA_OWNER_JID` | self-chat detection | Dedicated bot-account mode |
+| `PAL_VOICE_FLOOR`, `PAL_VOICE_REFINE` | on | Voice checks |
+| `PAL_VOICE_REASONING` | off | Reasoned voice profile instead of the fixed heuristic |
+| `PAL_INTENT_ROUTER` | off | Model intent classifier ahead of the command grammar; falls back to it on any doubt |
+| `PAL_DRAFT_CONFIRM` / `PAL_DRAFT_HIGH_STAKES` | off | Hold low-confidence replies |
+| `PAL_WORLD_MODEL`, `PAL_WORLD_MODEL_HOURS` | on, 6 | World-model refresh |
+| `PAL_BRIDGE_RETRY_ATTEMPTS` | 3 | Retries on 429, 503 and network errors, with full-jitter backoff |
+
+Under launchd, the bridge wrapper script sources `bridge.env` from the state directory at every start, and it overrides the plist environment. `pal setup --apply` writes that file.

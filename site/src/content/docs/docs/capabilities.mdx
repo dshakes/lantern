@@ -1,17 +1,58 @@
 ---
-title: Capabilities
-description: "Everything pal and PAL Runtime do, one card each, with a live diagram and a link to the page that explains it."
+title: What PAL is
+description: "PAL is two products on one platform: pal, a personal agent for your own messages, and PAL Runtime, the platform it runs on."
 tableOfContents: false
 ---
 
-import CapabilityGrid from '../../../components/CapabilityGrid.astro';
+PAL is two products on one platform. **pal** is a personal agent that answers your iMessage and WhatsApp threads as you, from your Mac, and holds anything that commits you until you say yes. **PAL Runtime** is the platform pal runs on: a runtime for AI agents that makes runs **durable**, **budgeted** and **sandboxed**. pal talks to the same sessions API you use for your own agents.
 
-Every card's thumbnail is drawn from the interactive diagram on its page; open the page to step through it.
+| | pal | PAL Runtime |
+| --- | --- | --- |
+| What it is | A personal agent for your own iMessage and WhatsApp | A platform for running agents, yours or pal's |
+| Who it is for | You, on your Mac | Developers and platform teams |
+| What it does | Drafts, checks and sends replies in your voice; holds the risky ones | Runs agents durably, within budget, with untrusted code in a microVM |
+| Where it runs | Two channel bridges on your Mac, next to a control plane | Your laptop, your cluster, or a managed control plane with the data plane in your VPC |
+| Start with | [How pal works](/docs/pal/) | [How PAL Runtime works](/docs/architecture/overview/) |
 
-## pal
+## What pal does
 
-<CapabilityGrid product="pal" groups />
+| Capability | What it does | Page |
+| --- | --- | --- |
+| The Brief | One ranked list of what needs you: drafts, promises and threads left waiting | [Daily use](/docs/pal/daily/) |
+| Holds | A reply that promises money or states what pal cannot verify waits for you | [Holds and trust](/docs/pal/human-in-the-loop/) |
+| Your voice | Drafts are checked against your own sent messages before they go out | [Teach it your voice](/docs/pal/voice/) |
+| One memory | iMessage and WhatsApp share one person graph and timeline | [Connect your channels](/docs/pal/surfaces/) |
+| World model | Mail, calendar and your own notes keep what pal knows about you current | [Daily use](/docs/pal/daily/) |
+| Nudges | A heads-up before a meeting, a date, a reply you owe or a promise still open | [Daily use](/docs/pal/daily/) |
+| Skill forge | You teach a recurring task in one message; nothing runs until you approve it | [Daily use](/docs/pal/daily/) |
+| What did I miss | A short recap of what landed while you were away, most important first | [Daily use](/docs/pal/daily/) |
+| Knowledge and handoff | Answers cite your documents; a chat can be handed to a person | [Knowledge and handoff](/docs/pal/knowledge/) |
 
-## PAL Runtime
+## What PAL Runtime does
 
-<CapabilityGrid product="rt" groups />
+| Capability | What it does | Page |
+| --- | --- | --- |
+| Durable execution | A crash mid-run resumes from the journal; finished steps are not re-run | [Durable execution](/docs/runtime/durable-execution/) |
+| Budgets and eval gates | Over a hard cap is HTTP 402 before any provider call; a regression is 422 | [Budgets](/docs/build/budgets/) |
+| Model routing | You ask for a capability, not a model; failover and idempotency keys are built in | [Models and routing](/docs/build/models/) |
+| microVM isolation | Untrusted code runs in its own microVM | [Isolation](/docs/runtime/isolation/) |
+| Egress broker | Network calls pass an allowlist; credentials are added outside the VM | [Egress](/docs/security/egress/) |
+| Sandbox lifecycle | Pause, resume, fork and idle-suspend a running microVM | [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/) |
+| Sessions and streaming | Multi-turn sessions with events over SSE; tokens are not buffered | [Sessions and memory](/docs/runtime/sessions-and-memory/), [Streaming](/docs/runtime/streaming/) |
+| Connectors, triggers, schedules | Connector actions, a signed webhook URL per agent, timezone-aware cron | [Connectors](/docs/build/connectors/), [Triggers](/docs/build/triggers/), [Scheduling](/docs/build/scheduling/) |
+| Agents talking to agents | MCP tools, A2A discovery, marketplace agents | [Marketplace](/docs/build/marketplace/) |
+| Tenant isolation | Row-level security on tenant tables and a token-gated gRPC boundary | [Security model](/docs/security/) |
+| Identity and secrets | Secrets are references until the harness vends them to an authenticated peer | [Identity and secrets](/docs/security/identity/) |
+| Receipts | An Ed25519 signature over the run's journal hash; tampering breaks it | [Receipts](/docs/security/receipts/) |
+| Tracing | Every span carries tenant, run and step ids | [Observability](/docs/observability/) |
+| Deploy anywhere | Managed or self-hosted control plane; the data plane in your VPC | [Production deployment](/docs/operate/deployment/) |
+| Agentic onboarding | You describe a goal; you get a reviewed spec, a tested key and a first streamed run | [Your first agent](/docs/start/quickstart/) |
+
+## What PAL is not
+
+- **Not a chat client.** pal acts through the iMessage and WhatsApp accounts on your Mac. It does not replace either app.
+- **Not fully unattended.** pal sends ordinary replies on its own. It holds anything that commits you, and it does not verify a held claim; it holds it.
+- **Not a hosted service you sign up for.** A fully managed PAL cloud is the intended offering, not a shipped one. Today you run the control plane yourself ([Deploy to the cloud](/docs/start/deploy/)).
+- **Not a model.** You bring provider keys. Agents ask for a capability and the model router picks the model.
+
+New here? Go to [Start here](/docs/).

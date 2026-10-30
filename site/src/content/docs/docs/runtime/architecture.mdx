@@ -1,330 +1,178 @@
 ---
-title: Architecture
-description: Every PAL Runtime process, its port, the trust boundary it enforces, and the sequences that connect them.
-glance:
-  what: "Every PAL Runtime process, the port it listens on, the trust boundary it enforces and the sequences that connect them."
-  why: "It lets you see which component does what, and where each credential and trust boundary sits, before you debug or deploy."
-  how: "Start with the System map, then read A run, end to end under Sequences."
+title: Runtime internals
+description: Every PAL Runtime process, its port and the trust boundary it enforces, with the tool-call and broker-egress sequences.
 sidebar:
   order: 13
 ---
 
-import Diagram from '../../../../components/Diagram.astro';
-
 import { Aside } from '@astrojs/starlight/components';
-import { ArchitectureExplorer } from '../../../../components/diagrams';
 
-<ArchitectureExplorer client:visible />
+PAL Runtime is a set of real processes joined by real calls. Callers sit outside, a **control plane** owns tenants, runs and budgets, and a **data plane** in your VPC executes steps and runs sandboxes. The microVM sits inside the data plane, and the data stores are shared. The overview is [How PAL Runtime works](/docs/architecture/overview/). The picture of the control-plane and data-plane split is on [Production deployment](/docs/operate/deployment/), and the run and sandbox sequences are on [Request lifecycle](/docs/architecture/request-lifecycle/) and [microVM lifecycle](/docs/architecture/vm-lifecycle/).
 
-Every component below is a real process and every arrow a real call: what it does, its port, and the trust boundary it enforces.
-
-<Diagram name="your-cloud" />
-
-## System map
-
-The system has three zones: callers outside, a control plane, and a data plane that runs in your VPC. The microVM sits inside the data plane. Data stores (Postgres, Redis, S3/MinIO) are shared.
-
-### Callers and external services
+## Callers and external services
 
 | Component | Language / port | Role and boundary |
 | --- | --- | --- |
-| SDKs | TypeScript, Python 3.11+, Go | Typed clients for the REST API. Each reads its base URL from `PAL_API_URL`. Untrusted caller: every request carries a Bearer JWT or API key that the control plane validates. Models are addressed by capability (`auto`, `reasoning-large`), never by vendor name. |
-| `pal` CLI | Go (Cobra) | Static binary that wraps the same REST API: runs, sandboxes (`pal vm ...`), onboarding. Authenticates like the SDKs. |
-| Dashboard | TypeScript (Next.js), `:3001` (dev) | Operator UI over the same REST endpoints: agents, runs and their journal waterfall, sandboxes, budgets. Browser session, JWT-authenticated like any other caller. |
-| LLM providers | Anthropic, OpenAI (external HTTPS) | Reached directly by the control plane's failover chain (the default) or through the model router. Calls carry an `Idempotency-Key` so a retry or crash-replay is deduplicated at the provider. Tenant provider keys are AES-256-GCM encrypted at rest and never logged. |
-| Internet | External | Whatever the sandbox's egress rules allow. Everything else is denied and audited. Deny by default; private and metadata ranges (including `169.254.169.254`) are refused even when a hostname resolves to them. |
+| SDKs | TypeScript, Python 3.11+, Go | Typed clients for the REST API. Untrusted caller: every request carries a Bearer JWT or API key that the control plane validates. Models are addressed by capability (`auto`, `reasoning-large`), never by vendor name. |
+| `pal` CLI | Go (Cobra) | Static binary over the same REST API: runs, sandboxes (`pal vm ...`), onboarding. Authenticates like the SDKs. |
+| Dashboard | TypeScript (Next.js), `:3001` in dev | Operator UI over the same REST endpoints: agents, runs and their journal waterfall, sandboxes, budgets. |
+| LLM providers | Anthropic, OpenAI (external HTTPS) | Reached directly by the control plane's failover chain (default) or through the model router. Calls carry an `Idempotency-Key`. Tenant provider keys are AES-256-GCM encrypted at rest and never logged. |
+| Internet | External | Whatever the sandbox's egress rules allow. Everything else is denied and audited. Private and metadata ranges (including `169.254.169.254`) are refused even when a hostname resolves to them. |
 
-### Control plane
+## Control plane
 
 | Component | Language / port | Role and boundary |
 | --- | --- | --- |
-| Gateway | Rust (Axum), `:8443` TLS | Edge ingress. Terminates TLS, validates API keys by asking the control plane (cached 60 s by key hash), and calls the control plane over gRPC. Sends `x-lantern-service-token` on its gRPC calls; refuses API-key auth when introspection is not configured. |
-| Control plane | Go, `:8080` HTTP (REST + SSE), `:50051` gRPC | Owns agents, runs, budgets and tenants. Gates every run (auth, budget, isolation), runs shared-tier agents inline, and journals every step to Postgres. Trust boundary on `:50051`: only callers presenting `x-lantern-service-token` may set a `tenant_id`. |
-| Model router | Rust, `:50053` gRPC | `ModelService`: `Complete`, `CompleteStream`, `Embed`, `Tokenize`. Maps a capability to a concrete provider model, with caching. Service-token gate on `:50053`; it carries tenant provider keys, so it refuses to start in prod without the token. |
+| Gateway | Rust (Axum), `:8443` TLS | Edge ingress. Terminates TLS, validates API keys by asking the control plane (cached 60 s by key hash), calls the control plane over gRPC with `x-lantern-service-token`. Refuses API-key auth when introspection is not configured. Without `PAL_TLS_CERT` and `PAL_TLS_KEY` it serves plaintext and warns; never run that way in production. |
+| Control plane | Go, `:8080` HTTP (REST, SSE), `:50051` gRPC | Owns agents, runs, budgets and tenants. Gates every run (auth, budget, isolation), runs shared-tier agents inline, journals every step to Postgres. Only callers presenting the service token may set a `tenant_id` on `:50051`. Refuses to start in production without the token. |
+| Model router | Rust, `:50053` gRPC | `ModelService`: `Complete`, `CompleteStream`, `Embed`, `Tokenize`. Maps a capability to a concrete provider model, with caching. It carries tenant provider keys, so it refuses to start in production without the token. |
 
 Control plane invariants:
 
 - Hard-fail budgets block a run with HTTP 402 before any compute or tokens are spent.
 - Every tenant-scoped query runs through `WithTenant` so Postgres RLS can enforce it.
 - A crashed run is re-driven from its journal by a 30 s recovery sweep.
-- It refuses to start in prod without the service token.
 
-Model router invariants:
+The control plane uses the model router only when `PAL_USE_MODEL_ROUTER` is on (default off), and any router error falls through to the direct provider chain. Workflow-engine `llm_call` steps always go through the router.
 
-- The control plane uses it only when `PAL_USE_MODEL_ROUTER` is on (default off); any router error falls through to the direct provider chain.
-- Workflow-engine `llm_call` steps always go through it.
-
-Gateway invariant: without `PAL_TLS_CERT`/`PAL_TLS_KEY` it serves plaintext and warns. Never run that way in production.
-
-### Data plane (your VPC)
+## Data plane
 
 | Component | Language / port | Role and boundary |
 | --- | --- | --- |
-| Data-plane agent | Go | Runs in your VPC. Opens a `RunStream` to the control plane, receives run assignments, and drives each one on the local workflow engine. It dials out: the control plane never connects into your network. Each plane is bound to one tenant. If no plane is connected for a tenant, the run executes inline in the control plane instead. |
-| Workflow engine | Go, `:50052` gRPC | Durable step executor: `llm_call` via the model router, `tool_call` via the runtime manager, `child_run` in-engine. Each attempt is replay-checked before it runs. Service-token gate on `:50052`; Cancel/Resume/Signal also filter by the verified `tenant_id` and return `NotFound` on mismatch. |
-| Runtime scheduler | Go, `:50055` gRPC, `:8085` REST | Places sandboxes on nodes (warm pool, capacity, fair share) and owns their lifecycle: pause, resume, fork, and the idle-suspend sweeper. Service-token gate on `:50055`. Tenant quota is reserved atomically (all-or-nothing for forks). |
-| Runtime manager | Rust (tonic), `:50054` gRPC (mTLS), one per node | The only thing that touches microVMs: spawn, stop, snapshot/restore, exec, `ExecTool`. Serves `RuntimeHarness` for the guests on its node. Refuses any peer presenting a per-VM cert (`OU=lantern-vm`) on `RuntimeManager` methods and requires the service token from everyone else. |
-| Host egress broker | Rust (inside runtime-manager), opt-in | Per-VM proxy on the host end of vsock port 3128. Applies the allowlist, dials upstream from the host, and injects credentials into requests to hosts whose rule says so. New trust boundary: host code parsing guest bytes. Heads capped at 64 KiB; error strings returned to the guest are static. |
-| Harness | Rust (musl, static), PID 1 in the VM, `:50056` exec (in guest) | Init process inside every microVM: supervises the workload, serves exec and tool calls, vends short-TTL secrets, and enforces egress. The last in-VM boundary. The secrets socket only answers the workload uid (kernel-attested via `SO_PEERCRED`); the workload runs as its own uid with `PAL_*` env (and its `LANTERN_*` alias) withheld. |
-| Untrusted code | Anything: Python, Node, shell | Code the agent wrote or downloaded. It sees `/workspace`, the proxy env, and nothing that identifies the control plane. Contained by the microVM wall and, in broker mode, has no network device at all. |
+| Data-plane agent | Go | Runs in your VPC. Opens a `RunStream` to the control plane, receives assignments, drives each on the local workflow engine. It dials out; the control plane never connects in. Each plane is bound to one tenant. With no plane connected, the run executes inline in the control plane. |
+| Workflow engine | Go, `:50052` gRPC | Durable step executor: `llm_call` via the model router, `tool_call` via the runtime manager, `child_run` in-engine. Each attempt is replay-checked first. `CancelRun`, `ResumeRun` and `SignalRun` filter by the verified `tenant_id` and return `NotFound` on mismatch. |
+| Runtime scheduler | Go, `:50055` gRPC, `:8085` REST | Places sandboxes on nodes (warm pool, capacity, fair share) and owns lifecycle: pause, resume, fork and the idle-suspend sweeper. Reserves tenant quota atomically (all or nothing for forks). |
+| Runtime manager | Rust (tonic), `:50054` gRPC (mTLS), one per node | The only process that touches microVMs: spawn, stop, snapshot and restore, exec, `ExecTool`. Serves `RuntimeHarness` for the guests on its node. |
+| Host egress broker | Rust, inside the runtime manager, opt-in | Per-VM proxy on the host end of vsock port 3128. A new trust boundary: host code parsing guest bytes. Request heads are capped at 64 KiB and error strings returned to the guest are static. |
+| Harness | Rust (musl, static), PID 1 in the VM, `:50056` exec in the guest | Init process inside every microVM: supervises the workload, serves exec and tool calls, vends short-lived secrets, enforces egress. The last in-VM boundary. |
+| Untrusted code | Anything | Sees `/workspace`, the proxy env, and nothing that identifies the control plane. In broker mode it has no network device. |
 
-Workflow engine invariants:
+Invariants by component:
 
-- Idempotency key for every side effect: `run_id:step_id:attempt`.
-- A missing router or manager address fails the step with a typed error, never a fabricated result.
+| Component | Invariant |
+| --- | --- |
+| Workflow engine | Every side effect carries the key `run_id:step_id:attempt`. A missing router or manager address fails the step with a typed error, never a made-up result. |
+| Runtime scheduler | A `PAUSED` VM holds no concurrent-VM slot. Lifecycle changes on one VM serialize on a per-VM lock; only the leader replica mutates. |
+| Runtime manager | A VM owned by another tenant looks absent (`NOT_FOUND`). Untrusted code runs in Firecracker or Kata, never a bare pod. |
+| Egress broker | Opt-in (`PAL_EGRESS_MODE=broker`, Firecracker only; default is `guest`). HTTPS is terminated only for hosts whose rule injects a credential. The credential never enters the VM. |
+| Harness | Security audits are logged locally before forwarding. Tool file operations are confined to `/workspace`. |
 
-Runtime scheduler invariants:
-
-- A PAUSED VM holds no concurrent-VM slot.
-- Lifecycle mutations on one VM are serialized by a per-VM lock; only the leader replica mutates.
-
-Runtime manager invariants:
-
-- A VM owned by another tenant is indistinguishable from an absent one (`NOT_FOUND`).
-- Untrusted code runs in Firecracker or Kata, never a bare pod.
-
-Host egress broker invariants:
-
-- Opt-in: `PAL_EGRESS_MODE=broker` on the manager, Firecracker only. Default is guest mode.
-- HTTPS is terminated only for hosts whose rule injects a credential; every other host is an opaque tunnel.
-- The credential never enters the VM.
-
-Harness invariant: security audits are logged locally before forwarding and survive a manager outage. Tool file operations are confined to `/workspace` with `openat2` `RESOLVE_BENEATH`, as the workload's own uid.
-
-### Data stores
+## Data stores
 
 | Store | Port | Role |
 | --- | --- | --- |
-| Postgres 16 + pgvector | `:5432` | System of record: tenants, agents, runs, the `journal_events` log, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy, enforced in production whenever `PAL_APP_DB_PASSWORD` is set (the control plane refuses to start without it unless `PAL_RLS_ENFORCE=0`). `journal_events` is append-only: `step_started`, then `step_completed` or `step_failed`, keyed `(run_id, seq)`. |
+| Postgres 16 with pgvector | `:5432` | System of record: tenants, agents, runs, `journal_events`, `run_locks`, budgets and usage rollups. Every tenant table has a `tenant_isolation` RLS policy. `journal_events` is append-only, keyed `(run_id, seq)`. |
 | Redis | `:6379` | Caching, rate limiting and session event pub/sub for SSE. Internal only. |
-| S3 / MinIO | `:9000` | Agent bundles, attachments, and the optional second tier of microVM snapshots. Snapshot uploads are best-effort: the local copy on the node is authoritative. |
+| S3 or MinIO | `:9000` | Agent bundles, attachments and the optional second tier of microVM snapshots. Uploads are best-effort; the local copy on the node is authoritative. |
 
-### Calls between components
+## Who calls whom
 
-- SDK to gateway: HTTPS `:8443`. SDK, CLI and dashboard to control plane: REST `/v1`. Gateway to control plane: gRPC `:50051`.
-- Control plane to model router: `Complete`, behind a flag. Control plane to LLM provider: direct (default). Router to provider: provider call.
-- Data-plane agent to control plane: `RunStream`, dialed out. Data-plane agent to workflow engine: `ExecuteRun`.
-- Workflow engine to model router: `llm_call`. Workflow engine to runtime manager: `ExecTool`.
-- Control plane to scheduler: Schedule, Pause, Resume, Fork. Control plane to runtime manager: exec and files. Scheduler to runtime manager: Spawn, Stop, Snapshot.
-- Runtime manager to control plane: report and secret relay.
-- Harness to runtime manager: Heartbeat and Report upward, Exec on `:50056` downward.
-- Workload to harness: `:3128`. In guest mode the harness proxies to the internet over the TAP device. In broker mode it forwards over vsock `3128` to the broker, which allows and injects before dialing upstream.
-- Control plane, workflow engine and scheduler to Postgres (SQL with RLS, journal). Control plane to Redis and S3. Manager to S3 for optional snapshots.
+| From | To | Call |
+| --- | --- | --- |
+| SDK | Gateway | HTTPS `:8443` |
+| SDK, CLI, dashboard | Control plane | REST `/v1` |
+| Gateway | Control plane | gRPC `:50051` |
+| Control plane | Model router | `Complete`, behind a flag |
+| Data-plane agent | Control plane | `RunStream`, dialed out |
+| Data-plane agent | Workflow engine | `ExecuteRun` |
+| Workflow engine | Model router | `llm_call` |
+| Workflow engine | Runtime manager | `ExecTool` |
+| Control plane | Scheduler | Schedule, Pause, Resume, Fork |
+| Control plane | Runtime manager | Exec and files |
+| Scheduler | Runtime manager | Spawn, Stop, Snapshot |
+| Runtime manager | Control plane | Report and secret relay |
+| Harness | Runtime manager | Heartbeat and Report up; Exec on `:50056` down |
+| Workload | Harness | `:3128`. Guest mode proxies out over the TAP device; broker mode forwards over vsock `3128` to the broker. |
+| Control plane, workflow engine, scheduler | Postgres | SQL with RLS, journal |
 
 ## Runtime manager
 
-One per node, the only process that touches microVMs. Callers cross the authz interceptor; guests reach only `RuntimeHarness`. The manager listens on `:50054` and is a trusted host.
+One per node, listening on `:50054`. Callers cross the authz interceptor; guests reach only `RuntimeHarness`.
 
 | Part | Role and boundary |
 | --- | --- |
-| Authz interceptor (`authz.rs`) | Per-call authorization for `RuntimeManager` (ADR 0025). The TLS handshake alone cannot tell a guest from the scheduler, because every per-VM cert is signed by the trusted CA. A peer presenting `OU=lantern-vm` is refused outright; everyone else needs the service token (constant-time compare). Token unset: prod refuses to start, dev warns and allows. |
-| `RuntimeManager` service | `Spawn` (fresh or `restore_snapshot_id`), `Stop`, `Logs`, `Exec` (bidi stream), `ExecTool`, `Stats`, `Snapshot`. `ExecTool` resolves the VM by `vm_id` or `run_id`; a tenant mismatch returns `NOT_FOUND`. Tool output buffered in manager memory is capped at 1 MiB; tool timeout defaults to 30 s, capped at 900 s. |
-| `RuntimeHarness` service | What guests call: a 5 s heartbeat stream (also how the manager learns the guest's dial-back address), secret vending, and the report stream. Methods bind the cert CN/SAN to the request's `vm_id` per message, pinned to this incarnation's cert. `VendSecret` only resolves URIs declared in the VM's own spawn record. |
-| Handle registry | Every live sandbox on the node: tenant, backend, declared secrets, the incarnation's cert pin and exec token. The source of truth for VM ownership checks. |
-| Isolation backends | One `RuntimeBackend` trait (schedule, cancel, snapshot, restore, exec) with Firecracker, Kata, Kubernetes, Wasmtime and Docker implementations. Fail-closed: an isolation class the backend cannot satisfy is refused, never downgraded. Only Firecracker VMs run the in-guest tool registry; `ExecTool` on other backends returns `TOOL_STATUS_UNAVAILABLE`. |
-| Warm pool | Pre-booted handles keyed by (isolation class, bundle digest, tenant), published to the scheduler for warm-start scoring. The tenant is part of the key: a warm handle booted with one tenant's env and cert is never handed to another. |
-| Snapshot store | `vmstate` and `mem` files under `SNAPSHOT_DIR`, mirrored to S3 when configured. The mem file is made read-only so forks can hard-link it. Forks share mem pages through the host page cache (`MAP_PRIVATE` copy-on-write) until a guest writes. S3 upload failures are warn-logged, never fatal. |
-| Reaper | Polls backend liveness and deregisters workloads that exited on their own, so finished VMs stop counting against quota. Only reaps on an affirmative "not running"; an error keeps the handle. |
+| Authz interceptor (`authz.rs`) | Per-call authorization for `RuntimeManager` (ADR 0025). The TLS handshake cannot tell a guest from the scheduler, because every per-VM certificate is signed by the trusted CA. A peer presenting a VM certificate (`OU=pal-vm`, or the older `OU=lantern-vm`) is refused; everyone else needs the service token (constant-time compare). Token unset: production refuses to start, dev warns and allows. |
+| `RuntimeManager` service | `Spawn` (fresh or `restore_snapshot_id`), `Stop`, `Logs`, `Exec` (bidi stream), `ExecTool`, `Stats`, `Snapshot`. `ExecTool` resolves the VM by `vm_id` or `run_id`. Tool output buffered in manager memory is capped at 1 MiB; tool timeout defaults to 30 s, capped at 900 s. |
+| `RuntimeHarness` service | What guests call: a 5 s heartbeat stream (also how the manager learns the guest's dial-back address), secret vending and the report stream. Each method binds the certificate CN or SAN to the request's `vm_id`, pinned to this incarnation's certificate. `VendSecret` resolves only URIs declared in the VM's own spawn record. |
+| Handle registry | Every live sandbox on the node: tenant, backend, declared secrets, certificate pin and exec token. The source of truth for ownership checks. |
+| Isolation backends | One `RuntimeBackend` trait (schedule, cancel, snapshot, restore, exec) with Firecracker, Kata, Kubernetes, Wasmtime and Docker implementations. An isolation class the backend cannot satisfy is refused, never downgraded. Only Firecracker VMs run the in-guest tool registry; `ExecTool` elsewhere returns `TOOL_STATUS_UNAVAILABLE`. |
+| Warm pool | Pre-booted handles keyed by (isolation class, bundle digest, tenant), published to the scheduler for warm-start scoring. The tenant is in the key, so a handle booted with one tenant's env and certificate is never handed to another. |
+| Snapshot store | `vmstate` and `mem` files under `SNAPSHOT_DIR`, mirrored to S3 when configured. `mem` is made read-only so forks can hard-link it. S3 failures are warn-logged, never fatal. |
+| Reaper | Polls backend liveness and deregisters workloads that exited, so finished VMs stop counting against quota. It reaps only on an affirmative "not running"; an error keeps the handle. |
 | Scheduler heartbeat | Posts node capacity and warm-pool inventory to the scheduler's REST gateway (`:8085`) every 30 s. |
-| Secret resolver | Resolves `lantern.secret/...` URIs at request time through the control-plane relay (`POST /v1/runtime/secrets/resolve`), or env in dev. The relay authenticates with `X-Lantern-Runtime-Token`; the control plane fails closed without it. |
-| Report forwarder | Forwards each harness report (logs, OTLP traces, metrics, audit events) to `POST /v1/runtime/report`. A forward failure never crashes the workload; failed audit forwards are logged at ERROR. |
-| Egress broker (broker mode only) | Per-VM listener on the Firecracker vsock UDS for guest port 3128: allowlist, upstream dial from the host, credential injection. At most 128 concurrent connections per VM; 10 s limits on head read, TLS, DNS and connect; 300 s idle close. Production refuses broker mode without the relay resolver. |
+| Secret resolver | Resolves `pal.secret/...` URIs (the older `lantern.secret/...` form still works) at request time through the control-plane relay (`POST /v1/runtime/secrets/resolve`), or from env in dev. The relay authenticates with the `X-Pal-Runtime-Token` header; the control plane fails closed without the token. |
+| Report forwarder | Forwards each harness report (logs, OTLP traces, metrics, audit events) to `POST /v1/runtime/report`. A forward failure never crashes the workload; failed audit forwards log at ERROR. |
+| Egress broker (broker mode) | Per-VM listener on the Firecracker vsock socket for guest port 3128: allowlist, upstream dial from the host, credential injection. At most 128 concurrent connections per VM; 10 s limits on head read, TLS, DNS and connect; 300 s idle close. Production refuses broker mode without the relay resolver. |
 
 ## Harness
 
-The harness is the in-VM side. It starts as PID 1 and is the last trust boundary around the workload.
+The harness starts as PID 1 and is the last trust boundary around the workload. The workload reaches it only through the proxy port, the secrets socket and its own stdio.
 
 | Part | Role and boundary |
 | --- | --- |
-| Init and boot env | Mounts `/run/lantern`, sets rlimits, reads `spawn.json` (workload command, env, egress rules, workload uid/gid) from the read-only cert drive. Unknown `spawn.json` versions are rejected; in prod the harness refuses to start without a workload uid. |
-| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash up to N times, injects the proxy env. Every `PAL_*` key (and its `LANTERN_*` alias) is withheld from the child except a short allowlist of non-secret identifiers. |
+| Init and boot env | Mounts `/run/lantern`, sets rlimits, reads `spawn.json` (workload command, env, egress rules, workload uid and gid) from the read-only cert drive. Unknown `spawn.json` versions are rejected. In production it refuses to start without a workload uid. |
+| Supervisor | Spawns the workload as the workload uid, tails stdio, restarts on crash, injects the proxy env. Every `PAL_*` key (and its `LANTERN_*` alias) is withheld from the child except a short allowlist of non-secret identifiers. |
 | Signals and reaper | PID 1 duties: reaps orphaned zombies, drains on `SIGTERM`, prepares for snapshots on `SIGUSR1`. |
-| Heartbeat | Bidi stream to the manager every 5 s with resource usage, `has_active_exec` and `last_activity_unix_ms`; the scheduler's idle sweeper reads the last two. mTLS with this incarnation's per-VM cert. |
-| Activity tracker | Atomic count of running workload and exec children, plus the time the last one exited. Idle means no child alive: the basis for idle-suspend. |
+| Heartbeat | Bidi stream to the manager every 5 s with resource usage, `has_active_exec` and `last_activity_unix_ms`; the scheduler's idle sweeper reads the last two. mTLS with this incarnation's certificate. |
+| Activity tracker | Atomic count of running workload and exec children, plus when the last one exited. Idle means no child alive. |
 | Report stream | Client-streaming `RuntimeHarness.Report` to the manager, with reconnect. Security audits (`secret_vend`, egress deny, `secret_access_denied`, `egress_preflight`) are logged locally first and never dropped on a full buffer. |
-| Exec server | `:50056`, Bearer token. Serves `RuntimeHarness.Exec`: one-shot or TTY commands, and the `__lantern_tool_call__` envelope for tool calls. Rejects calls without this incarnation's bearer token, so a token frozen into a snapshot is refused after restore. |
-| Tool runner | Five built-in tools: `shell_exec`, `http_fetch` (through the egress proxy), `read_file`, `write_file`, `list_dir`. File tools are confined to the fixed `/workspace` root via `openat2` `RESOLVE_BENEATH`, running under the workload's fsuid. Every captured output is capped at 1 MiB and marked truncated. |
-| Secrets socket | `/run/lantern/secrets.sock`. Vends short-TTL secret values to the workload, fetched from the manager's `VendSecret`. Peer uid comes from the kernel (`SO_PEERCRED`) and must be the workload uid; denials emit `secret_access_denied`. |
-| Egress proxy (guest mode) | `127.0.0.1:3128`, in-guest CONNECT allowlist proxy. Enforcing only with the image's iptables REDIRECT rule, which the harness checks at boot. Prod is always fail-closed when rules are declared and REDIRECT is missing; the workload is not started. |
-| Egress forwarder (broker mode) | `127.0.0.1:3128`. Bridges each proxy connection byte for byte to vsock CID 2 port 3128. Nothing in the guest enforces or terminates anything; the VM has no NIC and the host broker is the enforcement point. |
-| Re-identify | A restored guest wakes up believing it is the source VM. This mints the new incarnation's `vm_id`, cert and agent identity before anything else runs. |
+| Exec server | `:50056`, bearer token. Serves one-shot or TTY commands and the `__lantern_tool_call__` envelope for tool calls. Rejects calls without this incarnation's token, so a token frozen into a snapshot is refused after restore. |
+| Tool runner | Five tools: `shell_exec`, `http_fetch` (through the egress proxy), `read_file`, `write_file`, `list_dir`. File tools are confined to `/workspace` via `openat2` `RESOLVE_BENEATH`, under the workload's fsuid. Every captured output is capped at 1 MiB and marked truncated. |
+| Secrets socket | `/run/lantern/secrets.sock`. Vends short-lived secrets fetched from the manager's `VendSecret`. The peer uid comes from the kernel (`SO_PEERCRED`) and must be the workload uid; denials emit `secret_access_denied`. |
+| Egress proxy (guest mode) | `127.0.0.1:3128`, an in-guest CONNECT allowlist proxy. It enforces only with the image's iptables REDIRECT rule, which the harness checks at boot. In production, declared rules with no REDIRECT mean the workload is not started. |
+| Egress forwarder (broker mode) | `127.0.0.1:3128`. Bridges each proxy connection byte for byte to vsock CID 2, port 3128. Nothing in the guest enforces anything; the VM has no network device and the host broker decides. |
+| Re-identify | A restored guest wakes up believing it is the source VM. This mints the new incarnation's `vm_id`, certificate and agent identity before anything else runs. |
 
-The workload talks to the harness only through the proxy port, the secrets socket, and its own stdio.
+## A tool call into a microVM
 
-## Sequences
+The workflow engine asks the runtime manager, which hands a JSON envelope to the harness. The happy path is on [Request lifecycle](/docs/architecture/request-lifecycle/). The details that matter here:
 
-Each sequence below is one message per step. Scenario variants cover the failure and refusal paths.
+- The manager sends `Exec __lantern_tool_call__` with `{ tool, args, idempotency_key, timeout_sec }` in `argv[0]`, plus this incarnation's bearer token. On broker VMs the same gRPC rides host-initiated vsock.
+- The exec server intercepts the sentinel before its generic exec audit, so arguments are never logged. The manager audits the tool name, duration and status, never the arguments.
+- `shell_exec` runs `/bin/sh -c` as the workload uid. `read_file` uses `openat2` with `RESOLVE_BENEATH`, so no `..` or symlink escape.
+- The runner writes `{ ok: true, result }` to stdout before the done frame. The status is typed; there is no string matching.
 
-### A run, end to end
+| Case | Result |
+| --- | --- |
+| Tool ran and failed, or the name is unknown (for example `read_file` outside `/workspace`) | The runner returns `{ ok: false, error }`; the manager returns `TOOL_STATUS_ERROR` and the step fails with the manager's detail. |
+| VM is not Firecracker, or has not heartbeated yet | `TOOL_STATUS_UNAVAILABLE`. Never a made-up success; the engine fails the step wrapping `ErrRuntimeManagerUnavailable`. |
+| VM belongs to another tenant | The mismatch is audited under `lantern_audit` as `exec_tool DENIED` and the manager returns `NOT_FOUND`, the same answer as a VM that does not exist (ADR 0025). |
 
-From `POST /v1/runs` to a journaled result, including the budget gate, the optional model router, and what happens when the process dies mid-step.
-
-**Managed (inline)**
-
-1. `POST /v1/runs`: the SDK sends `{ agentName, input }`. The route requires the `runs:execute` scope.
-2. `CheckBudget(tenant, agent, 0)`: before anything is created, daily cost, run-count and token limits from prior runs are read from the usage rollup.
-3. `CreateRun`: the run is created queued. No data plane is connected for this tenant, so it executes inline.
-4. `201 Created { run }`: the caller gets the run id immediately; execution continues on a background goroutine.
-5. Status becomes `running`.
-6. `checkCachedLLMStep`: is there already a `step_completed` for this LLM step? On a first attempt, no.
-7. Journal `step_started`, written before the call so the waterfall shows the step in flight and recovery knows it began.
-8. `ModelService.Complete`, only when `PAL_USE_MODEL_ROUTER` is on (default off). Otherwise the control plane calls the provider directly, and any router error falls through to that direct chain.
-9. The provider request carries an `Idempotency-Key` derived from the run, so a retry or crash-replay is deduplicated by the provider.
-10. The completion returns text, model used, tokens in and out.
-11. Journal `step_completed`. The full output payload is persisted: this row is what makes replay skip the call next time.
-12. Status becomes `succeeded`, with output, tokens and `cost_usd` on the run row.
-13. `RecordUsage`: the daily rollup for the budget gate, recorded exactly once per run.
-14. `GET /v1/runs/{id}/events`: SSE replays `journal_events` in `seq` order, then tails until the run is terminal.
-
-**Budget exhausted**
-
-1. `POST /v1/runs`.
-2. `CheckBudget` finds a hard-fail limit for this agent already exceeded.
-3. `402 Payment Required` with `{ error: "agent budget limit reached - ...", reason }`. No run row, no compute, no tokens.
-
-**Crash and re-drive**
-
-1. A run is mid-step: the LLM step has journaled `step_started`.
-2. The process dies (restart, deploy or crash) before `step_completed` is written. The run row still says `running`.
-3. Every `PAL_RECOVERY_INTERVAL` (default 30 s) the recovery sweep finds runs in `running`/`queued` whose `run_locks` row is absent or expired.
-4. `acquireRecoveryLock`: an UPSERT on `run_locks` that only steals an expired lock, so two replicas never re-drive the same run.
-5. `redriveRun` re-enters the executor (or the workflow interpreter) for that run.
-6. `checkCachedLLMStep`: a `step_completed` row means reuse the stored output with no LLM call. Workflow nodes do the same via `journalCompletedStep`.
-7. The provider call is made only if not cached. If the crash came before `step_completed`, the call is made again under the same idempotency key derivation, so the provider can dedup it.
-8. Journal `step_completed`. The run resumes from the first incomplete step; it does not restart.
-
-<Diagram name="crash-resume" />
-
-**Data plane (engine)**
-
-1. `POST /v1/runs`.
-2. `RouteRun`: a data plane is connected for this tenant, so the assignment goes down the `RunStream` that the agent opened outbound.
-3. `ExecuteRun`: the agent drives the run on the local workflow engine and streams its events back.
-4. Replay check: `executeAttempt` first looks for a cached result keyed `stepID:attempt`; a completed step is never re-dispatched.
-5. `Complete { idempotency_key }`: `llm_call` always goes through the model router, capability-addressed, keyed `run_id:step_id:attempt`.
-6. The router maps the capability to a concrete vendor model and calls the provider.
-7. The completion returns; `model_used`, tokens and cost map into the step result.
-8. `journal.Append`: the engine is the only thing that mutates run state; the journal write and status update share a transaction.
-9. `StreamEvent` messages stream back to the agent, which reports status to the control plane.
-
-### A tool call into a microVM
-
-The workflow engine never runs tools itself: it asks the runtime manager, which hands a JSON envelope to the harness inside the guest.
-
-**Succeeds**
-
-1. Workflow engine to manager: `ExecTool` with `tool_name`, `args` (Struct), `run_id`, `step_id`, `vm_id`, timeout, idempotency key `run_id:step_id:attempt`, `tenant_id`.
-2. Authz interceptor: service token required; any peer presenting a per-VM cert (`OU=lantern-vm`) is refused.
-3. The manager resolves the VM by `vm_id`, or by scanning for `run_id`. The owning tenant must match.
-4. Manager to harness: `Exec __lantern_tool_call__`. The envelope `{ tool, args, idempotency_key, timeout_sec }` goes in `argv[0]`, with this incarnation's Bearer exec token. On broker VMs the same gRPC rides host-initiated vsock.
-5. The exec server intercepts the sentinel before its generic exec audit, so args are never logged, and calls `run_tool_call`.
-6. The tool runner acts, for example `read_file` under `/workspace`: `openat2` with `RESOLVE_BENEATH` as the workload's fsuid, so no `..` or symlink escape. `shell_exec` runs `/bin/sh -c` as the workload uid.
-7. Bytes return, at most 1 MiB; every captured output is capped and flagged truncated.
-8. The runner writes `{ ok: true, result }` to stdout before the done frame.
-9. The manager returns `TOOL_STATUS_OK` plus the result to the engine. The status is typed, with no string matching. The manager audits tool name, duration and status, never args.
-
-**Tool fails.** The runner returns `{ ok: false, error }` (the tool ran and failed, or the name is unknown, for example `read_file` outside `/workspace`). The manager returns `TOOL_STATUS_ERROR` and the step fails with the manager's detail.
-
-**No harness.** If the VM is not Firecracker, or has no heartbeat yet, the manager returns `TOOL_STATUS_UNAVAILABLE`. Only Firecracker guests run the tool registry, and the guest address comes from its heartbeat. It is never a fabricated success; the engine fails the step wrapping `ErrRuntimeManagerUnavailable`.
-
-**Wrong tenant.** A caller asks for a VM that belongs to another tenant. The mismatch is audited under `lantern_audit` as `exec_tool DENIED`, and the manager returns `NOT_FOUND`, indistinguishable from a VM that does not exist: no existence leak (ADR 0025).
-
-### Egress in broker mode
+## Egress in broker mode
 
 <Aside type="note" title="Opt-in">
 `PAL_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
 </Aside>
 
-The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/security/egress/).
+The workload's request leaves the VM over vsock. The host broker decides, dials and adds the credential, and the VM never holds it. The picture and the rules are on [Egress](/docs/security/egress/).
 
-<Diagram name="sandbox-egress" />
-
-**Allowed, credential injected** (example: `api.github.com`)
-
-1. The workload sends `CONNECT api.github.com:443` using `HTTPS_PROXY=http://127.0.0.1:3128` as usual.
-2. The forwarder splices bytes over vsock `:3128`. The VM has no network device; the forwarder connects to vsock CID 2 (the host), port 3128.
-3. The broker reads the head (at most 64 KiB, 10 s). A slow or silent guest is dropped; `CONNECT` goes to `handle_connect`, anything else to `handle_plain`.
-4. `Policy.evaluate`: port in `PAL_EGRESS_ALLOWED_PORTS` (default 443), not a private/metadata IP literal, first matching rule.
-5. The broker answers `200 Connection Established`. This rule injects, so the broker terminates TLS with a leaf from the per-VM ephemeral CA. Nothing is dialled yet.
-6. The workload sends its real request (`GET /user`) inside TLS, with a placeholder or no `Authorization` header.
-7. Preflight: not `TRACE` or `CONNECT`; the target and exactly one `Host:` header must name `api.github.com`.
-8. The broker resolves `lantern.secret/...` through the secret relay on the host at request time, scoped to the VM's tenant. The ref comes from the manager's spawn record, not the guest.
-9. The secret value is held for one header write, then dropped. Never logged, traced or audited.
-10. The broker dials upstream with TLS and the header injected: DNS checked against private ranges, upstream verified against native roots, same-named header replaced, `Connection: close`.
-11. Audit `egress_inject`: header names only, logged locally first, then the report path.
-12. The response is spliced back, rate-limited by the rule's `rate_bps`; idle connections close after 300 s.
-
-**Allowed, no injection** (example: `pypi.org`). Same steps through `Policy.evaluate`. The rule has no inject list, so TLS is not terminated. The broker resolves once, refuses private/metadata answers, dials the checked address, and answers `200 Connection Established` (audited as passthrough). Then it is an opaque TLS tunnel end to end between the workload and the upstream; the broker only splices bytes.
-
-**Not allowlisted** (example: `paste.example`). `Policy.evaluate` returns the deny reason. The deny is always logged locally, and goes into the shared audit channel at a burst of 20, then 5 per second per VM. The workload gets `403 Forbidden`, with `X-Lantern-Reason` carrying the static reason. Nothing was dialled.
-
-**Plain HTTP with a credential.** A plain-HTTP proxy request goes to a host whose rule injects a credential (port 80 opened in the allowlist). `handle_plain` allows it by policy, but the broker returns `403 plain-HTTP injection refused`: a credential would cross the network in cleartext. Only `PAL_EGRESS_PLAIN_INJECT=1` allows it, and only to port 80.
-
-**Host mismatch.** After `200` and TLS termination, the workload sends `GET /` with `Host: evil.example` inside an approved tunnel. The Host is not bound to the approved host, which is checked before any secret is resolved or anything dialled and audited as an `egress_inject` deny. The workload gets `403 Forbidden`: the credential never rides a request addressed elsewhere.
-
-### Sandbox lifecycle
-
-Schedule, idle-suspend with transparent resume, explicit pause and resume, and copy-on-write forks. See [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/).
-
-**Schedule**
-
-1. `POST /v1/runtime/schedule`: an AgentSpec with image, isolation, limits, egress, secrets, and optional `idleTimeoutSecs`.
-2. `RuntimeScheduler.Schedule`. Over the tenant's quota, the control plane answers HTTP 402.
-3. The scheduler places the VM (PENDING, then SPAWNING). Warm pool, region, fair share, cost and health pick the node.
-4. `Spawn { spec, handle }`: the manager writes `spawn.json` to the read-only cert drive and boots the VM.
-5. The harness sends a heartbeat every 5 s. PID 1 is up: RUNNING. Each beat carries `has_active_exec` and `last_activity_unix_ms`.
-6. The control plane returns `{ vm_id }`. The sandbox is addressable by `vm_id` from here on.
-
-**Idle suspend and auto-resume**
-
-1. The guest reports `has_active_exec = false`: no workload or exec child alive; the tracker stamps when the last one exited.
-2. The idle sweeper ticks every 10 s (leader only). Eligible: RUNNING, `idle_timeout_secs > 0`, idle longer than the timeout.
-3. `Snapshot { vm_id }`, the same crash-safe path as an operator pause, marked `scheduler:idle-pausing`.
-4. `Stop`: the VM is gone from the node; its snapshot stays.
-5. The VM becomes PAUSED and its slot is freed. Reason "auto-suspended (idle timeout)". Snapshot storage is still kept.
-6. The client sends `POST .../vms/{id}/exec`, not knowing or caring that the VM is suspended.
-7. `ensureVMRunning` calls Resume because `idle_timeout_secs > 0`. `FailedPrecondition` means already running.
-8. `Spawn { restore_snapshot_id }`: quota reserved first (402 if over); same `vm_id`, restored from its snapshot.
-9. The original exec proceeds; the control plane audits `auto_resume`.
-
-**Pause and resume**
-
-1. `POST .../vms/{id}/pause`: manual pause. Exec on a manually paused VM returns 409, never auto-resumes.
-2. The scheduler pauses under the per-VM lock; only a RUNNING VM can be paused.
-3. `Snapshot`: the snapshot id is persisted before `Stop`, then the VM is marked DRAINING (`scheduler:pausing`).
-4. `Stop { reason: paused }`. If Stop fails the VM goes back to RUNNING and keeps its slot.
-5. PAUSED plus `snapshot_id` returns. Exactly one of the RPC or reconciliation releases the quota slot.
-6. Later, `POST .../vms/{id}/resume`. The scheduler runs `TryReserveTenantVMs`, then SPAWNING (`scheduler:resuming`).
-7. `Spawn` from snapshot, same `vm_id`. A failed spawn leaves the VM PAUSED and resumable again.
-8. Re-identify: the restored guest takes a new incarnation's cert and exec token, so the snapshot's frozen credentials are refused.
-
-**Fork x N**
-
-1. `POST .../vms/{id}/fork { count }`: count is 1..`PAL_MAX_FORK_COUNT` (default 100, ceiling 1000).
-2. The control plane forks with one identity per child. Each child gets its own agent identity; inheriting the source's would let N sandboxes act as one.
-3. The scheduler reserves N slots, all-or-nothing, before any snapshot I/O.
-4. `Snapshot { keep_running }`: a RUNNING source keeps running; a PAUSED source forks from its pause snapshot.
-5. `Spawn` x N with new `vm_id`s. Concurrency is bounded; a child that fails is reported and its slot released.
-6. The manager hard-links the read-only mem file: `MAP_PRIVATE` copy-on-write via the host page cache. Lima nested-virt, indicative: fork spawns took 131, 145 and 160 ms.
-7. The response is `forks [{ vmId, state }]`; each child is RUNNING or FAILED with its error.
-
-## Sandbox states
-
-| State | Meaning |
+| Case | What happens |
 | --- | --- |
-| `PENDING` | Scheduler accepted the request, awaiting placement. |
-| `SPAWNING` | Node assigned, bootstrapping. Also the state a resume or fork child is in while the manager restores it. |
-| `RUNNING` | The harness is reporting heartbeats. Holds one concurrent-VM quota slot. |
-| `DRAINING` | Graceful shutdown initiated. A pause in progress is persisted here with the `scheduler:pausing` marker, so a crash never reloads it as PAUSED. |
-| `PAUSED` | Snapshotted and stopped. Holds no quota slot; resumable. Snapshot storage is still kept. |
-| `FAILED` | Spawn or health failure; the reason is in the `StatusEvent`. |
-| `TERMINATED` | Resources released. |
+| **Allowed, credential injected** (for example `api.github.com`) | See the steps below. |
+| **Allowed, no injection** (for example `pypi.org`) | The rule has no inject list, so TLS is not terminated. The broker resolves once, refuses private and metadata answers, dials the checked address and answers `200 Connection Established`. From there it is an opaque TLS tunnel; the broker only splices bytes. |
+| **Not allowlisted** | `Policy.evaluate` returns the deny reason. The workload gets `403 Forbidden` with an `X-Pal-Reason` header carrying a static reason. Nothing is dialed. The deny is always logged locally and reaches the shared audit channel at a burst of 20, then 5 per second per VM. |
+| **Plain HTTP to a credential host** | The broker returns `403 plain-HTTP injection refused`, because the credential would cross the network in cleartext. Only `PAL_EGRESS_PLAIN_INJECT=1` allows it, and only to port 80. |
+| **Host mismatch** | After TLS termination the workload sends a request with a different `Host:`. The check runs before any secret is resolved or anything is dialed; the broker audits an `egress_inject` deny and returns `403`. The credential never rides a request addressed elsewhere. |
 
-Transitions:
+Injected request, step by step:
 
-- schedule: start to `PENDING`. placed: `PENDING` to `SPAWNING`.
-- heartbeats: `SPAWNING` to `RUNNING`. spawn fails: `SPAWNING` to `FAILED`.
-- pause, idle or delete: `RUNNING` to `DRAINING`.
-- snapshot and stop ok: `DRAINING` to `PAUSED`. stop failed: `DRAINING` back to `RUNNING`. drained: `DRAINING` to `TERMINATED`.
-- resume or auto-resume: `PAUSED` to `SPAWNING`. restore fails: `SPAWNING` back to `PAUSED`.
-- fork x N: `RUNNING` to `SPAWNING` (children).
+1. The workload sends `CONNECT api.github.com:443` through `HTTPS_PROXY=http://127.0.0.1:3128`.
+2. The forwarder splices bytes to vsock CID 2, port 3128. The VM has no network device.
+3. The broker reads the head (at most 64 KiB, 10 s). A slow or silent guest is dropped.
+4. `Policy.evaluate` checks the port (`PAL_EGRESS_ALLOWED_PORTS`, default 443), rejects private or metadata IP literals, and takes the first matching rule.
+5. The broker answers `200 Connection Established`. This rule injects, so it terminates TLS with a leaf from the per-VM ephemeral CA. Nothing is dialed yet.
+6. The workload sends its real request inside TLS, with a placeholder or no `Authorization` header.
+7. Preflight: not `TRACE` or `CONNECT`, and the target and exactly one `Host:` header must name the approved host.
+8. The broker resolves the `pal.secret/...` reference on the host at request time, scoped to the VM's tenant. The reference comes from the manager's spawn record, not the guest.
+9. The value is held for one header write, then dropped. It is never logged, traced or audited.
+10. The broker dials upstream over TLS with the header injected: DNS checked against private ranges, upstream verified against native roots, same-named header replaced, `Connection: close`.
+11. It audits `egress_inject` with header names only.
+12. The response is spliced back, rate-limited by the rule's `rate_bps`. Idle connections close after 300 s.
+
+## Where the sequences moved
+
+| Sequence | Page |
+| --- | --- |
+| A run, end to end (inline, budget 402, data plane) | [Request lifecycle](/docs/architecture/request-lifecycle/) |
+| Crash and re-drive | [Durability](/docs/architecture/durability/), picture on [Durable execution](/docs/runtime/durable-execution/) |
+| Schedule, idle suspend, pause, resume, fork | [microVM lifecycle](/docs/architecture/vm-lifecycle/) |

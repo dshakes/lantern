@@ -1,1 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 376" width="960" height="376" role="img" aria-labelledby="t d"><title id="t">A budget is checked before the model is called</title><desc id="d">A run request first meets the budget check: a forecast and the daily caps. Over a hard cap, the API returns 402 and no model is called, so it costs nothing. Under the cap, the request is routed by capability to a provider model and the usage is recorded against the budget.</desc><rect width="960" height="376" rx="18" fill="#ffffff"/><rect x="24" y="152" width="168" height="72" rx="12" fill="#ffffff" stroke="#d9d8d2" stroke-width="1.5"/><text x="108" y="182.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600" fill="#0b0c0f" text-anchor="middle">run request</text><text x="108" y="198.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">POST /v1/runs</text><path d="M192 188 L240 188" fill="none" stroke="#62656d" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M231.9 191.9 L240 188 L231.9 184.1" fill="none" stroke="#62656d" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><rect x="240" y="136" width="208" height="104" rx="12" fill="#e08a00" fill-opacity="0.09" stroke="#e08a00" stroke-width="2"/><text x="344" y="171.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600" fill="#0b0c0f" text-anchor="middle">budget check</text><text x="344" y="187.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">forecast +</text><text x="344" y="203.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">daily caps</text><path d="M448 168 L488 168 L488 84 L520 84" fill="none" stroke="#d03030" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M511.9 87.9 L520 84 L511.9 80.1" fill="none" stroke="#d03030" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><rect x="520" y="44" width="208" height="80" rx="12" fill="#d03030" fill-opacity="0.09" stroke="#d03030" stroke-width="1.5"/><text x="624" y="78.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600" fill="#0b0c0f" text-anchor="middle">402 refused</text><text x="624" y="94.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">no model call · $0</text><path d="M448 208 L488 208 L488 292 L520 292" fill="none" stroke="#1f8a63" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M511.9 295.9 L520 292 L511.9 288.1" fill="none" stroke="#1f8a63" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><rect x="520" y="252" width="208" height="80" rx="12" fill="#1f8a63" fill-opacity="0.09" stroke="#1f8a63" stroke-width="1.5"/><text x="624" y="286.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600" fill="#0b0c0f" text-anchor="middle">routed</text><text x="624" y="302.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">by capability</text><path d="M728 292 L760 292" fill="none" stroke="#1f8a63" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M751.9 295.9 L760 292 L751.9 288.1" fill="none" stroke="#1f8a63" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><rect x="760" y="252" width="176" height="80" rx="12" fill="#ffffff" stroke="#d9d8d2" stroke-width="1.5"/><text x="848" y="286.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="600" fill="#0b0c0f" text-anchor="middle">usage</text><text x="848" y="302.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#45474e" text-anchor="middle">recorded</text><text x="498" y="140" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#b42323" text-anchor="start">over cap</text><text x="498" y="246" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="400" fill="#146b4b" text-anchor="start">under cap</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 296" width="880" height="296" role="img" aria-labelledby="t d">
+<title id="t">Budgets are checked before the model is called</title>
+<desc id="d">A run request first meets the budget check: the agent caps and the tenant-wide daily cap. Over a hard cap the API returns 402 and no model is called, so the refusal costs nothing. Under the cap, the request is routed by capability to a provider model and the usage is recorded against the day.</desc>
+<style>
+.cv{fill:#f6f5f2;stroke:#e2e1dc;stroke-width:1.5}
+.zone{fill:#f1f0ec;stroke:#dedcd5;stroke-width:1.5}
+.card{fill:#ffffff;stroke:#d9d8d2;stroke-width:1.5}
+.soft{fill:url(#gs)}.ring{fill:none;stroke:url(#ga);stroke-width:1.5}
+.ghost{fill:none;stroke:#9a9ca3;stroke-width:1.5;stroke-dasharray:4 4}
+.chip{fill:#ffffff;stroke:#d9d8d2;stroke-width:1}
+text{font-family:'Inter Tight','Inter',ui-sans-serif,-apple-system,'Segoe UI',sans-serif}
+.t{font-size:13.5px;font-weight:600;fill:#0b0c0f}
+.s{font-size:12px;fill:#45474e}
+.m{font:11.5px 'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;fill:#45474e}
+.xs{font-size:11px;font-weight:500;fill:#62656d}
+.k{font-size:10.5px;font-weight:650;letter-spacing:.08em;fill:#62656d}
+.ka{fill:url(#ga)}
+.ln,.la{fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ln{stroke:#9a9ca3}.la{stroke:url(#ga)}
+.dash{stroke-dasharray:5 5}
+.pkt{fill:url(#ga)}
+.flow{stroke-dasharray:4 6;animation:flow 1.1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+@media (prefers-reduced-motion:reduce){.flow{animation:none;stroke-dasharray:none}.pkt{display:none}}
+</style>
+<defs>
+<linearGradient id="ga" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="880" y2="0"><stop offset="0" stop-color="#4a3ee6"/><stop offset="1" stop-color="#0e7490"/></linearGradient>
+<linearGradient id="gs" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="880" y2="0"><stop offset="0" stop-color="#4a3ee6" stop-opacity="0.07"/><stop offset="1" stop-color="#0e7490" stop-opacity="0.07"/></linearGradient>
+<filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-color="#1a1408" flood-opacity="0.08"/></filter>
+</defs>
+<rect class="cv" x=".75" y=".75" width="878.5" height="294.5" rx="16"/>
+<rect class="zone" x="24" y="24" width="832" height="248" rx="16"/>
+<text class="k ka" x="40" y="48">POLICY AS CODE · PER AGENT AND PER TENANT</text>
+<rect class="card" x="40" y="96" width="176" height="96" rx="12" filter="url(#sh)"/>
+<text class="k ka" x="56" y="130.5">01</text>
+<text class="t" x="56" y="148.5">Run request</text>
+<text class="s" x="56" y="166.5">agent + input</text>
+<rect class="card" x="256" y="88" width="208" height="112" rx="12" filter="url(#sh)"/>
+<rect class="soft" x="256" y="88" width="208" height="112" rx="12"/><rect class="ring" x="256.75" y="88.75" width="206.5" height="110.5" rx="11.25"/>
+<text class="k ka" x="272" y="113.5">02</text>
+<text class="t" x="272" y="131.5">Budget check</text>
+<text class="s" x="272" y="149.5">cost/run · cost/day</text>
+<text class="s" x="272" y="165.5">tokens/day · runs/day</text>
+<text class="s" x="272" y="181.5">per-tool limits</text>
+<rect x="504" y="52" width="336" height="84" rx="12" fill="#e6f4ee" stroke="#146b4b" stroke-width="1.5"/>
+<text class="k" x="520" y="72" style="fill:#146b4b">03</text>
+<text class="t" x="520" y="90">Under the cap</text>
+<text class="s" x="520" y="108">routed by capability to a model;</text>
+<text class="s" x="520" y="124">usage recorded for the day</text>
+<rect x="504" y="168" width="336" height="84" rx="12" fill="#fbedea" stroke="#b42323" stroke-width="1.5"/>
+<text class="t" x="520" y="196.5">Over a hard cap</text>
+<text class="s" x="520" y="214.5">402 before any model call;</text>
+<text class="s" x="520" y="230.5">the refusal costs nothing</text>
+<path class="ln" d="M222 144L250 144"/>
+<path class="ln" d="M244.5 147.4L250 144L244.5 140.6"/>
+<path class="la flow" d="M470 128L484 128L484 94L498 94"/>
+<path class="la" d="M492.5 97.4L498 94L492.5 90.6"/>
+<circle class="pkt" r="3"><animateMotion dur="2.6s" repeatCount="indefinite" path="M470 128L484 128L484 94L498 94"/></circle>
+<path class="ln dash" style="stroke:#b42323" d="M470 160L484 160L484 210L498 210"/>
+<path class="ln" style="stroke:#b42323" d="M492.5 213.4L498 210L492.5 206.6"/>
+</svg>

@@ -1,65 +1,46 @@
 ---
-title: Build your first agent
-description: Describe an agent in a sentence and watch it get designed, created and run.
-glance:
-  what: "You describe an agent in a sentence; the onboarding agent designs it, test-calls your model key, creates it and streams its first run."
-  why: "Every step advances only after a real 2xx, so you end with output from your own agent, not a mock."
-  how: "Run pal onboard, or open localhost:3001/onboarding."
+title: Your first agent
+description: Describe an agent in a sentence and watch it get designed, created and run on your own model key.
 sidebar:
   order: 2
 ---
-import Progress from '../../../../components/Progress.astro';
-
-<Progress current={2} />
-
 
 import { Aside, Steps } from '@astrojs/starlight/components';
-import { OnboardingFlow } from '../../../../components/diagrams';
 
-<OnboardingFlow client:visible />
+You describe an **agent** in one sentence. The **onboarding agent** designs it, test-calls your **model key**, creates it and streams its **first run**. Every step advances only after a real 2xx or a terminal status, so you end with output from your own agent, not a mock. An *agent* is an AI worker with a name and instructions; a *run* is one execution, input in and output out.
 
-An *agent* is an AI worker with a name and instructions. A *run* is one execution: input in, output out. The *event stream* is the live record of a run.
-
-<Aside type="tip" title="No API key yet?">
-`make demo` needs only Docker and answers from recorded replays. See [Demo mode](/docs/start/demo/). This page runs your own agent against your own key.
-</Aside>
+To look around with no key, use [Try it: the demo](/docs/start/demo/).
 
 ## Before you start
 
-- A running stack: `pal dev` ([Installation](/docs/start/installation/) if you have not set it up).
+- A running stack: `pal dev` ([Develop locally](/docs/start/local-dev/)).
 - An OpenAI or Anthropic key. You can add it during onboarding.
-- Optional, for the terminal path: the CLI, built with `( cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal )`. `pal doctor` checks the stack, including whether the sandbox runtime is wired.
+- For the terminal path, the `pal` CLI ([Install](/docs/start/installation/)).
+
+## What happens, in order
+
+1. **Describe the goal.** Free text, or one of six starters (support desk, PR triage, incident responder, daily digest, data analyst, Telegram assistant). A starter names the connectors it needs and skips the design call.
+2. **Review the design.** The onboarding agent proposes a name, instructions, steps, a capability model (`auto`, never a vendor name) and a first task, and says why. You edit anything, then approve. If the design call fails, you can fall back to a one-step design, labelled as such.
+3. **Check the model key.** PAL makes a real test call. A rejected key stops here with the provider's actual error.
+4. **Create and run.** The first run streams live, step by step, then shows the output.
+5. **Optional: run in a sandbox.** PAL starts a microVM, runs one command and shuts it down. Without a runtime scheduler it reports **Sandbox unavailable** and nothing runs; `pal doctor` names the missing piece.
 
 ## In the dashboard
 
-Open [localhost:3001/onboarding](http://localhost:3001/onboarding) and sign in (the seeded dev account; the e-mail domain is a legacy name: `admin@lantern.dev` / `lantern`). A conversation on the right, a progress rail on the left.
+Open `http://localhost:3001/onboarding` and sign in with the seeded dev account (`admin@lantern.dev` / `lantern`; the domain is a legacy name). A conversation sits on the right and a progress rail on the left.
 
-<Steps>
+Progress is stored on the server, so a reload or another browser resumes where you left off. **Start over** clears it. When a step fails, the page names the cause and offers one fix:
 
-1. **Describe the goal**, for example *"Turn my rough meeting notes into a short summary with action items."* Or pick one of six starters (support desk, PR triage, incident responder, daily digest, data analyst, Telegram assistant); each names the connectors it needs and skips the design call.
-
-2. **Review the design.** The onboarding agent proposes a name, instructions, steps, a capability model (`auto`, never a vendor name) and a first task, and says why. Edit anything, then approve. If the design call fails you can fall back to a one-step design, labelled as such.
-
-3. **Check the model key.** PAL makes a real test call. A rejected key stops here with the provider's actual error and a **Replace the key** button.
-
-4. **Create and run.** The first run streams live, step by step, then shows the output and what to try next.
-
-5. **Optional: run in a sandbox.** Starts a microVM, runs one command, shuts it down. Without a runtime scheduler it says **Sandbox unavailable** and nothing runs; `pal doctor` names the missing piece.
-
-</Steps>
-
-Progress is stored on the server, so a reload or another browser resumes where you left off; **Start over** clears it. When a step fails, the page names the cause and offers one fix:
-
-| What you see | One-click fix |
+| What you see | Fix it offers |
 | --- | --- |
-| No model key configured | Add a model key (the design is retried) |
+| No model key configured | Add a model key; the design is retried |
 | Provider rejected the key | Replace the key |
 | Design came back unusable | Rephrase the goal, or use the basic design |
 | An agent with that name exists | Rename the agent |
 | Budget or quota blocked the run | Open budgets |
 
 <Aside type="caution" title="Email verification">
-Where verification is required ([Accounts](/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`. Onboarding shows **Resend verification email** and **I've verified, try again** instead of failing silently.
+Where verification is required ([Accounts and teams](/docs/build/accounts/)), creating a run before you verify returns `403` with `code: "email_unverified"`. Onboarding shows **Resend verification email** and **I've verified, try again**.
 </Aside>
 
 ## In the terminal
@@ -68,7 +49,7 @@ Where verification is required ([Accounts](/docs/build/accounts/)), creating a r
 pal onboard
 ```
 
-It checks health, signs in, test-calls your key (asking for one if needed), asks *"What do you want your agent to do?"*, shows the proposed agent, creates it on confirm and streams the first run. For CI, `--yes` never prompts and fails at the first broken step:
+It checks health, signs in, test-calls your key (asking for one if needed), asks *What do you want your agent to do?*, shows the proposed agent, creates it on confirm and streams the first run. `--yes` never prompts and fails at the first broken step, which suits CI:
 
 ```bash
 pal onboard --yes \
@@ -78,9 +59,9 @@ pal onboard --yes \
 
 Other `pal` commands reuse the credentials `pal onboard` saves. To sign in separately: `pal login --email admin@lantern.dev --password lantern`.
 
-## Under the hood
+## The same flow over REST
 
-Both paths use public endpoints you can script:
+Both paths use public endpoints you can script.
 
 ```bash
 export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
@@ -88,12 +69,12 @@ export PAL_TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -d '{"email":"admin@lantern.dev","password":"lantern"}' | jq -r .token)
 H="Authorization: Bearer $PAL_TOKEN"; J="Content-Type: application/json"
 
-# 1. Provider key + a real test call
+# 1. Provider key, then a real test call
 curl -s -X POST localhost:8080/v1/settings/llm-providers -H "$H" -H "$J" \
   -d '{"provider":"anthropic","apiKey":"sk-ant-..."}'
 curl -s -X POST localhost:8080/v1/settings/llm-providers/anthropic/test -H "$H"
 
-# 2. Design an agent from a goal (returns the spec: name, systemPrompt, firstInput, rationale, steps)
+# 2. Design an agent from a goal (returns name, systemPrompt, firstInput, rationale, steps)
 curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" -H "$J" \
   -d '{"description":"Turn meeting notes into action items"}' | tee spec.json
 
@@ -101,13 +82,13 @@ curl -s -X POST localhost:8080/v1/agents/generate-spec -H "$H" -H "$J" \
 jq '{name, description, systemPrompt}' spec.json | \
   curl -s -X POST localhost:8080/v1/agents -H "$H" -H "$J" -d @-
 
-# 4. Run it with the suggested first task, then stream events (named SSE events)
+# 4. Run it with the suggested first task, then stream events
 RUN_ID=$(jq --argjson i "$(jq .firstInput spec.json)" -n \
   "{agentName: \"$(jq -r .name spec.json)\", input: \$i}" | \
   curl -s -X POST localhost:8080/v1/runs -H "$H" -H "$J" -d @- | jq -r .id)
 curl -N localhost:8080/v1/runs/$RUN_ID/events -H "$H" -H "Accept: text/event-stream"
 ```
 
-`generate-spec` returns `400 {"code":"no_provider"}` with no key, and `502` (`bad_spec` or `llm_failed`) when the model call fails. The event stream closes at `succeeded`, `failed` or `cancelled`; read the final output from `GET /v1/runs/{id}`. Onboarding progress lives at `GET/PUT/DELETE /v1/onboarding`.
+`generate-spec` returns `400 {"code":"no_provider"}` with no key, and `502` (`bad_spec` or `llm_failed`) when the model call fails. The event stream closes at `succeeded`, `failed` or `cancelled`; read the final output from `GET /v1/runs/{id}`. Onboarding progress lives at `GET`, `PUT` and `DELETE /v1/onboarding`.
 
-Next: [develop it locally](/docs/start/local-dev/) with a save-and-rerun loop.
+Next: [Develop locally](/docs/start/local-dev/) with a save-and-rerun loop.

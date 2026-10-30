@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 344" width="880" height="344" role="img" aria-labelledby="t d">
+<title id="t">Where the trust boundaries are</title>
+<desc id="d">Callers authenticate at the edge with a JWT or an API key that carries scopes. The control plane takes the tenant from that credential and scopes every query with row-level security. Internal gRPC ports accept a tenant id only from callers presenting the shared service token. Untrusted code runs only in a microVM, behind the egress allowlist, with secrets vended to the workload user alone.</desc>
+<style>
+.cv{fill:#f6f5f2;stroke:#e2e1dc;stroke-width:1.5}
+.zone{fill:#f1f0ec;stroke:#dedcd5;stroke-width:1.5}
+.card{fill:#ffffff;stroke:#d9d8d2;stroke-width:1.5}
+.soft{fill:url(#gs)}.ring{fill:none;stroke:url(#ga);stroke-width:1.5}
+.ghost{fill:none;stroke:#9a9ca3;stroke-width:1.5;stroke-dasharray:4 4}
+.chip{fill:#ffffff;stroke:#d9d8d2;stroke-width:1}
+text{font-family:'Inter Tight','Inter',ui-sans-serif,-apple-system,'Segoe UI',sans-serif}
+.t{font-size:13.5px;font-weight:600;fill:#0b0c0f}
+.s{font-size:12px;fill:#45474e}
+.m{font:11.5px 'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;fill:#45474e}
+.xs{font-size:11px;font-weight:500;fill:#62656d}
+.k{font-size:10.5px;font-weight:650;letter-spacing:.08em;fill:#62656d}
+.ka{fill:url(#ga)}
+.ln,.la{fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ln{stroke:#9a9ca3}.la{stroke:url(#ga)}
+.dash{stroke-dasharray:5 5}
+.pkt{fill:url(#ga)}
+.flow{stroke-dasharray:4 6;animation:flow 1.1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+@media (prefers-reduced-motion:reduce){.flow{animation:none;stroke-dasharray:none}.pkt{display:none}}
+</style>
+<defs>
+<linearGradient id="ga" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="880" y2="0"><stop offset="0" stop-color="#4a3ee6"/><stop offset="1" stop-color="#0e7490"/></linearGradient>
+<linearGradient id="gs" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="880" y2="0"><stop offset="0" stop-color="#4a3ee6" stop-opacity="0.07"/><stop offset="1" stop-color="#0e7490" stop-opacity="0.07"/></linearGradient>
+<filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-color="#1a1408" flood-opacity="0.08"/></filter>
+</defs>
+<rect class="cv" x=".75" y=".75" width="878.5" height="342.5" rx="16"/>
+<rect class="zone" x="24" y="24" width="832" height="296" rx="16"/>
+<text class="k ka" x="40" y="48">FOUR BOUNDARIES · EACH FAILS CLOSED</text>
+<rect class="card" x="40" y="56" width="182" height="208" rx="12" filter="url(#sh)"/>
+<text class="k ka" x="56" y="121">01</text>
+<text class="t" x="56" y="139">Edge</text>
+<text class="s" x="56" y="157">JWT or API key</text>
+<text class="s" x="56" y="173">scopes per endpoint</text>
+<text class="s" x="56" y="189">gateway checks keys</text>
+<text class="s" x="56" y="205">with the control plane</text>
+<rect class="card" x="246" y="56" width="182" height="208" rx="12" filter="url(#sh)"/>
+<rect class="soft" x="246" y="56" width="182" height="208" rx="12"/><rect class="ring" x="246.75" y="56.75" width="180.5" height="206.5" rx="11.25"/>
+<text class="k ka" x="262" y="121">02</text>
+<text class="t" x="262" y="139">Tenant</text>
+<text class="s" x="262" y="157">tenant from the</text>
+<text class="s" x="262" y="173">credential, never</text>
+<text class="s" x="262" y="189">the request body;</text>
+<text class="s" x="262" y="205">row-level security</text>
+<rect class="card" x="452" y="56" width="182" height="208" rx="12" filter="url(#sh)"/>
+<text class="k ka" x="468" y="121">03</text>
+<text class="t" x="468" y="139">Service</text>
+<text class="s" x="468" y="157">gRPC :50051-:50055</text>
+<text class="s" x="468" y="173">shared service token</text>
+<text class="s" x="468" y="189">before a tenant id</text>
+<text class="s" x="468" y="205">is trusted</text>
+<rect class="card" x="658" y="56" width="182" height="208" rx="12" filter="url(#sh)"/>
+<rect class="soft" x="658" y="56" width="182" height="208" rx="12"/><rect class="ring" x="658.75" y="56.75" width="180.5" height="206.5" rx="11.25"/>
+<text class="k ka" x="674" y="112.5">04</text>
+<text class="t" x="674" y="130.5">Sandbox</text>
+<text class="s" x="674" y="148.5">untrusted code only</text>
+<text class="s" x="674" y="164.5">in a microVM</text>
+<text class="s" x="674" y="180.5">egress allowlist</text>
+<text class="s" x="674" y="196.5">secrets to the</text>
+<text class="s" x="674" y="212.5">workload user only</text>
+<path class="ln" d="M228 160L240 160"/>
+<path class="ln" d="M234.5 163.4L240 160L234.5 156.6"/>
+<path class="ln" d="M434 160L446 160"/>
+<path class="ln" d="M440.5 163.4L446 160L440.5 156.6"/>
+<path class="ln" d="M640 160L652 160"/>
+<path class="ln" d="M646.5 163.4L652 160L646.5 156.6"/>
+<text class="xs" x="40" y="296">Production refuses to start when a boundary is not configured.</text>
+</svg>

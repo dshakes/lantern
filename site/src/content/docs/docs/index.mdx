@@ -1,12 +1,63 @@
 ---
-title: PAL documentation
-description: "Docs for pal, the personal agent in iMessage and WhatsApp, and PAL Runtime: durable, budgeted, sandboxed agents in your cloud."
-tableOfContents: false
-pagefind: true
-editUrl: false
-prev: false
+title: Start here
+description: "Two products on one platform, four ways in: try the demo, use pal on your own messages, build agents on PAL Runtime, or run it in production."
 ---
 
-import DocsPortal from '../../../components/DocsPortal.astro';
+PAL is two things on one platform. **pal** is a personal agent that answers your iMessage and WhatsApp threads as you, from your Mac, and **holds anything that commits you** until you say yes. **PAL Runtime** is the platform pal runs on, and you can run your own agents on it: **durable** (a crash resumes the run instead of restarting it), **budgeted** (caps are checked before a model is called) and **sandboxed** (untrusted code runs in a microVM). Pick a path.
 
-<DocsPortal />
+| Path | For | Effort | First command |
+| --- | --- | --- | --- |
+| **Try it** | A look at the whole platform, no API keys | Smallest | `make demo` |
+| **Use pal** | You: your Mac, your iMessage and WhatsApp | Small | `pal setup` |
+| **Build on PAL Runtime** | A developer running their own agents | Small | `pal dev` |
+| **Run it in production** | A platform team: your cluster, your cloud | Largest | `helm install` |
+
+Every path starts from a checkout. The paths after **Try it** also use the `pal` CLI:
+
+```sh
+git clone https://github.com/dshakes/pal.git && cd pal
+(cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal)   # Go 1.26+
+```
+
+[Install](/docs/start/installation/) lists the prerequisites (Docker, Node.js 22, Go 1.26).
+
+## Try it
+
+```sh
+make demo        # Docker only: Postgres, Redis, control plane, dashboard, replay server
+make demo-down   # stop it and delete its volumes
+```
+
+Open `http://localhost:3001/kiosk`. Each visitor gets a throwaway workspace that expires after 30 minutes, and model answers come from recorded replays, so no key is needed and nothing is billed. Details: [Try it: the demo](/docs/start/demo/).
+
+## Use pal
+
+pal runs as two small programs on your Mac, the **channel bridges**, next to a PAL control plane. Install and pair them first ([BOT-SETUP.md](repo:/blob/master/docs/personal/BOT-SETUP.md)), then let `pal setup` walk you through the rest:
+
+```sh
+pal dev                # the control plane and dashboard, on this Mac
+pal setup              # channels -> voice -> trust -> your people; resumes where you left off
+pal setup --apply      # write what you confirmed into this Mac's bridge config (backed up first)
+```
+
+Each step advances only on a real result: a live bridge check, a setting read back, your explicit yes. Consent is never given for you. The same flow is in the dashboard at `/pal/onboarding`. Next: [How pal works](/docs/pal/), then [Holds and trust](/docs/pal/human-in-the-loop/) to decide what it may send on its own.
+
+## Build on PAL Runtime
+
+```sh
+pal dev          # Postgres, Redis, MinIO, the API on :8080 and the dashboard on :3001
+pal onboard      # health -> sign in -> provider key (a real test call) -> agent -> first run
+```
+
+`pal onboard` designs an agent from one sentence, creates it and streams its first run. From there, call the same agent from your code with an SDK (TypeScript, Python or Go). Paths: [Quickstart in 60 seconds](/docs/start/sixty-seconds/), then [Your first agent](/docs/start/quickstart/). To run code in a sandbox, see the [headless agent quickstart](/docs/runtime/quickstart/).
+
+## Run it in production
+
+```sh
+helm dependency build ./infra/helm/pal
+helm install pal ./infra/helm/pal --namespace pal --create-namespace \
+  --values infra/helm/pal/values-prod.yaml \
+  --set secrets.grpcServiceToken="$PAL_GRPC_SERVICE_TOKEN"   # plus the JWT, credential and receipt secrets
+```
+
+The chart defaults the environment to `production`, which turns on the production guards: a service that is missing its trust-boundary configuration (service token, scheduler address, runtime manager) refuses to start instead of falling back to a stub. You can run the control plane yourself or use a managed one, and keep the data plane, the microVMs and the run data in your own VPC with no inbound ports. Read [How PAL Runtime works](/docs/architecture/overview/) and the [Security model](/docs/security/) first, then [Production deployment](/docs/operate/deployment/).
