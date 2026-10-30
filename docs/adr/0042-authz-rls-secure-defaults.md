@@ -73,7 +73,7 @@ true   when PAL_RLS_ENFORCE is unset AND prod AND PAL_APP_DB_PASSWORD is set
 
 ### 4. GRANT audit: fix missing `lantern_app` grant on `brief_items`
 
-Migration `0020_brief_items` created the table without granting `SELECT/INSERT/UPDATE/DELETE` to `lantern_app`. Migration `0030_grant_brief_items` adds the missing grants. All future migrations must include grants to `lantern_app` for tenant-scoped tables.
+Migration `0020_brief_items` created the table without granting `SELECT/INSERT/UPDATE/DELETE` to `lantern_app`. Migration `0031_grant_brief_items` adds the missing grants. All future migrations must include grants to `lantern_app` for tenant-scoped tables.
 
 ### 5. Permanent gate tests
 
@@ -88,7 +88,7 @@ Both scan `main.go` and `internal/handlers/*.go` and require stale exemptions to
 
 ### Upgrading an existing deployment
 
-1. **Run migrations** — `0030_grant_brief_items` adds the missing `lantern_app` grant. Safe to run against a live database.
+1. **Run migrations** — `0031_grant_brief_items` adds the missing `lantern_app` grant. Safe to run against a live database.
 
 2. **AuthZ enforcement** — now defaults ON in production. If you are running with unscoped API keys, either:
    - Set `PAL_AUTHZ_ENFORCE=0` temporarily and set appropriate scopes on existing keys, then remove the override.

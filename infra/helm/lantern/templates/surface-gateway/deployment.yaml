@@ -32,7 +32,7 @@ spec:
                   name: {{ include "lantern.fullname" . }}-config
                   key: LOG_LEVEL
             - name: PAL_ENV
-              value: {{ .Values.surfaceGateway.env.LANTERN_ENV | default "production" | quote }}
+              value: {{ coalesce .Values.surfaceGateway.env.PAL_ENV .Values.surfaceGateway.env.LANTERN_ENV "production" | quote }}
             # The control-plane REST port (:8080); the token must match its
             # LANTERN_GRPC_SERVICE_TOKEN.
             # gRPC, not REST: control_plane.rs is a tonic client (see its header).
