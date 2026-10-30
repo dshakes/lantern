@@ -69,6 +69,14 @@ resource "helm_release" "pal_data_plane" {
     value = local.control_plane_endpoint
   }
 
+  dynamic "set" {
+    for_each = length(var.pal_control_plane_endpoints) > 0 ? [1] : []
+    content {
+      name  = "controlPlane.endpoints"
+      value = "{${join(",", var.pal_control_plane_endpoints)}}"
+    }
+  }
+
   set {
     name  = "controlPlane.tenantId"
     value = var.tenant_id

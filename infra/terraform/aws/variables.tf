@@ -118,3 +118,24 @@ variable "tags" {
     "component"  = "data-plane"
   }
 }
+
+# ---------------------------------------------------------------------------
+# Multi-region (ADR 0046) — both default to off (single-region, unchanged)
+# ---------------------------------------------------------------------------
+
+variable "pal_control_plane_endpoints" {
+  description = "Ordered control-plane endpoints, one per region, primary first. The data-plane agent connects to the first whose gRPC health check reports SERVING and fails back when a higher-priority one recovers. Empty = pal_control_plane_endpoint only."
+  type        = list(string)
+  default     = []
+}
+
+variable "bundles_replica_region" {
+  description = "AWS region to cross-region-replicate the bundles/snapshots bucket to (e.g. us-west-2). Empty = no replication."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.bundles_replica_region == "" || can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", var.bundles_replica_region))
+    error_message = "bundles_replica_region must be an AWS region name such as us-west-2, or empty."
+  }
+}

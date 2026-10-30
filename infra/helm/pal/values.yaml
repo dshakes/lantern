@@ -144,6 +144,16 @@ dashboard:
     type: ClusterIP
     port: 3000
 
+# -- Multi-region (ADR 0046) --
+# All empty = single-region (the default): nothing is injected and nothing
+# changes. A two-region install layers values-region-primary.yaml or
+# values-region-standby.yaml on top of values-prod.yaml in each region; see
+# docs/runbooks/region-failover.md for promotion.
+region:
+  name: ""            # PAL_REGION, e.g. us-east-1 — stamped on runs/leases/journal + OTel cloud.region
+  fenceEpoch: ""      # PAL_FENCE_EPOCH — must equal pal_region_fence.epoch once the fence is armed
+  readOnly: false     # PAL_READ_ONLY — standby: mutations 503, no migrations/background writers
+
 # -- In-cluster dependencies (dev / kind / evaluation) vs managed (production) --
 #
 # postgresql + minio are small first-party templates, enabled by default so
