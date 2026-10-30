@@ -5,7 +5,9 @@
 # cargo fmt per crate, ruff (import order + format) on touched Python files.
 source "${ZL_HERE:?}/lib.sh"
 
-base="$(git merge-base HEAD "${ZL_BASE:-origin/master}")"
+# Mid-merge, compare with the incoming master itself (so files master changed
+# but this branch did not are left alone); otherwise with the merge base.
+base="$(git rev-parse -q --verify MERGE_HEAD || git merge-base HEAD "${ZL_BASE:-origin/master}")"
 changed() { git diff --name-only --diff-filter=AMR "$base" -- "$@" | while read -r f; do [[ -f "$f" ]] && printf '%s\n' "$f"; done; }
 
 tools="${ZL_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/zero-lantern/bin}"
