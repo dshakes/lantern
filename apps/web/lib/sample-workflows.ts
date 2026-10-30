@@ -391,7 +391,7 @@ export const approvalWorkflow: WorkflowDefinition = {
       data: {
         label: "Webhook Trigger",
         triggerKind: "webhook",
-        webhookUrl: "https://api.pal.dev/hooks/deploy",
+        webhookUrl: "https://api.pal.example.com/hooks/deploy",
       } as TriggerData,
     },
     {

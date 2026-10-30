@@ -35,7 +35,7 @@ import pino from "pino";
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
 // Initialize bridge → control-plane auth. Lazily logs in on first use
-// (using PAL_BRIDGE_EMAIL / PASSWORD, defaults to admin@pal.dev
+// (using PAL_BRIDGE_EMAIL / PASSWORD, defaults to admin@pal.local
 // for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
 import { initAuth, authEnabled } from "@pal/bridge-core/auth";
 import { buildLabel } from "@pal/bridge-core/build-info";
@@ -984,7 +984,7 @@ function autoResumeSessions(): void {
 // a WARN naming the ones that are off so they're visible in a grep.
 function logConfigCapabilities(): void {
   const has = (v: string | undefined) => !!(v && v.trim());
-  // Auth works via the dev default creds (admin@pal.dev / pal) baked
+  // Auth works via the dev default creds (admin@pal.local / pal) baked
   // into bridge-core even when no explicit env is set, so replies are NOT off
   // by default — only flag it when those defaults are the active path.
   const explicitAuth =

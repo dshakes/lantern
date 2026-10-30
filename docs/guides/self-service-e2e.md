@@ -11,7 +11,7 @@
 pal doctor   # verifies stack health, auth, LLM provider, and a live test run
 ```
 
-Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credentials: `admin@pal.dev` / `pal`
+Dashboard: `http://localhost:3001` · API: `http://localhost:8080` · Credentials: `admin@pal.local` / `pal`
 
 ---
 
@@ -26,7 +26,7 @@ pal init triage
 # Or directly via REST
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 
 curl -s -X POST http://localhost:8080/v1/agents \
   -H "Authorization: Bearer $TOKEN" \

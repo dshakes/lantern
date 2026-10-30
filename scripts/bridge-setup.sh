@@ -397,7 +397,7 @@ print_next_steps() {
 
   printf "  ${BLD}4. Open the dashboard${RST}\n"
   printf "       http://localhost:3001\n"
-  printf "       Login: ${CYN}admin@pal.dev${RST} / ${CYN}pal${RST}\n\n"
+  printf "       Login: ${CYN}admin@pal.local${RST} / ${CYN}pal${RST}\n\n"
 
   printf "  ${BLD}5. Add an LLM provider key${RST}\n"
   printf "       Dashboard → Settings → LLM Providers\n"

@@ -15,13 +15,13 @@ make run-api            # control-plane on :8080
 make dashboard-dev      # Next.js dashboard on :3001
 ```
 
-Log in at <http://localhost:3001> as `admin@pal.dev` / `pal`. Then
+Log in at <http://localhost:3001> as `admin@pal.local` / `pal`. Then
 grab a JWT for CLI/curl use:
 
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 echo "$TOKEN" | head -c 40 ; echo …
 ```
 

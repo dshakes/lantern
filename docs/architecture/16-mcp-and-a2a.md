@@ -100,7 +100,7 @@ This means an engineer using Claude Code, Cursor, or any MCP-aware client can co
 ### Endpoint
 
 ```
-https://mcp.<tenant>.pal.run
+https://mcp.<tenant>.pal.example.com
 ```
 
 Authenticated with a PAL MCP key (separate from API keys; scoped to MCP usage so revocation doesn't break the user's automations).
@@ -112,7 +112,7 @@ Authenticated with a PAL MCP key (separate from API keys; scoped to MCP usage so
 {
   "pal": {
     "transport": "http+sse",
-    "url": "https://mcp.acme.pal.run",
+    "url": "https://mcp.acme.pal.example.com",
     "auth": { "type": "bearer", "token": "${PAL_MCP_KEY}" }
   }
 }
@@ -136,7 +136,7 @@ A2A is how PAL agents talk to **other vendors' agents** — and how other vendor
 Every PAL agent automatically gets an Agent Card published at:
 
 ```
-https://a2a.<tenant>.pal.run/.well-known/agent.json
+https://a2a.<tenant>.pal.example.com/.well-known/agent.json
 ```
 
 Example agent card:
@@ -147,9 +147,9 @@ Example agent card:
   "name": "research-agent",
   "displayName": "Research Agent",
   "description": "Plans, searches, and synthesizes research reports.",
-  "vendor": { "name": "Acme", "url": "https://acme.pal.run" },
+  "vendor": { "name": "Acme", "url": "https://acme.pal.example.com" },
   "auth": [{ "scheme": "bearer", "scope": "agents:run" }],
-  "endpoint": "https://a2a.acme.pal.run/v1/agents/research-agent",
+  "endpoint": "https://a2a.acme.pal.example.com/v1/agents/research-agent",
   "capabilities": {
     "streaming": true,
     "multi_turn": true,
@@ -216,7 +216,7 @@ The orchestrator runs in PAL; some workers are PAL agents, some are remote A2A p
 
 ## Discoverability and the registry
 
-PAL runs an **Agent Registry** at `https://registry.pal.run` (post-launch) where users can publish their agents (with consent) and discover others'. Each registry entry includes:
+PAL runs an **Agent Registry** at `https://registry.pal.example.com` (post-launch) where users can publish their agents (with consent) and discover others'. Each registry entry includes:
 
 - The A2A agent card
 - The MCP server metadata (if exposed)

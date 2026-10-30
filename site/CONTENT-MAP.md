@@ -148,7 +148,7 @@ table/JSX-to-markdown reshaping, or the rename itself, not loss. Spot checks lis
 ### FAQ / other
 | Item | Old source | New location | Status |
 |---|---|---|---|
-| Privacy policy (entity "PAL Assistant", contact support@pal.run, effective June 2, 2026) | privacy/page.tsx | none | **GAP** |
+| Privacy policy (entity "PAL Assistant", contact support@pal.local, effective June 2, 2026) | privacy/page.tsx | none | **GAP** |
 | Terms of service (same entity/contact/date) | terms/page.tsx | none | **GAP** |
 | SEO metadata (titles/descriptions per page) | each page `metadata` | frontmatter | kept |
 | Search index script | docs/scripts/build-search-index.mjs | Starlight/Pagefind | intentionally-dropped (replaced) |
@@ -161,7 +161,7 @@ table/JSX-to-markdown reshaping, or the rename itself, not loss. Spot checks lis
 
 | # | Gap | Old text / code | Suggested target |
 |---|---|---|---|
-| 1 | Privacy page | Footer link `/privacy/`; entity `"PAL Assistant"`, contact `support@pal.run`, effective `June 2, 2026`; full text in `git show fd11a65d^:apps/landing/app/privacy/page.tsx` (203 lines). Rename entity/contact with owner OK (legal text, do not auto-rewrite). | new `src/pages/privacy` (marketing page), not docs |
+| 1 | Privacy page | Footer link `/privacy/`; entity `"PAL Assistant"`, contact `support@pal.local`, effective `June 2, 2026`; full text in `git show fd11a65d^:apps/landing/app/privacy/page.tsx` (203 lines). Rename entity/contact with owner OK (legal text, do not auto-rewrite). | new `src/pages/privacy` (marketing page), not docs |
 | 2 | Terms page | same entity/contact/date; `git show fd11a65d^:apps/landing/app/terms/page.tsx` (170 lines) | new `src/pages/terms` |
 | 3 | Broker demo (3 steps) | "Looks for a network card -> none: The VM has no network device. Its only way out is a socket to the host." / "Calls an API with the key 'placeholder' -> 200: The host swapped in the real credential... the agent only ever saw 'placeholder'." / "Sends the same call over plain HTTP -> 403: Refused by the host. A credential never leaves unencrypted." Source: infra/firecracker/broker-e2e.sh PASS lines, recording docs/media/egress-broker-kvm.gif | `security/egress.mdx` (broker mode section) and `pages/runtime/index.astro` |
 | 4 | Broker poster/recording asset | `apps/landing/public/media/broker-run-poster.webp`, `docs/media/egress-broker-kvm.gif` | `public/media/` + `security/egress.mdx` |

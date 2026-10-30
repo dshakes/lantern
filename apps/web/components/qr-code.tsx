@@ -185,7 +185,7 @@ export function buildQRLink(params: {
   botUsername?: string;
   phoneNumber?: string;
 }): string {
-  const base = typeof window !== "undefined" ? window.location.origin : "https://app.pal.run";
+  const base = typeof window !== "undefined" ? window.location.origin : "";
 
   switch (params.type) {
     case "pair":

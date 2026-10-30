@@ -34,7 +34,7 @@ make run-api          # starts control-plane on :8080
 make dashboard-dev    # starts dashboard on :3001 (in a separate terminal)
 ```
 
-Open <http://localhost:3001> and log in with `admin@pal.dev` / `pal`.
+Open <http://localhost:3001> and log in with `admin@pal.local` / `pal`.
 
 ## Step 2 — Configure your LLM provider
 

@@ -69,7 +69,7 @@ const (
 	probeTimeout    = 2 * time.Second
 
 	defaultBaseURL  = "http://localhost:8080"
-	defaultEmail    = "admin@pal.dev"
+	defaultEmail    = "admin@pal.local"
 	defaultPassword = "pal"
 )
 

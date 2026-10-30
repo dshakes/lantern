@@ -396,6 +396,7 @@ assert_security_chart_renders() {
   fi
   local out
   if ! out=$(helm template "$chart" \
+      --set controlPlane.endpoint=https://cp.example.com \
       --set policies.enabled=true \
       --set imageVerification.enabled=true \
       --set egress.cilium.enabled=true \
@@ -427,7 +428,7 @@ assert_security_chart_renders() {
 
   # Default values (everything OFF) must render NONE of these — safe default.
   local def
-  def=$(helm template "$chart" 2>/dev/null)
+  def=$(helm template "$chart" --set controlPlane.endpoint=https://cp.example.com 2>/dev/null)
   if grep -qE '^kind: (ClusterPolicy|CiliumClusterwideNetworkPolicy|SecretStore|ExternalSecret)$' <<<"$def"; then
     fail "security artifacts off by default" "a policy kind rendered with default values"
   else

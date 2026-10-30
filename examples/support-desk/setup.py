@@ -49,7 +49,7 @@ def main():
         "POST",
         "/auth/login",
         {
-            "email": os.environ.get("PAL_EMAIL", "admin@pal.dev"),
+            "email": os.environ.get("PAL_EMAIL", "admin@pal.local"),
             "password": os.environ.get("PAL_PASSWORD", "pal"),
         },
     )

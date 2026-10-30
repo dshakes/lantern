@@ -83,7 +83,7 @@ export class PalClient {
   private readonly apiKey: string;
 
   constructor(config: PalClientConfig = {}) {
-    this.baseUrl = config.baseUrl ?? config.baseURL ?? palEnv("API_URL") ?? "https://api.pal.run";
+    this.baseUrl = config.baseUrl ?? config.baseURL ?? palEnv("API_URL") ?? "http://localhost:8080";
     this.apiKey = config.apiKey ?? palEnv("API_KEY") ?? "";
   }
 

@@ -26,13 +26,13 @@ func AgentIdentityWellKnown(w http.ResponseWriter, _ *http.Request) {
 			"algorithm":      "Ed25519",
 			"publicKey":      base64.StdEncoding.EncodeToString(pub),
 			"keyFingerprint": agentidentity.AgentIdentityKeyFingerprint(),
-			"docs":           "https://docs.pal.dev/agent-identity",
+			"docs":           "https://dshakes.github.io/pal/agent-identity",
 		})
 		return
 	}
 	// HS256 fallback — never emit the secret.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"algorithm": "HS256",
-		"docs":      "https://docs.pal.dev/agent-identity",
+		"docs":      "https://dshakes.github.io/pal/agent-identity",
 	})
 }

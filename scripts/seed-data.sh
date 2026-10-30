@@ -71,10 +71,10 @@ success "Tenant: dev-team (${TENANT_ID})"
 info "Creating test user..."
 run_sql <<SQL
 INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject)
-VALUES ('${USER_ID}', '${TENANT_ID}', 'dev@pal.run', 'Dev User', 'local', 'dev-local-001')
+VALUES ('${USER_ID}', '${TENANT_ID}', 'dev@pal.local', 'Dev User', 'local', 'dev-local-001')
 ON CONFLICT (id) DO NOTHING;
 SQL
-success "User: dev@pal.run (${USER_ID})"
+success "User: dev@pal.local (${USER_ID})"
 
 info "Creating agents..."
 run_sql <<SQL
@@ -186,7 +186,7 @@ printf "${GREEN} Seed data loaded successfully          ${NC}\n"
 printf "${GREEN}========================================${NC}\n"
 echo ""
 info "Tenant:  dev-team (${TENANT_ID})"
-info "User:    dev@pal.run (${USER_ID})"
+info "User:    dev@pal.local (${USER_ID})"
 echo ""
 info "Agents:"
 info "  research-agent  -- 2 versions (0.1.0, 0.2.0), current: 0.2.0"

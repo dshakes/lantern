@@ -3,6 +3,7 @@
 // Types only — we intentionally don't import any mock data runtime here.
 // Every method below either returns real API data, returns empty/null, or
 // throws. No fabricated rows leak into the UI as fake runs.
+import { publicApiBase } from "./public-url";
 import { isNoSessionPath } from "./no-session-paths";
 import type { BillingOverview } from "./billing";
 import type {
@@ -325,7 +326,7 @@ export type ExplainRequest =
 // so the demo footprint is grep-able from one place.
 export const DEMO_USER: User = {
   id: "usr_demo",
-  email: "demo@pal.dev",
+  email: "demo@pal.local",
   name: "Demo User",
   tenantId: "t_acme",
   role: "owner",
@@ -588,7 +589,7 @@ class PalAPI {
       // demo tokens at /auth/me, so they never reach real tenant data.
       if (
         process.env.NEXT_PUBLIC_DEMO_MODE === "1" &&
-        (email === "demo@pal.dev" || password === "demo")
+        (email === "demo@pal.local" || password === "demo")
       ) {
         const demoToken = "demo_token_" + Date.now();
         this.setToken(demoToken);
@@ -1843,11 +1844,11 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         description: "Agent card unavailable",
         version: "0.1.0",
         capabilities: ["text-generation"],
-        endpoint: `https://api.pal.run/v1/agents/${agentName}/a2a/invoke`,
+        endpoint: `${publicApiBase()}/v1/agents/${agentName}/a2a/invoke`,
         auth: { type: "bearer", description: "PAL API key" },
         inputSchema: { type: "object", properties: { message: { type: "string" } } },
         outputSchema: { type: "object", properties: { result: { type: "string" } } },
-        provider: { name: "PAL", url: "https://pal.run" },
+        provider: { name: "PAL", url: "https://dshakes.github.io/pal" },
       };
     }
   }
@@ -1870,7 +1871,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       return await this.request("/.well-known/agent.json");
     } catch {
       notifySimulated("getAgentDirectory");
-      return { agents: [], provider: { name: "PAL", url: "https://pal.run" } };
+      return { agents: [], provider: { name: "PAL", url: "https://dshakes.github.io/pal" } };
     }
   }
 

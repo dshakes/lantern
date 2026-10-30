@@ -51,8 +51,9 @@ mock_provider "kubernetes" {}
 mock_provider "helm" {}
 
 variables {
-  tenant_id   = "00000000-0000-0000-0000-000000000001"
-  agent_token = "example-token"
+  pal_control_plane_endpoint = "https://cp.pal.example.com"
+  tenant_id                  = "00000000-0000-0000-0000-000000000001"
+  agent_token                = "example-token"
 }
 
 run "new_cluster" {
@@ -105,4 +106,12 @@ run "image_tag_from_pal_version" {
     condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "1.2.3")
     error_message = "pal_version must set the image tag"
   }
+}
+
+run "control_plane_endpoint_must_be_https" {
+  command = plan
+  variables {
+    pal_control_plane_endpoint = "http://cp.example.com"
+  }
+  expect_failures = [var.pal_control_plane_endpoint]
 }

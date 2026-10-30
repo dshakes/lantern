@@ -41,11 +41,11 @@ curl -s http://localhost:8080/healthz
 ```bash
 export TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jq -r .token)
+  -d '{"email":"admin@pal.local","password":"pal"}' | jq -r .token)
 echo "${TOKEN:0:40}..."   # sanity-check the token
 ```
 
-Dev credentials: `admin@pal.dev` / `pal`, tenant `dev`.
+Dev credentials: `admin@pal.local` / `pal`, tenant `dev`.
 
 ### Run example 01 — shared tier
 

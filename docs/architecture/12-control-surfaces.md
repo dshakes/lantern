@@ -254,7 +254,7 @@ await ctx.screen.share({
 
 ## Mobile apps
 
-`apps/mobile-ios` (Swift, SwiftUI, MQTT for live updates) and `apps/mobile-android` (Kotlin, Jetpack Compose) — both thin shells over the surface-gateway. PWA fallback at `app.pal.run` for first-time users on platforms without native installs.
+`apps/mobile-ios` (Swift, SwiftUI, MQTT for live updates) and `apps/mobile-android` (Kotlin, Jetpack Compose) — both thin shells over the surface-gateway. PWA fallback at `app.pal.example.com` for first-time users on platforms without native installs.
 
 Features at launch:
 

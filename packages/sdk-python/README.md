@@ -43,7 +43,7 @@ from pal import PalClient
 async def main():
     async with PalClient(
         api_key=os.environ["PAL_API_KEY"],
-        # base_url defaults to https://api.pal.run
+        # base_url defaults to https://api.pal.example.com
         # or set PAL_API_URL for a self-hosted instance
     ) as client:
 
@@ -67,7 +67,7 @@ asyncio.run(main())
 
 ```python
 PalClient(
-    base_url: str | None = None,    # default: PAL_API_URL or https://api.pal.run
+    base_url: str | None = None,    # default: PAL_API_URL or https://api.pal.example.com
     api_key: str | None = None,     # default: PAL_API_KEY
     *,
     timeout: float = 30.0,          # per-request timeout in seconds
@@ -85,7 +85,7 @@ not using a context manager.
 
 | Var | Purpose |
 |---|---|
-| `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.pal.run`. For local dev: `http://localhost:8080` |
+| `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.pal.example.com`. For local dev: `http://localhost:8080` |
 | `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
 | `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy`. Default `auto` |
 

@@ -48,7 +48,7 @@ async function login() {
   const r = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@pal.dev", password: "pal" }),
+    body: JSON.stringify({ email: "admin@pal.local", password: "pal" }),
   });
   if (!r.ok) throw new Error(`login failed: ${r.status}`);
   const d = await r.json();

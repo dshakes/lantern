@@ -18,7 +18,7 @@ import (
 )
 
 // DefaultBaseURL is used when no explicit base URL is configured.
-const DefaultBaseURL = "https://api.pal.run"
+const DefaultBaseURL = "http://localhost:8080"
 
 // Client talks to a PAL Runtime control plane over HTTPS.
 type Client struct {

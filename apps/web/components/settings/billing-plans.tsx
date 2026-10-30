@@ -17,7 +17,7 @@ import { Button } from "@/components/button";
 import { Skeleton } from "@/components/skeleton";
 import { useToast } from "@/components/settings/toast";
 
-const SALES_EMAIL = "sales@pal.dev";
+const SALES_EMAIL = "sales@pal.local";
 
 function errorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);

@@ -92,7 +92,7 @@ pal doctor                                   # health, auth, model provider, a l
 pal onboard                                  # describe an agent in one line, get a running agent
 ```
 
-Console: http://localhost:3001, sign in as `admin@pal.dev` / `pal` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/).
+Console: http://localhost:3001, sign in as `admin@pal.local` / `pal` (local dev only). Sandboxes, the egress broker and real Firecracker on a Mac: [Runtime quickstart](https://dshakes.github.io/pal/docs/runtime/quickstart/).
 
 ## Use it from code
 

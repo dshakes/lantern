@@ -15,7 +15,7 @@ go install github.com/dshakes/pal/packages/cli/cmd/pal@latest
 ## Common commands
 
 ```bash
-pal login                        # authenticate against api.pal.run (or --api-url)
+pal login                        # authenticate against api.pal.example.com (or --api-url)
 pal init my-agent                # scaffold a new agent project
 pal dev                          # boot Postgres + Redis + MinIO + control-plane locally
 
@@ -66,7 +66,7 @@ pal test --agent=triage --suite=golden --set-baseline
 
 ```bash
 pal dev                # docker-compose up: postgres + redis + minio + control-plane
-# visit http://localhost:3000 — admin@pal.dev / pal
+# visit http://localhost:3000 — admin@pal.local / pal
 ```
 
 `pal dev` is a convenience wrapper over `make dev`. Stop with `Ctrl+C`; volumes persist across restarts.

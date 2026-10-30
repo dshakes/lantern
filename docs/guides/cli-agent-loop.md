@@ -66,7 +66,7 @@ Output is grouped into three sections:
 ```
 Core
   ✓  HTTP health (:8080/healthz)  ok  llmMode=api
-  ✓  authentication               stored credentials valid (admin@pal.dev)
+  ✓  authentication               stored credentials valid (admin@pal.local)
   ✓  LLM provider configured      openai
   ✓  end-to-end run               run abc123 succeeded
 

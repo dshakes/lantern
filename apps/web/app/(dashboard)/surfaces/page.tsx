@@ -1,5 +1,6 @@
 "use client";
 
+import { publicApiBase, widgetScriptUrl } from "@/lib/public-url";
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -409,9 +410,10 @@ export default function SurfacesPage() {
     toast.info(`${configModal.name} disconnected`);
   };
 
-  const embedCode = `<script src="https://cdn.pal.run/webchat.js"
-  data-tenant="t_acme"
-  data-agent="auto"
+  const embedCode = `<script src="${widgetScriptUrl()}"
+  data-api-key="pk_live_..."
+  data-agent="your-agent"
+  data-api-base="${publicApiBase()}"
   data-theme="dark">
 </script>`;
 

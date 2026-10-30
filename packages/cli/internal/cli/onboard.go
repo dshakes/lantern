@@ -600,7 +600,7 @@ func onboardAuth(restURL string) (string, string, error) {
 	}
 
 	// Fall back to seeded dev credentials.
-	loginResp, err := client.Login("admin@pal.dev", "pal")
+	loginResp, err := client.Login("admin@pal.local", "pal")
 	if err != nil {
 		return "", "", fmt.Errorf("stored credentials absent/stale and dev login failed: %w", err)
 	}

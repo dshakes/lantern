@@ -7,7 +7,7 @@
 
 PAL deploys as two logically and physically separable planes:
 
-1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by PAL SaaS at `pal.run` or self-hosted by the customer.
+1. **Control Plane** — the "brain." Dashboard, API gateway, model router, control-plane service, surface gateway, billing, and scheduler. Manages tenant configuration, agent definitions, routing decisions, and billing. Hosted by PAL SaaS at `pal.example.com` or self-hosted by the customer.
 
 2. **Data Plane** — the "muscle." Workflow engine, runtime manager, Firecracker/Kata/Wasm sandboxes, and agent execution. All user code runs here. All user data stays here. Deployed into the customer's own cloud infrastructure (EKS, GKE, AKS, or bare metal).
 
@@ -49,7 +49,7 @@ Customers choose their own instance types, reserved instances, savings plans, an
 ```
 +---------------------------------------------------------+
 |                  PAL CONTROL PLANE                   |
-|               (pal.run or self-hosted)               |
+|               (pal.example.com or self-hosted)               |
 |                                                          |
 |  +----------+  +----------+  +-------------------+      |
 |  | Dashboard |  | Gateway  |  |   Control Plane   |      |
@@ -123,12 +123,12 @@ Control plane is hosted by PAL SaaS. Data plane is deployed into the customer's 
 - Upgrades: PAL upgrades the control plane transparently; the customer upgrades the data plane via `pal infra upgrade` or Helm
 
 **Installation flow:**
-1. Customer signs up at `pal.run` and creates a tenant
+1. Customer signs up at `pal.example.com` and creates a tenant
 2. Customer runs `pal infra install --cloud aws --region us-east-1`
 3. CLI generates Terraform configuration for the customer's cloud
 4. Customer reviews and applies the Terraform (or PAL applies it via a guided flow)
 5. Terraform provisions EKS cluster (or uses existing), installs the `pal-data-plane` Helm chart
-6. Data plane agent connects to `api.pal.run`, registers, begins receiving run assignments
+6. Data plane agent connects to `api.pal.example.com`, registers, begins receiving run assignments
 
 ### Mode 3: Self-hosted
 
@@ -151,7 +151,7 @@ The data plane agent maintains a persistent, bidirectional gRPC stream to the co
 
 ### Why outbound-only
 
-Enterprise network security policies strongly prefer outbound connections over inbound. Opening an inbound port in a production VPC requires firewall changes, security review, and ongoing audit. An outbound HTTPS connection to a known endpoint (`api.pal.run:443`) is typically allowed by default and requires no firewall changes.
+Enterprise network security policies strongly prefer outbound connections over inbound. Opening an inbound port in a production VPC requires firewall changes, security review, and ongoing audit. An outbound HTTPS connection to a known endpoint (`api.pal.example.com:443`) is typically allowed by default and requires no firewall changes.
 
 ### Connection lifecycle
 
@@ -269,7 +269,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### AWS (EKS)
 
 - **Instance types for Firecracker:** Requires bare-metal instances (`m5.metal`, `m6i.metal`, `m7i.metal`) or instances with nested virtualization support. For development/testing, `m5.xlarge` with Kata containers as a fallback.
-- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.run:443` must be allowed. No inbound rules needed.
+- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.example.com:443` must be allowed. No inbound rules needed.
 - **Storage:** S3 bucket for agent bundles and snapshots. EBS for Postgres persistence.
 - **IAM:** Terraform creates an IAM role for the data plane service account (IRSA) with least-privilege access to S3 and KMS.
 - **Provisioning:** Terraform module at `infra/terraform/aws/` creates EKS cluster, node group, VPC (optional), IAM roles, S3 bucket, and deploys the Helm chart.
@@ -277,7 +277,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### GCP (GKE)
 
 - **Instance types for Firecracker:** `n2-standard-*` with nested virtualization enabled (GCE supports this natively). Or `c2d-metal-*` for bare metal.
-- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.run:443`. Cloud NAT for outbound if nodes are private.
+- **Networking:** Data plane runs in customer's VPC. Outbound HTTPS to `api.pal.example.com:443`. Cloud NAT for outbound if nodes are private.
 - **Storage:** GCS bucket for bundles and snapshots. Persistent Disk for Postgres.
 - **IAM:** Workload Identity for GKE service account to GCP service account binding.
 - **Provisioning:** Terraform module at `infra/terraform/gcp/`.
@@ -285,7 +285,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### Azure (AKS)
 
 - **Instance types for Firecracker:** `Standard_D*_v5` with nested virtualization. Or dedicated hosts for bare metal.
-- **Networking:** Data plane runs in customer's VNet. Outbound HTTPS to `api.pal.run:443`. Azure NAT Gateway for outbound.
+- **Networking:** Data plane runs in customer's VNet. Outbound HTTPS to `api.pal.example.com:443`. Azure NAT Gateway for outbound.
 - **Storage:** Azure Blob Storage for bundles and snapshots. Azure Managed Disk for Postgres.
 - **IAM:** Managed identity with federated credentials for pod identity.
 - **Provisioning:** Terraform module at `infra/terraform/azure/`.
@@ -293,7 +293,7 @@ The data plane requires its own Postgres (with pgvector) and Redis instances. Th
 ### Bare metal / on-premises
 
 - **Requirements:** Kubernetes 1.28+, containerd, KVM support (`/dev/kvm`), persistent storage (local-path or NFS).
-- **Networking:** Outbound HTTPS to `api.pal.run:443` (or self-hosted control plane endpoint).
+- **Networking:** Outbound HTTPS to `api.pal.example.com:443` (or self-hosted control plane endpoint).
 - **Installation:** Manual Helm install of `pal-data-plane` chart. No Terraform module — the customer manages their own cluster.
 
 ---
@@ -341,7 +341,7 @@ Deploys only control plane components: gateway, control-plane service, model rou
 
 ### `infra/helm/pal-data-plane/`
 
-Deploys only data plane components: data plane agent, workflow engine, runtime manager. Configured with a `controlPlane.endpoint` that points to the control plane (either `api.pal.run` or a self-hosted URL). Optionally provisions Postgres and Redis, or accepts external connection strings.
+Deploys only data plane components: data plane agent, workflow engine, runtime manager. Configured with a `controlPlane.endpoint` that points to the control plane (either `api.pal.example.com` or a self-hosted URL). Optionally provisions Postgres and Redis, or accepts external connection strings.
 
 ---
 

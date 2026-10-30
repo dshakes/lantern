@@ -23,3 +23,20 @@
   s/^moved \{\n\s*from\s*=\s*(\S+)\n\s*to\s*=\s*\1\n\}\n\n?//mg;
   s/^variable "\w+" \{\n\s*description\s*=\s*"Deprecated alias of [^"]*"\n(?:[^\n]*\n)*?\}\n\n?//mg;
   s/coalesce\((var\.\w+), \1, /coalesce($1, /g;
+
+# Public domains: the old brand's domains were rewritten to pal.run / pal.dev,
+# which are owned by third parties. Never point anything at them:
+#   error-type URIs and the product/docs site -> the project docs site;
+#   any other host (api., app., cdn., <tenant>., ...) -> RFC 2606 pal.example.com;
+#   e-mail addresses -> non-routable pal.local; security contact -> GitHub PVR.
+# K8s label/annotation keys (pal.dev/<key>) and node labels (pal.run/component)
+# are names, not hosts, and are left alone.
+s{`security\.pal\.run/advisories`}{[GitHub private vulnerability reporting](https://github.com/dshakes/pal/security/advisories/new)}g;
+s{`security\@pal\.run`}{GitHub private vulnerability reporting}g;
+s{https?://pal\.(?:run|dev)/errors/}{https://dshakes.github.io/pal/errors/}g;
+s{https?://(?:www\.|docs\.)?pal\.(?:run|dev)\b(?![._-])}{https://dshakes.github.io/pal}g;
+s{((?:https?|wss?)://)?((?:[a-z0-9-]+\.|<[\w-]+>\.)+)pal\.(?:run|dev)\b(?![._-])}{($1//"").$2."pal.example.com"}ge;
+s{\@pal\.(?:run|dev)\b(?![._-])}{\@pal.local}g;
+s{\bpal\.dev/(acme/[\w./-]+\@sha256)}{registry.pal.example.com/$1}g;
+s{(?<![\w./@-])pal\.run/(?!component)}{pal.example.com/}g;
+s{(?<![\w./@-])pal\.run\b(?![._/-])}{pal.example.com}g;

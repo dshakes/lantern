@@ -240,8 +240,8 @@ We do NOT rely on prompt-level "Ignore previous instructions" defenses. Those do
 - `Trivy` scans every container image we ship.
 - `Semgrep` SAST runs on every PR with the OWASP top 10 ruleset + PAL-specific rules.
 - Dependabot for routine updates.
-- Security advisories at `security.pal.run/advisories`.
-- Coordinated disclosure: `security@pal.run`, GPG-signed responses, 90-day disclosure window.
+- Security advisories at [GitHub private vulnerability reporting](https://github.com/dshakes/pal/security/advisories/new).
+- Coordinated disclosure: GitHub private vulnerability reporting, GPG-signed responses, 90-day disclosure window.
 
 ---
 

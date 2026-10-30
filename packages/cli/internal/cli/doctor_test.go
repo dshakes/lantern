@@ -38,7 +38,7 @@ func registerLoginOK(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/login", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"token":"` + devBearerToken + `","user":{"id":"u1","email":"admin@pal.dev","name":"Admin","tenantId":"t1","role":"owner"}}`))
+		_, _ = w.Write([]byte(`{"token":"` + devBearerToken + `","user":{"id":"u1","email":"admin@pal.local","name":"Admin","tenantId":"t1","role":"owner"}}`))
 	})
 }
 
@@ -51,7 +51,7 @@ func registerGetMe(mux *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"u1","email":"admin@pal.dev","name":"Admin","tenantId":"t1","role":"owner"}`))
+		_, _ = w.Write([]byte(`{"id":"u1","email":"admin@pal.local","name":"Admin","tenantId":"t1","role":"owner"}`))
 	})
 }
 

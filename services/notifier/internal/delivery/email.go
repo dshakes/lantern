@@ -33,7 +33,7 @@ func NewEmailDeliverer(logger *zap.Logger) *EmailDeliverer {
 		smtpPort:  envOrDefault("SMTP_PORT", "587"),
 		smtpUser:  os.Getenv("SMTP_USER"),
 		smtpPass:  os.Getenv("SMTP_PASS"),
-		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@pal.dev"),
+		fromAddr:  envOrDefault("EMAIL_FROM", "noreply@pal.local"),
 		resendKey: os.Getenv("RESEND_API_KEY"),
 		client:    &http.Client{Timeout: 30 * time.Second},
 		logger:    logger.Named("email"),

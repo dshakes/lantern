@@ -59,7 +59,7 @@ echo "    control-plane up (pid $CP_PID)"
 
 echo "==> [4/9] login (dev admin)"
 TOKEN=$(curl -fsS -X POST "http://localhost:8080/auth/login" -H "Content-Type: application/json" \
-  -d '{"email":"admin@pal.dev","password":"pal"}' | jget token) || fail "login request"
+  -d '{"email":"admin@pal.local","password":"pal"}' | jget token) || fail "login request"
 [ -n "$TOKEN" ] || fail "empty login token"
 
 echo "==> [5/9] register a data plane (POST /v1/data-planes)"
