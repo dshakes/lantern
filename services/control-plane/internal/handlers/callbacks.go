@@ -82,8 +82,16 @@ func checkSSRF(rawURL string) error {
 	if isProd() && scheme == "http" {
 		return fmt.Errorf("callback URL must use https in production")
 	}
-	if u.Hostname() == "" {
+	host := u.Hostname()
+	if host == "" {
 		return fmt.Errorf("callback URL has no host")
+	}
+	// Fast-path: if the host is already a literal IP address, block it now
+	// without DNS resolution so creation-time validation is synchronous.
+	if parsed := net.ParseIP(host); parsed != nil {
+		if isBlockedIP(parsed) {
+			return fmt.Errorf("callbacks: ssrf check: callback URL blocked: target is a private/loopback/metadata address (resolved %s → %s)", host, host)
+		}
 	}
 	return nil
 }
