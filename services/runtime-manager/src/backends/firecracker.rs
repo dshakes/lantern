@@ -5535,7 +5535,6 @@ mod tests {
         );
         assert!(args.contains("pal.env.PAL_WORKLOAD_UID=4242"), "{args}");
         assert!(!args.contains("PAL_WORKLOAD_UID=0"), "{args}");
-        assert!(!args.contains("PAL_WORKLOAD_UID"), "{args}");
     }
 
     /// build_cert_image stages spawn.json at the image root, mode 0600, before

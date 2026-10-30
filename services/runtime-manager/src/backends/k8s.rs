@@ -145,15 +145,15 @@ impl K8sBackend {
         // Constrain the shape before interpolating into a namespace name. The
         // value's origin is already trusted (authenticated control-plane), but a
         // non-DNS-1123 tenant_id would otherwise produce an opaque late failure
-        // at jobs.create. Reject anything outside [a-z0-9-] / >53 chars early
+        // at jobs.create. Reject anything outside [a-z0-9-] / >57 chars early
         // and clearly.
         //
-        // FIX 7(a): The `pal-t-` prefix is 10 chars; K8s name limit is 63.
-        //   Max allowed tenant_id length = 63 - 10 = 53.
+        // FIX 7(a): The `pal-t-` prefix is 6 chars; K8s name limit is 63.
+        //   Max allowed tenant_id length = 63 - 6 = 57.
         // FIX 7(b): DNS-1123 requires the first and last character to be
         //   alphanumeric (no leading/trailing dashes).
-        const PREFIX_LEN: usize = "pal-t-".len(); // 10
-        const MAX_TENANT_ID_LEN: usize = 63 - PREFIX_LEN; // 53
+        const PREFIX_LEN: usize = "pal-t-".len(); // 6
+        const MAX_TENANT_ID_LEN: usize = 63 - PREFIX_LEN; // 57
 
         let id = req.tenant_id.as_bytes();
         let invalid = req.tenant_id.len() > MAX_TENANT_ID_LEN
@@ -2719,14 +2719,14 @@ mod tests {
     // FIX 7: namespace_for length bound and DNS-1123 boundary checks.
     // -----------------------------------------------------------------------
 
-    // A 54-char tenant_id (prefix 10 + 54 = 64, over K8s 63 limit) is refused.
+    // A 58-char tenant_id (prefix 6 + 58 = 64, over K8s 63 limit) is refused.
     #[test]
-    fn namespace_for_rejects_tenant_id_over_53_chars() {
+    fn namespace_for_rejects_tenant_id_over_57_chars() {
         let mut req = make_req(IsolationClass::Trusted);
-        // 54 lowercase letters — 10 + 54 = 64 chars total, exceeds K8s 63 limit.
-        req.tenant_id = "a".repeat(54);
+        // 58 lowercase letters — 6 + 58 = 64 chars total, exceeds K8s 63 limit.
+        req.tenant_id = "a".repeat(58);
         let err = K8sBackend::namespace_for(&req)
-            .expect_err("tenant_id >53 chars must be refused (would produce >63-char namespace)");
+            .expect_err("tenant_id >57 chars must be refused (would produce >63-char namespace)");
         let msg = err.to_string();
         assert!(
             msg.contains("DNS-1123"),
@@ -2734,13 +2734,13 @@ mod tests {
         );
     }
 
-    // A 53-char tenant_id is exactly at the boundary and should be accepted.
+    // A 57-char tenant_id is exactly at the boundary and should be accepted.
     #[test]
-    fn namespace_for_accepts_tenant_id_at_53_chars() {
+    fn namespace_for_accepts_tenant_id_at_57_chars() {
         let mut req = make_req(IsolationClass::Trusted);
-        req.tenant_id = "a".repeat(53);
+        req.tenant_id = "a".repeat(57);
         let ns = K8sBackend::namespace_for(&req)
-            .expect("53-char tenant_id must be accepted (10+53=63 chars namespace)");
+            .expect("57-char tenant_id must be accepted (6+57=63 chars namespace)");
         assert_eq!(ns.len(), 63);
     }
 
