@@ -29,7 +29,7 @@ After the denied run, query the audit log:
 
 ```bash
 curl -s "http://localhost:8080/v1/runtime/audit?vm_id=$VM_ID" \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN" | jq
+  -H "Authorization: Bearer $PAL_API_TOKEN" | jq
 ```
 
 You'll see entries like:
@@ -47,7 +47,7 @@ You'll see entries like:
 ## Why `untrusted` isolation
 
 The workload imports third-party packages (`requests`, `beautifulsoup4`).
-Any code from PyPI is, by Lantern's threat model, untrusted —
+Any code from PyPI is, by PAL Runtime's threat model, untrusted —
 package-supply-chain attacks are well-documented. The Firecracker
 microVM + seccomp + egress allowlist contain the blast radius to:
 

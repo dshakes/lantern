@@ -46,9 +46,9 @@ from pal import PalClient
 
 async def main():
     async with PalClient(
-        api_key=os.environ["LANTERN_API_KEY"],
+        api_key=os.environ["PAL_API_KEY"],
         # base_url defaults to https://api.lantern.run
-        # or set LANTERN_API_URL for a self-hosted instance
+        # or set PAL_API_URL for a self-hosted instance
     ) as client:
 
         # 1. Create an agent
@@ -71,11 +71,11 @@ asyncio.run(main())
 
 ```python
 PalClient(
-    base_url: str | None = None,    # default: LANTERN_API_URL or https://api.lantern.run
-    api_key: str | None = None,     # default: LANTERN_API_KEY
+    base_url: str | None = None,    # default: PAL_API_URL or https://api.lantern.run
+    api_key: str | None = None,     # default: PAL_API_KEY
     *,
     timeout: float = 30.0,          # per-request timeout in seconds
-    route_strategy: str | None = None,  # default: LANTERN_ROUTE_STRATEGY or "auto"
+    route_strategy: str | None = None,  # default: PAL_ROUTE_STRATEGY or "auto"
 )
 ```
 
@@ -89,8 +89,8 @@ not using a context manager.
 
 | Var | Purpose |
 |---|---|
-| `LANTERN_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
-| `LANTERN_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
+| `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.lantern.run`. For local dev: `http://localhost:8080` |
+| `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
 | `LANTERN_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Lantern-Route-Strategy`). Default `auto` |
 
 ---
@@ -318,7 +318,7 @@ mount a store at `/memories/` while everything else executes in the sandbox. See
 [`examples/deepagents_sandbox_agent.py`](examples/deepagents_sandbox_agent.py) for a
 runnable version that also wires `RubricMiddleware` for in-loop self-evaluation.
 
-Reads `LANTERN_API_URL` / `LANTERN_API_KEY` like the main client; pass `base_url` /
+Reads `PAL_API_URL` / `PAL_API_KEY` like the main client; pass `base_url` /
 `api_key` explicitly to override.
 
 `create()` defaults the entrypoint to `sleep infinity`. A sandbox is a long-lived
@@ -332,7 +332,7 @@ on the `docker` backend, covering `execute`, binary upload/download roundtrip, a
 the BaseSandbox-derived `write`/`read`/`ls`/`edit`/`grep` the agent actually calls.
 The Go-side regression test is
 `services/control-plane/internal/handlers/runtime_exec_e2e_test.go` (opt-in via
-`LANTERN_RUNTIME_E2E=1`). The **Firecracker** path specifically is not verifiable
+`PAL_RUNTIME_E2E=1`). The **Firecracker** path specifically is not verifiable
 on macOS (no `/dev/kvm`) — that is covered by the `microvm · integration` CI job on
 a KVM runner. Exec routing differs between them: the manager sends Firecracker VMs
 to the in-guest harness and everything else through the backend.

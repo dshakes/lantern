@@ -176,7 +176,7 @@ export function FleetGrid({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, id, node, region, tier…"
-            className="h-8 w-72 rounded-lg bg-surface-2 pl-8 pr-3 text-[12px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-lantern-500/40"
+            className="h-8 w-72 rounded-lg bg-surface-2 pl-8 pr-3 text-[12px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-pal-500/40"
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -206,7 +206,7 @@ export function FleetGrid({
 
       {/* Bulk action bar — soft accent tint, no hard border */}
       {selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg bg-lantern-500/[0.07] px-3.5 py-2.5">
+        <div className="flex items-center justify-between rounded-lg bg-pal-500/[0.07] px-3.5 py-2.5">
           <span className="text-[12px] text-zinc-300">
             <span className="font-medium tabular-nums text-zinc-100">{selected.size}</span> selected
           </span>
@@ -238,7 +238,7 @@ export function FleetGrid({
                     checked={allSelected}
                     onChange={toggleAll}
                     aria-label="Select all"
-                    className="h-3.5 w-3.5 accent-lantern-400"
+                    className="h-3.5 w-3.5 accent-pal-400"
                   />
                 </th>
                 <SortTh label="Workload" col="name" active={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -265,7 +265,7 @@ export function FleetGrid({
                     onClick={() => onOpen(v)}
                     className={clsx(
                       "cursor-pointer border-b border-zinc-800/30 last:border-0 transition-colors hover:bg-surface-2/60",
-                      selected.has(v.vmId) && "bg-lantern-500/[0.05]",
+                      selected.has(v.vmId) && "bg-pal-500/[0.05]",
                     )}
                   >
                     <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
@@ -275,7 +275,7 @@ export function FleetGrid({
                         onChange={() => toggleOne(v.vmId)}
                         disabled={!selectable}
                         aria-label={`Select ${v.vmId}`}
-                        className="h-3.5 w-3.5 accent-lantern-400 disabled:opacity-30"
+                        className="h-3.5 w-3.5 accent-pal-400 disabled:opacity-30"
                       />
                     </td>
                     <td className="px-4 py-4">
@@ -364,7 +364,7 @@ export function FleetGrid({
               onClick={() => onOpen(v)}
               className={clsx(
                 "group relative mc-glass cursor-pointer rounded-lg border border-white/[0.07] bg-white/[0.024] p-3.5 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12]",
-                selected.has(v.vmId) && "border-lantern-500/25 bg-lantern-500/[0.05]",
+                selected.has(v.vmId) && "border-pal-500/25 bg-pal-500/[0.05]",
               )}
             >
               <div className="flex items-start gap-3">
@@ -375,7 +375,7 @@ export function FleetGrid({
                   onClick={(e) => e.stopPropagation()}
                   disabled={!selectable}
                   aria-label={`Select ${v.vmId}`}
-                  className="mt-1 h-4 w-4 shrink-0 accent-lantern-400 disabled:opacity-30"
+                  className="mt-1 h-4 w-4 shrink-0 accent-pal-400 disabled:opacity-30"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">

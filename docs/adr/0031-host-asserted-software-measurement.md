@@ -14,7 +14,7 @@ booted* inside each Firecracker microVM. This enables:
 - Audit: receipts carry a measurement tied to the exact (kernel, rootfs, harness,
   boot args, spawn contract) tuple that was used.
 - Policy gating: a deployment can refuse VMs whose measurement does not match a
-  known-good reference set (`LANTERN_MEASUREMENT_GATE=enforce`).
+  known-good reference set (`PAL_MEASUREMENT_GATE=enforce`).
 - Debugging: a post-incident investigation can compare the receipt measurement to
   the expected value for that image/harness version.
 
@@ -95,13 +95,13 @@ The measurement must be reproducible across VMs launched from the same images
 and spec, or no reference set could ever match it. So per-incarnation values are
 excluded too: the contract's `vm_id`, `network` and per-VM `egress_ca_pem`, and
 the caller-set per-incarnation env keys (`CALLER_LANTERN_KEYS`:
-`LANTERN_AGENT_INSTANCE_ID`, `LANTERN_AGENT_INSTANCE_TOKEN` — a live bearer
-credential — `LANTERN_TRACE_PARENT`, `LANTERN_RESUME`); and from the cmdline the
+`PAL_AGENT_INSTANCE_ID`, `PAL_AGENT_INSTANCE_TOKEN` — a live bearer
+credential — `PAL_TRACE_PARENT`, `PAL_RESUME`); and from the cmdline the
 `ip=`, `lantern.vm_id=`, `lantern.run_id=`, `lantern.tls_cert=`/`lantern.tls_key=`
 (per-VM paths), `lantern.manager_ca=` (host-path dependent), `lantern.secret.*`
 tokens, and **every** `lantern.env.*` token. The `lantern.env.*` tokens are now
 only the manager-owned keys the harness needs before reading `spawn.json`
-(`LANTERN_ENV`, `LANTERN_MANAGER_ADDR`, `LANTERN_WORKLOAD_UID`): caller env is no
+(`PAL_ENV`, `PAL_MANAGER_ADDR`, `PAL_WORKLOAD_UID`): caller env is no
 longer emitted on the cmdline at all (the guest kernel echoes the cmdline to the
 console the manager logs, so a caller value there would be a log leak), and
 cmdline values have every whitespace character replaced. For any key both
@@ -109,7 +109,7 @@ channels carry, the contract key wins over the cmdline key; the authoritative en
 is measured in the contract.
 
 All other spawn-contract fields (workload command, env, egress rules *sans inject*,
-uid/gid, egress mode, `LANTERN_TENANT_ID`, `LANTERN_AGENT_VERSION_ID`) and the
+uid/gid, egress mode, `PAL_TENANT_ID`, `PAL_AGENT_VERSION_ID`) and the
 remaining cmdline are included. A changed workload command, env value, uid, or
 egress policy changes the measurement. Reference values are therefore per
 (images, spec, tenant, agent version).
@@ -121,7 +121,7 @@ with `gate=warn` and reading the receipt.
 
 ### Enforce gate
 
-Controlled by `LANTERN_MEASUREMENT_GATE`:
+Controlled by `PAL_MEASUREMENT_GATE`:
 
 | Value | Behaviour |
 |-------|-----------|
@@ -129,11 +129,11 @@ Controlled by `LANTERN_MEASUREMENT_GATE`:
 | `warn` | Measurement compared; **mismatch logs a WARN and proceeds** (default). |
 | `enforce` | Mismatch causes the manager to **refuse to start the VM** with an error. |
 
-Reference values are configured via `LANTERN_REFERENCE_MEASUREMENTS`
+Reference values are configured via `PAL_REFERENCE_MEASUREMENTS`
 (comma-separated lowercase hex strings). An empty list means no reference set is
 configured; `warn` mode produces no warning (no comparison possible), and
 `enforce` also passes (you cannot fail-closed against an unspecified allowed set
-without first providing one) — except in production (`LANTERN_ENV`
+without first providing one) — except in production (`PAL_ENV`
 prod/production/staging), where `enforce` with no references **refuses to
 start** the manager. The gate value is trimmed and case-insensitive; an
 unrecognised value (e.g. `enforced`) refuses startup rather than silently
@@ -224,10 +224,10 @@ lock) in `dispatchSpawn` after the manager's Spawn response arrives, and the con
   `enforce` with a reference set it is fail-CLOSED — an unmeasurable boot must
   not slip past the gate meant to stop it.
 - `enforce` mode is an ops decision. Deployers MUST populate
-  `LANTERN_REFERENCE_MEASUREMENTS` before enabling it; with an empty list the
+  `PAL_REFERENCE_MEASUREMENTS` before enabling it; with an empty list the
   gate passes everything (it cannot fail closed against an unspecified set), so
   `enforce` without references is NOT protection.
-- The X.509 OID `1.3.6.1.4.1.99999.3` is a PLACEHOLDER: Lantern holds no
+- The X.509 OID `1.3.6.1.4.1.99999.3` is a PLACEHOLDER: PAL Runtime holds no
   registered IANA Private Enterprise Number yet, and one is needed. It must be
   replaced with the assigned IANA PEN before cross-organisation certificate
   verification is meaningful.
@@ -252,8 +252,8 @@ manager logs; it reaches the harness via `spawn.json` only.
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `LANTERN_MEASUREMENT_GATE` | `warn` | `off` / `warn` / `enforce`; unknown → refuse to start |
-| `LANTERN_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected 64-hex measurements; malformed → refuse to start; empty + `enforce` in prod → refuse to start |
+| `PAL_MEASUREMENT_GATE` | `warn` | `off` / `warn` / `enforce`; unknown → refuse to start |
+| `PAL_REFERENCE_MEASUREMENTS` | _(empty)_ | Comma-separated expected 64-hex measurements; malformed → refuse to start; empty + `enforce` in prod → refuse to start |
 | `FC_HARNESS_PATH` | _(unset)_ | Path to separately-installed harness binary; 32 zero bytes when unset |
 
 ---

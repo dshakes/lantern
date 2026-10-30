@@ -46,10 +46,10 @@ searched, by Postgres full-text instead of vectors.
 ```bash
 # fixture tier: no provider key, deterministic replies
 go run ./services/control-plane/cmd/llm-replay -addr 127.0.0.1:9192 -rules examples/support-desk/rules.json &
-LANTERN_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 LANTERN_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192 \
-  OPENAI_API_KEY=fixture LANTERN_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9193 make run-api &
-cd e2e/examples && LANTERN_E2E_API_URL=http://localhost:8080 LANTERN_E2E_SLACK_FIXTURE_ADDR=127.0.0.1:9193 \
-  LANTERN_E2E_FIXTURE_LLM=1 go test -tags e2e -count=1 -v ./...
+PAL_LLM_BASEURL_OPENAI=http://127.0.0.1:9192 PAL_LLM_BASEURL_ANTHROPIC=http://127.0.0.1:9192 \
+  OPENAI_API_KEY=fixture PAL_CONNECTOR_BASEURL_SLACK=http://127.0.0.1:9193 make run-api &
+cd e2e/examples && PAL_E2E_API_URL=http://localhost:8080 PAL_E2E_SLACK_FIXTURE_ADDR=127.0.0.1:9193 \
+  PAL_E2E_FIXTURE_LLM=1 go test -tags e2e -count=1 -v ./...
 ```
 
 Against a real LLM, drop the fixture variables; the test then asserts the

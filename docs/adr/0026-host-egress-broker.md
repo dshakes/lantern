@@ -22,7 +22,7 @@ leaves via a host-side proxy over vsock; the proxy injects credentials on the wa
 
 ## Decision
 
-Add `LANTERN_EGRESS_MODE=broker` on the runtime-manager (default `guest` = today).
+Add `PAL_EGRESS_MODE=broker` on the runtime-manager (default `guest` = today).
 In broker mode, for Firecracker cold boots:
 
 - **No network device.** The manager omits `PUT /network-interfaces/eth0`, creates no
@@ -32,7 +32,7 @@ In broker mode, for Firecracker cold boots:
   the host.
 - **Host egress broker** (`runtime-manager/src/egress_broker.rs`). Per VM, it listens on
   the Firecracker host UDS for guest-initiated vsock port 3128 (`<vsock_uds>_3128`).
-  It enforces `egress_rules`: host pattern, `LANTERN_EGRESS_ALLOWED_PORTS` (default
+  It enforces `egress_rules`: host pattern, `PAL_EGRESS_ALLOWED_PORTS` (default
   443), private/metadata IP denial on literals and on resolved addresses (resolve once,
   dial the checked address), `http_methods`, and `rate_bps`. It dials upstream from the
   host. Every decision is audited (`egress`, `egress_inject`) through the existing
@@ -107,7 +107,7 @@ channel).
   remove-and-bind it, which cut the host-initiated channel. It uses guest port 1024.
 - **Tenant-scoped resolution.** `SecretResolver::resolve_scoped` carries the VM's
   registry tenant and vm_id; VendSecret and the broker both use it. Before this, the relay
-  sent the node env's `LANTERN_TENANT_ID` / `LANTERN_VM_ID`, which are empty on a
+  sent the node env's `PAL_TENANT_ID` / `PAL_VM_ID`, which are empty on a
   multi-tenant node, so the control-plane's VM↔tenant binding was never checked against
   the real VM. The control-plane relay resolves a ref only within the verified tenant;
   a cross-tenant ref returns "not found" (`TestResolveSecrets_TenantIsolation_*`,
@@ -126,7 +126,7 @@ channel).
 
 - **Plain-HTTP injection is off by default (H1).** A request matching an
   injecting rule over plain HTTP gets 403. It is allowed only with
-  `LANTERN_EGRESS_PLAIN_INJECT=1`, and only to port 80, so `http://host:443/`
+  `PAL_EGRESS_PLAIN_INJECT=1`, and only to port 80, so `http://host:443/`
   can never carry a credential in cleartext.
 - **The request must be addressed to the approved host (M1).** On both the
   terminated and the plain path, before any secret is resolved or anything is
@@ -179,9 +179,9 @@ channel).
 ## Consequences / limitations
 
 - **Plain-HTTP injection, when enabled, sends the secret in cleartext.** It requires
-  `LANTERN_EGRESS_PLAIN_INJECT=1`, port 80 opened in `LANTERN_EGRESS_ALLOWED_PORTS`,
+  `PAL_EGRESS_PLAIN_INJECT=1`, port 80 opened in `PAL_EGRESS_ALLOWED_PORTS`,
   and a request to port 80.
 - **h2 is not negotiated** on terminated connections. ALPN is pinned to http/1.1, which
   costs one reconnect per injected request.
-- **Egress mode is node-wide** (`LANTERN_EGRESS_MODE`), not per-spec. Restore is refused
+- **Egress mode is node-wide** (`PAL_EGRESS_MODE`), not per-spec. Restore is refused
   across nodes with different modes.

@@ -110,10 +110,10 @@ const cloudSetups: CloudSetup[] = [
       "terraform init",
       'terraform apply -var="cloud=aws" \\',
       '  -var="region=us-east-1" \\',
-      '  -var="cluster_name=lantern-dp"',
+      '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install lantern-data-plane lantern/data-plane \\",
+      "helm install pal-data-plane lantern/data-plane \\",
       "  --set controlPlane.endpoint=api.lantern.run \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
@@ -126,10 +126,10 @@ const cloudSetups: CloudSetup[] = [
       "terraform init",
       'terraform apply -var="cloud=gcp" \\',
       '  -var="region=us-central1" \\',
-      '  -var="cluster_name=lantern-dp"',
+      '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install lantern-data-plane lantern/data-plane \\",
+      "helm install pal-data-plane lantern/data-plane \\",
       "  --set controlPlane.endpoint=api.lantern.run \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
@@ -142,10 +142,10 @@ const cloudSetups: CloudSetup[] = [
       "terraform init",
       'terraform apply -var="cloud=azure" \\',
       '  -var="region=eastus2" \\',
-      '  -var="cluster_name=lantern-dp"',
+      '  -var="cluster_name=pal-dp"',
       "",
       "# Install the Helm chart",
-      "helm install lantern-data-plane lantern/data-plane \\",
+      "helm install pal-data-plane lantern/data-plane \\",
       "  --set controlPlane.endpoint=api.lantern.run \\",
       "  --set controlPlane.token=<your-registration-token>",
     ],
@@ -487,8 +487,8 @@ export default function DeploymentsPage() {
             className="flex w-full items-center justify-between rounded-xl bg-surface-1 px-5 py-4 text-left transition-colors hover:bg-surface-2/40"
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-lantern-500/10">
-                <Cloud className="h-5 w-5 text-lantern-400" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-pal-500/10">
+                <Cloud className="h-5 w-5 text-pal-400" />
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-zinc-100">Connect a data plane</h3>
@@ -507,7 +507,7 @@ export default function DeploymentsPage() {
                     onClick={() => setSelectedCloud(selectedCloud?.cloud === setup.cloud ? null : setup)}
                     className={clsx(
                       "rounded-xl p-4 text-left transition-all",
-                      selectedCloud?.cloud === setup.cloud ? "bg-lantern-500/10 ring-1 ring-inset ring-lantern-500/30" : "bg-surface-1 hover:bg-surface-2/40",
+                      selectedCloud?.cloud === setup.cloud ? "bg-pal-500/10 ring-1 ring-inset ring-pal-500/30" : "bg-surface-1 hover:bg-surface-2/40",
                     )}
                   >
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-2 text-xs font-bold text-zinc-400">
@@ -566,12 +566,12 @@ export default function DeploymentsPage() {
       >
         <div className="space-y-4">
           <ModalField label="Name *">
-            <input type="text" value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="lantern-dp-production"
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+            <input type="text" value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="pal-dp-production"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30" />
           </ModalField>
           <ModalField label="Cloud">
             <select value={addForm.cloud} onChange={(e) => setAddForm({ ...addForm, cloud: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30">
               <option value="aws">AWS</option>
               <option value="gcp">GCP</option>
               <option value="azure">Azure</option>
@@ -580,7 +580,7 @@ export default function DeploymentsPage() {
           </ModalField>
           <ModalField label="Region">
             <input type="text" value={addForm.region} onChange={(e) => setAddForm({ ...addForm, region: e.target.value })} placeholder="us-east-1"
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30" />
           </ModalField>
         </div>
       </Modal>
@@ -964,7 +964,7 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
                     <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
                     <span className={clsx("text-xs capitalize",
                       d.status === "live" && "text-emerald-400",
-                      d.status === "deploying" && "text-lantern-400",
+                      d.status === "deploying" && "text-pal-400",
                       d.status === "failed" && "text-red-400",
                     )}>{d.status}</span>
                   </div>
@@ -986,7 +986,7 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
                 <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
                 <span className={clsx("text-xs capitalize",
                   d.status === "live" && "text-emerald-400",
-                  d.status === "deploying" && "text-lantern-400",
+                  d.status === "deploying" && "text-pal-400",
                   d.status === "failed" && "text-red-400",
                 )}>{d.status}</span>
               </div>

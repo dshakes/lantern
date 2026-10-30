@@ -1,6 +1,6 @@
-# Lantern
+# PAL Runtime
 
-**Lantern is an open-source runtime for AI agents that you host in your own cloud.
+**PAL Runtime is an open-source runtime for AI agents that you host in your own cloud.
 The agent loop runs on your control plane. The code the agent writes runs in a
 microVM. Every step is journaled, every agent has a budget, and every completed run
 can be signed.**
@@ -39,7 +39,7 @@ runtime, and every guarantee the runtime adds, improves the other side.
 - Agents now write and run code as a matter of course. That code needs its own
   kernel, and the loop that holds the keys must not share it. Google's Agent Compute
   Engine announcement (October 22, 2026) puts a microVM per agent and credentials
-  outside it at the center of its pitch. Lantern runs that shape today, self-hosted.
+  outside it at the center of its pitch. PAL Runtime runs that shape today, self-hosted.
 - Addressing models by capability (`model: "auto"`) lets an agent pick up a better
   model without a code change.
 - Regulated buyers will not send agent traffic through a vendor cloud. They need the
@@ -52,7 +52,7 @@ runtime, and every guarantee the runtime adds, improves the other side.
 | Module | What it is | Status |
 |---|---|---|
 | **Agent runtime** | Go control plane and durable workflow engine, Rust model router, microVM runtime (scheduler, manager, in-VM harness). The control plane never touches user code. | Core in use. Firecracker lifecycle (boot, exec, snapshot, restore, fork) passes end to end on real KVM in a jailed Lima nested-virt guest; bare-metal numbers pending. |
-| **Egress broker** | VM with no network device; egress crosses vsock to a host broker that enforces the allowlist and injects credentials. | Opt-in (`LANTERN_EGRESS_MODE=broker`), Firecracker only. Default mode routes egress through an in-guest proxy; enforcement needs the image's iptables REDIRECT rule. |
+| **Egress broker** | VM with no network device; egress crosses vsock to a host broker that enforces the allowlist and injects credentials. | Opt-in (`PAL_EGRESS_MODE=broker`), Firecracker only. Default mode routes egress through an in-guest proxy; enforcement needs the image's iptables REDIRECT rule. |
 | **Trust and governance** | Budgets that return HTTP 402, eval gates that return HTTP 422 in CI, rehearsals of past failures, signed run receipts (Ed25519 when a signing seed is configured, HMAC-SHA256 otherwise), row-level security on every tenant table, AES-256-GCM credentials at rest. | In use. RLS and per-scope authZ enforcement are flag-gated per environment. |
 | **Personal agent** | WhatsApp and iMessage bridges that reply as the owner, learn their voice from their own sent messages, take Calendar / Notes / Mail actions on confirmation, and hold money promises and unverifiable claims for approval. | In daily use by the founder. |
 | **Channels** | WhatsApp, iMessage, Slack, Telegram, Discord, voice (Twilio, LiveKit), embeddable webchat. | In use. |
@@ -71,7 +71,7 @@ runtime, and every guarantee the runtime adds, improves the other side.
 
 Every team that ships an LLM feature ends up needing durable execution, cost
 controls and eval gates. Today the options are to build it, to use a framework that
-stops at the demo, or to hand a vendor the data. Lantern is the self-hosted,
+stops at the demo, or to hand a vendor the data. PAL Runtime is the self-hosted,
 Apache-2.0 option, with no paywalled tier.
 
 ## Moat
@@ -98,7 +98,7 @@ personal agent is the daily stress test.
 5. **Isolation.** Untrusted code runs in a Firecracker or Kata microVM, never a bare
    pod.
 6. **Receipt.** `POST /v1/runs/{id}/receipt` signs the hash of the run's journal: Ed25519 when
-   `LANTERN_RECEIPT_ED25519_SEED` is set (HMAC-SHA256 dev fallback otherwise). Anyone can
+   `PAL_RECEIPT_ED25519_SEED` is set (HMAC-SHA256 dev fallback otherwise). Anyone can
    check an Ed25519 receipt at `/proof` against the published key.
 
 ---

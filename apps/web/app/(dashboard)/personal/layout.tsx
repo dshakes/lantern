@@ -36,7 +36,7 @@ import type {
 import { isBridgeChannel } from "@/lib/bridge-types";
 
 const FALLBACK_TENANT = "default";
-const CHANNEL_STORAGE_KEY = "lantern_personal_channel";
+const CHANNEL_STORAGE_KEY = "pal_personal_channel";
 
 interface SubNavItem {
   href: string;

@@ -1,6 +1,6 @@
 # customer-support
 
-> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> **Heads up: this example targets the PAL Runtime SDK in-VM runtime, which is not
 > runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
 > `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
 > `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
@@ -65,7 +65,7 @@ pal run customer-support --input '{"ticketId": "ZD-4821", "customerMessage": "I 
 7. **Send** -- Posts the response to Zendesk and updates ticket status
 8. **Update memory** -- Stores the resolution in archival memory so future interactions have context
 
-## Lantern features demonstrated
+## PAL Runtime features demonstrated
 
 - **Durable approval gates**: `ctx.approval.request()` suspends the agent until a human approves -- survives process restarts, VM recycling, and infrastructure changes
 - **Human-in-the-loop**: `ctx.ask()` sends an interactive prompt to Slack with options, waits for a response, then continues

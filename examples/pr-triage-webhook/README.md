@@ -14,7 +14,7 @@ Files: `agent.yaml` (manifest), `workflow.json` (the graph), `trigger.json` (pro
 make test-e2e-examples        # runs this example's test on a throwaway stack
 ```
 
-To poke at it by hand, run `connector-replay` and `llm-replay` (`services/control-plane/cmd/`), start the API with `LANTERN_CONNECTOR_BASEURL_{GITHUB,SLACK}` and `LANTERN_LLM_BASEURL_OPENAI` pointing at them plus a dummy `OPENAI_API_KEY`, then follow the steps below. `GET <connector-replay>/__requests` shows the GitHub comment and Slack messages the run sent.
+To poke at it by hand, run `connector-replay` and `llm-replay` (`services/control-plane/cmd/`), start the API with `PAL_CONNECTOR_BASEURL_{GITHUB,SLACK}` and `PAL_LLM_BASEURL_OPENAI` pointing at them plus a dummy `OPENAI_API_KEY`, then follow the steps below. `GET <connector-replay>/__requests` shows the GitHub comment and Slack messages the run sent.
 
 ## Try it for real
 

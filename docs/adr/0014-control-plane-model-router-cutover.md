@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-23
-- **Deciders:** Lantern control-plane, model-router, security
+- **Deciders:** PAL Runtime control-plane, model-router, security
 - **Tags:** llm, model-router, trust-boundary, secrets, staged-rollout
 
 ## Context
@@ -62,7 +62,7 @@ control-plane → model-router gRPC hop.** Consequences:
 
 ### 2. Default-OFF flag with automatic fallback
 
-The cutover is gated by `LANTERN_USE_MODEL_ROUTER` (default OFF). It is wired at
+The cutover is gated by `PAL_USE_MODEL_ROUTER` (default OFF). It is wired at
 the `callLLMWithFailover` seam, which already centralizes plain provider
 completions. When ON:
 
@@ -84,7 +84,7 @@ the function signature and return shape are identical.
 The fallback guarantee makes the flag safe to flip per-deployment, but the
 intended rollout is still staged:
 
-1. Enable `LANTERN_USE_MODEL_ROUTER=1` on a NON-bridge tenant first.
+1. Enable `PAL_USE_MODEL_ROUTER=1` on a NON-bridge tenant first.
 2. Watch traces (`gen_ai.*` spans + the router's own spans) and error rate.
 3. Only then enable it for the bridge tenant.
 
@@ -102,7 +102,7 @@ intended rollout is still staged:
 ## Consequences
 
 - The control-plane gains a lazily-dialed `ModelServiceClient`
-  (`LANTERN_MODEL_ROUTER_ADDR`, default `model-router:50053`).
+  (`PAL_MODEL_ROUTER_ADDR`, default `model-router:50053`).
 - The router becomes multi-tenant-capable without a key store of its own.
 - A new credential-bearing gRPC hop exists and is documented as requiring mTLS
   for cross-trust-zone deployments.

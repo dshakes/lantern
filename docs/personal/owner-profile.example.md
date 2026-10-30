@@ -1,6 +1,6 @@
 # Owner profile — TEMPLATE
 
-Copy this file to `~/.lantern/owner-profile.md` (or set `LANTERN_OWNER_PROFILE`
+Copy this file to `~/.lantern/owner-profile.md` (or set `PAL_OWNER_PROFILE`
 to point elsewhere) and fill it in. The macOS WhatsApp/iMessage bridges read it
 to sound like *you* — your voice, your world, your people. It is hot-reloaded
 within ~30 seconds, so edits take effect without a restart.

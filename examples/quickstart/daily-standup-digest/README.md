@@ -14,7 +14,7 @@ stack.
 
 - A plain agent reliably synthesizes structured team updates into an
   actionable digest, faithful to the input (no invented work).
-- The same agent drops straight onto Lantern's **cron scheduler** with no code
+- The same agent drops straight onto PAL Runtime's **cron scheduler** with no code
   change.
 
 ## Files

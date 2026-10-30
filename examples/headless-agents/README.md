@@ -1,6 +1,6 @@
 # Headless-Agent Demos
 
-Four end-to-end examples that showcase the Lantern headless-agent execution
+Four end-to-end examples that showcase the PAL Runtime headless-agent execution
 layer (`packages/proto/lantern/v1/runtime.proto`, `services/runtime-scheduler`,
 `services/runtime-manager`, `services/harness`). Each demo:
 
@@ -58,7 +58,7 @@ pal run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
 # Or via REST directly (imageDigest field, camelCase)
 curl -X POST http://localhost:8080/v1/runtime/schedule \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN" \
+  -H "Authorization: Bearer $PAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "imageDigest": "lantern/demos/hello:latest",

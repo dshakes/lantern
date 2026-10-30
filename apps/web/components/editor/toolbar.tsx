@@ -140,7 +140,7 @@ export function Toolbar({
         </button>
         <button
           onClick={onDeploy}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-lantern-400"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-pal-400"
         >
           <Rocket className="h-3 w-3" />
           Deploy

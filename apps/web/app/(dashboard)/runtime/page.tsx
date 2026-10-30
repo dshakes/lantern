@@ -154,7 +154,7 @@ export default function RuntimePage() {
   const hasRealEmpty = !usingDemo && vms.length === 0;
 
   return (
-    <div className="flex flex-col">
+    <div className="theme-runtime flex flex-col">
       <div className="relative shrink-0 overflow-hidden">
         <div aria-hidden className="mc-aurora" />
         <PageHeader

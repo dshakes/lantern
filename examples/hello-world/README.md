@@ -1,6 +1,6 @@
 # hello-world
 
-> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> **Heads up: this example targets the PAL Runtime SDK in-VM runtime, which is not
 > runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
 > `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
 > `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
@@ -9,7 +9,7 @@
 > live control-plane, see [`examples/quickstart/`](../quickstart/).
 
 
-A simple greeting agent that demonstrates the basics of building a Lantern agent.
+A simple greeting agent that demonstrates the basics of building a PAL Runtime agent.
 
 ## How to run
 

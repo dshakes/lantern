@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-    // Reads LANTERN_API_URL and LANTERN_API_KEY from the environment by default.
+    // Reads PAL_API_URL and PAL_API_KEY from the environment by default.
     c := lantern.New()
     ctx := context.Background()
 

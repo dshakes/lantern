@@ -1,6 +1,6 @@
 # deploy-guardian
 
-> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> **Heads up: this example targets the PAL Runtime SDK in-VM runtime, which is not
 > runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
 > `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
 > `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
@@ -87,7 +87,7 @@ pal run deploy-guardian --input '{
 6. **Monitor** -- Uses `step.sleep` for a configurable monitoring window, then checks error rates and latency
 7. **Rollback** -- If post-deploy metrics are anomalous, automatically triggers a rollback and notifies Slack
 
-## Lantern features demonstrated
+## PAL Runtime features demonstrated
 
 - **Webhook triggers**: Fires automatically on GitHub push events -- no polling or external orchestration
 - **Parallel signal checking**: `step.map` queries 4 monitoring systems concurrently

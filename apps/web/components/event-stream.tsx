@@ -163,7 +163,7 @@ function EventIcon({ kind }: { kind: StreamEvent["kind"] }) {
     case "question":
       return <HelpCircle className="h-3.5 w-3.5 text-blue-300" />;
     case "end":
-      return <CheckCircle2 className="h-3.5 w-3.5 text-lantern-500" />;
+      return <CheckCircle2 className="h-3.5 w-3.5 text-pal-500" />;
     default:
       return <Play className="h-3.5 w-3.5 text-zinc-500" />;
   }
@@ -366,7 +366,7 @@ function ApprovalEvent({
                       "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                       isDeny
                         ? "border border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        : "bg-lantern-600 text-on-flame hover:bg-lantern-500"
+                        : "bg-pal-600 text-on-flame hover:bg-pal-500"
                     )}
                   >
                     {opt}
@@ -402,14 +402,14 @@ function QuestionEvent({ data }: { data: Record<string, unknown> }) {
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 placeholder="Type your answer..."
-                className="h-8 flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 text-xs text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 focus:outline-none"
+                className="h-8 flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 text-xs text-zinc-300 placeholder:text-zinc-600 focus:border-pal-500/50 focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && answer.trim()) setSubmitted(true);
                 }}
               />
               <button
                 onClick={() => answer.trim() && setSubmitted(true)}
-                className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-500"
+                className="rounded-lg bg-pal-600 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-500"
               >
                 Submit
               </button>
@@ -428,7 +428,7 @@ function EndEvent({ data }: { data: Record<string, unknown> }) {
       <span
         className={clsx(
           "inline-flex items-center gap-1.5 text-xs font-medium",
-          status === "succeeded" && "text-lantern-500",
+          status === "succeeded" && "text-pal-500",
           status === "failed" && "text-red-400"
         )}
       >
@@ -506,7 +506,7 @@ function getBorderColor(kind: StreamEvent["kind"]): string {
     case "question":
       return "border-l-blue-400/40";
     case "end":
-      return "border-l-lantern-500/40";
+      return "border-l-pal-500/40";
     default:
       return "border-l-zinc-700/30";
   }
@@ -604,7 +604,7 @@ export function EventStream({
           {/* Streaming indicator */}
           {streaming && !streamingText && (
             <div className="flex items-center gap-2 px-4 py-3">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-lantern-400" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-pal-400" />
               <span className="text-xs text-zinc-500">Processing...</span>
             </div>
           )}

@@ -17,7 +17,7 @@ _Results placeholder — run `scripts/bench/runtime-latency.sh` on a KVM host to
 ## What the shared-memory fork optimization changes
 
 Before this optimization, `fork N` performed `N` full byte-copies of the guest
-memory file (`LANTERN_VM_MEM_GiB` × N GiB of I/O).  After:
+memory file (`PAL_VM_MEM_GiB` × N GiB of I/O).  After:
 
 - The snapshot store marks the `mem` artifact read-only (0444) after writing.
 - `restore_after_tap` hard-links the read-only mem file into every fork's jail
@@ -50,8 +50,8 @@ Expected effect on the benchmark numbers:
 
 ```bash
 # Prerequisites: Linux + KVM, running PAL stack
-export LANTERN_API_URL=http://localhost:8080
-export LANTERN_API_TOKEN=<your-admin-token>
+export PAL_API_URL=http://localhost:8080
+export PAL_API_TOKEN=<your-admin-token>
 bash scripts/bench/runtime-latency.sh --iterations 10
 ```
 
@@ -104,7 +104,7 @@ same Lima VM, jailed mode, guest (TAP) egress. **Indicative only: nested virt.**
 | first exec after restore (ms) | 2 571 | 3 053 | 2 847 | 2 924 | 2 857 | **2 857** | 3 053 |
 
 The test now makes ONE ExecTool call with no retry loop. The manager holds it
-(`LANTERN_HARNESS_READY_TIMEOUT_MS`, default 5 s) until the restored guest's
+(`PAL_HARNESS_READY_TIMEOUT_MS`, default 5 s) until the restored guest's
 first cert-pinned heartbeat, then dispatches it. The fixed 2 s retry
 quantization is gone, and so are the 1 s re-identify poll and the doubled
 heartbeat backoff. The gate hard-fails above 3 500 ms and warns above 1 500 ms.

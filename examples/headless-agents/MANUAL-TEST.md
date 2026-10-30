@@ -29,8 +29,8 @@ Build the CLI once:
 
 ```bash
 cd packages/cli && go build -o /usr/local/bin/pal ./cmd/pal
-export LANTERN_API_URL=http://localhost:8080
-export LANTERN_API_TOKEN="$TOKEN"
+export PAL_API_URL=http://localhost:8080
+export PAL_API_TOKEN="$TOKEN"
 ```
 
 ### Two-tier run (real wire, recommended)
@@ -51,13 +51,13 @@ LISTEN_ADDR=0.0.0.0:50054 \
 
 # Terminal 2 — runtime-scheduler (Go, placement)
 cd services/runtime-scheduler
-LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+PAL_DEFAULT_MANAGER_ADDR=localhost:50054 \
   go run ./cmd/scheduler
 # gRPC on :50055, REST on :8085
 
 # Terminal 3 — control-plane (Go, public API) — point it at the scheduler
-LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055 \
-  LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+PAL_SCHEDULER_GRPC_ADDR=localhost:50055 \
+  PAL_DEFAULT_MANAGER_ADDR=localhost:50054 \
   make run-api
 ```
 
@@ -215,7 +215,7 @@ pal vm cluster
 ```
 
 Returns per-node load + warm-pool capacity. With the two-tier run setup
-(`LANTERN_SCHEDULER_GRPC_ADDR` set), this is live data from the
+(`PAL_SCHEDULER_GRPC_ADDR` set), this is live data from the
 scheduler's `RuntimeScheduler.Cluster` RPC. Without it, returns the
 stub topology marked `"stub": true`.
 
@@ -231,7 +231,7 @@ Or in the browser: the per-VM debug view opens an EventSource on
 `/v1/runtime/vms/<id>/logs?follow=1`. With the two-tier setup, the
 control-plane proxies `RuntimeManager.Logs` server-streaming RPC from
 the per-node manager and forwards each `LogLine` as an SSE `data:`
-frame. Without `LANTERN_DEFAULT_MANAGER_ADDR`, falls back to a single
+frame. Without `PAL_DEFAULT_MANAGER_ADDR`, falls back to a single
 stub frame.
 
 ---

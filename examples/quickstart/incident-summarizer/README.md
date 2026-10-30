@@ -117,7 +117,7 @@ Real captured receipt:
 ```
 
 > `algorithm` is `HMAC-SHA256` here because this dev stack has no
-> `LANTERN_RECEIPT_ED25519_SEED` set; set the seed and receipts are signed with
+> `PAL_RECEIPT_ED25519_SEED` set; set the seed and receipts are signed with
 > Ed25519 and verifiable fully offline against the public key at
 > `/.well-known/lantern-receipts`.
 

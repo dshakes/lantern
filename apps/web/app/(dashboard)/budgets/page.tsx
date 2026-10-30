@@ -232,7 +232,7 @@ export default function BudgetsPage() {
                 onChange={(e) =>
                   setEditing({ ...editing, agentName: e.target.value })
                 }
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
               >
                 <option value="">Select an agent...</option>
                 {agents.map((a) => (
@@ -285,7 +285,7 @@ export default function BudgetsPage() {
                 }
                 rows={3}
                 placeholder={"slack.post=100\ngithub.create_issue=25"}
-                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-pal-500"
               />
             </ModalField>
             <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-surface-2/50 px-3 py-2.5">
@@ -296,7 +296,7 @@ export default function BudgetsPage() {
                   onChange={(e) =>
                     setEditing({ ...editing, hardFail: e.target.checked })
                   }
-                  className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-lantern-500"
+                  className="h-4 w-4 rounded border-zinc-600 bg-surface-3 text-pal-500"
                 />
                 <span className="flex items-center gap-1.5">
                   Hard-fail
@@ -318,7 +318,7 @@ export default function BudgetsPage() {
                       notifyAtPct: parseInt(e.target.value, 10) || 80,
                     })
                   }
-                  className="w-16 rounded-md border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-16 rounded-md border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-pal-500"
                 />
                 <span className="text-xs text-zinc-500">%</span>
               </div>
@@ -466,7 +466,7 @@ function NumberField({
           onChange(s === "" ? undefined : parseFloat(s));
         }}
         placeholder="unset"
-        className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+        className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500"
       />
     </ModalField>
   );
