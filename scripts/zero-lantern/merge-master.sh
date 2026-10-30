@@ -66,6 +66,7 @@ while IFS= read -r p; do
   fi
   git show ":2:$p" > "$tmp/ours"
   git show ":3:$p" > "$tmp/theirs"
+  ZL_PATH="$p" perl -0pi "$here/compat.pl" "$tmp/base" "$tmp/theirs"
   ZL_PATH="$p" perl -0pi "$here/rewrite.pl" "$tmp/base" "$tmp/theirs"
   perl -0pi "$here/dedupe.pl" "$tmp/base" "$tmp/theirs"
   if git merge-file -L ours -L base -L master -p "$tmp/ours" "$tmp/base" "$tmp/theirs" > "$tmp/merged"; then
