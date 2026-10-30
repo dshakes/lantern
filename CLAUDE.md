@@ -227,7 +227,7 @@ Dashboard pages live in `apps/web/app/(dashboard)/`. Key pages include:
 - `/eval-suites` -- declarative suites, run history, pin-as-baseline. Regressions in CI return HTTP 422
 - `/marketplace` -- publish / fork / star public agents, backed by `/v1/marketplace` (no sample data fallbacks)
 - `/evaluations` -- analytics: performance metrics, cost attribution, model usage
-- `/settings` -- LLM providers, API keys, team management
+- `/settings` -- LLM providers, API keys, team management, billing (plans, Stripe checkout/portal, dunning notice)
 
 ---
 
@@ -271,8 +271,10 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `agent_experiments`     | A/B traffic splits with auto-promotion                                                                                                                                                           | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
+| `billing_accounts`      | Stripe customer/subscription, plan, dunning clock (ADR 0049)                                                                                                                                     | `tenant_id`, `stripe_customer_id`, `plan_id`, `status`, `grace_until`, `downgraded_at`                                       |
+| `billing_meter_exports` | One Stripe meter export per (tenant, meter, day); idempotency record                                                                                                                             | `tenant_id`, `meter`, `period_start`, `value`, `idempotency_key`, `status`                                                   |
 
-Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`, `billing_plans`, `billing_webhook_events`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
 **Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **RLS is now safe to enable per-env** — set `PAL_APP_DB_PASSWORD` (and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). In production, setting `PAL_APP_DB_PASSWORD` is enough; `PAL_RLS_ENFORCE=1` is optional. Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
 
@@ -662,6 +664,47 @@ runs/day (only successes count; a workflow run counts once on success),
 `toolLimits` outside workflows, `notifyAtPct` alerts. Matrix:
 `site/src/content/docs/docs/` (budgets page).
 
+### Billing (Stripe — ADR 0049, default OFF)
+
+Behind config: with `PAL_STRIPE_SECRET_KEY` unset, `GET /v1/billing` reports
+`{enabled:false}` + the plan catalog, checkout/portal/webhook answer 404
+`billing_disabled`, and the billing loop never starts. Code:
+`internal/billing/` (Stripe client, signature check, pure plan/dunning rules) +
+`internal/handlers/billing.go`; dashboard Settings → Billing
+(`components/settings/billing-plans.tsx`, view-model `lib/billing.ts`).
+
+- **Plans are data** (`billing_plans`: free/pro/team/enterprise). A plan's limits
+  are written to the existing enforcement — the tenant-wide `agent_budgets` row
+  (`'*'`) and `runtime_quotas` — only once the tenant has subscribed.
+- **Webhook** is `Stripe-Signature`-verified (fail-closed without
+  `PAL_STRIPE_WEBHOOK_SECRET`; prod refuses to start that way) and idempotent by
+  event id in the same tenant tx as the state change.
+- **Dunning:** payment failed → grace (`PAL_BILLING_GRACE_DAYS`, default 7) →
+  free limits. **Never deletes data**; `invoice.paid` restores the paid plan.
+- **Usage export:** settled `agent_usage_daily` days → Stripe meter events, one
+  claim row + one idempotency key per `(tenant, meter, day)`.
+- Tables: `billing_accounts`, `billing_meter_exports` (RLS);
+  `billing_plans`, `billing_webhook_events` (RLS-exempt: global catalog / global
+  event-id dedup).
+
+| Method | Path                    | Description                                                        |
+| ------ | ----------------------- | ------------------------------------------------------------------ |
+| `GET`  | `/v1/billing`           | Plans + subscription state (`planId`, `effectivePlanId`, grace). `settings:read` |
+| `POST` | `/v1/billing/checkout`  | `{planId}` → Stripe Checkout URL. Owner/admin, `settings:write`    |
+| `POST` | `/v1/billing/portal`    | Stripe Customer Portal URL. Owner/admin, `settings:write`          |
+| `POST` | `/v1/billing/webhook`   | Stripe → PAL. Signature-verified, no JWT                           |
+
+| Env var (control-plane)      | Purpose                                                              |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `PAL_STRIPE_SECRET_KEY`      | Enables billing. Never logged.                                       |
+| `PAL_STRIPE_WEBHOOK_SECRET`  | Webhook signing secret. Required when billing is on. Never logged.   |
+| `PAL_STRIPE_PLAN_PRICES`     | Optional `pro=price_…,team=price_…` override of plan price ids.      |
+| `PAL_STRIPE_METER_TOKENS` / `PAL_STRIPE_METER_RUNS` | Meter event names (default `pal_tokens` / `pal_runs`). |
+| `PAL_BILLING_GRACE_DAYS`     | Dunning grace before free limits (default 7, 0–60).                  |
+| `PAL_BILLING_SYNC_INTERVAL`  | Dunning sweep + meter export cadence (default 1h).                   |
+| `PAL_DASHBOARD_URL`          | Checkout success/cancel + portal return base (default `:3001`).      |
+| `PAL_STRIPE_API_BASE`        | Stripe API origin override (tests / egress proxy).                   |
+
 ### Eval suites + CI gating (wedge #2)
 
 | Method   | Path                                    | Description                                                                    |
@@ -846,14 +889,15 @@ are wired; select with `PAL_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
 passes the tenant-scoped `Deps.CallLLM` as the `sample` (nil-safe — estimators
 degrade gracefully when no LLM is wired). See ADR 0021.
 
-- **`verbalization_heuristic`** (default) — scans prior step text for LLM
+- **`verbalization_heuristic`** (opt-out: `PAL_CONFIDENCE_ESTIMATOR=verbalization`) — scans prior step text for LLM
   self-reported confidence ("Confidence: 85%", "70% confident"). Falls back to
   `DefaultConfidence=0.9` when none found. A HEURISTIC, and note the failure
   mode it encodes: **silence → 0.9 → auto-execute** (a model that hallucinates an
   action also cheerfully writes "confidence: 95%" about it, and no self-report at
-  all clears the 0.75 bar). Kept as the default for backward-compatibility and as
-  every estimator's safe fallback.
-- **`self_consistency`** (`SelfConsistencyEstimator`) — scores confidence from the
+  all clears the 0.75 bar). No longer the default (GA-AUDIT A4); kept as the
+  explicit opt-out and as every estimator's safe fallback.
+- **`self_consistency`** (`SelfConsistencyEstimator`, **default** when the gate is
+  on and `PAL_CONFIDENCE_ESTIMATOR` is unset or unrecognised) — scores confidence from the
   model's INDEPENDENT agreement, not its self-report: it re-poses the pending
   action to the model `N` times (`PAL_CONFIDENCE_SAMPLES`, default 5, clamped
   [1,9]) as a fresh skeptical YES/NO judgment and returns the fraction voting
@@ -886,13 +930,13 @@ The `confidence_evaluated` journal event tags which estimator ran via
 |-----|---------|---------|
 | `PAL_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
 | `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
-| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
+| `PAL_CONFIDENCE_ESTIMATOR` | `self-consistency` | Default polls for independent agreement (falls back to the heuristic when no LLM is wired). `verbalization` (aliases `heuristic`, `verbalization_heuristic`) opts out to the heuristic alone. Selection: `selectConfidenceEstimator` in `internal/handlers/rest.go`. |
 | `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
 | `PAL_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
 
 Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
-→ turn on `self-consistency` and tune `SAMPLES`/threshold → then production.
+(self-consistency by default) → tune `SAMPLES`/threshold → then production.
 
 #### Workflow-engine RLS (invariant #7)
 

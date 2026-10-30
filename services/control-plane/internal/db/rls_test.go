@@ -393,6 +393,7 @@ var rlsTenantTables = []string{
 	"agent_triggers", "agent_trigger_deliveries",
 	"agent_documents", "agent_document_chunks",
 	"dlp_policies",
+	"billing_accounts", "billing_meter_exports",
 	"bridge_pairing_codes", "bridges", "device_signals",
 	"batches",
 }
@@ -407,6 +408,11 @@ var rlsExemptTables = map[string]bool{
 	"marketplace_agents":      true,
 	"mcp_servers":             true,
 	"marketplace_invocations": true,
+	// Billing (ADR 0049): the plan catalog is global data shared by every
+	// tenant; the webhook event ledger dedups by Stripe event id before a
+	// tenant is resolved.
+	"billing_plans":          true,
+	"billing_webhook_events": true,
 }
 
 // TestRLSEnforcement_AllTenantTables is the permanent catalog gate. For every

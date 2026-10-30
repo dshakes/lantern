@@ -238,6 +238,7 @@ func TestExportRedacted_Catalog(t *testing.T) {
 		"schedules.config":                         false,
 		"surface_configs.config":                   false,
 		"api_keys.key_prefix":                      false,
+		"billing_meter_exports.idempotency_key":    false,
 		"batches.idempotency_key":                  false,
 		"commitments.idempotency_key":              false,
 		"domain_records.idempotency_key":           false,

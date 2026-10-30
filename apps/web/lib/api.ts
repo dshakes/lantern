@@ -4,6 +4,7 @@
 // Every method below either returns real API data, returns empty/null, or
 // throws. No fabricated rows leak into the UI as fake runs.
 import { isNoSessionPath } from "./no-session-paths";
+import type { BillingOverview } from "./billing";
 import type {
   Agent,
   Run,
@@ -889,6 +890,33 @@ class PalAPI {
       notifySimulated("getFleetUsage", err);
       return null;
     }
+  }
+
+  // ---- Billing (ADR 0049) ---------------------------------------------------
+
+  /** Plans + this workspace's subscription. null when the API is unreachable. */
+  async getBilling(): Promise<BillingOverview | null> {
+    try {
+      return await this.request<BillingOverview>("/v1/billing");
+    } catch (err) {
+      notifySimulated("getBilling", err);
+      return null;
+    }
+  }
+
+  /** Hosted Stripe Checkout URL for a plan. Throws with the server's message. */
+  async startCheckout(planId: string): Promise<string> {
+    const res = await this.request<{ url: string }>("/v1/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ planId }),
+    });
+    return res.url;
+  }
+
+  /** Stripe Customer Portal URL (change plan, update card, invoices). */
+  async openBillingPortal(): Promise<string> {
+    const res = await this.request<{ url: string }>("/v1/billing/portal", { method: "POST" });
+    return res.url;
   }
 
   async updateSettings(data: SettingsInput): Promise<void> {

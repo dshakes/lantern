@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dshakes/lantern/services/control-plane/internal/billing"
 	"net"
 	"net/http"
 	"os"
@@ -924,6 +925,24 @@ func main() {
 	httpMux.HandleFunc("PUT /v1/egress/dlp-policy", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.PutPolicy))
 	httpMux.HandleFunc("POST /v1/egress/dlp-policy/rules", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.UpsertRule))
 	httpMux.HandleFunc("DELETE /v1/egress/dlp-policy/rules/{ruleId}", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.DeleteRule))
+	// Stripe billing — ADR 0049. Behind config: with PAL_STRIPE_SECRET_KEY
+	// unset, GET reports {enabled:false}, the mutating routes and the webhook
+	// answer 404 billing_disabled, and the billing loop never starts.
+	billingCfg := billing.ConfigFromEnv()
+	billingHandler := handlers.NewBillingHandler(srv, authHandler, billingCfg)
+	if billingCfg.Enabled() {
+		if billingCfg.WebhookSecret == "" {
+			if handlers.IsProd() {
+				logger.Fatal("PAL_STRIPE_SECRET_KEY is set but PAL_STRIPE_WEBHOOK_SECRET is not; billing webhooks would be rejected")
+			}
+			logger.Warn("billing: PAL_STRIPE_WEBHOOK_SECRET unset; webhooks will be rejected (fail-closed)")
+		}
+		logger.Info("billing: Stripe integration enabled", zap.Int("grace_days", billingCfg.GraceDays))
+	}
+	httpMux.HandleFunc("GET /v1/billing", authHandler.WithScope(handlers.ScopeSettingsRead, billingHandler.GetBilling))
+	httpMux.HandleFunc("POST /v1/billing/checkout", authHandler.WithScope(handlers.ScopeSettingsWrite, billingHandler.Checkout))
+	httpMux.HandleFunc("POST /v1/billing/portal", authHandler.WithScope(handlers.ScopeSettingsWrite, billingHandler.Portal))
+	httpMux.HandleFunc("POST /v1/billing/webhook", billingHandler.Webhook) // Stripe-Signature verified; no JWT
 	// Secret relay — service-to-service endpoint for the runtime-manager to
 	// resolve pal.secret/... refs. Fail-closed when
 	// PAL_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
@@ -1021,6 +1040,10 @@ func main() {
 		// process restart. Fires 15s after startup (after the run-level sweep has
 		// a chance to complete orphaned child runs), then every 30s.
 		handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
+
+		// Billing: dunning sweep + Stripe meter export (no-op unless Stripe is
+		// configured). Writer-only: never on a read-only standby.
+		handlers.RunBillingLoop(ctx, billingHandler, envDurationMain("PAL_BILLING_SYNC_INTERVAL", time.Hour))
 
 		// Peer-service health sweep (PAL_HEALTH_SWEEP_INTERVAL, default 60s).
 		// Probes configured peer services via TCP dial; alerts the owner on
