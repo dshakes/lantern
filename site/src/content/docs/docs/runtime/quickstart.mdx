@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { MicroVmRunSequence } from '../../../../components/diagrams';
+
+<MicroVmRunSequence client:visible />
 
 Write your first `agent.yaml`, pick an isolation class, run it, watch its logs, traces and cost, then terminate it. The four worked demos in `examples/headless-agents/` are the reference; this page builds the smallest one from scratch.
 
@@ -41,9 +44,9 @@ kind: AgentSpec
 metadata:
   name: hello
   labels:
-    owner: lantern-team
+    owner: pal-team
 spec:
-  image_digest: lantern/demos/hello@sha256:0000...0001
+  image_digest: pal/demos/hello@sha256:0000...0001
   isolation: trusted        # first-party, no package loading
   limits:
     vcpu: "100m"            # 0.1 vCPU

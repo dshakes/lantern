@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SessionsMemory } from '../../../../components/diagrams';
+
+<SessionsMemory client:visible />
 
 Sessions are interactive, multi-turn conversations with an agent. Memory distillates are the long-term memory layer: durable facts and preferences distilled by the LLM from raw session transcripts and timeline events, stored and re-injected into future sessions.
 
@@ -49,7 +52,7 @@ Session turns are not journaled. A control-plane crash mid-turn loses that turn;
 ### SDK
 
 ```ts
-const client = new LanternClient({ apiKey: "..." });
+const client = new PalClient({ apiKey: "..." });
 
 // Create
 const session = await client.sessions.create({ agent: "my-agent" });

@@ -15,6 +15,6 @@ import { DeployTopology } from '../../../../components/diagrams';
 
 ## Reference
 
-- `lantern dev` boots Postgres, Redis, MinIO, the API and the console; `lantern doctor` reports what is missing.
+- `pal dev` boots Postgres, Redis, MinIO, the API and the console; `pal doctor` reports what is missing.
 - Real Firecracker locally needs a Lima guest on Apple Silicon (M3 or later, macOS 15+). Without it the stub scheduler fabricates VM ids; production refuses to start with it.
 - In the cloud the data-plane agent dials the control plane over mTLS; Helm charts ship for the control plane, the data plane, and both together.

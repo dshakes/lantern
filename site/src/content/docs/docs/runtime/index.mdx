@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SystemContext } from '../../../../components/diagrams';
+
+<SystemContext client:visible />
 
 Every run executes in one of two tiers: **shared** (the inline executor inside the control-plane) or **microVM** (the W12 Kubernetes/Firecracker/Kata stack). The tier is declared in the agent version's `manifest.isolation` at publish time. The caller cannot override it.
 

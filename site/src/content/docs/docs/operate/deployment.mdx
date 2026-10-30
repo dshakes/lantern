@@ -12,6 +12,9 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { DeployTopology } from '../../../../components/diagrams';
+
+<DeployTopology client:visible />
 
 PAL splits into a **control plane** (scheduling, routing, dashboard) and a **data plane** (microVMs, execution, secrets). The data plane runs in your cloud: agent data never leaves your VPC.
 

@@ -1,0 +1,167 @@
+---
+// The docs home: search, the "Start here" path, the two product doors, a
+// gallery of capabilities (each thumbnail drawn from its real diagram), and
+// the pages people open most.
+import { Icon } from '@astrojs/starlight/components';
+import CapabilityGrid from './CapabilityGrid.astro';
+import MiniFlow from './MiniFlow.astro';
+import { u } from '../data/site';
+import * as P from './diagrams/flows-pal';
+import * as R from './diagrams/flows-runtime';
+
+const start = [
+  { t: 'See it run', s: 'pal demo: no key, a private sample workspace.', href: '/docs/start/sixty-seconds/', ic: 'rocket' },
+  { t: 'Your first agent', s: 'One sentence in, a designed agent and a streamed run out.', href: '/docs/start/quickstart/', ic: 'star' },
+  { t: 'Develop locally', s: 'pal agent dev: edit, re-publish and re-run on save.', href: '/docs/start/local-dev/', ic: 'laptop' },
+  { t: 'Deploy', s: 'Control plane anywhere; the data plane in your VPC.', href: '/docs/start/deploy/', ic: 'setting' },
+];
+const palLinks = [
+  ['Meet pal', '/docs/pal/'], ['Connect your channels', '/docs/pal/surfaces/'],
+  ['Teach it your voice', '/docs/pal/voice/'], ['Holds: you approve', '/docs/pal/human-in-the-loop/'],
+];
+const rtLinks = [
+  ['What the runtime does', '/docs/runtime/'], ['Durable execution', '/docs/runtime/durable-execution/'],
+  ['microVM isolation', '/docs/runtime/isolation/'], ['Architecture', '/docs/architecture/overview/'],
+];
+const popular = [
+  ['REST API', '/docs/reference/api/', 'Every endpoint on the control plane.'],
+  ['CLI', '/docs/reference/cli/', 'pal onboard, doctor, demo, run, vm and more.'],
+  ['SDKs', '/docs/sdks/', 'TypeScript, Python and Go.'],
+  ['Egress and credentials', '/docs/security/egress/', 'What a workload can reach, and where keys live.'],
+  ['Budgets', '/docs/build/budgets/', 'Hard caps that stop a run before it costs you.'],
+  ['Environment variables', '/docs/reference/env-vars/', 'Settings for every service, with defaults.'],
+];
+---
+<div class="portal not-content">
+  <header class="ph">
+    <p class="ph-eye">Documentation</p>
+    <h1 class="ph-h">Agents that act for you, <span>and the runtime they run on.</span></h1>
+    <p class="ph-sub"><b class="pal">pal</b> is a personal agent in iMessage and WhatsApp. <b class="rt">PAL Runtime</b> runs your own agents: durable, budgeted, sandboxed, in your cloud.</p>
+    <button type="button" class="ph-search" data-portal-search>
+      <Icon name="magnifier" size="1.15rem" />
+      <span>Search the docs</span>
+      <kbd>⌘K</kbd>
+    </button>
+  </header>
+
+  <section class="ps" aria-labelledby="ps-start">
+    <div class="ps-head"><h2 id="ps-start">Start here</h2><p>Four steps, each a page. Do them in order the first time.</p></div>
+    <ol class="path">
+      {start.map((s, i) => (
+        <li><a href={u(s.href)}>
+          <span class="path-n">{i + 1}</span>
+          <span class="path-ic"><Icon name={s.ic as any} size="1.1rem" /></span>
+          <span class="path-t">{s.t}</span>
+          <span class="path-s">{s.s}</span>
+        </a></li>
+      ))}
+    </ol>
+  </section>
+
+  <section class="ps" aria-labelledby="ps-doors">
+    <div class="ps-head"><h2 id="ps-doors">Two products, one platform</h2></div>
+    <div class="doors">
+      <article class="door p-pal">
+        <div class="door-art" aria-hidden="true"><MiniFlow def={P.HOLDS_GATES} brand="pal" /></div>
+        <div class="door-b">
+          <p class="door-k">pal</p>
+          <h3>Your pal for every moment.</h3>
+          <p>Replies in your voice, holds anything that commits you, and keeps one memory across your chats.</p>
+          <ul>{palLinks.map(([t, h]) => <li><a href={u(h)}>{t}<Icon name="right-arrow" size="0.9rem" /></a></li>)}</ul>
+        </div>
+      </article>
+      <article class="door p-rt">
+        <div class="door-art" aria-hidden="true"><MiniFlow def={R.SYSTEM_CONTEXT} brand="rt" /></div>
+        <div class="door-b">
+          <p class="door-k">PAL Runtime</p>
+          <h3>Agents that finish, stay contained, and stay yours.</h3>
+          <p>Runs resume after a crash, stop at a budget, and run untrusted code in a microVM.</p>
+          <ul>{rtLinks.map(([t, h]) => <li><a href={u(h)}>{t}<Icon name="right-arrow" size="0.9rem" /></a></li>)}</ul>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="ps" aria-labelledby="ps-caps">
+    <div class="ps-head row"><div><h2 id="ps-caps">What it can do</h2><p>Each card is drawn from the interactive diagram on its page.</p></div>
+      <a class="ps-all" href={u('/docs/capabilities/')}>All capabilities <Icon name="right-arrow" size="0.95rem" /></a></div>
+    <CapabilityGrid featured />
+  </section>
+
+  <section class="ps" aria-labelledby="ps-pop">
+    <div class="ps-head"><h2 id="ps-pop">Most opened</h2></div>
+    <ul class="pop">
+      {popular.map(([t, h, s]) => <li><a href={u(h)}><span class="pop-t">{t}</span><span class="pop-s">{s}</span><Icon name="right-arrow" size="1rem" class="pop-a" /></a></li>)}
+    </ul>
+  </section>
+</div>
+
+<script>
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-portal-search]'))
+    b.addEventListener('click', () => document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]')?.click());
+</script>
+
+<style>
+  .portal { --gap: clamp(3rem, 6vw, 4.5rem); overflow-x: clip; padding-bottom: 1rem; }
+  .ph { position: relative; padding: clamp(1.5rem, 4vw, 3rem) 0 0; }
+  .ph::before { content: ''; position: absolute; inset: -40px 0 auto; height: 340px; z-index: -1; pointer-events: none;
+    background: radial-gradient(40% 60% at 20% 30%, var(--p-pal-bg), transparent 70%), radial-gradient(40% 60% at 75% 20%, var(--p-rt-bg), transparent 70%); }
+  .ph-eye { font: 600 12px/1 var(--p-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--sl-color-gray-3); margin: 0 0 1rem; }
+  .ph-h { font-family: var(--p-display); font-weight: 700; letter-spacing: -0.035em; line-height: 1.04; margin: 0;
+    font-size: clamp(2.1rem, 4.4vw, 3.3rem); color: var(--sl-color-white); max-width: 22ch; text-wrap: balance; }
+  .ph-h span { display: inline; }
+  .ph-h span { background: var(--p-brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ph-sub { font-size: clamp(1rem, 1.6vw, 1.15rem); line-height: 1.6; color: var(--sl-color-gray-2); max-width: 60ch; margin: 1.1rem 0 1.6rem; }
+  .ph-sub b { font-weight: 650; } .ph-sub b.pal { color: var(--p-pal-text); } .ph-sub b.rt { color: var(--p-rt-text); }
+  .ph-search { display: flex; align-items: center; gap: 12px; width: min(100%, 560px); padding: 14px 16px; cursor: pointer;
+    border-radius: 14px; border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-bg-nav); color: var(--sl-color-gray-3);
+    font: inherit; font-size: 1rem; box-shadow: var(--p-shadow); transition: border-color 160ms, box-shadow 160ms; }
+  .ph-search:hover, .ph-search:focus-visible { border-color: var(--p-rt-line); box-shadow: var(--p-glow-rt); color: var(--sl-color-gray-2); }
+  .ph-search span { flex: 1; text-align: left; }
+  .ph-search kbd { font: 500 12px var(--p-mono); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--sl-color-hairline-light); }
+
+  .ps { margin-top: var(--gap); }
+  .ps-head { margin-bottom: 1.25rem; }
+  .ps-head.row { display: flex; align-items: end; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .ps-head h2 { font-family: var(--p-display); font-size: clamp(1.4rem, 2.6vw, 1.75rem); letter-spacing: -0.02em; margin: 0; color: var(--sl-color-white); }
+  .ps-head p { margin: 0.35rem 0 0; color: var(--sl-color-gray-3); font-size: 0.95rem; }
+  .ps-all { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.95rem; color: var(--p-rt-text); text-decoration: none; }
+  .ps-all:hover { text-decoration: underline; }
+
+  .path { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; counter-reset: p; }
+  .path li { margin: 0; }
+  .path a { position: relative; display: grid; gap: 6px; height: 100%; padding: 18px; border-radius: 16px; text-decoration: none; color: inherit;
+    border: 1px solid var(--sl-color-hairline-light); background: var(--sl-color-bg-nav); transition: border-color 160ms, transform 160ms, box-shadow 160ms; }
+  .path a:hover, .path a:focus-visible { border-color: var(--p-rt-line); transform: translateY(-2px); box-shadow: 0 16px 36px -24px var(--p-rt-1); }
+  .path-n { position: absolute; top: 14px; right: 16px; font: 700 2rem/1 var(--p-display); color: transparent; -webkit-text-stroke: 1px var(--sl-color-hairline-light); }
+  .path-ic { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #fff; background: var(--p-rt-btn); }
+  .path li:first-child .path-ic { background: var(--p-pal-btn); }
+  .path-t { font-family: var(--p-display); font-weight: 650; font-size: 1.05rem; margin-top: 6px; color: var(--sl-color-white); }
+  .path-s { font-size: 0.875rem; line-height: 1.5; color: var(--sl-color-gray-2); }
+
+  .doors { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .door { --a: var(--p-rt-1); --abg: var(--p-rt-bg); --aline: var(--p-rt-line); --at: var(--p-rt-text); --glow: var(--p-glow-rt);
+    border-radius: 20px; overflow: hidden; border: 1px solid var(--aline); background: var(--sl-color-bg-nav); box-shadow: var(--glow); display: flex; flex-direction: column; }
+  .door.p-pal { --a: var(--p-pal-3); --abg: var(--p-pal-bg); --aline: var(--p-pal-line); --at: var(--p-pal-text); --glow: var(--p-glow-pal); }
+  .door-art { aspect-ratio: 16 / 7; padding: 16px 18px 8px; background: radial-gradient(90% 100% at 0% 0%, var(--abg), transparent 70%), var(--lx-bg); border-bottom: 1px solid var(--sl-color-hairline); }
+  .door-b { padding: 20px 22px 22px; }
+  .door-k { font: 600 12px/1 var(--p-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--at); margin: 0 0 0.6rem; }
+  .door h3 { font-family: var(--p-display); font-size: 1.3rem; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 0.5rem; color: var(--sl-color-white); }
+  .door-b > p:not(.door-k) { margin: 0 0 1rem; color: var(--sl-color-gray-2); line-height: 1.55; font-size: 0.95rem; }
+  .door ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .door li { margin: 0; }
+  .door li a { display: flex; justify-content: space-between; align-items: center; padding: 9px 10px; margin: 0 -10px; border-radius: 10px; text-decoration: none; color: var(--sl-color-white); font-weight: 550; font-size: 0.95rem; }
+  .door li a:hover { background: var(--abg); color: var(--at); }
+
+  .pop { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .pop li { margin: 0; }
+  .pop a { position: relative; display: grid; gap: 4px; padding: 14px 40px 14px 16px; border-radius: 14px; text-decoration: none; color: inherit; border: 1px solid var(--sl-color-hairline-light); }
+  .pop a:hover { border-color: var(--p-rt-line); background: var(--p-rt-bg); }
+  .pop-t { font-weight: 600; color: var(--sl-color-white); }
+  .pop-s { font-size: 0.85rem; color: var(--sl-color-gray-3); line-height: 1.45; }
+  .pop :global(.pop-a) { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--sl-color-gray-3); }
+
+  @media (max-width: 960px) { .path { grid-template-columns: 1fr 1fr; } .pop { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 640px) { .doors, .pop { grid-template-columns: 1fr; } .path { grid-template-columns: 1fr; } .path a { grid-template-columns: 34px 1fr; column-gap: 12px; padding: 14px 16px; } .path-ic { grid-row: span 2; } .path-t { margin-top: 0; } .path-n { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .path a, .door, .ph-search { transition: none; } .path a:hover { transform: none; } }
+</style>

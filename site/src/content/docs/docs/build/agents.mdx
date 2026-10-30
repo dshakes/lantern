@@ -12,6 +12,9 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { RunSequence } from '../../../../components/diagrams';
+
+<RunSequence client:visible />
 
 An agent takes input, works through steps (LLM calls, tool calls, API requests) and returns output. Every step is journaled, so a crashed run resumes where it stopped. This page covers creating, configuring, testing, running and scheduling agents.
 

@@ -20,7 +20,7 @@ Kiosk mode answers from **recorded replays** served by a local fixture server, l
 make demo               # builds, starts; prints "demo: http://localhost:3001/kiosk"
 make demo-down          # stop and delete all demo data
 
-# Same stack through the CLI (go build -o "$(go env GOPATH)/bin/pal" ./cmd/lantern from packages/cli):
+# Same stack through the CLI (go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal from packages/cli):
 pal demo            # builds, waits until healthy, opens the browser (--no-open to skip)
 pal demo --down     # stop and delete all demo data
 ```

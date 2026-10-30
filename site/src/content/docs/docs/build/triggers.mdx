@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { WebhookTriggers } from '../../../../components/diagrams';
+
+<WebhookTriggers client:visible />
 
 A trigger binds a public URL, `POST /v1/hooks/{id}`, to one agent. GitHub, Sentry, PagerDuty or any service that can sign a request with HMAC-SHA256 posts events there, and every verified delivery starts a run. The signature is the only credential: the sender never holds a PAL token. A delivery sent twice starts one run.
 
@@ -60,8 +63,8 @@ curl -X DELETE http://localhost:8080/v1/triggers/$ID -H "Authorization: Bearer $
 <TabItem label="TypeScript">
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
-const client = new LanternClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
+import { PalClient } from "@pal-runtime/sdk";
+const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
 
 const t = await client.triggers.create("my-agent", { provider: "github" });
 console.log(t.hookPath, t.secret); // secret is present only here
@@ -75,9 +78,9 @@ await client.triggers.delete(t.id);
 <TabItem label="Python">
 
 ```python
-from lantern import LanternClient
+from pal import PalClient
 
-async with LanternClient(api_key="hlx_live_...", base_url="http://localhost:8080") as client:
+async with PalClient(api_key="hlx_live_...", base_url="http://localhost:8080") as client:
     t = await client.triggers.create("my-agent", provider="github")
     print(t["hookPath"], t.get("secret"))  # secret is present only here
 
@@ -90,15 +93,15 @@ async with LanternClient(api_key="hlx_live_...", base_url="http://localhost:8080
 <TabItem label="Go">
 
 ```go
-import lantern "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/lantern/packages/sdk-go"
 
-c := lantern.New(lantern.WithAPIKey(key), lantern.WithBaseURL("http://localhost:8080"))
+c := pal.New(pal.WithAPIKey(key), pal.WithBaseURL("http://localhost:8080"))
 
-t, err := c.CreateTrigger(ctx, "my-agent", lantern.TriggerCreate{Provider: "github"})
+t, err := c.CreateTrigger(ctx, "my-agent", pal.TriggerCreate{Provider: "github"})
 // t.Secret is set only here
 list, _ := c.ListTriggers(ctx, "my-agent")
 off := false
-_, _ = c.UpdateTrigger(ctx, t.ID, lantern.TriggerUpdate{Enabled: &off})
+_, _ = c.UpdateTrigger(ctx, t.ID, pal.TriggerUpdate{Enabled: &off})
 _ = c.DeleteTrigger(ctx, t.ID)
 ```
 

@@ -100,7 +100,7 @@ Budgets and voice numbers are not part of the deploy manifest, so those stay RES
 ```bash
 BASE=http://localhost:8080
 VM=$(curl -s -XPOST $BASE/v1/runtime/schedule -H "Authorization: Bearer $T" \
-  -d '{"imageDigest":"lantern/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
+  -d '{"imageDigest":"pal/examples/data-analyst@sha256:...05","isolation":"untrusted","network":"allowlist_domain"}' | jq -r .vmId)
 curl -XPUT "$BASE/v1/runtime/vms/$VM/files/content?path=sales.csv" -H "Authorization: Bearer $T" --data-binary @sales.csv
 curl -XPOST $BASE/v1/runtime/vms/$VM/exec -H "Authorization: Bearer $T" \
   -d '{"command":"python","argv":["/opt/analyze.py","/workspace/sales.csv"]}'

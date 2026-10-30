@@ -1,62 +1,103 @@
 ---
 title: Quickstart in 60 seconds
-description: "Three commands to see PAL work: the no-key demo, an agent designed from one sentence, and a run from your own code."
+description: "See PAL Runtime work before you read anything: the no-key demo, an agent designed from one sentence, and a run from your own code."
 glance:
-  what: "The shortest path from a clone to a running agent: three commands, each about a minute of your time."
-  why: "You see it work before you read anything else, and every later page builds on exactly these steps."
-  how: "Pick the tab that matches what you have: nothing yet, a model key, or an app that should call an agent."
+  what: "Three ways to see a run, from nothing installed to calling an agent from your own code."
+  why: "Every later page builds on these exact commands."
+  how: "Install the prerequisites once, then pick a path: no key, your key, or your code."
 sidebar:
-  order: 1
   label: 60-second quickstart
 ---
 
-import { Aside, Tabs, TabItem, Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Progress from '../../../../components/Progress.astro';
 
-You need Git, Docker and Go 1.25+ for the CLI. The first `docker compose` build pulls and builds images, which takes a few minutes once; after that every command here is seconds.
+<Progress current={1} />
+
+## 1. Install the prerequisites
+
+You need Git, Docker and Go 1.25 or newer (for the `pal` CLI).
+
+<Tabs syncKey="os">
+<TabItem label="macOS" icon="apple">
+```bash
+brew install git go
+brew install --cask docker   # then start Docker Desktop once
+```
+</TabItem>
+<TabItem label="Linux" icon="linux">
+```bash
+sudo apt-get install -y git docker.io docker-compose-v2
+# Go 1.25+: distro packages are often older; use the tarball from https://go.dev/dl
+```
+</TabItem>
+</Tabs>
+
+Then clone and build the CLI:
 
 ```bash
-git clone https://github.com/dshakes/lantern.git pal && cd pal
-( cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/lantern )
+git clone https://github.com/dshakes/pal.git && cd pal
+( cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal )
+pal --help
 ```
 
+The first `docker compose` build in step 2 takes a few minutes once. After that each command here takes seconds.
+
+## 2. Pick a path
+
 <Tabs>
-<TabItem label="1. No key: the demo">
+<TabItem label="No key: the demo">
 
 <Steps>
 
-1. Start the self-contained demo. It answers from recorded replays, so no API key is needed.
+1. Start the self-contained demo. It answers from recorded replays, so no model key is needed.
 
    ```bash
    pal demo
    ```
 
-2. It opens `http://localhost:3001/kiosk`. You get a private workspace with sample agents; it is deleted after 30 minutes.
+   ```text title="Expected output"
+   demo ready in <elapsed>: http://localhost:3001/kiosk
+   ```
 
-3. Stop it with `pal demo --down`.
+2. Open `http://localhost:3001/kiosk`. You get a private workspace with sample agents; it is deleted after 30 minutes.
+
+3. Stop it and delete its data:
+
+   ```bash
+   pal demo --down
+   ```
+
+   ```text title="Expected output"
+   demo stopped, data deleted
+   ```
 
 </Steps>
 
-More: [Demo mode](/docs/start/demo/).
-
 </TabItem>
-<TabItem label="2. Your key: your agent">
+<TabItem label="Your key: your agent">
 
 <Steps>
 
-1. Boot the local stack (Postgres, Redis, MinIO, API on `:8080`, dashboard on `:3001`):
+1. Boot the local stack: Postgres, Redis, MinIO, the API on `:8080` and the dashboard on `:3001`.
 
    ```bash
    pal dev
    ```
 
-2. In a second terminal, describe the agent in one sentence. PAL designs it, test-calls your key, creates it and streams the first run:
+2. In a second terminal, describe an agent in one sentence. PAL designs a spec, test-calls your key, creates the agent and streams its first run.
 
    ```bash
    pal onboard --yes --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
      --description "Turn meeting notes into a summary with action items"
    ```
 
-3. Run it again any time:
+   ```text title="Expected output (shape)"
+   ✓ step completed: <step> (<ms>ms)
+   ✓ llm complete (tokens_in=<n> tokens_out=<n>)
+   ```
+
+3. Run it again whenever you like:
 
    ```bash
    pal runs create --agent <name-it-printed> --input '{"notes":"..."}' --stream
@@ -64,28 +105,28 @@ More: [Demo mode](/docs/start/demo/).
 
 </Steps>
 
-Prefer clicking? The same flow is at [localhost:3001/onboarding](http://localhost:3001/onboarding). More: [Build your first agent](/docs/start/quickstart/).
+Prefer a browser? The same flow is at `http://localhost:3001/onboarding`.
 
 </TabItem>
-<TabItem label="3. From your code">
+<TabItem label="From your code">
 
-With the stack from tab 2 running and an API key from **Settings → API keys**:
+With the stack from the second path running and an API key from **Settings → API keys**:
 
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal-runtime/sdk";
 
-const client = new LanternClient({ baseUrl: "http://localhost:8080", apiKey: process.env.PAL_API_KEY });
+const client = new PalClient({ baseUrl: "http://localhost:8080", apiKey: process.env.PAL_API_KEY });
 const run = await client.runs.create({ agent: "my-agent", input: { notes: "..." } });
 for await (const e of client.runs.events(run.id)) console.log(e.kind);
 ```
 </TabItem>
 <TabItem label="Python" icon="seti:python">
 ```python
-from lantern import LanternClient
+from pal import PalClient
 
-async with LanternClient(base_url="http://localhost:8080") as client:
+async with PalClient(base_url="http://localhost:8080") as client:
     run = await client.runs.create(agent="my-agent", input={"notes": "..."})
     async for e in client.runs.events(run.id):
         print(e)
@@ -93,8 +134,10 @@ async with LanternClient(base_url="http://localhost:8080") as client:
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-c := lantern.New(lantern.WithBaseURL("http://localhost:8080"))
-r, err := c.CreateRun(ctx, lantern.RunOptions{AgentName: "my-agent", Input: map[string]string{"notes": "..."}})
+import pal "github.com/dshakes/lantern/packages/sdk-go" // module path predates the rename
+
+c := pal.New(pal.WithBaseURL("http://localhost:8080"))
+r, err := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent", Input: map[string]string{"notes": "..."}})
 ```
 </TabItem>
 <TabItem label="curl" icon="seti:shell">
@@ -105,18 +148,47 @@ curl -s -X POST localhost:8080/v1/runs -H "Authorization: Bearer $PAL_API_KEY" \
 </TabItem>
 </Tabs>
 
-Install notes for each SDK: [SDKs](/docs/sdks/).
+Install notes for each SDK are in [SDKs](/docs/sdks/).
 
 </TabItem>
 </Tabs>
 
-<Aside type="tip">Something off? `pal doctor` checks every piece of the local stack, one pass/fail line each, and prints the fix for anything that fails.</Aside>
+## 3. Check your setup
 
-## Next
+```bash
+pal doctor
+```
 
-<CardGrid>
-  <LinkCard title="Develop locally" description="pal agent dev: edit, re-publish and re-run on every save." href="/docs/start/local-dev/" />
-  <LinkCard title="Deploy to the cloud" description="One command for the agent; Helm or Terraform for the data plane." href="/docs/start/deploy/" />
-  <LinkCard title="Invocation modes" description="Sync, streaming, async, cron and webhooks." href="/docs/runtime/invocation/" />
-  <LinkCard title="pal" description="The personal agent in iMessage and WhatsApp." href="/docs/pal/" />
-</CardGrid>
+```text title="Expected output"
+doctor: all checks passed — stack is ready
+```
+
+Each check prints one pass/fail line and, for a failure, the fix.
+
+## Troubleshooting
+
+<details>
+<summary>`docker is required`</summary>
+
+The CLI could not run `docker`. Start Docker Desktop (macOS) or the Docker service (`sudo systemctl start docker`), then retry.
+</details>
+
+<details>
+<summary>``run `pal demo` from inside a PAL checkout``</summary>
+
+`pal demo` reads the compose files from the repository. `cd` into the clone first.
+</details>
+
+<details>
+<summary>`waiting for http://localhost:8080/healthz` times out</summary>
+
+A container did not become healthy. The error names the compose project to inspect: `docker compose -p lantern-demo logs`. A port already in use is the usual cause; override with `KIOSK_API_PORT` or `KIOSK_WEB_PORT`.
+</details>
+
+<details>
+<summary>`pal: command not found`</summary>
+
+`$(go env GOPATH)/bin` is not on your `PATH`. Add `export PATH="$PATH:$(go env GOPATH)/bin"` to your shell profile.
+</details>
+
+<Aside type="tip">Still stuck? `pal doctor` prints a fix for every failing check.</Aside>

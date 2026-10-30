@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ToolCallSequence } from '../../../../components/diagrams';
+
+<ToolCallSequence client:visible />
 
 `make test-e2e` runs Go suites against a live local stack over HTTP: real JWT login, real Postgres rows, no mocks. Because some tests call a real LLM, a spend policy is enforced in code.
 

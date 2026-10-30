@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SignedReceipts } from '../../../../components/diagrams';
+
+<SignedReceipts client:visible />
 
 When a headless agent finishes, you can ask the runtime for a **signed receipt**: tamper-evident, offline-verifiable proof of what actually ran. The receipt is signed over the run's journal hash, so any post-hoc edit to the run's event log invalidates the signature.
 

@@ -8,6 +8,9 @@ glance:
 sidebar:
   order: 15
 ---
+import { ContainerView } from '../../../../components/diagrams';
+
+<ContainerView client:visible />
 
 Four languages, three data stores, one contract format. This page explains why Rust and Go are both in here: what each piece does and why it went to that tool.
 
@@ -26,7 +29,7 @@ Right tool per layer. **Never unify for unification's sake.** Adding a new langu
 | Dashboard, landing page, docs site | **TypeScript / Next.js 15** | React Server Components and streaming mean the run waterfall can render tokens as they arrive rather than after. It is the same language as the primary SDK, so types flow straight through. |
 | Primary SDK | **TypeScript** | Where the agent ecosystem already lives. |
 | Secondary SDKs | **Python 3.11+**, **Go** | Python for AI/ML users, Go for infra users. |
-| CLI (`lantern`) | **Go / Cobra** | Static binary, trivial cross-compilation to every OS, and it reuses the same gRPC client the services use. |
+| CLI (`pal`) | **Go / Cobra** | Static binary, trivial cross-compilation to every OS, and it reuses the same gRPC client the services use. |
 | API contracts | **protobuf3** | One source of truth for types that cross a service boundary. Generates Go and TypeScript, so a field rename cannot silently drift between two services. |
 
 ## What these things are

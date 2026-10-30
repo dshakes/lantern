@@ -12,12 +12,12 @@ sidebar:
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The packages still carry their pre-rename names (`@lantern/sdk`, `lantern-sdk`, `LanternClient`); the PAL names arrive with the SDK rename release and this page switches with it. For the raw endpoints see the [API reference](/docs/reference/api/).
+Every sample here was checked against the SDK source on `master` (`packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`). The TypeScript package is `@pal-runtime/sdk`, the Python package is `pal-runtime` (import `pal`), and the Go module keeps its path `github.com/dshakes/lantern/packages/sdk-go` (package `lantern`). For the raw endpoints see the [API reference](/docs/reference/api/).
 
 ## Install
 
 <Aside type="caution" title="Not on a registry yet">
-None of the three is published. Install from a checkout. On PyPI, `lantern-sdk` belongs to an unrelated project, so `pip install lantern-sdk` installs the wrong package.
+None of the three is published. Install from a checkout. Do not `pip install lantern-sdk` from PyPI: that name belongs to an unrelated project.
 </Aside>
 
 <Tabs syncKey="lang">
@@ -51,9 +51,9 @@ All three read `PAL_API_KEY` and `PAL_API_URL` when you pass nothing (the old `L
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal-runtime/sdk";
 
-const client = new LanternClient({
+const client = new PalClient({
   apiKey: process.env.PAL_API_KEY,
   baseUrl: process.env.PAL_API_URL, // e.g. http://localhost:8080
 });
@@ -61,10 +61,10 @@ const client = new LanternClient({
 </TabItem>
 <TabItem label="Python" icon="seti:python">
 ```python
-from lantern import LanternClient
+from pal import PalClient
 
 # Every request method is async (httpx.AsyncClient underneath).
-async with LanternClient(
+async with PalClient(
     api_key="...",                    # or PAL_API_KEY
     base_url="http://localhost:8080", # or PAL_API_URL
 ) as client:
@@ -73,11 +73,11 @@ async with LanternClient(
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-import lantern "github.com/dshakes/lantern/packages/sdk-go"
+import pal "github.com/dshakes/lantern/packages/sdk-go"
 
-c := lantern.New(
-    lantern.WithBaseURL("http://localhost:8080"), // or PAL_API_URL
-    lantern.WithAPIKey(os.Getenv("PAL_API_KEY")),
+c := pal.New(
+    pal.WithBaseURL("http://localhost:8080"), // or PAL_API_URL
+    pal.WithAPIKey(os.Getenv("PAL_API_KEY")),
 )
 ```
 </TabItem>
@@ -88,7 +88,7 @@ c := lantern.New(
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
-import type { Run } from "@lantern/sdk";
+import type { Run } from "@pal-runtime/sdk";
 
 const run = (await client.runs.create({
   agent: "research-agent",
@@ -117,7 +117,7 @@ done = await client.runs.get(run.id)
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-r, err := c.CreateRun(ctx, lantern.RunOptions{
+r, err := c.CreateRun(ctx, pal.RunOptions{
     AgentName: "research-agent",
     Input:     map[string]string{"topic": "quantum computing"},
 })
@@ -203,12 +203,12 @@ _ = c.DeleteSession(ctx, s.ID)
 <Tabs syncKey="lang">
 <TabItem label="TypeScript" icon="seti:typescript">
 ```ts
-import { LanternApiError } from "@lantern/sdk";
+import { PalApiError } from "@pal-runtime/sdk";
 
 try {
   await client.runs.create({ agent: "my-agent", input: {} });
 } catch (err) {
-  if (err instanceof LanternApiError && err.status === 402) {
+  if (err instanceof PalApiError && err.status === 402) {
     // a hard-fail budget blocked the run
   }
 }
@@ -216,18 +216,18 @@ try {
 </TabItem>
 <TabItem label="Python" icon="seti:python">
 ```python
-from lantern import LanternApiError
+from pal import PalApiError
 
 try:
     await client.runs.create(agent="my-agent", input={})
-except LanternApiError as e:
+except PalApiError as e:
     if e.status == 402:
         ...  # a hard-fail budget blocked the run
 ```
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-var apiErr *lantern.APIError
+var apiErr *pal.APIError
 if errors.As(err, &apiErr) && apiErr.Status == http.StatusPaymentRequired {
     // a hard-fail budget blocked the run
 }
@@ -309,7 +309,7 @@ The Python runtime context (`ctx.llm`, `ctx.tools`, `ctx.mem` and the rest) is s
 </Aside>
 
 ```ts
-import { agent, step } from "@lantern/sdk";
+import { agent, step } from "@pal-runtime/sdk";
 
 export default agent<{ query: string }>({
   name: "my-agent",

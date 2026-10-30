@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { TracePropagation } from '../../../../components/diagrams';
+
+<TracePropagation client:visible />
 
 One OTel trace per spawn, GenAI token telemetry and real-time anomaly detection, wired through standard OpenTelemetry.
 
@@ -136,7 +139,7 @@ Returns a `vmMetricsDTO` array with `vmId`, `state`, `node`, `az`, `isolationCla
 The **gateway** emits one span per HTTP request (`gateway.request`, tagged with `tenant_id`) via OTLP/HTTP. The **model-router** emits one span per routing call tagged with `tenant_id`, `run_id`, `step_id`, `model_used`, `tokens_in/out`, `cost_usd`, and `escalated` via OTLP/gRPC. Both honour inbound W3C `traceparent`, so spans join the caller's distributed trace automatically.
 
 <Aside type="caution" title="No Prometheus histograms yet for gateway / model-router">
-Latency SLOs live in your tracing backend (Tempo / Jaeger / Honeycomb). Alert rules that would cover p99 latency are parked in the `lantern-TODO-needs-instrumentation` group in `infra/monitoring/prometheus/alerts.yml` until the histogram metric ships.
+Latency SLOs live in your tracing backend (Tempo / Jaeger / Honeycomb). Alert rules that would cover p99 latency are parked in the `pal-TODO-needs-instrumentation` group in `infra/monitoring/prometheus/alerts.yml` until the histogram metric ships.
 </Aside>
 
 ## Find a run, its logs and its audit trail
@@ -144,7 +147,7 @@ Latency SLOs live in your tracing backend (Tempo / Jaeger / Honeycomb). Alert ru
 Every control-plane span carries `lantern.run_id`, so one run is one query in your trace backend:
 
 ```
-# Jaeger:    service=lantern-control-plane lantern.run_id=<run_id>
+# Jaeger:    service=lantern.control-plane lantern.run_id=<run_id>
 # Tempo:     { span.lantern.run_id = "<run_id>" }
 # Honeycomb: WHERE lantern.run_id = "<run_id>"
 ```

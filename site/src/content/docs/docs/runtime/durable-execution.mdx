@@ -12,6 +12,9 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside, Steps } from '@astrojs/starlight/components';
+import { CheckpointSequence } from '../../../../components/diagrams';
+
+<CheckpointSequence client:visible />
 
 A crash mid-run does not lose work, re-spend tokens, or fire a side effect twice. The shared tier (inline executor) recovers through an event-sourced `journal_events` table and a `CompletedStep` replay gate, with external deliveries de-duplicated by idempotency key. MicroVM runs are re-scheduled by the same recovery sweep (see below).
 

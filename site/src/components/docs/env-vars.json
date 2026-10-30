@@ -225,7 +225,7 @@
   "source": ""
  },
  {
-  "name": "NEXT_PUBLIC_LANTERN_BRIDGE_URL",
+  "name": "NEXT_PUBLIC_PAL_BRIDGE_URL",
   "services": [],
   "group": "Dashboard (Next.js)",
   "default": "unset",
@@ -234,7 +234,7 @@
   "source": ""
  },
  {
-  "name": "NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL",
+  "name": "NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL",
   "services": [],
   "group": "Dashboard (Next.js)",
   "default": "unset",
@@ -455,7 +455,7 @@
   "default": "set at spawn",
   "description": "Agent name of the running workload.",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runner.py:7"
+  "source": "packages/sdk-python/pal/runtime/runner.py:7"
  },
  {
   "name": "PAL_AGENT_PAUSE_MIN",
@@ -478,7 +478,7 @@
   "default": "set at spawn",
   "description": "Agent version of the running workload.",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runtime.py:50"
+  "source": "packages/sdk-python/pal/runtime/runtime.py:50"
  },
  {
   "name": "PAL_AGENT_VERSION_ID",
@@ -1693,7 +1693,7 @@
   "default": "",
   "description": "",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runtime.py:51"
+  "source": "packages/sdk-python/pal/runtime/runtime.py:51"
  },
  {
   "name": "PAL_GRPC_SERVICE_TOKEN",
@@ -1958,7 +1958,7 @@
   "default": "",
   "description": "",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runner.py:7"
+  "source": "packages/sdk-python/pal/runtime/runner.py:7"
  },
  {
   "name": "PAL_INTROSPECT_DRYRUN",
@@ -2058,7 +2058,7 @@
   "default": "",
   "description": "",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runtime.py:52"
+  "source": "packages/sdk-python/pal/runtime/runtime.py:52"
  },
  {
   "name": "PAL_JOURNAL_RETENTION_DAYS",
@@ -3215,7 +3215,7 @@
   "default": "set at spawn",
   "description": "Run id of the running workload.",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runtime.py:47"
+  "source": "packages/sdk-python/pal/runtime/runtime.py:47"
  },
  {
   "name": "PAL_RUN_LEASE_TTL",
@@ -3238,7 +3238,7 @@
   "default": "set by the platform",
   "description": "`true` inside a running agent: enables the production sidecar in the SDK.",
   "prod": false,
-  "source": "packages/sdk-python/lantern/runtime/runtime.py:23"
+  "source": "packages/sdk-python/pal/runtime/runtime.py:23"
  },
  {
   "name": "PAL_RUNTIME_CLASS",

@@ -12,6 +12,10 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { TrustBoundaries, TenancyRls } from '../../../../components/diagrams';
+
+<TrustBoundaries client:visible />
+<TenancyRls client:visible />
 
 Each hop between the caller, the control plane, the data-plane host and the microVM is a trust boundary with its own credential, and untrusted code sits behind all of them.
 

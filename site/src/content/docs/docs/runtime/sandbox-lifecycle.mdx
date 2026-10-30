@@ -10,6 +10,10 @@ sidebar:
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { VmLifecycle, SandboxLifecycleSequence } from '../../../../components/diagrams';
+
+<VmLifecycle client:visible />
+<SandboxLifecycleSequence client:visible />
 
 MicroVM sandboxes are stateful. A running VM suspends itself when idle and wakes on the next request. You can also pause it (snapshot, quota slot freed), resume it under the same `vm_id`, or fork it into independent copies. Command output streams over SSE as it is produced.
 

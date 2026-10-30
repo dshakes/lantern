@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { TokenStreaming } from '../../../../components/diagrams';
+
+<TokenStreaming client:visible />
 
 Session replies are streamed token-by-token from the model provider through the control-plane to the client. The streaming contract is a sequence of three named SSE events on `GET /v1/sessions/{id}/events`.
 
@@ -80,9 +83,9 @@ When the session has tools attached, the LLM call runs through a non-streaming t
 The TypeScript SDK exposes token streaming as an async iterator. It handles sequence reordering, unknown event filtering, and legacy server compatibility automatically.
 
 ```ts
-import { LanternClient } from "@lantern/sdk";
+import { PalClient } from "@pal-runtime/sdk";
 
-const client = new LanternClient({ apiKey: "..." });
+const client = new PalClient({ apiKey: "..." });
 
 for await (const event of client.sessions.streamMessage(sessionId, {
   content: "Summarise the last quarter in 3 bullets.",

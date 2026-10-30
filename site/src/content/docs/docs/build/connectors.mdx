@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ConnectorActions } from '../../../../components/diagrams';
+
+<ConnectorActions client:visible />
 
 A connector gives an agent hands: search a Gmail inbox, open a GitHub issue, post to Slack. PAL Runtime ships 18, each with a fixed set of actions. Connect a service once (usually an OAuth consent screen) and credentials are stored per tenant. Per-tool limits can be stored on a [budget](/docs/build/budgets/) and are enforced on workflow tool and connector nodes only.
 

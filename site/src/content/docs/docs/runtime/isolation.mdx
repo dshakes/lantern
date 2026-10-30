@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { IsolationClasses } from '../../../../components/diagrams';
+
+<IsolationClasses client:visible />
 
 Every headless agent declares an isolation class in its `agent.yaml`. The class is the security boundary the workload runs behind. On Kubernetes it maps to a `runtimeClassName`: isolation is a tier on the pod, not a separate backend (ADR 0009).
 
@@ -95,4 +98,4 @@ On the Kubernetes backend each workload Job is created with `automountServiceAcc
 make k8s-validate   # throwaway kind + Calico cluster: egress deny (incl. 169.254.169.254), seccomp, cap-drop
 ```
 
-The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/lantern-data-plane/` and are off by default.
+The gVisor and Kata execution legs (proving a workload runs inside the sandboxed kernel) need a cluster with those RuntimeClasses installed and are skipped without one; GitHub-hosted runners cannot nest-virtualize. Optional cluster policies (Kyverno tenant baseline, cosign image verification, Cilium host egress) live in `infra/helm/pal-data-plane/` and are off by default.

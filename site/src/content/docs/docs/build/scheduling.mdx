@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { CronSchedules } from '../../../../components/diagrams';
+
+<CronSchedules client:visible />
 
 Run an agent on a cron expression. Schedules are their own resource, so one agent can have many, each with its own input and timezone. Manage them at `/v1/schedules`. Scheduled runs appear in the dashboard like any other run.
 

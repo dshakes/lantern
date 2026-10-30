@@ -46,7 +46,7 @@ Rules are in `infra/monitoring/prometheus/alerts.yml`; two Grafana dashboards (`
 
 | Group | Alerts | Needs |
 | --- | --- | --- |
-| `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | scrape job `lantern-runtime-scheduler` on `:8085` |
+| `pal-scheduler` | SchedulerDown, SchedulerNoLeader, SchedulerScheduleErrorRateHigh, SchedulerQuotaRejectionSurge, SchedulerNoRegisteredNodes | scrape job `pal-runtime-scheduler` on `:8085` |
 | `pal-liveness` | ControlPlaneDown, ControlPlaneNotReady, GatewayDown, ModelRouterDown | jobs `pal-control-plane`, `pal-gateway`, `pal-model-router`, and a blackbox probe `pal-control-plane-readyz` on `/readyz` |
 | `pal-postgres` | PostgresExporterDown, PostgresConnectionSaturation, DataPlaneHeartbeatStale, CronScheduleOverdue | `postgres_exporter` with `postgres-exporter-queries.yaml` |
 | `pal-instrumented-slos` | ControlPlane5xxRateHigh (above 5% for 5 m), RunFailureRateHigh (above 20% for 10 m), BudgetDenied402Surge | control-plane job scraping `:9464` |
@@ -63,7 +63,7 @@ kubectl create job --from=cronjob/pal-postgres-backup backup-manual-1 -n pal   #
 aws s3 ls s3://lantern-backups/postgres/                                              # newest object should be under 24 h old
 ```
 
-The CronJob (`<release>-postgres-backup`) runs `pg_dump`, gzips it to `s3://<bucket>/postgres/lantern-<ts>.sql.gz`, and prunes dumps older than `retentionDays`. A failed or empty dump fails the pod before anything is uploaded or pruned. With `backup.useChartMinio=true` (the default) it uploads to the release's own object store; for real durability point it at external S3 with `backup.existingSecret`.
+The CronJob (`<release>-postgres-backup`) runs `pg_dump`, gzips it to `s3://<bucket>/postgres/pal-<ts>.sql.gz`, and prunes dumps older than `retentionDays`. A failed or empty dump fails the pod before anything is uploaded or pruned. With `backup.useChartMinio=true` (the default) it uploads to the release's own object store; for real durability point it at external S3 with `backup.existingSecret`.
 
 ### The restore drill
 

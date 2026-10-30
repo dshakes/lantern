@@ -30,6 +30,8 @@ export type FlowDef = {
   scenarios?: FScenario[];
   /** Legend chips under the diagram. */
   legend?: [FTone | "wall", string][];
+  /** Accent for the lit path; inferred from the node tones when omitted. */
+  brand?: "pal" | "rt";
 };
 
 const NW = 150, NH = 54, TICK_MS = 2400;
@@ -39,7 +41,7 @@ const fitText = (t: string, cw: number, w: number) =>
 const ek = (e: FEdge) => `${e.from}>${e.to}`;
 const reduced = () => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?: boolean }) {
+export function FlowDiagram({ def, autoplay = true, compact = false }: { def: FlowDef; autoplay?: boolean; compact?: boolean }) {
   const uid = useId().replace(/:/g, "");
   const root = useRef<HTMLElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
@@ -51,6 +53,9 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
   const [hover, setHover] = useState<string | null>(null);
   const [fit, setFit] = useState(false);
   const [motion, setMotion] = useState(false);
+  // Phones get a readable stacked list of the steps by default; the full map is one tap away.
+  const [stacked, setStacked] = useState(false);
+  const brand = def.brand ?? (def.nodes.some((n) => n.tone === "pal") ? "pal" : "rt");
 
   const nodes = useMemo(() => def.nodes.map((n) => ({ ...n, w: n.w ?? NW, h: n.h ?? NH })), [def]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -59,7 +64,10 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
   const step = steps[idx];
   const selNode = sel ? byId.get(sel) : undefined;
 
-  useEffect(() => setMotion(!reduced()), []);
+  useEffect(() => {
+    setMotion(!reduced());
+    if (typeof matchMedia !== "undefined" && matchMedia("(max-width: 760px)").matches) setStacked(true);
+  }, []);
 
   // Start playing the first time the diagram scrolls into view (never under reduced motion).
   useEffect(() => {
@@ -118,7 +126,7 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
   const [vw, vh] = def.vb;
 
   return (
-    <figure ref={root} className="ix ix-flow not-content my-8" onKeyDown={(e) => e.key === "Escape" && setSel(null)}>
+    <figure ref={root} className={`ix ix-flow b-${brand}${compact ? " compact" : ""}${stacked ? " is-stacked" : ""} not-content my-8`} onKeyDown={(e) => e.key === "Escape" && setSel(null)}>
       <figcaption className="mb-3">
         <span className="block font-semibold text-ink">{def.title}</span>
         <span className="block text-sm text-ink-2 mt-1">{def.caption}</span>
@@ -136,7 +144,33 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
         </div>
       )}
 
-      <div className="ix-stage">
+      {stacked && (
+        <ol className="ix-stack" aria-label={`${def.title}, step by step`}>
+          {steps.length > 0 ? steps.map((s, i) => (
+            <li key={s.title} className={`${i === idx ? "on" : ""}${i < idx ? " done" : ""}${s.deny ? " deny" : ""}`}>
+              <button type="button" onClick={() => go(i)} aria-current={i === idx ? "step" : undefined}>
+                <span className="n" aria-hidden="true">{i + 1}</span>
+                <span className="b"><span className="t">{s.title}</span><span className="d">{s.note}</span>
+                  {s.nodes && s.nodes.length > 0 && (
+                    <span className="chips">{s.nodes.map((id) => byId.get(id)).filter(Boolean).map((n) => (
+                      <span key={n!.id} className={`chip tone-${n!.tone ?? "plain"}`}>{n!.label}</span>
+                    ))}</span>
+                  )}
+                </span>
+              </button>
+            </li>
+          )) : nodes.map((n) => (
+            <li key={n.id} className="node">
+              <div className={`nodecard tone-${n.tone ?? "plain"}`}>
+                <span className="t">{n.label}{n.sub && <span className="s"> · {n.sub}</span>}</span>
+                {n.detail && <span className="d">{n.detail}</span>}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="ix-stage" hidden={stacked}>
         <div
           className={`ix-canvas${fit ? " fit" : ""}`}
           ref={canvas}
@@ -178,7 +212,7 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
                 <g key={ek(e) + (e.label ?? "")} aria-hidden="true"
                   className={`ix-edge${e.kind ? ` k-${e.kind}` : ""}${e.dashed ? " dashed" : ""}${on ? " on flow" : ""}${deny ? " k-deny" : ""}${anyLit && !on ? " ix-dim" : ""}`}>
                   <path id={`${uid}-${ek(e)}`} d={d} markerEnd={`url(#${uid}-a)`} markerStart={e.bidi ? `url(#${uid}-a)` : undefined} />
-                  {on && motion && <circle className="ix-dot" r={4}><animateMotion dur="1.4s" repeatCount="indefinite" path={d} /></circle>}
+                  {on && motion && <circle className="ix-dot" r={4.5}><animateMotion dur="1.4s" repeatCount="indefinite" path={d} /></circle>}
                   {showLabel && <text x={lx} y={ly - 6} textAnchor="middle">{e.label}</text>}
                 </g>
               );
@@ -191,8 +225,8 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
                   aria-label={`${n.label}${n.sub ? `, ${n.sub}` : ""}${n.detail ? `. ${n.detail}` : ""}`} {...press(n.id)}>
                   <rect className="ring" x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={13} />
                   <rect className="box" x={n.x} y={n.y} width={n.w} height={n.h} rx={10} />
-                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle" {...fitText(n.label, 7.3, n.w)}>{n.label}</text>
-                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle" {...fitText(n.sub, 6, n.w)}>{n.sub}</text>}
+                  <text className="t1" x={n.x + n.w / 2} y={n.sub ? n.y + n.h / 2 - 3 : n.y + n.h / 2 + 5} textAnchor="middle" {...fitText(n.label, 7.9, n.w)}>{n.label}</text>
+                  {n.sub && <text className="t2" x={n.x + n.w / 2} y={n.y + n.h / 2 + 14} textAnchor="middle" {...fitText(n.sub, 6.5, n.w)}>{n.sub}</text>}
                 </g>
               );
             })}
@@ -206,8 +240,11 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
         </div>
       </div>
       <div className="ix-mobilebar">
-        <span className="ix-pan-hint">{fit ? "Whole diagram. Tap a box for details." : "Swipe sideways to pan. Tap a box for details."}</span>
-        <button type="button" className="ix-btn" aria-pressed={fit} onClick={() => setFit(!fit)}>{fit ? "Zoom in" : "Fit to screen"}</button>
+        {!stacked && <span className="ix-pan-hint">{fit ? "Whole diagram. Tap a box for details." : "Swipe sideways to pan."}</span>}
+        <span className="ix-mb-btns">
+          {!stacked && <button type="button" className="ix-btn" aria-pressed={fit} onClick={() => setFit(!fit)}>{fit ? "Zoom in" : "Fit"}</button>}
+          <button type="button" className="ix-btn" aria-pressed={!stacked} onClick={() => setStacked(!stacked)}>{stacked ? "Show diagram" : "Show steps"}</button>
+        </span>
       </div>
 
       {steps.length > 0 && (
@@ -227,7 +264,7 @@ export function FlowDiagram({ def, autoplay = true }: { def: FlowDef; autoplay?:
         </div>
       )}
 
-      {(selNode || step) && (
+      {!stacked && (selNode || step) && (
         <div className={`ix-panel ix-cap mt-3${!selNode && step?.deny ? " deny" : ""}`} aria-live="polite">
           {selNode ? (
             <>

@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ModelRouting } from '../../../../components/diagrams';
+
+<ModelRouting client:visible />
 
 Agents ask for a **capability** such as `reasoning-large`. PAL Runtime maps it to a concrete model from the providers you have keyed. Vendor model names stay out of agent code, so swapping a model or riding out a provider outage needs no code change.
 

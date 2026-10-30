@@ -8,8 +8,15 @@ glance:
 sidebar:
   order: 4
 ---
+import Progress from '../../../../components/Progress.astro';
+
+<Progress current={4} />
+
 
 import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { DeployTopology } from '../../../../components/diagrams';
+
+<DeployTopology client:visible />
 
 <Aside type="note" title="No hosted cloud yet">
 A fully managed PAL cloud is the intended offering, not a shipped one. Today you run the control plane yourself; everything below targets your own cluster.

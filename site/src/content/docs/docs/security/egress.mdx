@@ -10,6 +10,10 @@ sidebar:
 ---
 
 import Diagram from '../../../../components/Diagram.astro';
+import { EgressSequence, BrokerDemo } from '../../../../components/diagrams';
+
+<EgressSequence client:visible />
+<BrokerDemo client:visible />
 
 A sandbox is only as safe as its way out. PAL Runtime ships two egress modes. The default mode enforces the allowlist inside the guest via an iptables-redirected CONNECT proxy. The optional **broker mode** (`PAL_EGRESS_MODE=broker`, Firecracker only) removes the network device entirely: every outbound request crosses a vsock to a broker in the runtime-manager on the host, which checks the sandbox's allowlist and adds the credential there. In broker mode the workload never holds the token it is using.
 

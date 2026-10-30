@@ -9,7 +9,7 @@ sidebar:
   order: 3
 ---
 
-One static Go binary, `pal`. Until the rename release ships, its source lives at `packages/cli/cmd/lantern`; the install line below builds it under the name `pal`, so every command on this site works as written. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+One static Go binary, `pal`. Until the rename release ships, its source lives at `packages/cli/cmd/pal`; the install line below builds it under the name `pal`, so every command on this site works as written. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
 
 Just looking? `pal demo` needs Docker and no API key. To build your own, `pal dev` boots the stack and `pal onboard` walks you through your first agent.
 
@@ -17,7 +17,7 @@ Just looking? `pal demo` needs Docker and no API key. To build your own, `pal de
 
 ```bash
 # Build from the repo
-cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/lantern
+cd packages/cli && go build -o "$(go env GOPATH)/bin/pal" ./cmd/pal
 pal --version
 ```
 

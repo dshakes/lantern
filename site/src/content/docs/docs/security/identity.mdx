@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { IdentitySecrets } from '../../../../components/diagrams';
+
+<IdentitySecrets client:visible />
 
 Every headless agent spawn gets its own cryptographic identity, and secrets are vended to it at execution time over a mutually-authenticated channel, never baked into the image or the spec. The two are linked: the per-instance identity is what authenticates the secret-vending call.
 

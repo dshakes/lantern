@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { InvocationModes } from '../../../../components/diagrams';
+
+<InvocationModes client:visible />
 
 | You want | Use | Caller waits for |
 | --- | --- | --- |
@@ -69,7 +72,7 @@ run = await client.runs.get(run.id)
 </TabItem>
 <TabItem label="Go" icon="seti:go">
 ```go
-r, _ := c.CreateRun(ctx, lantern.RunOptions{AgentName: "my-agent"})
+r, _ := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent"})
 // ...later
 r, _ = c.GetRun(ctx, r.ID)
 ```
