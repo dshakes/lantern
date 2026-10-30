@@ -1,0 +1,4580 @@
+[
+ {
+  "name": "AGENT_IMAGE",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`ghcr.io/lantern/agent-runner:latest`",
+  "description": "Default workload image (docker, kata).",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "ANTHROPIC_API_KEY",
+  "services": [],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "Same, for Anthropic.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "AWS_ACCESS_KEY_ID",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Snapshot-tier credentials.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "AWS_SECRET_ACCESS_KEY",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Snapshot-tier credentials.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "BUNDLE_S3_BUCKET",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`lantern-bundles`",
+  "description": "Bundle bucket.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "BUNDLE_S3_ENDPOINT",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`http://localhost:9000`",
+  "description": "Where agent bundles are fetched from.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "DATABASE_URL",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`postgres://localhost:5432/lantern?sslmode=disable`",
+  "description": "Postgres DSN (pgvector image). Also read by `cmd/migrate` and the cron scheduler.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "DOCKER_SOCKET",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`/var/run/docker.sock`",
+  "description": "Docker socket path.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FC_BINARY_PATH",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "found on PATH",
+  "description": "Firecracker binary.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FC_BRIDGE",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Host bridge for VM taps.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FC_KERNEL_PATH",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`/opt/lantern/vmlinux`",
+  "description": "Guest kernel.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FC_ROOTFS_PATH",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`/opt/lantern/rootfs.ext4`",
+  "description": "Base rootfs image.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FIRECRACKER_CHROOT_BASE",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`/srv/jailer`",
+  "description": "Jailer chroot base.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FIRECRACKER_JAILER_GID",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`100`",
+  "description": "Gid the jailer drops to.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FIRECRACKER_JAILER_PATH",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset (no jailer)",
+  "description": "Run Firecracker under this `jailer` binary.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "FIRECRACKER_JAILER_UID",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`123`",
+  "description": "Uid the jailer drops to.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "GOOGLE_CLIENT_ID",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Enables \"Sign in with Google\" (with the secret).",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "GOOGLE_CLIENT_SECRET",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Google OAuth client secret.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "HTTP_ADDR",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`:8080`",
+  "description": "REST listen address.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "JWT_SECRET",
+  "services": [],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "dev default (public)",
+  "description": "Signs dashboard JWTs. Unset or the dev default is fatal in prod. **Required in prod.**",
+  "prod": true,
+  "source": ""
+ },
+ {
+  "name": "KATA_RUNTIME_NAME",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`kata-runtime`",
+  "description": "Docker runtime name registered for Kata.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "LISTEN_ADDR",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`:50051`",
+  "description": "gRPC listen address (the tenant-trust boundary).",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "LOG_LEVEL",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`info`",
+  "description": "Log level.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NEXT_PUBLIC_API_URL",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "`http://localhost:8080`",
+  "description": "Control-plane URL for the browser and the kiosk page.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NEXT_PUBLIC_DEMO_MODE",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "unset",
+  "description": "`1` shows the demo affordances on the login page.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NEXT_PUBLIC_PAL_BRIDGE_URL",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "unset",
+  "description": "Public fallback for the same URL, and the Surfaces page probe.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NEXT_PUBLIC_PAL_IMESSAGE_BRIDGE_URL",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "unset",
+  "description": "Public fallback, and the Surfaces page probe.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "unset",
+  "description": "Turnstile site key; renders the captcha widget.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NODE_ADVERTISE_ADDR",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`LISTEN_ADDR` with `0.0.0.0` as `localhost`",
+  "description": "Address the scheduler dials back; set it on multi-host.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NODE_ENV",
+  "services": [],
+  "group": "Dashboard (Next.js)",
+  "default": "set by Next.js",
+  "description": "`production` marks the session cookie `Secure`.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NODE_NAME",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`HOSTNAME`-derived",
+  "description": "Node name reported to the scheduler.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NODE_REGION",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`local`",
+  "description": "Region label for placement.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "NODE_ZONE",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`local-a`",
+  "description": "Zone label.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OAUTH_BASE_URL",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`http://localhost:8080`",
+  "description": "Public base URL for connector OAuth redirect URIs.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OAUTH_CLIENT_ID_",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Per-connector OAuth client id; connector id upper-cased, `-` as `_` (for example `OAUTH_CLIENT_ID_GITHUB`).",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OAUTH_CLIENT_SECRET_",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "The matching client secret.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OAUTH_DASHBOARD_URL",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`http://localhost:3001`",
+  "description": "Dashboard base URL used in emailed verify/reset links and OAuth redirects.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OAUTH_REDIRECT_BASE",
+  "services": [],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`http://localhost:8080`",
+  "description": "Base URL for the Google sign-in redirect URI. Set it to the public API URL.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OPENAI_API_KEY",
+  "services": [],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "Platform-level fallback provider key, used when a tenant has none configured.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "services": [],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "Standard OTLP endpoint; setting it also enables tracing.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "PAL_AGENT_HANDOFF_MESSAGE",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:8774"
+ },
+ {
+  "name": "PAL_AGENT_HANDOFF_PAUSE_HOURS",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:551"
+ },
+ {
+  "name": "PAL_AGENT_IDENTITY_ED25519_SEED",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Seed for Ed25519 agent identity tokens (preferred over the HMAC secret).",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:773"
+ },
+ {
+  "name": "PAL_AGENT_IDENTITY_SECRET",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "HMAC secret for per-instance agent identity tokens.",
+  "prod": false,
+  "source": "services/control-plane/internal/agentidentity/issuer.go:64"
+ },
+ {
+  "name": "PAL_AGENT_IDENTITY_TTL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "`1h`",
+  "description": "Identity token lifetime (Go duration).",
+  "prod": false,
+  "source": "services/control-plane/internal/agentidentity/issuer.go:67"
+ },
+ {
+  "name": "PAL_AGENT_INSTANCE_ID",
+  "services": [
+   "control-plane",
+   "harness",
+   "runtime-manager",
+   "runtime-scheduler"
+  ],
+  "group": "Runtime scheduler (placement)",
+  "default": "set by the control plane",
+  "description": "Injected into spawned workloads, not an operator setting.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime.go:1959"
+ },
+ {
+  "name": "PAL_AGENT_INSTANCE_TOKEN",
+  "services": [
+   "control-plane",
+   "harness",
+   "runtime-manager",
+   "runtime-scheduler"
+  ],
+  "group": "Runtime scheduler (placement)",
+  "default": "set by the control plane",
+  "description": "Injected into spawned workloads, not an operator setting.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime.go:1949"
+ },
+ {
+  "name": "PAL_AGENT_NAME",
+  "services": [
+   "imessage-bridge",
+   "sdk-python",
+   "surface-gateway",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "set at spawn",
+  "description": "Agent name of the running workload.",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runner.py:7"
+ },
+ {
+  "name": "PAL_AGENT_PAUSE_MIN",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:545"
+ },
+ {
+  "name": "PAL_AGENT_VERSION",
+  "services": [
+   "sdk-python"
+  ],
+  "group": "SDKs and CLI",
+  "default": "set at spawn",
+  "description": "Agent version of the running workload.",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runtime.py:50"
+ },
+ {
+  "name": "PAL_AGENT_VERSION_ID",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Service: harness",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:118"
+ },
+ {
+  "name": "PAL_ALLOW_FULL_COPY_FORK",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:2502"
+ },
+ {
+  "name": "PAL_ALLOW_RUNC_STANDARD",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "off",
+  "description": "`1`/`true`/`yes`/`on` lets the `standard` class run on plain runc (admin override).",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:81"
+ },
+ {
+  "name": "PAL_ALLOW_SECRET_STUB",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "off",
+  "description": "`1`: read secrets from the harness's own env instead of the manager. Dev only; never in production.",
+  "prod": false,
+  "source": "services/harness/src/manager_client.rs:10"
+ },
+ {
+  "name": "PAL_API_KEY",
+  "services": [
+   "cli",
+   "sdk-go",
+   "sdk-python",
+   "web"
+  ],
+  "group": "Dashboard (Next.js)",
+  "default": "unset",
+  "description": "Appears only in the generated \"view code\" samples; the dashboard itself does not read it.",
+  "prod": false,
+  "source": "apps/web/components/view-code.tsx:156"
+ },
+ {
+  "name": "PAL_API_PORT",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/tailscale-serve.sh:22"
+ },
+ {
+  "name": "PAL_API_TOKEN",
+  "services": [
+   "bridge-core",
+   "cli",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/auth.ts:17"
+ },
+ {
+  "name": "PAL_API_URL",
+  "services": [
+   "bridge-core",
+   "cli",
+   "scripts",
+   "sdk-go",
+   "sdk-python",
+   "web"
+  ],
+  "group": "Dashboard (Next.js)",
+  "default": "`http://localhost:8080`",
+  "description": "Control-plane URL for server-side calls (checked before `NEXT_PUBLIC_API_URL`).",
+  "prod": false,
+  "source": "apps/web/lib/api.ts:479"
+ },
+ {
+  "name": "PAL_APP_DB_PASSWORD",
+  "services": [
+   "cli",
+   "control-plane",
+   "helm",
+   "workflow-engine"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Password of the non-superuser `lantern_app` role used when RLS is enforced. Setting it turns RLS on in production; if it is missing, startup is fatal unless `PAL_RLS_ENFORCE=0`. **Required in prod.**",
+  "prod": true,
+  "source": "infra/helm/pal/values-prod.yaml:7"
+ },
+ {
+  "name": "PAL_APPT_INGEST",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:4750"
+ },
+ {
+  "name": "PAL_ARTICLE_READ",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:8132"
+ },
+ {
+  "name": "PAL_ATTENTION_DEDUP_MIN",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/attention.ts:57"
+ },
+ {
+  "name": "PAL_AUDIT_RETENTION_DAYS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`365`",
+  "description": "Retention for audit events.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/retention_janitor.go:42"
+ },
+ {
+  "name": "PAL_AUTHZ_ENFORCE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "on in production, off in dev",
+  "description": "Scope enforcement is on by default in production (`PAL_ENV=production|staging`) and off in dev. `=0` opts out (logged as a warning); `=1` forces it on in dev. A key missing the endpoint's scope then gets 403.",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/env.go:33"
+ },
+ {
+  "name": "PAL_BENCH_IMAGE",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/bench/runtime-latency.sh:43"
+ },
+ {
+  "name": "PAL_BENCH_TENANT",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/bench/runtime-latency.sh:44"
+ },
+ {
+  "name": "PAL_BRIDGE_AGENT_TIMEOUT_MS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/agent.ts:29"
+ },
+ {
+  "name": "PAL_BRIDGE_BIND",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/index.ts:64"
+ },
+ {
+  "name": "PAL_BRIDGE_EMAIL",
+  "services": [
+   "bridge-core",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/auth.ts:44"
+ },
+ {
+  "name": "PAL_BRIDGE_HEARTBEAT_TOKEN",
+  "services": [
+   "control-plane",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Shared token for `POST /v1/surfaces/whatsapp/heartbeat`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/surfaces.go:390"
+ },
+ {
+  "name": "PAL_BRIDGE_ORIGIN",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/index.ts:69"
+ },
+ {
+  "name": "PAL_BRIDGE_PASSWORD",
+  "services": [
+   "bridge-core",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/auth.ts:45"
+ },
+ {
+  "name": "PAL_BRIDGE_RETRY_ATTEMPTS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "3",
+  "description": "Retries for 429/503/network errors to the control plane.",
+  "prod": false,
+  "source": "packages/bridge-core/src/agent.ts:33"
+ },
+ {
+  "name": "PAL_BRIDGE_RETRY_BASE_MS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "500",
+  "description": "Backoff base step.",
+  "prod": false,
+  "source": "packages/bridge-core/src/agent.ts:34"
+ },
+ {
+  "name": "PAL_BRIDGE_RETRY_MAX_MS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "4000",
+  "description": "Backoff cap (full jitter).",
+  "prod": false,
+  "source": "packages/bridge-core/src/agent.ts:35"
+ },
+ {
+  "name": "PAL_BRIDGE_SEND_DEDUP_MS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:780"
+ },
+ {
+  "name": "PAL_BRIDGE_SEND_MAX_ENTRIES",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:787"
+ },
+ {
+  "name": "PAL_BRIDGE_TOKEN",
+  "services": [
+   "control-plane",
+   "imessage-bridge",
+   "web",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Token the WhatsApp bridge validates.",
+  "prod": false,
+  "source": "apps/web/app/api/bridge/[channel]/[...path]/route.ts:35"
+ },
+ {
+  "name": "PAL_BRIDGE_URL",
+  "services": [
+   "bridge-core",
+   "control-plane",
+   "scripts",
+   "web"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "WhatsApp bridge base URL.",
+  "prod": false,
+  "source": "apps/web/app/api/bridge/[channel]/[...path]/route.ts:31"
+ },
+ {
+  "name": "PAL_BROWSER_SKILL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "`on`/`1`/`true` enables browser-as-skill.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/browser.go:38"
+ },
+ {
+  "name": "PAL_BUILD_SHA",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/build-info.ts:42"
+ },
+ {
+  "name": "PAL_BUNDLE_URI",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/docker.rs:109"
+ },
+ {
+  "name": "PAL_CALL_COMMITMENTS_FILE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/call-commitments.ts:48"
+ },
+ {
+  "name": "PAL_CC_MEASUREMENT_PATH",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "File holding the launch measurement.",
+  "prod": false,
+  "source": "services/harness/src/cc_attest.rs:69"
+ },
+ {
+  "name": "PAL_CC_TECH",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Confidential-computing technology to report.",
+  "prod": false,
+  "source": "services/harness/src/cc_attest.rs:47"
+ },
+ {
+  "name": "PAL_CLAIM_VERIFY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "on",
+  "description": "Claim-verify guard on completed-action claims. `0`/`off`/`false` disables; read on every call.",
+  "prod": false,
+  "source": "services/control-plane/internal/grounding/grounding.go:21"
+ },
+ {
+  "name": "PAL_CLAUDE_BINARY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "found on PATH",
+  "description": "Explicit path to that binary.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:371"
+ },
+ {
+  "name": "PAL_COMMITMENT_LEDGER",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0` disables closing open commitments from verbatim evidence.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:3054"
+ },
+ {
+  "name": "PAL_COMMUTE",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1126"
+ },
+ {
+  "name": "PAL_COMPLEXITY_ROUTING",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "on",
+  "description": "Complexity-based model routing. `0`/`off`/`false` disables.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/intelligence.go:178"
+ },
+ {
+  "name": "PAL_CONCIERGE",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1106"
+ },
+ {
+  "name": "PAL_CONFIDENCE_CALIBRATE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "Lowers the score by the step type's realized regret rate.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/confidence_calibration.go:190"
+ },
+ {
+  "name": "PAL_CONFIDENCE_ESTIMATOR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`verbalization`",
+  "description": "`self-consistency` (also `self_consistency`, `sampling`) polls the model; anything else uses the heuristic.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/rest.go:2999"
+ },
+ {
+  "name": "PAL_CONFIDENCE_GATE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "`1`/`true`/`on` diverts low-confidence tool and connector steps to approval. See [Human-in-the-loop](/docs/pal/human-in-the-loop/).",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/rest.go:2981"
+ },
+ {
+  "name": "PAL_CONFIDENCE_GATE_THRESHOLD",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`0.75`",
+  "description": "Minimum score in [0,1] for auto-execution.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/rest.go:2988"
+ },
+ {
+  "name": "PAL_CONFIDENCE_SAMPLES",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`5 (1 to 9)`",
+  "description": "Independent judgments per self-consistency estimate; each is one LLM call.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/rest.go:3001"
+ },
+ {
+  "name": "PAL_CONFIDENTIAL",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Marks a confidential-computing VM for attestation.",
+  "prod": false,
+  "source": "services/harness/src/cc_attest.rs:31"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_ENDPOINTS",
+  "services": [
+   "data-plane-agent"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Ordered, comma-separated control-plane endpoints, primary region first; the data-plane agent fails over down the list.",
+  "prod": false,
+  "source": "services/data-plane-agent/cmd/agent/main.go:160"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_FAILBACK_INTERVAL",
+  "services": [
+   "data-plane-agent"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`60s`",
+  "description": "How often the data-plane agent probes the primary endpoint to fail back after a failover.",
+  "prod": false,
+  "source": "services/data-plane-agent/cmd/agent/main.go:161"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_TLS_CA",
+  "services": [
+   "gateway"
+  ],
+  "group": "Service: gateway",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/gateway/src/config.rs:15"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_TLS_CERT",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "PEM path for the gRPC server certificate. Both cert and key, or neither; one alone is always fatal. Prod requires them. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/env.go:66"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_TLS_KEY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "PEM path for the matching key. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/env.go:67"
+ },
+ {
+  "name": "PAL_CONTROL_PLANE_URL",
+  "services": [
+   "control-plane",
+   "gateway",
+   "imessage-bridge",
+   "runtime-manager",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Control plane's own public URL (errand callbacks); also what the manager uses for the secret relay.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/errand.go:164"
+ },
+ {
+  "name": "PAL_CORS_ORIGINS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "`http://localhost:3001`",
+  "description": "Comma-separated allowed browser origins. Public endpoints (receipt verify, `/.well-known/*`) stay open.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/env.go:118"
+ },
+ {
+  "name": "PAL_CREDENTIAL_KEY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset (plaintext in dev)",
+  "description": "32-byte AES-256-GCM key that encrypts provider keys and connector tokens at rest. Fatal in prod when unset or malformed. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/cmd/reencrypt-credentials/main.go:63"
+ },
+ {
+  "name": "PAL_CROSS_APP",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "`on`/`1`/`true` enables cross-app workflows.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/cross_app.go:32"
+ },
+ {
+  "name": "PAL_DASHBOARD_PORT",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/tailscale-serve.sh:23"
+ },
+ {
+  "name": "PAL_DASHBOARD_URL",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/offline-monitor.ts:36"
+ },
+ {
+  "name": "PAL_DECLARED_SECRETS",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "Secret refs the spec declared.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:174"
+ },
+ {
+  "name": "PAL_DEFAULT_CALENDAR",
+  "services": [
+   "bridge-core",
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "Home / Calendar / Personal / Work",
+  "description": "Calendar used when a booking names none.",
+  "prod": false,
+  "source": "packages/bridge-core/src/mac-actions.ts:98"
+ },
+ {
+  "name": "PAL_DEFAULT_MANAGER_ADDR",
+  "services": [
+   "cli",
+   "control-plane",
+   "runtime-scheduler",
+   "scripts"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Manager address for the log-stream proxy and the health sweep.",
+  "prod": true,
+  "source": "packages/cli/internal/cli/doctor_runtime.go:37"
+ },
+ {
+  "name": "PAL_DEFAULT_TENANT_ID",
+  "services": [
+   "bridge-core",
+   "control-plane",
+   "imessage-bridge",
+   "scripts"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "`00000000-0000-0000-0000-000000000001`",
+  "description": "Tenant that single-owner background jobs act for.",
+  "prod": false,
+  "source": "packages/bridge-core/src/personal.ts:79"
+ },
+ {
+  "name": "PAL_DEFAULT_TIMEZONE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "UTC",
+  "description": "IANA zone for cron matching and the budget day boundary when a schedule sets none.",
+  "prod": false,
+  "source": "services/control-plane/internal/scheduler/tz.go:23"
+ },
+ {
+  "name": "PAL_DELIVERY_WATCH_MS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:5518"
+ },
+ {
+  "name": "PAL_DIALER",
+  "services": [
+   "runtime-scheduler"
+  ],
+  "group": "Runtime scheduler (placement)",
+  "default": "unset",
+  "description": "`stub` forces the stub dialer. Fatal in prod.",
+  "prod": false,
+  "source": "services/runtime-scheduler/cmd/scheduler/main.go:144"
+ },
+ {
+  "name": "PAL_DIGEST_HOUR",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/daily-digest.ts:73"
+ },
+ {
+  "name": "PAL_DIGEST_NARRATIVE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/digest-compose.ts:216"
+ },
+ {
+  "name": "PAL_DISLIKE_FILE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/dislike-memory.ts:56"
+ },
+ {
+  "name": "PAL_DISLIKE_LLM_CLUSTER",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0` disables the LLM clustering pass of the thumbs-down learning loop (the deterministic pass always runs).",
+  "prod": false,
+  "source": "packages/bridge-core/src/dislike-consolidator.ts:148"
+ },
+ {
+  "name": "PAL_DL_SIGNING_SECRET",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Signing secret for short-lived document download links.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/dl.go:42"
+ },
+ {
+  "name": "PAL_DOC_INGEST",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1179"
+ },
+ {
+  "name": "PAL_DP_MAX_STREAMS_PER_TENANT",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`10`",
+  "description": "Concurrent data-plane run streams per tenant.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/dataplane.go:63"
+ },
+ {
+  "name": "PAL_DRAFT_APPROVALS",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:608"
+ },
+ {
+  "name": "PAL_DRAFT_CONFIRM",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "off",
+  "description": "iMessage: `on` holds LOW-confidence replies for owner approval.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1099"
+ },
+ {
+  "name": "PAL_DRAFT_HIGH_STAKES",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "off",
+  "description": "WhatsApp: `on` holds LOW-confidence replies for owner approval.",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:1844"
+ },
+ {
+  "name": "PAL_DRAIN_GRACE_SECS",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`25`",
+  "description": "Grace period on SIGTERM drain.",
+  "prod": false,
+  "source": "services/harness/src/signals.rs:156"
+ },
+ {
+  "name": "PAL_DRAIN_TIMEOUT",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`30s`",
+  "description": "Graceful-shutdown drain window (Go duration).",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:988"
+ },
+ {
+  "name": "PAL_EGRESS_ALLOWED_PORTS",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`443`",
+  "description": "Comma list of ports the broker will dial.",
+  "prod": false,
+  "source": "services/harness/src/egress.rs:112"
+ },
+ {
+  "name": "PAL_EGRESS_BIND",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`127.0.0.1:3128`",
+  "description": "Listen address of the in-guest egress proxy.",
+  "prod": false,
+  "source": "services/harness/src/egress.rs:530"
+ },
+ {
+  "name": "PAL_EGRESS_CA_PEM",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Per-VM CA the broker uses to terminate TLS for injecting hosts.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:185"
+ },
+ {
+  "name": "PAL_EGRESS_FAIL_CLOSED",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "off in dev",
+  "description": "`1` refuses to boot without the iptables REDIRECT rule. Always on in prod; `0` is ignored there with a warning.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:995"
+ },
+ {
+  "name": "PAL_EGRESS_MODE",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`guest`",
+  "description": "`broker` (Firecracker only) gives VMs no NIC and enforces egress on the host over vsock. See [Egress and credentials](/docs/security/egress/).",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:182"
+ },
+ {
+  "name": "PAL_EGRESS_PLAIN_INJECT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "`1` permits credential injection over plain HTTP on port 80. Off by default.",
+  "prod": false,
+  "source": "services/runtime-manager/src/egress_broker.rs:75"
+ },
+ {
+  "name": "PAL_EGRESS_RULES",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "`[]`",
+  "description": "JSON `[{pattern, http_methods, rate_bps}]` declared egress.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:158"
+ },
+ {
+  "name": "PAL_EGRESS_VSOCK_PORT",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`3128`",
+  "description": "Broker-mode vsock port to the host broker.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:188"
+ },
+ {
+  "name": "PAL_EMBED_CONCURRENCY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`4 (1 to 32)`",
+  "description": "Parallel embedding calls.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/identity.go:73"
+ },
+ {
+  "name": "PAL_EMBED_MODEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`text-embedding-3-small`",
+  "description": "Embedding model for knowledge and memory.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/embed.go:40"
+ },
+ {
+  "name": "PAL_ENERGY",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1153"
+ },
+ {
+  "name": "PAL_ENV",
+  "services": [
+   "control-plane",
+   "gateway",
+   "harness",
+   "model-router",
+   "runtime-manager",
+   "runtime-scheduler",
+   "surface-gateway",
+   "workflow-engine"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset (dev)",
+  "description": "`prod`, `production` or `staging` turns on every production startup guard in this table. The Helm chart defaults it to `production`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/env.go:20"
+ },
+ {
+  "name": "PAL_ENV_FILE",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/bridge-setup.sh:444"
+ },
+ {
+  "name": "PAL_EPISODES_FILE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/episodic-memory.ts:80"
+ },
+ {
+  "name": "PAL_ERRAND",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "off",
+  "description": "Enables outbound errand calls.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/errand.go:197"
+ },
+ {
+  "name": "PAL_ERRAND_PUBLIC_URL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Public URL for errand webhooks.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/errand.go:163"
+ },
+ {
+  "name": "PAL_EVENT_SCOUT",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0` disables the weekly event scan (commands still work).",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:3083"
+ },
+ {
+  "name": "PAL_EVENT_SCOUT_AGENT",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "event-scout",
+  "description": "Registered agent name event-scout sessions run under.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:3148"
+ },
+ {
+  "name": "PAL_EVENT_SCOUT_AUDIENCE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "built-in default",
+  "description": "Audience the event scout curates for.",
+  "prod": false,
+  "source": "packages/bridge-core/src/event-scout.ts:81"
+ },
+ {
+  "name": "PAL_EVENT_SCOUT_LOCATION",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "built-in default",
+  "description": "Location the event scout searches around.",
+  "prod": false,
+  "source": "packages/bridge-core/src/event-scout.ts:78"
+ },
+ {
+  "name": "PAL_EVENT_SCOUT_WA",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "off",
+  "description": "`1` enables the scheduled event scan on WhatsApp too.",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:10582"
+ },
+ {
+  "name": "PAL_FENCE_EPOCH",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Positive-integer fencing epoch for failover; a stale region cannot write after a newer epoch is promoted. See `docs/runbooks/region-failover.md`.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
+ },
+ {
+  "name": "PAL_FOCUS",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1169"
+ },
+ {
+  "name": "PAL_FORK_CONCURRENCY",
+  "services": [
+   "runtime-scheduler"
+  ],
+  "group": "Runtime scheduler (placement)",
+  "default": "`16`",
+  "description": "Concurrent fork spawns.",
+  "prod": false,
+  "source": "services/runtime-scheduler/internal/handlers/lifecycle.go:60"
+ },
+ {
+  "name": "PAL_FREE_TIER_COST_USD_PER_DAY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`2.00`",
+  "description": "Tenant-wide LLM spend cap applied to new tenants.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/tenant_defaults.go:45"
+ },
+ {
+  "name": "PAL_FREE_TIER_MAX_VMS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`2`",
+  "description": "Concurrent sandbox VMs for new tenants.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/tenant_defaults.go:46"
+ },
+ {
+  "name": "PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`1.00`",
+  "description": "Sandbox spend cap for new tenants.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/tenant_defaults.go:47"
+ },
+ {
+  "name": "PAL_GMAIL_INGEST",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2308"
+ },
+ {
+  "name": "PAL_GMAIL_POLL_SEC",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2312"
+ },
+ {
+  "name": "PAL_GMAIL_POLL_STATE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/gmail-ingest.ts:61"
+ },
+ {
+  "name": "PAL_GRPC_ENDPOINT",
+  "services": [
+   "sdk-python"
+  ],
+  "group": "SDKs and CLI",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runtime.py:51"
+ },
+ {
+  "name": "PAL_GRPC_SERVICE_TOKEN",
+  "services": [
+   "cli",
+   "control-plane",
+   "data-plane-agent",
+   "gateway",
+   "imessage-bridge",
+   "model-router",
+   "runtime-manager",
+   "runtime-scheduler",
+   "scheduler",
+   "surface-gateway",
+   "whatsapp-bridge",
+   "workflow-engine"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Shared service token for the gRPC trust boundaries. Set the same value on the control plane, gateway, workflow engine, runtime scheduler, model router and runtime manager. Fatal in prod when unset; dev warns and allows unauthenticated calls. **Required in prod.**",
+  "prod": true,
+  "source": "packages/cli/internal/cli/runtime.go:628"
+ },
+ {
+  "name": "PAL_HAIKU_MODEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`claude-haiku-4-5-20251001`",
+  "description": "Concrete model behind the small tier.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:667"
+ },
+ {
+  "name": "PAL_HARNESS_EXEC_ADDR",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "`0.0.0.0:50056`",
+  "description": "Listen address of the one-shot exec server.",
+  "prod": false,
+  "source": "services/harness/src/exec.rs:7"
+ },
+ {
+  "name": "PAL_HARNESS_EXEC_PORT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`50056`",
+  "description": "Port of the harness exec channel.",
+  "prod": false,
+  "source": "services/runtime-manager/src/service.rs:123"
+ },
+ {
+  "name": "PAL_HARNESS_EXEC_TOKEN",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Token the Exec RPC requires. Must be set in prod and staging. **Required in prod.**",
+  "prod": true,
+  "source": "services/harness/src/bootenv.rs:76"
+ },
+ {
+  "name": "PAL_HARNESS_READY_TIMEOUT_MS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`5000`",
+  "description": "How long resume and fork wait for the harness.",
+  "prod": false,
+  "source": "services/runtime-manager/src/service.rs:105"
+ },
+ {
+  "name": "PAL_HEALTH",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1160"
+ },
+ {
+  "name": "PAL_HEALTH_SWEEP_INTERVAL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`60s`",
+  "description": "Peer-service health sweep period. `0` or `off` disables it.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/health_sweep.go:297"
+ },
+ {
+  "name": "PAL_HISTORY_REPLY",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:1334"
+ },
+ {
+  "name": "PAL_HOOK_BURST",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`10`",
+  "description": "Per-trigger burst.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/triggers.go:73"
+ },
+ {
+  "name": "PAL_HOOK_RATE_PER_MIN",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`60`",
+  "description": "Per-trigger rate limit on `POST /v1/hooks/{id}`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/triggers.go:72"
+ },
+ {
+  "name": "PAL_IMAGE_ALLOWED_REPOS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/config.rs:87"
+ },
+ {
+  "name": "PAL_IMESSAGE_AGENT_NAME",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1230"
+ },
+ {
+  "name": "PAL_IMESSAGE_AUTOSTART",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/index.ts:584"
+ },
+ {
+  "name": "PAL_IMESSAGE_BRIDGE_BIND",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/index.ts:81"
+ },
+ {
+  "name": "PAL_IMESSAGE_BRIDGE_ORIGIN",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/index.ts:84"
+ },
+ {
+  "name": "PAL_IMESSAGE_BRIDGE_PORT",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/index.ts:80"
+ },
+ {
+  "name": "PAL_IMESSAGE_BRIDGE_TOKEN",
+  "services": [
+   "control-plane",
+   "imessage-bridge",
+   "web",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Token the iMessage bridge validates (a different variable from the WhatsApp one).",
+  "prod": false,
+  "source": "apps/web/app/api/bridge/[channel]/[...path]/route.ts:26"
+ },
+ {
+  "name": "PAL_IMESSAGE_BRIDGE_URL",
+  "services": [
+   "bridge-core",
+   "control-plane",
+   "scripts",
+   "web",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "iMessage bridge base URL.",
+  "prod": false,
+  "source": "apps/web/app/api/bridge/[channel]/[...path]/route.ts:22"
+ },
+ {
+  "name": "PAL_IMESSAGE_OWNER_HANDLE",
+  "services": [
+   "imessage-bridge",
+   "scripts"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "unset",
+  "description": "Owner iMessage handle for dedicated-bot mode; unset falls back to self-chat detection.",
+  "prod": false,
+  "source": "scripts/bridge-setup.sh:320"
+ },
+ {
+  "name": "PAL_IMMIGRATION_SENTINEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Service: control-plane",
+  "default": "off",
+  "description": "`on` enables the document-deadline sentinel, which derives deadlines from documents and mail (control plane).",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/immigration_sentinel.go:50"
+ },
+ {
+  "name": "PAL_INPUT",
+  "services": [
+   "runtime-manager",
+   "sdk-python"
+  ],
+  "group": "SDKs and CLI",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runner.py:7"
+ },
+ {
+  "name": "PAL_INTROSPECT_DRYRUN",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/introspect/run.sh:87"
+ },
+ {
+  "name": "PAL_INTROSPECT_MAX_SECONDS",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/introspect/run.sh:21"
+ },
+ {
+  "name": "PAL_INTROSPECT_MODEL",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/introspect/run.sh:15"
+ },
+ {
+  "name": "PAL_IPHONE_SIGNALS",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2563"
+ },
+ {
+  "name": "PAL_IPHONE_SIGNALS_SEC",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2569"
+ },
+ {
+  "name": "PAL_JARVIS_BRIEF_CHANNEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Channel for the brief.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/jarvis.go:548"
+ },
+ {
+  "name": "PAL_JARVIS_BRIEF_HOUR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset (brief off)",
+  "description": "Hour 0 to 23 for the morning brief push.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/jarvis.go:463"
+ },
+ {
+  "name": "PAL_JARVIS_STREAM",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7169"
+ },
+ {
+  "name": "PAL_JOURNAL_PATH",
+  "services": [
+   "sdk-python"
+  ],
+  "group": "SDKs and CLI",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runtime.py:52"
+ },
+ {
+  "name": "PAL_JOURNAL_RETENTION_DAYS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`90`",
+  "description": "Retention for `journal_events`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/retention_janitor.go:39"
+ },
+ {
+  "name": "PAL_KB_MIN_SCORE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`0.2`",
+  "description": "Cosine floor for a knowledge-base vector hit; below it the full-text fallback runs.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/knowledge.go:499"
+ },
+ {
+  "name": "PAL_KIOSK",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "Demo mode: anonymous throwaway workspaces. Refuses to start unless RLS and authz enforcement are on and `JWT_SECRET` is non-default.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:55"
+ },
+ {
+  "name": "PAL_KIOSK_ALLOW_PROD",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "Required to run kiosk mode under a production-like `PAL_ENV`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:71"
+ },
+ {
+  "name": "PAL_KIOSK_IP_PER_HOUR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`3`",
+  "description": "New workspaces per client IP per hour.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:116"
+ },
+ {
+  "name": "PAL_KIOSK_MAX_SESSIONS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`20`",
+  "description": "Concurrent kiosk workspaces.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:115"
+ },
+ {
+  "name": "PAL_KIOSK_SWEEP_SEC",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`60`",
+  "description": "Expiry sweep period in seconds.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:117"
+ },
+ {
+  "name": "PAL_KIOSK_TTL_MIN",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`30`",
+  "description": "Workspace lifetime in minutes.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:114"
+ },
+ {
+  "name": "PAL_LIFE_EVENT_AUTOACT",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:4844"
+ },
+ {
+  "name": "PAL_LIFE_EVENTS",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:4757"
+ },
+ {
+  "name": "PAL_LIFE_EVENTS_ACTED",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/life-events-store.ts:89"
+ },
+ {
+  "name": "PAL_LIFE_EVENTS_AUTOACT_STATE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/life-events-store.ts:148"
+ },
+ {
+  "name": "PAL_LIFE_EVENTS_PREFS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/life-events-store.ts:19"
+ },
+ {
+  "name": "PAL_LIVE_WATCH",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0`/`off` disables live watches (follow-ups on a flight, game or outage a contact mentioned).",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1048"
+ },
+ {
+  "name": "PAL_LLM_BASEURL_ANTHROPIC",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "Same, for Anthropic.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:82"
+ },
+ {
+  "name": "PAL_LLM_BASEURL_OPENAI",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "Points OpenAI calls at a fixture or proxy base URL (used by demo mode and the replay server).",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/kiosk.go:82"
+ },
+ {
+  "name": "PAL_LLM_MAX_TURNS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`12 (cap 40)`",
+  "description": "Tool-loop turn limit per completion.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:72"
+ },
+ {
+  "name": "PAL_MAC_USAGE",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "off",
+  "description": "`on` enables the owner-only Mac app-usage signal (summaries only, fails closed).",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2381"
+ },
+ {
+  "name": "PAL_MAC_USAGE_SEC",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "1800",
+  "description": "Mac app-usage refresh interval in seconds (min 60).",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2387"
+ },
+ {
+  "name": "PAL_MAIL_FROM",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`Lantern <no-reply@localhost>`",
+  "description": "From address for `smtp` and `http`.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:58"
+ },
+ {
+  "name": "PAL_MAIL_HTTP_TOKEN",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Bearer token for the `http` driver.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:81"
+ },
+ {
+  "name": "PAL_MAIL_HTTP_URL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Endpoint for the `http` driver.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:77"
+ },
+ {
+  "name": "PAL_MAIL_INDEX",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0`/`off` disables the owner-only search over the local Apple Mail index.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/mail-reader.ts:44"
+ },
+ {
+  "name": "PAL_MAILER",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`log`",
+  "description": "`log`, `smtp` or `http`.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:51"
+ },
+ {
+  "name": "PAL_MANAGER_ADDR",
+  "services": [
+   "cli",
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "from spawn.json",
+  "description": "Manager address; in broker mode the manager's name, dialed over vsock.",
+  "prod": false,
+  "source": "packages/cli/internal/cli/runtime.go:545"
+ },
+ {
+  "name": "PAL_MANAGER_SERVER_NAME",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`manager.lantern.internal`",
+  "description": "TLS server name used to verify the manager.",
+  "prod": false,
+  "source": "services/harness/src/tls.rs:155"
+ },
+ {
+  "name": "PAL_MANAGER_TLS_CA",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "CA that harness and caller client certs must chain to. Fail-closed in prod, plaintext with a warning in dev. **Required in prod.**",
+  "prod": true,
+  "source": "services/harness/src/bootenv.rs:649"
+ },
+ {
+  "name": "PAL_MANAGER_TLS_CERT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Manager server certificate (PEM). **Required in prod.**",
+  "prod": true,
+  "source": "services/runtime-manager/src/tls.rs:14"
+ },
+ {
+  "name": "PAL_MANAGER_TLS_KEY",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Manager server key (PEM). **Required in prod.**",
+  "prod": true,
+  "source": "services/runtime-manager/src/tls.rs:15"
+ },
+ {
+  "name": "PAL_MANAGER_VSOCK_PORT",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Broker mode: vsock port of the control channel.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:191"
+ },
+ {
+  "name": "PAL_MAX_FORK_COUNT",
+  "services": [
+   "control-plane",
+   "runtime-scheduler"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`100 (ceiling 1000)`",
+  "description": "Per-call cap on `POST /v1/runtime/vms/{id}/fork`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime_lifecycle.go:44"
+ },
+ {
+  "name": "PAL_MAX_RESTARTS",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`5`",
+  "description": "Workload restart limit.",
+  "prod": false,
+  "source": "services/harness/src/supervisor.rs:235"
+ },
+ {
+  "name": "PAL_MEASUREMENT_GATE",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:3213"
+ },
+ {
+  "name": "PAL_MEMORY_DISTILL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "off",
+  "description": "`1`/`true`/`on` enables LLM memory distillation.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/memory_distill.go:49"
+ },
+ {
+  "name": "PAL_MEMORY_DISTILL_INTERVAL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "`6h (min 1m)`",
+  "description": "Distillation period.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/memory_distill.go:107"
+ },
+ {
+  "name": "PAL_MEMORY_INGEST",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "on",
+  "description": "Background memory ingest. `off` disables.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/memory_ingest.go:57"
+ },
+ {
+  "name": "PAL_MEMORY_INGEST_INTERVAL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "`15m (min 1m)`",
+  "description": "Ingest period.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/memory_ingest.go:41"
+ },
+ {
+  "name": "PAL_METRICS_ADDR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`:9464`",
+  "description": "Separate Prometheus `/metrics` listener. Unauthenticated and labelled with agent names, so scrape it from Prometheus only, never through ingress.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:417"
+ },
+ {
+  "name": "PAL_MODEL_ROUTER_ADDR",
+  "services": [
+   "control-plane",
+   "workflow-engine"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Model router address; also a health-sweep target.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/health_sweep.go:161"
+ },
+ {
+  "name": "PAL_MULTI_STEP_PLANNER",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "on",
+  "description": "Multi-step planner. `0`/`off`/`false` disables.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/intelligence.go:247"
+ },
+ {
+  "name": "PAL_NATURAL_CHAT_MODEL",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7207"
+ },
+ {
+  "name": "PAL_NEWS_DIGEST_HOUR",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1965"
+ },
+ {
+  "name": "PAL_NEWS_PROACTIVE",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1134"
+ },
+ {
+  "name": "PAL_NO_PROXY",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "`127.0.0.1,localhost,::1,169.254.169.254`",
+  "description": "Overrides the injected `NO_PROXY`.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:1042"
+ },
+ {
+  "name": "PAL_NODE_LABEL_GVISOR",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Node label that marks gVisor-capable nodes.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:86"
+ },
+ {
+  "name": "PAL_NODE_LABEL_KATA",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Node label that marks Kata-capable nodes.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:90"
+ },
+ {
+  "name": "PAL_NODE_MEMORY_BYTES",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "detected",
+  "description": "Override the advertised memory in bytes. Default: detected, else 8 GiB with a warning.",
+  "prod": false,
+  "source": "services/runtime-manager/src/scheduler_heartbeat.rs:102"
+ },
+ {
+  "name": "PAL_NODE_VCPU_MILLIS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "detected",
+  "description": "Override the advertised CPU capacity in millicores. Default: detected parallelism x 1000.",
+  "prod": false,
+  "source": "services/runtime-manager/src/scheduler_heartbeat.rs:92"
+ },
+ {
+  "name": "PAL_NONENGLISH_DRAFT",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:7664"
+ },
+ {
+  "name": "PAL_NUDGE_VOICE",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:9286"
+ },
+ {
+  "name": "PAL_OCR_PYTHON",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1279"
+ },
+ {
+  "name": "PAL_OCR_SCRIPT",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1277"
+ },
+ {
+  "name": "PAL_OFFLINE_ALERT_AFTER_SEC",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/offline-monitor.ts:33"
+ },
+ {
+  "name": "PAL_OPENAI_API_KEY",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/media.ts:169"
+ },
+ {
+  "name": "PAL_OPUS_MODEL",
+  "services": [
+   "control-plane",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`claude-opus-4-8`",
+  "description": "Concrete model behind the large tier.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:665"
+ },
+ {
+  "name": "PAL_OTEL_ENABLED",
+  "services": [
+   "control-plane",
+   "gateway",
+   "model-router",
+   "runtime-manager"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "unset",
+  "description": "`1` enables tracing (with an OTLP endpoint).",
+  "prod": false,
+  "source": "services/control-plane/internal/telemetry/tracer.go:31"
+ },
+ {
+  "name": "PAL_OTLP_SOCKET",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "Unix socket for workload OTLP.",
+  "prod": false,
+  "source": "services/harness/src/otel.rs:28"
+ },
+ {
+  "name": "PAL_OWNER_CHAT_NL",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:7341"
+ },
+ {
+  "name": "PAL_OWNER_EMAIL",
+  "services": [
+   "bridge-core",
+   "control-plane",
+   "imessage-bridge",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Owner email: brief fallback and memory-ingest identity.",
+  "prod": false,
+  "source": "packages/bridge-core/src/email-mirror.ts:38"
+ },
+ {
+  "name": "PAL_OWNER_NAME",
+  "services": [
+   "bridge-core",
+   "control-plane",
+   "imessage-bridge",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Owner first name for briefs and calls.",
+  "prod": false,
+  "source": "packages/bridge-core/src/outbound-call.ts:314"
+ },
+ {
+  "name": "PAL_OWNER_PHONE",
+  "services": [
+   "control-plane",
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Owner number for the morning brief by SMS.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/jarvis.go:582"
+ },
+ {
+  "name": "PAL_OWNER_PROFILE",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "~/.lantern/owner-profile.md",
+  "description": "Owner profile markdown (facts, relationships, style lessons), hot-reloaded.",
+  "prod": false,
+  "source": "packages/bridge-core/src/owner-profile.ts:20"
+ },
+ {
+  "name": "PAL_OWNER_TELEGRAM_BOT_TOKEN",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7570"
+ },
+ {
+  "name": "PAL_OWNER_TELEGRAM_CHAT_ID",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7571"
+ },
+ {
+  "name": "PAL_OWNER_TIMEZONE",
+  "services": [
+   "bridge-core",
+   "imessage-bridge",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "process tz",
+  "description": "IANA timezone for quiet hours, digests and calendar lookups.",
+  "prod": false,
+  "source": "packages/bridge-core/src/calendar.ts:68"
+ },
+ {
+  "name": "PAL_OWNER_VERIFY_PIN",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "PIN for the owner's Twilio line; unset authorizes on caller ID alone (spoofable).",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/sms.go:121"
+ },
+ {
+  "name": "PAL_OWNER_VERIFY_TTL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "`12h`",
+  "description": "How long a PIN verification lasts.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/sms.go:110"
+ },
+ {
+  "name": "PAL_PAUSE_WARN",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/__tests__/helpers/enable-pause-warn.ts:5"
+ },
+ {
+  "name": "PAL_PERSONAL_DOCS_BRIDGE_URL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Overrides the bridge URL for the personal-docs tool.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/personal_docs_tool.go:384"
+ },
+ {
+  "name": "PAL_PERSONAL_DOCS_MAX_CHARS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/personal-docs.ts:97"
+ },
+ {
+  "name": "PAL_PERSONAL_DOCS_MAX_RESULTS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/personal-docs.ts:96"
+ },
+ {
+  "name": "PAL_PERSONAL_DOCS_OCR_MAX_PAGES",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "3",
+  "description": "Max PDF pages rendered and OCR-ed per file.",
+  "prod": false,
+  "source": "packages/bridge-core/src/personal-docs.ts:798"
+ },
+ {
+  "name": "PAL_PERSONAL_DOCS_ROOTS",
+  "services": [
+   "bridge-core",
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "~/Documents:~/Desktop:~/Downloads:iCloud Drive",
+  "description": "Colon-separated roots the personal-docs search may read. Everything else is blocked.",
+  "prod": false,
+  "source": "packages/bridge-core/src/doc-ingest.ts:243"
+ },
+ {
+  "name": "PAL_PG_MAX_CONN_IDLE_TIME",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`30m`",
+  "description": "Max connection idle time.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:1385"
+ },
+ {
+  "name": "PAL_PG_MAX_CONN_LIFETIME",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`1h`",
+  "description": "Max connection lifetime.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:1384"
+ },
+ {
+  "name": "PAL_PG_MAX_CONNS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`20`",
+  "description": "Postgres pool size.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:1383"
+ },
+ {
+  "name": "PAL_PROACTIVE_NUDGES",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0` disables anticipation nudges (pre-meeting, overdue reply, dates, commitments).",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1787"
+ },
+ {
+  "name": "PAL_PROACTIVE_RECALL",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:7969"
+ },
+ {
+  "name": "PAL_PUBLIC_BASE_URL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "Public URL override for Twilio callbacks.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/sms.go:658"
+ },
+ {
+  "name": "PAL_PUSHOVER_TOKEN",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:11545"
+ },
+ {
+  "name": "PAL_PUSHOVER_USER",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:11546"
+ },
+ {
+  "name": "PAL_QUIET_END",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "6",
+  "description": "Quiet hours end (24h); the queue replays with morning pacing.",
+  "prod": false,
+  "source": "packages/bridge-core/src/natural.ts:2303"
+ },
+ {
+  "name": "PAL_QUIET_QUEUE_MAX",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "200",
+  "description": "Max messages buffered overnight per bridge.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:848"
+ },
+ {
+  "name": "PAL_QUIET_REPLAY_GAP_CEIL_MS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:864"
+ },
+ {
+  "name": "PAL_QUIET_REPLAY_GAP_FLOOR_MS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:860"
+ },
+ {
+  "name": "PAL_QUIET_START",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "1",
+  "description": "Quiet hours start (24h). Inbound is queued, not answered.",
+  "prod": false,
+  "source": "packages/bridge-core/src/natural.ts:2302"
+ },
+ {
+  "name": "PAL_RCS_INBOUND",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "off",
+  "description": "`on` accepts inbound RCS.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/messaging.go:85"
+ },
+ {
+  "name": "PAL_READ_ONLY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "off",
+  "description": "`1`/`true`/`on` makes this region a read-only standby that rejects writes; `0`/`false`/`off` is writable. Anything else fails startup.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
+ },
+ {
+  "name": "PAL_REAPER_INTERVAL_SECS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`15`",
+  "description": "Orphan-VM reaper period (minimum 1).",
+  "prod": false,
+  "source": "services/runtime-manager/src/reaper.rs:51"
+ },
+ {
+  "name": "PAL_RECEIPT_ED25519_SEED",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Seed for the Ed25519 receipt key. Unset: receipts fall back to HMAC and cannot be verified offline by third parties.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/receipts.go:132"
+ },
+ {
+  "name": "PAL_RECEIPT_SECRET",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "dev default",
+  "description": "HMAC secret for run receipts and marketplace invocation signatures. Fatal in prod when unset. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/cmd/server/main.go:1072"
+ },
+ {
+  "name": "PAL_RECOVERY_INTERVAL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`30s`",
+  "description": "Crash-recovery sweep period.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/recovery.go:294"
+ },
+ {
+  "name": "PAL_REDIS_POOL_SIZE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`20`",
+  "description": "Redis pool size.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:124"
+ },
+ {
+  "name": "PAL_REFERENCE_MEASUREMENTS",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:3215"
+ },
+ {
+  "name": "PAL_REGION",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Region label for active-passive multi-region (lowercase `[a-z0-9-]`, 1-63 chars). A malformed value fails startup. ADR 0046.",
+  "prod": false,
+  "source": "services/control-plane/internal/region/region.go:51"
+ },
+ {
+  "name": "PAL_REPLY_MODEL_TIER",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:8113"
+ },
+ {
+  "name": "PAL_REQUIRE_REFLINK",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:2645"
+ },
+ {
+  "name": "PAL_RESUME",
+  "services": [
+   "control-plane",
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "Service: control-plane",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/recovery.go:407"
+ },
+ {
+  "name": "PAL_RLIMIT_AS_BYTES",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "unset (no cap)",
+  "description": "Address-space limit applied to the workload.",
+  "prod": false,
+  "source": "services/harness/src/init.rs:98"
+ },
+ {
+  "name": "PAL_RLS_ENFORCE",
+  "services": [
+   "cli",
+   "control-plane",
+   "workflow-engine"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "on in production when `PAL_APP_DB_PASSWORD` is set",
+  "description": "Row-level security is on in production whenever `PAL_APP_DB_PASSWORD` is set. Without that password the control plane refuses to start unless you set `PAL_RLS_ENFORCE=0`. `1` enforces it elsewhere through the `lantern_app` pool.",
+  "prod": true,
+  "source": "services/control-plane/cmd/server/main.go:1050"
+ },
+ {
+  "name": "PAL_ROUTE_STRATEGY",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`balanced`",
+  "description": "`balanced`, `cheap`, `quality` or `fast` for `model: auto`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:808"
+ },
+ {
+  "name": "PAL_RUN_DIR",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "`/run/lantern`",
+  "description": "Directory for sockets (`secrets.sock`).",
+  "prod": false,
+  "source": "services/harness/src/init.rs:10"
+ },
+ {
+  "name": "PAL_RUN_ID",
+  "services": [
+   "harness",
+   "runtime-manager",
+   "sdk-python",
+   "sdk-ts"
+  ],
+  "group": "SDKs and CLI",
+  "default": "set at spawn",
+  "description": "Run id of the running workload.",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runtime.py:47"
+ },
+ {
+  "name": "PAL_RUN_LEASE_TTL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`60s`",
+  "description": "Run lease length; renewed every third of it while a run executes.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/durable_replay.go:51"
+ },
+ {
+  "name": "PAL_RUNTIME",
+  "services": [
+   "sdk-python",
+   "sdk-ts"
+  ],
+  "group": "SDKs and CLI",
+  "default": "set by the platform",
+  "description": "`true` inside a running agent: enables the production sidecar in the SDK.",
+  "prod": false,
+  "source": "packages/sdk-python/pal/runtime/runtime.py:23"
+ },
+ {
+  "name": "PAL_RUNTIME_CLASS",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "RuntimeClass the pod runs under (attestation).",
+  "prod": false,
+  "source": "services/harness/src/cc_attest.rs:178"
+ },
+ {
+  "name": "PAL_RUNTIME_LOG_RETENTION_DAYS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`14`",
+  "description": "Retention for `runtime_vm_logs`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime_report.go:869"
+ },
+ {
+  "name": "PAL_RUNTIME_MANAGER_ADDR",
+  "services": [
+   "control-plane",
+   "workflow-engine"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Runtime manager, for exec, pause and fork calls. Unset: those routes are unavailable.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:323"
+ },
+ {
+  "name": "PAL_RUNTIME_MANAGER_TLS_CA",
+  "services": [
+   "control-plane",
+   "runtime-scheduler",
+   "workflow-engine"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "CA used to verify the manager. Prod requires mTLS to the manager; dev allows plaintext. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/runtime.go:242"
+ },
+ {
+  "name": "PAL_RUNTIME_MANAGER_TLS_CERT",
+  "services": [
+   "control-plane",
+   "runtime-scheduler",
+   "workflow-engine"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Client certificate (both cert and key, or neither). Prod requires it. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/runtime.go:243"
+ },
+ {
+  "name": "PAL_RUNTIME_MANAGER_TLS_KEY",
+  "services": [
+   "control-plane",
+   "runtime-scheduler",
+   "workflow-engine"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Client key. **Required in prod.**",
+  "prod": true,
+  "source": "services/control-plane/internal/handlers/runtime.go:244"
+ },
+ {
+  "name": "PAL_RUNTIME_RELAY_ALLOW_INSECURE",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "`1` allows a non-TLS relay URL (dev only).",
+  "prod": false,
+  "source": "services/runtime-manager/src/secret_resolver.rs:232"
+ },
+ {
+  "name": "PAL_RUNTIME_SECRET_TOKEN",
+  "services": [
+   "control-plane",
+   "runtime-manager"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Pre-shared token for the manager-to-control-plane secret relay. Unset: `POST /v1/runtime/secrets/resolve` returns 403.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime_secrets.go:93"
+ },
+ {
+  "name": "PAL_RUNTIME_TERMINAL_GRACE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`10m`",
+  "description": "How long after a VM turns terminal the control plane still accepts its late log and audit reports. `0` disables the window.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime_report.go:78"
+ },
+ {
+  "name": "PAL_RUNTIMECLASS_GVISOR",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Kubernetes RuntimeClass for gVisor. Unset: that class is refused (fail-closed).",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:68"
+ },
+ {
+  "name": "PAL_RUNTIMECLASS_KATA",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "RuntimeClass for Kata.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:71"
+ },
+ {
+  "name": "PAL_RUNTIMECLASS_KATA_CC",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "RuntimeClass for confidential Kata.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:76"
+ },
+ {
+  "name": "PAL_RUNTIMECLASS_WASM",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "RuntimeClass for Wasm pods.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/k8s.rs:73"
+ },
+ {
+  "name": "PAL_SCHEDULER_GRPC_ADDR",
+  "services": [
+   "cli",
+   "control-plane",
+   "scripts"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset (stub scheduler)",
+  "description": "Runtime scheduler, for example `localhost:50055`. Unset uses a stub that fabricates VM ids and spawns nothing, so prod refuses to start. **Required in prod.**",
+  "prod": true,
+  "source": "packages/cli/internal/cli/doctor_runtime.go:36"
+ },
+ {
+  "name": "PAL_SCREEN_OCR",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:91"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_BLOCK",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:95"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_END_HOUR",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:97"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_INTERVAL_MS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:92"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_MAX_CHARS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:98"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_RING",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:93"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_START_HOUR",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:96"
+ },
+ {
+  "name": "PAL_SCREEN_OCR_TTL_MS",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/screen-context.ts:94"
+ },
+ {
+  "name": "PAL_SECRET_RESOLVER",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/secret_resolver.rs:114"
+ },
+ {
+  "name": "PAL_SECRETS_SOCKET",
+  "services": [
+   "harness"
+  ],
+  "group": "Service: harness",
+  "default": "/run/lantern/secrets.sock",
+  "description": "Unix socket the workload asks for secrets on.",
+  "prod": false,
+  "source": "services/harness/src/secrets.rs:209"
+ },
+ {
+  "name": "PAL_SELFCHAT_MAX_REPLIES",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:747"
+ },
+ {
+  "name": "PAL_SELFCHAT_WINDOW_MS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:743"
+ },
+ {
+  "name": "PAL_SESSION_VM_IDLE_TTL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`30m`",
+  "description": "Idle time before a session's sandbox VM is reaped.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime.go:1279"
+ },
+ {
+  "name": "PAL_SHORTCUT_OUT",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/app-context/generate-app-open-signal.py:111"
+ },
+ {
+  "name": "PAL_SHORTCUT_PORT",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/serve-shortcuts.sh:47"
+ },
+ {
+  "name": "PAL_SHORTCUT_SRC",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/serve-shortcuts.sh:16"
+ },
+ {
+  "name": "PAL_SHORTCUT_WEB",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/serve-shortcuts.sh:15"
+ },
+ {
+  "name": "PAL_SIDE_EFFECT_RETENTION_DAYS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`30`",
+  "description": "Retention for `side_effect_receipts`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/durable_replay.go:279"
+ },
+ {
+  "name": "PAL_SIGNAL_TOKEN",
+  "services": [
+   "control-plane",
+   "scripts",
+   "web"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Shared secret for `/v1/signals` (header `x-lantern-signal-token`). Unset: the endpoint is 401.",
+  "prod": false,
+  "source": "apps/web/app/api/signals/route.ts:62"
+ },
+ {
+  "name": "PAL_SIGNAL_URL",
+  "services": [
+   "scripts"
+  ],
+  "group": "Scripts and benchmarks",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "scripts/iphone/app-context/generate-app-open-signal.py:28"
+ },
+ {
+  "name": "PAL_SIGNUP_INVITE_SECRET",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "HMAC key for invite codes. Required for `invite` mode.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/auth.go:156"
+ },
+ {
+  "name": "PAL_SIGNUP_MODE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "`closed` in prod, `open` in dev",
+  "description": "`open`, `invite` or `closed`. Any other value stops startup.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/auth_lifecycle.go:77"
+ },
+ {
+  "name": "PAL_SMTP_ADDR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "`host:port`; required for `smtp`.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:71"
+ },
+ {
+  "name": "PAL_SMTP_PASSWORD",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "SMTP password.",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:75"
+ },
+ {
+  "name": "PAL_SMTP_USER",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "SMTP user (PLAIN auth).",
+  "prod": false,
+  "source": "services/control-plane/internal/mailer/mailer.go:75"
+ },
+ {
+  "name": "PAL_SONNET_MODEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`claude-sonnet-4-6`",
+  "description": "Concrete model behind the mid tier.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/llm_proxy.go:666"
+ },
+ {
+  "name": "PAL_SPAWN_BURST",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`20`",
+  "description": "Per-tenant spawn burst.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/spawn_ratelimit.go:183"
+ },
+ {
+  "name": "PAL_SPAWN_RATE_PER_MIN",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`120`",
+  "description": "Per-tenant VM spawn rate limit.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/spawn_ratelimit.go:182"
+ },
+ {
+  "name": "PAL_SPOUSE_AGENT",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:1110"
+ },
+ {
+  "name": "PAL_STATE_DIR",
+  "services": [
+   "web"
+  ],
+  "group": "Service: web",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "apps/web/lib/legacy-compat.test.mts:35"
+ },
+ {
+  "name": "PAL_STEP_GOAL",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2152"
+ },
+ {
+  "name": "PAL_STUB_NOT_A_REAL_SECRET",
+  "services": [
+   "harness"
+  ],
+  "group": "Service: harness",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/harness/src/manager_client.rs:454"
+ },
+ {
+  "name": "PAL_SUPPRESS_SPAM",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:4778"
+ },
+ {
+  "name": "PAL_TENANT_ID",
+  "services": [
+   "bridge-core",
+   "cli",
+   "harness",
+   "imessage-bridge",
+   "runtime-manager",
+   "sdk-python",
+   "surface-gateway"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "set at spawn",
+  "description": "Tenant id of the running workload.",
+  "prod": false,
+  "source": "packages/bridge-core/src/personal.ts:78"
+ },
+ {
+  "name": "PAL_TLS_CERT",
+  "services": [
+   "gateway"
+  ],
+  "group": "Service: gateway",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/gateway/src/tls.rs:5"
+ },
+ {
+  "name": "PAL_TLS_KEY",
+  "services": [
+   "gateway"
+  ],
+  "group": "Service: gateway",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/gateway/src/tls.rs:5"
+ },
+ {
+  "name": "PAL_TOPIC_INDEX",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/social-graph.ts:72"
+ },
+ {
+  "name": "PAL_TRACE_PARENT",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "W3C trace parent for the spawn.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:100"
+ },
+ {
+  "name": "PAL_TRUSTED_PROXIES",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "empty",
+  "description": "CIDRs whose `X-Forwarded-For` is trusted for rate-limit keys.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/runtime_secrets.go:214"
+ },
+ {
+  "name": "PAL_TURNSTILE_SECRET",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: sign-up, mail, OAuth",
+  "default": "unset",
+  "description": "Cloudflare Turnstile secret. Setting it requires a captcha on every sign-up.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/auth_lifecycle.go:131"
+ },
+ {
+  "name": "PAL_TWILIO_NUMBER",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "from the Twilio connector",
+  "description": "SMS sending number override.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/errand.go:283"
+ },
+ {
+  "name": "PAL_TWILIO_WEBHOOK_AUTH",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "on",
+  "description": "`off` skips Twilio signature checks. Fatal in prod.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:1035"
+ },
+ {
+  "name": "PAL_USAGE_DAILY_RETENTION_DAYS",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "`400`",
+  "description": "Retention for `agent_usage_daily`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/retention_janitor.go:45"
+ },
+ {
+  "name": "PAL_USE_CLAUDE_CODE",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "`1` routes through a local `claude` binary. Fatal in prod.",
+  "prod": false,
+  "source": "services/control-plane/cmd/server/main.go:290"
+ },
+ {
+  "name": "PAL_USE_MODEL_ROUTER",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "off",
+  "description": "`1`/`true`/`on` sends plain completions through the model router; any router error falls back to the direct provider.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/health_sweep.go:163"
+ },
+ {
+  "name": "PAL_USE_REST",
+  "services": [
+   "cli"
+  ],
+  "group": "SDKs and CLI",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/cli/internal/cli/root.go:50"
+ },
+ {
+  "name": "PAL_VERIFY_SIGNATURES",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/config.rs:86"
+ },
+ {
+  "name": "PAL_VM_CERT_DIR",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Service: runtime-manager",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/runtime-manager/src/tls.rs:104"
+ },
+ {
+  "name": "PAL_VM_ID",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "This VM's id.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:170"
+ },
+ {
+  "name": "PAL_VM_SIGNING_CA_CERT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "falls back to the manager CA",
+  "description": "CA that signs per-VM certificates.",
+  "prod": false,
+  "source": "services/runtime-manager/src/tls.rs:99"
+ },
+ {
+  "name": "PAL_VM_SIGNING_CA_KEY",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "falls back to the manager key",
+  "description": "Its key.",
+  "prod": false,
+  "source": "services/runtime-manager/src/tls.rs:100"
+ },
+ {
+  "name": "PAL_VM_TLS_CERT",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "Per-VM client certificate path.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:626"
+ },
+ {
+  "name": "PAL_VM_TLS_KEY",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "set at spawn",
+  "description": "Per-VM client key path.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:648"
+ },
+ {
+  "name": "PAL_VOICE_CACHE_PUBLIC_URL",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:9418"
+ },
+ {
+  "name": "PAL_VOICE_CALLER_ID",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "Twilio DID",
+  "description": "Caller ID shown on outbound calls; must be a Twilio number or verified caller ID.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:9346"
+ },
+ {
+  "name": "PAL_VOICE_FLOOR",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0`/`off` disables the authorship floor that suppresses drafts that do not sound like the owner.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:694"
+ },
+ {
+  "name": "PAL_VOICE_LANG",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "packages/bridge-core/src/language.ts:393"
+ },
+ {
+  "name": "PAL_VOICE_OUT",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:561"
+ },
+ {
+  "name": "PAL_VOICE_OUT_VOICE",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:566"
+ },
+ {
+  "name": "PAL_VOICE_REASONING",
+  "services": [
+   "bridge-core"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "off",
+  "description": "`on` replaces the heuristic style profile with an LLM-reasoned owner-voice profile.",
+  "prod": false,
+  "source": "packages/bridge-core/src/voice-profile.ts:31"
+ },
+ {
+  "name": "PAL_VOICE_REFINE",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0`/`off` disables critique-refine of MEDIUM/LOW drafts against the owner's real messages.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:708"
+ },
+ {
+  "name": "PAL_VOICE_SMS_HEADSUP",
+  "services": [
+   "imessage-bridge",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "Texts a one-line heads-up before an outbound conference call.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:9348"
+ },
+ {
+  "name": "PAL_WA_HISTORY_BACKFILL",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:1350"
+ },
+ {
+  "name": "PAL_WA_HISTORY_FILE",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "bridge default",
+  "description": "Path of the WhatsApp history file the world model reads.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:3007"
+ },
+ {
+  "name": "PAL_WA_HISTORY_MAX_BYTES",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:1306"
+ },
+ {
+  "name": "PAL_WA_OWNER_JID",
+  "services": [
+   "imessage-bridge",
+   "scripts",
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "unset",
+  "description": "Owner WhatsApp JID (dedicated-bot mode); also scopes the self-chat slice of WhatsApp history.",
+  "prod": false,
+  "source": "scripts/bridge-setup.sh:304"
+ },
+ {
+  "name": "PAL_WA_READ_RECEIPTS",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:1491"
+ },
+ {
+  "name": "PAL_WA_REPLAY_STAGGER",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7899"
+ },
+ {
+  "name": "PAL_WA_REPLAY_STAGGER_MAX_MS",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7901"
+ },
+ {
+  "name": "PAL_WA_REPLAY_STAGGER_MIN_MS",
+  "services": [
+   "whatsapp-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "",
+  "description": "",
+  "prod": false,
+  "source": "services/whatsapp-bridge/src/session.ts:7900"
+ },
+ {
+  "name": "PAL_WEBSEARCH_MODEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`claude-sonnet-4-6`",
+  "description": "Anthropic model for the built-in `web_search` tool.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/web_search.go:35"
+ },
+ {
+  "name": "PAL_WEBSEARCH_OPENAI_MODEL",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: models, knowledge, flags",
+  "default": "`gpt-4o-mini-search-preview`",
+  "description": "OpenAI fallback model for `web_search`.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/web_search.go:46"
+ },
+ {
+  "name": "PAL_WHATSAPP_BRIDGE_URL",
+  "services": [
+   "control-plane",
+   "imessage-bridge"
+  ],
+  "group": "Control plane: personal-assistant and bridge integration",
+  "default": "unset",
+  "description": "WhatsApp bridge URL for the personal-docs tool.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/personal_docs_tool.go:403"
+ },
+ {
+  "name": "PAL_WORKFLOW_ENGINE_ADDR",
+  "services": [
+   "control-plane"
+  ],
+  "group": "Control plane: runtime, recovery, limits",
+  "default": "unset",
+  "description": "Workflow engine address, a health-sweep target.",
+  "prod": false,
+  "source": "services/control-plane/internal/handlers/health_sweep.go:173"
+ },
+ {
+  "name": "PAL_WORKLOAD_ARGV",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "from spawn.json",
+  "description": "Workload arguments.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:154"
+ },
+ {
+  "name": "PAL_WORKLOAD_CMD",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "from spawn.json",
+  "description": "Workload command line.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:155"
+ },
+ {
+  "name": "PAL_WORKLOAD_GID",
+  "services": [
+   "harness"
+  ],
+  "group": "In-VM harness",
+  "default": "uid",
+  "description": "Workload gid.",
+  "prod": false,
+  "source": "services/harness/src/bootenv.rs:164"
+ },
+ {
+  "name": "PAL_WORKLOAD_GID_DEFAULT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "same as the uid",
+  "description": "Workload gid.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:157"
+ },
+ {
+  "name": "PAL_WORKLOAD_UID",
+  "services": [
+   "harness",
+   "runtime-manager"
+  ],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Uid the workload, exec and shell children run as; also the only uid admitted to the secrets socket. In prod the harness refuses to start without it. **Required in prod.**",
+  "prod": true,
+  "source": "services/harness/src/bootenv.rs:108"
+ },
+ {
+  "name": "PAL_WORKLOAD_UID_DEFAULT",
+  "services": [
+   "runtime-manager"
+  ],
+  "group": "Runtime manager",
+  "default": "`1000`",
+  "description": "Workload uid written to `spawn.json`; a caller-supplied `PAL_WORKLOAD_UID` is dropped.",
+  "prod": false,
+  "source": "services/runtime-manager/src/backends/firecracker.rs:156"
+ },
+ {
+  "name": "PAL_WORKSPACE",
+  "services": [
+   "harness"
+  ],
+  "group": "Service: harness",
+  "default": "/workspace",
+  "description": "Root the in-VM file tools are confined to.",
+  "prod": false,
+  "source": "services/harness/src/supervisor.rs:113"
+ },
+ {
+  "name": "PAL_WORLD_MODEL",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "on",
+  "description": "`0` disables the present-tense self-model refresh from mail and calendar.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2969"
+ },
+ {
+  "name": "PAL_WORLD_MODEL_HOURS",
+  "services": [
+   "imessage-bridge"
+  ],
+  "group": "pal: chat bridges (iMessage, WhatsApp)",
+  "default": "6",
+  "description": "World-model refresh interval in hours.",
+  "prod": false,
+  "source": "services/imessage-bridge/src/session.ts:2970"
+ },
+ {
+  "name": "REDIS_URL",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`redis://localhost:6379/0`",
+  "description": "Redis for rate limits, pub/sub and queues.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "RUNTIME_BACKEND",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`k8s`",
+  "description": "Backend: `k8s`, `docker`, `firecracker`, `kata` or `wasm`.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "RUST_LOG",
+  "services": [],
+  "group": "In-VM harness",
+  "default": "unset",
+  "description": "Standard Rust log filter.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "S3_ACCESS_KEY",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "falls back to `AWS_ACCESS_KEY_ID`, then `lantern`",
+  "description": "Object-store access key.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "S3_BUCKET",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "`lantern-bundles-dev`",
+  "description": "Bucket name.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "S3_ENDPOINT",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "S3-compatible endpoint for agent bundles and attachments.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "S3_REGION",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "Signing region.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "S3_SECRET",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "falls back to `AWS_SECRET_ACCESS_KEY`, then `lanternsecret`",
+  "description": "Object-store secret. Set real values outside dev.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_NODE_TOKEN",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "unset",
+  "description": "Token that node heartbeats must present. Fatal in prod when unset; dev warns. **Required in prod.**",
+  "prod": true,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_TENANT_MAX_VMS",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`20`",
+  "description": "Default per-tenant concurrent VM cap.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_TOKEN",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Heartbeat token (the scheduler's `SCHEDULER_NODE_TOKEN`).",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_URL",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "unset",
+  "description": "Runtime scheduler address for node heartbeats.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_WEIGHT_COST",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`0.10`",
+  "description": "Placement score weight.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_WEIGHT_FAIR_SHARE",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`0.15`",
+  "description": "Placement score weight.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_WEIGHT_HEALTH",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`0.10`",
+  "description": "Placement score weight.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_WEIGHT_REGION",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`0.25`",
+  "description": "Placement score weight.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SCHEDULER_WEIGHT_WARM_POOL",
+  "services": [],
+  "group": "Runtime scheduler (placement)",
+  "default": "`0.40`",
+  "description": "Placement score weight.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SEED_DEV",
+  "services": [],
+  "group": "Control plane: listeners, stores, process",
+  "default": "unset",
+  "description": "`1`/`true`: `cmd/migrate` seeds the dev tenant and admin user.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SLACK_SIGNING_SECRET",
+  "services": [],
+  "group": "Control plane: auth, secrets, trust boundaries",
+  "default": "unset",
+  "description": "Verifies Slack slash commands. Unset in prod: unsigned commands are refused.",
+  "prod": false,
+  "source": ""
+ },
+ {
+  "name": "SNAPSHOT_DIR",
+  "services": [],
+  "group": "Runtime manager",
+  "default": "`/var/lib/lantern/snapshots`",
+  "description": "Local snapshot store root.",
+  "prod": false,
+  "source": ""
+ }
+]

@@ -2,12 +2,12 @@
 // fails loudly if any page scrolls horizontally (scrollWidth !== clientWidth)
 // or any diagram's labels render below 12px.
 // Needs a running server: `npm run build && npx astro preview --port 4329`
-// Usage: node scripts/shots.mjs <outdir> [base=http://localhost:4329/lantern/] [--only=name,name]
+// Usage: node scripts/shots.mjs <outdir> [base=http://localhost:4329/pal/] [--only=name,name]
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 
 const out = process.argv[2] ?? 'shots';
-const base = process.argv.find((a) => a.startsWith('http')) ?? 'http://localhost:4329/lantern/';
+const base = process.argv.find((a) => a.startsWith('http')) ?? 'http://localhost:4329/pal/';
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',');
 const fullPageMax = Number(process.env.SHOT_FULL ?? 1) !== 0;
 mkdirSync(out, { recursive: true });

@@ -38,7 +38,7 @@ func (s *RunService) logger() *zap.Logger {
 // CreateRun validates the request, inserts a run row with status=queued, and
 // returns the Run proto. Workflow engine dispatch is not implemented yet.
 //
-// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1
+// Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1
 // (lantern_app role, subject to the tenant_isolation_runs policy); otherwise
 // Pool (zero behaviour change). The WHERE tenant_id = $1 clause remains the
 // primary correctness guard; RLS is defence-in-depth.
@@ -53,7 +53,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 	}
 
 	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
-	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
@@ -156,7 +156,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 
 // GetRun queries a run by ID.
 //
-// Uses srv.TenantPool() (the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// Uses srv.TenantPool() (the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise the privileged pool — zero behaviour change).
 func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (*lanternv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -168,7 +168,7 @@ func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	// TenantPool: when LANTERN_RLS_ENFORCE=1 this is the lantern_app pool and RLS
+	// TenantPool: when PAL_RLS_ENFORCE=1 this is the lantern_app pool and RLS
 	// is enforced at the DB level. Otherwise it aliases Pool — no change.
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (
 
 // ListRuns returns a paginated list of runs, filtered by agent_name and status.
 //
-// Uses srv.TenantPool() (the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// Uses srv.TenantPool() (the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise the privileged pool — zero behaviour change).
 func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsRequest) (*lanternv1.ListRunsResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -204,7 +204,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 		pageSize = req.GetPageSize()
 	}
 
-	// TenantPool: when LANTERN_RLS_ENFORCE=1 this is the lantern_app pool and RLS
+	// TenantPool: when PAL_RLS_ENFORCE=1 this is the lantern_app pool and RLS
 	// is enforced at the DB level. Otherwise it aliases Pool — no change.
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
@@ -309,7 +309,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 
 // CancelRun sets a run's status to cancelled.
 //
-// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// Uses TenantPool() — the RLS-enforcing pool when PAL_RLS_ENFORCE=1;
 // otherwise Pool (zero behaviour change).
 func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequest) (*lanternv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -322,7 +322,7 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 	}
 
 	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
-	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	// PAL_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
 	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)

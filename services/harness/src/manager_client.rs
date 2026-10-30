@@ -70,7 +70,7 @@ pub struct ManagerClient {
     /// time and injected as `LANTERN_AGENT_INSTANCE_TOKEN`. Attached as
     /// `authorization: Bearer <token>` metadata on every `VendSecret` call
     /// so the control-plane relay can verify the caller's identity as an
-    /// additive layer on top of the shared `X-Lantern-Runtime-Token`.
+    /// additive layer on top of the shared `X-Pal-Runtime-Token`.
     /// `None` when the env var is absent (dev / older deployments) — in that
     /// case no `authorization` metadata is sent and the relay behaves as before.
     /// The token is never logged.
@@ -547,7 +547,7 @@ impl ManagerClient {
         // The manager's VendSecret handler reads this and forwards it to the
         // control-plane relay as `Authorization: Bearer <token>`, adding a
         // second layer of identity verification on top of the shared
-        // X-Lantern-Runtime-Token. Absent (older deployments / dev) → no
+        // X-Pal-Runtime-Token. Absent (older deployments / dev) → no
         // metadata attached; behavior is identical to before. Never logged.
         let mut tonic_req = tonic::Request::new(wire_req);
 

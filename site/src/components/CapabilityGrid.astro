@@ -1,0 +1,78 @@
+---
+// Card grid of capabilities, each with a live (CSS/SMIL) thumbnail of its diagram.
+import { Icon } from '@astrojs/starlight/components';
+import MiniFlow from './MiniFlow.astro';
+import { CAPABILITIES, type Capability } from '../data/capabilities';
+import { u } from '../data/site';
+
+interface Props { product?: 'pal' | 'rt'; featured?: boolean; groups?: boolean; limit?: number }
+const { product, featured, groups, limit } = Astro.props;
+let list: Capability[] = CAPABILITIES.filter((c) => (!product || c.product === product) && (!featured || c.featured));
+if (limit) list = list.slice(0, limit);
+const order = ['Every day', 'Trust', 'Voice', 'Memory', 'Knowledge', 'Build', 'Reliable', 'Safe', 'Operate'];
+const sections = groups
+  ? order.map((g) => [g, list.filter((c) => c.group === g)] as const).filter(([, l]) => l.length)
+  : [['', list] as const];
+const label: Record<string, string> = {
+  'Every day': 'Every day', Trust: 'Trust', Voice: 'Your voice', Memory: 'Memory', Knowledge: 'Knowledge',
+  Build: 'Build', Reliable: 'Make it reliable', Safe: 'Make it safe', Operate: 'Ship and operate',
+};
+---
+{sections.map(([g, items]) => (
+  <section class="capg not-content">
+    {g && <h3 class="capg-h">{label[g] ?? g}</h3>}
+    <ul class="capg-grid">
+      {items.map((c) => (
+        <li>
+          <a class={`cap p-${c.product}`} href={u(c.href)}>
+            <span class="cap-thumb" aria-hidden="true">
+              <MiniFlow def={c.def} seq={c.seq} brand={c.product} />
+            </span>
+            <span class="cap-body">
+              <span class="cap-top">
+                <span class="cap-ic"><Icon name={c.icon as any} size="1.05rem" /></span>
+                <span class="cap-prod">{c.product === 'pal' ? 'pal' : 'PAL Runtime'}</span>
+              </span>
+              <span class="cap-t">{c.title}</span>
+              <span class="cap-l">{c.line}</span>
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </section>
+))}
+
+<style>
+  .capg + .capg { margin-top: 2.25rem; }
+  .capg-h { font-family: var(--p-display); font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 0.9rem; color: var(--sl-color-white); }
+  .capg-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
+  .capg-grid > li { margin: 0; }
+  .cap { --a: var(--p-rt-1); --abg: var(--p-rt-bg); --aline: var(--p-rt-line); --at: var(--p-rt-text);
+    position: relative; display: flex; flex-direction: column; height: 100%; text-decoration: none; color: inherit;
+    border: 1px solid var(--sl-color-hairline-light); border-radius: 16px; overflow: hidden; background: var(--sl-color-bg-nav);
+    transition: transform 180ms var(--lx-ease), border-color 180ms, box-shadow 180ms; }
+  .cap.p-pal { --a: var(--p-pal-3); --abg: var(--p-pal-bg); --aline: var(--p-pal-line); --at: var(--p-pal-text); }
+  .cap::before { content: ''; position: absolute; inset: 0 0 auto; height: 3px; background: var(--p-rt-grad); opacity: 0.9; }
+  .cap.p-pal::before { background: var(--p-pal-grad); }
+  .cap:hover, .cap:focus-visible { border-color: var(--aline); box-shadow: 0 18px 40px -24px var(--a); transform: translateY(-2px); }
+  .cap:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+  .cap-thumb { display: block; aspect-ratio: 16 / 8; padding: 12px 14px 6px; background:
+    radial-gradient(80% 90% at 0% 0%, var(--abg), transparent 70%), var(--lx-bg); border-bottom: 1px solid var(--sl-color-hairline); }
+  .cap-body { display: grid; gap: 6px; padding: 14px 16px 16px; }
+  .cap-top { display: flex; align-items: center; gap: 8px; }
+  .cap-ic { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--at); background: var(--abg); border: 1px solid var(--aline); }
+  .cap-prod { font: 600 11px/1 var(--p-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--at); }
+  .cap-t { font-family: var(--p-display); font-weight: 650; font-size: 1.02rem; letter-spacing: -0.01em; color: var(--sl-color-white); }
+  .cap-l { font-size: 0.875rem; line-height: 1.5; color: var(--sl-color-gray-2); }
+  @media (max-width: 560px) {
+    .capg-grid { gap: 10px; }
+    .cap { flex-direction: row; align-items: stretch; }
+    .cap-thumb { flex: 0 0 34%; aspect-ratio: auto; padding: 10px 8px; border-bottom: 0; border-right: 1px solid var(--sl-color-hairline); display: grid; align-items: center; }
+    .cap-body { padding: 12px 14px; gap: 4px; }
+    .cap-ic { width: 24px; height: 24px; }
+    .cap-t { font-size: 0.98rem; }
+    .cap-l { font-size: 0.84rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .cap { transition: none; } .cap:hover { transform: none; } }
+</style>

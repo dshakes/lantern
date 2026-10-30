@@ -1,6 +1,6 @@
 # pal CLI
 
-The `pal` command-line tool for [PAL Runtime](https://github.com/dshakes/lantern) — the open-source runtime for production AI agents.
+The `pal` command-line tool for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents.
 
 `lantern` is the CLI's pre-rename name (ADR 0032). It still works: Homebrew installs a `lantern` symlink, and `go install ./cmd/lantern` builds the same CLI under the old name. Config lives in `$PAL_HOME`, else `~/.pal`, else an existing legacy `~/.lantern` (used in place, never moved).
 

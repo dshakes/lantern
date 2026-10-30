@@ -17,9 +17,9 @@ package handlers
 //
 // Env vars (all optional; server behaviour is unchanged when not set):
 //
-//	LANTERN_JOURNAL_RETENTION_DAYS        default 90
-//	LANTERN_AUDIT_RETENTION_DAYS          default 365
-//	LANTERN_USAGE_DAILY_RETENTION_DAYS    default 400
+//	PAL_JOURNAL_RETENTION_DAYS        default 90
+//	PAL_AUDIT_RETENTION_DAYS          default 365
+//	PAL_USAGE_DAILY_RETENTION_DAYS    default 400
 //
 // Sweep interval for all three: 1 hour (mirrors the side_effect_receipts janitor).
 

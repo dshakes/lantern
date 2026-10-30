@@ -17,6 +17,7 @@ pattern='(Getenv|LookupEnv)\("LANTERN_|env::var(_os)?\("LANTERN_|process\.env\.L
 allow=(
   ':!docs' ':!site' ':!*.md' ':!*.mdx'           # prose and published docs (rename PR 7)
   ':!packages/palenv'                            # Go compat helper
+  ':!scripts/cutover'                            # machine cutover tool: renames LANTERN_* keys on disk and fakes the old code in its sandbox
   ':!packages/pal-env-rs'                        # Rust compat helper
   ':!packages/bridge-core/src/env-compat.ts'     # TS compat helper
   ':!packages/sdk-python/pal/_env.py'        # Python compat helper

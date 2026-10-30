@@ -38,7 +38,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/mailer"
 )
 
-// Sign-up modes (LANTERN_SIGNUP_MODE).
+// Sign-up modes (PAL_SIGNUP_MODE).
 const (
 	signupOpen   = "open"
 	signupInvite = "invite"
@@ -70,7 +70,7 @@ var turnstileVerifyURL = "https://challenges.cloudflare.com/turnstile/v0/sitever
 
 var errInvalidToken = errors.New("invalid or expired token")
 
-// signupMode returns LANTERN_SIGNUP_MODE, defaulting to closed in prod and open
+// signupMode returns PAL_SIGNUP_MODE, defaulting to closed in prod and open
 // in dev. An unrecognised value is returned as-is; the handler treats anything
 // but open/invite as closed and the startup guard refuses it.
 func signupMode() string {
@@ -142,19 +142,19 @@ func CheckSignupConfig(prod bool) (fatal bool, message string) {
 	switch mode {
 	case signupOpen, signupInvite, signupClosed:
 	default:
-		return true, fmt.Sprintf("LANTERN_SIGNUP_MODE=%q is not one of open, invite, closed", mode)
+		return true, fmt.Sprintf("PAL_SIGNUP_MODE=%q is not one of open, invite, closed", mode)
 	}
 	if mode == signupInvite && os.Getenv("PAL_SIGNUP_INVITE_SECRET") == "" {
-		return true, "LANTERN_SIGNUP_MODE=invite needs LANTERN_SIGNUP_INVITE_SECRET to verify invite codes"
+		return true, "PAL_SIGNUP_MODE=invite needs PAL_SIGNUP_INVITE_SECRET to verify invite codes"
 	}
 	if !prod || mode == signupClosed {
 		return false, ""
 	}
 	if mode == signupOpen && os.Getenv("PAL_TURNSTILE_SECRET") == "" {
-		return true, "LANTERN_SIGNUP_MODE=open in production needs LANTERN_TURNSTILE_SECRET (captcha is required for open sign-up)"
+		return true, "PAL_SIGNUP_MODE=open in production needs PAL_TURNSTILE_SECRET (captcha is required for open sign-up)"
 	}
 	if mailer.Driver() == mailer.DriverLog {
-		return true, "sign-up is " + mode + " in production but LANTERN_MAILER=log — new users could never receive their verification link; set LANTERN_MAILER=smtp or http"
+		return true, "sign-up is " + mode + " in production but PAL_MAILER=log — new users could never receive their verification link; set PAL_MAILER=smtp or http"
 	}
 	return false, ""
 }
@@ -217,7 +217,7 @@ func (h *AuthHandler) checkCaptcha(ctx context.Context, token, ip string) (int, 
 		return 0, ""
 	}
 	if secret == "" {
-		h.logger().Error("sign-up refused: captcha required but LANTERN_TURNSTILE_SECRET is unset")
+		h.logger().Error("sign-up refused: captcha required but PAL_TURNSTILE_SECRET is unset")
 		return http.StatusServiceUnavailable, "sign-up is not available"
 	}
 	if token == "" {
@@ -335,8 +335,8 @@ func dashboardLink(path, token string) string {
 func (h *AuthHandler) sendVerifyMail(to, token string) {
 	h.sendMail(mailer.Message{
 		To:      to,
-		Subject: "Verify your Lantern email",
-		Text: "Confirm this address to finish setting up your Lantern account:\n\n" +
+		Subject: "Verify your PAL email",
+		Text: "Confirm this address to finish setting up your PAL account:\n\n" +
 			dashboardLink("/auth/verify", token) +
 			"\n\nThe link works once and expires in 24 hours. If you didn't sign up, ignore this email.\n",
 	})
@@ -345,8 +345,8 @@ func (h *AuthHandler) sendVerifyMail(to, token string) {
 func (h *AuthHandler) sendResetMail(to, token string) {
 	h.sendMail(mailer.Message{
 		To:      to,
-		Subject: "Reset your Lantern password",
-		Text: "Someone (hopefully you) asked to reset your Lantern password:\n\n" +
+		Subject: "Reset your PAL password",
+		Text: "Someone (hopefully you) asked to reset your PAL password:\n\n" +
 			dashboardLink("/auth/reset", token) +
 			"\n\nThe link works once and expires in 1 hour. If you didn't ask, ignore this email — your password is unchanged.\n",
 	})

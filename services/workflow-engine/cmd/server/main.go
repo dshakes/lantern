@@ -19,7 +19,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -40,15 +39,29 @@ func main() {
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
 
-	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Fail closed in production; warn and continue in dev (PAL_ENV unset).
 	// Without a service token any caller reachable to :50052 can forge any
 	// tenant_id because the token check is what guards the tenant interceptor.
 	prod := isProdEnv()
 	if prod && cfg.GRPCServiceToken == "" {
-		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
+		logger.Fatal("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
 	}
 	if !prod && cfg.GRPCServiceToken == "" {
-		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+		logger.Warn("PAL_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
+	// mTLS on :50052 (ADR 0043) is required ON TOP OF the token, not instead
+	// of it. Resolved before any I/O so a bad cert fails the boot fast.
+	tlsCreds, err := serviceServerCreds(prod)
+	if err != nil {
+		logger.Fatal("workflow-engine gRPC TLS", zap.Error(err))
+	}
+	switch {
+	case tlsCreds != nil:
+		logger.Info("workflow-engine gRPC server: mTLS enabled (client certificates required)")
+	case prod:
+		logger.Warn("SECURITY: PAL_GRPC_INSECURE=1 — workflow-engine gRPC (:50052) serves PLAINTEXT in production; remove it once PAL_GRPC_TLS_CA/_CERT/_KEY are mounted")
+	default:
+		logger.Warn("workflow-engine gRPC server: TLS unset — serving plaintext (acceptable in dev; production requires PAL_GRPC_TLS_CA/_CERT/_KEY)")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -100,9 +113,15 @@ func main() {
 	// with a typed error rather than executing.
 	var modelClient lanternv1.ModelServiceClient
 	if cfg.ModelRouterAddr != "" {
-		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+		// Service-mesh mTLS (ADR 0043): the router carries tenant provider
+		// keys, so prod refuses plaintext unless PAL_GRPC_INSECURE=1.
+		mrCreds, err := serviceClientCreds(prod)
+		if err != nil {
+			logger.Fatal("model-router dial credentials", zap.Error(err))
+		}
+		mrOpts := []grpc.DialOption{grpc.WithTransportCredentials(mrCreds)}
 		if cfg.GRPCServiceToken != "" {
-			// The router rejects calls without x-lantern-service-token.
+			// The router rejects calls without x-pal-service-token.
 			mrOpts = append(mrOpts, grpc.WithPerRPCCredentials(serviceTokenCreds{token: cfg.GRPCServiceToken}))
 		}
 		conn, err := grpc.NewClient(cfg.ModelRouterAddr, mrOpts...)
@@ -113,7 +132,7 @@ func main() {
 		modelClient = lanternv1.NewModelServiceClient(conn)
 		logger.Info("model router client configured", zap.String("addr", cfg.ModelRouterAddr))
 	} else {
-		logger.Warn("LANTERN_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
+		logger.Warn("PAL_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
 	}
 
 	// --- Runtime manager client ---
@@ -140,7 +159,7 @@ func main() {
 		runtimeClient = lanternv1.NewRuntimeManagerClient(conn)
 		logger.Info("runtime manager client configured", zap.String("addr", cfg.RuntimeManagerAddr))
 	} else {
-		logger.Warn("LANTERN_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
+		logger.Warn("PAL_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
 	}
 
 	// --- Engine ---
@@ -158,7 +177,7 @@ func main() {
 	//
 	// Operator cutover: CREATE ROLE lantern_app (done by the control-plane's
 	// Migrate) -> ALTER ROLE lantern_app PASSWORD '<strong>' -> set
-	// LANTERN_APP_DB_PASSWORD + LANTERN_RLS_ENFORCE=1 on this service too.
+	// PAL_APP_DB_PASSWORD + PAL_RLS_ENFORCE=1 on this service too.
 	//
 	// GRANTS MATTER HERE, and this is the step that will bite. A tenant-scoped
 	// transaction in this service touches more than runs/agents: journal_events,
@@ -174,12 +193,12 @@ func main() {
 	if os.Getenv("PAL_RLS_ENFORCE") == "1" {
 		appPwd := os.Getenv("PAL_APP_DB_PASSWORD")
 		if appPwd == "" {
-			// FAIL CLOSED. An operator who sets LANTERN_RLS_ENFORCE=1 believes
+			// FAIL CLOSED. An operator who sets PAL_RLS_ENFORCE=1 believes
 			// isolation is on; continuing on the privileged pool would leave it
 			// off while looking enabled, which is the worst of both. Matches
 			// the repo's precedent for security controls (the gRPC service
 			// token refuses to start rather than run unauthenticated).
-			logger.Fatal("LANTERN_RLS_ENFORCE=1 requires LANTERN_APP_DB_PASSWORD — " +
+			logger.Fatal("PAL_RLS_ENFORCE=1 requires PAL_APP_DB_PASSWORD — " +
 				"refusing to start rather than run with RLS silently bypassed")
 		} else {
 			appCfg, cfgErr := pgxpool.ParseConfig(cfg.DatabaseURL)
@@ -221,7 +240,7 @@ func main() {
 
 	// --- gRPC server ---
 	grpcServiceToken := cfg.GRPCServiceToken
-	grpcServer := grpc.NewServer(
+	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
@@ -232,7 +251,11 @@ func main() {
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
-	)
+	}
+	if tlsCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 
 	// Register services.
 	workflowSvc := handlers.NewWorkflowService(srv)
@@ -354,7 +377,7 @@ func loadConfig() config {
 }
 
 // isProdEnv reports whether the server is running in a production-like
-// environment (LANTERN_ENV=prod|production|staging).
+// environment (PAL_ENV=prod|production|staging).
 func isProdEnv() bool {
 	e := os.Getenv("PAL_ENV")
 	return e == "prod" || e == "production" || e == "staging"
@@ -407,11 +430,11 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 
 		var attrs []attribute.KeyValue
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			attrs = append(attrs, attribute.String("lantern.tenant_id", tid))
+			attrs = append(attrs, attribute.String("pal.tenant_id", tid), attribute.String("lantern.tenant_id", tid))
 		}
 		if r, ok := req.(runIDer); ok {
 			if rid := r.GetRunId(); rid != "" {
-				attrs = append(attrs, attribute.String("lantern.run_id", rid))
+				attrs = append(attrs, attribute.String("pal.run_id", rid), attribute.String("lantern.run_id", rid))
 			}
 		}
 		if len(attrs) > 0 {
@@ -438,7 +461,7 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 		defer span.End()
 
 		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
-			span.SetAttributes(attribute.String("lantern.tenant_id", tid))
+			span.SetAttributes(attribute.String("pal.tenant_id", tid), attribute.String("lantern.tenant_id", tid))
 		}
 
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
@@ -460,7 +483,7 @@ func (w *wrappedStream) Context() context.Context {
 type serviceTokenCreds struct{ token string }
 
 func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{"x-lantern-service-token": c.token}, nil
+	return middleware.OutgoingServiceTokenMetadata(c.token), nil
 }
 
 // RequireTransportSecurity is false: in-cluster hop, same as the other dials.

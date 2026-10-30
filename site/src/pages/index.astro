@@ -24,7 +24,7 @@ const TRUST = [
   { h: 'Asks before it acts', b: 'pal holds money, promises and unverifiable claims at the send boundary. A rule in a prompt is advice; this is a gate in code.' },
   { h: 'Your Mac, your folders', b: 'pal’s bridges run on a Mac you own and read only the folders you allow. Its most personal memory is encrypted at rest.' },
   { h: 'MicroVM isolation', b: 'Untrusted agent code never runs in a bare container: Firecracker or Kata, an egress allowlist, secrets by reference.' },
-  { h: 'Tenant walls', b: 'Every row and every internal call carries a tenant. Row-level security policies cover every tenant table.' },
+  { h: 'Tenant walls', b: 'Every row and every internal call carries a tenant. Row-level security policies cover every tenant table and are enforced in production.' },
   { h: 'Signed receipts', b: 'A run can carry an Ed25519 receipt over the hash of its journal. Change one row and it stops verifying.' },
   { h: 'Read every line', b: 'Apache-2.0. Go, Rust and TypeScript, with tests and linters gating every change.' },
 ];

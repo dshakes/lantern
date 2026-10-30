@@ -2,20 +2,21 @@
 title: Models
 description: Capability-based model routing, providers, strategies, failover and API keys.
 glance:
-  what: "Agents ask for a capability such as reasoning-large, and PAL Runtime maps it to a concrete model from your keyed providers."
-  why: "Vendor model names stay out of agent code, so swapping a model or surviving a provider outage needs no code change."
-  how: "See Capability names, then choose a routing strategy under Routing strategies."
+  what: "Agents ask for a capability such as reasoning-large, and the control plane maps it to a concrete Anthropic or OpenAI model from the providers you have keyed."
+  why: "Swapping a model or riding out a provider outage needs no agent code change, and a cheap agent never fails over into an expensive model."
+  how: "Add a provider key under Settings, then set model on the agent or PAL_ROUTE_STRATEGY on the control plane."
 sidebar:
   order: 3
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { ModelRouting } from '../../../../components/diagrams';
 
-Agents ask for a **capability** such as `reasoning-large`. PAL Runtime maps it to a concrete model from the providers you have keyed. Vendor model names stay out of agent code, so swapping a model or riding out a provider outage needs no code change.
+<ModelRouting client:visible />
 
 ## Supported providers
 
-Two LLM providers today:
+Two providers today:
 
 - **Anthropic**: Opus, Sonnet and Haiku (defaults `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`; override with `PAL_OPUS_MODEL`, `PAL_SONNET_MODEL`, `PAL_HAIKU_MODEL`)
 - **OpenAI**: `gpt-4o` and `gpt-4o-mini`
@@ -76,7 +77,7 @@ PAL_ROUTE_STRATEGY=fast
 
 ## Per-agent model
 
-Each agent can carry a `model`: a capability (`fast`, `cheap`, `reasoning-small`, `reasoning-large`, ...) or a vendor model id (`gpt-*`, `o1*`, `o3*`, `claude-*`). Runs, sessions and workflow `ai-step` nodes with no capability of their own try that model first. Use it to pin a cheap model on a high-volume agent, or a stronger one on an agent that needs it.
+Runs, sessions and workflow `ai-step` nodes with no capability of their own try the agent's `model` first.
 
 ```text
 # Set on create
@@ -91,11 +92,17 @@ PATCH /v1/agents/triage
 GET /v1/agents/triage   →  { ..., "model": "reasoning-large" }
 ```
 
-- **Unset or `auto`**: exactly the [`auto`](#how-auto-works) chain, unchanged.
-- **Validation**: anything else returns 400. Embedding, rerank and speech capabilities are rejected because agents run text completions. The error never echoes the value.
-- **Provider not keyed**: if the model's provider has no key for your tenant, the agent uses the default chain.
-- **Workflow nodes**: an `ai-step` with an explicit capability keeps it; only `auto` nodes take the agent's model.
-- **Recorded**: the model that answered is on the run's `llm:main` step in the run timeline.
+| Allowed value | Examples |
+| --- | --- |
+| Default | `""`, `auto` (the [`auto`](#how-auto-works) chain, unchanged) |
+| Cost/speed target | `fast`, `cheap`, `balanced`, `best` |
+| Capability | `reasoning-frontier`, `reasoning-large`, `reasoning-small`, `chat-large`, `chat-small`, `chat-edge`, `vision-large`, `vision-small`, `code-large`, `code-small` |
+| Vendor model id | `gpt-*`, `o1*`, `o3*`, `claude-*` (lowercase, 100 characters or fewer) |
+
+- **Validation**: anything else returns 400, including embedding, rerank and speech capabilities. The error never echoes the value.
+- **Provider not keyed**: the agent uses the default chain.
+- **Workflow nodes**: an `ai-step` with its own capability keeps it; only `auto` nodes take the agent's model.
+- **Recorded**: the model that answered is on the run's `llm:main` step.
 
 ## Failover
 
@@ -125,11 +132,7 @@ Keys are AES-256-GCM encrypted at rest when `PAL_CREDENTIAL_KEY` is set (plainte
 
 ## Model-router service
 
-A separate Rust model-router service exists (gRPC `:50053`, Anthropic and OpenAI providers). The control plane only routes plain completions through it when `PAL_USE_MODEL_ROUTER=1`; it is **off by default**, and any router error falls back to the direct path.
-
-<Aside type="tip">
-Enable the router on a non-critical tenant first.
-</Aside>
+A separate Rust model-router service exists (gRPC `:50053`, address set with `PAL_MODEL_ROUTER_ADDR`, default `model-router:50053`; Anthropic and OpenAI providers). The control plane only routes plain completions through it when `PAL_USE_MODEL_ROUTER=1` (also `true` or `on`); it is **off by default**, and any router error falls back to the direct path. Enable it on a non-critical tenant first.
 
 The router has its own, separate mapping. The control plane resolves a model first using the table above, converts it back to a router capability (Opus to `reasoning-frontier`, Sonnet to `reasoning-large`, Haiku to `reasoning-small`, `gpt-4o` to `chat-large`, `-mini` to `chat-small`, anything else to `auto`), and the router then picks the concrete model for that capability. Each provider supports a capability only if it lists it exactly:
 
@@ -150,3 +153,5 @@ Router model ids are fixed in the service (not overridable by `PAL_OPUS_MODEL` a
 </Aside>
 
 Among providers that support the capability, the optimize target orders them: cheap by price, fast by p50 latency, best by quality score, balanced by a fixed provider preference.
+
+Next: [connectors](/docs/build/connectors/).

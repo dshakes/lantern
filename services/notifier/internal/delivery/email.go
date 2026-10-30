@@ -121,7 +121,7 @@ func (e *EmailDeliverer) deliverViaResend(ctx context.Context, n *Notification) 
 func (e *EmailDeliverer) deliverViaSMTP(_ context.Context, n *Notification) (*DeliveryResult, error) {
 	subject := n.Subject
 	if subject == "" {
-		subject = "Lantern Notification"
+		subject = "PAL Notification"
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",

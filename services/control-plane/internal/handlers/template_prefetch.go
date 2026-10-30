@@ -105,7 +105,7 @@ func prefetchInboxConcierge(
 	defer cancel()
 	// Filters: -category:promotions -category:social drops marketing/
 	// social noise. -from:me + -label:lantern drop the user's own sent
-	// mail (sometimes appears unread on first sync) AND Lantern's own
+	// mail (sometimes appears unread on first sync) AND PAL's own
 	// status mirror mail (which lands in inbox until the user grants
 	// gmail.modify scope, otherwise the label/skip-inbox is a no-op).
 	// Without these two, the prefetch was returning 5 lantern-self

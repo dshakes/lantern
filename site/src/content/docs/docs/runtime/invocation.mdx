@@ -1,0 +1,127 @@
+---
+title: Invocation modes
+description: "Every way to start a run - wait for the answer, stream it, fire and poll, on a cron, or from a signed webhook - and which to pick."
+glance:
+  what: "Five ways to start the same run today: synchronous, streaming, asynchronous, cron and webhook."
+  why: "They differ only in how the caller waits; the run itself, its journal, budget checks and receipts are identical."
+  how: "Find your situation in the table, then copy the request from its tab."
+sidebar:
+  order: 3
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { InvocationModes } from '../../../../components/diagrams';
+
+<InvocationModes client:visible />
+
+| You want | Use | Caller waits for |
+| --- | --- | --- |
+| The answer in the response, under a minute | **Sync** | the output (up to 60 s) |
+| Tokens or steps as they happen | **Stream** | an SSE stream that ends with the run |
+| To hand off long work and check later | **Async** | a run id, immediately |
+| The agent on a timetable | **Cron** | nothing; the scheduler starts it |
+| GitHub, Sentry, PagerDuty or any HMAC sender to start it | **Webhook** | `202` with the run id |
+| Many inputs in one call, with a completion callback | **Batch** | coming soon |
+
+<Tabs>
+<TabItem label="Sync">
+
+The A2A invoke endpoint creates the run, waits for it, and returns the output. It polls for up to **60 s**; a run that has not succeeded by then answers `502` with its `runId` and status, so you can keep following it asynchronously.
+
+```bash
+curl -s -X POST localhost:8080/v1/agents/my-agent/a2a/invoke \
+  -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{"input":{"q":"..."}}'
+# 200 {"runId":"...","status":"succeeded","output":{...}}
+```
+
+Needs the `runs:execute` scope. Another tenant can call it only when the agent is public; see [Marketplace and A2A](/docs/build/marketplace/).
+
+</TabItem>
+<TabItem label="Stream">
+
+Create the run, then subscribe to its events over SSE. The stream replays the journal from the first event, so a late subscriber misses nothing, and closes when the run reaches `succeeded`, `failed` or `cancelled`.
+
+```bash
+RUN_ID=$(curl -s -X POST localhost:8080/v1/runs -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" \
+  -d '{"agentName":"my-agent","input":{}}' | jq -r .id)
+curl -N localhost:8080/v1/runs/$RUN_ID/events \
+  -H "Authorization: Bearer $PAL_API_KEY" -H "Accept: text/event-stream"
+```
+
+For a chat turn, sessions stream token by token instead; see [Token streaming](/docs/runtime/streaming/).
+
+</TabItem>
+<TabItem label="Async">
+
+`POST /v1/runs` returns as soon as the run is queued. Poll `GET /v1/runs/{id}` or subscribe to events later. A process restart does not lose the run: the recovery sweep re-drives it every 30 s from its journal, skipping steps that already completed ([Durable execution](/docs/runtime/durable-execution/)).
+
+<Tabs syncKey="lang">
+<TabItem label="TypeScript" icon="seti:typescript">
+```ts
+import { PalClient, type Run } from "@pal-runtime/sdk";
+const client = new PalClient({ apiKey: process.env.PAL_API_KEY, baseUrl: "http://localhost:8080" });
+const run = (await client.runs.create({ agent: "my-agent", input: {} })) as Run;
+// ...later
+const { status, output } = await client.runs.get(run.id);
+```
+</TabItem>
+<TabItem label="Python" icon="seti:python">
+```python
+# inside an async function, with client = PalClient(api_key=..., base_url="http://localhost:8080")
+run = await client.runs.create(agent="my-agent", input={})
+# ...later
+run = await client.runs.get(run.id)
+```
+</TabItem>
+<TabItem label="Go" icon="seti:go">
+```go
+// c := pal.New(pal.WithAPIKey(key), pal.WithBaseURL("http://localhost:8080"))
+r, _ := c.CreateRun(ctx, pal.RunOptions{AgentName: "my-agent"})
+// ...later
+r, _ = c.GetRun(ctx, r.ID)
+```
+</TabItem>
+</Tabs>
+
+</TabItem>
+<TabItem label="Cron">
+
+A schedule starts a run on a cron expression, in an IANA timezone (unset: `PAL_DEFAULT_TIMEZONE`, then UTC).
+
+```bash
+curl -s -X POST localhost:8080/v1/schedules -H "Authorization: Bearer $PAL_API_KEY" -H "Content-Type: application/json" -d '{
+  "agentName": "research-agent",
+  "cronExpr": "0 9 * * 1-5",
+  "timezone": "America/New_York",
+  "inputTemplate": { "mode": "daily-digest" },
+  "enabled": true
+}'
+```
+
+More: [Scheduling](/docs/build/scheduling/).
+
+</TabItem>
+<TabItem label="Webhook">
+
+A trigger gives an agent a public URL. The sender's HMAC signature is the only credential, and a delivery sent twice starts one run.
+
+```bash
+pal hooks create my-agent --provider github
+# prints the URL (/v1/hooks/{id}) and the signing secret, once
+```
+
+More: [Webhook triggers](/docs/build/triggers/).
+
+</TabItem>
+<TabItem label="Batch (soon)">
+
+<Aside type="note" title="Coming soon">
+Submitting many inputs in one request, with a callback when they finish, is in review and not on `master` yet. Until it lands, fan out with async runs, or use `step.map` inside one agent for parallel work that is journaled together.
+</Aside>
+
+</TabItem>
+</Tabs>
+
+## The same in every mode
+
+Whatever starts it, a run goes through the same path: the [budget](/docs/build/budgets/) check (a hard-fail cap returns `402` before anything executes), the journal, the isolation tier from the agent's manifest, and a [receipt](/docs/security/receipts/) you can verify afterwards.

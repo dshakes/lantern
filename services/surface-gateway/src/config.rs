@@ -37,25 +37,25 @@ pub struct Config {
     pub log_level: String,
     /// Comma-separated allowed CORS origins. Defaults to "http://localhost:3001".
     pub allowed_origins: Vec<String>,
-    /// Shared service token sent as `x-lantern-service-token` on every gRPC call
-    /// to the control-plane.  Must match LANTERN_GRPC_SERVICE_TOKEN on the
+    /// Shared service token sent as `x-pal-service-token` on every gRPC call
+    /// to the control-plane.  Must match PAL_GRPC_SERVICE_TOKEN on the
     /// control-plane (invariant #7).  Dev: unset is fine; prod: required.
     pub service_token: String,
-    /// Name of the Lantern agent that handles inbound surface messages.
+    /// Name of the PAL agent that handles inbound surface messages.
     /// Set LANTERN_AGENT_NAME.  Required — run creation fails without it.
     pub agent_name: Option<String>,
-    /// Lantern tenant UUID that owns this surface-gateway deployment.
+    /// PAL tenant UUID that owns this surface-gateway deployment.
     ///
     /// Inbound webhook events carry platform-native identifiers (Telegram chat_id,
     /// Slack team_id, WhatsApp phone_number_id) in their payloads.  Those are NOT
-    /// Lantern tenant UUIDs.  This value is the real Lantern tenant UUID injected at
+    /// PAL tenant UUIDs.  This value is the real PAL tenant UUID injected at
     /// deploy time so the dispatcher can stamp every event with the correct tenant
     /// before forwarding to the control plane.
     ///
     /// Set `LANTERN_TENANT_ID`.  Required for production.  If unset the gateway will
     /// still start but every webhook dispatch will be rejected at the tenant-resolution
     /// step with a 503.
-    pub lantern_tenant_id: Option<String>,
+    pub pal_tenant_id: Option<String>,
 }
 
 impl Config {
@@ -105,7 +105,7 @@ impl Config {
                 .collect(),
             service_token,
             agent_name,
-            lantern_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
+            pal_tenant_id: pal_env::var("PAL_TENANT_ID").ok(),
         })
     }
 }

@@ -1,6 +1,6 @@
 # pal-runtime (Python)
 
-The official Python SDK for [PAL](https://github.com/dshakes/lantern) — the
+The official Python SDK for [PAL](https://github.com/dshakes/pal) — the
 open-source runtime for production AI agents with VPC deployment, pre-run cost
 forecasts, policy budgets, and eval-in-CI.
 
@@ -17,7 +17,7 @@ Registry packages are not published yet. The distribution is named `pal-runtime`
 ```bash
 pip install "path/to/lantern/packages/sdk-python"          # add [deepagents] for the extra below
 # or in CI:
-pip install "git+https://github.com/dshakes/lantern.git#subdirectory=packages/sdk-python"
+pip install "git+https://github.com/dshakes/pal.git#subdirectory=packages/sdk-python"
 ```
 
 The import package is `pal` (`from pal import PalClient`); the CLI entry point is `pal-runner`.

@@ -2,9 +2,9 @@
 title: Deployment
 description: Control plane and data plane topologies, the Helm chart, Terraform, namespace isolation and database migrations.
 glance:
-  what: "PAL splits into a control plane (scheduling, routing, dashboard) and a data plane (microVMs, execution, secrets) that runs in your cloud."
-  why: "Keeping the data plane in your VPC means agent data never leaves your cloud account."
-  how: "Choose a topology under Deployment options, then install with the Helm section."
+  what: "A control plane (scheduling, routing, dashboard) and a data plane (microVMs, execution, secrets) that you can run in your own cluster, via Helm or generated Terraform."
+  why: "With the data plane in your VPC, prompts, credentials and customer data stay in your cloud account."
+  how: "Pick a topology under Deployment options, then helm install ./infra/helm/pal --values values-prod.yaml."
 sidebar:
   order: 1
 ---
@@ -12,16 +12,15 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { DeployTopology } from '../../../../components/diagrams';
 
-PAL splits into a **control plane** (scheduling, routing, dashboard) and a **data plane** (microVMs, execution, secrets). The data plane runs in your cloud: agent data never leaves your VPC.
+<DeployTopology client:visible />
 
-The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. The split lets you keep execution inside your own cloud account, so prompts, credentials and customer data stay in your infrastructure wherever the control plane runs. Today you deploy both planes yourself: there is no managed cloud endpoint yet (see the [API reference](/docs/reference/api/)). The split is what makes a hosted control plane possible later without moving your data.
+The control plane decides what should run (dashboards, scheduling, budgets). The data plane is where agent code executes, with your API keys and your data. Today you deploy both planes yourself: there is no managed cloud endpoint yet.
 
 ## Architecture: the control plane / data plane split
 
-The full system: channels, gateways, control plane, then your data plane. The control plane never runs user code.
-
-What crosses the boundary: specs, identity and trace context go down; heartbeats, step events and audit come back. Token-authenticated (mTLS hardening planned). Prompts and data never leave your VPC.
+The control plane never runs user code. Specs, identity and trace context go down; heartbeats, step events and audit come back, over server-authenticated TLS with a bootstrap token and session JWT (no client certificates). Prompts and data stay in your VPC.
 
 <Diagram name="your-cloud" />
 
@@ -35,7 +34,7 @@ Both planes hosted for you. This is the intended offering, not a shipped one: th
 
 Control plane in one place (your own platform account, or hosted for you once that exists); data plane in each workload's cloud. Agent data stays in your VPC.
 
-1. Deploy the data plane Helm chart into your cluster (see below).
+1. Deploy the `pal-data-plane` chart into your cluster ([Helm](#helm)).
 2. Register via `POST /v1/data-planes` or **Settings > Data Planes**. This mints a one-time 32-byte bootstrap token. Store it immediately.
 3. The data plane dials **out** to `:50051` (gRPC), sends the bootstrap token via the `Register` RPC, and receives a short-lived session JWT (1 h TTL, auto-rotated via `RefreshToken`).
 4. The data plane opens a persistent `RunStream` bidi RPC. The control plane pushes run assignments; the agent reports status and completion back. Only run metadata crosses the boundary.
@@ -66,15 +65,21 @@ You manage Postgres, Redis, and Kubernetes. Ensure your team has the capacity be
 
 ## Helm
 
-The repo ships one chart, `infra/helm/lantern`, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
+The repo ships three charts under `infra/helm/`: `pal` (everything in one release, with `values-dev.yaml`, `values-staging.yaml` and `values-prod.yaml`), plus `pal-control-plane` and `pal-data-plane` for the split topology (the data-plane chart installs the workflow engine, runtime manager and the agent that tunnels out to your control plane; see its README). The rest of this page documents `pal`. It deploys the gateway, control plane, model router, workflow engine, runtime manager, runtime scheduler, surface gateway and dashboard, with in-cluster Postgres and S3-compatible storage for development and a Redis subchart. The chart defaults `PAL_ENV=production`, so the production startup guards are on.
 
 ```bash
-helm install lantern ./infra/helm/lantern \
-  --namespace lantern --create-namespace \
-  --values infra/helm/lantern/values-prod.yaml
+helm dependency build ./infra/helm/pal    # vendors the Redis subchart
+helm install pal ./infra/helm/pal \
+  --namespace pal --create-namespace \
+  --values infra/helm/pal/values-prod.yaml \
+  --set secrets.jwtSecret="$JWT_SECRET" \
+  --set secrets.credentialKey="$PAL_CREDENTIAL_KEY" \
+  --set secrets.receiptSecret="$PAL_RECEIPT_SECRET" \
+  --set secrets.grpcServiceToken="$PAL_GRPC_SERVICE_TOKEN" \
+  --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
 ```
 
-Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. There is no separate data-plane chart yet; for a data plane in another cloud, use the Terraform path below.
+Top-level values keys: `global`, `gateway`, `controlPlane`, `modelRouter`, `workflowEngine`, `runtimeManager`, `runtimeScheduler`, `surfaceGateway`, `dashboard`, `postgresql`, `redis`, `minio`, `ingress`, `networkPolicy`, `backup`, `secrets`, `serviceAccount`. To stand up a cluster for a data plane in another cloud, use the Terraform path below.
 
 ### Production settings
 
@@ -114,15 +119,21 @@ They are single replicas with no replication, point-in-time recovery or lifecycl
 
 ## Terraform
 
-`lantern infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
+`pal infra install --cloud aws|gcp|azure` generates Terraform for a data-plane cluster. Flags include `--tenant-id` (required), `--region`, `--cluster-name`, `--existing-cluster`, `--instance-type` and `--node-count`. The modules live in `infra/terraform/` and are not published to the Terraform Registry. Review the output, then apply.
 
 ```bash
-lantern infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates terraform/ in the current directory
-cd terraform
+pal infra install --cloud aws --region us-east-1 --tenant-id <tenant-id>   # generates lantern-data-plane-aws/ (override with the output-dir flag)
+cd lantern-data-plane-aws
 terraform init
 terraform plan
 terraform apply
 ```
+
+## Multi-region (active-passive)
+
+Opt-in and flag-gated (ADR 0046). A standby region runs the same chart read-only (`PAL_READ_ONLY=1`: HTTP 503 with `Retry-After`, gRPC `UNAVAILABLE`) against a cross-region Postgres read replica and a replicated bucket. A fence epoch in the `pal_region_fence` table (`PAL_FENCE_EPOCH`, `PAL_REGION`) stops a stale region from writing runs, locks or journal rows after a failover. Data-plane agents take an ordered list in `PAL_CONTROL_PLANE_ENDPOINTS` (primary first) and probe for failback every `PAL_CONTROL_PLANE_FAILBACK_INTERVAL` (default 60 s).
+
+Targets are RPO of 1 minute for Postgres and 15 minutes for S3 bundles, RTO of 30 minutes. Promotion is manual; automated promotion is future work. Follow the [region-failover runbook](repo:/blob/master/docs/runbooks/region-failover.md).
 
 ## Namespace isolation
 
@@ -130,11 +141,7 @@ Each tenant gets its own Kubernetes namespace: `lantern-t-<tenant_id>`. This pro
 
 ## Monitoring
 
-Every service emits OTel traces tagged with `tenant_id`, `run_id`, `step_id`, and `agent_version`. Compatible with Grafana + Tempo, Datadog, New Relic, Jaeger, and any OTel backend. The control plane also serves Prometheus metrics at `:9464/metrics` (its own listener, `PAL_METRICS_ADDR`, not the public `:8080` API; HTTP request duration by status, run totals, budget blocks), unauthenticated, so scrape it only from inside the cluster. Alert rules and Grafana dashboards live in `infra/monitoring/`; runbooks in `docs/runbooks/`. See [Observability](/docs/runtime/observability/) for details.
-
-<Aside type="caution">
-The [Operations](/docs/operate/operations/) page says the control plane serves `/metrics` on its own listener, port `9464` (`PAL_METRICS_ADDR`), not on `:8080`. The source docs disagree; prefer the Operations page.
-</Aside>
+Services emit OTel traces to any OTel backend. The control plane also serves unauthenticated Prometheus metrics on its own listener, `:9464/metrics` (`PAL_METRICS_ADDR`), so scrape it only from inside the cluster. Alert rules, dashboards and the wiring are in [Operations](/docs/operate/operations/#metrics) and [Observability](/docs/observability/).
 
 ## Database migrations
 

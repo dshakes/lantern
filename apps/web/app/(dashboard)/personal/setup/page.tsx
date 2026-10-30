@@ -453,7 +453,7 @@ function IMessageSetupView({
         <p className="mt-4 text-xs text-zinc-500">
           Looking for prod-grade always-on? See{" "}
           <Link
-            href="https://github.com/dshakes/lantern/blob/master/scripts/launchd/README.md"
+            href="https://github.com/dshakes/pal/blob/master/scripts/launchd/README.md"
             target="_blank"
             className="text-violet-300 underline"
           >

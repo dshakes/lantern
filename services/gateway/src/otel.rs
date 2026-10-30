@@ -3,7 +3,7 @@
 // # Design
 //
 // Only activated when `OTEL_EXPORTER_OTLP_ENDPOINT` (standard OTLP env var)
-// or `LANTERN_OTEL_ENABLED=1` is set.  When neither is present every function
+// or `PAL_OTEL_ENABLED=1` is set.  When neither is present every function
 // is a cheap no-op, so the default behaviour (no collector configured) is
 // completely unchanged — the service starts and runs without any telemetry
 // overhead.
@@ -56,7 +56,7 @@ pub fn init() -> Option<SdkShutdown> {
         return None;
     }
 
-    // Default to the standard OTLP/HTTP port when LANTERN_OTEL_ENABLED=1 is set
+    // Default to the standard OTLP/HTTP port when PAL_OTEL_ENABLED=1 is set
     // but no explicit endpoint is given.
     let endpoint_str = endpoint.unwrap_or_else(|| "http://localhost:4318".to_string());
     tracing::info!(endpoint = %endpoint_str, "otel: initialising OTLP/HTTP exporter");

@@ -36,6 +36,18 @@ import { HoldsGates } from '../../../../components/diagrams';
 | `ProactiveNudges` | pal: proactive nudges | flow, scenarios |
 | `SkillForge` | pal: skill forge | flow, scenarios |
 | `Recap` | pal: "what did I miss" recap | flow, scenarios |
+| `WebhookTriggers` | Signed webhook: HMAC verify, dedupe, run; bad signature, duplicate, budget 402 | flow, scenarios |
+| `CronSchedules` | Cron: timezone resolution (schedule, env default, UTC), next fire, claim and fire | flow, scenarios |
+| `ConnectorActions` | Connector execute: encrypted install, vendor call, not installed 404, recorded test mode | flow, scenarios |
+| `TracePropagation` | HTTP and gRPC spans, EnrichSpan attributes, traceparent into the microVM | flow, scenarios |
+| `SignedReceipts` | Journal hash, Ed25519 signature, public verify, tampered journal | flow, scenarios |
+| `TokenStreaming` | Provider to client token stream, tool-turn single message, mid-stream error | flow, scenarios |
+| `SessionsMemory` | Session turn, memory distillation, crash mid-turn | flow, scenarios |
+| `KnowledgeHandoff` | Document upload, cited answers, handoff to a human | flow, scenarios |
+| `IdentitySecrets` | Secret ref, SO_PEERCRED vending, denied peer, relay fail-closed | flow, scenarios |
+| `IsolationClasses` | Isolation class placement and fail-closed refusal | flow, scenarios |
+| `InvocationModes` | Sync, stream, async, cron and webhook starts of one run | flow, scenarios |
+| `OnboardingFlow` | Agentic onboarding: spec, approve, provider test, create, first run | flow, scenarios |
 
 `FlowDiagram` (the kit) takes a `FlowDef` (nodes, edges, frames, scenarios of
 steps); see `flows-runtime.ts` / `flows-pal.ts`. It gives every diagram the same

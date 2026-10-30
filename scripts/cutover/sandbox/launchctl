@@ -1,0 +1,38 @@
+#!/bin/bash
+# Sandbox recorder for launchctl. Keeps fake job state in $STUB_STATE/jobs/<label>
+# (contents: "<pid> <plist>"). On bootstrap it appends the log lines a healthy
+# service would print, so the health checks have something real to read.
+set -uo pipefail
+S="${STUB_STATE:?}"; mkdir -p "$S/jobs"
+echo "launchctl $*" >> "$S/calls.log"
+label_of() { plutil -extract Label raw -o - "$1" 2>/dev/null; }
+case "${1:-}" in
+  list)
+    printf 'PID\tStatus\tLabel\n'
+    for f in "$S"/jobs/*; do [[ -e "$f" ]] || continue; read -r pid _ < "$f"; printf '%s\t0\t%s\n' "$pid" "$(basename "$f")"; done ;;
+  print)
+    l="${2##*/}"; [[ -f "$S/jobs/$l" ]] || exit 113
+    read -r pid plist < "$S/jobs/$l"; printf '%s = {\n\tpath = %s\n' "$2" "$plist"; [[ "$pid" != - ]] && printf '\tpid = %s\n' "$pid"; echo "}" ;;
+  bootstrap)
+    plist="$3"; l="$(label_of "$plist")"; [[ -n "$l" ]] || exit 5
+    if [[ -n "${STUB_BOOTSTRAP_FAIL_ONCE:-}" && "$l" == *"$STUB_BOOTSTRAP_FAIL_ONCE" && ! -e "$S/failed-once-$l" ]]; then
+      touch "$S/failed-once-$l"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    [[ -f "$S/jobs/$l" ]] && exit 37
+    pid=$(( (RANDOM % 50000) + 1000 )); [[ "$l" == *.infra ]] && pid=-
+    echo "$pid $plist" > "$S/jobs/$l"
+    out="$(plutil -extract StandardOutPath raw -o - "$plist" 2>/dev/null)"
+    if [[ -n "$out" ]]; then
+      mkdir -p "$(dirname "$out")"
+      case "$l" in
+        *.imessage-bridge) printf '{"level":30,"msg":"opened chat.db"}\n{"level":40,"msg":"LIVENESS: reply suppression active (paused contacts / unmonitored group chats)"}\n' >> "$out" ;;
+        *.whatsapp-bridge) printf '{"level":30,"msg":"connection open"}\n' >> "$out" ;;
+        *) echo "started $l" >> "$out" ;;
+      esac
+    fi ;;
+  bootout)
+    l="${2##*/}"; [[ -f "$S/jobs/$l" ]] || exit 3; rm -f "$S/jobs/$l" ;;
+  kickstart)
+    l="${*: -1}"; l="${l##*/}"; [[ -f "$S/jobs/$l" ]] || exit 113 ;;
+  load|unload) ;;
+  *) echo "stub launchctl: unsupported $*" >&2; exit 64 ;;
+esac

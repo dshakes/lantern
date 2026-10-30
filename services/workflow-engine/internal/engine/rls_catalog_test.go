@@ -11,7 +11,7 @@ import (
 // TestRLSCatalog_NoUnscopedTenantQueries is a permanent gate.
 //
 // The engine writes run state for every tenant on the platform and, until this
-// was fixed, set `app.tenant_id` NOWHERE — so under LANTERN_RLS_ENFORCE=1 its
+// was fixed, set `app.tenant_id` NOWHERE — so under PAL_RLS_ENFORCE=1 its
 // queries were outside the policies the rest of the platform depends on
 // (invariant #7). Worse than a leak: an unset GUC matches NOTHING, so
 // enforcement would have made the engine silently stop working — updates
@@ -79,7 +79,7 @@ func TestRLSCatalog_NoUnscopedTenantQueries(t *testing.T) {
 		t.Errorf("raw pool queries touch tenant-scoped tables without db.WithTenant/beginTenantTx "+
 			"and without an `rls-exempt:` reason:\n  %s\n\n"+
 			"Scope it (db.WithTenant / beginTenantTx), or add an `rls-exempt:` comment saying why it "+
-			"cannot be. Under LANTERN_RLS_ENFORCE=1 an unscoped query matches no rows at all.",
+			"cannot be. Under PAL_RLS_ENFORCE=1 an unscoped query matches no rows at all.",
 			strings.Join(violations, "\n  "))
 	}
 }

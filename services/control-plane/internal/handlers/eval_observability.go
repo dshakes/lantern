@@ -1,6 +1,6 @@
 // Eval observability — failure clustering + score/pass-rate trends over the
 // existing eval_runs history. Read-only, additive: no new tables, no writes.
-// Answers the two questions LangSmith-style dashboards make easy and Lantern
+// Answers the two questions LangSmith-style dashboards make easy and PAL
 // didn't: "which cases keep failing?" and "is quality trending down?".
 package handlers
 

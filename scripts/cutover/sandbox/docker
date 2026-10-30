@@ -1,0 +1,13 @@
+#!/bin/bash
+# Sandbox recorder for docker. Only `exec`/`inspect` against the sandbox's
+# Postgres container reach the real daemon (the throwaway *_test DB lives
+# there); everything else (compose up/down, ps, ...) is recorded and no-op.
+set -uo pipefail
+echo "docker $*" >> "${STUB_STATE:?}/calls.log"
+case "${1:-}" in
+  exec)
+    for a in "$@"; do [[ "$a" == "$STUB_DB_CONTAINER" ]] && exec "$STUB_REAL_DOCKER" "$@"; done
+    echo "stub docker: exec outside the sandbox container refused" >&2; exit 64 ;;
+  inspect) exec "$STUB_REAL_DOCKER" "$@" ;;
+  *) exit 0 ;;
+esac

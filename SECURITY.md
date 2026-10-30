@@ -4,7 +4,7 @@
 
 **Please do not open a public issue for security vulnerabilities.**
 
-Report privately via GitHub's [**Private Vulnerability Reporting**](https://github.com/dshakes/lantern/security/advisories/new)
+Report privately via GitHub's [**Private Vulnerability Reporting**](https://github.com/dshakes/pal/security/advisories/new)
 (Security → Advisories → Report a vulnerability). We aim to acknowledge within
 72 hours and to ship a fix or mitigation for confirmed High/Critical issues as
 quickly as is responsibly possible.
