@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -284,4 +285,31 @@ func TestA2A_Invoke_WithDeps_CreatesRun(t *testing.T) {
 			w.Code, w.Body.String())
 	}
 	t.Logf("invoke: HTTP %d runId=%s (run fails without LLM — expected in CI)", w.Code, runID)
+}
+
+// The card advertises THIS deployment's public URL (PAL_PUBLIC_BASE_URL, else
+// the request host) — never a hardcoded public domain, since callers send
+// their credentials to it.
+func TestA2A_CardEndpointIsThisDeployment(t *testing.T) {
+	pool := openTestPool(t)
+	h := newA2ATestHandler(t, pool)
+	tenantA := seedA2ATenant(t, pool, "a2a-endpoint-a")
+	const name = "a2a-endpoint-agent"
+	seedA2AAgent(t, pool, tenantA, name, true)
+
+	t.Setenv("PAL_PUBLIC_BASE_URL", "https://cp.acme.example.com/")
+	w := a2aGetCard(h, name, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("card: got %d; body %s", w.Code, w.Body.String())
+	}
+	want := `"https://cp.acme.example.com/v1/agents/` + name + `/a2a/invoke"`
+	if !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("card endpoint: want %s in %s", want, w.Body.String())
+	}
+
+	t.Setenv("PAL_PUBLIC_BASE_URL", "")
+	w = a2aGetCard(h, name, "") // httptest requests carry Host: example.com
+	if want := `"http://example.com/v1/agents/` + name + `/a2a/invoke"`; !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("card endpoint without override: want %s in %s", want, w.Body.String())
+	}
 }
