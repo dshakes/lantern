@@ -136,32 +136,54 @@ make dashboard-dev    # Next.js dashboard at localhost:3001
 make site-dev         # Website (site/, Astro + Starlight) — landing + docs
 ```
 
-### Dashboard sidebar (4 primary + Workspace section)
+### Dashboard IA: two home spaces (pal / Runtime)
 
-The dashboard sidebar (`apps/web/components/sidebar.tsx`) groups nav into a
-short primary set (the daily-driver) and a collapsible Workspace section
-(everything else). Bookmarks + deep links to old top-level routes keep
-working — they live under Workspace now.
+The dashboard serves two audiences behind one **mode switch** at the top of the
+sidebar (`components/mode-switch.tsx`). ONE source of truth for navigation:
+`apps/web/lib/workspace-nav.ts` (`NAV`, `modeForPath`, `chooseLanding`, unit-tested
+— the test also asserts every nav href has a page). Sidebar, mobile bottom nav,
+⌘K and keyboard shortcuts all read it; add a destination there, not in a component.
 
-**Primary (always visible):**
+- **pal** (consumer) — home **Today** (`/brief`): a ranked "what needs you" list
+  (held replies with one-click Approve / Edit / Discard, suggested life-events,
+  open commitments, threads waiting on you from the bridges' attention snapshot).
+  Ranking = deterministic base order + ONE control-plane LLM pass that may only
+  reorder/annotate (`lib/brief.ts`, same contract as the bridges' Attention Engine).
+  Nav: Today · Holds · Automations · People & memory · Activity · Documents · Voice · Channels · Assistant.
+- **Runtime** (builder) — home **Overview** (`/overview`): runs/success/spend/
+  sandboxes KPIs, runs-by-hour, recent failures with inline **Why?**, Ask bar.
+  Nav: Overview · Agents · Runs · Sandboxes · Deployments · Evals · Experiments ·
+  Analytics · Budgets · Connectors · Channels · Marketplace (+ recent agents).
+  Runtime mode adds `.theme-runtime` on the shell, re-pointing the accent scale
+  indigo→cyan (no per-component edits).
+- **Shared**: Settings keeps the last mode. `/` routes via `chooseLanding`:
+  remembered mode → its home; otherwise agents → Overview, started Runtime
+  onboarding → `/onboarding`, brand-new → `/welcome` (pick pal or Runtime;
+  pal path = `/pal/onboarding` when `NEXT_PUBLIC_PAL_ONBOARDING=1`, else `/personal/setup`).
 
-1. **Inbox** (`/inbox`) — cross-agent activity feed. Recent runs, runs
-   needing review, live runs in flight. New in W6.
-2. **Agents** (`/agents`)
-3. **Analytics** (`/evaluations`)
-4. **Settings** (`/settings`)
+**Settings nav** is the `SETTINGS_NAV` array in `apps/web/lib/settings-nav.ts`
+(rendered by `settings/layout.tsx`). To add a page: create
+`app/(dashboard)/settings/<slug>/page.tsx` and append one entry. Tabs of the main
+settings page are `?tab=<id>` URLs.
 
-**Workspace (collapsed by default, auto-opens on hit):**
-Runs · Channels (`/surfaces`) · Integrations (`/connectors`) · Deployments ·
-Budgets · Experiments · Eval Suites · Marketplace
+**AI-native surfaces** (all LLM calls go through the control-plane — `/v1/completions`
+with `model:"auto"` or `/v1/assist/explain`; the browser never calls a provider):
+- **⌘K / Ask PAL** (`components/command-palette.tsx` + pure `lib/assistant.ts`):
+  natural language → one validated action: navigate · answer · explain_run ·
+  create_agent (via generate-spec) · vm_action (pause/resume/terminate). Routes are
+  allowlisted and ids must come from the context the model was given. Mutations
+  ALWAYS stop at a confirm card; any inline bar calls `openAsk()` (`lib/ask-events.ts`).
+- **Inline "Explain"** (`components/explain-inline.tsx`) on run detail, Overview
+  failures and eval failure clusters.
+- **AI-suggested next steps** (`components/suggested-steps.tsx`): model picks over
+  a deterministic, live fallback; hrefs allowlisted; cached per session.
 
-**Additional dashboard surfaces:**
+Keyboard: `⌘K` Ask PAL · `g t` Today · `g h` Holds · `g o` Overview · `g a` Agents ·
+`g r` Runs · `g v` Sandboxes · `g s` Settings · `?` cheat sheet.
 
-- `/embed` — webchat install center (W10)
-- `/proof` — public receipt verifier (W8) — _no auth required_
-- `/onboarding` — agentic first-agent flow, a conversation plus a progress rail (see "Agentic onboarding")
-
-Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
+Sign-in (`app/login`) shows only what `GET /auth/providers` says is configured
+(OAuth buttons, sign-up open/invite/closed). The cookie write is awaited before
+any gated navigation (login, sign-up, OAuth callback, logout) — see the auth-loop fix.
 
 ### Dashboard UX primitives
 
@@ -205,7 +227,7 @@ Dashboard pages live in `apps/web/app/(dashboard)/`. Key pages include:
 - `/eval-suites` -- declarative suites, run history, pin-as-baseline. Regressions in CI return HTTP 422
 - `/marketplace` -- publish / fork / star public agents, backed by `/v1/marketplace` (no sample data fallbacks)
 - `/evaluations` -- analytics: performance metrics, cost attribution, model usage
-- `/settings` -- LLM providers, API keys, team management
+- `/settings` -- LLM providers, API keys, team management, billing (plans, Stripe checkout/portal, dunning notice)
 
 ---
 
@@ -249,8 +271,10 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `agent_experiments`     | A/B traffic splits with auto-promotion                                                                                                                                                           | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
+| `billing_accounts`      | Stripe customer/subscription, plan, dunning clock (ADR 0049)                                                                                                                                     | `tenant_id`, `stripe_customer_id`, `plan_id`, `status`, `grace_until`, `downgraded_at`                                       |
+| `billing_meter_exports` | One Stripe meter export per (tenant, meter, day); idempotency record                                                                                                                             | `tenant_id`, `meter`, `period_start`, `value`, `idempotency_key`, `status`                                                   |
 
-Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `pal` superuser pool bypasses RLS; `pal_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until RLS enforcement is active — see ADR 0042 for the secure-default rules: in production `PAL_APP_DB_PASSWORD` being set implicitly activates RLS (no flag needed); without it the server is FATAL at startup unless `PAL_RLS_ENFORCE=0` is set (acknowledged opt-out with WARN). The privileged `pal` superuser pool bypasses RLS; `pal_app` is subject to it. Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`, `billing_plans`, `billing_webhook_events`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
 **Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `pal_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **RLS is now safe to enable per-env** — set `PAL_APP_DB_PASSWORD` (and run `ALTER ROLE pal_app PASSWORD '<strong>'` first). In production, setting `PAL_APP_DB_PASSWORD` is enough; `PAL_RLS_ENFORCE=1` is optional. Run a batch's tests with `DATABASE_URL=postgres://pal:pal@localhost:5432/pal?sslmode=disable` (the harness sets the `pal_app` password itself via `ALTER ROLE`).
 
@@ -270,6 +294,7 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `POST` | `/auth/login`            | Email+password login |
 | `GET`  | `/auth/me`               | Current user info    |
 | `GET`  | `/auth/oauth/google/...` | Google OAuth flow    |
+| `GET`  | `/auth/providers`        | Public: which sign-in methods are configured `{oauth:{google,github}, signup, passwordReset, emailVerification}` (booleans/enum only) |
 | `POST` | `/auth/verify`, `/auth/verify/resend` | Email verification (token / re-send) |
 | `POST` | `/auth/forgot`, `/auth/reset` | Password reset (never reveals whether the account exists) |
 | `GET`  | `/v1/tenants/{id}/export` | Owner-only data export (GDPR access) |
@@ -331,6 +356,12 @@ scheduler, scheduler/manager reachability, KVM/Firecracker).
 | `DELETE` | `/v1/onboarding`          | Start over                                                          |
 | `POST`   | `/v1/onboarding/explain`  | Onboarding agent's ≤3-sentence read of a run (LLM; `runs:execute`)  |
 
+### Assist (dashboard "explain this")
+
+| Method | Path                 | Description |
+| ------ | -------------------- | ----------- |
+| `POST` | `/v1/assist/explain` | `{kind:"run", runId}` or `{kind:"eval_case", case, expected?, actual?, error?}` → `{explanation}`. For runs the SERVER loads the run + last journal events (tenant-scoped, cross-tenant → 404), so the model only sees real state. `runs:execute` (spends tenant money). Errors use the `no_provider`/`llm_failed` codes. `internal/handlers/assist.go` |
+
 ### pal first-run (ADR 0048)
 
 The consumer twin of the flow above: dashboard `/pal/onboarding` and `pal setup`.
@@ -358,12 +389,23 @@ the local owner profile + `bridge.env` (backed up, 0600, read back).
 
 ### Runs
 
-| Method | Path                   | Description              |
-| ------ | ---------------------- | ------------------------ |
-| `POST` | `/v1/runs`             | Create and execute a run |
-| `GET`  | `/v1/runs`             | List runs                |
-| `GET`  | `/v1/runs/{id}`        | Get run details          |
-| `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)  |
+| Method | Path                   | Description                                                                              |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `POST` | `/v1/runs`             | Create and execute a run. Optional `callbackUrl` (HTTPS in prod) fires a signed POST on terminal status (`X-Pal-Signature: v1=<hmac-sha256-hex>`, per-tenant key). See ADR 0033. |
+| `GET`  | `/v1/runs`             | List runs                                                                                |
+| `GET`  | `/v1/runs/{id}`        | Get run details                                                                          |
+| `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)                                                                  |
+
+### Batches
+
+Bulk invocation: one request fans out N child runs with optional concurrency cap. Callback fires when all children are terminal. Idempotent via `Idempotency-Key` header. Items capped at `PAL_BATCH_MAX_ITEMS` (default 1000). See ADR 0033. SDK surfaces are a follow-up.
+
+| Method   | Path                        | Description                                                         |
+| -------- | --------------------------- | ------------------------------------------------------------------- |
+| `POST`   | `/v1/batches`               | Create a batch + dispatch N child runs (`runs:execute`)             |
+| `GET`    | `/v1/batches/{id}`          | Status summary: counts by status, total cost (`runs:read`)          |
+| `GET`    | `/v1/batches/{id}/results`  | Paginated per-run outputs; `?after=<ISO>` cursor (`runs:read`)      |
+| `POST`   | `/v1/batches/{id}/cancel`   | Cancel all pending/running children + mark batch cancelled (`runs:execute`) |
 
 ### Sessions (interactive)
 
@@ -622,6 +664,47 @@ runs/day (only successes count; a workflow run counts once on success),
 `toolLimits` outside workflows, `notifyAtPct` alerts. Matrix:
 `site/src/content/docs/docs/` (budgets page).
 
+### Billing (Stripe — ADR 0049, default OFF)
+
+Behind config: with `PAL_STRIPE_SECRET_KEY` unset, `GET /v1/billing` reports
+`{enabled:false}` + the plan catalog, checkout/portal/webhook answer 404
+`billing_disabled`, and the billing loop never starts. Code:
+`internal/billing/` (Stripe client, signature check, pure plan/dunning rules) +
+`internal/handlers/billing.go`; dashboard Settings → Billing
+(`components/settings/billing-plans.tsx`, view-model `lib/billing.ts`).
+
+- **Plans are data** (`billing_plans`: free/pro/team/enterprise). A plan's limits
+  are written to the existing enforcement — the tenant-wide `agent_budgets` row
+  (`'*'`) and `runtime_quotas` — only once the tenant has subscribed.
+- **Webhook** is `Stripe-Signature`-verified (fail-closed without
+  `PAL_STRIPE_WEBHOOK_SECRET`; prod refuses to start that way) and idempotent by
+  event id in the same tenant tx as the state change.
+- **Dunning:** payment failed → grace (`PAL_BILLING_GRACE_DAYS`, default 7) →
+  free limits. **Never deletes data**; `invoice.paid` restores the paid plan.
+- **Usage export:** settled `agent_usage_daily` days → Stripe meter events, one
+  claim row + one idempotency key per `(tenant, meter, day)`.
+- Tables: `billing_accounts`, `billing_meter_exports` (RLS);
+  `billing_plans`, `billing_webhook_events` (RLS-exempt: global catalog / global
+  event-id dedup).
+
+| Method | Path                    | Description                                                        |
+| ------ | ----------------------- | ------------------------------------------------------------------ |
+| `GET`  | `/v1/billing`           | Plans + subscription state (`planId`, `effectivePlanId`, grace). `settings:read` |
+| `POST` | `/v1/billing/checkout`  | `{planId}` → Stripe Checkout URL. Owner/admin, `settings:write`    |
+| `POST` | `/v1/billing/portal`    | Stripe Customer Portal URL. Owner/admin, `settings:write`          |
+| `POST` | `/v1/billing/webhook`   | Stripe → PAL. Signature-verified, no JWT                           |
+
+| Env var (control-plane)      | Purpose                                                              |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `PAL_STRIPE_SECRET_KEY`      | Enables billing. Never logged.                                       |
+| `PAL_STRIPE_WEBHOOK_SECRET`  | Webhook signing secret. Required when billing is on. Never logged.   |
+| `PAL_STRIPE_PLAN_PRICES`     | Optional `pro=price_…,team=price_…` override of plan price ids.      |
+| `PAL_STRIPE_METER_TOKENS` / `PAL_STRIPE_METER_RUNS` | Meter event names (default `pal_tokens` / `pal_runs`). |
+| `PAL_BILLING_GRACE_DAYS`     | Dunning grace before free limits (default 7, 0–60).                  |
+| `PAL_BILLING_SYNC_INTERVAL`  | Dunning sweep + meter export cadence (default 1h).                   |
+| `PAL_DASHBOARD_URL`          | Checkout success/cancel + portal return base (default `:3001`).      |
+| `PAL_STRIPE_API_BASE`        | Stripe API origin override (tests / egress proxy).                   |
+
 ### Eval suites + CI gating (wedge #2)
 
 | Method   | Path                                    | Description                                                                    |
@@ -806,14 +889,15 @@ are wired; select with `PAL_CONFIDENCE_ESTIMATOR`. Both satisfy the interface
 passes the tenant-scoped `Deps.CallLLM` as the `sample` (nil-safe — estimators
 degrade gracefully when no LLM is wired). See ADR 0021.
 
-- **`verbalization_heuristic`** (default) — scans prior step text for LLM
+- **`verbalization_heuristic`** (opt-out: `PAL_CONFIDENCE_ESTIMATOR=verbalization`) — scans prior step text for LLM
   self-reported confidence ("Confidence: 85%", "70% confident"). Falls back to
   `DefaultConfidence=0.9` when none found. A HEURISTIC, and note the failure
   mode it encodes: **silence → 0.9 → auto-execute** (a model that hallucinates an
   action also cheerfully writes "confidence: 95%" about it, and no self-report at
-  all clears the 0.75 bar). Kept as the default for backward-compatibility and as
-  every estimator's safe fallback.
-- **`self_consistency`** (`SelfConsistencyEstimator`) — scores confidence from the
+  all clears the 0.75 bar). No longer the default (GA-AUDIT A4); kept as the
+  explicit opt-out and as every estimator's safe fallback.
+- **`self_consistency`** (`SelfConsistencyEstimator`, **default** when the gate is
+  on and `PAL_CONFIDENCE_ESTIMATOR` is unset or unrecognised) — scores confidence from the
   model's INDEPENDENT agreement, not its self-report: it re-poses the pending
   action to the model `N` times (`PAL_CONFIDENCE_SAMPLES`, default 5, clamped
   [1,9]) as a fresh skeptical YES/NO judgment and returns the fraction voting
@@ -846,13 +930,13 @@ The `confidence_evaluated` journal event tags which estimator ran via
 |-----|---------|---------|
 | `PAL_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
 | `PAL_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
-| `PAL_CONFIDENCE_ESTIMATOR` | `verbalization` | `self-consistency` to poll for independent agreement; else the heuristic. |
+| `PAL_CONFIDENCE_ESTIMATOR` | `self-consistency` | Default polls for independent agreement (falls back to the heuristic when no LLM is wired). `verbalization` (aliases `heuristic`, `verbalization_heuristic`) opts out to the heuristic alone. Selection: `selectConfidenceEstimator` in `internal/handlers/rest.go`. |
 | `PAL_CONFIDENCE_SAMPLES` | `5` | Independent judgments for self-consistency (clamped [1,9]). Each is one LLM call — N trades cost/latency for signal. |
 | `PAL_CONFIDENCE_CALIBRATE` | _(off)_ | `1`/`true`/`on` wraps the estimator in `CalibratedEstimator` (regret-lowered score). Default OFF; fail-safe. |
 
 Rollout: enable the gate on non-production agents first → inspect
 `confidence_evaluated` events (score, decision, `estimator`) in the run waterfall
-→ turn on `self-consistency` and tune `SAMPLES`/threshold → then production.
+(self-consistency by default) → tune `SAMPLES`/threshold → then production.
 
 #### Workflow-engine RLS (invariant #7)
 
@@ -1077,11 +1161,18 @@ the API, not the dashboard on `:3001`). The bridge reads
 context. A parallel dashboard route at `apps/web/app/api/signals/route.ts`
 writes the same contract on `:3001`; this endpoint is the tunnel-reachable twin.
 
-Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
-`PAL_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
-closed** (401) when the env var is unset or the `x-pal-signal-token`
-header is missing/mismatched. The token is never logged. The JSONL file is
-mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
+**Tenant-scoped since ADR 0047.** With an `Authorization` header the caller is
+judged on that credential only: a paired-device token (`Bearer pal_brg_…`,
+scope `bridge:signals:write`/`:read`) or a JWT/API key (`write`/`read`, kiosk
+refused); rows go to `device_signals` (RLS, migration 0033, 30-day retention via
+`PAL_SIGNALS_RETENTION_DAYS`). **Without** `Authorization` the legacy
+single-owner path is unchanged: `PAL_SIGNAL_TOKEN` shared secret
+(`x-pal-signal-token` or `x-pal-signal-token`, constant-time compare,
+**fails closed** when unset), appended to the JSONL file the live bridge reads
+(mode 0600, trimmed to the last 4000 lines past 5000) and mirrored best-effort
+into `device_signals` for ONE tenant, `PAL_SIGNALS_LEGACY_OWNER_TENANT` (default
+the dev tenant; `off` disables the legacy path — set it on multi-tenant
+deployments). The token is never logged.
 
 **Supported kinds (bridge reads all):**
 
@@ -1104,7 +1195,27 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PAL_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-pal-signal-token`; the pre-rename header is accepted for one release). Unset → endpoint is 401 fail-closed |
+| `PAL_SIGNAL_TOKEN`  | Shared secret for the legacy `/v1/signals` path (sent as `x-pal-signal-token`; the pre-rename header is accepted for one release). Unset → legacy path is 401 fail-closed |
+| `PAL_SIGNALS_LEGACY_OWNER_TENANT` | Tenant the legacy shared-token path mirrors into (default dev tenant); `off` disables the legacy path |
+| `PAL_SIGNALS_RETENTION_DAYS` | Tenant `device_signals` retention (default 30) |
+
+### Device tenancy — bridge enrollment (ADR 0047)
+
+PAL is an **appliance + cloud control plane**: the bridge on the user's Mac keeps
+raw sources (chat.db, Mail, files) on-device and pairs to a tenant. Tables
+`bridge_pairing_codes` / `bridges` (RLS). Codes are 10-char Crockford base32,
+10-min TTL, single-use, SHA-256 at rest, ≤5 open per tenant; tokens are
+`pal_brg_`+256 bits, SHA-256 at rest, accepted ONLY by bridge endpoints (never by
+`validateRequest`). Dashboard: Settings → Devices (`/settings?tab=devices`).
+Bridge-side pairing is a flag-gated follow-up — no bridge code reads the token yet.
+
+| Method   | Path                        | Description |
+| -------- | --------------------------- | ----------- |
+| `POST`   | `/v1/bridges/enroll`        | JWT/`settings:write`. `{name?, platform: macos\|ios-shortcuts, scopes?}` → one-time `{id, code, expiresAt, scopes}` |
+| `POST`   | `/v1/bridges/pair`          | Unauthenticated, rate-limited. `{code, name?}` → `{bridgeId, tenantId, token, tokenPrefix, scopes}` (token shown once) |
+| `POST`   | `/v1/bridges/self/rotate`   | Bridge token. New token; old one dies immediately |
+| `GET`    | `/v1/bridges`               | List paired devices (`?includeRevoked=true`) |
+| `DELETE` | `/v1/bridges/{id}`          | Revoke (soft); cross-tenant → 404 |
 
 ### Surface-gateway reply loop + example suites (W2-X3)
 

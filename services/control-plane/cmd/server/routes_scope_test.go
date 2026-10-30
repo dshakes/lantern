@@ -23,6 +23,7 @@ var scopeExempt = map[string]string{
 
 	// Provider-signed webhooks.
 	"POST /v1/sms/twilio/webhook":            "Twilio signature",
+	"POST /v1/billing/webhook":               "Stripe signature",
 	"POST /v1/messaging/twilio/inbound":      "Twilio signature",
 	"POST /v1/voice/twilio/webhook":          "Twilio signature",
 	"POST /v1/voice/twilio/turn":             "Twilio signature",
@@ -34,7 +35,9 @@ var scopeExempt = map[string]string{
 
 	// Shared-token / service-to-service.
 	"POST /v1/surfaces/whatsapp/heartbeat": "bridge shared token",
-	"POST /v1/signals":                     "PAL_SIGNAL_TOKEN",
+	"POST /v1/signals":                     "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
+	"POST /v1/bridges/pair":                "pre-auth: one-time pairing code is the credential, rate-limited (ADR 0047)",
+	"POST /v1/bridges/self/rotate":         "bridge token (ADR 0047)",
 	"POST /v1/runtime/secrets/resolve":     "PAL_RUNTIME_SECRET_TOKEN",
 	"POST /v1/runtime/report":              "PAL_RUNTIME_SECRET_TOKEN",
 	"POST /internal/auth/introspect-key":   "PAL_GRPC_SERVICE_TOKEN",
@@ -62,11 +65,12 @@ var getExempt = map[string]string{
 	// Auth flow — these ARE the authentication endpoints.
 	"GET /auth/me":                        "auth endpoint (returns current user, internal JWT validation)",
 	"GET /auth/oauth/{provider}/start":    "OAuth flow start (no credential yet)",
+	"GET /auth/providers":                 "pre-auth: sign-in page lists enabled login providers (no credential yet)",
 	"GET /auth/oauth/{provider}/callback": "OAuth callback (no credential yet)",
 	"GET /v1/connectors/oauth/callback":   "OAuth callback (connector flow, no scope needed)",
 
 	// Shared-token endpoints.
-	"GET /v1/signals": "PAL_SIGNAL_TOKEN shared secret (not JWT/API key)",
+	"GET /v1/signals": "bridge token / JWT scope checked in-handler, or legacy PAL_SIGNAL_TOKEN (ADR 0047)",
 
 	// Public/unauthenticated by design.
 	"GET /v1/agents/{name}/card":          "A2A card: public for is_public agents; internal auth for own agents",

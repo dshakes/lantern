@@ -1,5 +1,6 @@
 "use client";
 
+import { ExplainInline } from "@/components/explain-inline";
 import { useState, useEffect, useMemo } from "react";
 import {
   BarChart3,
@@ -623,9 +624,20 @@ export default function EvaluationsPage() {
                           {c.sampleError}
                         </p>
                       )}
-                      <p className="mt-1 text-[11px] text-zinc-600">
-                        last seen {relTime(c.lastSeen)}
-                      </p>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-zinc-600">last seen {relTime(c.lastSeen)}</p>
+                        <ExplainInline
+                          size="xs"
+                          label="Why?"
+                          request={{
+                            kind: "eval_case",
+                            case: c.case,
+                            expected: c.expected ? String(c.expected) : undefined,
+                            actual: c.actual ? String(c.actual) : undefined,
+                            error: c.sampleError || undefined,
+                          }}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>

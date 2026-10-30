@@ -12,7 +12,7 @@ export async function signUp(page: Page, email: string, name = "E2E User") {
   await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
   await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: /Create account/ }).click();
-  // Signed up == logged in: the app leaves /login (for onboarding). Cold `next dev`
+  // Signed up == logged in: the app leaves /login (for /welcome). Cold `next dev`
   // compiles the destination on first hit, hence the generous timeout.
   await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
 }

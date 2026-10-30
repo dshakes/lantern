@@ -227,6 +227,8 @@ snapshot() {  # snapshot OUT [old|new] — everything rollback promises to resto
 
 # ================================================================== preflight
 PRE_LOADED=""   # "label pid" lines of the old side at preflight time
+OLD_ENV_COUNT=0 # *.env files in the old state dir at preflight
+STATE_SENTINEL="" # a regular file known to be at the top of the old state dir
 preflight() {
   hdr "preflight"
   local t f s
@@ -246,6 +248,8 @@ preflight() {
   fi
 
   # --- env files (key names only)
+  OLD_ENV_COUNT="$(env_files "$OLD_STATE_DIR" | grep -c . || true)"
+  STATE_SENTINEL="$(cd "$OLD_STATE_DIR" 2>/dev/null && for f in bridge.env *; do [[ -f "$f" && ! -L "$f" ]] && { echo "$f"; break; }; done)"
   for f in $(env_files "$OLD_STATE_DIR"); do
     s="$(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry)"
     case $? in
@@ -495,8 +499,28 @@ step_state_move() {
     return 0
   fi
   journal begin state-move
-  mv "$OLD_STATE_DIR" "$NEW_STATE_DIR" || { bad "mv failed"; return 1; }
+  # Re-check NOW, not just at preflight: on the live cutover something wrote
+  # ~/.pal/credentials.json after preflight, `mv` then moved the state INTO it
+  # (~/.pal/.lantern) and every service booted with empty state.
+  if [[ -L "$NEW_STATE_DIR" || ( -e "$NEW_STATE_DIR" && ! -d "$NEW_STATE_DIR" ) ]]; then
+    bad "$NEW_STATE_DIR appeared since preflight and is not a directory"; return 1
+  fi
+  if [[ -d "$NEW_STATE_DIR" ]]; then
+    if [[ -n "$(ls -A "$NEW_STATE_DIR")" ]]; then
+      bad "$NEW_STATE_DIR appeared since preflight and is NOT empty ($(find "$NEW_STATE_DIR" -mindepth 1 -maxdepth 1 | sed 's#.*/##' | head -5 | tr '\n' ' ')) — something wrote to it during the cutover; refusing to merge"
+      return 1
+    fi
+    warn "$NEW_STATE_DIR appeared since preflight but is empty — it will be replaced"
+  fi
+  # rename(2) via the helper: replaces an empty dir, FAILS on a non-empty one,
+  # never nests (plain `mv` would move the source inside an existing dir).
+  helper rename-dir "$OLD_STATE_DIR" "$NEW_STATE_DIR" >/dev/null || { bad "rename $OLD_STATE_DIR → $NEW_STATE_DIR failed"; return 1; }
+  journal end state-renamed
   [[ -d "$NEW_STATE_DIR" && ! -e "$OLD_STATE_DIR" ]] || { bad "post-move check"; return 1; }
+  [[ ! -e "$NEW_STATE_DIR/$(basename "$OLD_STATE_DIR")" ]] || { bad "state was NESTED at $NEW_STATE_DIR/$(basename "$OLD_STATE_DIR")"; return 1; }
+  if [[ -n "$STATE_SENTINEL" ]]; then
+    [[ -f "$NEW_STATE_DIR/$STATE_SENTINEL" ]] && ok "sentinel $STATE_SENTINEL is at the top of $NEW_STATE_DIR" || { bad "$NEW_STATE_DIR/$STATE_SENTINEL missing after the move"; return 1; }
+  fi
   if [[ "$STATE_COMPAT_SYMLINK" == 1 ]]; then ln -s "$NEW_STATE_DIR" "$OLD_STATE_DIR" || { bad "symlink"; return 1; }; fi
   ok "moved ($(find "$NEW_STATE_DIR" | wc -l | tr -d ' ') entries)$([[ "$STATE_COMPAT_SYMLINK" == 1 ]] && echo ", compat symlink in place")"
   if [[ "$WA_CREDS_OLD" != "$WA_CREDS_NEW" && -d "$WA_CREDS_OLD" ]]; then
@@ -512,8 +536,13 @@ step_state_move() {
 
 step_env() {
   hdr "rewrite env keys $OLD_ENV_PREFIX* → $NEW_ENV_PREFIX* in $NEW_STATE_DIR/*.env"
-  local f s dir="$NEW_STATE_DIR"
+  local f s dir="$NEW_STATE_DIR" n
   [[ "$DRY" == 1 ]] && dir="$OLD_STATE_DIR"
+  n="$(env_files "$dir" | grep -c . || true)"
+  if [[ "$n" != "$OLD_ENV_COUNT" ]]; then
+    bad "found $n *.env file(s) in $dir but the old state dir had $OLD_ENV_COUNT — the state is not where it should be"
+    return 1
+  fi
   for f in $(env_files "$dir"); do
     if [[ "$DRY" == 1 ]]; then
       would "rewrite $(basename "$f") (0600): $(helper env-rename "$f" "$OLD_ENV_PREFIX" "$NEW_ENV_PREFIX" --dry | python3 -I -c 'import json,sys;print(" ".join(json.load(sys.stdin)["renamed"]))')"
@@ -650,6 +679,33 @@ step_git() {
   journal end git
 }
 
+# The node a service RUNS under must be the node its deps are INSTALLED under:
+# native addons (lightningcss, tailwind-oxide, next-swc) are per-arch. Live, the
+# dashboard ran under /usr/local/bin/node (x64, Rosetta) while the build ran
+# arm64 nvm node, so the x64 natives were missing and the dashboard 500'd.
+node_dir_for() {  # node_dir_for SVC PREFIX → dir of the node that service's launch path resolves
+  local svc="$1" plist="$LA_DIR/$2.$1.plist" p n=""
+  case "$svc" in
+    whatsapp-bridge|imessage-bridge)
+      # run-bridge-wrapper.sh puts the NEWEST nvm node first, ahead of the plist PATH
+      if grep -q '.nvm/versions/node' "$REPO_DIR/scripts/launchd/run-bridge-wrapper.sh" 2>/dev/null; then
+        # shellcheck disable=SC2012  # newest-by-mtime, mirroring the wrapper exactly
+        n="$(ls -t "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | head -1)"
+      fi ;;
+  esac
+  if [[ -z "$n" && -f "$plist" ]]; then
+    p="$(helper plist-get "$plist" env:PATH)"
+    [[ -n "$p" ]] && n="$(PATH="$p" command -v node)"
+  fi
+  [[ -n "$n" ]] || n="$(command -v node)"
+  dirname "$n"
+}
+with_node() {  # with_node DIR cmd… — run with DIR's node/npm first on PATH (sandbox stubs still win)
+  local d="$1"; shift
+  if [[ "$SANDBOX" == 1 ]]; then PATH="$PAL_CUTOVER_STUB_BIN:$d:$PATH" "$@"; else PATH="$d:$PATH" "$@"; fi
+}
+node_desc() { printf '%s (%s)' "$1/node" "$(file -b "$1/node" 2>/dev/null | grep -oE 'x86_64|arm64' | sort -u | tr '\n' '+' | sed 's/+$//')"; }
+
 build_tree() {  # build_tree LABEL — what `make deploy-local` would rebuild, done up front so errors surface before start
   local d svc log="${BK:-/tmp}/build-$1.log"
   [[ "$DRY" == 1 ]] && {
@@ -659,8 +715,12 @@ build_tree() {  # build_tree LABEL — what `make deploy-local` would rebuild, d
     would "dashboard: npm install && rm -rf .next && npm run build (the wrapper never rebuilds an existing bundle)"
     return 0; }
   : > "$log"
+  local prefix="$NEW_LABEL_PREFIX" nd
+  [[ "$1" == rollback ]] && prefix="$OLD_LABEL_PREFIX"
   for d in $BRIDGE_DIRS; do
-    ( cd "$REPO_DIR/$d" && npm install --no-audit --no-fund ) >> "$log" 2>&1 || { bad "npm install $d (see $log)"; return 1; }
+    nd="$(node_dir_for "$(basename "$d")" "$prefix")"
+    log "  .     $(basename "$d"): npm install with $(node_desc "$nd")"
+    ( cd "$REPO_DIR/$d" && with_node "$nd" npm install --no-audit --no-fund ) >> "$log" 2>&1 || { bad "npm install $d (see $log)"; return 1; }
   done
   for svc in $RUST_SERVICES; do
     [[ -d "$REPO_DIR/services/$svc" ]] || continue
@@ -671,7 +731,12 @@ build_tree() {  # build_tree LABEL — what `make deploy-local` would rebuild, d
     [[ -d "$REPO_DIR/services/$svc" ]] || continue
     ( cd "$REPO_DIR/services/$svc" && go build -o "bin/$bin" "$pkg" ) >> "$log" 2>&1 || { bad "go build $svc (see $log)"; return 1; }
   done
-  ( cd "$REPO_DIR/$DASHBOARD_DIR" && npm install --no-audit --no-fund && rm -rf .next && npm run build ) >> "$log" 2>&1 || { bad "dashboard build (see $log)"; return 1; }
+  nd="$(node_dir_for dashboard "$prefix")"
+  log "  .     dashboard: npm install + next build with $(node_desc "$nd") (the node its plist PATH resolves)"
+  ( cd "$REPO_DIR/$DASHBOARD_DIR" && with_node "$nd" npm install --no-audit --no-fund && rm -rf .next && with_node "$nd" npm run build ) >> "$log" 2>&1 || { bad "dashboard build (see $log)"; return 1; }
+  # the wrapper serves .next/standalone and only builds when it is MISSING — a
+  # first-boot `next build` under launchd outlasts the health window
+  [[ -f "$REPO_DIR/$DASHBOARD_DIR/.next/standalone/server.js" ]] || { bad "dashboard build produced no .next/standalone/server.js (is output: \"standalone\" still set?)"; return 1; }
   ok "built bridges deps, ${RUST_SERVICES}, go services, dashboard (log: $log)"
 }
 step_build() { hdr "build"; build_tree "$1"; }
@@ -700,19 +765,32 @@ http() {  # http URL [header-line] [code|body] — secret header travels via cur
     { [[ -n "$hdrline" ]] && printf 'header = "%s"\n' "$esc"; } | curl -s -m 5 -K - "$url" 2>/dev/null
   fi
 }
-wait_http() {  # wait_http NAME URL [header]
-  local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECS )) c=""
+wait_http() {  # wait_http NAME URL [header] [timeout-secs]
+  local t="${4:-$HEALTH_TIMEOUT_SECS}" deadline c=""
+  deadline=$(( $(date +%s) + t ))
   while [[ $(date +%s) -lt $deadline ]]; do
     c="$(http "$2" "${3:-}")"; [[ "$c" == 200 ]] && { ok "$1 → 200"; return 0; }
     sleep 3
   done
-  bad "$1 → ${c:-no answer} after ${HEALTH_TIMEOUT_SECS}s"; return 1
+  bad "$1 → ${c:-no answer} after ${t}s"; return 1
 }
 json_field() { python3 -I -c 'import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print(""); sys.exit()
 for k in sys.argv[1].split("."): d = d.get(k) if isinstance(d, dict) else None
 print("" if d is None else str(d).lower())' "$1"; }
+
+TOKEN=""
+bridge_token() {  # bridge_token ENVFILE CONTRACT_KEY → $TOKEN; the side's key, else the legacy one. Says which key, never the value.
+  local envf="$1" k k2
+  TOKEN=""
+  k="$(side_key "$2")"; k2="${OLD_ENV_PREFIX}${2#"$NEW_ENV_PREFIX"}"
+  if [[ ! -f "$envf" ]]; then bad "$envf missing — cannot read $k"; return; fi
+  if helper env-has "$envf" "$k"; then TOKEN="$(helper env-get "$envf" "$k")"
+  elif [[ "$k2" != "$k" ]] && helper env-has "$envf" "$k2"; then warn "$(basename "$envf") has no $k; using legacy $k2"; TOKEN="$(helper env-get "$envf" "$k2")"
+  else bad "$(basename "$envf") defines neither $k nor $k2 — bridge probes would be unauthenticated"; return; fi
+  [[ -n "$TOKEN" ]] || bad "$(basename "$envf"): $k is set but empty after shell parsing"
+}
 
 health() {  # health old|new
   local side="$1" envf tok sig l pid prepid line f
@@ -733,11 +811,11 @@ health() {  # health old|new
     fi
   done <<< "$PRE_LOADED"
   wait_http "API $API_URL/healthz" "$API_URL/healthz"
-  wait_http "dashboard $DASHBOARD_URL" "$DASHBOARD_URL"
+  wait_http "dashboard $DASHBOARD_URL" "$DASHBOARD_URL" "" "$DASHBOARD_TIMEOUT_SECS"
   wait_http "WhatsApp bridge /health" "$WA_URL/health"
   wait_http "iMessage bridge /health" "$IM_URL/health"
   envf="$S_STATE/bridge.env"
-  tok="$( [[ -f "$envf" ]] && helper env-get "$envf" "$(side_key "$WA_TOKEN_KEY")")"
+  bridge_token "$envf" "$WA_TOKEN_KEY"; tok="$TOKEN"
   line="$( [[ -n "$tok" ]] && echo "Authorization: Bearer $tok")"
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECS )) st=""
   while [[ $(date +%s) -lt $deadline ]]; do
@@ -746,7 +824,7 @@ health() {  # health old|new
   done
   [[ "$st" == true ]] && ok "WhatsApp session connected (no QR)" || bad "WhatsApp session not connected (status.connected=${st:-?}) — check the err log before re-pairing"
   [[ "$(http "$WA_URL/session/$TENANT_ID/has-creds" "$line" body | json_field hasCreds)" == true ]] && ok "WhatsApp creds present" || bad "WhatsApp has-creds=false"
-  tok="$( [[ -f "$envf" ]] && helper env-get "$envf" "$(side_key "$IM_TOKEN_KEY")")"
+  bridge_token "$envf" "$IM_TOKEN_KEY"; tok="$TOKEN"
   line="$( [[ -n "$tok" ]] && echo "Authorization: Bearer $tok")"
   st="$(http "$IM_URL/session/$TENANT_ID/diagnostics" "$line" body)"
   if [[ "$(printf '%s' "$st" | json_field chatDb.open)" == true ]]; then ok "iMessage chat.db open (lastSeenRowid $(printf '%s' "$st" | json_field chatDb.lastSeenRowid))"
@@ -866,7 +944,10 @@ cmd_rollback() {
   # 3. state dir
   if [[ "$has_backup" == 1 ]]; then
     [[ -L "$OLD_STATE_DIR" ]] && rm "$OLD_STATE_DIR"
-    [[ -d "$NEW_STATE_DIR" && ! -L "$NEW_STATE_DIR" ]] && mv "$NEW_STATE_DIR" "$aside/state-new"
+    # only if the cutover renamed the state into it — a ~/.pal that something
+    # else created (the live race) is not ours to move
+    if journaled "$bkd" "end state-renamed" && [[ -d "$NEW_STATE_DIR" && ! -L "$NEW_STATE_DIR" ]]; then mv "$NEW_STATE_DIR" "$aside/state-new"
+    elif [[ -e "$NEW_STATE_DIR" ]]; then warn "left $NEW_STATE_DIR alone (the cutover never moved state into it)"; fi
     [[ -d "$OLD_STATE_DIR" ]] && mv "$OLD_STATE_DIR" "$aside/state-old"
     tar -C "$(dirname "$OLD_STATE_DIR")" -xpzf "$bkd/state.tgz" && ok "restored $OLD_STATE_DIR from state.tgz (post-cutover state kept at $aside)" || bad "state restore"
   fi

@@ -120,3 +120,13 @@ lookup (`internal/handlers/confidence_calibration.go`) is tenant-scoped
 fail-safe (no data / any error → regret 0 → base unchanged). Opt-in via
 `PAL_CONFIDENCE_CALIBRATE`; default OFF. This makes the self-consistency
 signal *outcome-calibrated* rather than merely grounded.
+
+## Amendment (2026-10, GA-AUDIT A4): self-consistency is the default
+
+When the gate is enabled and `PAL_CONFIDENCE_ESTIMATOR` is unset (or holds an
+unrecognised value), the gate now uses `SelfConsistencyEstimator`. The
+verbalization heuristic remains the fallback inside it (nil sampler,
+undescribable action, every sample failed) and the explicit opt-out
+(`PAL_CONFIDENCE_ESTIMATOR=verbalization`). The gate itself stays default OFF.
+Cost: with the gate on, each gated step now issues `PAL_CONFIDENCE_SAMPLES`
+(default 5) small LLM judgments by default.

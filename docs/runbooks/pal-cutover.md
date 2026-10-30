@@ -144,10 +144,21 @@ No secret value is ever printed. Read the WARN lines before you apply.
    Each archive is listed back, entry counts are compared and the dump is
    read with `pg_restore -l`. This runs **after** the stop, so the snapshot
    is consistent.
-5. **state-move**: `mv ~/.lantern ~/.pal` (the same-volume check passed in
-   preflight), then `ln -s ~/.pal ~/.lantern`.
+5. **state-move**: renames `~/.lantern` to `~/.pal` with a single `rename(2)`
+   (the same-volume check passed in preflight), then `ln -s ~/.pal ~/.lantern`.
+   Immediately before the rename it checks again that `~/.pal` doesn't exist.
+   An **empty** `~/.pal` is replaced; a **non-empty** one fails the step and
+   triggers rollback. During the live cutover something wrote
+   `~/.pal/credentials.json` after preflight, and a plain `mv` then moved the
+   state *into* it (`~/.pal/.lantern`), so every service booted with empty
+   state. The rename can no longer nest. Afterwards the step asserts that a
+   known file (`bridge.env`) is at the top of `~/.pal` and that
+   `~/.pal/.lantern` doesn't exist. Rollback only moves `~/.pal` aside if the
+   cutover put the state there.
 6. **env**: renames `LANTERN_*` → `PAL_*` in `~/.pal/*.env`, leaving values
-   untouched, and writes the files `0600`.
+   untouched, and writes the files `0600`. It fails if it finds a different
+   number of `*.env` files than the old directory had. Finding zero used to
+   pass silently.
 7. **db**: creates a temporary superuser (a session cannot rename its own
    user), ends any remaining sessions, renames the DB and both roles, sets the
    main user's password from the new `DATABASE_URL` and the app role's from
@@ -161,6 +172,21 @@ No secret value is ever printed. Read the WARN lines before you apply.
     the 4 Rust services and `go build` for the 3 Go services, then rebuilds
     the dashboard from a clean `.next`. The wrapper never rebuilds an existing
     dashboard bundle, so a restart alone would keep serving the old UI.
+    Each `npm` runs under **the node that service actually runs under**,
+    because native modules (lightningcss, tailwind-oxide, next-swc) are built
+    per CPU architecture:
+    - the dashboard uses the node its plist `PATH` resolves. Live, that was
+      `/usr/local/bin/node`, which is x64 under Rosetta.
+    - the bridges use the newest nvm node, which is what
+      `run-bridge-wrapper.sh` execs.
+
+    Live, the build used the arm64 nvm node while the dashboard ran under x64,
+    so the x64 native modules were missing and the dashboard returned 500. The
+    step prints each node path and architecture, and fails unless
+    `.next/standalone/server.js` exists. Without it, the wrapper starts a
+    `next build` on first boot, which outlasts the health window. The
+    dashboard health check now waits up to `DASHBOARD_TIMEOUT_SECS`
+    (default 900 s).
 11. **start**: bootstraps every agent that was loaded before, in dependency
     order, retrying the known "bootstrap failed and left it down" case.
 12. **health**: see the next section.
@@ -201,6 +227,11 @@ to run `rollback`.
 - The API `/healthz` returns 200, and the dashboard returns 200 (following the
   `/login` redirect).
 - Both bridges answer `/health`.
+- The bridge tokens come from `~/.pal/bridge.env`, parsed exactly as the
+  wrapper's `set -a; . bridge.env` sees them: `export`, quotes and inline
+  `# comments` are handled. A key missing from the file, or empty after
+  parsing, is reported by **name** as a FAIL. Before this fix a wrong parse
+  showed up only as `status.connected=?` while WhatsApp was in fact connected.
 - WhatsApp `status.connected=true` and `has-creds=true` with **no QR**. The
   creds live in `services/whatsapp-bridge/auth_sessions/`, inside the checkout,
   and the cutover doesn't move them. If a contract ever moves them, `apply`
@@ -318,8 +349,10 @@ by three failure injections, plus four schema-version cases (DB ahead of the
 old code: plan refuses until a choice is made; DB ahead of the release: plan
 refuses; rollback to `PAL_CUTOVER_ROLLBACK_REF`: everything but git is
 identical; roll-forward-only: rollback and `verify --old` report the API cannot
-start). The failure injections are: after the state move, after the DB rename, and
+start), plus the live-found cases (a non-empty `~/.pal` appearing mid-cutover
+is refused without nesting; an empty one is replaced; an `export KEY="v"  # c`
+token line; per-service node selection for `npm`). The failure injections are: after the state move, after the DB rename, and
 a build failure after checkout. Each must auto-roll back to a snapshot
 byte-identical to the start. The snapshot covers file checksums and modes,
 plists, launchd jobs, git HEAD/remote/worktree, the DB data checksum and the
-role verifiers. Expected result: `67 passed, 0 failed`.
+role verifiers. Expected result: `78 passed, 0 failed`.

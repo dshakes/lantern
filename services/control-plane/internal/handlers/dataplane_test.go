@@ -5,8 +5,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net"
 	"testing"
 	"time"
@@ -97,12 +95,6 @@ func seedDP(t *testing.T, pool *pgxpool.Pool, tenantID, regTokenHash string) str
 		_, _ = pool.Exec(context.Background(), `DELETE FROM data_planes WHERE id = $1`, id)
 	})
 	return id
-}
-
-// sha256Hex returns hex(sha256(s)).
-func sha256Hex(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
 }
 
 // dpAssertCode checks that err is a gRPC error with the expected code.

@@ -1,71 +1,64 @@
 "use client";
 
+// /login — sign in / sign up.
+//
+// Only offers what the deployment really supports: GET /auth/providers says
+// which OAuth providers are configured and whether sign-up is open, invite-
+// only or closed. Unknown (older control-plane) → no OAuth buttons rather
+// than buttons that can only fail.
+//
+// Session handling follows the auth-loop fix: the HttpOnly cookie write is
+// AWAITED before navigating to a gated route, and when the server bounced us
+// here (?from= / ?next=) while we still hold a valid token, the cookie is
+// repaired non-destructively (api.syncCookie) instead of forcing a re-login.
+
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, Loader2, ArrowRight, MailCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { api } from "@/lib/api";
-import { PalMark } from "@/components/pal-mark";
+import { api, type AuthProviders } from "@/lib/api";
 import { Turnstile, TURNSTILE_SITE_KEY } from "@/components/turnstile";
+import { AuthError, AuthFrame, authInputClass } from "@/app/auth/auth-shell";
+import { describeAuthError, safeNextPath, type AuthErrorView } from "./auth-errors";
 
 function GoogleIcon() {
   return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24">
-      <path
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-        fill="#4285F4"
-      />
-      <path
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-        fill="#34A853"
-      />
-      <path
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-        fill="#FBBC05"
-      />
-      <path
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-        fill="#EA4335"
-      />
+    <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden>
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
     </svg>
   );
 }
 
 function GitHubIcon() {
   return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
       <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
     </svg>
   );
 }
+
+const OAUTH_META: Record<string, { label: string; Icon: () => React.ReactElement }> = {
+  google: { label: "Continue with Google", Icon: GoogleIcon },
+  github: { label: "Continue with GitHub", Icon: GitHubIcon },
+};
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, signup, loginDemo, isAuthenticated, isLoading } = useAuth();
 
-  // Where to send the user after a successful login. Defaults to /agents.
-  // ?next= is set by the 401-redirect in lib/runtime-api + lib/api; ?from= is set
-  // by the auth middleware when it bounces an unauthenticated request. Read both
-  // so a session expiring mid-task drops the user back where they were.
-  // Reject absolute URLs to avoid open-redirect; only same-origin paths.
-  const nextPath = (() => {
-    const raw = searchParams.get("next") || searchParams.get("from");
-    if (!raw) return "/agents";
-    if (!raw.startsWith("/") || raw.startsWith("//")) return "/agents";
-    return raw;
-  })();
-
-  // A `from`/`next` param means the SERVER (middleware or a 401) rejected our
-  // session and sent us here. If the client still reads as authenticated, it's a
-  // stale localStorage token with no valid server cookie — the exact desync that
-  // otherwise loops /login <-> the gated route forever (blank screen). Detect it.
+  const nextPath = safeNextPath(searchParams.get("next") || searchParams.get("from"));
+  // A from/next param means the SERVER rejected our session. If the client
+  // still reads as authenticated it's the localStorage/cookie desync — repair.
   const bounced = searchParams.get("from") !== null || searchParams.get("next") !== null;
-
-  // An invite link (?invite=<code>) opens straight into sign-up with the code
-  // prefilled; invite-only deployments reject sign-ups without it (ADR 0027).
   const inviteParam = searchParams.get("invite") ?? "";
+  const oauthError = searchParams.get("error");
+
+  const [providers, setProviders] = useState<AuthProviders | null>(null);
   const [mode, setMode] = useState<"signin" | "signup">(inviteParam ? "signup" : "signin");
   const [inviteCode, setInviteCode] = useState(inviteParam);
   const [captchaToken, setCaptchaToken] = useState("");
@@ -73,26 +66,30 @@ export default function LoginPage() {
   const [checkEmail, setCheckEmail] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const [name, setName] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AuthErrorView | null>(
+    oauthError ? { kind: "other", message: "That sign-in didn't complete. Try again or use email." } : null,
+  );
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
 
-  // Redirect / desync-repair. AuthProvider restores + VALIDATES the token
-  // (/auth/me) asynchronously, so wait for isLoading to settle. Once the client
-  // is authenticated with a proven-valid token:
-  //   - If we were bounced here by the server (?from=/?next=) yet hold a valid
-  //     token, the HttpOnly cookie is missing/stale (the desync that loops
-  //     /login <-> the gated route → blank screen). REPAIR it by re-writing the
-  //     cookie from the token — no destructive re-login — then proceed.
-  //   - Otherwise just await the pending cookie write so the redirect never
-  //     races ahead of it.
-  // The one-shot ref bounds this to a single repair+redirect per mount.
+  useEffect(() => {
+    void api.getAuthProviders().then(setProviders);
+  }, []);
+
+  const signupMode = providers?.signup ?? "open";
+  const signupAllowed = signupMode !== "closed" || Boolean(inviteParam);
+  const oauthProviders = Object.entries(providers?.oauth ?? {})
+    .filter(([id, on]) => on && OAUTH_META[id])
+    .map(([id]) => id)
+    .sort();
+
+  // Redirect / desync repair once AuthProvider has validated the token.
   const redirecting = useRef(false);
-  // Sign-up sets this before auth flips, so the effect below sends a brand-new
-  // user to onboarding instead of racing the explicit replace to nextPath.
   const destination = useRef<string | null>(null);
   useEffect(() => {
     if (isLoading || !isAuthenticated || redirecting.current) return;
@@ -103,40 +100,28 @@ export default function LoginPage() {
       await api.whenCookieSynced();
       if (!cancelled) router.replace(destination.current ?? nextPath);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [isLoading, isAuthenticated, bounced, nextPath, router]);
 
-  // Authenticated → we're about to redirect; don't flash the form.
-  if (!isLoading && isAuthenticated) {
-    return null;
-  }
+  if (!isLoading && isAuthenticated) return null;
+
+  const switchMode = (m: "signin" | "signup") => {
+    setMode(m);
+    setError(null);
+    setResent(false);
+  };
 
   const handleOAuthLogin = async (provider: string) => {
     setError(null);
     setOauthLoading(provider);
     try {
       const data = await api.oauthStart(provider);
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
-      }
+      if (data.redirect_url) window.location.href = data.redirect_url;
+      else throw new Error("no redirect");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("OAuth is not configured")) {
-        // Extract the specific error from the API response.
-        const match = message.match(/API \d+: (.*)/);
-        if (match) {
-          try {
-            const parsed = JSON.parse(match[1]);
-            setError(parsed.error || message);
-          } catch {
-            setError(message);
-          }
-        } else {
-          setError(message);
-        }
-      } else {
-        setError("Can't reach the PAL API, so Google and GitHub sign-in are unavailable. In local dev, start it with make run-api.");
-      }
+      setError(describeAuthError(err, "signin"));
       setOauthLoading(null);
     }
   };
@@ -144,24 +129,22 @@ export default function LoginPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-
-    if (!email.trim() || !password.trim()) {
-      setError("Enter your email and password.");
-      return;
-    }
-
+    setResent(false);
+    const fail = (message: string) => setError({ kind: "other", message });
+    if (!email.trim() || !password) return fail("Enter your email and password.");
     if (mode === "signup") {
-      if (!name.trim()) { setError("Enter your name."); return; }
-      if (password.length < 12) { setError("Use a password of at least 12 characters."); return; }
-      if (password !== confirmPassword) { setError("The passwords don't match."); return; }
-      if (TURNSTILE_SITE_KEY && !captchaToken) { setError("Complete the check above the button."); return; }
+      if (!name.trim()) return fail("Enter your name.");
+      if (password.length < 12) return fail("Use a password of at least 12 characters.");
+      if (password !== confirmPassword) return fail("The passwords don't match.");
+      if (signupMode === "invite" && !inviteCode.trim()) return fail("This workspace is invite-only. Enter your invite code.");
+      if (TURNSTILE_SITE_KEY && !captchaToken) return fail("Complete the check above the button.");
     }
-
     setLoading(true);
     try {
       if (mode === "signup") {
-        destination.current = "/onboarding";
-        const { verificationRequired } = await signup(email, password, name, {
+        // A brand-new account picks its path on /welcome.
+        destination.current = "/welcome";
+        const { verificationRequired } = await signup(email.trim(), password, name.trim(), {
           inviteCode: inviteCode.trim() || undefined,
           captchaToken: captchaToken || undefined,
         });
@@ -169,260 +152,246 @@ export default function LoginPage() {
           setCheckEmail(true);
           return;
         }
-        router.replace("/onboarding");
+        await api.whenCookieSynced();
+        router.replace("/welcome");
       } else {
-        await login(email, password);
+        await login(email.trim(), password);
+        await api.whenCookieSynced();
         router.replace(nextPath);
       }
     } catch (err) {
       destination.current = null;
-      const message = err instanceof Error ? err.message : "";
-      // Surface the server's own reason (closed, invite, captcha, 429) on sign-up.
-      const server = message.match(/API (\d+): (.*)/);
-      let reason = message || "Couldn't sign in. Check your email and password.";
-      if (server?.[1] === "429") reason = "Too many attempts. Wait a while and try again.";
-      else if (server) {
-        try { reason = JSON.parse(server[2]).error || reason; } catch { /* keep message */ }
-      }
-      setError(reason);
+      setError(describeAuthError(err, mode));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDemo = () => {
-    setDemoLoading(true);
-    loginDemo();
-    router.replace(nextPath);
+  const resendVerification = async () => {
+    try {
+      await api.resendVerification(email.trim());
+    } finally {
+      setResent(true); // same answer either way — never reveals whether the account exists
+    }
   };
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-0 px-4">
-      <div className="w-full max-w-[380px]">
-        {/* Logo */}
-        <div className="mb-8 text-center">
-          <PalMark className="mx-auto mb-4 h-11 w-11" />
-          <h1 className="text-xl font-semibold text-zinc-100">
-            {mode === "signin" ? "Welcome back" : "Create your account"}
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            {mode === "signin" ? "Sign in to your PAL workspace" : "Get started in 30 seconds"}
+  if (checkEmail) {
+    return (
+      <AuthFrame>
+        <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-6">
+          <MailCheck className="h-6 w-6 text-pal-400" />
+          <h1 className="mt-3 text-lg font-semibold text-zinc-50">Check your email</h1>
+          <p className="mt-1.5 text-sm leading-relaxed text-zinc-400">
+            We sent a verification link to <span className="text-zinc-200">{email}</span>. Open it to finish setting up, then sign in.
           </p>
+          <button
+            onClick={() => { setCheckEmail(false); switchMode("signin"); }}
+            className="mt-5 text-sm font-medium text-pal-400 hover:text-pal-300"
+          >
+            Back to sign in
+          </button>
         </div>
+      </AuthFrame>
+    );
+  }
 
-        {/* Card */}
-        {checkEmail ? (
-          <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-5 text-sm text-zinc-400">
-            <div className="mb-2 flex items-center gap-2 font-medium text-zinc-100">
-              <MailCheck className="h-4 w-4 text-pal-400" />
-              Check your email
-            </div>
-            We sent a verification link to <span className="text-zinc-200">{email}</span>. Open it to
-            finish setting up your account, then sign in.
-          </div>
-        ) : (
-        <div className="rounded-xl border border-zinc-800/80 bg-surface-1 p-5">
-          {/* Error */}
-          {error && (
-            <div className="mb-3.5 flex items-start gap-2 rounded-lg bg-red-500/8 border border-red-500/20 px-3 py-2.5 text-xs text-red-400">
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{error}</span>
-            </div>
+  return (
+    <AuthFrame>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">
+          {mode === "signin" ? "Welcome back" : "Create your account"}
+        </h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          {mode === "signin" ? "Sign in to your PAL workspace." : "Your personal layer and agent runtime, in one place."}
+        </p>
+      </div>
+
+      {error && (
+        <div role="alert">
+          <AuthError message={error.message} />
+          {error.kind === "unverified" && email && (
+            <p className="-mt-2 mb-3.5 text-xs text-zinc-400">
+              {resent ? (
+                "If that account needs verifying, a new link is on its way."
+              ) : (
+                <button onClick={resendVerification} className="font-medium text-pal-400 hover:text-pal-300">
+                  Send a new verification link
+                </button>
+              )}
+            </p>
           )}
-
-          {/* Social login buttons */}
-          <div className="space-y-2.5">
-            <button
-              type="button"
-              onClick={() => handleOAuthLogin("google")}
-              disabled={oauthLoading !== null}
-              className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-zinc-700/80 bg-white/[0.03] px-3 py-2.5 text-sm text-zinc-200 transition-all hover:bg-white/[0.07] hover:border-zinc-600 disabled:opacity-50 active:scale-[0.98]"
-            >
-              {oauthLoading === "google" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <GoogleIcon />
-                  Continue with Google
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleOAuthLogin("github")}
-              disabled={oauthLoading !== null}
-              className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-zinc-700/80 bg-white/[0.03] px-3 py-2.5 text-sm text-zinc-200 transition-all hover:bg-white/[0.07] hover:border-zinc-600 disabled:opacity-50 active:scale-[0.98]"
-            >
-              {oauthLoading === "github" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <GitHubIcon />
-                  Continue with GitHub
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="my-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-zinc-800/60" />
-            <span className="text-[11px] text-zinc-600">or</span>
-            <div className="h-px flex-1 bg-zinc-800/60" />
-          </div>
-
-          {/* Email form */}
-          <form onSubmit={handleSubmit} className="space-y-3.5">
-            {mode === "signup" && (
-              <div>
-                <label htmlFor="name" className="mb-1 block text-xs font-medium text-zinc-400">Name</label>
-                <input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Your name"
-                  autoComplete="name"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
-                />
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="email" className="mb-1 block text-xs font-medium text-zinc-400">Email</label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                autoComplete="email"
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="mb-1 block text-xs font-medium text-zinc-400">Password</label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === "signup" ? "At least 12 characters" : "••••••••"}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
-              />
-            </div>
-
-            {mode === "signin" && (
-              <div className="-mt-1.5 text-right">
-                <Link href="/auth/forgot" className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-300">
-                  Forgot password?
-                </Link>
-              </div>
-            )}
-
-            {mode === "signup" && (
-              <div>
-                <label htmlFor="confirm" className="mb-1 block text-xs font-medium text-zinc-400">Confirm password</label>
-                <input
-                  id="confirm"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••"
-                  autoComplete="new-password"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
-                />
-              </div>
-            )}
-
-            {mode === "signup" && (
-              <div>
-                <label htmlFor="invite" className="mb-1 block text-xs font-medium text-zinc-400">
-                  Invite code <span className="text-zinc-600">(if you have one)</span>
-                </label>
-                <input
-                  id="invite"
-                  type="text"
-                  value={inviteCode}
-                  onChange={(e) => setInviteCode(e.target.value)}
-                  autoComplete="off"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-colors focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/20"
-                />
-              </div>
-            )}
-
-            {mode === "signup" && <Turnstile onToken={onCaptcha} />}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-pal-500 py-2.5 text-sm font-medium text-on-flame transition-all hover:bg-pal-400 disabled:opacity-50 active:scale-[0.98]"
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  {mode === "signup" ? "Create account" : "Sign in"}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </>
-              )}
-            </button>
-          </form>
-
-          <div className="mt-4 text-center text-xs text-zinc-500">
-            {mode === "signin" ? (
-              <>
-                No account?{" "}
-                <button onClick={() => { setMode("signup"); setError(null); }} className="text-pal-400 hover:text-pal-300 transition-colors">
-                  Sign up
-                </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{" "}
-                <button onClick={() => { setMode("signin"); setError(null); }} className="text-pal-400 hover:text-pal-300 transition-colors">
-                  Sign in
-                </button>
-              </>
-            )}
-          </div>
         </div>
+      )}
+
+      {oauthProviders.length > 0 && (
+        <>
+          <div className="space-y-2.5">
+            {oauthProviders.map((id) => {
+              const { label, Icon } = OAUTH_META[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => handleOAuthLogin(id)}
+                  disabled={oauthLoading !== null || loading}
+                  className="flex h-10 w-full items-center justify-center gap-2.5 rounded-lg border border-zinc-700 bg-surface-1 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-surface-2 disabled:opacity-50"
+                >
+                  {oauthLoading === id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon />}
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-zinc-800" />
+            <span className="text-[11px] uppercase tracking-wider text-zinc-600">or with email</span>
+            <div className="h-px flex-1 bg-zinc-800" />
+          </div>
+        </>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+        {mode === "signup" && (
+          <Field id="name" label="Name">
+            <input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoComplete="name" className={authInputClass} />
+          </Field>
         )}
 
-        {/* Demo mode — only when explicitly enabled at build time. Off by
-            default so production never advertises a client-minted demo login. */}
-        {process.env.NEXT_PUBLIC_DEMO_MODE === "1" && (
-          <>
-            {/* Divider */}
-            <div className="my-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-zinc-800/60" />
-              <span className="text-[11px] text-zinc-600">or</span>
-              <div className="h-px flex-1 bg-zinc-800/60" />
-            </div>
+        <Field id="email" label="Email">
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            inputMode="email"
+            autoFocus
+            className={authInputClass}
+          />
+        </Field>
 
+        <Field
+          id="password"
+          label="Password"
+          aside={
+            mode === "signin" && (providers?.passwordReset ?? true) ? (
+              <Link href="/auth/forgot" className="text-[12px] text-zinc-500 hover:text-zinc-200">
+                Forgot password?
+              </Link>
+            ) : null
+          }
+        >
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyUp={(e) => setCapsLock(e.getModifierState?.("CapsLock") ?? false)}
+              placeholder={mode === "signup" ? "At least 12 characters" : "Your password"}
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              className={`${authInputClass} pr-10`}
+            />
             <button
-              onClick={handleDemo}
-              disabled={demoLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-800/80 py-2.5 text-sm text-zinc-400 transition-all hover:bg-surface-1 hover:text-zinc-200 disabled:opacity-50 active:scale-[0.98]"
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-200"
             >
-              {demoLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Try the demo"}
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
-            <p className="mt-2 text-center text-[11px] text-zinc-600">
-              No account needed — explore with sample data
-            </p>
+          </div>
+          {capsLock && <p className="mt-1 text-[12px] text-amber-400">Caps Lock is on.</p>}
+          {mode === "signup" && password.length > 0 && password.length < 12 && (
+            <p className="mt-1 text-[12px] text-zinc-500">{12 - password.length} more character{12 - password.length === 1 ? "" : "s"}.</p>
+          )}
+        </Field>
+
+        {mode === "signup" && (
+          <Field id="confirm" label="Confirm password">
+            <input
+              id="confirm"
+              type={showPassword ? "text" : "password"}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              className={authInputClass}
+            />
+          </Field>
+        )}
+
+        {mode === "signup" && (signupMode === "invite" || inviteParam) && (
+          <Field id="invite" label="Invite code">
+            <input id="invite" type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} autoComplete="off" className={`${authInputClass} font-mono text-xs`} />
+          </Field>
+        )}
+
+        {mode === "signup" && <Turnstile onToken={onCaptcha} />}
+
+        <button
+          type="submit"
+          disabled={loading || oauthLoading !== null}
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-pal-500 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-label={mode === "signup" ? "Creating account" : "Signing in"} />
+          ) : (
+            <>
+              {mode === "signup" ? "Create account" : "Sign in"}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </>
+          )}
+        </button>
+      </form>
+
+      <p className="mt-5 text-center text-xs text-zinc-500">
+        {mode === "signin" ? (
+          signupAllowed ? (
+            <>
+              No account?{" "}
+              <button onClick={() => switchMode("signup")} className="font-medium text-pal-400 hover:text-pal-300">
+                Sign up
+              </button>
+            </>
+          ) : (
+            "New accounts are by invitation."
+          )
+        ) : (
+          <>
+            Already have an account?{" "}
+            <button onClick={() => switchMode("signin")} className="font-medium text-pal-400 hover:text-pal-300">
+              Sign in
+            </button>
           </>
         )}
+      </p>
 
-        {/* Dev hint -- only visible in development */}
-        {process.env.NODE_ENV === "development" && (
-          <p className="mt-6 text-center text-[10px] text-zinc-700">
-            Dev: admin@pal.dev / pal
-          </p>
-        )}
+      {process.env.NEXT_PUBLIC_DEMO_MODE === "1" && (
+        <button
+          onClick={() => {
+            loginDemo();
+            router.replace(nextPath);
+          }}
+          className="mt-4 flex h-10 w-full items-center justify-center rounded-lg border border-zinc-800 text-sm text-zinc-400 hover:bg-surface-1 hover:text-zinc-200"
+        >
+          Explore the demo
+        </button>
+      )}
+    </AuthFrame>
+  );
+}
+
+function Field({ id, label, aside, children }: { id: string; label: string; aside?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <label htmlFor={id} className="text-xs font-medium text-zinc-400">
+          {label}
+        </label>
+        {aside}
       </div>
+      {children}
     </div>
   );
 }
