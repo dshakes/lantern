@@ -242,6 +242,6 @@ mid-call, it also falls back to Polly: voice-clone never fails a call.
 | Var | Purpose | Default |
 |---|---|---|
 | `PAL_VOICE_CLONE` | Master opt-in (`1`/`true`/`on`). Deepfake-class — keep off unless intended | off |
-| `PAL_ELEVENLABS_API_KEY` | ElevenLabs API key (legacy alias `PAL_ELEVENLABS_KEY`) | — |
+| `PAL_ELEVENLABS_API_KEY` | ElevenLabs API key | — |
 | `PAL_ELEVENLABS_VOICE_ID` | The cloned voice to speak in | — |
 | `PAL_VOICE_CACHE_PUBLIC_URL` | Public base URL the bridge serves `/voice-cache/<sha>.mp3` from | — |

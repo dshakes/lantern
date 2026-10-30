@@ -79,7 +79,6 @@ from pal.types import (
 __version__ = "0.1.0"
 
 __all__ = [
-    # Deprecated aliases (ADR 0032)
     # Agent definition
     "agent",
     "PalAgent",

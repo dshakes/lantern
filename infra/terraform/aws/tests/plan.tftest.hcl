@@ -90,25 +90,13 @@ run "existing_cluster" {
   }
 }
 
-run "image_tag_prefers_pal_version" {
+run "image_tag_from_pal_version" {
   command = plan
   variables {
-    pal_version     = "1.2.3"
-    pal_version = "0.9.0"
+    pal_version = "1.2.3"
   }
   assert {
     condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "1.2.3")
     error_message = "pal_version must set the image tag"
-  }
-}
-
-run "image_tag_falls_back_to_pal_version" {
-  command = plan
-  variables {
-    pal_version = "0.9.0"
-  }
-  assert {
-    condition     = contains([for s in helm_release.pal_data_plane.set : s.value if s.name == "global.image.tag"], "0.9.0")
-    error_message = "deprecated pal_version must still set the image tag"
   }
 }

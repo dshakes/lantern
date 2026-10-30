@@ -14,3 +14,8 @@ path:^scripts/zero-lantern/ # the rename codemod (ADR 0032) rewrites the old nam
 
 # Migrations are append-only: renaming a persisted object means naming it.
 path:^services/control-plane/internal/db/migrations/\d{4}_pal_brand_rename\.(up|down)\.sql$ # renames the RLS role, namespaces and persisted values that pre-rename databases still carry
+
+# The one kept legacy wire name: iPhone Shortcuts installed before the rename
+# send this header, and the owner re-points them by hand. Accepted for one
+# release on /v1/signals only (control plane + dashboard twin), then removed.
+scope:^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$ \bx-lantern-signal-token\b # pre-rename iPhone Shortcuts send it; one release of grace (ADR 0032)

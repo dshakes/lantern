@@ -82,28 +82,15 @@ const BOT_SELF_PREFIXES: string[] = [
   "(call failed",
 
   // ── Status / digest / dashboard output ──
-  "🟢 *pal",             // "🟢 *PAL iMessage*", "🟢 *PAL WhatsApp*"
+  "🟢 *pal",                 // "🟢 *PAL iMessage*", "🟢 *PAL WhatsApp*", "🟢 *PAL is connected*"
   "🟢 pal",
-  "🔴 *pal",
-  "🔴 pal",
-  "📊 *pal morning report",
-  "📊 *pal",
-  "📊 pal",
-  // PAL→PAL rename (ADR 0032): the bot now emits "pal" headers. The
-  // "pal" entries above stay forever — those rows are still in chat
-  // history and iCloud can echo them back hours later.
-  "🟢 *pal",                 // "🟢 *pal iMessage*", "🟢 *pal WhatsApp*", "🟢 *pal is connected*"
-  "🟢 pal",
-  "🔴 *pal",                 // "🔴 *pal WhatsApp offline 12m*", "🔴 *pal alert: …"
+  "🔴 *pal",                 // "🔴 *PAL WhatsApp offline 12m*", "🔴 *PAL alert: …"
   "🔴 pal",
   "📊 *pal morning report",
   "📊 *pal",
   "📊 pal",
   "🤖 *pal",                 // WA "/pal" help + status replies
-  "🤖 *pal",             // …and their pre-rename form
   "⚠️ *pal alert",           // WA conflict / unlinked / error pages
-  "⚠️ *pal alert",
-  "🚪 *pal alert",
   "🚪 *pal alert",
   "🚨 kill switch",
   "🚨 ",

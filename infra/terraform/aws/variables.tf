@@ -70,12 +70,6 @@ variable "pal_control_plane_endpoint" {
   default     = null
 }
 
-variable "pal_control_plane_endpoint" {
-  description = "Deprecated alias of pal_control_plane_endpoint; still honored when the PAL name is unset."
-  type        = string
-  default     = null
-}
-
 variable "tenant_id" {
   description = "PAL Runtime tenant ID provisioned during onboarding."
   type        = string
@@ -93,15 +87,9 @@ variable "pal_version" {
   default     = null
 }
 
-variable "pal_version" {
-  description = "Deprecated alias of pal_version; still honored when the PAL name is unset."
-  type        = string
-  default     = null
-}
-
 locals {
-  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, var.pal_control_plane_endpoint, "https://api.pal.run")
-  chart_version          = coalesce(var.pal_version, var.pal_version, "0.1.0")
+  control_plane_endpoint = coalesce(var.pal_control_plane_endpoint, "https://api.pal.run")
+  chart_version          = coalesce(var.pal_version, "0.1.0")
 }
 
 variable "firecracker_enabled" {

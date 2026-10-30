@@ -786,13 +786,11 @@ func newVmQuotaCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceTokenCreds sends the service token on every manager RPC, under the
-// PAL header and the legacy x-pal-service-token one: managers that predate
-// the rename (ADR 0032) only read the legacy header.
+// serviceTokenCreds sends the service token on every manager RPC.
 type serviceTokenCreds string
 
 func (t serviceTokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
-	return map[string]string{"x-pal-service-token": string(t), "x-pal-service-token": string(t)}, nil
+	return map[string]string{"x-pal-service-token": string(t)}, nil
 }
 
 func (serviceTokenCreds) RequireTransportSecurity() bool { return false }

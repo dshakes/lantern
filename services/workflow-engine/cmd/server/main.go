@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -184,7 +185,7 @@ func main() {
 			if cfgErr != nil {
 				logger.Fatal("failed to parse DATABASE_URL for the pal_app pool", zap.Error(cfgErr))
 			}
-			appCfg.ConnConfig.User = "pal_app"
+			appCfg.ConnConfig.User = appDBUser()
 			appCfg.ConnConfig.Password = appPwd
 			if err := db.ApplyRegionSession(appCfg.ConnConfig); err != nil {
 				logger.Fatal("invalid region configuration", zap.Error(err))
@@ -463,3 +464,13 @@ func (c serviceTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (m
 
 // RequireTransportSecurity is false: in-cluster hop, same as the other dials.
 func (c serviceTokenCreds) RequireTransportSecurity() bool { return false }
+
+// appDBUser is the restricted RLS role the app pool connects as:
+// PAL_APP_DB_USER, default pal_app (created by the control-plane baseline
+// migration).
+func appDBUser() string {
+	if u := strings.TrimSpace(os.Getenv("PAL_APP_DB_USER")); u != "" {
+		return u
+	}
+	return "pal_app"
+}

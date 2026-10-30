@@ -12,7 +12,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 const COOKIE_NAME = "pal_token";
-const LEGACY_COOKIE_NAME = "pal_token"; // pre-PAL-rename; cleared on logout
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 export async function POST(req: NextRequest) {
@@ -42,15 +41,13 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(_req: NextRequest) {
   const cookieStore = await cookies();
-  for (const name of [COOKIE_NAME, LEGACY_COOKIE_NAME]) {
-    cookieStore.set(name, "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-    });
-  }
+  cookieStore.set(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 
   return NextResponse.json({ ok: true });
 }

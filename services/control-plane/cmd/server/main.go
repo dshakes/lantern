@@ -1473,7 +1473,16 @@ func buildAppPoolConfig(databaseURL, appPassword string) (*pgxpool.Config, error
 	if err != nil {
 		return nil, fmt.Errorf("parse DATABASE_URL for app pool: %w", err)
 	}
-	cfg.ConnConfig.User = "pal_app"
+	cfg.ConnConfig.User = appDBUser()
 	cfg.ConnConfig.Password = appPassword
 	return cfg, nil
+}
+
+// appDBUser is the restricted RLS role the app pool connects as:
+// PAL_APP_DB_USER, default pal_app (created by the baseline migration).
+func appDBUser() string {
+	if u := strings.TrimSpace(os.Getenv("PAL_APP_DB_USER")); u != "" {
+		return u
+	}
+	return "pal_app"
 }

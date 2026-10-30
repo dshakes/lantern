@@ -207,7 +207,7 @@ For more exercises (quota, audit, terminate, cluster view) see
 
 ## B2. Local Firecracker microVMs (`dev` sandbox detection)
 
-`pal dev` (the `pal dev` binary until the rename lands) decides which
+`pal dev` decides which
 sandbox the control-plane gets and prints exactly one `sandbox:` line saying so
 (ADR 0045). `pal doctor` shows the same decision under **Sandbox runtime**.
 

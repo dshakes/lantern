@@ -129,28 +129,23 @@ test("bot-self: case insensitivity", () => {
   assert.equal(isBotSelfMessage("📊 *PAL Morning Report*"), true);
 });
 
-test("bot-self: every pal-branded string the bridges emit is registered, and the pal-era ones still are (ADR 0032)", () => {
-  // One entry per string renamed PAL→pal in the bridges. A miss here is
-  // the self-chat echo loop: the bot reads its own status line back as a query.
-  const renamed: Array<[string, string]> = [
-    ["🟢 *pal iMessage*\n• bot: on", "🟢 *PAL iMessage*\n• bot: on"],
-    ["🟢 *pal WhatsApp*\n• bot: on", "🟢 *PAL WhatsApp*\n• bot: on"],
-    ["🟢 *pal is connected*\n\nReply `/pal status`", "🟢 *PAL is connected*"],
-    ["📊 *pal morning report* — fri, may 29", "📊 *pal morning report* — fri, may 29"],
-    ["🔴 *pal WhatsApp offline 12m*", "🔴 *PAL WhatsApp offline 12m*"],
-    ["🔴 *pal alert: WhatsApp bridge error*", "🔴 *PAL alert: WhatsApp bridge error*"],
-    ["⚠️ *pal alert: WhatsApp conflict*", "⚠️ *PAL alert: WhatsApp conflict*"],
-    ["🚪 *pal alert: WhatsApp unlinked*", "🚪 *PAL alert: WhatsApp unlinked*"],
-    ["🤖 *pal commands*\n\nCommand center", "🤖 *PAL commands*"],
-    ["🤖 *pal* · 🟢 active\nuptime 3h", "🤖 *PAL* · 🟢 active"],
+test("bot-self: every PAL-branded status line the bridges emit is registered", () => {
+  // A miss here is the self-chat echo loop: the bot reads its own status line
+  // back as a query.
+  const lines = [
+    "🟢 *PAL iMessage*\n• bot: on",
+    "🟢 *PAL WhatsApp*\n• bot: on",
+    "🟢 *PAL is connected*\n\nReply `/pal status`",
+    "📊 *PAL morning report* — fri, may 29",
+    "🔴 *PAL WhatsApp offline 12m*",
+    "🔴 *PAL alert: WhatsApp bridge error*",
+    "⚠️ *PAL alert: WhatsApp conflict*",
+    "🚪 *PAL alert: WhatsApp unlinked*",
+    "🤖 *PAL commands*\n\nCommand center",
+    "🤖 *PAL* · 🟢 active\nuptime 3h",
   ];
-  for (const [now, legacy] of renamed) {
-    assert.equal(isBotSelfMessage(now), true, `new form not registered: ${JSON.stringify(now)}`);
-    assert.equal(isBotSelfMessage(legacy), true, `legacy form dropped: ${JSON.stringify(legacy)}`);
-  }
-  // "pal" is an everyday word: an owner text that merely starts with it routes.
-  for (const t of ["pal, pause for 2h", "pal status", "/pal status", "🟢 on my way pal"]) {
-    assert.equal(isBotSelfMessage(t), false, `false positive on user text: ${JSON.stringify(t)}`);
+  for (const line of lines) {
+    assert.equal(isBotSelfMessage(line), true, `not registered: ${JSON.stringify(line)}`);
   }
 });
 

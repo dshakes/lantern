@@ -412,6 +412,24 @@ func TestSignalListTokenGate(t *testing.T) {
 	}
 }
 
+// Shortcuts installed before the rename send the legacy header; it is
+// accepted for one release (ADR 0032) and checked against the same token.
+func TestSignalListLegacyTokenHeader(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("PAL_SIGNAL_TOKEN", "test-signal-token")
+	h := newSignalHandlerForTest(t)
+
+	for tok, want := range map[string]int{"test-signal-token": http.StatusOK, "wrong": http.StatusUnauthorized} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/signals", nil)
+		req.Header.Set(legacySignalTokenHeader, tok)
+		rec := httptest.NewRecorder()
+		h.ListSignals(rec, req)
+		if rec.Code != want {
+			t.Fatalf("legacy header %q: status = %d, want %d", tok, rec.Code, want)
+		}
+	}
+}
+
 func TestSignalFileBounded(t *testing.T) {
 	const tok = "test-signal-token"
 	home := isolateHome(t)

@@ -1,15 +1,10 @@
 // Package pal is the official Go SDK for PAL Runtime — the open-source
 // runtime for AI agents with VPC deployment, pre-run cost forecasts,
 // policy budgets, and eval-in-CI.
-//
-// The package keeps its pre-rename name (ADR 0032) until the module path
-// moves: Go has no package alias, so renaming the clause alone would break
-// every importer's `pal.X` references for no gain.
 package pal
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,11 +32,11 @@ type Client struct {
 type Option func(*Client)
 
 // WithBaseURL overrides the control-plane URL.
-// Defaults to the PAL_API_URL env var (legacy PAL_API_URL), then DefaultBaseURL.
+// Defaults to the PAL_API_URL env var, then DefaultBaseURL.
 func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 
 // WithAPIKey sets the API key used for authentication.
-// Defaults to the PAL_API_KEY env var (legacy PAL_API_KEY).
+// Defaults to the PAL_API_KEY env var.
 func WithAPIKey(k string) Option { return func(c *Client) { c.apiKey = k } }
 
 // WithHTTPClient injects a custom *http.Client (for testing or custom transport).
@@ -55,7 +50,7 @@ func WithMaxRetries(n int) Option { return func(c *Client) { c.maxAttempts = n }
 // New constructs a Client.
 func New(opts ...Option) *Client {
 	c := &Client{
-		baseURL:     getenv("PAL_API_URL", DefaultBaseURL), // PAL_ wins (ADR 0032); inline, no palenv dep: a replace breaks go get for SDK users,
+		baseURL:     getenv("PAL_API_URL", DefaultBaseURL),
 		apiKey:      os.Getenv("PAL_API_KEY"),
 		http:        &http.Client{Timeout: 60 * time.Second},
 		maxAttempts: 3,
@@ -949,8 +944,7 @@ func (c *Client) ReadFile(ctx context.Context, vmID, path string) (*FileContent,
 	if err != nil {
 		return nil, fmt.Errorf("pal: read file body: %w", err)
 	}
-	// X-Pal-Truncated, or the legacy X-Pal-Truncated from a pre-rename control plane (ADR 0032).
-	truncated := cmp.Or(res.Header.Get("X-Pal-Truncated"), res.Header.Get("X-Pal-Truncated")) == "true"
+	truncated := res.Header.Get("X-Pal-Truncated") == "true"
 	return &FileContent{Content: string(b), Truncated: truncated}, nil
 }
 

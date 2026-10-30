@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"cmp"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -78,13 +79,18 @@ const (
 	signalFileKeepLine = 4000
 )
 
+// legacySignalTokenHeader is the header iPhone Shortcuts installed before the
+// rename send. Accepted for one release, until the owner re-points them at
+// x-pal-signal-token (ADR 0032); the only legacy wire name kept.
+const legacySignalTokenHeader = "x-lantern-signal-token"
+
 // authorize enforces the shared-token gate. Returns true when the request is
 // allowed to proceed; otherwise it has already written a 401 and the caller
 // must return. Fails closed: an unset env or a missing/mismatched header is a
 // 401. The token is never logged.
 func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	expected := os.Getenv("PAL_SIGNAL_TOKEN")
-	provided := r.Header.Get("x-pal-signal-token")
+	provided := cmp.Or(r.Header.Get("x-pal-signal-token"), r.Header.Get(legacySignalTokenHeader))
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		// Log the rejection (never the token) — a silent 401 is undebuggable.

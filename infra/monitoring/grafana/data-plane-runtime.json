@@ -336,7 +336,7 @@
       },
       "targets": [
         {
-          "expr": "pal_data_plane_seconds_since_heartbeat or pal_data_plane_seconds_since_heartbeat",
+          "expr": "pal_data_plane_seconds_since_heartbeat",
           "refId": "A",
           "legendFormat": "{{data_plane_id}} ({{cloud}}/{{region}})",
           "datasource": {

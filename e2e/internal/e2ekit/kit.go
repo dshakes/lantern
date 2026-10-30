@@ -77,7 +77,7 @@ const (
 // Env priority: PAL_E2E_API_URL (canonical) → PAL_API_URL (alias) → localhost:8080.
 // Identical precedence to e2e/runtime's baseURL() — keep them in sync.
 func DefaultBase() string {
-	for _, key := range []string{"PAL_E2E_API_URL", "PAL_E2E_API_URL", "PAL_API_URL", "PAL_API_URL"} {
+	for _, key := range []string{"PAL_E2E_API_URL", "PAL_API_URL"} {
 		if v := os.Getenv(key); v != "" {
 			return strings.TrimRight(v, "/")
 		}

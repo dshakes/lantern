@@ -80,8 +80,6 @@ host_up() {
 # Guest side (Linux, inside the VM).
 # ---------------------------------------------------------------------------
 CACHE="${HOME}/.cache/pal-lima"
-# ADR 0032: cache dir renamed; carry an existing cache over (no image rebuild).
-if [[ -d "${HOME}/.cache/pal-lima" && ! -e "${CACHE}" ]]; then mv "${HOME}/.cache/pal-lima" "${CACHE}"; fi
 TARGET="${CACHE}/target"   # shared cargo target dir: harness (musl) + manager
 IMG="${CACHE}/image"
 TIMING="${CACHE}/timing"

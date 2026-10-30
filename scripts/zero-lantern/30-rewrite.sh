@@ -24,6 +24,10 @@ printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 -n 200 perl -0pi -e '
   }
   # dev seed password is now "pal": swap the bcrypt hash of the old one
   s/\$2b\$10\$\.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak\/eeyP7W/\$2a\$10\$TjzuOlrLRP\/7gC9HGdUX0u4aLfWZH\/ho3WzZUiW7bSbRkAf2VEIau/g;
+  # the one kept legacy wire name (scripts/brand-allowlist.txt): pre-rename
+  # iPhone Shortcuts send it to /v1/signals; protected from the rewrite.
+  my $keep = $ARGV =~ m{^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$};
+  s/x-lantern-signal-token/\x00KEEP\x00/g if $keep;
   # 2-6. the rename
   s/X-Lantern-/X-Pal-/g;
   s/Lantern(?=[A-Za-z0-9])/Pal/g;
@@ -32,9 +36,10 @@ printf '%s\n' "$list" | tr '\n' '\0' | xargs -0 -n 200 perl -0pi -e '
   s/LANTERN/PAL/g;
   s/lantern/pal/g;
   s/(?i:lantern)/pal/g;
+  s/\x00KEEP\x00/x-lantern-signal-token/g if $keep;
 '
 
-left="$(git grep -I -i -l lantern -- . "${ZL_EXCLUDES[@]}" || true)"
+left="$(git grep -I -i -l lantern -- . "${ZL_EXCLUDES[@]}" | grep -v -E '^(services/control-plane/internal/handlers/signals(_test)?\.go|apps/web/app/api/signals/route\.ts)$' || true)"
 [[ -z "$left" ]] || zl_fail "content still mentions the old name:
 $left"
 zl_note "content rewritten"

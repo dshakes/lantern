@@ -2,10 +2,10 @@
 
 The `pal` command-line tool for [PAL Runtime](https://github.com/dshakes/pal) — the open-source runtime for production AI agents.
 
-`pal` is the CLI's pre-rename name (ADR 0032). It still works: Homebrew installs a `pal` symlink, and `go install ./cmd/pal` builds the same CLI under the old name. Config lives in `$PAL_HOME`, else `~/.pal`, else an existing legacy `~/.pal` (used in place, never moved).
+Config lives in `$PAL_HOME`, else `~/.pal`.
 
 ```bash
-# macOS / Linux (Homebrew; also links `pal`)
+# macOS / Linux (Homebrew)
 brew install dshakes/tap/pal
 
 # Or from source (the binary's main package lives at cmd/pal)
@@ -38,8 +38,6 @@ pal deploy [--dry-run] [--json]
 ```
 
 ## Flags
-
-Each `PAL_*` variable is also read under its legacy `PAL_*` name; `PAL_*` wins when both are set.
 
 | Flag | Env | Purpose |
 |---|---|---|

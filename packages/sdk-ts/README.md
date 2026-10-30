@@ -9,8 +9,6 @@ Registry packages are not published yet: `npm install @pal-runtime/sdk` fails. I
 npm install /path/to/pal/packages/sdk-ts      # in your project
 ```
 
-> **Renamed (ADR 0032).** This package was `@pal/sdk`. `PalClient`, `PalApiError`, `PalRuntime` and every `PAL*Error` remain as **deprecated aliases** of the `Pal*` names (same class objects, so `instanceof` works across both). The `pal-run` bin is kept next to `pal-run`. `PAL_*` env vars are still read as a fallback when the `PAL_*` name is unset.
-
 ## Quick start
 
 ```ts
@@ -100,8 +98,6 @@ export default agent({
 | `PAL_API_URL` | `https://api.pal.run` | Control-plane base URL |
 | `PAL_API_KEY` | — | API key (required) |
 | `PAL_TENANT_ID` | — | Optional tenant override (enterprise multi-tenant) |
-
-Each `PAL_*` variable falls back to its legacy `PAL_*` name.
 
 ## License
 

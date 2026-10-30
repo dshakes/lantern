@@ -59,7 +59,7 @@ true. An audit on 2026-10-29 found:
    digest is accepted only when `AGENT_IMAGE` is itself pinned. When
    `PAL_IMAGE_ALLOWED_REPOS` (comma-separated repository prefixes, matched on
    path segments) is set, the image must also come from one of those repos.
-   - **Default:** on when `PAL_ENV`/`PAL_ENV` is prod, production or
+   - **Default:** on when `PAL_ENV` is prod, production or
      staging; off elsewhere.
    - An unparseable value stops the manager from starting.
    - An explicit `off` in prod is honoured, but logged at ERROR on every start.

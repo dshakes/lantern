@@ -8,7 +8,7 @@
 // self-chat assistant context (never a contact reply).
 //
 // PRIVACY: signals stay on the Mac except the iPhone→tunnel hop that delivers
-// them. The endpoint is token-gated (x-pal-signal-token or legacy x-pal-signal-token == PAL_SIGNAL_TOKEN,
+// them. The endpoint is token-gated (x-pal-signal-token, or for one release the legacy x-lantern-signal-token, == PAL_SIGNAL_TOKEN,
 // a SERVER-SIDE env, never NEXT_PUBLIC). The file is owner-only (0600), its dir
 // 0700.
 //
@@ -62,9 +62,9 @@ function authorized(req: NextRequest): boolean {
   const expected = process.env.PAL_SIGNAL_TOKEN;
   // Fail closed: no token configured server-side → reject everything.
   if (!expected) return false;
-  // Legacy x-pal-signal-token is what already-installed iPhone Shortcuts send.
+  // x-lantern-signal-token is what iPhone Shortcuts installed before the rename send (ADR 0032).
   const given =
-    req.headers.get("x-pal-signal-token") ?? req.headers.get("x-pal-signal-token") ?? "";
+    req.headers.get("x-pal-signal-token") ?? req.headers.get("x-lantern-signal-token") ?? "";
   return safeEqual(given, expected);
 }
 

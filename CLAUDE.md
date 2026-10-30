@@ -6,7 +6,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ---
 
-> **Rename note (ADR 0032):** the product is now **PAL**. Real identifiers (`PAL_*` env vars, the `pal` CLI, packages, `pal.v1`, the repo URL) keep their current names; env vars also accept `PAL_*` equivalents (`PAL_X` wins when both are set). This file documents the `PAL_*` names; `PAL_*` names are still accepted as legacy aliases.
+> **Naming (ADR 0032):** the product is **PAL**, and every identifier uses the PAL names: env `PAL_*`, CLI `pal`, proto `pal.v1`, module `github.com/dshakes/pal`.
 
 ## Project in one sentence
 
@@ -1080,7 +1080,7 @@ Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` 
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PAL_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-pal-signal-token`). Unset → endpoint is 401 fail-closed |
+| `PAL_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-pal-signal-token`; the pre-rename header is accepted for one release). Unset → endpoint is 401 fail-closed |
 
 ### Surface-gateway reply loop + example suites (W2-X3)
 
@@ -2032,7 +2032,7 @@ self-chat as `✅ closed: <title> — saw: "<evidence>"` (prefix registered in
 | `PAL_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
 | `PAL_TWILIO_NUMBER` / `PAL_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
 | `PAL_VOICE_CLONE`                 | (Optional) **deepfake-class; OFF by default.** Set `1`/`true`/`on` to speak outbound calls in the owner's OWN cloned voice via ElevenLabs `<Play>` instead of generic Polly `<Say>`. Requires `PAL_ELEVENLABS_API_KEY` + `PAL_ELEVENLABS_VOICE_ID` + `PAL_VOICE_CACHE_PUBLIC_URL`. Any missing → clean Polly fallback. The 2-party-consent announcement still fires regardless. |
-| `PAL_ELEVENLABS_API_KEY`          | (Optional) ElevenLabs API key for voice-clone TTS (legacy alias `PAL_ELEVENLABS_KEY` accepted). Only used when `PAL_VOICE_CLONE` is on. Never logged. |
+| `PAL_ELEVENLABS_API_KEY`          | (Optional) ElevenLabs API key for voice-clone TTS. Only used when `PAL_VOICE_CLONE` is on. Never logged. |
 | `PAL_ELEVENLABS_VOICE_ID`         | (Optional) ElevenLabs voice id to synthesize in (the owner's cloned voice). Only used when `PAL_VOICE_CLONE` is on. |
 
 ### RCS messaging (to & fro)

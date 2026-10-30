@@ -497,7 +497,6 @@ class PalAPI {
         localStorage.setItem("pal_token", token);
       } else {
         localStorage.removeItem("pal_token");
-        localStorage.removeItem("pal_token"); // legacy name; else the boot-time migration would resurrect the session
       }
       // Set / clear the auth cookie as HttpOnly via the server-side Route
       // Handler so XSS cannot read it.  Fire-and-forget: the cookie is only

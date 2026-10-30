@@ -20,7 +20,7 @@ prefixes, launchd labels, binaries, package names, the Go module path and the re
    (env compat helpers, dual-accept readers, deprecated SDK aliases), so the live bridges and API
    kept running throughout. Once every reader understood the PAL names, a final pass removed the
    old name and every compat layer in one change.
-2. **The final pass is a codemod**, `scripts/zero-lantern/`: ordered, idempotent steps (remove the
+2. **The final pass is a codemod** (under `scripts/`, removed once the last in-flight PR landed): ordered, idempotent steps (remove the
    compat layers, `git mv` paths, rewrite content, collapse the now-identical dual reads, add the
    DB rename migration, regenerate `gen/go` from `packages/proto/pal/v1`, install this ADR and the
    strict allowlist, format, verify). It can be re-run after merging `master` until the last
@@ -42,8 +42,10 @@ prefixes, launchd labels, binaries, package names, the Go module path and the re
    `marketplace_invocations`) are not rewritten.
 5. **Brand gate.** `scripts/brand-check.sh --enforce` runs in the required `lint` CI job and fails
    on any occurrence of the old name outside `scripts/brand-allowlist.txt`. The allowlist holds
-   only what cannot avoid the name, each with its reason: the gate itself, the codemod, and the
-   DB rename migration.
+   only what cannot avoid the name, each with its reason: the gate itself, the codemod, the DB
+   rename migration, and one wire name kept for a single release — the signal-token header the
+   owner's already-installed iPhone Shortcuts send to `/v1/signals`, until they are re-pointed
+   at `x-pal-signal-token`.
 
 ## Consequences
 
@@ -52,9 +54,10 @@ prefixes, launchd labels, binaries, package names, the Go module path and the re
   notes list them; anything outside this repo that still sends an old name must be updated.
 - A baked microVM image or data plane built before the rename speaks the old wire names and must
   be rebuilt from this tree.
-- The owner's iPhone Shortcuts are updated by the owner (`x-pal-signal-token`, Shortcut names).
+- The owner's iPhone Shortcuts are updated by the owner (`x-pal-signal-token`, Shortcut names);
+  `/v1/signals` accepts their old header for one release, then the allowlist entry and the
+  fallback are deleted together.
 - A WhatsApp re-pair may be needed because the linked-device name changed.
-- After the last in-flight PR merges, the codemod directory can be deleted; the gate stays.
 
 ## Alternatives considered
 

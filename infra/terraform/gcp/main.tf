@@ -335,19 +335,3 @@ resource "helm_release" "pal_data_plane" {
   ]
 }
 
-# ADR 0032: addresses renamed pal -> pal. `moved` keeps existing state in place
-# (no destroy/recreate). Remove once every deployment has applied this version.
-moved {
-  from = kubernetes_namespace.pal
-  to   = kubernetes_namespace.pal
-}
-
-moved {
-  from = helm_release.pal_data_plane
-  to   = helm_release.pal_data_plane
-}
-
-moved {
-  from = google_container_node_pool.pal
-  to   = google_container_node_pool.pal
-}

@@ -14,9 +14,6 @@
 //   - PAL_READ_ONLY    standby mode: HTTP mutations get 503 + Retry-After,
 //     mutating gRPC methods get UNAVAILABLE, migrations and background
 //     writers do not start.
-//
-// The env vars are PAL_* names; palenv.Bridge() (called first in main) makes
-// the PAL_* spellings visible under these names too (ADR 0032).
 package region
 
 import (

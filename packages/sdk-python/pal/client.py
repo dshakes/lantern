@@ -116,8 +116,7 @@ class PalClient:
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
         if self._route_strategy and self._route_strategy != "auto":
-            # legacy header name sent too while servers migrate (ADR 0032)
-            h["X-Pal-Route-Strategy"] = h["X-Pal-Route-Strategy"] = self._route_strategy
+            h["X-Pal-Route-Strategy"] = self._route_strategy
         return h
 
     async def _request(

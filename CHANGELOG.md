@@ -11,7 +11,7 @@ This project is pre-1.0; there are no stable release branches yet.
 
 ### Changed
 
-- Product renamed from PAL to **PAL** (the Personal Agentic Layer; ADR 0032). Docs, dashboard copy, widget and CLI help text now say PAL. Identifiers (`PAL_*` env vars, the `pal` CLI, package names, `pal.v1`, the GitHub repo URL) are unchanged; env vars also accept `PAL_*`.
+- Product renamed to **PAL** (the Personal Agentic Layer; ADR 0032).
 
 ### Added
 - **Host-asserted software measurement (ADR 0031, ACE A5)** — at every Firecracker

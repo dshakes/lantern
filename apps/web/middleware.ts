@@ -21,7 +21,6 @@ function redirectToLogin(request: NextRequest): NextResponse {
   loginUrl.searchParams.set("from", pathname);
   const res = NextResponse.redirect(loginUrl);
   res.cookies.delete("pal_token");
-  res.cookies.delete("pal_token"); // legacy (pre-PAL-rename)
   return res;
 }
 
@@ -32,7 +31,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("pal_token")?.value ?? request.cookies.get("pal_token")?.value; // legacy accepted
+  const token = request.cookies.get("pal_token")?.value;
 
   // Presence is necessary but NOT sufficient — a non-empty cookie used to be
   // enough to authenticate, which let a garbage value (or a client-minted

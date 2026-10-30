@@ -26,16 +26,3 @@ test("theme toggle flips, persists across reload", async ({ page }) => {
   await page.reload();
   expect(await theme(page)).toBe("dark");
 });
-
-test("legacy pal-theme value migrates to pal-theme", async ({ page }) => {
-  // Seed only the legacy key (once, so the reload below isn't re-seeded).
-  await page.addInitScript(() => {
-    if (!sessionStorage.getItem("seeded")) {
-      sessionStorage.setItem("seeded", "1");
-      localStorage.setItem("pal-theme", "light");
-    }
-  });
-  await page.goto("/login");
-  expect(await theme(page)).toBe("light");
-  expect(await page.evaluate(() => localStorage.getItem("pal-theme"))).toBe("light");
-});

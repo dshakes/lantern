@@ -7,8 +7,7 @@ import Lifecycle from '../../components/landing/Lifecycle.astro';
 import { u, DEMO, GH } from '../../data/site';
 
 // Same SDK call and 402 body as the handler (rest.go, CheckBudget's reason
-// string). Only the dollar amounts are an example. The SDK class keeps its
-// old name until the rename lands.
+// string). Only the dollar amounts are an example.
 const SAMPLE = `const pal = new PalClient({
   baseUrl: "http://localhost:8080",
   apiKey: process.env.PAL_API_KEY,
@@ -85,7 +84,7 @@ const SPANS = [
         <li><h3>Gate</h3><p><code>pal test</code> runs the eval suite against your baseline. A regression returns 422 and blocks the deploy.</p></li>
         <li><h3>Deploy</h3><p><code>pal deploy</code> sends the same <code>agent.yaml</code> to whichever control plane you’re logged in to.</p></li>
       </ol>
-      <p class="small" style="margin-top:12px">The CLI keeps its old name, <code>pal</code>, until the rename lands. <code>pal doctor</code> checks health, auth, your model provider and a live run.</p>
+      <p class="small" style="margin-top:12px"><code>pal doctor</code> checks health, auth, your model provider and a live run.</p>
     </div>
   </section>
 

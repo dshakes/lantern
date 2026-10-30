@@ -329,10 +329,9 @@ func TestScheduleVM_SendsEgressInject(t *testing.T) {
 	}
 }
 
-// ReadFile honours X-Pal-Truncated and, from a pre-rename control plane, the
-// legacy X-Pal-Truncated (ADR 0032).
+// ReadFile honours X-Pal-Truncated.
 func TestReadFile_TruncatedHeaderNames(t *testing.T) {
-	for header, want := range map[string]bool{"X-Pal-Truncated": true, "X-Pal-Truncated": true, "X-Other": false} {
+	for header, want := range map[string]bool{"X-Pal-Truncated": true, "X-Other": false} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set(header, "true")
 			w.Write([]byte("x"))

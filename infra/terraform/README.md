@@ -26,7 +26,7 @@ terraform plan \
 ```
 
 `kubernetes_version` defaults to `null` (the cloud's current default) — pin it
-explicitly for production. `pal_version` (deprecated alias `pal_version`) sets the data-plane image tag.
+explicitly for production. `pal_version` sets the data-plane image tag.
 
 ## What is verified (and what is not)
 

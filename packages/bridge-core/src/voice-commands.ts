@@ -20,7 +20,7 @@ import { parseNLCommand, type ParsedCommand } from "./nl-commands.js";
 
 // Whisper transcripts have variable punctuation/capitalization. We
 // normalize before matching.
-const WAKE_PATTERN = /^\s*(?:hey\s+)?(?:pal|pal)[,!:\s]+/i;
+const WAKE_PATTERN = /^\s*(?:hey\s+)?pal[,!:\s]+/i;
 
 export function isVoiceCommand(transcript: string): boolean {
   if (!transcript) return false;

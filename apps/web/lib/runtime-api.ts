@@ -52,7 +52,6 @@ function purgeTokenAndRedirect() {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem("pal_token");
-    localStorage.removeItem("pal_token"); // legacy name; else the boot-time migration would resurrect the session
     // Clear the HttpOnly cookie via the server-side Route Handler.
     fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
   } catch {

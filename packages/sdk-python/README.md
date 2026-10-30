@@ -22,10 +22,6 @@ pip install "git+https://github.com/dshakes/pal.git#subdirectory=packages/sdk-py
 
 The import package is `pal` (`from pal import PalClient`); the CLI entry point is `pal-runner`.
 
-**Deprecated:** the old `pal` import package (and `pal-runner`, `PalClient`, `PAL*Error`,
-`PalSandbox`) remains as a thin shim that emits a `DeprecationWarning`. It resolves to the same
-objects/modules as `pal`, but new code should import from `pal` (ADR 0032).
-
 Dependencies pulled in automatically: `httpx>=0.27`, `pydantic>=2.0`, `grpcio>=1.62`,
 `protobuf>=5.0`, `opentelemetry-api>=1.20`.
 
@@ -91,7 +87,7 @@ not using a context manager.
 |---|---|
 | `PAL_API_URL` | Base URL of the control-plane API. Default `https://api.pal.run`. For local dev: `http://localhost:8080` |
 | `PAL_API_KEY` | Bearer token issued by `POST /auth/login` or the API-keys settings page |
-| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy` (and legacy `X-Pal-Route-Strategy`). Default `auto` |
+| `PAL_ROUTE_STRATEGY` | One of `auto`, `cheap`, `best`, `fast`. Sent as `X-Pal-Route-Strategy`. Default `auto` |
 
 ---
 

@@ -59,16 +59,14 @@ test("REGRESSION: command words inside a sentence must NOT fire a command", () =
   }
 });
 
-test("pal invocation + slash forms fire; legacy pal forms still fire (ADR 0032)", () => {
+test("pal invocation + slash forms fire", () => {
   const cases: Array<[string, string]> = [
     ["pal, pause for 2h", "mute"],
     ["hey pal, status", "status"],
+    ["hey pal status", "status"],
     ["pal: on", "unmute"],
     ["/pal status", "status"],
     ["/pal ping", "ping"],
-    ["pal, pause for 2h", "mute"],
-    ["hey pal status", "status"],
-    ["/pal status", "status"],
   ];
   for (const [input, action] of cases) {
     assert.equal(parseNLCommand(input)?.action, action, `"${input}" should be ${action}`);
