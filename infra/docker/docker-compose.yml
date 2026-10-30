@@ -168,7 +168,7 @@ services:
   #
   # To also route the control-plane at them, add this env to the control-plane
   # service definition (or override via .env.local):
-  #   LANTERN_SCHEDULER_GRPC_ADDR: runtime-scheduler:50055
+  #   PAL_SCHEDULER_GRPC_ADDR: runtime-scheduler:50055
   # (Not wired here by default so plain `make dev` keeps the stub-scheduler
   # path — dashboard-only work should not require the Rust runtime-manager.)
 
@@ -212,7 +212,7 @@ services:
   # NOTE: the WhatsApp + iMessage bridges are macOS-host services (they need
   # macOS TCC, AppleScript, Contacts/Calendar, and the local chat.db) and do
   # not run in a Linux container. Run them on the host instead:
-  #   lantern dev        (boots them under tsx with hot reload), or
+  #   pal dev        (boots them under tsx with hot reload), or
   #   make run-whatsapp-bridge / make run-imessage-bridge
 
 volumes:

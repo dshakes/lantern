@@ -119,7 +119,7 @@ function TextInput({
           "w-full rounded-md border bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1",
           showError
             ? "border-red-500/50 focus:border-red-500 focus:ring-red-500/30"
-            : "border-zinc-700 focus:border-lantern-500 focus:ring-lantern-500/30"
+            : "border-zinc-700 focus:border-pal-500 focus:ring-pal-500/30"
         )}
       />
       {showError && <FieldError>This field is required</FieldError>}
@@ -152,7 +152,7 @@ function TextArea({
           "w-full rounded-md border bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1",
           showError
             ? "border-red-500/50 focus:border-red-500 focus:ring-red-500/30"
-            : "border-zinc-700 focus:border-lantern-500 focus:ring-lantern-500/30"
+            : "border-zinc-700 focus:border-pal-500 focus:ring-pal-500/30"
         )}
       />
       {showError && <FieldError>This field is required</FieldError>}
@@ -173,7 +173,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 focus:border-lantern-500 focus:outline-none focus:ring-1 focus:ring-lantern-500/30"
+      className="w-full rounded-md border border-zinc-700 bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 focus:border-pal-500 focus:outline-none focus:ring-1 focus:ring-pal-500/30"
     >
       {options.map((opt) => (
         <option key={opt.value} value={opt.value}>
@@ -206,7 +206,7 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-lantern-500"
+        className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-pal-500"
       />
       <span className="min-w-[3rem] text-right text-xs font-mono text-zinc-400">
         {value}
@@ -240,7 +240,7 @@ function NumberInput({
           "w-full rounded-md border bg-surface-2 px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:ring-1",
           showError
             ? "border-red-500/50 focus:border-red-500 focus:ring-red-500/30"
-            : "border-zinc-700 focus:border-lantern-500 focus:ring-lantern-500/30"
+            : "border-zinc-700 focus:border-pal-500 focus:ring-pal-500/30"
         )}
       />
       {showError && (

@@ -27,6 +27,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -152,3 +154,71 @@ jobs:
           git commit -aqm "lantern $VERSION"
           git push
           echo "synced lantern $VERSION into dshakes/homebrew-tap"
+
+  # Signed CLI binaries (ADR 0044): build the `lantern` CLI at the tag, publish
+  # binaries + SHA256SUMS, sign SHA256SUMS keyless (cosign bundle) and attest
+  # SLSA provenance for every binary. Users verify with:
+  #   cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  #     --certificate-identity https://github.com/<repo>/.github/workflows/release.yml@refs/heads/<branch> \
+  #     --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+  #   sha256sum -c SHA256SUMS --ignore-missing
+  #   gh attestation verify lantern_<os>_<arch> --repo <repo>
+  cli-artifacts:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # upload release assets
+      id-token: write       # keyless cosign + attestation signing
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/cli/go.mod
+          cache-dependency-path: packages/cli/go.sum
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Build CLI binaries + SHA256SUMS
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          COMMIT="$(git rev-parse HEAD)"     # the tag's commit, not the dispatch branch tip
+          date="$(git log -1 --format=%cI)"   # reproducible: commit time, not wall clock
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            out="dist/lantern_${os}_${arch}"; [ "$os" = windows ] && out="$out.exe"
+            (cd packages/cli && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$date" \
+              -o "../../$out" ./cmd/lantern)
+          done
+          (cd dist && sha256sum lantern_* > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Sign SHA256SUMS (keyless, cosign bundle)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign sign-blob --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+          # Prove the bundle verifies under this workflow's identity before publishing.
+          cosign verify-blob --bundle dist/SHA256SUMS.sigstore.json \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com dist/SHA256SUMS
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/lantern_*
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: gh release upload "$VERSION" dist/lantern_* dist/SHA256SUMS dist/SHA256SUMS.sigstore.json --clobber

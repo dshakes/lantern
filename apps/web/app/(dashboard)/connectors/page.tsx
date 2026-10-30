@@ -72,7 +72,7 @@ const connectors: ConnectorDef[] = [
 ];
 
 const categories = ["All", "Communication", "Email & Calendar", "Docs & Storage", "Dev Tools", "CRM & Sales", "Commerce"];
-const STORAGE_KEY = "lantern_connectors";
+const STORAGE_KEY = "pal_connectors";
 
 // An MCP attachment tagged with the agent it belongs to — the backend only
 // models "server X attached to agent Y" (see /v1/agents/{name}/mcp-servers),
@@ -101,7 +101,7 @@ function SecretInput({ value, onChange, placeholder, isText }: { value: string; 
   return (
     <div className="relative">
       <input type={isText || vis ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+        className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30" />
       {!isText && <button type="button" onClick={() => setVis(!vis)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300">{vis ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}</button>}
     </div>
   );
@@ -227,7 +227,7 @@ export default function ConnectorsPage() {
   // Listen for OAuth popup completion.
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type !== "lantern:oauth:complete") return;
+      if (e.data?.type !== "pal:oauth:complete" && e.data?.type !== "lantern:oauth:complete") return; // legacy type still sent by current control-plane
       if (e.data.success) {
         setView("success"); setMsg(e.data.message || "Connected successfully"); setOauthErr("");
         loadData();
@@ -265,7 +265,7 @@ export default function ConnectorsPage() {
       const w = 600, h = 700;
       const left = window.screenX + (window.outerWidth - w) / 2;
       const top = window.screenY + (window.outerHeight - h) / 2;
-      window.open(redirectUrl, "lantern-oauth", `width=${w},height=${h},left=${left},top=${top},popup=yes`);
+      window.open(redirectUrl, "pal-oauth", `width=${w},height=${h},left=${left},top=${top},popup=yes`);
       // The popup will postMessage on completion (handled by the useEffect above).
     } catch {
       // OAuth not configured on the backend — fall back to manual if fields exist.
@@ -428,8 +428,8 @@ export default function ConnectorsPage() {
         {attachments.length === 0 ? (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-surface-1 px-4 py-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
-                <Server className="h-4 w-4 text-lantern-400" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pal-500/10">
+                <Server className="h-4 w-4 text-pal-400" />
               </div>
               <div>
                 <p className="text-sm font-medium text-zinc-100">MCP servers</p>
@@ -450,8 +450,8 @@ export default function ConnectorsPage() {
           <div className="mb-8 rounded-xl border border-zinc-800 bg-surface-1 p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lantern-500/10">
-                  <Server className="h-4 w-4 text-lantern-400" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-pal-500/10">
+                  <Server className="h-4 w-4 text-pal-400" />
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-100">MCP servers</h2>
@@ -462,7 +462,7 @@ export default function ConnectorsPage() {
                 onClick={() => { setShowMcpModal(true); setMcpForm({ agentName: "", slug: "" }); setMcpErrors({}); }}
                 disabled={agents.length === 0}
                 title={agents.length === 0 ? "Create an agent first" : undefined}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-pal-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add server
@@ -471,14 +471,14 @@ export default function ConnectorsPage() {
             <div className="relative mb-3 max-w-sm">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
               <input type="text" value={mcpSearch} onChange={(e) => setMcpSearch(e.target.value)} placeholder="Search by server or agent..."
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/30" />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredAttachments.map((row) => (
                 <div key={`${row.agentName}:${row.serverSlug}`} className="group rounded-xl border border-zinc-800 bg-surface-0 p-4 transition-colors hover:border-zinc-700">
                   <div className="flex items-start justify-between">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
-                      <Server className="h-4 w-4 text-lantern-400" />
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pal-500/10">
+                      <Server className="h-4 w-4 text-pal-400" />
                     </div>
                     <button
                       onClick={() => handleRemoveMcp(row)}
@@ -505,7 +505,7 @@ export default function ConnectorsPage() {
         <div className="mb-5 relative max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search connectors..."
-            className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
+            className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-pal-500/50 focus:ring-1 focus:ring-pal-500/30" />
         </div>
         {/* Category tabs */}
         <div className="mb-6 flex gap-1 overflow-x-auto pb-1">
@@ -513,7 +513,7 @@ export default function ConnectorsPage() {
             <button key={cat} onClick={() => setCategory(cat)}
               className={clsx("whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors inline-flex items-center gap-1.5",
                 category === cat ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
-              {cat}<span className={clsx("rounded-full px-1.5 py-0.5 text-[11px] font-medium", category === cat ? "bg-lantern-500/20 text-lantern-400" : "bg-surface-3 text-zinc-600")}>{counts[cat] ?? 0}</span>
+              {cat}<span className={clsx("rounded-full px-1.5 py-0.5 text-[11px] font-medium", category === cat ? "bg-pal-500/20 text-pal-400" : "bg-surface-3 text-zinc-600")}>{counts[cat] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -567,7 +567,7 @@ export default function ConnectorsPage() {
                 <span
                   className={clsx(
                     "mt-3 inline-flex w-full items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                    on ? "border border-zinc-700 text-zinc-300 group-hover:bg-surface-3" : "bg-lantern-500 text-on-flame group-hover:bg-lantern-400",
+                    on ? "border border-zinc-700 text-zinc-300 group-hover:bg-surface-3" : "bg-pal-500 text-on-flame group-hover:bg-pal-400",
                   )}
                 >
                   {on ? "Configure" : "Connect"}
@@ -585,7 +585,7 @@ export default function ConnectorsPage() {
           <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10"><Server className="h-4 w-4 text-lantern-400" /></div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pal-500/10"><Server className="h-4 w-4 text-pal-400" /></div>
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-100">Add MCP Server</h2>
                   <p className="text-xs text-zinc-500">Attach a server from the curated catalog to one of your agents</p>
@@ -599,7 +599,7 @@ export default function ConnectorsPage() {
                 <select
                   value={mcpForm.agentName}
                   onChange={(e) => { setMcpForm((p) => ({ ...p, agentName: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.agentName; return n; }); }}
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
                 >
                   <option value="">Select an agent…</option>
                   {agents.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
@@ -611,7 +611,7 @@ export default function ConnectorsPage() {
                 <select
                   value={mcpForm.slug}
                   onChange={(e) => { setMcpForm((p) => ({ ...p, slug: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.slug; return n; }); }}
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-pal-500 focus:ring-1 focus:ring-pal-500/30"
                 >
                   <option value="">Select a server…</option>
                   {catalog.map((s) => <option key={s.slug} value={s.slug}>{s.name} — {s.category}</option>)}
@@ -622,7 +622,7 @@ export default function ConnectorsPage() {
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">
               <button onClick={() => setShowMcpModal(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
-              <button onClick={handleAddMcp} disabled={mcpSaving} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50">
+              <button onClick={handleAddMcp} disabled={mcpSaving} className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50">
                 {mcpSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}Add Server
               </button>
             </div>
@@ -665,12 +665,12 @@ export default function ConnectorsPage() {
                     <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">{f.label}{f.required && <span className="text-red-400">*</span>}</label>
                     <SecretInput value={creds[f.key] ?? ""} onChange={(v) => { setCreds((p) => ({ ...p, [f.key]: v })); setErrors((p) => { const n = { ...p }; delete n[f.key]; return n; }); }} placeholder={f.placeholder} isText={f.type === "text"} />
                     {errors[f.key] && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{errors[f.key]}</p>}
-                    {f.helpText && !errors[f.key] && <p className="mt-1 text-[12px] text-zinc-600">{f.helpUrl ? <a href={f.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{f.helpText}</a> : f.helpText}</p>}
+                    {f.helpText && !errors[f.key] && <p className="mt-1 text-[12px] text-zinc-600">{f.helpUrl ? <a href={f.helpUrl} target="_blank" rel="noopener noreferrer" className="text-pal-400/70 hover:text-pal-400 underline underline-offset-2">{f.helpText}</a> : f.helpText}</p>}
                   </div>
                 ))}
               </>)}
 
-              {view === "testing" && <div className="flex flex-col items-center py-8"><Loader2 className="mb-4 h-10 w-10 animate-spin text-lantern-400" /><p className="text-sm font-medium text-zinc-200">{msg}</p></div>}
+              {view === "testing" && <div className="flex flex-col items-center py-8"><Loader2 className="mb-4 h-10 w-10 animate-spin text-pal-400" /><p className="text-sm font-medium text-zinc-200">{msg}</p></div>}
               {view === "success" && <div className="flex flex-col items-center py-8"><div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10"><CheckCircle2 className="h-7 w-7 text-emerald-400" /></div><p className="text-sm font-medium text-emerald-400">{msg}</p></div>}
 
               {view === "config" && (<>
@@ -713,7 +713,7 @@ export default function ConnectorsPage() {
                 <button onClick={() => setMc(null)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
                 <div className="flex items-center gap-2">
                   {view === "manual" && mc.oauthProvider && <button onClick={() => { setOauthErr(""); setMsg(""); setView("choose"); }} className="rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300">Back</button>}
-                  {view === "manual" && <button onClick={handleConnect} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-lantern-400"><Plug className="h-3.5 w-3.5" />Test &amp; Connect</button>}
+                  {view === "manual" && <button onClick={handleConnect} className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-4 py-2 text-sm font-medium text-on-flame transition-colors hover:bg-pal-400"><Plug className="h-3.5 w-3.5" />Test &amp; Connect</button>}
                 </div>
               </>)}
             </div>

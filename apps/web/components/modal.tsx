@@ -178,7 +178,7 @@ export function ConfirmModal({
             disabled={confirming}
             className={clsx(
               "rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50",
-              tone === "danger" ? "bg-rose-500 hover:bg-rose-400" : "bg-lantern-500 hover:bg-lantern-400",
+              tone === "danger" ? "bg-rose-500 hover:bg-rose-400" : "bg-pal-500 hover:bg-pal-400",
             )}
           >
             {confirming ? "Working…" : confirmLabel}

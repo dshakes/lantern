@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # db-restore-drill.sh -- prove a Postgres backup can actually be restored.
 #
-#   scripts/db-restore-drill.sh <lantern-ts.sql.gz>  restore a real backup (CronJob format; a pg_dump -Fc
+#   scripts/db-restore-drill.sh <pal-ts.sql.gz>  restore a real backup (CronJob format; a pg_dump -Fc
 #                                                    custom-format file also works) into a throwaway server
 #   scripts/db-restore-drill.sh --self-test          seed a throwaway DB, dump it the way the CronJob does,
 #                                                    restore it, compare
@@ -18,7 +18,7 @@ set -euo pipefail
 
 IMAGE="${DRILL_PG_IMAGE:-pgvector/pgvector:pg16}"
 EXPECT="${DRILL_EXPECT_TABLES:-agents runs journal_events}"
-NAME="lantern-restore-drill-$$"
+NAME="pal-restore-drill-$$"
 SRC="${NAME}-src"
 trap 'docker rm -f "$NAME" "$SRC" >/dev/null 2>&1 || true' EXIT
 

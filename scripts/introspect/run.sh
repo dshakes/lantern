@@ -26,7 +26,7 @@ RUNLOG="$STATE_DIR/run-$TS.log"
 export PATH="$NODE_BIN:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 mkdir -p "$STATE_DIR"
 
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Lantern introspect\"" >/dev/null 2>&1 || true; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"PAL Runtime introspect\"" >/dev/null 2>&1 || true; }
 log() { echo "[$(date -u +%H:%M:%SZ)] $*" | tee -a "$RUNLOG"; }
 
 cd "$REPO" || { log "repo missing"; exit 0; }

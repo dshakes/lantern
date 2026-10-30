@@ -107,7 +107,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
     }
     // Fallback: read from localStorage (Settings page saves here)
     try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("lantern_settings_providers") : null;
+      const raw = typeof window !== "undefined" ? localStorage.getItem("pal_settings_providers") : null;
       if (raw) {
         const parsed = JSON.parse(raw);
         const localProviders: ConfiguredProvider[] = Object.entries(parsed)
@@ -131,7 +131,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   // Also check localStorage as fallback (Settings page saves there when API is down)
   const localConfigured = typeof window !== "undefined" && (() => {
     try {
-      const raw = localStorage.getItem("lantern_settings_providers");
+      const raw = localStorage.getItem("pal_settings_providers");
       if (!raw) return false;
       const parsed = JSON.parse(raw);
       return Object.values(parsed).some((p: any) => p.key && p.key.length > 10 && !p.key.includes("****"));

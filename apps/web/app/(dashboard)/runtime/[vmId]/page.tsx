@@ -215,7 +215,7 @@ export default function RuntimeVmPage() {
   const active = v.state !== "terminated" && v.state !== "failed";
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="theme-runtime space-y-6 p-8">
       <PageHeader
         title={v.vmId}
         description={`${v.state}${v.node ? " on " + v.node : ""} · ${v.isolationClass} · created ${formatDistanceToNow(new Date(v.createdAt), { addSuffix: true })}`}
@@ -290,7 +290,7 @@ export default function RuntimeVmPage() {
             step={1}
             value={forkCount}
             onChange={(e) => setForkCount(e.target.value)}
-            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 text-sm text-zinc-100 focus:border-lantern-500 focus:outline-none"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 text-sm text-zinc-100 focus:border-pal-500 focus:outline-none"
           />
         </ModalField>
       </Modal>
@@ -366,7 +366,7 @@ export default function RuntimeVmPage() {
                   <div className="flex justify-between gap-2">
                     <dt className="text-zinc-500">Parent VM</dt>
                     <dd className="break-all font-mono">
-                      <Link href={`/runtime/${encodeURIComponent(v.parentVmId)}`} className="text-lantern-500 hover:underline">
+                      <Link href={`/runtime/${encodeURIComponent(v.parentVmId)}`} className="text-pal-500 hover:underline">
                         {v.parentVmId}
                       </Link>
                     </dd>

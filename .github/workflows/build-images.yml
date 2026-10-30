@@ -1,4 +1,4 @@
-# build-images — builds, pushes, and cosign-signs the deployable Lantern service images
+# build-images — builds, pushes, and cosign-signs the deployable PAL Runtime service images
 # that Helm/Terraform reference (ghcr.io/dshakes/lantern/<name>). Runs on push to master
 # and on demand (workflow_dispatch). Each image is tagged with the git SHA and `latest`.
 #
@@ -7,12 +7,21 @@
 # (rather than `uses: ./.github/workflows/sign-images.yml`) so we can sign the exact
 # pushed DIGEST that build-push-action returns, which is the tamper-proof thing to sign.
 #
-# Image-name mapping matches what the Helm charts pull (infra/helm/lantern/values.yaml):
+# Image-name mapping matches what the Helm charts pull (infra/helm/pal/values.yaml):
 #   control-plane, gateway, model-router, runtime-manager, runtime-scheduler, web (dashboard).
 # Build contexts differ per service:
 #   - Go (control-plane, runtime-scheduler): context = repo root (Dockerfiles COPY gen/go/).
 #   - Rust (gateway, model-router, runtime-manager): context = the service dir (COPY . .).
 #   - dashboard (apps/web): context = apps/web (COPY package*.json ./ then COPY . .).
+#
+# Supply chain (ADR 0044): each pushed digest also gets
+#   - a SLSA build-provenance attestation (actions/attest-build-provenance, pushed to ghcr),
+#   - an SPDX-JSON SBOM (syft via anchore/sbom-action) attached as a cosign attestation,
+# and the job then VERIFIES what it just produced — signature under the expected identity,
+# a wrong identity must be rejected, SBOM + provenance attestations must verify — so a
+# broken signing chain fails CI instead of failing admission in a customer cluster.
+# Cluster-side checks: infra/helm/lantern-data-plane (imageVerification) for platform
+# images, infra/k8s/supply-chain for tenant workload images.
 #
 # Action SHAs are pinned (same convention as sdlc-qa.yml / sign-images.yml).
 name: "build-images (push + cosign sign)"
@@ -28,6 +37,7 @@ permissions:
   contents: read
   packages: write
   id-token: write
+  attestations: write
 
 concurrency:
   group: build-images-${{ github.ref }}
@@ -36,6 +46,10 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/dshakes/lantern
+  # The keyless identity build-images.yml signs as on master. Kyverno attestors
+  # (data-plane chart + infra/k8s/supply-chain) trust exactly this subject.
+  SIGNER_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-images.yml@${{ github.ref }}
+  SIGNER_ISSUER: https://token.actions.githubusercontent.com
 
 jobs:
   build:
@@ -103,3 +117,45 @@ jobs:
           COSIGN_YES: "true"
           DIGEST_REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
         run: cosign sign --recursive "$DIGEST_REF"
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM (syft, SPDX JSON)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attach SBOM as a signed attestation
+        env:
+          COSIGN_YES: "true"
+          DIGEST_REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: cosign attest --type spdxjson --predicate sbom.spdx.json "$DIGEST_REF"
+
+      # Verify the chain we just produced, positive AND negative, so CI is the test.
+      - name: Verify signature, SBOM and provenance
+        env:
+          DIGEST_REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          id=(--certificate-identity "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER")
+          cosign verify "${id[@]}" "$DIGEST_REF" >/dev/null
+          cosign verify-attestation --type spdxjson "${id[@]}" "$DIGEST_REF" >/dev/null
+          gh attestation verify "oci://$DIGEST_REF" --repo "$REPO" >/dev/null
+          # A signature from any other identity must NOT satisfy the policy.
+          if cosign verify --certificate-identity "https://github.com/$REPO/.github/workflows/not-the-signer.yml@refs/heads/master" \
+               --certificate-oidc-issuer "$SIGNER_ISSUER" "$DIGEST_REF" >/dev/null 2>&1; then
+            echo "::error::signature verified under the WRONG identity — verification is not binding"; exit 1
+          fi
+          echo "verified: signature, SBOM attestation, SLSA provenance; wrong identity rejected"
+

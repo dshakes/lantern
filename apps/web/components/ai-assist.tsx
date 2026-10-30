@@ -109,7 +109,7 @@ export function AiAssistButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 rounded-md bg-lantern-500/10 px-2 py-1 text-[12px] font-medium text-lantern-400 transition-colors hover:bg-lantern-500/20"
+        className="inline-flex items-center gap-1 rounded-md bg-pal-500/10 px-2 py-1 text-[12px] font-medium text-pal-400 transition-colors hover:bg-pal-500/20"
         title="Generate with AI"
       >
         <Sparkles className="h-3 w-3" />
@@ -119,9 +119,9 @@ export function AiAssistButton({
   }
 
   return (
-    <div className="mt-2 rounded-lg border border-lantern-500/20 bg-lantern-500/5 p-3">
+    <div className="mt-2 rounded-lg border border-pal-500/20 bg-pal-500/5 p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="flex items-center gap-1 text-xs font-medium text-lantern-400">
+        <span className="flex items-center gap-1 text-xs font-medium text-pal-400">
           <Sparkles className="h-3 w-3" />
           {mode === "cron" ? "Describe your schedule" : mode === "json" ? "Describe your input" : "Describe what you want"}
         </span>
@@ -141,13 +141,13 @@ export function AiAssistButton({
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") handleGenerate(); }}
           placeholder={placeholder || (mode === "cron" ? "e.g., every weekday at 9am" : "Describe in natural language...")}
-          className="flex-1 rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
+          className="flex-1 rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-pal-500/50"
           autoFocus
         />
         <button
           onClick={handleGenerate}
           disabled={loading || !prompt.trim()}
-          className="inline-flex items-center gap-1 rounded-md bg-lantern-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-lantern-400 disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md bg-pal-500 px-3 py-1.5 text-xs font-medium text-on-flame transition-colors hover:bg-pal-400 disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
           Generate

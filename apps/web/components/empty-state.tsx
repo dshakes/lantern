@@ -79,7 +79,7 @@ export function EmptyState({
             {actionLabel && actionHref && !onAction && (
               <Link
                 href={actionHref}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-pal-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </Link>
@@ -87,7 +87,7 @@ export function EmptyState({
             {actionLabel && onAction && (
               <button
                 onClick={onAction}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-pal-500 px-5 py-2.5 text-xs font-medium text-on-flame shadow-sm transition-all duration-150 hover:bg-pal-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </button>
@@ -114,7 +114,7 @@ export function EmptyState({
           <div className="flex flex-wrap items-center justify-center gap-1.5">
             {suggestions.map((s, i) => {
               const cls =
-                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200";
+                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:border-pal-500/40 hover:bg-pal-500/5 hover:text-pal-200";
               if (s.href) {
                 return (
                   <Link key={i} href={s.href} className={cls}>

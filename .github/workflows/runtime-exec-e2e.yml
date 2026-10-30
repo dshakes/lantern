@@ -84,7 +84,7 @@ jobs:
           # single-node test wants — no Postgres service needed.
           LISTEN_ADDR=:50055 \
           HTTP_ADDR=:8085 \
-          LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+          PAL_DEFAULT_MANAGER_ADDR=localhost:50054 \
           LOG_LEVEL=info \
           ./services/runtime-scheduler/bin/scheduler > /tmp/scheduler.log 2>&1 &
           for _ in $(seq 1 60); do
@@ -153,9 +153,9 @@ jobs:
       # assertion had. So require the subtests to have actually RUN.
       - name: Run the exec e2e test
         env:
-          LANTERN_RUNTIME_E2E: "1"
-          LANTERN_SCHEDULER_GRPC_ADDR: localhost:50055
-          LANTERN_DEFAULT_MANAGER_ADDR: localhost:50054
+          PAL_RUNTIME_E2E: "1"
+          PAL_SCHEDULER_GRPC_ADDR: localhost:50055
+          PAL_DEFAULT_MANAGER_ADDR: localhost:50054
         run: |
           set -euo pipefail
           cd services/control-plane
