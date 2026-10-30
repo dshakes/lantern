@@ -700,3 +700,113 @@ class TestSessionMinimalCreateResponse:
         assert sess.tenant_id == "t1"
         assert sess.agent_name == "hello-test"
         assert sess.created_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Agent identity + policy (ADR 0052)
+# ---------------------------------------------------------------------------
+
+_IDENTITY = {
+    "agentId": "a1",
+    "spiffeId": "spiffe://x/a1",
+    "keyGeneration": 2,
+    "status": "active",
+    "publicKeyJwk": {"kty": "OKP"},
+    "jwksUri": "u",
+    "tokenTtlSeconds": 300,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "rotatedAt": None,
+    "revokedAt": None,
+    "revokedReason": None,
+}
+
+
+class TestAgentPolicy:
+    async def test_get_policy(self):
+        body = {"agentName": "t", "agentId": "a1", "policy": {"mode": "enforce", "version": 3}, "warnings": ["w"]}
+        t = _MockTransport(body=body)
+        res = await _client(t).agents.get_policy("t")
+        assert _last(t).method == "GET" and _last(t).url.path == "/v1/agents/t/policy"
+        assert res.policy["version"] == 3 and res.warnings == ["w"] and res.agent_id == "a1"
+
+    async def test_put_policy_sends_body(self):
+        t = _MockTransport(body={"agentName": "t", "policy": {"version": 4}})
+        res = await _client(t).agents.put_policy("t", {"mode": "enforce", "version": 3})
+        assert _last(t).method == "PUT"
+        assert json.loads(_last(t).content) == {"mode": "enforce", "version": 3}
+        assert res.policy["version"] == 4
+
+    async def test_put_policy_conflict_is_typed(self):
+        import pytest
+
+        from pal.errors import PalApiError, PalPolicyVersionConflictError
+
+        t = _MockTransport(status=409, body={"code": "version_conflict"})
+        with pytest.raises(PalPolicyVersionConflictError) as ei:
+            await _client(t).agents.put_policy("t", {"version": 1})
+        assert isinstance(ei.value, PalApiError) and ei.value.status == 409
+
+    async def test_plain_409_stays_api_error(self):
+        import pytest
+
+        from pal.errors import PalApiError, PalPolicyVersionConflictError
+
+        t = _MockTransport(status=409, body={"error": "other"})
+        with pytest.raises(PalApiError) as ei:
+            await _client(t).agents.put_policy("t", {})
+        assert not isinstance(ei.value, PalPolicyVersionConflictError)
+
+    async def test_policy_denied_is_typed(self):
+        import pytest
+
+        from pal.errors import PalApiError, PalPolicyDeniedError
+
+        t = _MockTransport(
+            status=403,
+            body={"code": "agent_policy_denied", "kind": "tool", "target": "shell_exec", "error": "no"},
+        )
+        with pytest.raises(PalPolicyDeniedError) as ei:
+            await _client(t).agents.get("t")
+        assert isinstance(ei.value, PalApiError)
+        assert (ei.value.kind, ei.value.target, ei.value.message) == ("tool", "shell_exec", "no")
+
+    async def test_propose(self):
+        body = {
+            "proposal": {"mode": "enforce"},
+            "rationale": [{"field": "tools", "reason": "r"}],
+            "sources": ["s"],
+            "unresolved": ["u"],
+        }
+        t = _MockTransport(body=body)
+        res = await _client(t).agents.propose_policy("t")
+        assert _last(t).method == "POST" and _last(t).url.path == "/v1/agents/t/policy/propose"
+        assert res.rationale[0]["field"] == "tools" and res.unresolved == ["u"]
+
+
+class TestAgentIdentity:
+    async def test_get_rotate_revoke(self):
+        t = _MockTransport(body=_IDENTITY)
+        c = _client(t)
+        ident = await c.agents.get_identity("t")
+        assert ident.key_generation == 2 and ident.status == "active" and ident.rotated_at is None
+        await c.agents.rotate_identity("t")
+        assert _last(t).method == "POST" and _last(t).url.path == "/v1/agents/t/identity/rotate"
+        await c.agents.revoke_identity("t", "leak")
+        assert _last(t).url.path == "/v1/agents/t/identity/revoke"
+        assert json.loads(_last(t).content) == {"reason": "leak"}
+
+    async def test_mint_token(self):
+        t = _MockTransport(body={"token": "jwt", "expiresAt": "e", "jti": "j", "audience": "svc"})
+        tok = await _client(t).agents.mint_token("t", "svc", run_id="r1")
+        assert json.loads(_last(t).content) == {"audience": "svc", "runId": "r1"}
+        assert tok.token == "jwt" and tok.jti == "j"
+
+    async def test_list_audit(self):
+        body = {
+            "events": [{"id": 7, "event": "policy_denied", "decision": "deny", "actionKind": "tool"}],
+            "chainValid": True,
+        }
+        t = _MockTransport(body=body)
+        res = await _client(t).agents.list_audit("t", limit=5, event="policy_denied")
+        assert _last(t).url.params["limit"] == "5" and _last(t).url.params["event"] == "policy_denied"
+        assert res.chain_valid and res.events[0].decision == "deny" and res.events[0].action_kind == "tool"

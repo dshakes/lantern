@@ -396,6 +396,8 @@ var rlsTenantTables = []string{
 	"billing_accounts", "billing_meter_exports",
 	"bridge_pairing_codes", "bridges", "device_signals",
 	"batches",
+	// ADR 0052: agent identity + per-agent policy + its audit trail.
+	"agent_identities", "agent_policies", "agent_identity_audit",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,
@@ -413,6 +415,8 @@ var rlsExemptTables = map[string]bool{
 	// tenant is resolved.
 	"billing_plans":          true,
 	"billing_webhook_events": true,
+	// ADR 0052: a single global row recording when per-agent policy shipped.
+	"agent_policy_cutover": true,
 }
 
 // TestRLSEnforcement_AllTenantTables is the permanent catalog gate. For every

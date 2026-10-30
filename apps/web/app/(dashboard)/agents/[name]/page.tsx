@@ -61,6 +61,7 @@ import { AiAssistButton } from "@/components/ai-assist";
 import { LinkButton } from "@/components/button";
 import { useAgent, useAgentRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
+import { SecurityTab } from "./security-tab";
 import { StatusBadge } from "@/components/status-badge";
 import { CostForecastBadge } from "@/components/cost-forecast-badge";
 import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
@@ -167,6 +168,7 @@ const tabs = [
   { key: "chat", label: "Chat", icon: MessageSquare },
   { key: "runs", label: "Runs", icon: Play },
   { key: "schedule", label: "Schedule", icon: Calendar },
+  { key: "security", label: "Security", icon: Shield },
   { key: "settings", label: "Settings", icon: Settings },
 ] as const;
 type TabKey = (typeof tabs)[number]["key"];
@@ -2042,6 +2044,8 @@ export default function AgentDetailPage() {
         )}
 
         {/* SETTINGS TAB */}
+        {activeTab === "security" && <SecurityTab name={name} />}
+
         {activeTab === "settings" && (
           <div className="mx-auto max-w-2xl space-y-6">
             {/* Webhook triggers (ADR 0028) */}

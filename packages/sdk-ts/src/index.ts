@@ -1,6 +1,6 @@
 export { agent } from "./agent.js";
 export { step, setStepRuntime } from "./step.js";
-export { PalClient, PalApiError, MessageStreamError } from "./client.js";
+export { PalClient, PalApiError, MessageStreamError, asPolicyDenied, isVersionConflict } from "./client.js";
 export { tool } from "./tools.js";
 
 // Runtime subsystem
@@ -126,4 +126,13 @@ export type {
   VmForkEntry,
   ExecStreamEvent,
   ExecResult,
+  AgentPolicy,
+  AgentPolicyBudget,
+  AgentPolicyDocument,
+  AgentPolicyProposal,
+  AgentPolicyDeniedBody,
+  AgentIdentity,
+  AgentToken,
+  AgentAuditEvent,
+  AgentAuditLog,
 } from "./types.js";

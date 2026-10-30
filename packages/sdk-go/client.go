@@ -1032,7 +1032,7 @@ func (c *Client) send(ctx context.Context, method, path, contentType string, bod
 		if res.StatusCode >= 400 {
 			b, _ := io.ReadAll(res.Body)
 			res.Body.Close()
-			return nil, &APIError{Status: res.StatusCode, Body: string(b)}
+			return nil, newAPIError(res.StatusCode, string(b))
 		}
 		return res, nil
 	}

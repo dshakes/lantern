@@ -19,6 +19,8 @@ from pal.errors import (
     PalApiError,
     PalError,
     PalLlmError,
+    PalPolicyDeniedError,
+    PalPolicyVersionConflictError,
     PalStepError,
     PalTimeoutError,
     PalValidationError,
@@ -97,6 +99,8 @@ __all__ = [
     # Errors
     "PalError",
     "PalApiError",
+    "PalPolicyDeniedError",
+    "PalPolicyVersionConflictError",
     "PalStepError",
     "PalLlmError",
     "PalTimeoutError",

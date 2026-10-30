@@ -8,10 +8,11 @@ import os
 import random
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
-from pal.errors import PalApiError
+from pal.errors import PalApiError, PalPolicyDeniedError, PalPolicyVersionConflictError
 from pal.types import (
     AgentInfo,
     ConnectorInfo,
@@ -38,6 +39,26 @@ _RETRYABLE_STATUS = {429, 503}
 def _retry_backoff_s(attempt: int) -> float:
     ceiling = min(_RETRY_MAX_DELAY_S, _RETRY_BASE_DELAY_S * 2**attempt)
     return random.uniform(0, ceiling)
+
+
+def _api_error(status: int, body: str) -> PalApiError:
+    """Build the most specific PalApiError for a non-2xx response."""
+    try:
+        env = json.loads(body)
+    except ValueError:
+        env = None
+    if isinstance(env, dict):
+        if status == 403 and env.get("code") == "agent_policy_denied":
+            return PalPolicyDeniedError(
+                status,
+                body,
+                kind=str(env.get("kind", "")),
+                target=str(env.get("target", "")),
+                message=str(env.get("error", "")),
+            )
+        if status == 409 and env.get("code") == "version_conflict":
+            return PalPolicyVersionConflictError(status, body)
+    return PalApiError(status, body)
 
 
 class PalClient:
@@ -153,7 +174,7 @@ class PalClient:
                 await asyncio.sleep(_retry_backoff_s(attempt))
                 continue
 
-            raise PalApiError(resp.status_code, resp.text)
+            raise _api_error(resp.status_code, resp.text)
 
     @staticmethod
     def _items(data: Any, key: str) -> list[Any]:
@@ -261,6 +282,61 @@ class PalClient:
 
         async def delete(self, name: str) -> None:
             await self._c._request("DELETE", f"/v1/agents/{name}")
+
+        # -- policy + identity (ADR 0052) --------------------------------
+
+        async def get_policy(self, name: str) -> AgentPolicyResult:
+            """Get the agent's policy (GET /v1/agents/{name}/policy)."""
+            data = await self._c._request("GET", f"/v1/agents/{quote(name, safe='')}/policy")
+            return AgentPolicyResult.from_dict(data or {})
+
+        async def put_policy(self, name: str, policy: dict[str, Any]) -> AgentPolicyResult:
+            """Replace the policy (PUT /v1/agents/{name}/policy).
+
+            ``policy`` must carry the ``version`` last read. Raises
+            PalPolicyVersionConflictError on 409.
+            """
+            data = await self._c._request("PUT", f"/v1/agents/{quote(name, safe='')}/policy", body=policy)
+            return AgentPolicyResult.from_dict(data or {})
+
+        async def propose_policy(self, name: str) -> PolicyProposal:
+            """Least-privilege proposal; never persisted (POST /v1/agents/{name}/policy/propose)."""
+            data = await self._c._request("POST", f"/v1/agents/{quote(name, safe='')}/policy/propose")
+            return PolicyProposal.from_dict(data or {})
+
+        async def get_identity(self, name: str) -> AgentIdentity:
+            """Get the agent's identity (GET /v1/agents/{name}/identity)."""
+            data = await self._c._request("GET", f"/v1/agents/{quote(name, safe='')}/identity")
+            return AgentIdentity.from_dict(data or {})
+
+        async def rotate_identity(self, name: str) -> AgentIdentity:
+            """Rotate the signing key (POST /v1/agents/{name}/identity/rotate)."""
+            data = await self._c._request("POST", f"/v1/agents/{quote(name, safe='')}/identity/rotate", body={})
+            return AgentIdentity.from_dict(data or {})
+
+        async def revoke_identity(self, name: str, reason: str = "") -> AgentIdentity:
+            """Revoke the identity (POST /v1/agents/{name}/identity/revoke)."""
+            data = await self._c._request(
+                "POST", f"/v1/agents/{quote(name, safe='')}/identity/revoke", body={"reason": reason}
+            )
+            return AgentIdentity.from_dict(data or {})
+
+        async def mint_token(self, name: str, audience: str, run_id: str | None = None) -> AgentToken:
+            """Mint a short-lived agent token (admin only; POST /v1/agents/{name}/identity/token)."""
+            body: dict[str, Any] = {"audience": audience}
+            if run_id:
+                body["runId"] = run_id
+            data = await self._c._request("POST", f"/v1/agents/{quote(name, safe='')}/identity/token", body=body)
+            return AgentToken.from_dict(data or {})
+
+        async def list_audit(self, name: str, *, limit: int | None = None, event: str | None = None) -> AgentAuditList:
+            """List audit events + chain integrity (GET /v1/agents/{name}/audit)."""
+            data = await self._c._request(
+                "GET",
+                f"/v1/agents/{quote(name, safe='')}/audit",
+                params={"limit": limit, "event": event},
+            )
+            return AgentAuditList.from_dict(data or {})
 
     # ------------------------------------------------------------------
     # runs namespace
@@ -1458,3 +1534,204 @@ class RehearseResponse:
         self.cases = cases
         self.count = count
         self.reason = reason
+
+
+class AgentPolicyResult:
+    """An agent's policy envelope (``policy`` is the raw Policy dict, incl. ``version``)."""
+
+    __slots__ = ("agent_name", "agent_id", "policy", "updated_at", "updated_by", "warnings")
+
+    def __init__(
+        self,
+        *,
+        agent_name: str,
+        agent_id: str,
+        policy: dict[str, Any],
+        updated_at: str | None,
+        updated_by: str | None,
+        warnings: list[str],
+    ) -> None:
+        self.agent_name = agent_name
+        self.agent_id = agent_id
+        self.policy = policy
+        self.updated_at = updated_at
+        self.updated_by = updated_by
+        self.warnings = warnings
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> AgentPolicyResult:
+        return cls(
+            agent_name=d.get("agentName", ""),
+            agent_id=d.get("agentId", ""),
+            policy=d.get("policy") or {},
+            updated_at=d.get("updatedAt"),
+            updated_by=d.get("updatedBy"),
+            warnings=list(d.get("warnings") or []),
+        )
+
+
+class PolicyProposal:
+    """A least-privilege policy proposal with rationale."""
+
+    __slots__ = ("proposal", "rationale", "sources", "unresolved")
+
+    def __init__(
+        self,
+        *,
+        proposal: dict[str, Any],
+        rationale: list[dict[str, Any]],
+        sources: list[str],
+        unresolved: list[str],
+    ) -> None:
+        self.proposal = proposal
+        self.rationale = rationale
+        self.sources = sources
+        self.unresolved = unresolved
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> PolicyProposal:
+        return cls(
+            proposal=d.get("proposal") or {},
+            rationale=list(d.get("rationale") or []),
+            sources=list(d.get("sources") or []),
+            unresolved=list(d.get("unresolved") or []),
+        )
+
+
+class AgentIdentity:
+    """An agent's cryptographic identity."""
+
+    __slots__ = (
+        "agent_id",
+        "spiffe_id",
+        "key_generation",
+        "status",
+        "public_key_jwk",
+        "jwks_uri",
+        "token_ttl_seconds",
+        "created_at",
+        "rotated_at",
+        "revoked_at",
+        "revoked_reason",
+    )
+
+    def __init__(
+        self,
+        *,
+        agent_id: str,
+        spiffe_id: str,
+        key_generation: int,
+        status: str,
+        public_key_jwk: dict[str, Any],
+        jwks_uri: str,
+        token_ttl_seconds: int,
+        created_at: str | None,
+        rotated_at: str | None,
+        revoked_at: str | None,
+        revoked_reason: str | None,
+    ) -> None:
+        self.agent_id = agent_id
+        self.spiffe_id = spiffe_id
+        self.key_generation = key_generation
+        self.status = status
+        self.public_key_jwk = public_key_jwk
+        self.jwks_uri = jwks_uri
+        self.token_ttl_seconds = token_ttl_seconds
+        self.created_at = created_at
+        self.rotated_at = rotated_at
+        self.revoked_at = revoked_at
+        self.revoked_reason = revoked_reason
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> AgentIdentity:
+        return cls(
+            agent_id=d.get("agentId", ""),
+            spiffe_id=d.get("spiffeId", ""),
+            key_generation=d.get("keyGeneration", 0),
+            status=d.get("status", ""),
+            public_key_jwk=d.get("publicKeyJwk") or {},
+            jwks_uri=d.get("jwksUri", ""),
+            token_ttl_seconds=d.get("tokenTtlSeconds", 0),
+            created_at=d.get("createdAt"),
+            rotated_at=d.get("rotatedAt"),
+            revoked_at=d.get("revokedAt"),
+            revoked_reason=d.get("revokedReason"),
+        )
+
+
+class AgentToken:
+    """A minted agent-identity token."""
+
+    __slots__ = ("token", "expires_at", "jti", "audience")
+
+    def __init__(self, *, token: str, expires_at: str, jti: str, audience: str) -> None:
+        self.token = token
+        self.expires_at = expires_at
+        self.jti = jti
+        self.audience = audience
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> AgentToken:
+        return cls(
+            token=d.get("token", ""),
+            expires_at=d.get("expiresAt", ""),
+            jti=d.get("jti", ""),
+            audience=d.get("audience", ""),
+        )
+
+
+class AgentAuditEvent:
+    """One row of an agent's hash-chained audit log."""
+
+    __slots__ = (
+        "id",
+        "event",
+        "action_kind",
+        "target",
+        "decision",
+        "reason",
+        "run_id",
+        "step_id",
+        "agent_version_id",
+        "jti",
+        "principal",
+        "created_at",
+    )
+
+    def __init__(self, **kw: Any) -> None:
+        for name in self.__slots__:
+            setattr(self, name, kw.get(name))
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> AgentAuditEvent:
+        return cls(
+            id=d.get("id"),
+            event=d.get("event"),
+            action_kind=d.get("actionKind"),
+            target=d.get("target"),
+            decision=d.get("decision"),
+            reason=d.get("reason"),
+            run_id=d.get("runId"),
+            step_id=d.get("stepId"),
+            agent_version_id=d.get("agentVersionId"),
+            jti=d.get("jti"),
+            principal=d.get("principal"),
+            created_at=d.get("createdAt"),
+        )
+
+
+class AgentAuditList:
+    """Audit events plus the chain-integrity verdict."""
+
+    __slots__ = ("events", "chain_valid")
+
+    def __init__(self, *, events: list[AgentAuditEvent], chain_valid: bool) -> None:
+        self.events = events
+        self.chain_valid = chain_valid
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> AgentAuditList:
+        return cls(
+            events=[AgentAuditEvent.from_dict(e) for e in (d.get("events") or [])],
+            chain_valid=bool(d.get("chainValid", False)),
+        )

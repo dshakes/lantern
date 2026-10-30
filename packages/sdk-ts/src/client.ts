@@ -1,6 +1,13 @@
 import { z } from "zod";
 import type {
   Agent,
+  AgentAuditLog,
+  AgentIdentity,
+  AgentPolicy,
+  AgentPolicyDeniedBody,
+  AgentPolicyDocument,
+  AgentPolicyProposal,
+  AgentToken,
   BudgetPolicy,
   Trigger,
   TriggerProvider,
@@ -142,6 +149,42 @@ export class PalClient {
 
     delete: (name: string): Promise<void> =>
       this.fetch(`/v1/agents/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+    // -- identity + per-agent policy (ADR 0052) ---------------------------
+
+    getPolicy: (name: string): Promise<AgentPolicyDocument> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/policy`),
+
+    /** Replace the policy. Send the `version` you read; a stale one rejects with
+     *  a 409 PalApiError (see `isVersionConflict`). */
+    putPolicy: (name: string, policy: AgentPolicy): Promise<AgentPolicyDocument> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/policy`, { method: "PUT", body: JSON.stringify(policy) }),
+
+    /** Least-privilege proposal. Never persisted; apply it with `putPolicy`. */
+    proposePolicy: (name: string): Promise<AgentPolicyProposal> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/policy/propose`, { method: "POST" }),
+
+    getIdentity: (name: string): Promise<AgentIdentity> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/identity`),
+
+    rotateIdentity: (name: string): Promise<AgentIdentity> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/identity/rotate`, { method: "POST" }),
+
+    revokeIdentity: (name: string, reason: string): Promise<AgentIdentity> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/identity/revoke`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      }),
+
+    /** Mint a short-lived audience-bound agent token (JWT owner/admin only). */
+    mintAgentToken: (name: string, params: { audience: string; runId?: string }): Promise<AgentToken> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/identity/token`, {
+        method: "POST",
+        body: JSON.stringify(params),
+      }),
+
+    listAudit: (name: string, params?: { limit?: number; event?: string }): Promise<AgentAuditLog> =>
+      this.fetch(`/v1/agents/${encodeURIComponent(name)}/audit${this.qs(params)}`),
   };
 
   readonly runtime = {
@@ -864,5 +907,34 @@ export class MessageStreamError extends Error {
   constructor(public readonly detail: string) {
     super(`Session stream error: ${detail}`);
     this.name = "MessageStreamError";
+  }
+}
+
+const policyDeniedSchema = z.object({
+  code: z.literal("agent_policy_denied"),
+  kind: z.string(),
+  target: z.string(),
+  error: z.string(),
+});
+
+/** Returns the parsed deny body when `err` is a 403 `agent_policy_denied`, else null. */
+export function asPolicyDenied(err: unknown): AgentPolicyDeniedBody | null {
+  if (!(err instanceof PalApiError) || err.status !== 403) return null;
+  try {
+    const parsed = policyDeniedSchema.safeParse(JSON.parse(err.body));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `err` is the 409 `version_conflict` from a stale policy PUT. */
+export function isVersionConflict(err: unknown): boolean {
+  if (!(err instanceof PalApiError) || err.status !== 409) return false;
+  try {
+    const body: unknown = JSON.parse(err.body);
+    return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "version_conflict";
+  } catch {
+    return false;
   }
 }
