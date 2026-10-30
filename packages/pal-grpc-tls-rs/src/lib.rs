@@ -77,6 +77,14 @@ impl Files {
     }
 }
 
+/// Install `ring` as the process-wide rustls provider (idempotent). Without
+/// it, a binary that links both `ring` and `aws-lc-rs` panics at the first
+/// handshake ("Could not automatically determine the process-level
+/// CryptoProvider") — observed live in the gateway.
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 fn read(path: &str, name: &str) -> anyhow::Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read {name} {path:?}: {e}"))
 }
@@ -111,6 +119,7 @@ pub fn server_tls(
         }
         return Ok(None);
     }
+    ensure_crypto_provider();
     let (Some(ca), Some(cert), Some(key)) = (&files.ca, &files.cert, &files.key) else {
         anyhow::bail!(
             "gRPC server TLS is half-configured: set all of PAL_GRPC_TLS_CA, PAL_GRPC_TLS_CERT, \
@@ -156,6 +165,7 @@ pub fn client_tls(
             "PAL_GRPC_TLS_CERT/_KEY are unset — service-mesh servers verify client certificates in production; set both"
         );
     }
+    ensure_crypto_provider();
     let mut tls = ClientTlsConfig::new().ca_certificate(read_ca(ca)?);
     if let (Some(cert), Some(key)) = (&files.cert, &files.key) {
         tls = tls.identity(Identity::from_pem(

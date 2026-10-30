@@ -553,6 +553,7 @@ dependencies = [
  "anyhow",
  "pal_env",
  "rcgen",
+ "rustls",
  "rustls-pemfile",
  "tonic",
  "tracing",

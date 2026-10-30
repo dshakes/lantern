@@ -1356,6 +1356,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "pal_env",
+ "rustls",
  "tonic",
  "tracing",
  "x509-parser",

@@ -1,4 +1,4 @@
-.PHONY: demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: dev-certs demo demo-down test-e2e-examples test-e2e-analyst help lima-up lima-image lima-e2e lima-broker-e2e lima-measurement-e2e lima-down lima-clean dev build test check-launchd-env deploy-local test-db test-e2e test-e2e-llm e2e-clean e2e-lint smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate validate-cluster rls-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -23,6 +23,9 @@ demo:
 
 demo-down:
 	KIOSK_JWT_SECRET=unused-for-down docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.kiosk.yml -p lantern-demo down -v
+
+dev-certs: ## Generate a local CA + per-service mTLS certs in .dev-certs/ (ADR 0043; dev only)
+	bash scripts/dev-certs.sh .dev-certs
 
 dev-infra: ## Start only infrastructure (Postgres, Redis; no MinIO)
 	docker compose -f infra/docker/docker-compose.yml up -d postgres redis
