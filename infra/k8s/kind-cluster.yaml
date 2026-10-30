@@ -7,7 +7,7 @@
 # egress-block assertions are real.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: lantern-k8s-validate
+name: pal-k8s-validate
 networking:
   disableDefaultCNI: true # validate.sh installs Calico (real NetworkPolicy enforcement)
   podSubnet: "192.168.0.0/16" # Calico's default IPv4 pool — keep them aligned

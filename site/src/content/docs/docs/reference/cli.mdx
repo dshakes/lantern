@@ -1,11 +1,15 @@
 ---
 title: CLI reference
-description: "The lantern command-line tool: local stack, agents, runs, evals, sandbox VMs, webhook triggers and data-plane install."
+description: "The PAL command-line tool: local stack, agents, runs, evals, sandbox VMs, webhook triggers and data-plane install."
+glance:
+  what: "One static Go binary, installed as lantern while the rename lands, that manages agents, runs, evals and VMs."
+  why: "It covers the whole workflow from a terminal, from a first demo to gating CI on evals."
+  how: "Run lantern demo to look around, or lantern dev to boot the stack and lantern onboard to build an agent."
 sidebar:
   order: 3
 ---
 
-One static Go binary. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
+One static Go binary. It is still installed as `lantern` while the rename lands; a `pal` alias is coming, and every command below will work under either name. It boots the local stack, scaffolds and runs agents, gates CI on evals, drives sandbox VMs, and installs the data plane in your cloud.
 
 Just looking? `lantern demo` needs Docker and no API key. To build your own, `lantern dev` boots the stack and `lantern onboard` walks you through your first agent.
 
@@ -21,7 +25,7 @@ lantern --version
 
 Starts the self-contained demo (kiosk mode): Docker only, no API key. Each visitor gets a private workspace with sample agents that is deleted after 30 minutes; answers are recorded replays from a local fixture server. Run it from inside a PAL checkout. It builds and starts Postgres, Redis, the control plane, the dashboard and the replay server as the compose project `lantern-demo`, waits for `/healthz` and the demo page (up to 5 minutes), then opens `http://localhost:3001/kiosk`.
 
-Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/lantern/docs/start/demo/).
+Flags: `--no-open` (don't open the browser), `--down` (stop and delete all demo data). Host ports default to 8080 and 3001; override with `KIOSK_API_PORT` and `KIOSK_WEB_PORT`. See [Demo](/docs/start/demo/).
 
 ```bash
 lantern demo             # start (first run builds images)
@@ -31,7 +35,7 @@ lantern demo --down      # stop and delete all demo data
 
 ## onboard
 
-First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/lantern/docs/start/quickstart/).
+First-run wizard: health check, sign-in, provider key (with a real test call), then the agentic part. It asks what you want the agent to do, the control plane designs it, you confirm, and the first run streams live. With `--yes` or a non-terminal stdin it never prompts (CI). Flags: `--provider` (`openai`|`anthropic`), `--api-key`, `--description`. See [Quickstart](/docs/start/quickstart/).
 
 ```bash
 lantern onboard                 # interactive
@@ -127,7 +131,7 @@ lantern vm logs <vm-id>          # SSE log stream from the harness
 lantern vm stop <vm-id> [--grace 30]
 lantern vm pause <vm-id>         # snapshot + stop, frees the quota slot
 lantern vm resume <vm-id>        # restore under the same vm id
-lantern vm fork <vm-id> --count 3   # N copies; the server caps N (100 by default, LANTERN_MAX_FORK_COUNT, ceiling 1000)
+lantern vm fork <vm-id> --count 3   # N copies; the server caps N (100 by default, PAL_MAX_FORK_COUNT, ceiling 1000)
 lantern vm exec <vm-id> -- ls /tmp  # exec into a running VM (-t/-i for a PTY)
 lantern vm ls <vm-id> [path]     # list /workspace
 lantern vm cat <vm-id> <path>    # print a file (1 MiB cap)
@@ -167,7 +171,7 @@ $ lantern --api-url http://localhost:8080 deploy --json
 
 ## hooks
 
-Manage inbound webhook triggers: a public `POST /v1/hooks/{id}` URL bound to an agent, so GitHub, Sentry, PagerDuty or any HMAC-signing sender starts a run. Aliased as `hook` and `triggers`. See [Webhook triggers](/lantern/docs/build/triggers/).
+Manage inbound webhook triggers: a public `POST /v1/hooks/{id}` URL bound to an agent, so GitHub, Sentry, PagerDuty or any HMAC-signing sender starts a run. Aliased as `hook` and `triggers`. See [Webhook triggers](/docs/build/triggers/).
 
 `create` prints the signing secret once; `--secret-stdin` reads one from stdin instead (Sentry and PagerDuty generate their own). `--template` maps the payload into run input. `update` needs at least one of its flags; `--enable` / `--disable` and `--template` / `--clear-template` are mutually exclusive, and a disabled trigger answers deliveries with 404.
 
@@ -201,9 +205,9 @@ lantern logout                       # clear stored credentials
 ## Global flags
 
 ```text
---api-url string     Control plane address (default: $LANTERN_API_URL or localhost:50051, gRPC)
---api-key string     API key (default: $LANTERN_API_KEY)
---tenant-id string   Tenant ID (default: $LANTERN_TENANT_ID)
+--api-url string     Control plane address (default: $PAL_API_URL or localhost:50051, gRPC)
+--api-key string     API key (default: $PAL_API_KEY)
+--tenant-id string   Tenant ID (default: $PAL_TENANT_ID)
 -o, --output string  Output format: text or json (default text)
---rest               Use REST instead of gRPC (or set LANTERN_USE_REST)
+--rest               Use REST instead of gRPC (or set PAL_USE_REST)
 ```
