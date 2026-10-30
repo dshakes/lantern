@@ -17,9 +17,12 @@ import (
 // PAL_GRPC_TLS_ALLOWED_PEERS SPIFFE allowlist) but cannot demand one there:
 // the customer-VPC DataPlaneService tunnel shares the port and authenticates
 // with its own bootstrap token + JWT. So the demand is made here, per method,
-// with the same exemptions as the service-token check.
+// exempting only health and DataPlaneService.
 func requireServiceCert(ctx context.Context, logger *zap.Logger, method string) error {
-	if isHealthCheck(method) || isDataPlaneService(method) {
+	// Health and the customer-VPC tunnel only. Unlike the token check, gRPC
+	// reflection is NOT exempt: on an mTLS server the schema is mesh-only.
+	if method == "/grpc.health.v1.Health/Check" || method == "/grpc.health.v1.Health/Watch" ||
+		isDataPlaneService(method) {
 		return nil
 	}
 	if p, ok := peer.FromContext(ctx); ok {
