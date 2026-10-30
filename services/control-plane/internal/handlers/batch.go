@@ -190,6 +190,12 @@ func (h *BatchHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 		if idemKey != "" {
 			idem = &idemKey
 		}
+		// Use SAVEPOINT so a 23505 race does not abort the transaction.
+		// Without the savepoint, postgres leaves the tx aborted after a failed
+		// statement and the follow-up SELECT also fails.
+		if _, svErr := tx.Exec(ctx, "SAVEPOINT pre_insert"); svErr != nil {
+			return fmt.Errorf("batch idem savepoint: %w", svErr)
+		}
 		e := tx.QueryRow(ctx, `
 			INSERT INTO batches (tenant_id, agent_name, total_count, pending_count, callback_url, concurrency, idempotency_key)
 			VALUES ($1, $2, $3, $3, $4, $5, $6)
@@ -199,9 +205,12 @@ func (h *BatchHandler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 			// Race: two concurrent CreateBatch requests with the same Idempotency-Key
 			// both passed the SELECT check (READ COMMITTED window) and both attempted
 			// the INSERT. The loser hits the unique index and gets a 23505 violation.
-			// Resolve it by reading the winner's ID and returning it idempotently.
+			// Roll back to the savepoint (un-aborts the tx) then look up the winner.
 			var pgErr *pgconn.PgError
 			if errors.As(e, &pgErr) && pgErr.Code == "23505" && idem != nil {
+				if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT pre_insert"); rbErr != nil {
+					return fmt.Errorf("batch idem rollback: %w", rbErr)
+				}
 				e2 := tx.QueryRow(ctx,
 					`SELECT id FROM batches WHERE tenant_id = $1 AND idempotency_key = $2`,
 					tenantID, *idem,
