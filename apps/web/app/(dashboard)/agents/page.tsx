@@ -278,7 +278,7 @@ export default function AgentsPage() {
           {error.message}. Make sure the control-plane API is reachable.
         </p>
         <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">
-          lantern dev
+          pal dev
         </code>
         <Button size="sm" variant="secondary" className="mt-4" icon={<RefreshCw className="h-3 w-3" />} onClick={() => window.location.reload()}>
           Retry

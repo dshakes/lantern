@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useModels } from "@/lib/model-context";
 import { format } from "date-fns";
 import {
@@ -14,9 +15,9 @@ import {
   Check,
   Loader2,
   Save,
-  ArrowUpRight,
   ToggleLeft,
   ToggleRight,
+  Laptop,
 } from "lucide-react";
 import clsx from "clsx";
 // Mock data imports removed — settings start with empty state when API is available
@@ -27,9 +28,9 @@ import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { api } from "@/lib/api";
 import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
-import { PageHeader } from "@/components/page-header";
 import { DangerZone } from "./danger-zone";
-import { Tabs } from "@/components/tabs";
+import { BillingPlans } from "@/components/settings/billing-plans";
+import { DevicesTab } from "./devices";
 import { Button } from "@/components/button";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,7 @@ const TABS = [
   { id: "api-keys", label: "API Keys", icon: Key },
   { id: "providers", label: "LLM Providers", icon: Cpu },
   { id: "team", label: "Team", icon: Users },
+  { id: "devices", label: "Devices", icon: Laptop },
   { id: "billing", label: "Billing", icon: CreditCard },
 ] as const;
 
@@ -129,7 +131,10 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const { refresh: refreshModels } = useModels();
 
-  const [activeTab, setActiveTab] = useState<TabId>("general");
+  // The tab is the URL (?tab=) so the Settings nav (lib/settings-nav) can link
+  // straight to it and new settings pages slot in beside it.
+  const tabParam = useSearchParams().get("tab");
+  const activeTab: TabId = TABS.some((t) => t.id === tabParam) ? (tabParam as TabId) : "general";
   const [general, setGeneral] = useState<GeneralSettings>(defaultGeneral);
   const [generalSaving, setGeneralSaving] = useState(false);
   const [keys, setKeys] = useState<StoredApiKey[]>([]);
@@ -143,6 +148,9 @@ export default function SettingsPage() {
   const [removeTarget, setRemoveTarget] = useState<StoredMember | null>(null);
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
   const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+
+  // Stripe Checkout/Portal return to /settings?tab=billing; the tab is the URL
+  // (lib/settings-nav), so no extra deep-link handling is needed.
 
   // Load from real API with localStorage fallback
   useEffect(() => {
@@ -320,47 +328,15 @@ export default function SettingsPage() {
     toast("success", next.hardLimit ? "Hard limit enabled" : "Hard limit disabled");
   };
 
-  // Tabs primitive driven by our route-agnostic state. The strip
-  // sits inside the PageHeader so there's no double-bar of chrome.
-  const tabDefs = TABS.map((t) => ({
-    id: t.id,
-    label: t.label,
-    icon: t.icon,
-  }));
-
   return (
-    <div className="flex flex-1 flex-col overflow-auto">
-      {/* Use the shared PageHeader for guaranteed visibility — matches
-          every other page (Agents, Inbox, Connectors). */}
-      <PageHeader
-        title="Settings"
-        description="API keys, model providers, team access, and billing for this workspace."
-      />
-
-      {/* Tab strip — sits as its own bordered band right below the header,
-          like GitHub's per-repo nav. The container clamp matches the
-          content below so they share the same left edge. */}
-      <div className="border-b border-zinc-800 bg-surface-1">
-        <div className="mx-auto w-full max-w-[1400px] px-6 md:px-8">
-          <Tabs
-            tabs={tabDefs}
-            value={activeTab}
-            onChange={(id) => setActiveTab(id as TabId)}
-            variant="underline"
-          />
-        </div>
-      </div>
-
-      {/* Content — wider container so two-column form fields can breathe.
-          mx-auto keeps it centered on ultrawide displays. */}
-      <div className="flex-1 px-6 py-8 md:px-8">
-        <div className="mx-auto w-full max-w-3xl">
+    <div>
+      <div className="w-full max-w-3xl">
           {activeTab === "general" && <GeneralTab general={general} setGeneral={setGeneral} saving={generalSaving} onSave={handleSaveGeneral} />}
           {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
           {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
           {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
+          {activeTab === "devices" && <DevicesTab />}
           {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} fleetUsage={fleetUsage} />}
-        </div>
       </div>
 
       {/* Modals */}
@@ -784,29 +760,12 @@ const costByAgent = [
 ];
 
 function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleetUsage }: { billing: BillingSettings; setBilling: (b: BillingSettings) => void; onSetBudget: () => void; onToggleHardLimit: () => void; fleetUsage: FleetUsage | null }) {
-  const plans = [
-    { name: "Personal", price: "$0/mo", features: ["1 user", "100 runs/mo", "1M tokens/mo"], current: billing.plan === "Personal" },
-    { name: "Team", price: "$49/mo", features: ["5 users", "1,000 runs/mo", "5M tokens/mo"], current: billing.plan === "Team" },
-    { name: "Enterprise", price: "Custom", features: ["Unlimited users", "Unlimited runs", "Custom limits"], current: billing.plan === "Enterprise" },
-  ];
-
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      {/* Plans */}
+      {/* Plans — live from /v1/billing (ADR 0049) */}
       <div>
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Current Plan</h3>
-        <div className="grid grid-cols-3 gap-4">
-          {plans.map((plan) => (
-            <div key={plan.name} className={clsx("rounded-xl border p-5 transition-colors", plan.current ? "border-pal-500 bg-pal-500/5" : "border-zinc-800 bg-surface-1")}>
-              <div className="flex items-start justify-between">
-                <div><p className="text-sm font-semibold text-zinc-100">{plan.name}</p><p className="mt-0.5 text-lg font-bold text-pal-400">{plan.price}</p></div>
-                {plan.current && <span className="rounded-full bg-pal-500/10 px-2 py-0.5 text-xs font-medium text-pal-400">Current</span>}
-              </div>
-              <ul className="mt-3 space-y-1">{plan.features.map((f) => <li key={f} className="text-xs text-zinc-500">{f}</li>)}</ul>
-              {!plan.current && <button className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"><ArrowUpRight className="h-3 w-3" />{plan.name === "Enterprise" ? "Contact Sales" : "Upgrade"}</button>}
-            </div>
-          ))}
-        </div>
+        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Plan</h3>
+        <BillingPlans />
       </div>
 
       {/* Usage */}

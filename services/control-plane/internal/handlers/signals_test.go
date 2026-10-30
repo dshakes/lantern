@@ -18,7 +18,7 @@ import (
 func newSignalHandlerForTest(t *testing.T) *SignalHandler {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	return NewSignalHandler(&server.Server{Logger: logger})
+	return NewSignalHandler(&server.Server{Logger: logger}, nil)
 }
 
 // isolateHome points HOME at a temp dir so the handler writes

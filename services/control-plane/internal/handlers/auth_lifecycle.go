@@ -539,3 +539,29 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
 	}
 }
+
+// authProvidersResponse tells the sign-in page which methods this deployment
+// actually supports, so the UI never offers a button that can only fail.
+// Booleans and an enum only — never a client id, secret, or URL.
+type authProvidersResponse struct {
+	OAuth             map[string]bool `json:"oauth"`
+	Signup            string          `json:"signup"` // open | invite | closed
+	PasswordReset     bool            `json:"passwordReset"`
+	EmailVerification bool            `json:"emailVerification"`
+}
+
+// AuthProviders handles GET /auth/providers (public, pre-auth).
+func (h *AuthHandler) AuthProviders(w http.ResponseWriter, _ *http.Request) {
+	oauth := make(map[string]bool, len(oauthLoginProviders))
+	for name, p := range oauthLoginProviders {
+		oauth[name] = os.Getenv(p.ClientIDEnv) != "" && os.Getenv(p.ClientSecEnv) != ""
+	}
+	writeJSON(w, http.StatusOK, authProvidersResponse{
+		OAuth:  oauth,
+		Signup: signupMode(),
+		// POST /auth/forgot is always mounted (RegisterAccountLifecycleRoutes);
+		// in dev the log mailer prints the link instead of sending it.
+		PasswordReset:     true,
+		EmailVerification: requireEmailVerification(),
+	})
+}

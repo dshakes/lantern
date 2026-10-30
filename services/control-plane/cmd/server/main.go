@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dshakes/lantern/services/control-plane/internal/billing"
 	"net"
 	"net/http"
 	"os"
@@ -340,7 +341,8 @@ func main() {
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
-	signalHandler := handlers.NewSignalHandler(srv)
+	signalHandler := handlers.NewSignalHandler(srv, authHandler)
+	bridgeHandler := handlers.NewBridgeHandler(srv, authHandler)
 	dlHandler := handlers.NewDLHandler(srv)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
@@ -487,6 +489,7 @@ func main() {
 	httpMux.HandleFunc("POST /auth/signup", authHandler.Signup)
 	httpMux.HandleFunc("POST /auth/login", authHandler.Login)
 	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
+	httpMux.HandleFunc("GET /auth/providers", authHandler.AuthProviders)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/start", authHandler.OAuthStart)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/callback", authHandler.OAuthCallback)
 	// One-time-code exchange: the OAuth callback redirects with ?code=… (not
@@ -540,12 +543,23 @@ func main() {
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", authHandler.WithScope(handlers.ScopeSettingsRead, surfaceHandler.WhatsAppStatus))
 
-	// Personal device signals — iPhone Shortcuts POST app-context here
-	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
-	// JWT/tenant scope; gated by the PAL_SIGNAL_TOKEN shared secret
-	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
+	// Device signals (ADR 0047). Tenant-scoped when called with a paired
+	// bridge token or a JWT/API key; without an Authorization header the
+	// legacy single-owner shared-token path (PAL_SIGNAL_TOKEN, fail-closed)
+	// serves the original iPhone Shortcuts install for one tenant only
+	// (PAL_SIGNALS_LEGACY_OWNER_TENANT). Auth is resolved inside the handler.
 	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
 	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
+
+	// PAL device enrollment (ADR 0047). enroll/list/revoke are tenant-scoped
+	// (settings:write enforced in-handler, not flag-gated); pair is
+	// unauthenticated by design (the one-time code is the credential) and
+	// rate-limited; self/rotate authenticates with the bridge token.
+	httpMux.HandleFunc("POST /v1/bridges/enroll", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Enroll))
+	httpMux.HandleFunc("POST /v1/bridges/pair", bridgeHandler.Pair)
+	httpMux.HandleFunc("POST /v1/bridges/self/rotate", bridgeHandler.RotateSelf)
+	httpMux.HandleFunc("GET /v1/bridges", authHandler.WithScope(handlers.ScopeSettingsRead, bridgeHandler.List))
+	httpMux.HandleFunc("DELETE /v1/bridges/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Revoke))
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).
@@ -621,6 +635,7 @@ func main() {
 	// Agentic onboarding: resumable state (tenants.settings->onboarding) + the
 	// onboarding agent's run explanation.
 	handlers.NewOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
+	handlers.NewAssistHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	handlers.NewPalOnboardingHandler(srv, authHandler, llmProxyHandler).RegisterRoutes(httpMux)
 	// The onboarding agent (ADR 0051): a multi-turn conversation whose server
 	// tools call back into this same mux, so every tool is a real endpoint
@@ -681,6 +696,8 @@ func main() {
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.UndoLifeEvent))
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", authHandler.WithScope(handlers.ScopeWrite, lifeEventHandler.DismissLifeEvent))
 	handlers.NewTriggerHandler(srv, authHandler, restHandler).RegisterRoutes(httpMux)
+	batchHandler := handlers.NewBatchHandler(srv, authHandler, restHandler)
+	batchHandler.RegisterRoutes(httpMux)
 
 	// Concierge agent commitment tracker.
 	httpMux.HandleFunc("POST /v1/commitments", authHandler.WithScope(handlers.ScopeWrite, commitmentHandler.CreateCommitment))
@@ -914,6 +931,24 @@ func main() {
 	httpMux.HandleFunc("PUT /v1/egress/dlp-policy", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.PutPolicy))
 	httpMux.HandleFunc("POST /v1/egress/dlp-policy/rules", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.UpsertRule))
 	httpMux.HandleFunc("DELETE /v1/egress/dlp-policy/rules/{ruleId}", authHandler.WithScope(handlers.ScopeSettingsWrite, dlpPolicyHandler.DeleteRule))
+	// Stripe billing — ADR 0049. Behind config: with PAL_STRIPE_SECRET_KEY
+	// unset, GET reports {enabled:false}, the mutating routes and the webhook
+	// answer 404 billing_disabled, and the billing loop never starts.
+	billingCfg := billing.ConfigFromEnv()
+	billingHandler := handlers.NewBillingHandler(srv, authHandler, billingCfg)
+	if billingCfg.Enabled() {
+		if billingCfg.WebhookSecret == "" {
+			if handlers.IsProd() {
+				logger.Fatal("PAL_STRIPE_SECRET_KEY is set but PAL_STRIPE_WEBHOOK_SECRET is not; billing webhooks would be rejected")
+			}
+			logger.Warn("billing: PAL_STRIPE_WEBHOOK_SECRET unset; webhooks will be rejected (fail-closed)")
+		}
+		logger.Info("billing: Stripe integration enabled", zap.Int("grace_days", billingCfg.GraceDays))
+	}
+	httpMux.HandleFunc("GET /v1/billing", authHandler.WithScope(handlers.ScopeSettingsRead, billingHandler.GetBilling))
+	httpMux.HandleFunc("POST /v1/billing/checkout", authHandler.WithScope(handlers.ScopeSettingsWrite, billingHandler.Checkout))
+	httpMux.HandleFunc("POST /v1/billing/portal", authHandler.WithScope(handlers.ScopeSettingsWrite, billingHandler.Portal))
+	httpMux.HandleFunc("POST /v1/billing/webhook", billingHandler.Webhook) // Stripe-Signature verified; no JWT
 	// Secret relay — service-to-service endpoint for the runtime-manager to
 	// resolve pal.secret/... refs. Fail-closed when
 	// PAL_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
@@ -1006,6 +1041,15 @@ func main() {
 		// PAL_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
 		// fires 2s after the HTTP server starts so /readyz serves first.
 		handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
+
+		// Batch crash-recovery: finalizes batches stuck in 'running' after a
+		// process restart. Fires 15s after startup (after the run-level sweep has
+		// a chance to complete orphaned child runs), then every 30s.
+		handlers.RunBatchRecoveryLoop(ctx, batchHandler, logger)
+
+		// Billing: dunning sweep + Stripe meter export (no-op unless Stripe is
+		// configured). Writer-only: never on a read-only standby.
+		handlers.RunBillingLoop(ctx, billingHandler, envDurationMain("PAL_BILLING_SYNC_INTERVAL", time.Hour))
 
 		// Peer-service health sweep (PAL_HEALTH_SWEEP_INTERVAL, default 60s).
 		// Probes configured peer services via TCP dial; alerts the owner on
@@ -1254,6 +1298,16 @@ func runStartupGuards(logger *zap.Logger) {
 	// the stub, which prod must never do.
 	if _, err := handlers.ServiceClientCreds(prod); err != nil {
 		logger.Fatal("service-mesh client TLS", zap.Error(err))
+	}
+
+	// C-CB — Callback signing secret (ADR 0033).
+	// Without a secret the server uses a well-known dev default, which allows
+	// trivial callback signature forgery.  Prod must have a strong random value.
+	if prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Fatal("PAL_CALLBACK_SIGNING_SECRET is unset — callback HMAC signatures would use the well-known dev secret; set a strong random value in production (callbacks with callbackUrl are disabled until this is set)")
+	}
+	if !prod && palenv.Get("CALLBACK_SIGNING_SECRET") == "" {
+		logger.Warn("PAL_CALLBACK_SIGNING_SECRET is unset — using insecure dev default for callback signing; set PAL_CALLBACK_SIGNING_SECRET in production")
 	}
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { ExplainInline } from "@/components/explain-inline";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -269,6 +270,7 @@ export default function RunDetailPage() {
                 {run.error.stepId && (
                   <p className="mt-2 font-mono text-xs text-red-300/50">Failed at step: {run.error.stepId}</p>
                 )}
+                <ExplainInline request={{ kind: "run", runId: run.id }} label="Explain this failure" className="mt-4" />
               </div>
             ) : run.status === "queued" ? (
               <div className="flex h-full items-center justify-center">
