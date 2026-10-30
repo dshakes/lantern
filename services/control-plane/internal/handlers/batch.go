@@ -739,8 +739,23 @@ func (h *BatchHandler) recoverStuckBatches(ctx context.Context, log *zap.Logger)
 // recoverOneBatch finalizes a single stuck batch by reading ground-truth run
 // states. If child runs are still pending/running, it skips and defers to the
 // next tick (the run-level recovery sweep will complete them).
+//
+// Items that were never dispatched (the batch crashed before their goroutine
+// fired) will never have a corresponding run row. The gap between total_count
+// and actual dispatched runs is counted as failed items so the batch always
+// reaches a terminal status and reports consistent totals.
 func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, callbackURL string, log *zap.Logger) {
 	log = log.With(zap.String("batch_id", batchID), zap.String("tenant_id", tenantID))
+
+	// Read total_count from the batch row so we know how many items were planned.
+	// rls-exempt: batch keyed by id; cross-tenant access for the recovery worker.
+	var totalCount int
+	if err := h.srv.Pool.QueryRow(ctx,
+		`SELECT total_count FROM batches WHERE id = $1`, batchID,
+	).Scan(&totalCount); err != nil {
+		log.Warn("batch recovery: total_count query failed", zap.Error(err))
+		return
+	}
 
 	// Count child runs by terminal vs non-terminal state.
 	var pendingOrRunning, succeeded, failed, cancelled int
@@ -766,6 +781,20 @@ func (h *BatchHandler) recoverOneBatch(ctx context.Context, batchID, tenantID, c
 		log.Info("batch recovery: skipping — child runs still in progress",
 			zap.Int("pending_or_running", pendingOrRunning))
 		return
+	}
+
+	// Account for items that were never dispatched: the batch goroutine died
+	// before it could spawn their runs. These items exist only in memory and
+	// have no run row. Treat them as failed so the batch reaches terminal status.
+	actualDispatched := succeeded + failed + cancelled
+	gap := totalCount - actualDispatched
+	if gap < 0 {
+		gap = 0
+	}
+	if gap > 0 {
+		log.Info("batch recovery: items never dispatched (crash) — counting as failed",
+			zap.Int("gap", gap), zap.Int("total_count", totalCount), zap.Int("actual_dispatched", actualDispatched))
+		failed += gap
 	}
 
 	// All child runs are terminal. Determine batch-level outcome.

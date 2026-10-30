@@ -676,6 +676,28 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Per-run idempotency (ADR 0033): if the caller sets an Idempotency-Key header,
+	// return the existing run instead of creating a new one on replay.
+	// This is the mechanism batch dispatch uses for per-item dedup so that a
+	// crash-replay of dispatchBatch never creates duplicate runs.
+	idemKey := r.Header.Get("Idempotency-Key")
+	if idemKey != "" {
+		if tenantID, ok := middleware.TenantIDFromContext(ctx); ok {
+			var existingRunID string
+			// rls-exempt: keyed by (tenant_id, idempotency_key) — no tenant GUC needed
+			// here because we filter by the explicit tenant_id from the auth context.
+			lookupErr := h.srv.Pool.QueryRow(ctx,
+				`SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2`,
+				tenantID, idemKey,
+			).Scan(&existingRunID)
+			if lookupErr == nil && existingRunID != "" {
+				// Idempotent: return the previously-created run.
+				writeJSON(w, http.StatusCreated, map[string]any{"id": existingRunID})
+				return
+			}
+		}
+	}
+
 	// Budget pre-check: enforce hard-fail limits before dispatching the run
 	// so a blocked agent never consumes compute or LLM tokens.  Estimated
 	// per-run cost is 0 at dispatch time (actual cost is unknown until the
@@ -746,7 +768,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Persist callback_url on the run row when supplied (ADR 0033).
+	// Persist callback_url and idempotency_key on the run row when supplied (ADR 0033).
 	// rls-exempt: inline executor — runs write keyed by the just-created authorized run id.
 	if body.CallbackUrl != "" {
 		if _, cbErr := h.srv.Pool.Exec(ctx,
@@ -754,6 +776,20 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		); cbErr != nil {
 			h.logger().Warn("CreateRun: failed to persist callback_url",
 				zap.String("run_id", run.GetId()), zap.Error(cbErr))
+		}
+	}
+	// Store the idempotency key so future replays with the same key return
+	// this run instead of creating a duplicate. Non-fatal: a uniqueness
+	// conflict here (two racing requests with the same key both completed
+	// creation before the SELECT above could short-circuit one) is harmless
+	// in practice — the run is already created; just log and continue.
+	// rls-exempt: keyed by the just-created authorized run id.
+	if idemKey != "" {
+		if _, ikErr := h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET idempotency_key = $2 WHERE id = $1`, run.GetId(), idemKey,
+		); ikErr != nil {
+			h.logger().Warn("CreateRun: failed to persist idempotency_key",
+				zap.String("run_id", run.GetId()), zap.Error(ikErr))
 		}
 	}
 

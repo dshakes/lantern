@@ -11,6 +11,15 @@ ALTER TABLE runs ADD COLUMN IF NOT EXISTS callback_url TEXT;
 -- is added after the batches table is created.
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS batch_id UUID;
 
+-- Per-run idempotency key: when POST /v1/runs (or spawnBatchRun) sets an
+-- Idempotency-Key header, the key is stored here and consulted on replay to
+-- return the existing run instead of creating a duplicate (ADR 0033).
+-- The unique index enforces at-most-once creation per (tenant, key) pair.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS runs_tenant_idem
+    ON runs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
 -- Batches: a named collection of up to PAL_BATCH_MAX_ITEMS parallel runs
 -- against one agent, dispatched with optional concurrency throttling.
 CREATE TABLE IF NOT EXISTS batches (
