@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shlex
 import re
 import sys
 import tempfile
@@ -108,20 +109,57 @@ def env_rename(path: str, old: str, new: str, dry: bool) -> dict:
     return summary
 
 
+def _shell_value(rest: str) -> str:
+    """The value a POSIX shell assigns for `KEY<rest>` (rest starts with '='):
+    quotes removed, `# comment` after whitespace dropped, backslash escapes
+    honoured. Variable expansion is NOT performed (the owner's files don't use
+    it; preflight warns when a value references one)."""
+    raw = rest[1:]
+    if not raw.strip():
+        return ""
+    lex = shlex.shlex(raw, posix=True)
+    lex.whitespace_split = True
+    lex.commenters = "#"
+    try:
+        words = list(lex)
+    except ValueError:  # unbalanced quote: fall back to the raw text
+        return raw.strip()
+    # `KEY=a b` assigns only `a` in a shell; keep the first word
+    return words[0] if words else ""
+
+
 def env_get(path: str, key: str) -> str:
-    """Value of KEY as the shell would see it for the simple forms the owner's
-    env files use (bare, 'single', "double"). Used only to feed a password or
-    token into another process without printing it."""
+    """Value of KEY as `set -a; . file` would see it (last assignment wins).
+    Handles `export KEY=...`, leading whitespace, quotes and inline comments.
+    Used only to feed a password or token into another process without
+    printing it."""
     val = ""
     with open(path, "rb") as f:
         for raw in f.read().decode("utf-8", "surrogateescape").splitlines():
             m = ENV_LINE.match(raw)
             if m and m.group("key") == key:
-                v = m.group("rest")[1:].strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
-                    v = v[1:-1]
-                val = v
+                val = _shell_value(m.group("rest"))
     return val
+
+
+def env_has(path: str, key: str) -> bool:
+    return key in env_keys(path)
+
+
+def rename_dir(old: str, new: str) -> str:
+    """rename(2) old -> new WITHOUT ever nesting old inside new.
+
+    `mv old new` moves old INTO new when new is an existing directory — that is
+    how the state ended up at ~/.pal/.lantern on the live cutover. os.rename
+    never does that: it replaces an EMPTY directory and fails (ENOTEMPTY /
+    EEXIST / ENOTDIR) on anything else, so a target that appears between the
+    preflight check and the move turns into a clean failure."""
+    if os.path.islink(new):
+        raise SystemExit(f"target {new} is a symlink")
+    if os.path.isdir(new) and os.listdir(new):
+        raise SystemExit(f"target {new} exists and is not empty: {sorted(os.listdir(new))[:10]}")
+    os.rename(old, new)
+    return "renamed"
 
 
 # ---------------------------------------------------------------- plists
@@ -242,6 +280,17 @@ def main(argv: list[str]) -> int:
         return 3 if s["conflicts"] else 0
     elif cmd == "env-get":
         sys.stdout.write(env_get(rest[0], rest[1]))
+    elif cmd == "env-has":
+        return 0 if env_has(rest[0], rest[1]) else 1
+    elif cmd == "rename-dir":
+        try:
+            print(rename_dir(rest[0], rest[1]))
+        except OSError as e:
+            print(f"rename failed: {e.strerror} ({rest[1]})", file=sys.stderr)
+            return 1
+        except SystemExit as e:
+            print(f"rename refused: {e}", file=sys.stderr)
+            return 1
     elif cmd == "plist-get":
         sys.stdout.write(plist_get(rest[0], rest[1]))
     elif cmd == "plist-env-keys":

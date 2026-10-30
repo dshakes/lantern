@@ -30,7 +30,10 @@ case "${1:-}" in
       esac
     fi ;;
   bootout)
-    l="${2##*/}"; [[ -f "$S/jobs/$l" ]] || exit 3; rm -f "$S/jobs/$l" ;;
+    l="${2##*/}"; [[ -f "$S/jobs/$l" ]] || exit 3; rm -f "$S/jobs/$l"
+    # race injection: something writes the TARGET state dir while services stop
+    if [[ -n "${STUB_ON_BOOTOUT_CREATE:-}" && ! -e "$STUB_ON_BOOTOUT_CREATE" ]]; then mkdir -p "$(dirname "$STUB_ON_BOOTOUT_CREATE")"; echo '{}' > "$STUB_ON_BOOTOUT_CREATE"; fi
+    if [[ -n "${STUB_ON_BOOTOUT_MKDIR:-}" ]]; then mkdir -p "$STUB_ON_BOOTOUT_MKDIR"; fi ;;
   kickstart)
     l="${*: -1}"; l="${l##*/}"; [[ -f "$S/jobs/$l" ]] || exit 113 ;;
   load|unload) ;;

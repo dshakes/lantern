@@ -18,6 +18,7 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { href: "/settings?tab=providers", label: "Model providers", icon: "cpu" },
   { href: "/settings?tab=api-keys", label: "API keys", icon: "key" },
   { href: "/settings?tab=team", label: "Team", icon: "users" },
+  { href: "/settings?tab=devices", label: "Devices", icon: "smartphone" },
   { href: "/settings?tab=billing", label: "Billing", icon: "card" },
 ];
 
