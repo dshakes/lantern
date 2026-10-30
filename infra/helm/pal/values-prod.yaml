@@ -1,0 +1,245 @@
+# values-prod.yaml -- Production overrides.
+#
+# Usage:
+#   helm upgrade --install pal infra/helm/pal \
+#     -f infra/helm/pal/values.yaml \
+#     -f infra/helm/pal/values-prod.yaml \
+#     --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
+#
+# Prod-like guards (PAL_ENV=production) and RLS enforcement are ON.
+# Pass secrets at deploy time: secrets.jwtSecret, secrets.credentialKey,
+# secrets.receiptSecret, secrets.grpcServiceToken, secrets.appDbPassword.
+# See docs/runbooks/rls-cutover.md before applying.
+
+global:
+  image:
+    # Published images: ghcr.io/dshakes/lantern/<name> (build-images.yml). The
+    # per-component image.name comes from values.yaml; an empty registry used to
+    # render "/pal/pal-gateway:tag", which no runtime can pull.
+    registry: ghcr.io
+    repository: dshakes/lantern
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+# -- Row-Level Security: ON here, and only here --
+#
+# PAL_RLS_ENFORCE=1 makes tenant-scoped queries run as the non-superuser
+# `lantern_app` role, which the policies actually apply to. Without the second
+# variable the pool is never built and the services fail closed at startup, so
+# the two must always travel together.
+#
+# appDbPassword is NOT stored here. Pass it at deploy time (--set, or an
+# external secret) — the runbook covers both.
+
+gateway:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  service:
+    type: ClusterIP
+    port: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+    CONTROL_PLANE_ADDR: "pal-control-plane:50051"
+    MODEL_ROUTER_ADDR: "pal-model-router:50053"
+    LOG_LEVEL: "info"
+
+controlPlane:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  service:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LISTEN_ADDR: ":50051"
+    LOG_LEVEL: "info"
+    PAL_ENV: "production"
+    # --- RLS ---
+    PAL_RLS_ENFORCE: "1"
+    # PAL_APP_DB_PASSWORD comes from the secret, not from values.
+    # --- API-key scope enforcement ---
+    # A key missing the endpoint's scope gets 403. JWT sessions and unscoped
+    # (legacy) keys are unaffected. Re-scope keys first: ga-staged-rollout.md.
+    PAL_AUTHZ_ENFORCE: "1"
+  # REQUIRED for a prod-class PAL_ENV (production) — the control-plane refuses
+  # to start without these (runStartupGuards / grpcTLSCreds). Besides the
+  # `secrets:` values listed at the top, supply per environment:
+  #   PAL_CONTROL_PLANE_TLS_CERT/KEY gRPC server cert (gateway hop)
+  #   PAL_RUNTIME_MANAGER_TLS_CA/CERT/KEY  mTLS client to the runtime-manager
+  # PAL_SCHEDULER_GRPC_ADDR is wired by the chart (in-cluster scheduler svc).
+  # The TLS inputs below are operator-supplied Secrets (the chart cannot mint
+  # them); the control-plane refuses to boot in prod until they are mounted.
+  # extraEnv (append):
+  #   - {name: PAL_CONTROL_PLANE_TLS_CERT, value: /etc/pal/tls/tls.crt}
+  #   - {name: PAL_CONTROL_PLANE_TLS_KEY, value: /etc/pal/tls/tls.key}
+  #   - {name: PAL_RUNTIME_MANAGER_TLS_CA, value: /etc/pal/manager-tls/ca.crt}
+  #   - {name: PAL_RUNTIME_MANAGER_TLS_CERT, value: /etc/pal/manager-tls/tls.crt}
+  #   - {name: PAL_RUNTIME_MANAGER_TLS_KEY, value: /etc/pal/manager-tls/tls.key}
+  # extraVolumeMounts:
+  #   - {name: cp-tls, mountPath: /etc/pal/tls, readOnly: true}
+  #   - {name: manager-tls, mountPath: /etc/pal/manager-tls, readOnly: true}
+  # extraVolumes:
+  #   - {name: cp-tls, secret: {secretName: pal-control-plane-tls}}
+  #   - {name: manager-tls, secret: {secretName: pal-manager-client-tls}}
+
+workflowEngine:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LOG_LEVEL: "info"
+    PAL_ENV: "production"
+    # --- RLS ---
+    # The engine needs BOTH, same as the control-plane. It pings the pool at
+    # startup, so a wrong password fails here rather than on the first
+    # tenant-scoped query hours later.
+    PAL_RLS_ENFORCE: "1"
+
+modelRouter:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    LOG_LEVEL: "info"
+    PAL_ENV: "production"
+
+runtimeManager:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    LOG_LEVEL: "info"
+    PAL_ENV: "production"
+
+runtimeScheduler:
+  replicas: 2
+  env:
+    PAL_ENV: "production"
+  # The scheduler dials the manager over mTLS in prod; mount the client cert like
+  # controlPlane.extraVolumes and set PAL_RUNTIME_MANAGER_TLS_CA/CERT/KEY.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+surfaceGateway:
+  replicas: 2
+  env:
+    PAL_ENV: "production"
+  # Secret with SLACK_SIGNING_SECRET, TELEGRAM_SECRET_TOKEN, ... (create it out of band)
+  existingSecret: ""
+
+networkPolicy:
+  enabled: true
+  # Narrow to your ingress controller's namespace, e.g.
+  # ingressFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]
+  ingressFrom: []
+
+# In-cluster logical backup is a floor; managed Postgres + PITR is the GA path
+# (docs/runbooks/db-restore.md). If you self-host Postgres, ship dumps to managed S3.
+# Disabled until you set a bucket: enable with
+#   --set backup.enabled=true --set backup.s3Bucket=<bucket>
+backup:
+  enabled: false
+  useChartMinio: false
+  existingSecret: lantern-backup-s3   # keys: access-key-id, secret-access-key
+  s3Endpoint: ""                      # "" = AWS S3
+  s3Bucket: ""                        # REQUIRED when enabled
+
+dashboard:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Managed dependencies --
+# Production runs managed Postgres (pgvector extension + point-in-time recovery)
+# and managed S3; the in-cluster single-pod dev stores are off. Set the endpoints
+# per environment (--set or an overlay); the chart fails to render without them.
+# Also provision the `lantern_app` role (infra/db/least-privilege.sql).
+postgresql:
+  enabled: false
+externalDatabase:
+  host: ""            # REQUIRED, e.g. pal.xxxx.us-west-2.rds.amazonaws.com
+  port: 5432
+  sslmode: require
+minio:
+  enabled: false
+externalS3:
+  endpoint: ""        # REQUIRED, e.g. https://s3.us-west-2.amazonaws.com
+  region: us-east-1   # set to the bucket region (e.g. us-west-2) or SigV4 requests are rejected
+  accessKeyId: ""     # REQUIRED; secret key is secrets.minioPassword
+  bucket: lantern-prod
+
+secrets:
+  # Also supplied at deploy time: jwtSecret, credentialKey, receiptSecret,
+  # grpcServiceToken, schedulerNodeToken (the scheduler refuses to start without it).
+  # Supplied at deploy time — never committed. See the runbook.
+  #   --set secrets.appDbPassword="$PAL_APP_DB_PASSWORD"
+  # This is the credential for the lantern_app role that RLS policies apply to;
+  # it is NOT the superuser postgres password and must not be set to it (a
+  # superuser bypasses RLS, which would leave enforcement silently off).
+  appDbPassword: ""

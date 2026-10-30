@@ -83,7 +83,7 @@ resource "google_compute_router_nat" "this" {
 
 resource "google_service_account" "data_plane" {
   account_id   = "${var.cluster_name}-dp"
-  display_name = "Lantern Data Plane Service Account"
+  display_name = "PAL Data Plane Service Account"
 }
 
 resource "google_project_iam_member" "data_plane_storage" {
@@ -108,7 +108,7 @@ resource "google_storage_bucket" "bundles" {
   }
 
   encryption {
-    default_kms_key_name = ""  # Uses Google-managed encryption by default.
+    default_kms_key_name = "" # Uses Google-managed encryption by default.
   }
 
   labels = var.labels
@@ -160,7 +160,7 @@ resource "google_container_cluster" "this" {
 # GKE Node Pool
 # ---------------------------------------------------------------------------
 
-resource "google_container_node_pool" "lantern" {
+resource "google_container_node_pool" "pal" {
   name     = "lantern-nodes"
   location = local.location
   cluster  = local.create_cluster ? google_container_cluster.this[0].name : var.existing_cluster_name
@@ -202,7 +202,7 @@ resource "google_container_node_pool" "lantern" {
 resource "google_service_account_iam_member" "workload_identity" {
   service_account_id = google_service_account.data_plane.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[lantern/lantern-data-plane]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[lantern/pal-data-plane]"
 }
 
 # ---------------------------------------------------------------------------
@@ -236,34 +236,34 @@ provider "helm" {
 # Namespace
 # ---------------------------------------------------------------------------
 
-resource "kubernetes_namespace" "lantern" {
+resource "kubernetes_namespace" "pal" {
   metadata {
     name = "lantern"
 
     labels = {
-      "app.kubernetes.io/part-of"    = "lantern-data-plane"
+      "app.kubernetes.io/part-of"    = "pal-data-plane"
       "app.kubernetes.io/managed-by" = "terraform"
     }
   }
 
-  depends_on = [google_container_node_pool.lantern]
+  depends_on = [google_container_node_pool.pal]
 }
 
 # ---------------------------------------------------------------------------
-# Deploy lantern-data-plane Helm chart
+# Deploy pal-data-plane Helm chart
 # ---------------------------------------------------------------------------
 
-resource "helm_release" "lantern_data_plane" {
-  name       = "lantern-dp"
-  namespace  = kubernetes_namespace.lantern.metadata[0].name
-  chart      = "${path.module}/../../helm/lantern-data-plane"
-  version    = var.lantern_version
-  wait       = true
-  timeout    = 600
+resource "helm_release" "pal_data_plane" {
+  name      = "lantern-dp"
+  namespace = kubernetes_namespace.pal.metadata[0].name
+  chart     = "${path.module}/../../helm/pal-data-plane"
+  version   = local.chart_version
+  wait      = true
+  timeout   = 600
 
   set {
     name  = "controlPlane.endpoint"
-    value = var.lantern_control_plane_endpoint
+    value = local.control_plane_endpoint
   }
 
   set {
@@ -303,7 +303,24 @@ resource "helm_release" "lantern_data_plane" {
   }
 
   depends_on = [
-    kubernetes_namespace.lantern,
-    google_container_node_pool.lantern,
+    kubernetes_namespace.pal,
+    google_container_node_pool.pal,
   ]
+}
+
+# ADR 0032: addresses renamed lantern -> pal. `moved` keeps existing state in place
+# (no destroy/recreate). Remove once every deployment has applied this version.
+moved {
+  from = kubernetes_namespace.lantern
+  to   = kubernetes_namespace.pal
+}
+
+moved {
+  from = helm_release.lantern_data_plane
+  to   = helm_release.pal_data_plane
+}
+
+moved {
+  from = google_container_node_pool.lantern
+  to   = google_container_node_pool.pal
 }

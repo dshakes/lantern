@@ -1,0 +1,39 @@
+---
+// Layered architecture map (entry edge, stacked layers, a cross-cutting rail, the
+// substrate underneath). Ported from the former docs app's PersonalHarnessArchitecture
+// and RuntimeArchitectureMap. Data: src/data/diagrams.ts.
+import type { Stack } from '../data/diagrams';
+import { u } from '../data/site';
+interface Props { stack: Stack; label: string }
+const { stack, label } = Astro.props;
+const href = (h?: string) => (h ? u(`docs/${h}${h.endsWith('/') ? '' : '/'}`) : undefined);
+const Tag = (h?: string) => (h ? 'a' : 'div');
+---
+<figure class="stack not-content" aria-label={label}>
+  <div class="stack-edge">
+    <p class="stack-label">{stack.edge.label}</p>
+    <div class="stack-chips">{stack.edge.cells.map((c) => <a class="stack-chip" href={href(c.href)}>{c.name}</a>)}</div>
+  </div>
+  {stack.layers.map((l) => (
+    <section class={`stack-layer t-${l.tone}`} aria-label={`${l.num}: ${l.title}`}>
+      <div class="stack-head">
+        <span class="stack-num">{l.num}</span>
+        <span class="stack-title">{l.title}</span>
+        {l.pill && <span class="stack-pill">{l.pill}</span>}
+        <span class="stack-tag">{l.tagline}</span>
+      </div>
+      <div class="stack-cells">
+        {l.items.map((c) => { const T = Tag(c.href); return <T class="stack-cell" href={href(c.href)}><b>{c.name}</b><span>{c.sub}</span></T>; })}
+      </div>
+      {l.substrate && <p class="stack-sub">{l.substrate}</p>}
+    </section>
+  ))}
+  <a class="stack-rail" href={href(stack.rail.href)}>
+    <span class="stack-rail-head"><b>{stack.rail.title}</b><span>{stack.rail.sub}</span></span>
+    <ul>{stack.rail.items.map((i) => <li>{i}</li>)}</ul>
+  </a>
+  <div class="stack-base">
+    <p class="stack-label">{stack.base.label}</p>
+    <div class="stack-chips">{stack.base.cells.map((c) => { const T = Tag(c.href); return <T class="stack-chip base" href={href(c.href)}>{c.name} <span>{c.sub}</span></T>; })}</div>
+  </div>
+</figure>
