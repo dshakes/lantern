@@ -12,7 +12,7 @@
 //	POST /v1/browser/propose                  — store a browser_act proposal (no side effect)
 //	POST /v1/browser/commitments/{id}/execute — SOLE write path; owner confirm required
 //
-// Feature-gated behind LANTERN_BROWSER_SKILL=on/1/true (default OFF).
+// Feature-gated behind PAL_BROWSER_SKILL=on/1/true (default OFF).
 package handlers
 
 import (
@@ -33,7 +33,7 @@ import (
 )
 
 // browserSkillEnabled reports whether the browser-as-skill feature is enabled.
-// Default OFF — set LANTERN_BROWSER_SKILL=on/1/true to enable.
+// Default OFF — set PAL_BROWSER_SKILL=on/1/true to enable.
 func browserSkillEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAL_BROWSER_SKILL")))
 	return v == "on" || v == "1" || v == "true"
@@ -69,7 +69,7 @@ func NewBrowserHandler(srv *server.Server, auth *AuthHandler) *BrowserHandler {
 }
 
 // SetRuntimeClient wires the real RuntimeManagerClient (called from main.go
-// when LANTERN_RUNTIME_MANAGER_ADDR is set). Wraps ExecTool in a closure
+// when PAL_RUNTIME_MANAGER_ADDR is set). Wraps ExecTool in a closure
 // that handles map→structpb conversion.
 func (h *BrowserHandler) SetRuntimeClient(cl lanternv1.RuntimeManagerClient) {
 	h.execFn = func(ctx context.Context, toolName string, args map[string]any) (*lanternv1.ExecToolResponse, error) {
@@ -103,7 +103,7 @@ func (h *BrowserHandler) logger() *zap.Logger {
 // Body: {url, task}
 func (h *BrowserHandler) Read(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 
@@ -167,7 +167,7 @@ func (h *BrowserHandler) Read(w http.ResponseWriter, r *http.Request) {
 // Returns: {id}
 func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 // this endpoint constitutes explicit confirmation.
 //
 // Safety invariants enforced (mirrors cross_app.ExecuteAction):
-//   - Feature-gated: same LANTERN_BROWSER_SKILL flag.
+//   - Feature-gated: same PAL_BROWSER_SKILL flag.
 //   - Owner/admin role gate: non-owners get 403 before any DB access.
 //   - Runtime check: no manager configured → 503 without touching the commitment.
 //   - Atomic exclusive claim: UPDATE WHERE status='suggested' RETURNING — only
@@ -248,7 +248,7 @@ func (h *BrowserHandler) Propose(w http.ResponseWriter, r *http.Request) {
 //   - ERROR: status set to 'failed'; owner must re-propose. Returns 502.
 func (h *BrowserHandler) Execute(w http.ResponseWriter, r *http.Request) {
 	if !browserSkillEnabled() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set LANTERN_BROWSER_SKILL=on)"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "browser skill disabled (set PAL_BROWSER_SKILL=on)"})
 		return
 	}
 

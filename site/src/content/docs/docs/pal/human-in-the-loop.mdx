@@ -10,6 +10,9 @@ sidebar:
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { HoldsGates } from '../../../../components/diagrams';
+
+<HoldsGates client:visible />
 
 Two ways to put a person in a workflow: **approval nodes** you place yourself, and the **confidence gate** (off by default), which diverts low-confidence steps to a person. Both record the decision through the takeover API.
 

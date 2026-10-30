@@ -1,23 +1,26 @@
 ---
 title: Agent runtime
-description: How PAL Runtime executes agents. Two isolation tiers, one journal, crash recovery, streaming and signed receipts.
+description: The two isolation tiers, the shared journal, and what an operator gets in production.
 glance:
-  what: "Every run executes in one of two tiers, shared (the inline executor) or microVM, declared in the agent version's manifest.isolation."
-  why: "Choosing the tier is the main trust decision: code you wrote goes shared, untrusted code goes in a microVM."
-  how: "Read Two tiers, one journal, then set manifest.isolation as shown under How routing works."
+  what: "PAL Runtime runs every agent in one of two tiers, shared (inside the control plane) or microVM (its own disposable VM), set by manifest.isolation."
+  why: "The tier is the trust decision, and the caller cannot override it: your code goes shared, untrusted code goes in a microVM."
+  how: "Set isolation: microvm in the manifest for untrusted code; omit it for the shared default."
 sidebar:
   order: 1
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import { SystemContext } from '../../../../components/diagrams';
 
-Every run executes in one of two tiers: **shared** (the inline executor inside the control-plane) or **microVM** (the W12 Kubernetes/Firecracker/Kata stack). The tier is declared in the agent version's `manifest.isolation` at publish time. The caller cannot override it.
+<SystemContext client:visible />
 
-The one decision you make is trust. Agents running code you wrote go in the shared tier. Agents running code you don't fully trust (user uploads, arbitrary shell commands, packages from the internet) go in the microVM tier, where each run gets its own disposable virtual machine. Crash recovery, live streaming and receipts work the same in both tiers.
+Every run executes in one of two tiers: **shared** (the inline executor inside the control plane) or **microVM** (the scheduler, runtime-manager and Firecracker/Kata stack). The tier is declared in the agent version's `manifest.isolation` at publish time.
+
+Code you wrote goes in the shared tier. User uploads, arbitrary shell commands and internet packages go in the microVM tier. Crash recovery, streaming and receipts work the same in both.
 
 ## Two tiers, one journal
 
-Every step of every run is written to the journal before it executes, in one place, regardless of tier. That is what makes crash recovery, the dashboard waterfall and signed receipts possible. Both tiers write to the same `journal_events` table. The run waterfall, Ed25519 receipts and crash replay are tier-agnostic. There is no second event store.
+Every step is written to the `journal_events` table before it executes, in both tiers. Crash recovery, the dashboard waterfall and Ed25519 receipts all read that one table; there is no second event store.
 
 | | Shared tier | MicroVM tier |
 | --- | --- | --- |
@@ -32,9 +35,7 @@ Every step of every run is written to the journal before it executes, in one pla
 
 ## How routing works
 
-When `POST /v1/runs` arrives, the control-plane reads `manifest.isolation` from the resolved agent version and dispatches to either `executeRunInline` (shared) or `scheduleAgentSpec` (microVM). The caller supplies only the input. The tier comes from the manifest.
-
-Unknown values in `manifest.isolation` are rejected at agent-version publish time with HTTP 400, so a typo fails at deploy, not at run time.
+`POST /v1/runs` reads `manifest.isolation` from the resolved agent version and dispatches to `executeRunInline` (shared) or `scheduleAgentSpec` (microVM). The caller supplies only the input. An unknown `isolation` value is rejected at publish with HTTP 400, so a typo fails at deploy.
 
 <Aside type="caution" title="No silent downgrade">
 If the microVM tier is unavailable (scheduler unreachable, quota exceeded, manager down), the run fails with code `microvm_unavailable`. A VM that exits unexpectedly produces `microvm_exit`; exhausting the 3-attempt resume limit produces `microvm_resume_exhausted`. None of these ever fall back to the shared tier. The isolation declaration is a security boundary.
@@ -42,28 +43,28 @@ If the microVM tier is unavailable (scheduler unreachable, quota exceeded, manag
 
 ## Shared tier
 
-The shared tier is a goroutine inside the control-plane. Most runs execute here: loop agents, bridge replies, dashboard runs, cron-triggered runs and sessions. It drives either the plain-LLM tool-use loop (for agents with no `workflow` JSONB) or the workflow interpreter (for agents with a graph saved in the visual editor). Crash-resume is handled by the recovery sweep. See [Durable execution](/docs/runtime/durable-execution/).
-
-Entry points: `POST /v1/runs`, `POST /v1/sessions/{id}/messages`, the cron scheduler, the loop agent tick, and bridge-triggered runs.
+A goroutine inside the control plane runs most work: dashboard runs, cron runs, sessions and bridge replies. It drives the plain-LLM tool-use loop, or the workflow interpreter for agents with a saved graph. Crash-resume is covered in [Durable execution](/docs/runtime/durable-execution/).
 
 ## MicroVM tier
 
-The microVM tier is required for agents that run user-supplied code, exec arbitrary tools, or load untrusted packages. Declare it in the manifest:
+Declare it in the manifest:
 
 ```yaml
 manifest:
-  isolation: microvm          # routes this agent version to the W12 stack
+  isolation: microvm          # routes this agent version to the microVM stack
   image_digest: …@sha256:…
   limits: { vcpu: "250m", memory: "128Mi", timeout: "60s" }
-  egress_rules: [{ host: "api.openai.com" }]
+  egress_rules: [{ pattern: "api.openai.com" }]
   idempotent: true
 ```
+
+`isolation: microvm` selects the microVM tier and schedules the workload with isolation class `standard`. To choose a stronger class (`untrusted`, `hostile`, `wasm`), schedule a headless agent with `pal run agent.yaml`; see [Isolation classes](/docs/runtime/isolation/).
 
 The in-guest tool runner gives the harness a typed tool registry: `shell_exec`, `http_fetch`, `read_file`, `write_file` and `list_dir`. File tools are confined to `/workspace`. Workflow-graph agents reach it through the engine's `tool_call` step.
 
 ## Service-health sweep
 
-A background loop TCP-probes peer services every 60 s (`PAL_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it declares the peer DOWN and sends a message to the operator's notification channel, once on transition, so there are no alert storms. Read the current snapshot:
+A background loop TCP-probes peer services every 60 s (`PAL_HEALTH_SWEEP_INTERVAL`). After 3 consecutive failures it marks the peer DOWN and notifies the operator once per transition. Current snapshot:
 
 ```
 GET /v1/system/health   # JWT-authed
@@ -85,37 +86,18 @@ GET /v1/system/health   # JWT-authed
 
 ## Operating it in production
 
-Four things an operator cares about: work is never lost (checkpointing), crashed work restarts itself (recovery), a runaway tenant can't take the platform down (throttling), and you can see all of it (monitoring). The knobs are environment variables; the views are REST, the CLI and the dashboard.
+Checkpointing, auto-restart, throttling and monitoring, with environment-variable knobs and REST, CLI and dashboard views.
 
 | Capability | Mechanism | Knobs / views |
 | --- | --- | --- |
-| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots persisted to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
-| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `PAL_RESUME=1`, at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
+| Checkpointing | Every step journaled to `journal_events` before it runs (both tiers). Firecracker VM snapshots kept on the node and optionally mirrored to S3 (ADR 0007) | [Durable execution](/docs/runtime/durable-execution/) |
+| Auto-restart | Recovery sweep steals expired run leases and re-drives from the last completed step. microVM runs re-scheduled with `LANTERN_RESUME=1` (`PAL_RESUME=1` is accepted as an alias), at most 3 attempts. Scheduler is HA via leader election | `PAL_RECOVERY_INTERVAL` (default 30 s) |
 | Throttling | Budget gate blocks over-budget runs with 402. Per-tenant concurrent-VM hard cap (gRPC `ResourceExhausted`). Spawn-storm guard returns 429. Per-step timeout | `PAL_SPAWN_RATE_PER_MIN` (default 120), `PAL_SPAWN_BURST`, [Budgets](/docs/build/budgets/) |
-| Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `lantern vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
-| Telemetry | Five `lantern.run.*` OTel metrics. Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/runtime/observability/) |
-| Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/docs/runtime/receipts/), [Observability](/docs/runtime/observability/) |
+| Job monitoring | VM list / detail / audit trail / live SSE logs / per-VM metrics / cluster and quota views | `GET /v1/runtime/vms`, `/v1/runtime/metrics`, `/v1/runtime/cluster`, `/v1/runtime/audit`, `pal vm list\|get\|logs\|stop\|exec`, dashboard `/runtime` |
+| Backend | One per runtime-manager process, `RUNTIME_BACKEND` = `k8s` (default), `firecracker`, `kata`, `docker`, `wasm` | `RUNTIME_BACKEND` |
+| Telemetry | Five `lantern.run.*` OTel metrics (the names keep the legacy prefix). Scheduler Prometheus scrape. Prometheus alert rules and Grafana dashboards in `infra/monitoring/`, runbooks in `docs/runbooks/` | scheduler `:8085/metrics`, [Observability](/docs/observability/) |
+| Traceability | W3C trace context propagated control-plane, scheduler, manager and in-VM harness. One correlated identity chain (tenant, run, step, instance). Ed25519 receipts | [Receipts](/docs/security/receipts/), [Observability](/docs/observability/) |
 
-## System architecture
+Interactive multi-turn agents use sessions, which run on the shared tier ([Agents](/docs/build/agents/)). For how the control plane, scheduler, manager and harness collaborate, see [Runtime internals](/docs/runtime/architecture/).
 
-For the technical view of how the control-plane, scheduler, runtime-manager and in-VM harness collaborate across both tiers on the same `journal_events` substrate, see [Architecture](/docs/runtime/architecture/).
-
-## What makes it different
-
-- **Durable by default.** Every step is journaled. A crash-replay skips completed nodes and replays cached LLM outputs, so there are no re-spent tokens and no double side-effects.
-- **Isolation by manifest.** Isolation strength is declared in the agent version, not chosen by the caller. Fail-closed: untrusted workloads are refused without the hardened RuntimeClass, never silently downgraded.
-- **One observability contract.** One OTel trace per spawn, W3C `traceparent` end-to-end, five `lantern.run.*` metrics, and a shared span-attribute contract from HTTP entry to harness exit.
-
-## In this section
-
-- [Headless agent quickstart](/docs/runtime/quickstart/): write your first `agent.yaml` and run it end-to-end in about 15 minutes.
-- [Isolation classes](/docs/runtime/isolation/): the decision tree from trusted to hostile, and the fail-closed gate.
-- [Durable execution](/docs/runtime/durable-execution/): crash-resume with journal, replay, per-step retry and idempotency keys.
-- [Token streaming](/docs/runtime/streaming/): the `message_delta` / `message_completed` / `message_error` contract and the SDK async iterator.
-- [Sessions and memory](/docs/runtime/sessions-and-memory/): interactive multi-turn sessions on the shared tier, and LLM-distilled long-term memory.
-- [Sandbox lifecycle](/docs/runtime/sandbox-lifecycle/): pause / resume / fork a microVM and streaming exec, with TS, Python and CLI examples.
-- [Observability](/docs/runtime/observability/): OTel span attributes, the five `lantern.run.*` metrics, the service-health sweep.
-- [Identity and secrets](/docs/runtime/identity/): per-instance Ed25519 keys and short-TTL secret vending (microVM tier).
-- [Verifiable receipts](/docs/runtime/receipts/): signed, offline-verifiable proof of what ran.
-
-Interactive agents use sessions, not runs. For multi-turn conversations see [Agents](/docs/build/agents/); for the full REST surface see the [API reference](/docs/reference/api/). Sessions execute on the shared tier.
+Next: [create and configure an agent](/docs/build/agents/).

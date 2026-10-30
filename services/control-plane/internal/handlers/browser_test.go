@@ -3,7 +3,7 @@ package handlers
 // Tests for the browser-as-skill feature (increment 1 — contract layer only).
 //
 // Two layers:
-//   - Gate tests: no DB needed; verify 404 when LANTERN_BROWSER_SKILL is unset.
+//   - Gate tests: no DB needed; verify 404 when PAL_BROWSER_SKILL is unset.
 //   - DB-backed tests: skip when DATABASE_URL is unset, matching the rest of
 //     this package's pattern.
 //

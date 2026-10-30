@@ -2,20 +2,23 @@
 title: Evaluations
 description: Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals.
 glance:
-  what: "Eval suites, CI regression gates, baselines, A/B experiments, human feedback and rehearsals, all on the same REST API as the dashboard."
-  why: "Changing a prompt can make an agent worse; a pinned baseline makes the API answer 422 so CI fails first."
-  how: "Create a suite under Eval suites, record a run, then pin it as the baseline."
+  what: "Eval suites score an agent against fixed cases; a run that scores below the pinned branch baseline gets HTTP 422."
+  why: "A prompt change can quietly make an agent worse, and a 422 fails CI before users see it."
+  how: "POST /v1/eval-suites, post a run to /v1/eval-runs, then pin it with pal test --set-baseline."
 sidebar:
   order: 7
 ---
+import { BudgetEvalGate } from '../../../../components/diagrams';
 
-Test agents against fixed cases, fail CI on regressions, split traffic between versions, and collect human feedback. All of it is on the same REST API the dashboard uses.
+<BudgetEvalGate client:visible />
 
-Change a prompt and the agent may get worse. An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower, so CI fails before users see it.
+An eval suite is a set of inputs with expected results. Run it like a test suite, pin today's score as the baseline, and the API answers 422 when a later run scores lower. Everything here is on the REST API the dashboard uses.
 
 ## Eval suites
 
-A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object (e.g. `{"contains":"1945"}`, or `{"grounded":true}` to fail outputs that claim actions nothing backed). Suites are upserted by `(tenant, agent, name)`.
+A suite is a named list of cases for one agent. A case has a `name`, an `input` string, and an `expected` string and/or an `assert` object. Suites are upserted by `(tenant, agent, name)`.
+
+PAL stores `expected` and `assert` with the case; your runner (or `pal test`) decides pass/fail and reports `passed` and `score` per case. The one assertion the server checks itself is `{"grounded":true}`, which forces a case to fail when the output claims an action nothing backed.
 
 ### Create or update a suite
 
@@ -49,7 +52,7 @@ DELETE /v1/eval-suites/{id}        — delete suite
 
 ## Recording a run and the CI gate
 
-Run the agent on each case yourself (or use `lantern test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the branch baseline. A regression returns **HTTP 422**, which fails a CI step.
+Run the agent on each case yourself (or use `pal test`, which waits for each run to finish; `--timeout` caps the wait, default 2m), then post the per-case results. The server computes the score (mean of case scores) and compares it with the pinned baseline for the same agent and branch. A score more than 0.01 below the baseline returns **HTTP 422**, which fails a CI step. With no baseline pinned, nothing regresses.
 
 ```http
 POST /v1/eval-runs
@@ -81,13 +84,15 @@ GET /v1/eval-runs?suiteId=&agentName=&branch=  — list runs (bare array)
 
 ## Baselines
 
-Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `lantern test --agent a --suite s --set-baseline`.
+Pin an eval run as the baseline for an agent and branch. Later runs on that branch are compared against it. From the CLI: `pal test --agent a --suite s --set-baseline`.
 
 ```http
 POST /v1/eval-baselines
 { "agentName": "research-agent", "branch": "main", "evalRunId": "run-uuid" }
+→ { "status": "baseline set" }
 
 GET /v1/eval-baselines?agentName=research-agent&branch=main
+→ { "agentName", "branch", "evalRunId", "score", "setAt" }   (404 {"error":"no baseline"} when unset)
 ```
 
 ## Eval observability
@@ -142,7 +147,7 @@ Response:
 
 ## A/B experiments
 
-Split traffic between two agent versions. The split is deterministic (FNV-1a hash of the run ID), so a run always lands on the same variant. Record a score per run; with `autoPromote` on, PAL promotes the winner once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
+An experiment records scores for two agent versions and can promote the winner. `PickVariant` implements a deterministic FNV-1a split, but nothing in the run path calls it yet, so **experiments do not route traffic today**: you assign variants and `record` each outcome yourself. With `autoPromote` on, PAL promotes the leader once both arms have enough runs and one leads by more than 0.02. This is a fixed margin, not a significance test.
 
 ### Create an experiment
 
@@ -158,8 +163,8 @@ POST /v1/experiments
   "minRunsToPromote": 100     // per arm; default 100
 }
 
-Response: 201 Created
-{ "id": "exp-uuid", "status": "running", ... }
+Response: 200 OK
+{ "id": "exp-uuid" }
 ```
 
 ### Record an outcome
@@ -212,7 +217,7 @@ GET /v1/agents/{name}/feedback               — aggregate summary
 
 ## Rehearsals
 
-Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `lantern test --rehearse` runs them.
+Pull past failed or low-scored runs (feedback score of 2 or lower) as synthetic test cases, then replay them against a candidate version before you flip traffic. The endpoint returns the cases; `pal test --rehearse` runs them.
 
 ```http
 POST /v1/runs/rehearse
@@ -228,6 +233,4 @@ Response: { "agentName", "window", "cases": [{ "originalRunId", "input",
   "expectedOutput", ... }], "count", "reason"? }
 ```
 
-## OTel traces
-
-Every HTTP request and gRPC call carries a span enriched with `lantern.tenant_id`, `lantern.run_id`, `lantern.step_id`, and `lantern.user_id` via `middleware.EnrichSpan`. Traces are no-op safe when `PAL_OTEL_ENABLED` is unset. Export to any OTel backend by setting `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Span attributes and traces: [Observability](/docs/observability/).

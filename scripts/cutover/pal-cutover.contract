@@ -1,0 +1,84 @@
+# pal-cutover contract — the names the RELEASE code expects on this machine.
+#
+# Sourced by pal-cutover.sh (bash). Mirrors the zero-lantern contract
+# (lantern-handoff/plans/ZERO-LANTERN-CONTRACT.md). When a name is the same on
+# both sides the corresponding step is a no-op, so a contract that keeps an
+# allowlisted name (e.g. the DB) needs no script change — edit it here.
+#
+# Every value can be overridden from the environment (the sandbox test does
+# exactly that), which is why each line uses ${VAR:-default}.
+
+# launchd
+OLD_LABEL_PREFIX="${OLD_LABEL_PREFIX:-dev.lantern}"
+NEW_LABEL_PREFIX="${NEW_LABEL_PREFIX:-dev.pal}"
+# plist templates at the release commit: <TEMPLATE_DIR>/<NEW_LABEL_PREFIX>.<svc>.plist
+TEMPLATE_DIR="${TEMPLATE_DIR:-scripts/launchd}"
+OLD_LOG_DIR="${OLD_LOG_DIR:-$HOME/Library/Logs/Lantern}"
+NEW_LOG_DIR="${NEW_LOG_DIR:-$HOME/Library/Logs/PAL}"
+
+# state directory (single atomic rename; optional compat symlink old -> new)
+OLD_STATE_DIR="${OLD_STATE_DIR:-$HOME/.lantern}"
+NEW_STATE_DIR="${NEW_STATE_DIR:-$HOME/.pal}"
+STATE_COMPAT_SYMLINK="${STATE_COMPAT_SYMLINK:-1}"
+
+# env key prefix in <state>/*.env and in plist EnvironmentVariables
+OLD_ENV_PREFIX="${OLD_ENV_PREFIX:-LANTERN_}"
+NEW_ENV_PREFIX="${NEW_ENV_PREFIX:-PAL_}"
+
+# Postgres (docker compose container). Same old/new name => step skipped.
+DB_CONTAINER="${DB_CONTAINER:-docker-postgres-1}"
+DB_OLD_NAME="${DB_OLD_NAME:-lantern}"
+DB_NEW_NAME="${DB_NEW_NAME:-pal}"
+DB_OLD_USER="${DB_OLD_USER:-lantern}"
+DB_NEW_USER="${DB_NEW_USER:-pal}"
+DB_OLD_APP_ROLE="${DB_OLD_APP_ROLE:-lantern_app}"
+DB_NEW_APP_ROLE="${DB_NEW_APP_ROLE:-pal_app}"
+# env key (after the rename) holding the app role's password; unset => keep the
+# existing (SCRAM) verifier, which survives a role rename
+DB_APP_PASSWORD_KEY="${DB_APP_PASSWORD_KEY:-PAL_APP_DB_PASSWORD}"
+# the agent whose (new) plist DATABASE_URL carries the main DB credentials
+DB_URL_AGENT="${DB_URL_AGENT:-api}"
+
+# checkout
+REPO_DIR="${REPO_DIR:-/Users/shakes/workspace/lantern}"
+REPO_REMOTE_URL="${REPO_REMOTE_URL:-https://github.com/dshakes/pal.git}"
+RELEASE_REF="${RELEASE_REF:-origin/master}"
+RELEASE_BRANCH="${RELEASE_BRANCH:-master}"
+RUST_SERVICES="${RUST_SERVICES:-gateway model-router runtime-manager surface-gateway}"
+BRIDGE_DIRS="${BRIDGE_DIRS:-services/whatsapp-bridge services/imessage-bridge}"
+DASHBOARD_DIR="${DASHBOARD_DIR:-apps/web}"
+COMPOSE_FILE="${COMPOSE_FILE:-infra/docker/docker-compose.yml}"
+# golang-migrate source embedded in the control-plane binary. Up() fails with
+# "no migration found for version N" when the DB is AHEAD of this directory, so
+# a checkout whose newest migration < the DB's schema_migrations.version cannot
+# start the API.
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-services/control-plane/internal/db/migrations}"
+
+# in-repo runtime state (gitignored). Backed up; never rewritten by the cutover.
+REPO_STATE_PATHS="${REPO_STATE_PATHS:-services/whatsapp-bridge/bridge_state services/imessage-bridge/bridge_state services/whatsapp-bridge/auth_sessions}"
+# WhatsApp Baileys creds. If the release reads them from a new path, apply moves
+# them (and verifies the tree checksum is identical after the move).
+WA_CREDS_OLD="${WA_CREDS_OLD:-$REPO_DIR/services/whatsapp-bridge/auth_sessions}"
+WA_CREDS_NEW="${WA_CREDS_NEW:-$REPO_DIR/services/whatsapp-bridge/auth_sessions}"
+
+# health
+TENANT_ID="${TENANT_ID:-00000000-0000-0000-0000-000000000001}"
+API_URL="${API_URL:-http://localhost:8080}"
+DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:3001}"
+WA_URL="${WA_URL:-http://localhost:3100}"
+IM_URL="${IM_URL:-http://localhost:3200}"
+SIGNAL_HEADER="${SIGNAL_HEADER:-x-pal-signal-token}"
+WA_TOKEN_KEY="${WA_TOKEN_KEY:-PAL_BRIDGE_TOKEN}"
+IM_TOKEN_KEY="${IM_TOKEN_KEY:-PAL_IMESSAGE_BRIDGE_TOKEN}"
+SIGNAL_TOKEN_KEY="${SIGNAL_TOKEN_KEY:-PAL_SIGNAL_TOKEN}"
+HEALTH_TIMEOUT_SECS="${HEALTH_TIMEOUT_SECS:-420}"
+
+# start order (agents not listed start last, in name order). Bridges stop first.
+START_ORDER="${START_ORDER:-infra api runtime-scheduler workflow-engine model-router runtime-manager gateway surface-gateway dashboard dashboard-reload whatsapp-bridge imessage-bridge}"
+STOP_FIRST="${STOP_FIRST:-whatsapp-bridge imessage-bridge dashboard}"
+
+# env keys where the release template's value REPLACES the live plist's value.
+# Every other key that differs keeps the live value (a deliberate local
+# override, e.g. a Tailscale NEXT_PUBLIC_API_URL). DATABASE_URL must follow the
+# DB rename; PATH follows the template's toolchain layout.
+TEMPLATE_WINS_KEYS="${TEMPLATE_WINS_KEYS:-DATABASE_URL PATH}"

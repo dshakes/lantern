@@ -33,6 +33,12 @@ import type {
   AgentSpecDraft as OnboardingSpec,
   OnboardingState as OnboardingDoc,
 } from "@/app/onboarding/onboarding-logic";
+import type {
+  PalOnboardingState as PalOnboardingDoc,
+  ProfileProposal as PalProfileProposal,
+  VoicePreview as PalVoicePreview,
+  VoiceProfile as PalVoiceProfile,
+} from "@/app/pal/onboarding/pal-onboarding-logic";
 
 export interface CreateAgentInput {
   name: string;
@@ -1343,6 +1349,47 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
 
   async resetOnboarding(): Promise<void> {
     await this.request("/v1/onboarding", { method: "DELETE" });
+  }
+
+  // ---- pal first-run (ADR 0048) ----------------------------------------------
+
+  async getPalOnboarding(): Promise<PalOnboardingDoc> {
+    return this.request("/v1/pal/onboarding");
+  }
+
+  async savePalOnboarding(doc: PalOnboardingDoc): Promise<PalOnboardingDoc> {
+    return this.request("/v1/pal/onboarding", { method: "PUT", body: JSON.stringify(doc) });
+  }
+
+  async resetPalOnboarding(): Promise<void> {
+    await this.request("/v1/pal/onboarding", { method: "DELETE" });
+  }
+
+  /** One turn of pal's setup guide (LLM; may throw — callers keep their own copy). */
+  async palGuide(body: { step: string; message: string; context?: string }): Promise<{ reply: string }> {
+    return this.request("/v1/pal/onboarding/guide", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /** Derive a voice profile + preview from the owner's own sent messages. Server-side consent-gated. */
+  async palLearnVoice(body: { samples: string[]; ownerName?: string; correction?: string }): Promise<{
+    profile: PalVoiceProfile;
+    preview: PalVoicePreview;
+    sampleCount: number;
+  }> {
+    return this.request("/v1/pal/onboarding/voice", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async palExtractProfile(text: string): Promise<{ items: PalProfileProposal[] }> {
+    return this.request("/v1/pal/onboarding/profile/extract", { method: "POST", body: JSON.stringify({ text }) });
+  }
+
+  async palSuggestTrust(text: string): Promise<{
+    modes: Record<string, "auto" | "ask" | "off">;
+    quietStart?: number | null;
+    quietEnd?: number | null;
+    why?: string;
+  }> {
+    return this.request("/v1/pal/onboarding/trust/suggest", { method: "POST", body: JSON.stringify({ text }) });
   }
 
   /** The onboarding agent's plain-language read of a run (LLM; may throw). */

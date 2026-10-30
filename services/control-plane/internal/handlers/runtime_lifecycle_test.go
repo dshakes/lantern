@@ -284,7 +284,7 @@ func TestManagerTransportCreds_ProdVsDev(t *testing.T) {
 }
 
 // TestManagerClient_SendsServiceToken: the manager rejects calls without
-// x-lantern-service-token once LANTERN_GRPC_SERVICE_TOKEN is set.
+// x-pal-service-token once PAL_GRPC_SERVICE_TOKEN is set.
 func TestManagerClient_SendsServiceToken(t *testing.T) {
 	got := make(chan string, 1)
 	srv := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, hd grpc.UnaryHandler) (any, error) {

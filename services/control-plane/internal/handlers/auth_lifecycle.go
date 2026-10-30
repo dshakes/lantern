@@ -335,8 +335,8 @@ func dashboardLink(path, token string) string {
 func (h *AuthHandler) sendVerifyMail(to, token string) {
 	h.sendMail(mailer.Message{
 		To:      to,
-		Subject: "Verify your Lantern email",
-		Text: "Confirm this address to finish setting up your Lantern account:\n\n" +
+		Subject: "Verify your PAL email",
+		Text: "Confirm this address to finish setting up your PAL account:\n\n" +
 			dashboardLink("/auth/verify", token) +
 			"\n\nThe link works once and expires in 24 hours. If you didn't sign up, ignore this email.\n",
 	})
@@ -345,8 +345,8 @@ func (h *AuthHandler) sendVerifyMail(to, token string) {
 func (h *AuthHandler) sendResetMail(to, token string) {
 	h.sendMail(mailer.Message{
 		To:      to,
-		Subject: "Reset your Lantern password",
-		Text: "Someone (hopefully you) asked to reset your Lantern password:\n\n" +
+		Subject: "Reset your PAL password",
+		Text: "Someone (hopefully you) asked to reset your PAL password:\n\n" +
 			dashboardLink("/auth/reset", token) +
 			"\n\nThe link works once and expires in 1 hour. If you didn't ask, ignore this email — your password is unchanged.\n",
 	})

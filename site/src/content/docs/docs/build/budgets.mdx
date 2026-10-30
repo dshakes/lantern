@@ -2,9 +2,9 @@
 title: Budgets
 description: Per-agent spend and rate limits set as policy, enforced before the model is called.
 glance:
-  what: "Per-agent spend and rate limits set as policy, with an optional hard-fail that refuses calls before the model is reached."
-  why: "A buggy loop can burn a month of model spend in an afternoon; a cap refuses the next call instead."
-  how: "Follow Setting a budget, or run the Try it example that caps an agent at one run per day."
+  what: "Per-agent caps on dollars, tokens and runs per day (plus per-run and per-tool limits), enforced before the model is called."
+  why: "A buggy loop can burn a month of spend in an afternoon; with hardFail the next call gets HTTP 402 instead."
+  how: "PUT /v1/agents/{name}/budget with maxCostUsdPerDay and hardFail: true, or run the Try it example."
 sidebar:
   order: 6
 ---
@@ -12,10 +12,11 @@ sidebar:
 import Diagram from '../../../../components/Diagram.astro';
 
 import { Aside } from '@astrojs/starlight/components';
+import { BudgetEvalGate } from '../../../../components/diagrams';
+
+<BudgetEvalGate client:visible />
 
 Per-agent spend and rate limits, set as policy. With `hardFail: true`, a call that would start while a limit is already reached is refused **before the model is called**: HTTP 402 on the REST paths, a failed step inside workflows. With `false`, the breach is logged and the call proceeds. If the budget cannot be read, hard-fail budgets fail closed.
-
-A buggy loop can burn a month of model spend in an afternoon. Set a cap per agent: dollars per day, runs per day, tokens per day. With hard-fail on, the next call is refused before it reaches a model, not flagged afterward.
 
 <Diagram name="budget-gate" />
 
@@ -65,7 +66,7 @@ Each check runs *before* the model or tool call. "Yes" means a hard-fail budget 
 - **Workflow `tool` node, sandbox tools:** only per-tool (Yes); everything else No.
 - **Workflow `connector` node:** only per-tool (Yes, keyed `connector.action`); everything else No.
 - **`web_search` inside a session turn:** covered by the session-message check at the start of the turn; its spend is recorded after.
-- **Voice (Twilio inbound, LiveKit token):** cost Yes, tokens Yes, runs/day Yes, tenant Yes, per-run flat estimate only, per-tool No.
+- **Voice (Twilio inbound, LiveKit token):** cost Yes, tokens Yes, runs/day Yes, tenant Yes, per-run flat estimate only, per-tool No. A flat estimate is reserved on connect and reconciled to the real call duration by the provider status callback (`POST /v1/voice/calls/status/{provider}`).
 
 Marketplace invokes check the *seller* agent's budget and return 402 with `seller agent budget limit reached: <reason>`.
 
@@ -205,10 +206,6 @@ Response: 200 OK   (values illustrative)
 ```
 
 Other `blockReason` strings: `daily cost would hit $5.0400 exceeding $5.0000`, `daily run limit reached (100/100)`. `blockReason` is omitted when nothing would block.
-
-## Voice calls
-
-Voice calls count against the same `agent_budgets` as runs. An inbound call over a hard-fail budget is declined before any media is allocated (Twilio: `<Reject reason="busy"/>`; LiveKit: HTTP 402 on the token request). A flat cost estimate is reserved on connect, then reconciled to the actual call duration when the provider status callback fires at `POST /v1/voice/calls/status/{provider}`.
 
 ## Not enforced yet
 

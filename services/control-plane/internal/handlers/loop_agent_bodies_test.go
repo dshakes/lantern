@@ -789,7 +789,7 @@ func TestFinancialSentinel_NoBills(t *testing.T) {
 
 // seedDomainRecord inserts a domain_records row directly (bypassing the handler).
 // fields_encrypted is stored as plain JSON because secrets.EncryptString is a
-// pass-through in tests (no LANTERN_CREDENTIAL_KEY set).
+// pass-through in tests (no PAL_CREDENTIAL_KEY set).
 func seedDomainRecord(t *testing.T, pool *pgxpool.Pool, tenantID, domain, kind, title, fields string) {
 	t.Helper()
 	ctx := context.Background()

@@ -71,17 +71,17 @@ func (w *WebhookDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Lantern-Notifier/1.0")
+	req.Header.Set("User-Agent", "PAL-Notifier/1.0")
 
 	// HMAC-SHA256 signature for webhook verification.
 	// The signing secret would come from the subscription config in production.
 	// Here we use the tenant_id as a derived key.
 	signature := computeHMAC(body, n.TenantID)
-	req.Header.Set("X-Lantern-Signature", "sha256="+signature)
-	req.Header.Set("X-Lantern-Delivery-ID", n.ID)
+	setPalHeader(req.Header, "Signature", "sha256="+signature)
+	setPalHeader(req.Header, "Delivery-ID", n.ID)
 
 	if n.IdempotencyKey != "" {
-		req.Header.Set("X-Lantern-Idempotency-Key", n.IdempotencyKey)
+		setPalHeader(req.Header, "Idempotency-Key", n.IdempotencyKey)
 	}
 
 	resp, err := w.client.Do(req)
@@ -103,8 +103,8 @@ func (w *WebhookDeliverer) Deliver(ctx context.Context, n *Notification) (*Deliv
 
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
 	result := &DeliveryResult{
-		Success:    success,
-		StatusCode: resp.StatusCode,
+		Success:     success,
+		StatusCode:  resp.StatusCode,
 		AttemptedAt: time.Now(),
 	}
 
@@ -124,4 +124,11 @@ func computeHMAC(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// setPalHeader sets X-Pal-<name> and, for receivers that verify the pre-PAL
+// names, X-Lantern-<name> with the same value (ADR 0032).
+func setPalHeader(h http.Header, name, v string) {
+	h.Set("X-Pal-"+name, v)
+	h.Set("X-Lantern-"+name, v)
 }

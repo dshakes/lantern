@@ -8,7 +8,7 @@ import (
 )
 
 // ResolveLocation resolves an IANA timezone string to a *time.Location.
-// Priority: tz (if non-empty) → LANTERN_DEFAULT_TIMEZONE env → time.UTC.
+// Priority: tz (if non-empty) → PAL_DEFAULT_TIMEZONE env → time.UTC.
 // An invalid tz string logs a warning and falls back to the next level.
 // Never returns nil.
 func ResolveLocation(tz string) *time.Location {
@@ -25,7 +25,7 @@ func ResolveLocation(tz string) *time.Location {
 		if err == nil {
 			return loc
 		}
-		zap.L().Warn("scheduler.ResolveLocation: invalid LANTERN_DEFAULT_TIMEZONE, using UTC",
+		zap.L().Warn("scheduler.ResolveLocation: invalid PAL_DEFAULT_TIMEZONE, using UTC",
 			zap.String("tz", env), zap.Error(err))
 	}
 	return time.UTC

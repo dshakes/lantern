@@ -42,7 +42,7 @@ export const SYSTEM: SysBlock[] = [
 
 // The headless-runtime execution path: one spec, two trust boundaries.
 export const RUN_PATH: SysBlock[] = [
-  { kind: 'actors', items: [{ name: 'lantern run agent.yaml', sub: 'submit the spec: image · isolation · limits · egress · secrets', href: 'runtime/quickstart', tone: 'rt' }] },
+  { kind: 'actors', items: [{ name: 'pal run agent.yaml', sub: 'submit the spec: image · isolation · limits · egress · secrets', href: 'runtime/quickstart', tone: 'rt' }] },
   { kind: 'conn', label: 'schedules' },
   { kind: 'boundary', plane: 'cp', tag: 'Control plane', note: 'Schedules the spec onto a node; never runs your workload itself.', items: [
     { name: 'control-plane', sub: 'RBAC + quota gate · 402 over quota', href: 'runtime/' },

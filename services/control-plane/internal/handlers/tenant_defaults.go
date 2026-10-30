@@ -7,9 +7,9 @@ package handlers
 //
 // Env (all optional; unset → the default below; "0" or "off" skips that cap):
 //
-//	LANTERN_FREE_TIER_COST_USD_PER_DAY          tenant-wide LLM spend/day   (default 2.00)
-//	LANTERN_FREE_TIER_MAX_VMS                   concurrent sandbox VMs      (default 2)
-//	LANTERN_FREE_TIER_RUNTIME_COST_USD_PER_DAY  sandbox spend/day           (default 1.00)
+//	PAL_FREE_TIER_COST_USD_PER_DAY          tenant-wide LLM spend/day   (default 2.00)
+//	PAL_FREE_TIER_MAX_VMS                   concurrent sandbox VMs      (default 2)
+//	PAL_FREE_TIER_RUNTIME_COST_USD_PER_DAY  sandbox spend/day           (default 1.00)
 //
 // The seeded dev tenant is created by db/migrate.go, not sign-up, so it never
 // receives caps. Only sign-up calls this; existing tenants are untouched.

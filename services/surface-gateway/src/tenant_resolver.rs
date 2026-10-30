@@ -4,14 +4,14 @@
 //!
 //! Platform adapters populate `SurfaceEvent::tenant_id` with whatever identifier the
 //! *platform* provides — e.g. Telegram's numeric `chat_id`, Slack's `team_id`, or
-//! WhatsApp's `phone_number_id`.  Those are opaque platform strings, not Lantern
+//! WhatsApp's `phone_number_id`.  Those are opaque platform strings, not PAL
 //! tenant UUIDs.  Passing them downstream to the control-plane as `tenant_id` breaks
 //! multi-tenant isolation: runs would be dispatched under phantom tenants that do not
 //! exist in the database.
 //!
 //! ## Solution
 //!
-//! Each surface-gateway deployment serves exactly one Lantern tenant.  The real tenant
+//! Each surface-gateway deployment serves exactly one PAL tenant.  The real tenant
 //! UUID is supplied at deploy time via `LANTERN_TENANT_ID`.  `TenantResolver` holds
 //! that configured value and rewrites every event's `tenant_id` to the correct UUID
 //! before the event is forwarded to the control plane.
@@ -22,13 +22,13 @@
 use crate::error::AppError;
 use crate::types::SurfaceId;
 
-/// Resolves the Lantern tenant UUID for an inbound surface event.
+/// Resolves the PAL tenant UUID for an inbound surface event.
 ///
 /// In the current deployment model every surface-gateway instance is
 /// configured for a single tenant — the UUID comes from `LANTERN_TENANT_ID`.
 #[derive(Clone, Debug)]
 pub struct TenantResolver {
-    /// The Lantern tenant UUID this gateway is configured to serve.
+    /// The PAL tenant UUID this gateway is configured to serve.
     ///
     /// `None` means the gateway was started without `LANTERN_TENANT_ID`, which is
     /// only acceptable in unit-test or local-dev scenarios where tenant routing is
@@ -39,12 +39,12 @@ pub struct TenantResolver {
 impl TenantResolver {
     /// Create a resolver from the configured tenant UUID.
     ///
-    /// `tenant_id` should come from `Config::lantern_tenant_id`.
+    /// `tenant_id` should come from `Config::pal_tenant_id`.
     pub fn new(tenant_id: Option<String>) -> Self {
         Self { tenant_id }
     }
 
-    /// Return the Lantern tenant UUID to use for an event from the given surface.
+    /// Return the PAL tenant UUID to use for an event from the given surface.
     ///
     /// `platform_id` is the raw platform-native identifier extracted by the adapter
     /// (chat_id, team_id, phone_number_id, …).  It is accepted only for logging
@@ -59,7 +59,7 @@ impl TenantResolver {
                     surface = %surface,
                     platform_id = %platform_id,
                     tenant_id = %id,
-                    "resolved platform id to lantern tenant"
+                    "resolved platform id to PAL tenant"
                 );
                 Ok(id.clone())
             }
@@ -72,7 +72,7 @@ impl TenantResolver {
                 );
                 Err(AppError::AdapterNotConfigured(
                     "LANTERN_TENANT_ID is required but not set; \
-                     cannot resolve platform id to a Lantern tenant"
+                     cannot resolve platform id to a PAL tenant"
                         .to_string(),
                 ))
             }

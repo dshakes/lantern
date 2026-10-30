@@ -47,8 +47,8 @@
 /* Nodes */
 .ix-node { cursor: pointer; }
 .ix-node rect.box { stroke-width: 1.5; }
-.ix-node .t1 { font-size: 14px; font-weight: 600; }
-.ix-node .t2 { font-size: 11.5px; fill: var(--lx-ink-2); }
+.ix-node .t1 { font-size: 16px; font-weight: 600; }
+.ix-node .t2 { font-size: 13px; fill: var(--lx-ink-2); }
 .ix-node:focus { outline: none; }
 .ix-node:focus-visible rect.box, .ix-node[aria-pressed="true"] rect.box { stroke: var(--lx-ink); stroke-width: 2.5; }
 .ix-node:focus-visible rect.ring { stroke: var(--ix-focus); }
@@ -59,7 +59,13 @@
 .tone-guest rect.box { fill: var(--lx-flame-soft); stroke: var(--lx-flame); }
 .tone-store rect.box { fill: var(--lx-surface-2); stroke: var(--lx-line); }
 .tone-deny rect.box { fill: var(--lx-signal-soft); stroke: var(--lx-signal); }
-.ix-dim { opacity: 0.32; }
+/* Dimmed = recedes, but labels stay AA-legible: no opacity on text, only on fills/strokes. */
+.ix-node.ix-dim rect.box { fill: var(--lx-surface); stroke: var(--lx-line); }
+.ix-node.ix-dim .t1 { fill: var(--lx-ink-2); }
+.ix-node.ix-dim .t2 { fill: var(--lx-ink-3); }
+.ix-edge.ix-dim path { opacity: 0.35; }
+.ix-edge.ix-dim text { fill: var(--lx-ink-3); }
+.ix-dim:not(.ix-node):not(.ix-edge) { opacity: 0.55; }
 .ix-zoomtag { font-size: 11px; fill: var(--lx-glass) !important; font-weight: 600; }
 
 /* Frames */
@@ -75,7 +81,7 @@
 .ix-edge.l-store path { stroke-dasharray: 3 3; }
 .ix-edge.on path { stroke: var(--lx-ink); stroke-width: 2.25; }
 .ix-edge.on.l-broker path, .ix-edge.on.l-guest path { stroke: var(--lx-flame); }
-.ix-edge text { font-size: 11.5px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 4px; stroke-linejoin: round; }
+.ix-edge text { font-size: 13px; fill: var(--lx-ink-2); paint-order: stroke; stroke: var(--lx-bg); stroke-width: 4px; stroke-linejoin: round; }
 .ix-edge.on text { fill: var(--lx-ink); font-weight: 600; }
 .ix-arrow { fill: var(--lx-ink-3); }
 
@@ -116,7 +122,8 @@
 .ix-msg.k-return path, .ix-msg.k-return line { stroke-dasharray: 5 4; }
 .ix-msg.k-deny path, .ix-msg.k-deny line { stroke: var(--lx-signal); }
 .ix-msg.k-inject path, .ix-msg.k-inject line { stroke: var(--lx-patina); }
-.ix-msg.future { opacity: 0.25; }
+.ix-msg.future path, .ix-msg.future line { opacity: 0.3; }
+.ix-msg.future text { fill: var(--lx-ink-3); }
 .ix-msg.on path, .ix-msg.on line { stroke-width: 3; stroke: var(--lx-ink); }
 .ix-msg.on.k-deny path, .ix-msg.on.k-deny line { stroke: var(--lx-signal); }
 .ix-msg.on.k-inject path, .ix-msg.on.k-inject line { stroke: var(--lx-patina); }
@@ -259,4 +266,59 @@
   .bd-verdict { padding-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .bd * { animation: none !important; } }
-.ix-flow .ix-dim { opacity: 0.42; }
+
+/* ---- v3: brand accent, glow on the active path, stacked phone view ---- */
+.ix-flow.b-rt { --ix-accent: var(--lx-violet); --ix-accent-2: var(--lx-glass); --ix-accent-soft: var(--lx-violet-soft); }
+.ix-flow.b-pal { --ix-accent: var(--lx-pink); --ix-accent-2: #ff9a5c; --ix-accent-soft: var(--lx-pink-soft); }
+:root[data-theme='light'] .ix-flow.b-pal { --ix-accent-2: #c2410c; }
+.ix-flow .ix-canvas {
+  background:
+    radial-gradient(90% 70% at 0% 0%, var(--ix-accent-soft), transparent 60%),
+    radial-gradient(70% 60% at 100% 100%, color-mix(in srgb, var(--ix-accent-2) 10%, transparent), transparent 60%),
+    var(--lx-bg);
+}
+.ix-flow .ix-node.lit rect.box { stroke: var(--ix-accent); stroke-width: 2.5; filter: drop-shadow(0 0 7px color-mix(in srgb, var(--ix-accent) 55%, transparent)); }
+.ix-flow .ix-node.lit.tone-deny rect.box { stroke: var(--lx-signal); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--lx-signal) 55%, transparent)); }
+.ix-flow .ix-node.lit .t1 { fill: var(--lx-ink); }
+.ix-flow .ix-edge.on:not(.k-deny):not(.k-inject) path { stroke: var(--ix-accent); stroke-width: 2.5; }
+.ix-flow .ix-edge.on .ix-dot { fill: var(--ix-accent-2); }
+.ix-flow .ix-btn[aria-pressed="true"] { border-color: var(--ix-accent); background: var(--ix-accent-soft); }
+.ix-flow .ix-range { accent-color: var(--ix-accent); }
+.ix-flow .ix-panel:not(.deny) { border-left: 3px solid var(--ix-accent); }
+.ix-flow figcaption .font-semibold { font-family: var(--lx-font-display); font-size: 17px; letter-spacing: -0.01em; }
+.ix-mb-btns { display: inline-flex; gap: 6px; margin-left: auto; }
+.ix-flow.is-stacked .ix-mobilebar { display: flex; }
+.ix-stage[hidden] { display: none; }
+
+.ix-stack { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: s; }
+.prose .ix-stack li, .ix-stack li { margin: 0; }
+.ix-stack button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 28px 1fr; gap: 12px; width: 100%;
+  padding: 12px 14px; border-radius: var(--lx-radius-m); border: 1px solid var(--lx-line); background: var(--lx-surface); }
+.ix-stack button:focus-visible { outline: 2px solid var(--ix-accent); outline-offset: 2px; }
+.ix-stack .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 600 12.5px var(--lx-font-mono);
+  border: 1.5px solid var(--lx-line); color: var(--lx-ink-2); }
+.ix-stack .b { display: grid; gap: 4px; min-width: 0; }
+.ix-stack .t { font-weight: 600; font-size: 15px; color: var(--lx-ink); line-height: 1.35; }
+.ix-stack .d { font-size: 14px; line-height: 1.5; color: var(--lx-ink-2); }
+.ix-stack .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ix-stack .chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--lx-line); color: var(--lx-ink-2); }
+.ix-stack .chip.tone-guest { border-color: var(--lx-flame); } .ix-stack .chip.tone-host, .ix-stack .chip.tone-ok { border-color: var(--lx-patina); }
+.ix-stack .chip.tone-pal { border-color: var(--lx-pink); } .ix-stack .chip.tone-rt { border-color: var(--lx-violet); }
+.ix-stack .chip.tone-deny { border-color: var(--lx-signal); }
+.ix-stack li.on button { border-color: var(--ix-accent); background: var(--ix-accent-soft); box-shadow: 0 0 0 1px var(--ix-accent), 0 10px 30px -14px var(--ix-accent); }
+.ix-stack li.on .n, .ix-stack li.done .n { background: var(--ix-accent); border-color: var(--ix-accent); color: #fff; }
+.ix-stack li.deny.on button { border-color: var(--lx-signal); background: var(--lx-signal-soft); box-shadow: 0 0 0 1px var(--lx-signal); }
+.ix-stack li.deny.on .n { background: var(--lx-signal); border-color: var(--lx-signal); }
+.ix-stack .nodecard { display: grid; gap: 4px; padding: 10px 14px; border-radius: var(--lx-radius-m); border: 1px solid var(--lx-line); background: var(--lx-surface); }
+.ix-stack .nodecard.tone-guest { border-left: 3px solid var(--lx-flame); } .ix-stack .nodecard.tone-host, .ix-stack .nodecard.tone-ok { border-left: 3px solid var(--lx-patina); }
+.ix-stack .nodecard.tone-pal { border-left: 3px solid var(--lx-pink); } .ix-stack .nodecard.tone-rt { border-left: 3px solid var(--lx-violet); }
+.ix-stack .nodecard .s { font-weight: 400; font-family: var(--lx-font-mono); font-size: 12px; color: var(--lx-ink-3); }
+@media (prefers-reduced-motion: no-preference) { .ix-stack button { transition: border-color 200ms var(--lx-ease), background 200ms var(--lx-ease), box-shadow 200ms var(--lx-ease); } }
+/* Sequences and the state machine are runtime diagrams: active message in the runtime accent. */
+.ix-seq .ix-msg.on:not(.k-deny):not(.k-inject) path, .ix-seq .ix-msg.on:not(.k-deny):not(.k-inject) line { stroke: var(--lx-violet); }
+.ix-seq .ix-msg.on path:not(.hit), .ix-seq .ix-msg.on line:not(.hit) { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--lx-violet) 60%, transparent)); }
+.ix-seq .ix-rowband { fill: var(--lx-violet-soft); }
+.ix-seq .head.on rect { stroke: var(--lx-violet); }
+.ix-seq .ix-panel, .ix .ix-cap { border-left: 3px solid var(--lx-violet); }
+.ix-seq .head .t2 { fill: var(--lx-ink-2); }
+.ix-seq figcaption .font-semibold, .ix figcaption .font-semibold { font-family: var(--lx-font-display); font-size: 17px; letter-spacing: -0.01em; }

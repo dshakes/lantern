@@ -326,6 +326,21 @@ pub struct VsockDevice {
     pub uds_path: String,
 }
 
+/// PUT /entropy — virtio-rng device.
+///
+/// Without an entropy source the guest kernel's CRNG seeds only from scarce
+/// interrupt entropy (the Firecracker CI guest kernel has jitterentropy
+/// disabled), so the first blocking `getrandom()` — the harness's mTLS
+/// handshake — stalls ~5 s until `random: crng init done`. A virtio-rng device
+/// feeds the CRNG from the host at boot so `getrandom()` never blocks. The CI
+/// guest kernel ships the `virtio_rng` driver. An empty body (`{}`, no rate
+/// limiter) is the unthrottled default.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EntropyDevice {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limiter: Option<RateLimiter>,
+}
+
 /// PUT /actions — InstanceStart, FlushMetrics, SendCtrlAltDel
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstanceAction {
@@ -519,7 +534,7 @@ impl VmConfig {
             &hex[8..10],
         );
 
-        // Build kernel boot_args; inject the Lantern env contract:
+        // Build kernel boot_args; inject the PAL env contract:
         //   LANTERN_VM_ID, LANTERN_VM_TLS_CERT/KEY, LANTERN_MANAGER_TLS_CA.
         // Note: per-VM cert generation is a paired follow-up.  We thread
         // the paths here so the boot-args contract is stable.
@@ -647,6 +662,15 @@ impl VmConfig {
         format!("{}_{port}", self.vsock_uds_path)
     }
 
+    /// Produce the EntropyDevice body for PUT /entropy (virtio-rng).
+    ///
+    /// Unthrottled (no rate limiter): the device only needs to seed the guest
+    /// CRNG once at boot so the harness's first `getrandom()` (mTLS) does not
+    /// block waiting for interrupt entropy. See [`EntropyDevice`].
+    pub fn entropy_device(&self) -> EntropyDevice {
+        EntropyDevice { rate_limiter: None }
+    }
+
     /// Produce the VsockDevice body for PUT /vsock.
     pub fn vsock_device(&self) -> VsockDevice {
         VsockDevice {
@@ -708,7 +732,7 @@ pub fn parse_mem_limit(mem: &str) -> Option<u32> {
 }
 
 /// Build the kernel `console=ttyS0 …` boot_args string, injecting the
-/// Lantern env contract as kernel parameters the init process picks up.
+/// PAL env contract as kernel parameters the init process picks up.
 ///
 /// Pure function — unit-testable.
 /// Number of /30 blocks carved out of 172.16.0.0/16 (4 addresses each).
@@ -3732,6 +3756,13 @@ impl FirecrackerBackend {
         // Step 7: Vsock.
         unix_socket_put(sock, "/vsock", &api_cfg.vsock_device()).await?;
 
+        // Step 7b: Entropy (virtio-rng). Seeds the guest CRNG from the host so
+        // the harness's first blocking getrandom() — the mTLS handshake — does
+        // not stall ~5 s waiting for `random: crng init done` (the CI guest
+        // kernel has no other entropy source: jitterentropy is disabled and
+        // interrupt entropy is scarce in a quiet microVM). See `EntropyDevice`.
+        unix_socket_put(sock, "/entropy", &api_cfg.entropy_device()).await?;
+
         // Step 8: InstanceStart.
         unix_socket_put(
             sock,
@@ -4801,6 +4832,35 @@ mod tests {
     }
 
     #[test]
+    fn entropy_device_serializes_as_empty_body() {
+        // The unthrottled virtio-rng device: an empty JSON object is the body
+        // Firecracker's `PUT /entropy` accepts. A `rate_limiter` key must NOT
+        // appear when None, or Firecracker rejects the malformed field.
+        let e = EntropyDevice::default();
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(
+            json, "{}",
+            "unthrottled entropy device must serialize to {{}}"
+        );
+    }
+
+    #[test]
+    fn vm_config_wires_an_entropy_device() {
+        // Regression guard for the cold-boot CRNG stall fix: every VM config
+        // must expose a virtio-rng device so the boot sequence can seed the
+        // guest CRNG (otherwise the harness's first getrandom() blocks ~5 s
+        // until `random: crng init done`). See `EntropyDevice`.
+        let cfg =
+            VmConfig::from_schedule(&minimal_schedule_req(), "/opt/vmlinux", "/opt/rootfs.ext4")
+                .unwrap();
+        let json: serde_json::Value = serde_json::to_value(cfg.entropy_device()).unwrap();
+        assert!(
+            json.get("rate_limiter").is_none(),
+            "entropy device is unthrottled (no rate_limiter key)"
+        );
+    }
+
+    #[test]
     fn drive_root_serializes_correctly() {
         let d = Drive {
             drive_id: "rootfs".to_string(),
@@ -5315,7 +5375,7 @@ mod tests {
         assert_eq!(orphaned_tap_names(out), vec!["fc-bbbbbbbb".to_string()]);
     }
 
-    /// Only Lantern's own devices are eligible — never the host's networking.
+    /// Only PAL's own devices are eligible — never the host's networking.
     #[test]
     fn reconcile_ignores_non_lantern_devices() {
         let out = concat!(
