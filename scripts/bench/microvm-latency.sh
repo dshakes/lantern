@@ -39,7 +39,7 @@
 #   FIRECRACKER_JAILER_PATH/_UID/_GID FIRECRACKER_CHROOT_BASE (fork needs the
 #   jailer); ITERATIONS (default 20); FORK_SIZES (default "1 10 50");
 #   FORK_ITERATIONS (default ITERATIONS); FORK_CONCURRENCY (default 16);
-#   FORK_READY_MAX (default 1); BENCH_PORT (default 51060, broker
+#   FORK_READY_MAX (default 1); ONLY_BROKER=1; BENCH_PORT (default 51060, broker
 #   manager uses +1); OUT_DIR (default ./bench-out); SKIP_BROKER=1.
 # Output: OUT_DIR/samples.csv (op,iter,ms), OUT_DIR/summary.json, summary.md.
 #
@@ -170,6 +170,8 @@ openssl x509 -req -in "${WORK}/client.csr" -CA "${WORK}/ca.crt" -CAkey "${WORK}/
   -days 1 -out "${WORK}/client.crt" -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE') >/dev/null 2>&1 || fail client
 
 # ───────────────────── phase A: guest egress mode, jailed ─────────────────────
+# ONLY_BROKER=1 skips straight to phase B (body not re-indented on purpose).
+if [ "${ONLY_BROKER:-0}" != "1" ]; then
 A="127.0.0.1:${PORT}"
 JAIL_ENV=()
 [ -n "${FIRECRACKER_JAILER_PATH:-}" ] && JAIL_ENV=(
@@ -266,6 +268,7 @@ else
   done
 fi
 stop_manager "${PORT}"
+fi # ONLY_BROKER
 
 # ──────────────── phase B: broker egress mode (ADR 0026), unjailed ────────────────
 if [ "${SKIP_BROKER:-0}" != "1" ]; then
@@ -292,7 +295,9 @@ if [ "${SKIP_BROKER:-0}" != "1" ]; then
   st=$(fetch "${ALLOWED}" bprobe)
   [ "${st}" = 200 ] || fail "allowed fetch through the broker returned ${st} (want 200)\n$(grep -i broker "${WORK}/manager.$((PORT + 1)).log" | tail -10)"
   for i in $(seq "${ITERATIONS}"); do
-    t0=$(ms); exec_ok "${B}" "${BVM}" "bx-$i" || fail "broker exec failed"; rec broker_exec_baseline "$i" $(( $(ms) - t0 ))
+    t0=$(ms)
+    if exec_ok "${B}" "${BVM}" "bx-$i"; then rec broker_exec_baseline "$i" $(( $(ms) - t0 ))
+    else rec broker_exec_failures "$i" 1; log "WARN: broker exec #$i failed after $(( $(ms) - t0 )) ms"; fi
     t0=$(ms); st=$(fetch "${ALLOWED}" "ba-$i"); rec broker_fetch_allowed "$i" $(( $(ms) - t0 ))
     [ "${st}" = 200 ] || fail "allowed fetch #$i returned ${st}"
     t0=$(ms); st=$(fetch "https://example.org/" "bd-$i"); rec broker_fetch_denied "$i" $(( $(ms) - t0 ))

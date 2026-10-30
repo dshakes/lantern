@@ -8,7 +8,9 @@
 #   - resume
 #   - fork N=1 / N=10 / N=100
 #
-# Outputs JSON to stdout and a markdown table to docs/benchmarks/runtime-latency.md.
+# Outputs JSON to stdout and a markdown table to stderr. For the Lima/KVM
+# numbers in docs/benchmarks/runtime-latency.md see microvm-latency.sh, which
+# needs only the runtime-manager, not the whole stack.
 #
 # PREREQUISITES (Linux + KVM only)
 # ─────────────────────────────────
@@ -42,7 +44,6 @@ TOKEN="${PAL_API_TOKEN:-${LANTERN_API_TOKEN:-}}"
 ITERATIONS=5          # per-operation sample count (override with --iterations N)
 IMAGE_DIGEST="${PAL_BENCH_IMAGE:-${LANTERN_BENCH_IMAGE:-sha256:placeholder}}"   # must be a real digest in prod
 TENANT_ID="${PAL_BENCH_TENANT:-${LANTERN_BENCH_TENANT:-}}"
-OUT_MD="docs/benchmarks/runtime-latency.md"
 
 usage() {
   cat >&2 <<EOF
@@ -264,19 +265,8 @@ md_table() {
     "| \(.name) | \(.p50_ms) | \(.p95_ms) | \(.samples) | \(.rss_mib_per_fork // "n/a") |"'
 }
 
-if [[ -f "$OUT_MD" ]]; then
-  # Replace the results table between the markers.
-  python3 - "$OUT_MD" <<'PYEOF'
-import sys, re
-path = sys.argv[1]
-text = open(path).read()
-# Replace content between <!-- results-start --> and <!-- results-end -->
-marker = r'(<!-- results-start -->).*?(<!-- results-end -->)'
-repl = r'\1\n\n_Results placeholder — run scripts/bench/runtime-latency.sh on a KVM host to populate._\n\n\2'
-new = re.sub(marker, repl, text, flags=re.DOTALL)
-open(path, 'w').write(new)
-PYEOF
-  echo "Updated $OUT_MD (results pending real KVM run)." >&2
-fi
+# Bug fix: this used to overwrite the doc's results block with a placeholder
+# on every run (it never wrote the table). Print the table instead.
+md_table >&2
 
 exit 0

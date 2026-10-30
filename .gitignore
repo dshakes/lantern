@@ -79,3 +79,4 @@ services/imessage-bridge/node_modules/
 
 # Local Claude Code overrides
 .claude/settings.local.json
+bench-out/
