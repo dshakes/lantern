@@ -411,6 +411,15 @@ An enterprise customer can deploy multiple data planes:
 - Different environments (e.g., `staging` and `production`)
 - The control plane routes run assignments to the appropriate data plane based on agent configuration
 
+### Multi-region control plane
+
+A data plane can be given an ordered list of control-plane regions
+(`controlPlane.endpoints` / `PAL_CONTROL_PLANE_ENDPOINTS`). It registers with
+the first one that health-checks `SERVING`, moves when that region fails or
+becomes a read-only standby, and fails back once a higher-priority region is
+healthy again. See [ADR 0046](../adr/0046-multi-region-active-passive.md) and
+the [failover runbook](../runbooks/region-failover.md).
+
 ---
 
 ## Related documents

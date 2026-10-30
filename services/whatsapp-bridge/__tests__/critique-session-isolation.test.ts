@@ -21,7 +21,7 @@ let tmpRoot: string;
 let prevCwd: string;
 
 beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "lantern-critique-iso-"));
+  tmpRoot = mkdtempSync(join(tmpdir(), "pal-critique-iso-"));
   prevCwd = process.cwd();
   process.chdir(tmpRoot);
 });

@@ -1,8 +1,8 @@
 // Bounded exponential backoff retry helper for bridge HTTP calls.
 //
-// CLAUDE.md mandates @lantern/retry — that package does not yet exist in
+// CLAUDE.md mandates @pal/retry — that package does not yet exist in
 // this repo. This local helper fills the gap until the canonical package
-// is created. When @lantern/retry ships, replace the import in agent.ts
+// is created. When @pal/retry ships, replace the import in agent.ts
 // and delete this file.
 //
 // Usage:

@@ -129,7 +129,7 @@ export class OfflineMonitor {
     const minutes = Math.round(elapsedSec / 60);
     const fixUrl = `${this.cfg.dashboardUrl.replace(/\/$/, "")}/personal/setup`;
     const body = [
-      `🔴 *Lantern ${this.cfg.channelLabel} offline ${minutes}m*`,
+      `🔴 *pal ${this.cfg.channelLabel} offline ${minutes}m*`,
       "",
       `State: ${state}`,
       reason ? `Reason: ${reason}` : "",

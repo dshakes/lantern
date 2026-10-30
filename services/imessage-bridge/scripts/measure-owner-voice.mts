@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { homedir } from "os";
 import { join } from "path";
 import { decodeAttributedBody } from "../src/attributed-body.js";
-import { dedupeKey } from "@lantern/bridge-core/owner-voice";
+import { dedupeKey } from "@pal/bridge-core/owner-voice";
 
 const TELUGU_TOKENS = new Set([
   "vasta","vastha","vacchaka","vacchina","vacchi","cheptha","cheptanu","chepta","matladta","matladtham","matladkundam","ela","undi","unna","unnav","unnaru","chustha","chusta","chustanu","ostha","osta","ostunnav","ostunnaru","thelvadu","telidu","teliyadu","leda","ledu","ledhu","kavali","emi","enti","emaindi","amma","nanna","anna","akka","bava","vadina","ammayi","abbayi","cheppu","cheppara","sare","tappakunda","mari","koncham","baagunnav","bagunnava","ekkada","epudu","chesthunnav","chestunna","nuvvu","meeru","nenu","repu","kada",

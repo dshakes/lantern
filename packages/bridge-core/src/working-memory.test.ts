@@ -18,7 +18,7 @@ test("isSelfContextQuery detects where/what-am-i questions, ignores others", () 
 });
 
 function tmp(): string {
-  return join(mkdtempSync(join(tmpdir(), "lantern-wm-")), "wm.jsonl");
+  return join(mkdtempSync(join(tmpdir(), "pal-wm-")), "wm.jsonl");
 }
 
 test("records actions and surfaces them newest-first within the window", () => {

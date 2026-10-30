@@ -16,7 +16,7 @@ CI/CD guardian agent that analyzes code changes, checks operational signals, ass
 Normally triggered by a GitHub webhook (push to main or PR merge). To test manually:
 
 ```bash
-lantern run deploy-guardian --input '{
+pal run deploy-guardian --input '{
   "action": "push",
   "ref": "refs/heads/main",
   "repository": { "full_name": "acme/backend", "default_branch": "main" },

@@ -9,7 +9,7 @@
 import { execSync } from "node:child_process";
 
 export interface BuildInfo {
-  /** Short git SHA (or LANTERN_BUILD_SHA when baked at build time, or "unknown"). */
+  /** Short git SHA (or PAL_BUILD_SHA when baked at build time, or "unknown"). */
   sha: string;
   /** True when the working tree had uncommitted changes at resolution time. */
   dirty: boolean;
@@ -32,7 +32,7 @@ function git(args: string): string | null {
 
 /**
  * Resolve the running build, cached after first call. Resolution order:
- *   1. LANTERN_BUILD_SHA env (baked at CI/build time, e.g. packaged deploys),
+ *   1. PAL_BUILD_SHA env (baked at CI/build time, e.g. packaged deploys),
  *   2. `git rev-parse --short HEAD` from the source checkout (dev / make run),
  *   3. "unknown".
  * Never throws.

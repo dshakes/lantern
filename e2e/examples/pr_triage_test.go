@@ -64,7 +64,7 @@ func TestPRTriage(t *testing.T) {
 		if len(comments) != 1 {
 			t.Fatalf("PR comments = %d, want 1", len(comments))
 		}
-		if body := bodyJSON(t, comments[0])["body"]; body != "Lantern triage: "+triageReply {
+		if body := bodyJSON(t, comments[0])["body"]; body != "PAL triage: "+triageReply {
 			t.Fatalf("comment body = %q", body)
 		}
 		posts := find(reqs, "POST", "/api/chat.postMessage")

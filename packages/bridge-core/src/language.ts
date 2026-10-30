@@ -12,7 +12,7 @@
 //
 // Generic by design: the Telugu lexicon is one of N — add more (Hindi,
 // Tamil, Spanish, etc.) by appending to LEX. The user's own profile
-// (~/.lantern/owner-profile.md) can list their nativity to bias which
+// (~/.pal/owner-profile.md) can list their nativity to bias which
 // dialect the LLM uses when responding.
 
 export type DetectedLanguage =
@@ -390,12 +390,12 @@ function normalizeLangToken(raw: string): DetectedLanguage | "auto" | "unset" | 
 
 /** Resolve the Whisper language bias for a voice note.
  *
- *  Precedence: explicit `LANTERN_VOICE_LANG` env (an ISO code, a language
+ *  Precedence: explicit `PAL_VOICE_LANG` env (an ISO code, a language
  *  name, or "auto") → owner-profile nativity text → default Telugu (this
  *  deployment's owner speaks Telangana Telugu).
  *
  *  CRITICAL — we only ever send an explicit `iso` (Whisper's `language`
- *  param) when the OWNER set `LANTERN_VOICE_LANG` to a real ISO code. The
+ *  param) when the OWNER set `PAL_VOICE_LANG` to a real ISO code. The
  *  Whisper API rejects some valid ISO codes (notably "te"/Telugu) with a
  *  400 `unsupported_language`, which used to kill the whole transcription →
  *  the contact got dead silence. So out of the box we run AUTO-DETECT

@@ -1,4 +1,4 @@
-"""Retry/backoff behavior for LanternClient._request.
+"""Retry/backoff behavior for PalClient._request.
 
 429/503 and network-layer errors are retried with bounded exponential
 backoff; 4xx auth/validation errors are never retried.
@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from lantern.client import LanternClient
+from pal.client import PalClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,8 +47,8 @@ class _RaisingTransport(httpx.AsyncBaseTransport):
         return httpx.Response(200, content=str(self._ok_body).encode(), headers={"content-type": "application/json"})
 
 
-def _client(transport: httpx.AsyncBaseTransport) -> LanternClient:
-    c = LanternClient(base_url="https://api.example.com", api_key="test-key")
+def _client(transport: httpx.AsyncBaseTransport) -> PalClient:
+    c = PalClient(base_url="https://api.example.com", api_key="test-key")
     c._client = httpx.AsyncClient(base_url="https://api.example.com", transport=transport, headers=c._headers())
     return c
 
@@ -78,9 +78,9 @@ class TestRetry:
         c = _client(t)
         try:
             await c._request("GET", "/v1/agents/a1")
-            raise AssertionError("expected LanternApiError")
+            raise AssertionError("expected PalApiError")
         except Exception as e:
-            assert type(e).__name__ == "LanternApiError"
+            assert type(e).__name__ == "PalApiError"
         assert t.call_count == 1
 
     async def test_exhausts_retries_and_raises(self):
@@ -88,9 +88,9 @@ class TestRetry:
         c = _client(t)
         try:
             await c._request("GET", "/v1/agents/a1")
-            raise AssertionError("expected LanternApiError")
+            raise AssertionError("expected PalApiError")
         except Exception as e:
-            assert type(e).__name__ == "LanternApiError"
+            assert type(e).__name__ == "PalApiError"
             assert e.status == 503
         assert t.call_count == 3  # default max attempts
 

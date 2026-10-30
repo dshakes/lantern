@@ -7,10 +7,10 @@
 // + correction-precedence layer (Zep/Graphiti call it owner-authoritative
 // edges): a confirmed fact must never be overridden by a heuristic.
 //
-// Owner-only, local. Store: ~/.lantern/identity-overrides.jsonl (mode 0600),
+// Owner-only, local. Store: ~/.pal/identity-overrides.jsonl (mode 0600),
 // append-only, last-write-wins. Path + now injectable for tests.
 
-import { homedir } from "node:os";
+import { palStateDir } from "./state-dir.js";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { canonicalHandle } from "./canonical-handle.js";
@@ -22,7 +22,7 @@ export interface IdentityOverride {
   ts: number;
 }
 
-const DEFAULT_PATH = join(homedir(), ".lantern", "identity-overrides.jsonl");
+const defaultPath = (): string => join(palStateDir(), "identity-overrides.jsonl");
 
 export interface IdOpts {
   path?: string;
@@ -34,7 +34,7 @@ export interface IdOpts {
  *  return null the caller must NOT invent a name (no area-code guessing) —
  *  refer to the contact as the raw handle. Last write wins. */
 export function resolveName(handle: string, opts: IdOpts = {}): string | null {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   if (!handle || !existsSync(path)) return null;
   const key = canonicalHandle(handle);
   let name: string | null = null;
@@ -143,7 +143,7 @@ export function detectIdentityCorrection(
  *  the owner texts daily at a number they never saved as a contact. Last write
  *  wins per handle. */
 export function resolveHandlesByName(name: string, opts: IdOpts = {}): string[] {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const needle = (name || "").trim().toLowerCase();
   if (!needle || !existsSync(path)) return [];
   const latest = new Map<string, { handle: string; name: string }>(); // canon -> latest
@@ -172,7 +172,7 @@ export function resolveHandlesByName(name: string, opts: IdOpts = {}): string[] 
 /** Persist an owner correction ("that number is Manasa's" / "this is Sam").
  *  Best-effort; returns whether it was written. */
 export function recordIdentityCorrection(handle: string, name: string, opts: IdOpts = {}): boolean {
-  const path = opts.path ?? DEFAULT_PATH;
+  const path = opts.path ?? defaultPath();
   const h = (handle || "").trim();
   const n = (name || "").replace(/\s+/g, " ").trim().slice(0, 80);
   if (!h || !n) return false;

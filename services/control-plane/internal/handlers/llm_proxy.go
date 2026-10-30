@@ -273,7 +273,7 @@ func isKnownCapabilityOrVendorPrefix(s string) bool {
 //     reasoning-small, chat-large, chat-small, chat-edge, vision-large,
 //     vision-small, code-large, code-small, embed-large, embed-small, rerank,
 //     transcribe, tts, auto.
-//   - Python sdk-python/lantern/types.py Capability: identical set.
+//   - Python sdk-python/pal/types.py Capability: identical set.
 //   - Go sdk-go/client.go: untyped string field (no enum); accepts all of the above.
 //   - OptimizeTarget (TS + Python): cheap, fast, best, balanced.
 func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, capability string) (string, string) {
@@ -2872,7 +2872,7 @@ func (h *LlmProxyHandler) GenerateAgentCode(w http.ResponseWriter, r *http.Reque
 		zap.String("tenant_id", tenantID),
 	)
 
-	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @lantern/sdk.
+	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @pal-runtime/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {
@@ -2882,7 +2882,7 @@ Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 }
 
 The TypeScript code should:
-- Import from "@lantern/sdk"
+- Import from "@pal-runtime/sdk"
 - Use the Agent class with proper typing
 - Implement each step using the step() function for durability
 - Use ctx.llm.generate() for LLM calls (never call models directly)

@@ -9,7 +9,7 @@
       "prompt": "[pr-triage] You review pull requests for a small team. PR #{{input.number}} \"{{input.title}}\" by {{input.author}}. GitHub says: {{steps.fetch}}. Reply with ONE plain-text line under 300 characters: risk (low, med or high), then the single most important thing a reviewer should check. No markdown."}},
     {"id": "comment", "type": "connector", "data": {
       "label": "Comment on PR", "connector": "github", "action": "comment_pr",
-      "inputMapping": {"owner": "{{input.owner}}", "repo": "{{input.repo}}", "number": "{{input.number}}", "body": "Lantern triage: {{steps.triage}}"}}},
+      "inputMapping": {"owner": "{{input.owner}}", "repo": "{{input.repo}}", "number": "{{input.number}}", "body": "PAL triage: {{steps.triage}}"}}},
     {"id": "announce", "type": "connector", "data": {
       "label": "Announce in Slack", "connector": "slack", "action": "post_message",
       "inputMapping": {"channel": "{{input.slackChannel}}", "text": "New PR #{{input.number}}: {{input.title}} ({{input.url}})"}}},

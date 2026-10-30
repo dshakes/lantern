@@ -1,6 +1,6 @@
 package cli
 
-// agent_dev_test.go — unit tests for `lantern agent dev`.
+// agent_dev_test.go — unit tests for `pal agent dev`.
 //
 // Covers:
 //   - isWatchedFile: correct file-type classification.

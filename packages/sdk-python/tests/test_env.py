@@ -1,6 +1,6 @@
 import pytest
 
-from lantern import _env
+from pal import _env
 
 
 @pytest.mark.parametrize(

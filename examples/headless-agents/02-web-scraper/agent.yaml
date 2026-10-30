@@ -3,7 +3,7 @@
 # Fetches a URL from the public web, returns title + meta description.
 # Picks `untrusted` because the workload uses `requests` + `beautifulsoup4`
 # from pypi — anything that loads third-party packages is untrusted from
-# Lantern's perspective.
+# PAL's perspective.
 #
 # What this demo proves:
 #   * EGRESS ALLOWLIST: workload can only reach hosts on the allowlist.

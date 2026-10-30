@@ -1,6 +1,6 @@
 package cli
 
-// doctor_runtime.go — `lantern doctor` "Sandbox runtime" section.
+// doctor_runtime.go — `pal doctor` "Sandbox runtime" section.
 //
 // Soft checks (they never fail doctor): the sandbox is optional for a first
 // agent, but when it is missing the user should learn exactly which piece is
@@ -78,7 +78,7 @@ func checkRuntime(env runtimeEnv) []checkResult {
 		case err != nil:
 			wired.detail = "GET /v1/runtime/cluster: " + err.Error()
 		case cluster["stub"] == true:
-			wired.detail = "stub scheduler (sandbox runs spawn nothing) — start the API with LANTERN_SCHEDULER_GRPC_ADDR=" + env.schedulerAddr
+			wired.detail = "stub scheduler (sandbox runs spawn nothing) — start the API with PAL_SCHEDULER_GRPC_ADDR=" + env.schedulerAddr
 		default:
 			wired.passed = true
 			wired.detail = "real scheduler"
@@ -93,7 +93,7 @@ func checkRuntime(env runtimeEnv) []checkResult {
 	}
 	mgr := checkResult{label: "runtime-manager (" + env.managerAddr + ")", passed: dialOK(env.managerAddr)}
 	if !mgr.passed {
-		mgr.detail = "unreachable — run: make run-runtime-manager (and set LANTERN_DEFAULT_MANAGER_ADDR on the scheduler)"
+		mgr.detail = "unreachable — run: make run-runtime-manager (and set PAL_DEFAULT_MANAGER_ADDR on the scheduler)"
 	}
 	out = append(out, sched, mgr)
 

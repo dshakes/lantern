@@ -22,8 +22,8 @@ import { join } from "path";
 import { existsSync } from "fs";
 import type { Logger } from "pino";
 import { decodeAttributedBody } from "./attributed-body.js";
-import { dedupeKey } from "@lantern/bridge-core/owner-voice";
-import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
+import { dedupeKey } from "@pal/bridge-core/owner-voice";
+import { canonicalHandle } from "@pal/bridge-core/canonical-handle";
 
 export interface IMessageRow {
   // Stable per-message identity. We track lastSeenRowid in memory and
@@ -152,7 +152,7 @@ export class ChatDB {
       ) {
         return {
           ok: false,
-          reason: `Permission denied reading chat.db. Grant Full Disk Access to the process running lantern-imessage-bridge: System Settings → Privacy & Security → Full Disk Access → add your terminal/launchd binary.`,
+          reason: `Permission denied reading chat.db. Grant Full Disk Access to the process running the iMessage bridge: System Settings → Privacy & Security → Full Disk Access → add your terminal/launchd binary.`,
         };
       }
       return { ok: false, reason: `Failed to open chat.db: ${msg}` };
