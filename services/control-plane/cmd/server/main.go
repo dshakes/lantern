@@ -340,7 +340,8 @@ func main() {
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
-	signalHandler := handlers.NewSignalHandler(srv)
+	signalHandler := handlers.NewSignalHandler(srv, authHandler)
+	bridgeHandler := handlers.NewBridgeHandler(srv, authHandler)
 	dlHandler := handlers.NewDLHandler(srv)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
@@ -541,12 +542,23 @@ func main() {
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", authHandler.WithScope(handlers.ScopeSettingsRead, surfaceHandler.WhatsAppStatus))
 
-	// Personal device signals — iPhone Shortcuts POST app-context here
-	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
-	// JWT/tenant scope; gated by the PAL_SIGNAL_TOKEN shared secret
-	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
+	// Device signals (ADR 0047). Tenant-scoped when called with a paired
+	// bridge token or a JWT/API key; without an Authorization header the
+	// legacy single-owner shared-token path (PAL_SIGNAL_TOKEN, fail-closed)
+	// serves the original iPhone Shortcuts install for one tenant only
+	// (PAL_SIGNALS_LEGACY_OWNER_TENANT). Auth is resolved inside the handler.
 	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
 	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
+
+	// PAL device enrollment (ADR 0047). enroll/list/revoke are tenant-scoped
+	// (settings:write enforced in-handler, not flag-gated); pair is
+	// unauthenticated by design (the one-time code is the credential) and
+	// rate-limited; self/rotate authenticates with the bridge token.
+	httpMux.HandleFunc("POST /v1/bridges/enroll", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Enroll))
+	httpMux.HandleFunc("POST /v1/bridges/pair", bridgeHandler.Pair)
+	httpMux.HandleFunc("POST /v1/bridges/self/rotate", bridgeHandler.RotateSelf)
+	httpMux.HandleFunc("GET /v1/bridges", authHandler.WithScope(handlers.ScopeSettingsRead, bridgeHandler.List))
+	httpMux.HandleFunc("DELETE /v1/bridges/{id}", authHandler.WithScope(handlers.ScopeSettingsWrite, bridgeHandler.Revoke))
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).

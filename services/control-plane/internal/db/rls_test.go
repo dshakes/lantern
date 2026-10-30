@@ -393,6 +393,7 @@ var rlsTenantTables = []string{
 	"agent_triggers", "agent_trigger_deliveries",
 	"agent_documents", "agent_document_chunks",
 	"dlp_policies",
+	"bridge_pairing_codes", "bridges", "device_signals",
 	"batches",
 }
 
