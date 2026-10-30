@@ -16,7 +16,6 @@ Write your first `agent.yaml`, pick an isolation class, run it, watch its logs, 
 "Headless" means no conversation: the agent is a background worker, not a chatbot. You package your code as a container image, describe it in a short `agent.yaml` (what to run, how much CPU and memory, how strong a sandbox, which sites it may reach) and hand it to PAL Runtime. It finds a machine, builds the sandbox, runs it, streams the logs and cleans up.
 
 <Aside>
-The CLI and packages are still named `lantern` while the rename lands.
 </Aside>
 
 ## Prerequisites
@@ -75,7 +74,7 @@ Demo 02 (`web-scraper`) uses `untrusted` because it pulls `requests` and `beauti
 The CLI schedules the spec:
 
 ```bash
-lantern run examples/headless-agents/01-hello/agent.yaml \
+pal run examples/headless-agents/01-hello/agent.yaml \
   --input '{"name": "Ada"}'
 ```
 
@@ -99,7 +98,7 @@ curl http://localhost:8080/v1/runtime/vms/<vm_id> \
   -H "Authorization: Bearer $PAL_API_TOKEN"
 ```
 
-Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/docs/runtime/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
+Or open `localhost:3001/runtime`. The dashboard shows the live instance, its log stream and resource usage, and lets you exec in for debugging. If you have an OTel collector wired ([Observability](/docs/observability/)) you get one trace per spawn with token and cost telemetry. Aggregate counters are at `GET /v1/runtime/metrics`.
 
 ## 5. Terminate
 
@@ -116,6 +115,6 @@ The instance drains for the grace period, the manager tears down the pod, and th
 
 - [Isolation classes](/docs/runtime/isolation/): pick the right boundary for the workload.
 - [Durable execution](/docs/runtime/durable-execution/): what happens when a node dies mid-run.
-- [Identity and secrets](/docs/runtime/identity/): vend a real secret into the workload (demo 02).
+- [Identity and secrets](/docs/security/identity/): vend a real secret into the workload (demo 02).
 - `examples/data-analyst`: upload a CSV, run pandas in the sandbox, egress denied by default (docker tier in CI, Firecracker nightly).
-- [Observability](/docs/runtime/observability/): wire an OTel collector and read the trace.
+- [Observability](/docs/observability/): wire an OTel collector and read the trace.

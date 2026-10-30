@@ -23,9 +23,9 @@ The data-plane agent dials out to the control plane, so your VPC opens no inboun
 
 <CardGrid>
   <LinkCard title="Try the demo" description="make demo: Docker only, no API key. A private sample workspace at localhost:3001/kiosk with recorded answers." href="/docs/start/demo/" />
-  <LinkCard title="Run your own agent" description="With a provider key: make dev, then lantern onboard." href="/docs/start/quickstart/" />
-  <LinkCard title="Run code in a sandbox" description="Write an agent.yaml, pick an isolation class, and lantern run it in a microVM." href="/docs/runtime/quickstart/" />
-  <LinkCard title="Understand the security model" description="What the workload can reach, where credentials live, and which boundary checks what." href="/docs/runtime/egress/" />
+  <LinkCard title="Run your own agent" description="With a provider key: make dev, then pal onboard." href="/docs/start/quickstart/" />
+  <LinkCard title="Run code in a sandbox" description="Write an agent.yaml, pick an isolation class, and pal run it in a microVM." href="/docs/runtime/quickstart/" />
+  <LinkCard title="Understand the security model" description="What the workload can reach, where credentials live, and which boundary checks what." href="/docs/security/egress/" />
   <LinkCard title="Ship to your cloud" description="Control plane and data plane on your Kubernetes, with Helm and Terraform." href="/docs/operate/deployment/" />
 </CardGrid>
 
@@ -45,7 +45,7 @@ The data-plane agent dials out to the control plane, so your VPC opens no inboun
 - **Durable execution.** A crash mid-step resumes from the journal. Completed steps are skipped and idempotency keys stop double side effects. See [Durable execution](/docs/runtime/durable-execution/).
 - **Isolation classes.** runc, gVisor, Kata and Firecracker by declared class. Untrusted code is refused rather than downgraded when the hardened runtime is missing. See [Isolation](/docs/runtime/isolation/).
 - **Token streaming.** Session replies stream token by token over SSE, with no buffering between provider and client. Tool-using turns return one completed message. See [Streaming](/docs/runtime/streaming/).
-- **Observability.** Control-plane HTTP/gRPC and step spans carry `tenant_id`, `run_id` and `step_id`; the trace context propagates into the in-VM harness. See [Observability](/docs/runtime/observability/).
+- **Observability.** Control-plane HTTP/gRPC and step spans carry `tenant_id`, `run_id` and `step_id`; the trace context propagates into the in-VM harness. See [Observability](/docs/observability/).
 - **Budgets.** Hard caps on cost, tokens and runs per day, per agent and tenant-wide; over the cap, the call returns HTTP 402 before the model is called. Workflow runs also stop mid-run at the per-run cap, and tool nodes respect per-tool limits. See [Budgets](/docs/build/budgets/).
 - **Evaluations.** Pin a baseline per branch and fail CI on regression with HTTP 422. Replay past failures before promoting a version. See [Evaluations](/docs/build/evaluations/).
 
@@ -53,7 +53,7 @@ The data-plane agent dials out to the control plane, so your VPC opens no inboun
 
 <CardGrid>
   <LinkCard title="REST API" description="Every endpoint on the control plane." href="/docs/reference/api/" />
-  <LinkCard title="SDKs" description="TypeScript, Python and Go." href="/docs/reference/sdk/" />
+  <LinkCard title="SDKs" description="TypeScript, Python and Go." href="/docs/sdks/" />
   <LinkCard title="CLI" description="onboard, doctor, demo, run, vm, hooks and more." href="/docs/reference/cli/" />
 </CardGrid>
 

@@ -232,7 +232,7 @@ The workflow engine never runs tools itself: it asks the runtime manager, which 
 `PAL_EGRESS_MODE=broker`, Firecracker only, ADR 0026.
 </Aside>
 
-The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/runtime/egress/).
+The workload's request leaves the VM over vsock; the host broker decides, dials, and adds the credential. The VM never holds it. See [Egress](/docs/security/egress/).
 
 <Diagram name="sandbox-egress" />
 

@@ -6,7 +6,7 @@ glance:
   why: "Real API keys never sit where agent code can casually find them: the config holds only a reference, not a value."
   how: "Reference secrets with the lantern.secret/... form described in that section, and read Broker mode for the strongest isolation."
 sidebar:
-  order: 7
+  order: 3
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -51,7 +51,7 @@ secrets:
     secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
 ```
 
-The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/docs/runtime/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
+The `lantern.secret/...` ref form is the same convention used across the platform (see [Security](/docs/security/)). The runtime is where it is resolved, inside the isolation boundary, at the moment the workload needs it.
 
 <Aside type="caution">
 Pair secret vending with the right [isolation class](/docs/runtime/isolation/). A workload that loads internet packages and also holds a secret should be `untrusted` with an egress allowlist, so a compromised dependency can't exfiltrate the vended value to an arbitrary host.
@@ -59,7 +59,7 @@ Pair secret vending with the right [isolation class](/docs/runtime/isolation/). 
 
 ## Broker mode: credentials never enter the VM
 
-Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/runtime/egress/).
+Vending still puts a short-lived value inside the VM, so a compromised workload can read it while it is valid. The opt-in broker mode (`PAL_EGRESS_MODE=broker`, Firecracker only) closes that gap for outbound API calls: the VM has no network device, and the host broker resolves the `lantern.secret` ref and injects the header on the way out. The workload never holds the value. See [Egress and credentials](/docs/security/egress/).
 
 ## What you get
 

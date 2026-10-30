@@ -1,0 +1,76 @@
+---
+title: Deploy to the cloud
+description: "Ship an agent with one command, then put the platform itself in your cloud with Helm or Terraform."
+glance:
+  what: "Two separate deploys: pal deploy ships an agent to a running control plane; Helm or Terraform puts the platform in your cloud."
+  why: "Agents change daily and ship in seconds; the platform changes rarely and stays in your VPC so agent data never leaves your account."
+  how: "Ship the agent with pal deploy; the first time, install the platform with the Helm or Terraform tab below."
+sidebar:
+  order: 4
+---
+
+import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+<Aside type="note" title="No hosted cloud yet">
+A fully managed PAL cloud is the intended offering, not a shipped one. Today you run the control plane yourself; everything below targets your own cluster.
+</Aside>
+
+## Ship an agent
+
+From the agent's directory, against any control plane you are signed in to:
+
+```bash
+pal deploy --dry-run   # one read-only lookup: reports "create" or "update", changes nothing
+pal deploy --json
+```
+
+It reads `agent.yaml` (`name`, `description`, `model`, `system_prompt`, `labels`, `workflow`), creates or updates the agent, saves the workflow graph, then calls `POST /v1/agents/{name}/deploy`. The response carries `"status": "live"` and the agent's invoke URL. Exit codes are scriptable: `3` unauthorized, `4` quota or budget (`402`), `5` not found, `6` server error.
+
+## Put the platform in your cloud
+
+<Tabs>
+<TabItem label="Helm (one cluster)">
+
+<Steps>
+
+1. Supply the secrets the chart cannot create: `secrets.jwtSecret`, `credentialKey`, `receiptSecret`, `grpcServiceToken`, `schedulerNodeToken`, `appDbPassword`, plus the control plane's gRPC TLS cert and the runtime-manager mTLS client cert.
+
+2. Install with the production values. The chart sets `PAL_ENV=production`, so every production startup guard is on and a missing secret stops the pod with its name in the log.
+
+   ```bash
+   helm install pal ./infra/helm/pal \
+     --namespace pal --create-namespace \
+     --values infra/helm/pal/values-prod.yaml
+   ```
+
+3. Point the CLI at it: `pal --api-url https://<your-host> login`.
+
+</Steps>
+
+</TabItem>
+<TabItem label="Terraform (data plane per cloud)">
+
+Generate and apply a data plane for EKS, GKE or AKS. Agents then execute in that cloud while the control plane schedules them.
+
+```bash
+pal infra install --cloud aws --region us-east-1 --node-count 3 --firecracker
+pal infra status
+```
+
+The data plane dials **out** to the control plane (`:50051`) with a one-time bootstrap token, so you open no inbound ports. Register it under **Settings → Data planes** or `POST /v1/data-planes`.
+
+</TabItem>
+</Tabs>
+
+<details>
+<summary>Which topology?</summary>
+
+| Topology | Control plane | Data plane | When |
+| --- | --- | --- | --- |
+| Hybrid (recommended) | one place | each workload's cloud | production; agent data stays in your VPC |
+| Fully self-hosted | your cluster | your cluster | full control, you run Postgres, Redis, Kubernetes |
+| Fully managed | — | — | not offered yet |
+
+</details>
+
+Production settings, NetworkPolicy, backups and migrations: [Deployment](/docs/operate/deployment/). Every variable a production process requires: [Environment variables](/docs/reference/env-vars/#production-checklist).

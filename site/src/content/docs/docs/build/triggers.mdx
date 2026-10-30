@@ -106,20 +106,20 @@ _ = c.DeleteTrigger(ctx, t.ID)
 <TabItem label="CLI">
 
 ```bash
-lantern hooks create my-agent --provider github   # prints the URL path and the secret once
-lantern hooks list my-agent
-lantern hooks get <trigger-id>
-lantern hooks update <trigger-id> --disable        # --enable, --template '<json>', --clear-template, --secret-stdin
-lantern hooks delete <trigger-id>
+pal hooks create my-agent --provider github   # prints the URL path and the secret once
+pal hooks list my-agent
+pal hooks get <trigger-id>
+pal hooks update <trigger-id> --disable        # --enable, --template '<json>', --clear-template, --secret-stdin
+pal hooks delete <trigger-id>
 
 # supply your own secret without it landing in shell history
-printf '%s' "$SECRET" | lantern hooks create my-agent --provider generic --secret-stdin
+printf '%s' "$SECRET" | pal hooks create my-agent --provider generic --secret-stdin
 ```
 
 </TabItem>
 </Tabs>
 
-`lantern hooks` is also reachable as `lantern hook` and `lantern triggers`. In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`): **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
+`pal hooks` is also reachable as `pal hook` and `pal triggers`. In the dashboard, open an agent and use **Manage** on its webhook triggers card (`/agents/{name}/triggers`): **New trigger** picks a provider, takes an optional secret and input template, then shows the payload URL and secret in a copy dialog. Each row has Enable/Disable, **Replace secret** and Delete.
 
 ## The URL and the secret
 
@@ -149,7 +149,7 @@ Create a `github` trigger and let PAL Runtime generate the secret. In the reposi
 Sentry generates its own client secret, so you cannot choose it. Create a `sentry` trigger first (you need its URL for the Sentry integration), then paste Sentry's client secret into PAL Runtime:
 
 ```bash
-printf '%s' "<sentry client secret>" | lantern hooks update <trigger-id> --secret-stdin
+printf '%s' "<sentry client secret>" | pal hooks update <trigger-id> --secret-stdin
 ```
 
 Or use **Replace secret** in the dashboard, or `PATCH` with `secret`. The event is read from `Sentry-Hook-Resource`.
@@ -232,7 +232,7 @@ If the body is not valid JSON, `payload` is the raw body as a string. `event` is
 An `inputTemplate` (a JSON object, set on create or update; `null` clears it) replaces that shape. Inside it, a string that is exactly `{{path}}` becomes the typed value at that dotted path in `{payload, event, provider, deliveryId, triggerId}` (or `null` if absent). A `{{path}}` inside a longer string is interpolated as text (empty if absent; non-strings are JSON-encoded). Nothing else is evaluated.
 
 ```bash
-lantern hooks create my-agent --provider github \
+pal hooks create my-agent --provider github \
   --template '{"pr":"{{payload.number}}","title":"{{payload.pull_request.title}}","note":"PR {{payload.number}} opened"}'
 ```
 
@@ -260,4 +260,4 @@ Set a budget on any agent you expose this way.
 - Per-replica rate limit; no per-IP limit at this layer.
 - No event filter: every verified delivery, including a GitHub `ping`, starts a run.
 
-Related: [API reference](/docs/reference/api/), [Budgets](/docs/build/budgets/), [CLI](/docs/reference/cli/), [SDKs](/docs/reference/sdk/).
+Related: [API reference](/docs/reference/api/), [Budgets](/docs/build/budgets/), [CLI](/docs/reference/cli/), [SDKs](/docs/sdks/).
