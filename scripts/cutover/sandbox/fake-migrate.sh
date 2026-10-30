@@ -8,7 +8,11 @@ u="$DB_NEW_USER"; d="$DB_NEW_NAME"
 psql_ -U "$u" -d "$d" -c 'select 1' >/dev/null 2>&1 || { u="$DB_OLD_USER"; d="$DB_OLD_NAME"; }
 mdir="$REPO_DIR/services/control-plane/internal/db/migrations"
 max="$(find "$mdir" -name '*.up.sql' -exec basename {} \; | sed -nE 's/^0*([0-9]+)_.*$/\1/p' | sort -n | tail -1)"
-psql_ -U "$u" -d "$d" -c "UPDATE schema_migrations SET version=$max, dirty=false"
+cur="$(psql_ -U "$u" -d "$d" -c 'select version from schema_migrations limit 1' 2>/dev/null)"
+if [[ -n "$cur" && "$cur" -gt "$max" ]]; then  # golang-migrate: DB ahead of the source -> the API exits
+  echo "fake-migrate: $u@$d at v$cur but source has only $max: no migration found for version $cur"; exit 1
+fi
+psql_ -U "$u" -d "$d" -c "UPDATE schema_migrations SET version=$max, dirty=false WHERE version < $max"
 if [[ -n "$(find "$mdir" -name '*_pal_brand_rename.up.sql')" ]]; then
   psql_ -U "$u" -d postgres <<SQL
 DO \$\$ BEGIN
