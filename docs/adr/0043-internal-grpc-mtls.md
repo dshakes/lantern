@@ -106,7 +106,7 @@ workflow-engine, model-router and runtime-manager probe the TCP socket instead.
 - A gRPC caller outside the mesh (e.g. `lantern` CLI pointed straight at
   `:50051`) cannot call AgentService/RunService on an mTLS control-plane; the
   REST API is the external surface.
-- The dedicated `lantern-control-plane` / `lantern-data-plane` charts are not
+- The dedicated `pal-control-plane` / `pal-data-plane` charts are not
   wired yet; the data-plane agent's workflow-engine dial already speaks
   `PAL_GRPC_TLS_*`.
 - The memory, notifier and billing Go services have gRPC servers but no callers
