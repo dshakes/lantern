@@ -1,7 +1,7 @@
 # values-region-standby.yaml -- PASSIVE (warm standby) region (ADR 0046).
 #
 # Layer on top of values-prod.yaml in the standby region:
-#   helm upgrade --install lantern infra/helm/pal \
+#   helm upgrade --install pal infra/helm/pal \
 #     -f infra/helm/pal/values.yaml \
 #     -f infra/helm/pal/values-prod.yaml \
 #     -f infra/helm/pal/values-region-standby.yaml \

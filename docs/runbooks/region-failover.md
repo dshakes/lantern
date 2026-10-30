@@ -5,12 +5,12 @@ Targets: RPO ≤ 1 min (Postgres), ≤ 15 min (S3 bundles); RTO ≤ 30 min.
 
 Everything below is opt-in. A deployment that never sets `PAL_REGION`,
 `PAL_FENCE_EPOCH`, `PAL_READ_ONLY` or `PAL_CONTROL_PLANE_ENDPOINTS` and never
-inserts a `region_fence` row is unaffected.
+inserts a `pal_region_fence` row is unaffected.
 
 | Knob | Where | Meaning |
 | --- | --- | --- |
 | `PAL_REGION` | control-plane, workflow-engine (Helm `region.name`) | region identity, stamped on runs/leases/journal + OTel `cloud.region` |
-| `PAL_FENCE_EPOCH` | control-plane, workflow-engine (Helm `region.fenceEpoch`) | must equal `region_fence.epoch` once armed |
+| `PAL_FENCE_EPOCH` | control-plane, workflow-engine (Helm `region.fenceEpoch`) | must equal `pal_region_fence.epoch` once armed |
 | `PAL_READ_ONLY=1` | control-plane (Helm `region.readOnly`) | standby: HTTP 503 + `Retry-After: 30`, gRPC `UNAVAILABLE`, no migrations/background loops, `DataPlaneService` NOT_SERVING |
 | `PAL_CONTROL_PLANE_ENDPOINTS` | data-plane agent (Helm `controlPlane.endpoints`, Terraform `pal_control_plane_endpoints`) | ordered regions, primary first |
 | `PAL_CONTROL_PLANE_FAILBACK_INTERVAL` | data-plane agent | failback probe interval (default `60s`) |
@@ -48,11 +48,11 @@ Order matters: arming first would reject writers that don't send an epoch.
    `SELECT region, count(*) FROM run_locks GROUP BY 1;`
 3. Arm, on the primary:
    ```sql
-   INSERT INTO region_fence (epoch, active_region) VALUES (1, '<active>');
+   INSERT INTO pal_region_fence (epoch, active_region) VALUES (1, '<active>');
    ```
    From now on a write to `runs` / `run_locks` / `journal_events` from a session
    without epoch 1 fails with `pal_fence: … rejected`. If you see that error in
-   logs right after arming, a writer was missed: `DELETE FROM region_fence;`
+   logs right after arming, a writer was missed: `DELETE FROM pal_region_fence;`
    disarms instantly.
 
 ## 2. Failover (active region lost)
@@ -67,8 +67,8 @@ Order matters: arming first would reject writers that don't send an epoch.
    moment of promotion — that is the data-loss window.
 3. **Bump the epoch** on the promoted database:
    ```sql
-   UPDATE region_fence SET epoch = epoch + 1, active_region = '<new active>', updated_at = now();
-   SELECT * FROM region_fence;
+   UPDATE pal_region_fence SET epoch = epoch + 1, active_region = '<new active>', updated_at = now();
+   SELECT * FROM pal_region_fence;
    ```
    Any old-region process that can still reach this database is now fenced:
    its lease renewals, journal appends and run updates are rejected.
@@ -104,5 +104,5 @@ first `SERVING` endpoint on their own).
   was rolled with the old epoch.
 * Agents stuck disconnected with `no healthy control-plane endpoint` — every
   region is read-only or unreachable; check step 4.
-* Single-region rollback of this feature: `DELETE FROM region_fence;` and unset
+* Single-region rollback of this feature: `DELETE FROM pal_region_fence;` and unset
   the env vars. The `region` columns can stay (nullable, unused).

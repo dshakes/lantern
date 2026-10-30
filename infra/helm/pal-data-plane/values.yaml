@@ -39,7 +39,7 @@ controlPlane:
   endpoint: "https://api.lantern.run"
   # Multi-region (ADR 0046): ordered control-plane endpoints, one per region,
   # primary first. Empty = use `endpoint` only (single-region, no health probe).
-  # e.g. ["api.us-east-1.lantern.run:443", "api.us-west-2.lantern.run:443"]
+  # e.g. ["api.us-east-1.example.com:443", "api.us-west-2.example.com:443"]
   endpoints: []
 
   # Tenant ID provisioned by PAL Runtime during onboarding.

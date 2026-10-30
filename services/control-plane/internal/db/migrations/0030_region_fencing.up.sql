@@ -5,9 +5,9 @@
 --   * the new `region` columns default to the session GUC `pal.region`, which
 --     is only set when PAL_REGION is configured — otherwise NULL;
 --   * the fence trigger is a no-op until an operator ARMS it by inserting the
---     single region_fence row (docs/runbooks/region-failover.md).
+--     single pal_region_fence row (docs/runbooks/region-failover.md).
 --
--- Fencing model. region_fence holds the cluster's current epoch. Every service
+-- Fencing model. pal_region_fence holds the cluster's current epoch. Every service
 -- process connects with the session GUC `pal.fence_epoch` (from
 -- PAL_FENCE_EPOCH). Once armed, any write to the run-execution tables from a
 -- session whose epoch is missing or differs from the current epoch is REJECTED
@@ -22,7 +22,7 @@ ALTER TABLE journal_events ADD COLUMN IF NOT EXISTS region TEXT DEFAULT NULLIF(c
 ALTER TABLE run_locks      ADD COLUMN IF NOT EXISTS region TEXT DEFAULT NULLIF(current_setting('pal.region', true), '');
 ALTER TABLE run_locks      ADD COLUMN IF NOT EXISTS fence_epoch BIGINT;
 
-CREATE TABLE IF NOT EXISTS region_fence (
+CREATE TABLE IF NOT EXISTS pal_region_fence (
     singleton     BOOLEAN     PRIMARY KEY DEFAULT true CHECK (singleton),
     epoch         BIGINT      NOT NULL CHECK (epoch > 0),
     active_region TEXT        NOT NULL CHECK (active_region ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS region_fence (
 
 -- pal_current_fence_epoch returns the armed epoch, or NULL when unarmed.
 -- SECURITY DEFINER so the restricted lantern_app role (RLS enforcement) can
--- evaluate it without a grant on region_fence; search_path pinned.
+-- evaluate it without a grant on pal_region_fence; search_path pinned.
 CREATE OR REPLACE FUNCTION pal_current_fence_epoch() RETURNS BIGINT
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
-    SELECT epoch FROM public.region_fence WHERE singleton
+    SELECT epoch FROM public.pal_region_fence WHERE singleton
 $$;
 
 CREATE OR REPLACE FUNCTION pal_fence_guard() RETURNS trigger

@@ -125,7 +125,7 @@ func journal(ctx context.Context, p *pgxpool.Pool, runID string, seq int) error 
 	return err
 }
 
-// TestRegionFence_UnarmedIsInert: with no region_fence row (every existing
+// TestRegionFence_UnarmedIsInert: with no pal_region_fence row (every existing
 // deployment), sessions with and without region identity write exactly as
 // before, and the region column is stamped only when PAL_REGION is set.
 func TestRegionFence_UnarmedIsInert(t *testing.T) {
@@ -182,7 +182,7 @@ func TestRegionFence_SplitBrain(t *testing.T) {
 	runID := seedRun(t, operator)
 
 	// Arm the fence at epoch 1 with region a active.
-	if _, err := operator.Exec(ctx, `INSERT INTO region_fence (epoch, active_region) VALUES (1, 'region-a')`); err != nil {
+	if _, err := operator.Exec(ctx, `INSERT INTO pal_region_fence (epoch, active_region) VALUES (1, 'region-a')`); err != nil {
 		t.Fatalf("arm: %v", err)
 	}
 	ok, _, err := acquireRunLease(ctx, a, runID, zap.NewNop())
@@ -204,7 +204,7 @@ func TestRegionFence_SplitBrain(t *testing.T) {
 	requireFenced(t, "region b before promotion", journal(ctx, b, runID, 2))
 
 	// --- Failover: promote region b. ---
-	if _, err := operator.Exec(ctx, `UPDATE region_fence SET epoch = 2, active_region = 'region-b', updated_at = now()`); err != nil {
+	if _, err := operator.Exec(ctx, `UPDATE pal_region_fence SET epoch = 2, active_region = 'region-b', updated_at = now()`); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 

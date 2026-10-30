@@ -3,7 +3,7 @@ DROP TRIGGER IF EXISTS pal_fence_guard ON journal_events;
 DROP TRIGGER IF EXISTS pal_fence_guard ON runs;
 DROP FUNCTION IF EXISTS pal_fence_guard();
 DROP FUNCTION IF EXISTS pal_current_fence_epoch();
-DROP TABLE IF EXISTS region_fence;
+DROP TABLE IF EXISTS pal_region_fence;
 ALTER TABLE run_locks      DROP COLUMN IF EXISTS fence_epoch;
 ALTER TABLE run_locks      DROP COLUMN IF EXISTS region;
 ALTER TABLE journal_events DROP COLUMN IF EXISTS region;
