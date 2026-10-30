@@ -174,7 +174,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		InputSchema:  defaultInput,
 		OutputSchema: defaultOutput,
 		Provider: AgentCardProvider{
-			Name: "Lantern",
+			Name: "PAL",
 			URL:  "https://lantern.run",
 		},
 	}
@@ -252,7 +252,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"message":{"type":"string"}}}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"result":{"type":"string"}}}`),
 			Provider: AgentCardProvider{
-				Name: "Lantern",
+				Name: "PAL",
 				URL:  "https://lantern.run",
 			},
 		})
@@ -263,7 +263,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":   cards,
-		"provider": map[string]string{"name": "Lantern", "url": "https://lantern.run"},
+		"provider": map[string]string{"name": "PAL", "url": "https://lantern.run"},
 	})
 }
 

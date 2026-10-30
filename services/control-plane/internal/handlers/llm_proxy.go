@@ -430,7 +430,7 @@ type LLMUsageDetail struct {
 // A child OTel span is created for every call using the GenAI semantic
 // conventions (gen_ai.system, gen_ai.request.model, gen_ai.operation.name,
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens) plus the
-// Lantern-specific lantern.cost_usd attribute. Spans are recorded only when
+// PAL-specific pal.cost_usd attribute (plus the legacy lantern.cost_usd). Spans are recorded only when
 // a real TracerProvider is installed; the default no-op provider makes this
 // a zero-cost no-op.
 //
@@ -2747,7 +2747,7 @@ func writeLLMAssistError(w http.ResponseWriter, err error) {
 	}
 }
 
-const agentSpecSystemPrompt = `You are Lantern's agent architect. Given a user's goal, design an agent for it.
+const agentSpecSystemPrompt = `You are PAL's agent architect. Given a user's goal, design an agent for it.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {
@@ -2872,7 +2872,7 @@ func (h *LlmProxyHandler) GenerateAgentCode(w http.ResponseWriter, r *http.Reque
 		zap.String("tenant_id", tenantID),
 	)
 
-	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @lantern/sdk.
+	systemPrompt := `You are PAL's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @lantern/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {

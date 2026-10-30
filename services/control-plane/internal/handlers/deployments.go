@@ -516,7 +516,7 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 		return tx.QueryRow(ctx, `
 			INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
-			VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to Lantern Cloud', $4::jsonb)
+			VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to PAL Cloud', $4::jsonb)
 			RETURNING id, created_at
 		`, tenantID, name, tenantID, string(initialLogs)).Scan(&deployID, &createdAt)
 	})

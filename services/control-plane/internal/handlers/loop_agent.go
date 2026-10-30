@@ -266,7 +266,7 @@ func (h *LoopAgentHandler) CreateLoopAgent(w http.ResponseWriter, r *http.Reques
 // natural-language prompt. Falls back to tier-based cron defaults when the
 // model omits or returns an invalid expression.
 func (h *LoopAgentHandler) generateLoopManifest(ctx context.Context, tenantID, prompt, preferredName string) (*LoopManifest, error) {
-	systemPrompt := `You are Lantern's loop-agent architect. Given a description, generate a structured loop-agent manifest.
+	systemPrompt := `You are PAL's loop-agent architect. Given a description, generate a structured loop-agent manifest.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
 {

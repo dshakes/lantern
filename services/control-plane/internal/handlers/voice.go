@@ -142,7 +142,7 @@ func (p *twilioProvider) HandleInboundWebhook(_ context.Context, _ map[string]an
 	// it, calls just play the greeting + hang up.
 	twiml := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Connecting you to the Lantern agent now.</Say>
+  <Say voice="alice">Connecting you to the PAL agent now.</Say>
   <Pause length="1"/>
   <Say voice="alice">Audio streaming is not yet configured. Please follow up with the operator.</Say>
 </Response>`)

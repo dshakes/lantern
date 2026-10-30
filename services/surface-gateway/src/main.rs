@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
     if config.lantern_tenant_id.is_none() {
         tracing::warn!(
             "LANTERN_TENANT_ID is not set — all inbound webhooks will be rejected at \
-             tenant resolution; set this to the Lantern tenant UUID for this deployment"
+             tenant resolution; set this to the PAL tenant UUID for this deployment"
         );
     } else {
         tracing::info!(
@@ -187,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
     if config.agent_name.is_none() {
         tracing::warn!(
             "LANTERN_AGENT_NAME is not set — run creation will fail for every inbound \
-             message; set this to the Lantern agent name for this deployment"
+             message; set this to the PAL agent name for this deployment"
         );
     }
 

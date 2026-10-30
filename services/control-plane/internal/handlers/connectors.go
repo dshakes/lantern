@@ -626,7 +626,7 @@ func (h *ConnectorHandler) renderOAuthPopupClose(w http.ResponseWriter, success 
 		successStr = "true"
 	}
 	html := fmt.Sprintf(`<!DOCTYPE html>
-<html><head><title>Lantern OAuth</title></head>
+<html><head><title>PAL OAuth</title></head>
 <body>
 <script>
   if (window.opener) {

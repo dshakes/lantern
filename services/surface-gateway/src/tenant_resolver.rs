@@ -59,7 +59,7 @@ impl TenantResolver {
                     surface = %surface,
                     platform_id = %platform_id,
                     tenant_id = %id,
-                    "resolved platform id to lantern tenant"
+                    "resolved platform id to PAL tenant"
                 );
                 Ok(id.clone())
             }
@@ -72,7 +72,7 @@ impl TenantResolver {
                 );
                 Err(AppError::AdapterNotConfigured(
                     "LANTERN_TENANT_ID is required but not set; \
-                     cannot resolve platform id to a Lantern tenant"
+                     cannot resolve platform id to a PAL tenant"
                         .to_string(),
                 ))
             }

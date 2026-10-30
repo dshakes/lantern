@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(
         listen_addr = %config.listen_addr,
-        "starting lantern model router"
+        "starting PAL model router"
     );
 
     // Build the provider registry based on available API keys.

@@ -529,7 +529,7 @@ impl MitmCa {
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
         params.distinguished_name.push(
             rcgen::DnType::CommonName,
-            format!("lantern egress broker CA {vm_id}"),
+            format!("pal egress broker CA {vm_id}"),
         );
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
         params.key_usages = vec![

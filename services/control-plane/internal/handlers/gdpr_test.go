@@ -34,7 +34,7 @@ func mintTestJWT(tenantID, role string) (string, error) {
 			Subject:   "test-user-id",
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
-			Issuer:    "lantern",
+			Issuer:    "pal",
 		},
 		TenantID: tenantID,
 		Email:    "test@example.com",

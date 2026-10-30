@@ -95,7 +95,7 @@ type userJSON struct {
 
 // ---------- JWT claims ----------
 
-// PalClaims extends the standard JWT claims with Lantern-specific fields.
+// PalClaims extends the standard JWT claims with PAL-specific fields.
 type PalClaims struct {
 	jwt.RegisteredClaims
 	TenantID string `json:"tenant_id"`
